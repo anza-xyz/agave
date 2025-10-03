@@ -23,6 +23,7 @@ mod serde_snapshot_tests {
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
             ancestors::Ancestors,
+            ObsoleteAccounts,
         },
         solana_clock::Slot,
         solana_epoch_schedule::EpochSchedule,
@@ -144,6 +145,7 @@ mod serde_snapshot_tests {
                 storage_entry.slot(),
                 storage_entry.id(),
                 accounts_file,
+                ObsoleteAccounts::default(),
             );
             next_append_vec_id = next_append_vec_id.max(new_storage_entry.id());
             storage.insert(new_storage_entry.slot(), Arc::new(new_storage_entry));

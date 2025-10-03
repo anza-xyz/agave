@@ -64,7 +64,8 @@ fn bench_transactions_parsing(
     group.bench_function("TransactionView (Sanitized)", |c| {
         c.iter(|| {
             for bytes in serialized_transactions.iter() {
-                let _ = TransactionView::try_new_sanitized(black_box(bytes.as_ref())).unwrap();
+                let _ =
+                    TransactionView::try_new_sanitized(black_box(bytes.as_ref()), true).unwrap();
             }
         });
     });
@@ -132,8 +133,8 @@ fn packed_transfers() -> Vec<VersionedTransaction> {
 
 fn packed_noops() -> Vec<VersionedTransaction> {
     // Creating noop instructions to maximize the number of instructions per
-    // transaction. We can fit up to 355 noops.
-    const MAX_INSTRUCTIONS_PER_TRANSACTION: usize = 355;
+    // transaction. We are allowed to fit up to 64 instructions per transaction.
+    const MAX_INSTRUCTIONS_PER_TRANSACTION: usize = 64;
 
     (0..NUM_TRANSACTIONS)
         .map(|_| {

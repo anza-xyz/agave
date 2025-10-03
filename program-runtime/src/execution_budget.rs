@@ -1,5 +1,6 @@
 use {
-    solana_fee_structure::FeeDetails, solana_program_entrypoint::HEAP_LENGTH, std::num::NonZeroU32,
+    solana_fee_structure::FeeDetails, solana_program_entrypoint::HEAP_LENGTH,
+    solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH, std::num::NonZeroU32,
 };
 
 /// Max instruction stack depth. This is the maximum nesting of instructions that can happen during
@@ -74,7 +75,7 @@ impl SVMTransactionExecutionBudget {
         SVMTransactionExecutionBudget {
             compute_unit_limit: u64::from(MAX_COMPUTE_UNIT_LIMIT),
             max_instruction_stack_depth: get_max_instruction_stack_depth(simd_0268_active),
-            max_instruction_trace_length: 64,
+            max_instruction_trace_length: MAX_INSTRUCTION_TRACE_LENGTH,
             sha256_max_slices: 20_000,
             max_call_depth: MAX_CALL_DEPTH,
             stack_frame_size: STACK_FRAME_SIZE,

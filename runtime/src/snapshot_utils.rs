@@ -5,7 +5,8 @@ use {
         bank::{BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
         serde_snapshot::{
             self, AccountsDbFields, ExtraFieldsToSerialize, SerializableAccountStorageEntry,
-            SnapshotAccountsDbFields, SnapshotBankFields, SnapshotStreams,
+            SerializedAccountsFileId, SnapshotAccountsDbFields, SnapshotBankFields,
+            SnapshotStreams,
         },
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfo,
@@ -336,6 +337,12 @@ pub enum SnapshotError {
 
     #[error("snapshot hash mismatch: deserialized bank: {0:?}, snapshot archive: {1:?}")]
     MismatchedHash(SnapshotHash, SnapshotHash),
+
+    #[error(
+        "snapshot accounts file id mismatch: deserialized obsolete accounts file id: {0}, \
+         snapshot archive: {1}"
+    )]
+    MismatchedAccountsFileId(SerializedAccountsFileId, SerializedAccountsFileId),
 
     #[error("snapshot slot deltas are invalid: {0}")]
     VerifySlotDeltas(#[from] VerifySlotDeltasError),
@@ -1817,8 +1824,6 @@ fn create_snapshot_meta_files_for_unarchived_snapshot(unpack_dir: impl AsRef<Pat
         status_cache_file,
         slot_dir.join(SNAPSHOT_STATUS_CACHE_FILENAME),
     )?;
-
-    mark_bank_snapshot_as_loadable(slot_dir)?;
 
     Ok(())
 }

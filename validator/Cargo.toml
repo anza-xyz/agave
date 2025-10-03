@@ -1,5 +1,6 @@
 [package]
 name = "agave-validator"
+readme = "../README.md"
 documentation = "https://docs.rs/agave-validator"
 default-run = "agave-validator"
 version = { workspace = true }

@@ -22,6 +22,7 @@ mod tests {
                 ACCOUNTS_DB_CONFIG_FOR_TESTING,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
+            ObsoleteAccounts,
         },
         solana_epoch_schedule::EpochSchedule,
         solana_genesis_config::create_genesis_config,
@@ -68,6 +69,7 @@ mod tests {
                 storage_entry.slot(),
                 storage_entry.id(),
                 accounts_file,
+                ObsoleteAccounts::default(),
             );
             next_append_vec_id = next_append_vec_id.max(new_storage_entry.id());
             storage.insert(new_storage_entry.slot(), Arc::new(new_storage_entry));

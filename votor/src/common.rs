@@ -93,13 +93,13 @@ pub const SAFE_TO_NOTAR_MIN_NOTARIZE_AND_SKIP: f64 = 0.6;
 pub const SAFE_TO_SKIP_THRESHOLD: f64 = 0.4;
 
 /// Time bound assumed on network transmission delays during periods of synchrony.
-const DELTA: Duration = Duration::from_millis(250);
+pub(crate) const DELTA: Duration = Duration::from_millis(250);
 
 /// Time the leader has for producing and sending the block.
-const DELTA_BLOCK: Duration = Duration::from_millis(400);
+pub(crate) const DELTA_BLOCK: Duration = Duration::from_millis(400);
 
 /// Base timeout for when leader's first slice should arrive if they sent it immediately.
-const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
+pub(crate) const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 
 #[allow(dead_code)]
 /// TODO(wen): remove allow(dead_code) when timer is fully integrated

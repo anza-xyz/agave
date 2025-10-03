@@ -1,32 +1,44 @@
+#[cfg(feature = "shuttle-test")]
+use shuttle::sync::{Arc, Mutex};
 use {
     ahash::{HashMap, HashMapExt as _},
     log::*,
-    rand::{thread_rng, Rng},
     serde::Serialize,
     solana_accounts_db::ancestors::Ancestors,
     solana_clock::{Slot, MAX_RECENT_BLOCKHASHES},
     solana_hash::Hash,
-    std::{
-        collections::{hash_map::Entry, HashSet},
-        sync::{Arc, Mutex},
-    },
+    std::collections::{hash_map::Entry, HashSet},
+};
+#[cfg(not(feature = "shuttle-test"))]
+use {
+    rand::{thread_rng, Rng},
+    std::sync::{Arc, Mutex},
 };
 
+// The maximum number of entries to store in the cache. This is the same as the number of recent
+// blockhashes because we automatically reject txs that use older blockhashes so we don't need to
+// track those explicitly.
 pub const MAX_CACHE_ENTRIES: usize = MAX_RECENT_BLOCKHASHES;
+
+// Only store 20 bytes of the tx keys processed to save some memory.
 const CACHED_KEY_SIZE: usize = 20;
 
-// Store forks in a single chunk of memory to avoid another lookup.
+// Store forks in a single chunk of memory to avoid another hash lookup.
 pub type ForkStatus<T> = Vec<(Slot, T)>;
+
+// The type of the key used in the cache.
 pub(crate) type KeySlice = [u8; CACHED_KEY_SIZE];
+
 type KeyMap<T> = HashMap<KeySlice, ForkStatus<T>>;
+
 // Map of Hash and status
 pub type Status<T> = Arc<Mutex<HashMap<Hash, (usize, Vec<(KeySlice, T)>)>>>;
+
 // A Map of hash + the highest fork it's been observed on along with
 // the key offset and a Map of the key slice + Fork status for that key
 type KeyStatusMap<T> = HashMap<Hash, (Slot, usize, KeyMap<T>)>;
 
-// A map of keys recorded in each fork; used to serialize for snapshots easily.
-// Doesn't store a `SlotDelta` in it because the bool `root` is usually set much later
+// The type used for StatusCache::slot_deltas. See the field definition for more details.
 type SlotDeltaMap<T> = HashMap<Slot, Status<T>>;
 
 // The statuses added during a slot, can be used to build on top of a status cache or to
@@ -36,9 +48,12 @@ pub type SlotDelta<T> = (Slot, bool, Status<T>);
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug)]
 pub struct StatusCache<T: Serialize + Clone> {
+    // cache[blockhash][tx_key] => [(fork1_slot, tx_result), (fork2_slot, tx_result), ...] used to
+    // check if a tx_key was seen on a fork and for rpc to retrieve the tx_result
     cache: KeyStatusMap<T>,
     roots: HashSet<Slot>,
-    /// all keys seen during a fork/slot
+    // slot_deltas[slot][blockhash] => [(tx_key, tx_result), ...] used to serialize for snapshots
+    // and to rebuild cache[blockhash][tx_key] from a snapshot
     slot_deltas: SlotDeltaMap<T>,
 }
 
@@ -53,33 +68,15 @@ impl<T: Serialize + Clone> Default for StatusCache<T> {
     }
 }
 
-impl<T: Serialize + Clone + PartialEq> PartialEq for StatusCache<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.roots == other.roots
-            && self
-                .cache
-                .iter()
-                .all(|(hash, (slot, key_index, hash_map))| {
-                    if let Some((other_slot, other_key_index, other_hash_map)) =
-                        other.cache.get(hash)
-                    {
-                        if slot == other_slot && key_index == other_key_index {
-                            return hash_map.iter().all(|(slice, fork_map)| {
-                                if let Some(other_fork_map) = other_hash_map.get(slice) {
-                                    // all this work just to compare the highest forks in the fork map
-                                    // per entry
-                                    return fork_map.last() == other_fork_map.last();
-                                }
-                                false
-                            });
-                        }
-                    }
-                    false
-                })
-    }
-}
-
 impl<T: Serialize + Clone> StatusCache<T> {
+    /// Clear all entries for a slot.
+    ///
+    /// This is used when a slot is purged from the cache, see
+    /// ReplayStage::purge_unconfirmed_duplicate_slot().
+    ///
+    /// When this is called, it's guaranteed that there are no threads inserting new entries for
+    /// this slot. root_slot_deltas() also never accesses slots that are being cleared because roots
+    /// are never purged.
     pub fn clear_slot_entries(&mut self, slot: Slot) {
         let slot_deltas = self.slot_deltas.remove(&slot);
         if let Some(slot_deltas) = slot_deltas {
@@ -143,9 +140,9 @@ impl<T: Serialize + Clone> StatusCache<T> {
         None
     }
 
-    /// Search for a key with any blockhash
-    /// Prefer get_status for performance reasons, it doesn't need
-    /// to search all blockhashes.
+    /// Search for a key with any blockhash.
+    ///
+    /// Prefer get_status for performance reasons, it doesn't need to search all blockhashes.
     pub fn get_status_any_blockhash<K: AsRef<[u8]>>(
         &self,
         key: K,
@@ -163,8 +160,10 @@ impl<T: Serialize + Clone> StatusCache<T> {
         None
     }
 
-    /// Add a known root fork.  Roots are always valid ancestors.
-    /// After MAX_CACHE_ENTRIES, roots are removed, and any old keys are cleared.
+    /// Add a known root fork.
+    ///
+    /// Roots are always valid ancestors. After MAX_CACHE_ENTRIES, roots are removed, and any old
+    /// keys are cleared.
     pub fn add_root(&mut self, fork: Slot) {
         self.roots.insert(fork);
         self.purge_roots();
@@ -174,7 +173,7 @@ impl<T: Serialize + Clone> StatusCache<T> {
         &self.roots
     }
 
-    /// Insert a new key for a specific slot.
+    /// Insert a new key using the given blockhash at the given slot.
     pub fn insert<K: AsRef<[u8]>>(
         &mut self,
         transaction_blockhash: &Hash,
@@ -187,6 +186,10 @@ impl<T: Serialize + Clone> StatusCache<T> {
         // Get the cache entry for this blockhash.
         let (max_slot, key_index, hash_map) =
             self.cache.entry(*transaction_blockhash).or_insert_with(|| {
+                // DFS tests need deterministic behavior
+                #[cfg(feature = "shuttle-test")]
+                let key_index = 0;
+                #[cfg(not(feature = "shuttle-test"))]
                 let key_index = thread_rng().gen_range(0..max_key_index + 1);
                 (slot, key_index, HashMap::new())
             });
@@ -217,7 +220,7 @@ impl<T: Serialize + Clone> StatusCache<T> {
         }
     }
 
-    /// Clear for testing
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn clear(&mut self) {
         for v in self.cache.values_mut() {
             v.2 = HashMap::new();
@@ -228,7 +231,13 @@ impl<T: Serialize + Clone> StatusCache<T> {
             .for_each(|(_, status)| status.lock().unwrap().clear());
     }
 
-    /// Get the statuses for all the root slots
+    /// Get the statuses for all the root slots.
+    ///
+    /// This is never called concurrently with add_root(), and for a slot to be a root there must be
+    /// no new entries for that slot, so there are no races.
+    ///
+    /// See ReplayStage::handle_new_root() => BankForks::set_root() =>
+    /// BankForks::do_set_root_return_metrics() => root_slot_deltas()
     pub fn root_slot_deltas(&self) -> Vec<SlotDelta<T>> {
         self.roots()
             .iter()
@@ -242,7 +251,10 @@ impl<T: Serialize + Clone> StatusCache<T> {
             .collect()
     }
 
-    // replay deltas into a status_cache allows "appending" data
+    /// Populate the cache with the slot deltas from a snapshot.
+    ///
+    /// Really badly named method. See load_bank_forks() => ... =>
+    /// rebuild_bank_from_snapshot() => [load slot deltas from snapshot] => append()
     pub fn append(&mut self, slot_deltas: &[SlotDelta<T>]) {
         for (slot, is_root, statuses) in slot_deltas {
             statuses
@@ -258,13 +270,6 @@ impl<T: Serialize + Clone> StatusCache<T> {
                 self.add_root(*slot);
             }
         }
-    }
-
-    pub fn from_slot_deltas(slot_deltas: &[SlotDelta<T>]) -> Self {
-        // play all deltas back into the status cache
-        let mut me = Self::default();
-        me.append(slot_deltas);
-        me
     }
 
     fn insert_with_slice(
@@ -287,8 +292,7 @@ impl<T: Serialize + Clone> StatusCache<T> {
         self.add_to_slot_delta(transaction_blockhash, slot, key_index, key_slice, res);
     }
 
-    // Add this key slice to the list of key slices for this slot and blockhash
-    // combo.
+    // Add this key slice to the list of key slices for this slot and blockhash combo.
     fn add_to_slot_delta(
         &mut self,
         transaction_blockhash: &Hash,
@@ -310,6 +314,40 @@ mod tests {
     use {super::*, solana_sha256_hasher::hash, solana_signature::Signature};
 
     type BankStatusCache = StatusCache<()>;
+
+    impl<T: Serialize + Clone> StatusCache<T> {
+        fn from_slot_deltas(slot_deltas: &[SlotDelta<T>]) -> Self {
+            let mut cache = Self::default();
+            cache.append(slot_deltas);
+            cache
+        }
+    }
+
+    impl<T: Serialize + Clone + PartialEq> PartialEq for StatusCache<T> {
+        fn eq(&self, other: &Self) -> bool {
+            self.roots == other.roots
+                && self
+                    .cache
+                    .iter()
+                    .all(|(hash, (slot, key_index, hash_map))| {
+                        if let Some((other_slot, other_key_index, other_hash_map)) =
+                            other.cache.get(hash)
+                        {
+                            if slot == other_slot && key_index == other_key_index {
+                                return hash_map.iter().all(|(slice, fork_map)| {
+                                    if let Some(other_fork_map) = other_hash_map.get(slice) {
+                                        // all this work just to compare the highest forks in the fork map
+                                        // per entry
+                                        return fork_map.last() == other_fork_map.last();
+                                    }
+                                    false
+                                });
+                            }
+                        }
+                        false
+                    })
+        }
+    }
 
     #[test]
     fn test_empty_has_no_sigs() {
@@ -544,5 +582,203 @@ mod tests {
                 .get_status(hash_key, &blockhash, &ancestors)
                 .is_some());
         }
+    }
+}
+
+#[cfg(all(test, feature = "shuttle-test"))]
+mod shuttle_tests {
+    use {super::*, shuttle::sync::RwLock};
+
+    type BankStatusCache = RwLock<StatusCache<()>>;
+
+    const CLEAR_DFS_ITERATIONS: Option<usize> = None;
+    const CLEAR_RANDOM_ITERATIONS: usize = 20000;
+    const PURGE_DFS_ITERATIONS: Option<usize> = None;
+    const PURGE_RANDOM_ITERATIONS: usize = 8000;
+    const INSERT_DFS_ITERATIONS: Option<usize> = Some(20000);
+    const INSERT_RANDOM_ITERATIONS: usize = 20000;
+
+    fn do_test_shuttle_clear_slots_blockhash_overlap() {
+        let status_cache = Arc::new(BankStatusCache::default());
+
+        let blockhash1 = Hash::new_from_array([1; 32]);
+
+        let key1 = Hash::new_from_array([3; 32]);
+        let key2 = Hash::new_from_array([4; 32]);
+
+        status_cache
+            .write()
+            .unwrap()
+            .insert(&blockhash1, key1, 1, ());
+        let th_clear = shuttle::thread::spawn({
+            let status_cache = status_cache.clone();
+            move || {
+                status_cache.write().unwrap().clear_slot_entries(1);
+            }
+        });
+
+        let th_insert = shuttle::thread::spawn({
+            let status_cache = status_cache.clone();
+            move || {
+                // insert an entry for slot 1 so clear_slot_entries will remove it
+                status_cache
+                    .write()
+                    .unwrap()
+                    .insert(&blockhash1, key2, 2, ());
+            }
+        });
+
+        th_clear.join().unwrap();
+        th_insert.join().unwrap();
+
+        let mut ancestors2 = Ancestors::default();
+        ancestors2.insert(2, 0);
+
+        assert!(status_cache
+            .read()
+            .unwrap()
+            .get_status(key2, &blockhash1, &ancestors2)
+            .is_some());
+    }
+    #[test]
+    fn test_shuttle_clear_slots_blockhash_overlap_random() {
+        shuttle::check_random(
+            do_test_shuttle_clear_slots_blockhash_overlap,
+            CLEAR_RANDOM_ITERATIONS,
+        );
+    }
+
+    #[test]
+    fn test_shuttle_clear_slots_blockhash_overlap_dfs() {
+        shuttle::check_dfs(
+            do_test_shuttle_clear_slots_blockhash_overlap,
+            CLEAR_DFS_ITERATIONS,
+        );
+    }
+
+    // unlike clear_slot_entries(), purge_slots() can't overlap with regular blockhashes since
+    // they'd have expired by the time roots are old enough to be purged. However, nonces don't
+    // expire, so they can overlap.
+    fn do_test_shuttle_purge_nonce_overlap() {
+        let status_cache = Arc::new(BankStatusCache::default());
+        // fill the cache so that the next add_root() will purge the oldest root
+        for i in 0..MAX_CACHE_ENTRIES {
+            status_cache.write().unwrap().add_root(i as u64);
+        }
+
+        let blockhash1 = Hash::new_from_array([1; 32]);
+
+        let key1 = Hash::new_from_array([3; 32]);
+        let key2 = Hash::new_from_array([4; 32]);
+
+        // this slot/key is going to get purged when the th_purge thread calls add_root()
+        status_cache
+            .write()
+            .unwrap()
+            .insert(&blockhash1, key1, 0, ());
+
+        let th_purge = shuttle::thread::spawn({
+            let status_cache = status_cache.clone();
+            move || {
+                status_cache
+                    .write()
+                    .unwrap()
+                    .add_root(MAX_CACHE_ENTRIES as Slot + 1);
+            }
+        });
+
+        let th_insert = shuttle::thread::spawn({
+            let status_cache = status_cache.clone();
+            move || {
+                // insert an entry for a blockhash that gets concurrently purged
+                status_cache.write().unwrap().insert(
+                    &blockhash1,
+                    key2,
+                    MAX_CACHE_ENTRIES as Slot + 2,
+                    (),
+                );
+            }
+        });
+        th_purge.join().unwrap();
+        th_insert.join().unwrap();
+
+        let mut ancestors2 = Ancestors::default();
+        ancestors2.insert(MAX_CACHE_ENTRIES as Slot + 2, 0);
+
+        assert!(status_cache
+            .read()
+            .unwrap()
+            .get_status(key1, &blockhash1, &ancestors2)
+            .is_none());
+        assert!(status_cache
+            .read()
+            .unwrap()
+            .get_status(key2, &blockhash1, &ancestors2)
+            .is_some());
+    }
+
+    #[test]
+    fn test_shuttle_purge_nonce_overlap_random() {
+        shuttle::check_random(do_test_shuttle_purge_nonce_overlap, PURGE_RANDOM_ITERATIONS);
+    }
+
+    #[test]
+    fn test_shuttle_purge_nonce_overlap_dfs() {
+        shuttle::check_dfs(do_test_shuttle_purge_nonce_overlap, PURGE_DFS_ITERATIONS);
+    }
+
+    fn do_test_shuttle_concurrent_inserts() {
+        let status_cache = Arc::new(BankStatusCache::default());
+        let blockhash1 = Hash::new_from_array([42; 32]);
+        let blockhash2 = Hash::new_from_array([43; 32]);
+        const N_INSERTS: u8 = 50;
+
+        let mut handles = Vec::with_capacity(N_INSERTS as usize);
+        for i in 0..N_INSERTS {
+            let status_cache = status_cache.clone();
+            let slot = (i % 3) + 1;
+            let bh = if i % 2 == 0 { blockhash1 } else { blockhash2 };
+            handles.push(shuttle::thread::spawn(move || {
+                let key = Hash::new_from_array([i; 32]);
+                status_cache
+                    .write()
+                    .unwrap()
+                    .insert(&bh, key, slot as Slot, ());
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let mut ancestors = Ancestors::default();
+        ancestors.insert(1, 0);
+        ancestors.insert(2, 0);
+        ancestors.insert(3, 0);
+
+        // verify all 100 inserts are visible
+        for i in 0..N_INSERTS {
+            let key = Hash::new_from_array([i; 32]);
+            let bh = if i % 2 == 0 { blockhash1 } else { blockhash2 };
+            assert!(
+                status_cache
+                    .read()
+                    .unwrap()
+                    .get_status(key, &bh, &ancestors)
+                    .is_some(),
+                "missing key {}",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_shuttle_concurrent_inserts_dfs() {
+        shuttle::check_dfs(do_test_shuttle_concurrent_inserts, INSERT_DFS_ITERATIONS);
+    }
+
+    #[test]
+    fn test_shuttle_concurrent_inserts_random() {
+        shuttle::check_random(do_test_shuttle_concurrent_inserts, INSERT_RANDOM_ITERATIONS);
     }
 }

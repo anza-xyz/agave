@@ -313,6 +313,7 @@ pub enum RpcBench {
     Transaction,
     TransactionParsed,
     FirstAvailableBlock,
+    TokenSupply,
 }
 
 #[derive(Debug)]
@@ -334,6 +335,7 @@ impl FromStr for RpcBench {
             "multiple-accounts" => Ok(RpcBench::MultipleAccounts),
             "token-accounts-by-delegate" => Ok(RpcBench::TokenAccountsByDelegate),
             "token-accounts-by-owner" => Ok(RpcBench::TokenAccountsByOwner),
+            "token-supply" => Ok(RpcBench::TokenSupply),
             "transaction" => Ok(RpcBench::Transaction),
             "transaction-parsed" => Ok(RpcBench::TransactionParsed),
             "version" => Ok(RpcBench::Version),
@@ -691,6 +693,27 @@ fn run_rpc_bench_loop(
                         stats.total_errors_time_us += rpc_time.as_us();
                         if last_error.elapsed().as_secs() > 2 {
                             info!("get-token-accounts-by-owner error: {e:?}");
+                            last_error = Instant::now();
+                        }
+                    }
+                }
+            }
+            RpcBench::TokenSupply => {
+                let mut rpc_time = Measure::start("rpc-get-token-supply");
+                match client
+                    .get_token_supply_with_commitment(&mint.unwrap(), CommitmentConfig::confirmed())
+                {
+                    Ok(_ui_token_amount) => {
+                        rpc_time.stop();
+                        stats.success += 1;
+                        stats.total_success_time_us += rpc_time.as_us();
+                    }
+                    Err(e) => {
+                        rpc_time.stop();
+                        stats.errors += 1;
+                        stats.total_errors_time_us += rpc_time.as_us();
+                        if last_error.elapsed().as_secs() > 2 {
+                            info!("get-token-supply error: {e:?}");
                             last_error = Instant::now();
                         }
                     }
@@ -1265,6 +1288,11 @@ fn main() {
                 .value_name("RPC_BENCH_TYPE(S)")
                 .multiple(true)
                 .requires_ifs(&[("supply", "mint"), ("token-accounts-by-owner", "mint")])
+                .requires_ifs(&[
+                    ("supply", "mint"),
+                    ("token-accounts-by-owner", "mint"),
+                    ("token-supply", "mint"),
+                ])
                 .help("Spawn a thread which calls a specific RPC method in a loop to benchmark it"),
         )
         .get_matches();

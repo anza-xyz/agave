@@ -223,7 +223,7 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
     assert!(!db.accounts_index.contains(&pubkey));
     let result = db.generate_index(None, false);
     let entry = db.accounts_index.get_cloned(&pubkey).unwrap();
-    assert_eq!(entry.slot_list.read().unwrap().len(), 1);
+    assert_eq!(entry.slot_list_lock_read_len(), 1);
     assert_eq!(append_vec.alive_bytes(), aligned_stored_size(0));
     assert_eq!(append_vec.accounts_count(), 1);
     assert_eq!(append_vec.count(), 1);
@@ -744,7 +744,10 @@ fn test_flush_slots_with_reclaim_old_slots() {
         // Verify that the obsolete accounts for the remaining slots are correct
         let storage = accounts.storage.get_slot_storage_entry(slot).unwrap();
         assert_eq!(
-            storage.get_obsolete_accounts(Some(new_slot)).len() as u64,
+            storage
+                .obsolete_accounts_read_lock()
+                .filter_obsolete_accounts(Some(new_slot))
+                .count() as u64,
             5 - slot
         );
     }
@@ -1139,7 +1142,12 @@ fn test_clean_dead_slot_with_obsolete_accounts() {
     let slot = accounts.storage.get_slot_storage_entry(1).unwrap();
 
     // Ensure that slot1 also still contains the obsolete account
-    assert_eq!(slot.get_obsolete_accounts(None).len(), 1);
+    assert_eq!(
+        slot.obsolete_accounts_read_lock()
+            .filter_obsolete_accounts(None)
+            .count(),
+        1
+    );
 
     // Ref count for pubkey1 should be 1 as obsolete accounts are enabled
     accounts.assert_ref_count(&pubkey, 1);
@@ -1223,10 +1231,7 @@ fn test_remove_zero_lamport_single_ref_accounts_after_shrink() {
             let expected_ref_count = if pass < 2 { 1 } else { 2 };
             assert_eq!(entry.unwrap().ref_count(), expected_ref_count, "{pass}");
             let expected_slot_list = if pass < 1 { 1 } else { 2 };
-            assert_eq!(
-                entry.unwrap().slot_list.read().unwrap().len(),
-                expected_slot_list
-            );
+            assert_eq!(entry.unwrap().slot_list_lock_read_len(), expected_slot_list);
             (false, ())
         });
         accounts.accounts_index.get_and_then(&pubkey2, |entry| {
@@ -1250,13 +1255,11 @@ fn test_remove_zero_lamport_single_ref_accounts_after_shrink() {
                 }
                 1 => {
                     // alive only in slot + 1
-                    assert_eq!(entry.unwrap().slot_list.read().unwrap().len(), 1);
+                    assert_eq!(entry.unwrap().slot_list_lock_read_len(), 1);
                     assert_eq!(
                         entry
                             .unwrap()
-                            .slot_list
-                            .read()
-                            .unwrap()
+                            .slot_list_read_lock()
                             .first()
                             .map(|(s, _)| s)
                             .cloned()
@@ -1272,13 +1275,11 @@ fn test_remove_zero_lamport_single_ref_accounts_after_shrink() {
                 }
                 2 => {
                     // alive in both slot, slot + 1
-                    assert_eq!(entry.unwrap().slot_list.read().unwrap().len(), 2);
+                    assert_eq!(entry.unwrap().slot_list_lock_read_len(), 2);
 
                     let slots = entry
                         .unwrap()
-                        .slot_list
-                        .read()
-                        .unwrap()
+                        .slot_list_read_lock()
                         .iter()
                         .map(|(s, _)| s)
                         .cloned()
@@ -1834,7 +1835,7 @@ fn test_accounts_db_purge_keep_live() {
     // The earlier entry for pubkey in the account index is purged,
     let (slot_list_len, index_slot) = {
         let account_entry = accounts.accounts_index.get_cloned(&pubkey).unwrap();
-        let slot_list = account_entry.slot_list.read().unwrap();
+        let slot_list = account_entry.slot_list_read_lock();
         (slot_list.len(), slot_list[0].0)
     };
     assert_eq!(slot_list_len, 1);
@@ -2873,8 +2874,8 @@ fn test_delete_dependencies() {
         .collect();
     for key in [&key0, &key1, &key2] {
         let index_entry = accounts_index.get_cloned(key).unwrap();
-        let rooted_entries = accounts_index
-            .get_rooted_entries(index_entry.slot_list.read().unwrap().as_slice(), None);
+        let rooted_entries =
+            accounts_index.get_rooted_entries(index_entry.slot_list_read_lock().as_slice(), None);
         let ref_count = index_entry.ref_count();
         let index = accounts_index.bin_calculator.bin_from_pubkey(key);
         let candidates_bin = &mut candidates[index];
@@ -3690,9 +3691,7 @@ define_accounts_db_test!(test_alive_bytes, |accounts_db| {
                 .accounts_index
                 .get_cloned(account.pubkey())
                 .unwrap()
-                .slot_list
-                .read()
-                .unwrap()
+                .slot_list_read_lock()
                 // Should only be one entry per key, since every key was only stored to slot 0
                 [0];
             assert_eq!(account_info.0, slot);
@@ -3711,7 +3710,10 @@ define_accounts_db_test!(test_alive_bytes, |accounts_db| {
                 let stored_size_aligned = storage0.accounts.calculate_stored_size(account.data_len);
                 assert_eq!(before_size, after_size + stored_size_aligned);
                 assert_eq!(
-                    storage0.get_obsolete_accounts(None).len(),
+                    storage0
+                        .obsolete_accounts_read_lock()
+                        .filter_obsolete_accounts(None)
+                        .count(),
                     num_obsolete_accounts
                 );
             }
@@ -3747,7 +3749,7 @@ define_accounts_db_test!(
         // scan the accounts to track zlsr accounts
         accounts_db.accounts_index.scan(
             pubkeys.iter(),
-            |_pubkey, slots_refs, _entry| {
+            |_pubkey, slots_refs| {
                 let (slot_list, ref_count) = slots_refs.unwrap();
                 assert_eq!(slot_list.len(), 1);
                 assert_eq!(ref_count, 1);
@@ -3758,7 +3760,6 @@ define_accounts_db_test!(
                 AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
             },
             None,
-            false,
             ScanFilter::All,
         );
 
@@ -5016,6 +5017,78 @@ define_accounts_db_test!(
         accounts.accounts_index.set_startup(Startup::Normal);
     }
 );
+
+#[test_case(8)]
+#[test_case(5)]
+#[test_case(0)]
+fn test_calculate_storage_count_and_alive_bytes_obsolete_account(
+    num_accounts_to_mark_obsolete: usize,
+) {
+    let accounts = AccountsDb::new_single_for_tests();
+    accounts.accounts_index.set_startup(Startup::Startup);
+
+    let account_sizes = [1, 5, 10, 50, 100, 500, 1000, 2000];
+
+    // Make sure we have enough accounts to mark obsolete. If this fails, just add more
+    // entries to account_sizes
+    assert!(account_sizes.len() >= num_accounts_to_mark_obsolete);
+
+    let account_list: Vec<_> = account_sizes
+        .into_iter()
+        .map(|size| {
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new(1, size, AccountSharedData::default().owner()),
+            )
+        })
+        .collect();
+
+    let slot0 = 0;
+    let storage = accounts.create_and_insert_store(slot0, 10_000, "");
+    let offsets = storage
+        .accounts
+        .write_accounts(&(slot0, &account_list[..]), 0);
+
+    let offsets = offsets.unwrap().offsets;
+    let data_lens = storage.accounts.get_account_data_lens(&offsets);
+    let mut offsets: Vec<_> = offsets.into_iter().zip(data_lens).collect();
+
+    // Randomize the accounts that get marked obsolete
+    let mut rng = rand::thread_rng();
+    offsets.shuffle(&mut rng);
+
+    let (accounts_to_mark_obsolete, accounts_to_keep) =
+        offsets.split_at(num_accounts_to_mark_obsolete);
+
+    storage
+        .obsolete_accounts
+        .write()
+        .unwrap()
+        .mark_accounts_obsolete(accounts_to_mark_obsolete.iter().cloned(), slot0 + 1);
+
+    let storage_info = StorageSizeAndCountMap::default();
+    let mut reader = append_vec::new_scan_accounts_reader();
+    let info = accounts.generate_index_for_slot(&mut reader, &storage, 0, 0, &storage_info);
+    assert_eq!(
+        info.num_obsolete_accounts_skipped,
+        num_accounts_to_mark_obsolete as u64
+    );
+    assert_eq!(storage_info.len(), 1);
+
+    for entry in storage_info.iter() {
+        // Sum up the stored size of all non obsolete accounts
+        let expected_stored_size: usize = accounts_to_keep
+            .iter()
+            .map(|(_, data_len)| storage.accounts.calculate_stored_size(*data_len))
+            .sum();
+
+        assert_eq!(
+            (entry.key(), entry.value().count, entry.value().stored_size),
+            (&0, accounts_to_keep.len(), expected_stored_size)
+        );
+    }
+    accounts.accounts_index.set_startup(Startup::Normal);
+}
 
 define_accounts_db_test!(test_set_storage_count_and_alive_bytes, |accounts| {
     // make sure we have storage 0

@@ -474,7 +474,7 @@ mod tests {
 
         let reserved_addresses = HashSet::default();
         let packet_parser = |data, priority, cost| {
-            let view = SanitizedTransactionView::try_new_sanitized(data).unwrap();
+            let view = SanitizedTransactionView::try_new_sanitized(data, true).unwrap();
             let view = RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
                 view,
                 MessageHash::Compute,

@@ -1137,6 +1137,10 @@ pub mod provide_instruction_data_offset_in_vm_r2 {
     solana_pubkey::declare_id!("5xXZc66h4UdB6Yq7FzdBxBiRAFMMScMLwHxk2QZDaNZL");
 }
 
+pub mod static_instruction_limit {
+    solana_pubkey::declare_id!("64ixypL1HPu8WtJhNSMb9mSgfFaJvsANuRkTbHyuLfnx");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2053,6 +2057,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             provide_instruction_data_offset_in_vm_r2::id(),
             "SIMD-0321: Provide instruction data offset in VM r2",
+        ),
+        (
+            static_instruction_limit::id(),
+            "SIMD-0160: static instruction limit",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

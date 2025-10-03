@@ -25,17 +25,6 @@ if [[ -n $CI ]]; then
       export CI_PULL_REQUEST=
     fi
 
-    case "$(uname -s)" in
-    Linux)
-      export CI_OS_NAME=linux
-      ;;
-    Darwin)
-      export CI_OS_NAME=osx
-      ;;
-    *)
-      ;;
-    esac
-
     if [[ -n $BUILDKITE_TRIGGERED_FROM_BUILD_PIPELINE_SLUG ]]; then
       # The solana-secondary pipeline should use the slug of the pipeline that
       # triggered it
@@ -50,23 +39,6 @@ if [[ -n $CI ]]; then
     else
       export CI_TAG=$BUILDKITE_TAG
     fi
-  elif [[ -n $APPVEYOR ]]; then
-    export CI_BRANCH=$APPVEYOR_REPO_BRANCH
-    export CI_BUILD_ID=$APPVEYOR_BUILD_ID
-    export CI_COMMIT=$APPVEYOR_REPO_COMMIT
-    export CI_JOB_ID=$APPVEYOR_JOB_ID
-    if [[ -n $APPVEYOR_PULL_REQUEST_NUMBER ]]; then
-      export CI_PULL_REQUEST=true
-    else
-      export CI_PULL_REQUEST=
-    fi
-    if [[ $CI_LINUX = True ]]; then
-      export CI_OS_NAME=linux
-    else
-      export CI_OS_NAME=windows
-    fi
-    export CI_REPO_SLUG=$APPVEYOR_REPO_NAME
-    export CI_TAG=$APPVEYOR_REPO_TAG_NAME
 
   elif [[ $GITHUB_ACTION ]]; then
     export CI_BUILD_ID=$GITHUB_RUN_ID
@@ -84,21 +56,29 @@ if [[ -n $CI ]]; then
       export CI_BASE_BRANCH=$GITHUB_BASE_REF
       export CI_PULL_REQUEST=true
     fi
-
-    case $RUNNER_OS in
-    macOS)
-      export CI_OS_NAME=osx
-      ;;
-    Windows)
-      export CI_OS_NAME=windows
-      ;;
-    Linux)
-      export CI_OS_NAME=linux
-      ;;
-    *)
-      ;;
-    esac
   fi
+
+  _arch="$(uname -m)"
+  if [[ $_arch = arm64 ]]; then
+    _arch=aarch64
+  fi
+
+  case $(uname | tr '[:upper:]' '[:lower:]') in
+  linux*)
+    export CI_OS_NAME=linux
+    export CI_BUILD_TARGET_TRIPLE="$_arch-unknown-linux-gnu"
+    ;;
+  darwin*)
+    export CI_OS_NAME=osx
+    export CI_BUILD_TARGET_TRIPLE="$_arch-apple-darwin"
+    ;;
+  msys*)
+    export CI_OS_NAME=windows
+    export CI_BUILD_TARGET_TRIPLE="$_arch-pc-windows-msvc"
+    ;;
+  *)
+    ;;
+  esac
 else
   export CI=
   export CI_BRANCH=
@@ -109,6 +89,7 @@ else
   export CI_PULL_REQUEST=
   export CI_REPO_SLUG=
   export CI_TAG=
+  export CI_BUILD_TARGET_TRIPLE
   # Don't override ci/run-local.sh
   if [[ -z $CI_LOCAL_RUN ]]; then
     export CI_OS_NAME=
@@ -120,6 +101,7 @@ CI=$CI
 CI_BRANCH=$CI_BRANCH
 CI_BASE_BRANCH=$CI_BASE_BRANCH
 CI_BUILD_ID=$CI_BUILD_ID
+CI_BUILD_TARGET_TRIPLE=$CI_BUILD_TARGET_TRIPLE
 CI_COMMIT=$CI_COMMIT
 CI_JOB_ID=$CI_JOB_ID
 CI_PULL_REQUEST=$CI_PULL_REQUEST

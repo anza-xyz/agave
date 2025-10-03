@@ -252,6 +252,7 @@ impl SnapshotStorageRebuilder {
                         current_len,
                         old_append_vec_id as AccountsFileId,
                         self.storage_access,
+                        None,
                     )?,
                 };
 

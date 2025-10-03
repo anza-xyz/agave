@@ -470,6 +470,7 @@ fn compute_slot_cost(
                     None,
                     SimpleAddressLoader::Disabled,
                     &reserved_account_keys.active,
+                    feature_set.is_active(&agave_feature_set::static_instruction_limit::id()),
                 )
                 .map_err(|err| {
                     warn!("Failed to compute cost of transaction: {err:?}");

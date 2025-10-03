@@ -7,7 +7,7 @@ use {
     solana_clock::Slot,
     std::sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, RwLock,
+        Arc, RwLock, RwLockReadGuard, RwLockWriteGuard,
     },
 };
 
@@ -21,7 +21,7 @@ pub struct AccountMapEntry<T> {
     /// list of slots in which this pubkey was updated
     /// Note that 'clean' removes outdated entries (ie. older roots) from this slot_list
     /// purge_slot() also removes non-rooted slots from this list
-    pub slot_list: RwLock<SlotList<T>>,
+    slot_list: RwLock<SlotList<T>>,
     /// synchronization metadata for in-memory state since last flush to disk accounts index
     pub meta: AccountMapEntryMeta,
 }
@@ -107,6 +107,18 @@ impl<T: IndexValue> AccountMapEntry<T> {
             Ordering::Relaxed,
         );
     }
+
+    pub fn slot_list_lock_read_len(&self) -> usize {
+        self.slot_list.read().unwrap().len()
+    }
+
+    pub fn slot_list_read_lock(&self) -> RwLockReadGuard<SlotList<T>> {
+        self.slot_list.read().unwrap()
+    }
+
+    pub fn slot_list_write_lock(&self) -> RwLockWriteGuard<SlotList<T>> {
+        self.slot_list.write().unwrap()
+    }
 }
 
 /// data per entry in in-mem accounts index
@@ -149,7 +161,7 @@ impl<T: IndexValue> IsZeroLamport for PreAllocatedAccountMapEntry<T> {
     fn is_zero_lamport(&self) -> bool {
         match self {
             PreAllocatedAccountMapEntry::Entry(entry) => {
-                entry.slot_list.read().unwrap()[0].1.is_zero_lamport()
+                entry.slot_list_read_lock()[0].1.is_zero_lamport()
             }
             PreAllocatedAccountMapEntry::Raw(raw) => raw.1.is_zero_lamport(),
         }
@@ -159,7 +171,7 @@ impl<T: IndexValue> IsZeroLamport for PreAllocatedAccountMapEntry<T> {
 impl<T: IndexValue> From<PreAllocatedAccountMapEntry<T>> for (Slot, T) {
     fn from(source: PreAllocatedAccountMapEntry<T>) -> (Slot, T) {
         match source {
-            PreAllocatedAccountMapEntry::Entry(entry) => entry.slot_list.read().unwrap()[0],
+            PreAllocatedAccountMapEntry::Entry(entry) => entry.slot_list_read_lock()[0],
             PreAllocatedAccountMapEntry::Raw(raw) => raw,
         }
     }

@@ -62,7 +62,7 @@ use {
         task::{self, JoinHandle},
         time::{sleep, timeout},
     },
-    tokio_util::sync::CancellationToken,
+    tokio_util::{sync::CancellationToken, task::TaskTracker},
 };
 
 pub const DEFAULT_WAIT_FOR_CHUNK_TIMEOUT: Duration = Duration::from_secs(2);
@@ -240,15 +240,24 @@ pub fn spawn_server_with_cancel(
     });
 
     let max_concurrent_connections = quic_server_params.max_concurrent_connections();
-    let handle = tokio::spawn(run_server(
-        name,
-        endpoints.clone(),
-        packet_batch_sender,
-        staked_nodes,
-        stats.clone(),
-        quic_server_params,
-        cancel,
-    ));
+    let handle = tokio::spawn({
+        let endpoints = endpoints.clone();
+        let stats = stats.clone();
+        async move {
+            let tasks = run_server(
+                name,
+                endpoints.clone(),
+                packet_batch_sender,
+                staked_nodes,
+                stats.clone(),
+                quic_server_params,
+                cancel,
+            )
+            .await;
+            tasks.close();
+            tasks.wait().await;
+        }
+    });
 
     Ok(SpawnNonBlockingServerResult {
         endpoints,
@@ -312,7 +321,7 @@ async fn run_server(
     stats: Arc<StreamerStats>,
     quic_server_params: QuicServerParams,
     cancel: CancellationToken,
-) {
+) -> TaskTracker {
     let rate_limiter = Arc::new(ConnectionRateLimiter::new(
         quic_server_params.max_connections_per_ipaddr_per_min,
     ));
@@ -323,8 +332,9 @@ async fn run_server(
     const WAIT_FOR_CONNECTION_TIMEOUT: Duration = Duration::from_secs(1);
     debug!("spawn quic server");
     let mut last_datapoint = Instant::now();
-    let unstaked_connection_table: Arc<Mutex<ConnectionTable>> =
-        Arc::new(Mutex::new(ConnectionTable::new(false, cancel.clone())));
+    let unstaked_connection_table: Arc<Mutex<ConnectionTable>> = Arc::new(Mutex::new(
+        ConnectionTable::new(ConnectionTableType::Unstaked, cancel.clone()),
+    ));
     let stream_load_ema = Arc::new(StakedStreamLoadEMA::new(
         stats.clone(),
         quic_server_params.max_unstaked_connections,
@@ -333,8 +343,9 @@ async fn run_server(
     stats
         .quic_endpoints_count
         .store(endpoints.len(), Ordering::Relaxed);
-    let staked_connection_table: Arc<Mutex<ConnectionTable>> =
-        Arc::new(Mutex::new(ConnectionTable::new(true, cancel.clone())));
+    let staked_connection_table: Arc<Mutex<ConnectionTable>> = Arc::new(Mutex::new(
+        ConnectionTable::new(ConnectionTableType::Staked, cancel.clone()),
+    ));
 
     let mut accepts = endpoints
         .iter()
@@ -347,6 +358,7 @@ async fn run_server(
         })
         .collect::<FuturesUnordered<_>>();
 
+    let tasks = TaskTracker::new();
     loop {
         let timeout_connection = select! {
             ready = accepts.next() => {
@@ -406,7 +418,7 @@ async fn run_server(
                 Ok(connecting) => {
                     let rate_limiter = rate_limiter.clone();
                     let overall_connection_rate_limiter = overall_connection_rate_limiter.clone();
-                    tokio::spawn(setup_connection(
+                    tasks.spawn(setup_connection(
                         connecting,
                         rate_limiter,
                         overall_connection_rate_limiter,
@@ -418,6 +430,7 @@ async fn run_server(
                         stats.clone(),
                         stream_load_ema.clone(),
                         quic_server_params.clone(),
+                        tasks.clone(),
                     ));
                 }
                 Err(err) => {
@@ -431,6 +444,7 @@ async fn run_server(
             debug!("accept(): Timed out waiting for connection");
         }
     }
+    tasks
 }
 
 fn prune_unstaked_connection_table(
@@ -444,7 +458,9 @@ fn prune_unstaked_connection_table(
 
         let max_connections = max_percentage_full.apply_to(max_unstaked_connections);
         let num_pruned = unstaked_connection_table.prune_oldest(max_connections);
-        stats.num_evictions.fetch_add(num_pruned, Ordering::Relaxed);
+        stats
+            .num_evictions_unstaked
+            .fetch_add(num_pruned, Ordering::Relaxed);
     }
 }
 
@@ -563,6 +579,7 @@ fn handle_and_cache_new_connection(
     connection_table: Arc<Mutex<ConnectionTable>>,
     params: &NewConnectionHandlerParams,
     stream_load_ema: Arc<StakedStreamLoadEMA>,
+    tasks: TaskTracker,
 ) -> Result<(), ConnectionHandlerError> {
     if let Ok(max_uni_streams) = VarInt::from_u64(compute_max_allowed_uni_streams(
         params.peer_type,
@@ -601,7 +618,7 @@ fn handle_and_cache_new_connection(
             }
             connection.set_max_concurrent_uni_streams(max_uni_streams);
 
-            tokio::spawn(handle_connection(
+            tasks.spawn(handle_connection(
                 connection,
                 remote_addr,
                 last_update,
@@ -638,6 +655,7 @@ async fn prune_unstaked_connections_and_add_new_connection(
     connection_table: Arc<Mutex<ConnectionTable>>,
     params: &NewConnectionHandlerParams,
     stream_load_ema: Arc<StakedStreamLoadEMA>,
+    tasks: TaskTracker,
 ) -> Result<(), ConnectionHandlerError> {
     let stats = params.stats.clone();
     if params.max_connections > 0 {
@@ -651,6 +669,7 @@ async fn prune_unstaked_connections_and_add_new_connection(
             connection_table_clone,
             params,
             stream_load_ema,
+            tasks,
         )
     } else {
         connection.close(
@@ -717,6 +736,7 @@ async fn setup_connection(
     stats: Arc<StreamerStats>,
     stream_load_ema: Arc<StakedStreamLoadEMA>,
     quic_server_params: QuicServerParams,
+    tasks: TaskTracker,
 ) {
     const PRUNE_RANDOM_SAMPLE_SIZE: usize = 2;
     let from = connecting.remote_address();
@@ -802,7 +822,9 @@ async fn setup_connection(
                         {
                             let num_pruned =
                                 connection_table_l.prune_random(PRUNE_RANDOM_SAMPLE_SIZE, stake);
-                            stats.num_evictions.fetch_add(num_pruned, Ordering::Relaxed);
+                            stats
+                                .num_evictions_staked
+                                .fetch_add(num_pruned, Ordering::Relaxed);
                             update_open_connections_stat(&stats, &connection_table_l);
                         }
 
@@ -815,6 +837,7 @@ async fn setup_connection(
                                 staked_connection_table.clone(),
                                 &params,
                                 stream_load_ema.clone(),
+                                tasks,
                             ) {
                                 stats
                                     .connection_added_from_staked_peer
@@ -830,6 +853,7 @@ async fn setup_connection(
                                 unstaked_connection_table.clone(),
                                 &params,
                                 stream_load_ema.clone(),
+                                tasks,
                             )
                             .await
                             {
@@ -853,6 +877,7 @@ async fn setup_connection(
                             unstaked_connection_table.clone(),
                             &params,
                             stream_load_ema.clone(),
+                            tasks,
                         )
                         .await
                         {
@@ -1426,11 +1451,16 @@ impl ConnectionTableKey {
     }
 }
 
+enum ConnectionTableType {
+    Staked,
+    Unstaked,
+}
+
 // Map of IP to list of connection entries
 struct ConnectionTable {
     table: IndexMap<ConnectionTableKey, Vec<ConnectionEntry>>,
     total_size: usize,
-    is_staked: bool,
+    table_type: ConnectionTableType,
     cancel: CancellationToken,
 }
 
@@ -1438,11 +1468,11 @@ struct ConnectionTable {
 ///
 /// Return number pruned
 impl ConnectionTable {
-    fn new(is_staked: bool, cancel: CancellationToken) -> Self {
+    fn new(table_type: ConnectionTableType, cancel: CancellationToken) -> Self {
         Self {
             table: IndexMap::default(),
             total_size: 0,
-            is_staked,
+            table_type,
             cancel,
         }
     }
@@ -1452,7 +1482,7 @@ impl ConnectionTable {
     }
 
     fn is_staked(&self) -> bool {
-        self.is_staked
+        matches!(self.table_type, ConnectionTableType::Staked)
     }
 
     fn prune_oldest(&mut self, max_size: usize) -> usize {
@@ -2113,7 +2143,7 @@ pub mod test {
         use std::net::Ipv4Addr;
         solana_logger::setup();
         let cancel = CancellationToken::new();
-        let mut table = ConnectionTable::new(false, cancel);
+        let mut table = ConnectionTable::new(ConnectionTableType::Unstaked, cancel);
         let mut num_entries = 5;
         let max_connections_per_peer = 10;
         let sockets: Vec<_> = (0..num_entries)
@@ -2167,7 +2197,7 @@ pub mod test {
     fn test_prune_table_with_unique_pubkeys() {
         solana_logger::setup();
         let cancel = CancellationToken::new();
-        let mut table = ConnectionTable::new(false, cancel);
+        let mut table = ConnectionTable::new(ConnectionTableType::Unstaked, cancel);
 
         // We should be able to add more entries than max_connections_per_peer, since each entry is
         // from a different peer pubkey.
@@ -2206,7 +2236,7 @@ pub mod test {
     fn test_prune_table_with_non_unique_pubkeys() {
         solana_logger::setup();
         let cancel = CancellationToken::new();
-        let mut table = ConnectionTable::new(false, cancel);
+        let mut table = ConnectionTable::new(ConnectionTableType::Unstaked, cancel);
 
         let max_connections_per_peer = 10;
         let pubkey = Pubkey::new_unique();
@@ -2273,7 +2303,7 @@ pub mod test {
         use std::net::Ipv4Addr;
         solana_logger::setup();
         let cancel = CancellationToken::new();
-        let mut table = ConnectionTable::new(false, cancel);
+        let mut table = ConnectionTable::new(ConnectionTableType::Unstaked, cancel);
 
         let num_entries = 5;
         let max_connections_per_peer = 10;
@@ -2317,7 +2347,7 @@ pub mod test {
         use std::net::Ipv4Addr;
         solana_logger::setup();
         let cancel = CancellationToken::new();
-        let mut table = ConnectionTable::new(false, cancel);
+        let mut table = ConnectionTable::new(ConnectionTableType::Unstaked, cancel);
 
         let num_ips = 5;
         let max_connections_per_peer = 10;

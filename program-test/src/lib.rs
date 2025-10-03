@@ -270,7 +270,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
             .collect::<Vec<_>>();
 
         invoke_context
-            .prepare_next_instruction(instruction, &signers)
+            .prepare_next_instruction(instruction.clone(), &signers)
             .unwrap();
 
         // Copy caller's account_info modifications into invoke_context accounts
@@ -806,6 +806,7 @@ impl ProgramTest {
             &bootstrap_validator_pubkey,
             &voting_keypair.pubkey(),
             &Pubkey::new_unique(),
+            None,
             bootstrap_validator_stake_lamports,
             42,
             fee_rate_governor,
