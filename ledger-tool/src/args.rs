@@ -155,43 +155,27 @@ pub fn snapshot_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .takes_value(true)
             .global(true)
             .help("Use DIR for snapshot location [default: --ledger value]"),
-        Arg::with_name("snapshot_archive_path")
-            .long("snapshot-archive-path")
-            .value_name("DIR")
-            .takes_value(true)
-            .global(true)
-            .help("Use DIR as snapshot archives location [default: --snapshots value]")
-            .long_help(
-                "Use DIR as snapshot archives location. This DIR applies to both full and \
-                 incremental snapshots. To specify unique locations for full and incremental \
-                 snapshot archives, use --full-snapshot-archive-path and \
-                 --incremental-snapshot-archive-path instead. [default: --snapshots value]",
-            ),
         Arg::with_name("full_snapshot_archive_path")
             .long("full-snapshot-archive-path")
             .value_name("DIR")
             .takes_value(true)
             .global(true)
-            .conflicts_with("snapshot_archive_path")
             .help("Use DIR as full snapshot archives location [default: --snapshots value]")
             .long_help(
                 "Use DIR as full snapshot archives location. This DIR applies to *only* full \
                  snapshot archives. Refer to --incremental-snapshot-archive-path to specify \
-                 location for incremental snapshot archives. Or refer to --snapshot-archive-path \
-                 to specify location for all snapshot archives. [default: --snapshots value]",
+                 location for incremental snapshot archives. [default: --snapshots value]",
             ),
         Arg::with_name("incremental_snapshot_archive_path")
             .long("incremental-snapshot-archive-path")
             .value_name("DIR")
             .takes_value(true)
             .global(true)
-            .conflicts_with("snapshot_archive_path")
             .help("Use DIR as incremental snapshot archives location [default: --snapshots value]")
             .long_help(
                 "Use DIR as incremental snapshot archives location. This DIR applies to *only* \
                  incremental snapshot archives. Refer to --full-snapshot-archive-path to specify \
-                 location for full snapshot archives. Or refer to --snapshot-archive-path to \
-                 specify location for all snapshot archives. [default: --snapshots value]",
+                 location for full snapshot archives. [default: --snapshots value]",
             ),
         Arg::with_name(use_snapshot_archives_at_startup::cli::NAME)
             .long(use_snapshot_archives_at_startup::cli::LONG_ARG)
