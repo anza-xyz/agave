@@ -1126,77 +1126,84 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             // we don't care about lock time in this metric - bg threads can wait
             let flush_update_measure = Measure::start("flush_update");
             let evictions_age: Vec<_> = {
-                let map = self.map_internal.read().unwrap();
+                const CHUNK_SIZE: usize = 20;
+                // chunk these so we don't hold the read lock too long
                 evictions_age_possible
-                    .iter()
-                    .filter_map(|key| {
-                        let entry = map.get(key)?;
+                    .chunks(CHUNK_SIZE)
+                    .flat_map(|chunk| {
+                        let map = self.map_internal.read().unwrap();
+                        chunk
+                            .iter()
+                            .filter_map(|key| {
+                                let entry = map.get(key)?;
 
-                        // consider whether to write to disk for all the items we may evict
-                        let mut mse = Measure::start("flush_should_evict");
-                        let should_evict = self.should_evict_from_mem(
-                            current_age,
-                            entry,
-                            startup,
-                            true,
-                            ages_flushing_now,
-                        );
-                        mse.stop();
-                        flush_stats.flush_should_evict_us += mse.as_us();
-                        if !should_evict {
-                            // not evicting, so don't write, even if dirty
-                            return None;
-                        };
-
-                        // if we are evicting it, then we need to update disk if we're dirty
-                        if entry.clear_dirty() {
-                            // step 1: clear the dirty flag
-                            // step 2: perform the update on disk based on the fields in the entry
-                            // If a parallel operation dirties the item again - even while this flush is occurring,
-                            //  the last thing the writer will do, after updating contents, is set_dirty(true)
-                            //  That prevents dropping an item from cache before disk is updated to latest in mem.
-                            // It is possible that the item in the cache is marked as dirty while these updates are happening. That is ok.
-                            //  The dirty will be picked up and the item will be prevented from being evicted.
-
-                            // may have to loop if disk has to grow and we have to retry the write
-                            loop {
-                                let disk_resize = {
-                                    // Check the refcount before grabbing the slot list read lock. If ref_count != 1, then skip.
-                                    let mut ref_count = entry.ref_count();
-                                    if ref_count != 1 {
-                                        entry.set_dirty(true);
-                                        return None;
-                                    }
-
-                                    // Re-acquire the slot list lock just before disk write to minimize lock contention
-                                    let slot_list = entry.slot_list_read_lock();
-                                    ref_count = entry.ref_count(); // neded to re-check ref count after grabbing slot list lock
-                                    if ref_count != 1 || slot_list.len() != 1 {
-                                        entry.set_dirty(true);
-                                        return None;
-                                    }
-                                    // since we know slot_list.len() == 1, we can create a stack-allocated array for single element.
-                                    let (slot, info) = slot_list[0];
-                                    let disk_entry = [(slot, info.into())];
-                                    disk.try_write(key, (&disk_entry, ref_count.into()))
+                                // consider whether to write to disk for all the items we may evict
+                                let mut mse = Measure::start("flush_should_evict");
+                                let should_evict = self.should_evict_from_mem(
+                                    current_age,
+                                    entry,
+                                    startup,
+                                    true,
+                                    ages_flushing_now,
+                                );
+                                mse.stop();
+                                flush_stats.flush_should_evict_us += mse.as_us();
+                                if !should_evict {
+                                    // not evicting, so don't write, even if dirty
+                                    return None;
                                 };
-                                match disk_resize {
-                                    Ok(_) => {
-                                        // successfully written to disk
-                                        flush_stats.flush_entries_updated_on_disk += 1;
-                                        // exit disk-resize loop
-                                        break;
-                                    }
-                                    Err(err) => {
-                                        // disk needs to resize. This item did not get written. Resize and try again.
-                                        let m = Measure::start("flush_grow");
-                                        disk.grow(err);
-                                        flush_stats.flush_grow_us += m.end_as_us();
+
+                                // if we are evicting it, then we need to update disk if we're dirty
+                                if entry.clear_dirty() {
+                                    // step 1: clear the dirty flag
+                                    // step 2: perform the update on disk based on the fields in the entry
+                                    // If a parallel operation dirties the item again - even while this flush is occurring,
+                                    //  the last thing the writer will do, after updating contents, is set_dirty(true)
+                                    //  That prevents dropping an item from cache before disk is updated to latest in mem.
+                                    // It is possible that the item in the cache is marked as dirty while these updates are happening. That is ok.
+                                    //  The dirty will be picked up and the item will be prevented from being evicted.
+
+                                    // may have to loop if disk has to grow and we have to retry the write
+                                    loop {
+                                        let disk_resize = {
+                                            // Check the refcount before grabbing the slot list read lock. If ref_count != 1, then skip.
+                                            let mut ref_count = entry.ref_count();
+                                            if ref_count != 1 {
+                                                entry.set_dirty(true);
+                                                return None;
+                                            }
+
+                                            // Re-acquire the slot list lock just before disk write to minimize lock contention
+                                            let slot_list = entry.slot_list_read_lock();
+                                            ref_count = entry.ref_count(); // neded to re-check ref count after grabbing slot list lock
+                                            if ref_count != 1 || slot_list.len() != 1 {
+                                                entry.set_dirty(true);
+                                                return None;
+                                            }
+                                            // since we know slot_list.len() == 1, we can create a stack-allocated array for single element.
+                                            let (slot, info) = slot_list[0];
+                                            let disk_entry = [(slot, info.into())];
+                                            disk.try_write(key, (&disk_entry, ref_count.into()))
+                                        };
+                                        match disk_resize {
+                                            Ok(_) => {
+                                                // successfully written to disk
+                                                flush_stats.flush_entries_updated_on_disk += 1;
+                                                // exit disk-resize loop
+                                                break;
+                                            }
+                                            Err(err) => {
+                                                // disk needs to resize. This item did not get written. Resize and try again.
+                                                let m = Measure::start("flush_grow");
+                                                disk.grow(err);
+                                                flush_stats.flush_grow_us += m.end_as_us();
+                                            }
+                                        }
                                     }
                                 }
-                            }
-                        }
-                        Some(*key)
+                                Some(*key)
+                            })
+                            .collect::<Vec<_>>()
                     })
                     .collect()
             };
