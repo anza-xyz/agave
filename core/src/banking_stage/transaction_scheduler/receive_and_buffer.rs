@@ -835,7 +835,9 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
-        solana_message::{v0, AddressLookupTableAccount, VersionedMessage},
+        solana_message::{
+            v0, AccountMeta, AddressLookupTableAccount, Instruction, VersionedMessage,
+        },
         solana_packet::{Meta, PACKET_DATA_SIZE},
         solana_perf::packet::{to_packet_batches, Packet, PacketBatch, PinnedPacketBatch},
         solana_pubkey::Pubkey,
@@ -1392,5 +1394,57 @@ mod tests {
         assert_eq!(num_buffered, num_transactions);
 
         verify_container(&mut container, TEST_CONTAINER_CAPACITY);
+    }
+
+    #[test]
+    fn test_total_num_locks() {
+        let transaction = transfer(
+            &Keypair::new(),
+            &Pubkey::new_unique(),
+            1,
+            Hash::new_unique(),
+        );
+        let total_locks = transaction.message.account_keys.len();
+        let svt = SanitizedVersionedTransaction::try_new(transaction.into()).unwrap();
+        assert_eq!(total_num_locks(&svt), total_locks);
+
+        // with ALTs
+        let fee_payer = Keypair::new();
+        let pk1 = Pubkey::new_unique();
+        let pk2 = Pubkey::new_unique();
+        let pk3 = Pubkey::new_unique();
+        let transaction = VersionedTransaction::try_new(
+            VersionedMessage::V0(
+                v0::Message::try_compile(
+                    &fee_payer.pubkey(),
+                    &[Instruction::new_with_bytes(
+                        Pubkey::new_unique(),
+                        &[],
+                        vec![
+                            AccountMeta::new(pk1, false),
+                            AccountMeta::new(pk2, false),
+                            AccountMeta::new_readonly(pk3, false),
+                        ],
+                    )],
+                    &[
+                        AddressLookupTableAccount {
+                            key: Pubkey::new_unique(),
+                            addresses: vec![pk1],
+                        },
+                        AddressLookupTableAccount {
+                            key: Pubkey::new_unique(),
+                            addresses: vec![pk2, pk3],
+                        },
+                    ],
+                    Hash::new_unique(),
+                )
+                .unwrap(),
+            ),
+            &[&fee_payer],
+        )
+        .unwrap();
+        let total_locks = 5; // fee-payer, program, pk1, pk2, pk3
+        let svt = SanitizedVersionedTransaction::try_new(transaction).unwrap();
+        assert_eq!(total_num_locks(&svt), total_locks);
     }
 }
