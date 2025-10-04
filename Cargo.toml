@@ -131,6 +131,7 @@ members = [
     "validator",
     "verified-packet-receiver",
     "version",
+    "wincode",
     "vortexor",
     "vote",
     "votor",
@@ -609,6 +610,7 @@ url = "2.5.7"
 vec_extract_if_polyfill = "0.1.0"
 wasm-bindgen = "0.2"
 winapi = "0.3.8"
+wincode = { path = "wincode", features = ["solana-short-vec"] }
 winreg = "0.50"
 x509-parser = "0.14.0"
 zeroize = { version = "1.8", default-features = false }

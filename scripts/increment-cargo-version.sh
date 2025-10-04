@@ -23,6 +23,7 @@ ignores=(
   .cargo
   target
   node_modules
+  wincode
 )
 
 not_paths=()

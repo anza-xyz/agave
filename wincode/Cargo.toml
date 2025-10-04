@@ -1,0 +1,34 @@
+[package]
+name = "wincode"
+version = "0.1.0"
+authors.workspace = true
+description = "Fast bincode de/serialization with placement initialization"
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = ["std"]
+alloc = []
+std = ["alloc", "thiserror/std"]
+solana-short-vec = ["dep:solana-short-vec"]
+
+[dependencies]
+paste = "1.0.15"
+solana-short-vec = { workspace = true, optional = true }
+thiserror = { workspace = true, default-features = false }
+
+[dev-dependencies]
+bincode = { workspace = true }
+proptest = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+solana-short-vec = { workspace = true }
+
+[lints]
+workspace = true
