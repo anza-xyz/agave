@@ -2,10 +2,12 @@ use {
     crate::netlink::{
         netlink_get_neighbors, netlink_get_routes, MacAddress, NeighborEntry, RouteEntry,
     },
+    arc_swap::ArcSwap,
     libc::{AF_INET, AF_INET6},
     std::{
         io,
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
+        sync::Arc,
     },
     thiserror::Error,
 };
@@ -111,16 +113,20 @@ fn is_ipv6_match(addr: Ipv6Addr, network: Ipv6Addr, prefix_len: u8) -> bool {
     true
 }
 
+#[derive(Clone)]
 pub struct Router {
-    arp_table: ArpTable,
-    routes: Vec<RouteEntry>,
+    arp_table: Arc<ArpTable>,
+    routes: Arc<Vec<RouteEntry>>,
 }
 
 impl Router {
     pub fn new() -> Result<Self, io::Error> {
+        let arp_table = ArpTable::new()?;
+        let routes = netlink_get_routes(AF_INET as u8)?;
+
         Ok(Self {
-            arp_table: ArpTable::new()?,
-            routes: netlink_get_routes(AF_INET as u8)?,
+            arp_table: Arc::new(arp_table),
+            routes: Arc::new(routes),
         })
     }
 
@@ -186,6 +192,41 @@ impl ArpTable {
             .iter()
             .find(|n| n.destination == Some(ip))
             .and_then(|n| n.lladdr.as_ref())
+    }
+}
+
+pub struct AtomicRouter {
+    router: ArcSwap<Router>,
+}
+
+impl AtomicRouter {
+    pub fn new() -> Result<Self, io::Error> {
+        Ok(Self {
+            router: ArcSwap::from_pointee(Router::new()?),
+        })
+    }
+
+    // Lock-free read - just load the current router
+    pub fn load(&self) -> Arc<Router> {
+        self.router.load().clone()
+    }
+
+    // update both routes and ARP table
+    pub fn update_routes_and_neighbors(&self) -> Result<(), io::Error> {
+        let mut current_router = (**self.router.load()).clone();
+        current_router.routes = Self::fetch_routes()?;
+        current_router.arp_table = Self::fetch_arp_table()?;
+        self.router.store(Arc::new(current_router));
+        Ok(())
+    }
+
+    fn fetch_routes() -> Result<Arc<Vec<RouteEntry>>, io::Error> {
+        Ok(Arc::new(netlink_get_routes(AF_INET as u8)?))
+    }
+
+    fn fetch_arp_table() -> Result<Arc<ArpTable>, io::Error> {
+        let neighbors = netlink_get_neighbors(None, AF_INET as u8)?;
+        Ok(Arc::new(ArpTable { neighbors }))
     }
 }
 

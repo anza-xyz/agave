@@ -5,16 +5,26 @@ use {
     agave_xdp::{
         device::{NetworkDevice, QueueId},
         load_xdp_program,
+        route::AtomicRouter,
+        route_monitor::RouteMonitor,
         tx_loop::tx_loop,
     },
     crossbeam_channel::TryRecvError,
-    std::{sync::Arc, thread::Builder, time::Duration},
+    std::{thread::Builder, time::Duration},
 };
 use {
     crossbeam_channel::{Sender, TrySendError},
     solana_ledger::shred,
-    std::{error::Error, net::SocketAddr, thread},
+    std::{
+        error::Error,
+        net::SocketAddr,
+        sync::{atomic::AtomicBool, Arc},
+        thread,
+    },
 };
+
+#[cfg(target_os = "linux")]
+const ROUTE_MONITOR_UPDATE_INTERVAL_SECS: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug)]
 pub struct XdpConfig {
@@ -101,16 +111,25 @@ impl XdpSender {
 
 pub struct XdpRetransmitter {
     threads: Vec<thread::JoinHandle<()>>,
+    monitor_thread: thread::Thread,
 }
 
 impl XdpRetransmitter {
     #[cfg(not(target_os = "linux"))]
-    pub fn new(_config: XdpConfig, _src_port: u16) -> Result<(Self, XdpSender), Box<dyn Error>> {
+    pub fn new(
+        _config: XdpConfig,
+        _src_port: u16,
+        _exit: Arc<AtomicBool>,
+    ) -> Result<(Self, XdpSender), Box<dyn Error>> {
         Err("XDP is only supported on Linux".into())
     }
 
     #[cfg(target_os = "linux")]
-    pub fn new(config: XdpConfig, src_port: u16) -> Result<(Self, XdpSender), Box<dyn Error>> {
+    pub fn new(
+        config: XdpConfig,
+        src_port: u16,
+        exit: Arc<AtomicBool>,
+    ) -> Result<(Self, XdpSender), Box<dyn Error>> {
         use caps::{
             CapSet,
             Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW},
@@ -147,7 +166,17 @@ impl XdpRetransmitter {
             .map(|_| crossbeam_channel::bounded(config.rtx_channel_cap))
             .unzip::<_, _, Vec<_>, Vec<_>>();
 
+        // Create atomic router for lock-free updates
+        let atomic_router = Arc::new(AtomicRouter::new()?);
+        let monitor_handle = RouteMonitor::start(
+            Arc::clone(&atomic_router),
+            exit.clone(),
+            ROUTE_MONITOR_UPDATE_INTERVAL_SECS,
+        );
+        let monitor_thread = monitor_handle.thread().clone();
+
         let mut threads = vec![];
+        threads.push(monitor_handle); // Add monitor thread
 
         let (drop_sender, drop_receiver) = crossbeam_channel::bounded(DROP_CHANNEL_CAP);
         threads.push(
@@ -180,6 +209,7 @@ impl XdpRetransmitter {
         {
             let dev = Arc::clone(&dev);
             let drop_sender = drop_sender.clone();
+            let atomic_router = Arc::clone(&atomic_router);
             threads.push(
                 Builder::new()
                     .name(format!("solRetransmIO{i:02}"))
@@ -195,16 +225,24 @@ impl XdpRetransmitter {
                             None,
                             receiver,
                             drop_sender,
+                            atomic_router,
                         )
                     })
                     .unwrap(),
             );
         }
 
-        Ok((Self { threads }, XdpSender { senders }))
+        Ok((
+            Self {
+                threads,
+                monitor_thread,
+            },
+            XdpSender { senders },
+        ))
     }
 
     pub fn join(self) -> thread::Result<()> {
+        self.monitor_thread.unpark();
         for handle in self.threads {
             handle.join()?;
         }
