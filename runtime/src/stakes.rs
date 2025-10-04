@@ -140,11 +140,11 @@ impl StakesCache {
     pub(crate) fn activate_epoch(
         &self,
         next_epoch: Epoch,
-        thread_pool: &ThreadPool,
-        new_rate_activation_epoch: Option<Epoch>,
+        stake_history: StakeHistory,
+        vote_accounts: VoteAccounts,
     ) {
         let mut stakes = self.0.write().unwrap();
-        stakes.activate_epoch(next_epoch, thread_pool, new_rate_activation_epoch)
+        stakes.activate_epoch(next_epoch, stake_history, vote_accounts)
     }
 }
 
@@ -277,19 +277,19 @@ impl Stakes<StakeAccount> {
         &self.stake_history
     }
 
-    fn activate_epoch(
-        &mut self,
+    pub(crate) fn begin_epoch_activation(
+        &self,
         next_epoch: Epoch,
         thread_pool: &ThreadPool,
+        stake_delegations: &[(&Pubkey, &StakeAccount)],
         new_rate_activation_epoch: Option<Epoch>,
-    ) {
-        let stake_delegations: Vec<_> = self.stake_delegations.values().collect();
+    ) -> (StakeHistory, VoteAccounts) {
         // Wrap up the prev epoch by adding new stake history entry for the
         // prev epoch.
         let stake_history_entry = thread_pool.install(|| {
             stake_delegations
                 .par_iter()
-                .fold(StakeActivationStatus::default, |acc, stake_account| {
+                .fold(StakeActivationStatus::default, |acc, (_, stake_account)| {
                     let delegation = stake_account.delegation();
                     acc + delegation.stake_activating_and_deactivating(
                         self.epoch,
@@ -299,18 +299,30 @@ impl Stakes<StakeAccount> {
                 })
                 .reduce(StakeActivationStatus::default, Add::add)
         });
-        self.stake_history.add(self.epoch, stake_history_entry);
-        self.epoch = next_epoch;
+        let mut stake_history = self.stake_history.clone();
+        stake_history.add(self.epoch, stake_history_entry);
         // Refresh the stake distribution of vote accounts for the next epoch,
         // using new stake history.
-        self.vote_accounts = refresh_vote_accounts(
+        let vote_accounts = refresh_vote_accounts(
             thread_pool,
-            self.epoch,
+            next_epoch,
             &self.vote_accounts,
-            &stake_delegations,
-            &self.stake_history,
+            stake_delegations,
+            &stake_history,
             new_rate_activation_epoch,
         );
+        (stake_history, vote_accounts)
+    }
+
+    pub(crate) fn activate_epoch(
+        &mut self,
+        next_epoch: Epoch,
+        stake_history: StakeHistory,
+        vote_accounts: VoteAccounts,
+    ) {
+        self.epoch = next_epoch;
+        self.stake_history = stake_history;
+        self.vote_accounts = vote_accounts;
     }
 
     /// Sum the stakes that point to the given voter_pubkey
@@ -472,7 +484,7 @@ fn refresh_vote_accounts(
     thread_pool: &ThreadPool,
     epoch: Epoch,
     vote_accounts: &VoteAccounts,
-    stake_delegations: &[&StakeAccount],
+    stake_delegations: &[(&Pubkey, &StakeAccount)],
     stake_history: &StakeHistory,
     new_rate_activation_epoch: Option<Epoch>,
 ) -> VoteAccounts {
@@ -489,12 +501,15 @@ fn refresh_vote_accounts(
     let delegated_stakes = thread_pool.install(|| {
         stake_delegations
             .par_iter()
-            .fold(HashMap::default, |mut delegated_stakes, stake_account| {
-                let delegation = stake_account.delegation();
-                let entry = delegated_stakes.entry(delegation.voter_pubkey).or_default();
-                *entry += delegation.stake(epoch, stake_history, new_rate_activation_epoch);
-                delegated_stakes
-            })
+            .fold(
+                HashMap::default,
+                |mut delegated_stakes, (_, stake_account)| {
+                    let delegation = stake_account.delegation();
+                    let entry = delegated_stakes.entry(delegation.voter_pubkey).or_default();
+                    *entry += delegation.stake(epoch, stake_history, new_rate_activation_epoch);
+                    delegated_stakes
+                },
+            )
             .reduce(HashMap::default, merge)
     });
     vote_accounts
@@ -807,14 +822,19 @@ pub(crate) mod tests {
 
         {
             let stakes = stakes_cache.stakes();
+            let stake_delegations: Vec<_> = stakes.stake_delegations().iter().collect();
             let vote_accounts = stakes.vote_accounts();
             assert_eq!(
                 vote_accounts.get_delegated_stake(&vote_pubkey),
                 stake.stake(stakes.epoch, &stakes.stake_history, None)
             );
+            let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+            let (stake_history, vote_accounts) =
+                stakes.begin_epoch_activation(3, &thread_pool, &stake_delegations, None);
+            drop(stake_delegations);
+            drop(stakes);
+            stakes_cache.activate_epoch(3, stake_history, vote_accounts);
         }
-        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-        stakes_cache.activate_epoch(3, &thread_pool, None);
         {
             let stakes = stakes_cache.stakes();
             let vote_accounts = stakes.vote_accounts();

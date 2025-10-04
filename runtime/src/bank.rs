@@ -48,6 +48,7 @@ use {
         runtime_config::RuntimeConfig,
         snapshot_hash::SnapshotHash,
         stake_account::StakeAccount,
+        stake_history::StakeHistory as CowStakeHistory,
         stake_weighted_timestamp::{
             calculate_stake_weighted_timestamp, MaxAllowableDrift,
             MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST, MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2,
@@ -65,9 +66,15 @@ use {
     },
     ahash::AHashSet,
     dashmap::DashMap,
+    itertools::Either,
     log::*,
-    partitioned_epoch_rewards::PartitionedRewardsCalculation,
-    rayon::{ThreadPool, ThreadPoolBuilder},
+    partitioned_epoch_rewards::{
+        CalculateRewardsAndDistributeVoteRewardsResult, PartitionedRewardsCalculation,
+    },
+    rayon::{
+        iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
+        ThreadPool, ThreadPoolBuilder,
+    },
     serde::Serialize,
     solana_account::{
         create_account_shared_data_with_fields as create_account, from_account, Account,
@@ -162,7 +169,7 @@ use {
         transaction_accounts::KeyedAccountSharedData, TransactionReturnData,
     },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    solana_vote::vote_account::{VoteAccount, VoteAccountsHashMap},
+    solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
     std::{
         collections::{HashMap, HashSet},
         fmt,
@@ -182,7 +189,6 @@ use {
 #[cfg(feature = "dev-context-only-utils")]
 use {
     dashmap::DashSet,
-    rayon::iter::{IntoParallelRefIterator, ParallelIterator},
     solana_accounts_db::accounts_db::{
         ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
     },
@@ -1031,6 +1037,56 @@ impl AtomicBankHashStats {
     }
 }
 
+struct NewEpochBundle {
+    stake_history: CowStakeHistory,
+    vote_accounts: VoteAccounts,
+    rewards_result: CalculateRewardsAndDistributeVoteRewardsResult,
+    rewards_metrics: RewardsMetrics,
+    activate_epoch_time_us: u64,
+    update_rewards_with_thread_pool_time_us: u64,
+}
+
+struct FilteredStakeDelegations<'a> {
+    stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
+    min_stake_delegation: Option<u64>,
+}
+
+impl<'a> FilteredStakeDelegations<'a> {
+    fn len(&self) -> usize {
+        self.stake_delegations.len()
+    }
+
+    fn par_iter(
+        &'a self,
+    ) -> impl IndexedParallelIterator<Item = Option<(&'a Pubkey, &'a StakeAccount<Delegation>)>>
+    {
+        match self.min_stake_delegation {
+            Some(ref min_stake_delegation) => Either::Left(
+                self.stake_delegations
+                    .par_iter()
+                    // We yield `None` items instead of filtering them out to
+                    // keep the number of elements predictable. It's better to
+                    // let the callers deal with `None` elements and even store
+                    // them in collections (that are allocated once with the
+                    // size of `FilteredStakeDelegations::len`) rather than
+                    // `collect` yet another time (which would take ~100ms).
+                    .map(|(pubkey, stake_account)| {
+                        if stake_account.delegation().stake >= *min_stake_delegation {
+                            // Dereference `&&` to `&`.
+                            Some((*pubkey, *stake_account))
+                        } else {
+                            None
+                        }
+                    }),
+            ),
+            None => Either::Right(self.stake_delegations.par_iter().map(
+                |(pubkey, stake_account)|
+                        // Dereference `&&` to `&`.
+                        Some((*pubkey, *stake_account)),
+            )),
+        }
+    }
+}
 impl Bank {
     fn default_with_accounts(accounts: Accounts) -> Self {
         let mut bank = Self {
@@ -1570,6 +1626,48 @@ impl Bank {
             .new_warmup_cooldown_rate_epoch(&self.epoch_schedule)
     }
 
+    fn process_new_epoch_caches_and_rewards(
+        &self,
+        new_epoch: Epoch,
+        parent_epoch: Epoch,
+        reward_calc_tracer: Option<impl RewardCalcTracer>,
+        thread_pool: &ThreadPool,
+    ) -> NewEpochBundle {
+        let stakes = self.stakes_cache.stakes();
+        let stake_delegations: Vec<_> = stakes.stake_delegations().iter().collect();
+
+        // Compute new stake history and vote accounts.
+        let ((stake_history, vote_accounts), activate_epoch_time_us) = measure_us!(stakes
+            .begin_epoch_activation(
+                new_epoch,
+                thread_pool,
+                &stake_delegations,
+                self.new_warmup_cooldown_rate_epoch()
+            ));
+
+        let mut rewards_metrics = RewardsMetrics::default();
+        // Apply stake rewards and commission.
+        let (rewards_result, update_rewards_with_thread_pool_time_us) = measure_us!(self
+            .calculate_rewards_and_distribute_vote_rewards(
+                &stake_history,
+                stake_delegations,
+                &vote_accounts,
+                parent_epoch,
+                reward_calc_tracer,
+                thread_pool,
+                &mut rewards_metrics
+            ));
+
+        NewEpochBundle {
+            stake_history,
+            vote_accounts,
+            rewards_result,
+            rewards_metrics,
+            activate_epoch_time_us,
+            update_rewards_with_thread_pool_time_us,
+        }
+    }
+
     /// process for the start of a new epoch
     fn process_new_epoch(
         &mut self,
@@ -1589,31 +1687,31 @@ impl Bank {
             thread_pool.install(|| { self.compute_and_apply_new_feature_activations() })
         );
 
+        let NewEpochBundle {
+            stake_history,
+            vote_accounts,
+            rewards_result,
+            rewards_metrics,
+            activate_epoch_time_us,
+            update_rewards_with_thread_pool_time_us,
+        } = self.process_new_epoch_caches_and_rewards(
+            epoch,
+            parent_epoch,
+            reward_calc_tracer,
+            &thread_pool,
+        );
+
         // Add new entry to stakes.stake_history, set appropriate epoch and
         // update vote accounts with warmed up stakes before saving a
-        // snapshot of stakes in epoch stakes
-        let (_, activate_epoch_time_us) = measure_us!(self.stakes_cache.activate_epoch(
-            epoch,
-            &thread_pool,
-            self.new_warmup_cooldown_rate_epoch()
-        ));
-
-        // Save a snapshot of stakes for use in consensus and stake weighted networking
-        let leader_schedule_epoch = self.epoch_schedule.get_leader_schedule_epoch(slot);
+        // snapshot of stakes in epoch stakes.
+        self.stakes_cache
+            .activate_epoch(epoch, stake_history, vote_accounts);
+        // Save a snapshot of stakes for use in consensus and stake weighted
+        // networking.
+        let leader_schedule_epoch = self.epoch_schedule.get_leader_schedule_epoch(self.slot());
         let (_, update_epoch_stakes_time_us) =
             measure_us!(self.update_epoch_stakes(leader_schedule_epoch));
-
-        let mut rewards_metrics = RewardsMetrics::default();
-        // After saving a snapshot of stakes, apply stake rewards and commission
-        let (_, update_rewards_with_thread_pool_time_us) = measure_us!(self
-            .begin_partitioned_rewards(
-                reward_calc_tracer,
-                &thread_pool,
-                parent_epoch,
-                parent_slot,
-                parent_height,
-                &mut rewards_metrics,
-            ));
+        self.save_rewards(rewards_result, &rewards_metrics, parent_slot, parent_height);
 
         report_new_epoch_metrics(
             epoch,
@@ -2276,36 +2374,24 @@ impl Bank {
 
     fn filter_stake_delegations<'a>(
         &self,
-        stakes: &'a Stakes<StakeAccount<Delegation>>,
-    ) -> Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)> {
-        if self
+        stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
+    ) -> FilteredStakeDelegations<'a> {
+        let min_stake_delegation = if self
             .feature_set
             .is_active(&feature_set::stake_minimum_delegation_for_rewards::id())
         {
-            let num_stake_delegations = stakes.stake_delegations().len();
             let min_stake_delegation = solana_stake_program::get_minimum_delegation(
                 self.feature_set
                     .is_active(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id()),
             )
             .max(LAMPORTS_PER_SOL);
-
-            let (stake_delegations, filter_time_us) = measure_us!(stakes
-                .stake_delegations()
-                .iter()
-                .filter(|(_stake_pubkey, cached_stake_account)| {
-                    cached_stake_account.delegation().stake >= min_stake_delegation
-                })
-                .collect::<Vec<_>>());
-
-            datapoint_info!(
-                "stake_account_filter_time",
-                ("filter_time_us", filter_time_us, i64),
-                ("num_stake_delegations_before", num_stake_delegations, i64),
-                ("num_stake_delegations_after", stake_delegations.len(), i64)
-            );
-            stake_delegations
+            Some(min_stake_delegation)
         } else {
-            stakes.stake_delegations().iter().collect()
+            None
+        };
+        FilteredStakeDelegations {
+            stake_delegations,
+            min_stake_delegation,
         }
     }
 

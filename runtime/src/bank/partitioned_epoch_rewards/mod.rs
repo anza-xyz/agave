@@ -4,11 +4,8 @@ mod epoch_rewards_hasher;
 mod sysvar;
 
 use {
-    super::Bank,
-    crate::{
-        inflation_rewards::points::PointValue, stake_account::StakeAccount,
-        stake_history::StakeHistory,
-    },
+    super::{Bank, FilteredStakeDelegations},
+    crate::{inflation_rewards::points::PointValue, stake_history::StakeHistory},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
         partitioned_rewards::PartitionedEpochRewardsConfig,
@@ -18,7 +15,7 @@ use {
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_reward_info::RewardInfo,
-    solana_stake_interface::state::{Delegation, Stake},
+    solana_stake_interface::state::Stake,
     solana_vote::vote_account::VoteAccounts,
     std::{mem::MaybeUninit, sync::Arc},
 };
@@ -234,7 +231,7 @@ impl Default for CalculateValidatorRewardsResult {
 /// hold reward calc info to avoid recalculation across functions
 pub(super) struct EpochRewardCalculateParamInfo<'a> {
     pub(super) stake_history: StakeHistory,
-    pub(super) stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
+    pub(super) stake_delegations: FilteredStakeDelegations<'a>,
     pub(super) cached_vote_accounts: &'a VoteAccounts,
 }
 
@@ -262,6 +259,8 @@ pub(super) struct CalculateRewardsAndDistributeVoteRewardsResult {
     pub(super) point_value: PointValue,
     /// stake rewards that still need to be distributed
     pub(super) stake_rewards: Arc<PartitionedStakeRewards>,
+    // rewards calculation result that needs to be cached
+    pub(super) rewards_calculation: PartitionedRewardsCalculation,
 }
 
 pub(crate) type StakeRewards = Vec<StakeReward>;
