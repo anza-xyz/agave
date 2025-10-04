@@ -11,7 +11,7 @@ use {
     },
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::sanitized::SanitizedTransaction,
-    solana_transaction_context::transaction_accounts::TransactionAccount,
+    solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
 };
 
 // Used to approximate how many accounts will be calculated for storage so that
@@ -106,7 +106,7 @@ fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
     collected_account_transactions: &mut Option<Vec<&'a SanitizedTransaction>>,
     transaction: &'a T,
     transaction_ref: Option<&'a SanitizedTransaction>,
-    transaction_accounts: &'a [TransactionAccount],
+    transaction_accounts: &'a [KeyedAccountSharedData],
 ) {
     for (i, (address, account)) in (0..transaction.account_keys().len()).zip(transaction_accounts) {
         if !transaction.is_writable(i) {

@@ -25,6 +25,7 @@ use {
     },
     solana_clock::{Slot, DEFAULT_SLOTS_PER_EPOCH},
     solana_core::{
+        banking_stage::transaction_scheduler::scheduler_controller::SchedulerConfig,
         banking_trace::DISABLED_BAKING_TRACE_DIR,
         consensus::tower_storage,
         repair::repair_handler::RepairHandlerType,
@@ -32,7 +33,7 @@ use {
         system_monitor_service::SystemMonitorService,
         validator::{
             is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod,
-            TransactionStructure, Validator, ValidatorConfig, ValidatorError,
+            SchedulerPacing, TransactionStructure, Validator, ValidatorConfig, ValidatorError,
             ValidatorStartProgress, ValidatorTpuConfig,
         },
     },
@@ -611,6 +612,13 @@ pub fn execute(
             BlockProductionMethod
         ),
         block_production_num_workers,
+        block_production_scheduler_config: SchedulerConfig {
+            scheduler_pacing: value_t_or_exit!(
+                matches,
+                "block_production_pacing_fill_time_millis",
+                SchedulerPacing
+            ),
+        },
         transaction_struct: value_t_or_exit!(matches, "transaction_struct", TransactionStructure),
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
         banking_trace_dir_byte_limit: parse_banking_trace_dir_byte_limit(matches),
@@ -1128,11 +1136,10 @@ fn new_snapshot_config(
         }
     }
 
-    let snapshots_dir = if let Some(snapshots) = matches.value_of("snapshots") {
-        Path::new(snapshots)
-    } else {
-        ledger_path
-    };
+    let snapshots_dir = matches
+        .value_of("snapshots")
+        .map(Path::new)
+        .unwrap_or(ledger_path);
     let snapshots_dir = create_and_canonicalize_directory(snapshots_dir).map_err(|err| {
         format!(
             "failed to create snapshots directory '{}': {err}",
@@ -1158,12 +1165,10 @@ fn new_snapshot_config(
         )
     })?;
 
-    let full_snapshot_archives_dir =
-        if let Some(full_snapshot_archive_path) = matches.value_of("full_snapshot_archive_path") {
-            PathBuf::from(full_snapshot_archive_path)
-        } else {
-            snapshots_dir.clone()
-        };
+    let full_snapshot_archives_dir = matches
+        .value_of("full_snapshot_archive_path")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| snapshots_dir.clone());
     fs::create_dir_all(&full_snapshot_archives_dir).map_err(|err| {
         format!(
             "failed to create full snapshot archives directory '{}': {err}",
@@ -1171,13 +1176,10 @@ fn new_snapshot_config(
         )
     })?;
 
-    let incremental_snapshot_archives_dir = if let Some(incremental_snapshot_archive_path) =
-        matches.value_of("incremental_snapshot_archive_path")
-    {
-        PathBuf::from(incremental_snapshot_archive_path)
-    } else {
-        snapshots_dir.clone()
-    };
+    let incremental_snapshot_archives_dir = matches
+        .value_of("incremental_snapshot_archive_path")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| snapshots_dir.clone());
     fs::create_dir_all(&incremental_snapshot_archives_dir).map_err(|err| {
         format!(
             "failed to create incremental snapshot archives directory '{}': {err}",

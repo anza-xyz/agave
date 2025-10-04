@@ -15,7 +15,10 @@ use {
             packet_deserializer::PacketDeserializer,
             transaction_scheduler::{
                 prio_graph_scheduler::PrioGraphScheduler,
-                scheduler_controller::SchedulerController, scheduler_error::SchedulerError,
+                scheduler_controller::{
+                    SchedulerConfig, SchedulerController, DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS,
+                },
+                scheduler_error::SchedulerError,
             },
         },
         validator::{BlockProductionMethod, TransactionStructure},
@@ -38,7 +41,7 @@ use {
     },
     solana_time_utils::AtomicInterval,
     std::{
-        num::{NonZeroUsize, Saturating},
+        num::{NonZeroU64, NonZeroUsize, Saturating},
         ops::Deref,
         sync::{
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -75,11 +78,7 @@ conditional_vis_mod!(packet_deserializer, feature = "dev-context-only-utils", pu
 mod packet_receiver;
 mod read_write_account_set;
 conditional_vis_mod!(scheduler_messages, feature = "dev-context-only-utils", pub);
-conditional_vis_mod!(
-    transaction_scheduler,
-    feature = "dev-context-only-utils",
-    pub
-);
+pub mod transaction_scheduler;
 conditional_vis_mod!(unified_scheduler, feature = "dev-context-only-utils", pub, pub(crate));
 
 /// The maximum number of worker threads that can be spawned by banking stage.
@@ -371,6 +370,7 @@ impl BankingStage {
         tpu_vote_receiver: BankingPacketReceiver,
         gossip_vote_receiver: BankingPacketReceiver,
         num_workers: NonZeroUsize,
+        scheduler_config: SchedulerConfig,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
@@ -409,6 +409,7 @@ impl BankingStage {
             transaction_struct,
             use_greedy_scheduler,
             num_workers,
+            scheduler_config,
             &context,
         );
 
@@ -423,6 +424,7 @@ impl BankingStage {
         transaction_struct: TransactionStructure,
         block_production_method: BlockProductionMethod,
         num_workers: NonZeroUsize,
+        scheduler_config: SchedulerConfig,
     ) -> thread::Result<()> {
         if let Some(context) = self.context.as_ref() {
             info!("Shutting down banking stage threads");
@@ -446,6 +448,7 @@ impl BankingStage {
                     BlockProductionMethod::CentralSchedulerGreedy
                 ),
                 num_workers,
+                scheduler_config,
                 context,
             )
         }
@@ -458,6 +461,7 @@ impl BankingStage {
         transaction_struct: TransactionStructure,
         use_greedy_scheduler: bool,
         num_workers: NonZeroUsize,
+        scheduler_config: SchedulerConfig,
         context: &BankingStageContext,
     ) {
         match transaction_struct {
@@ -471,6 +475,7 @@ impl BankingStage {
                     receive_and_buffer,
                     use_greedy_scheduler,
                     num_workers,
+                    scheduler_config,
                     context,
                 )
             }
@@ -484,6 +489,7 @@ impl BankingStage {
                     receive_and_buffer,
                     use_greedy_scheduler,
                     num_workers,
+                    scheduler_config,
                     context,
                 )
             }
@@ -495,6 +501,7 @@ impl BankingStage {
         receive_and_buffer: R,
         use_greedy_scheduler: bool,
         num_workers: NonZeroUsize,
+        scheduler_config: SchedulerConfig,
         context: &BankingStageContext,
     ) {
         assert!(num_workers <= BankingStage::max_num_workers());
@@ -550,6 +557,7 @@ impl BankingStage {
                         .spawn(move || {
                             let scheduler_controller = SchedulerController::new(
                                 exit,
+                                scheduler_config,
                                 decision_maker,
                                 receive_and_buffer,
                                 bank_forks,
@@ -627,6 +635,10 @@ impl BankingStage {
         MAX_NUM_WORKERS
     }
 
+    pub const fn default_fill_time_millis() -> NonZeroU64 {
+        DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS
+    }
+
     pub fn join(mut self) -> thread::Result<()> {
         self.context
             .take()
@@ -670,7 +682,10 @@ pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
 mod tests {
     use {
         super::*,
-        crate::banking_trace::{BankingTracer, Channels},
+        crate::{
+            banking_trace::{BankingTracer, Channels},
+            validator::SchedulerPacing,
+        },
         agave_banking_stage_ingress_types::BankingPacketBatch,
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
@@ -754,6 +769,9 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_receiver,
             DEFAULT_NUM_WORKERS,
+            SchedulerConfig {
+                scheduler_pacing: SchedulerPacing::Disabled,
+            },
             None,
             replay_vote_sender,
             None,
@@ -816,6 +834,9 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_receiver,
             DEFAULT_NUM_WORKERS,
+            SchedulerConfig {
+                scheduler_pacing: SchedulerPacing::Disabled,
+            },
             None,
             replay_vote_sender,
             None,
@@ -887,6 +908,9 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_receiver,
             DEFAULT_NUM_WORKERS,
+            SchedulerConfig {
+                scheduler_pacing: SchedulerPacing::Disabled,
+            },
             None,
             replay_vote_sender,
             None,
@@ -1044,6 +1068,9 @@ mod tests {
                 tpu_vote_receiver,
                 gossip_vote_receiver,
                 DEFAULT_NUM_WORKERS,
+                SchedulerConfig {
+                    scheduler_pacing: SchedulerPacing::Disabled,
+                },
                 None,
                 replay_vote_sender,
                 None,
@@ -1237,6 +1264,9 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_receiver,
             DEFAULT_NUM_WORKERS,
+            SchedulerConfig {
+                scheduler_pacing: SchedulerPacing::Disabled,
+            },
             None,
             replay_vote_sender,
             None,

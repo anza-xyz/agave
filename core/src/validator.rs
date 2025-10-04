@@ -4,7 +4,9 @@ pub use solana_perf::report_target_features;
 use {
     crate::{
         admin_rpc_post_init::{AdminRpcRequestMetadataPostInit, KeyUpdaterType, KeyUpdaters},
-        banking_stage::BankingStage,
+        banking_stage::{
+            transaction_scheduler::scheduler_controller::SchedulerConfig, BankingStage,
+        },
         banking_trace::{self, BankingTracer, TraceError},
         cluster_info_vote_listener::VoteTracker,
         completed_data_sets_service::CompletedDataSetsService,
@@ -143,8 +145,9 @@ use {
         borrow::Cow,
         collections::{HashMap, HashSet},
         net::SocketAddr,
-        num::NonZeroUsize,
+        num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
+        str::FromStr,
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, Mutex, RwLock,
@@ -249,6 +252,42 @@ impl TransactionStructure {
     }
 }
 
+#[derive(
+    Clone, Debug, EnumVariantNames, IntoStaticStr, Display, Serialize, Deserialize, PartialEq, Eq,
+)]
+#[strum(serialize_all = "kebab-case")]
+#[serde(rename_all = "kebab-case")]
+pub enum SchedulerPacing {
+    Disabled,
+    FillTimeMillis(NonZeroU64),
+}
+
+impl FromStr for SchedulerPacing {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        if s.eq_ignore_ascii_case("disabled") {
+            Ok(SchedulerPacing::Disabled)
+        } else {
+            match s.parse::<u64>() {
+                Ok(v) if v > 0 => Ok(SchedulerPacing::FillTimeMillis(
+                    NonZeroU64::new(v).ok_or_else(|| "value must be non-zero".to_string())?,
+                )),
+                _ => Err("value must be a positive integer or 'disabled'".to_string()),
+            }
+        }
+    }
+}
+
+impl SchedulerPacing {
+    pub fn fill_time(&self) -> Option<Duration> {
+        match self {
+            SchedulerPacing::Disabled => None,
+            SchedulerPacing::FillTimeMillis(millis) => Some(Duration::from_millis(millis.get())),
+        }
+    }
+}
+
 /// Configuration for the block generator invalidator for replay.
 #[derive(Clone, Debug)]
 pub struct GeneratorConfig {
@@ -315,6 +354,7 @@ pub struct ValidatorConfig {
     pub block_verification_method: BlockVerificationMethod,
     pub block_production_method: BlockProductionMethod,
     pub block_production_num_workers: NonZeroUsize,
+    pub block_production_scheduler_config: SchedulerConfig,
     pub transaction_struct: TransactionStructure,
     pub enable_block_production_forwarding: bool,
     pub generator_config: Option<GeneratorConfig>,
@@ -394,6 +434,7 @@ impl ValidatorConfig {
             block_verification_method: BlockVerificationMethod::default(),
             block_production_method: BlockProductionMethod::default(),
             block_production_num_workers: BankingStage::default_num_workers(),
+            block_production_scheduler_config: SchedulerConfig::default(),
             transaction_struct: TransactionStructure::default(),
             // enable forwarding by default for tests
             enable_block_production_forwarding: true,
@@ -1692,6 +1733,7 @@ impl Validator {
             &prioritization_fee_cache,
             config.block_production_method.clone(),
             config.block_production_num_workers,
+            config.block_production_scheduler_config.clone(),
             config.transaction_struct.clone(),
             config.enable_block_production_forwarding,
             config.generator_config.clone(),
