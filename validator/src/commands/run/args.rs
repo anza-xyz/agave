@@ -5,7 +5,7 @@ use {
         commands::{FromClapArgMatches, Result},
     },
     clap::{values_t, App, Arg, ArgMatches},
-    solana_accounts_db::utils::create_and_canonicalize_directory,
+    solana_accounts_db::{accounts_db::AccountsDbConfig, utils::create_and_canonicalize_directory},
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::keypair_of,
@@ -58,6 +58,8 @@ const WEN_RESTART_HELP: &str =
      watch the discord channel for instructions.";
 
 pub mod account_secondary_indexes;
+pub mod accounts_db_config;
+pub mod accounts_index_config;
 pub mod blockstore_options;
 pub mod json_rpc_config;
 pub mod pub_sub_config;
@@ -78,6 +80,7 @@ pub struct RunArgs {
     pub json_rpc_config: JsonRpcConfig,
     pub pub_sub_config: PubSubConfig,
     pub send_transaction_service_config: SendTransactionServiceConfig,
+    pub accounts_db_config: AccountsDbConfig,
 }
 
 impl FromClapArgMatches for RunArgs {
@@ -132,6 +135,8 @@ impl FromClapArgMatches for RunArgs {
 
         let socket_addr_space = SocketAddrSpace::new(matches.is_present("allow_private_addr"));
 
+        let accounts_db_config = accounts_db_config::new_accounts_db_config(matches, &ledger_path)?;
+
         Ok(RunArgs {
             identity_keypair,
             ledger_path,
@@ -146,6 +151,7 @@ impl FromClapArgMatches for RunArgs {
             send_transaction_service_config: SendTransactionServiceConfig::from_clap_arg_match(
                 matches,
             )?,
+            accounts_db_config,
         })
     }
 }
@@ -1687,12 +1693,14 @@ fn validators_set(
 mod tests {
     use {
         super::*,
-        crate::cli::thread_args::thread_args,
+        crate::cli::{get_deprecated_arguments, thread_args::thread_args},
         scopeguard::defer,
+        solana_accounts_db::accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig},
         solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,
         std::{
             fs,
             net::{IpAddr, Ipv4Addr},
+            num::NonZeroUsize,
             path::{absolute, PathBuf},
         },
     };
@@ -1707,7 +1715,7 @@ mod tests {
 
             RunArgs {
                 identity_keypair,
-                ledger_path,
+                ledger_path: ledger_path.clone(),
                 logfile,
                 entrypoints,
                 known_validators,
@@ -1730,6 +1738,30 @@ mod tests {
                     ..PubSubConfig::default_for_tests()
                 },
                 send_transaction_service_config: SendTransactionServiceConfig::default(),
+                accounts_db_config: AccountsDbConfig {
+                    index: Some(AccountsIndexConfig {
+                        num_flush_threads: Some(
+                            solana_accounts_db::accounts_index::default_num_flush_threads(),
+                        ),
+                        drives: Some(vec![ledger_path.join("accounts_index")]),
+                        ..AccountsIndexConfig::default()
+                    }),
+                    account_indexes: Some(AccountSecondaryIndexes::default()),
+                    base_working_path: Some(ledger_path.clone()),
+                    num_background_threads: Some(
+                        NonZeroUsize::new(solana_accounts_db::accounts_db::quarter_thread_count())
+                            .unwrap(),
+                    ),
+                    num_foreground_threads: Some(
+                        NonZeroUsize::new(
+                            solana_accounts_db::accounts_db::default_num_foreground_threads(),
+                        )
+                        .unwrap(),
+                    ),
+                    memlock_budget_size:
+                        solana_accounts_db::accounts_db::DEFAULT_MEMLOCK_BUDGET_SIZE,
+                    ..AccountsDbConfig::default()
+                },
             }
         }
     }
@@ -1748,6 +1780,7 @@ mod tests {
                 json_rpc_config: self.json_rpc_config.clone(),
                 pub_sub_config: self.pub_sub_config.clone(),
                 send_transaction_service_config: self.send_transaction_service_config.clone(),
+                accounts_db_config: self.accounts_db_config.clone(),
             }
         }
     }
@@ -1758,7 +1791,8 @@ mod tests {
         expected_args: RunArgs,
     ) {
         let app = add_args(App::new("run_command"), default_args)
-            .args(&thread_args(&default_args.thread_args));
+            .args(&thread_args(&default_args.thread_args))
+            .args(&get_deprecated_arguments());
 
         crate::commands::tests::verify_args_struct_by_command::<RunArgs>(
             app,
@@ -1856,6 +1890,14 @@ mod tests {
 
             let expected_args = RunArgs {
                 ledger_path: ledger_path.clone(),
+                accounts_db_config: AccountsDbConfig {
+                    index: Some(AccountsIndexConfig {
+                        drives: Some(vec![ledger_path.join("accounts_index")]),
+                        ..default_run_args.accounts_db_config.clone().index.unwrap()
+                    }),
+                    base_working_path: Some(ledger_path.clone()),
+                    ..default_run_args.accounts_db_config.clone()
+                },
                 ..default_run_args.clone()
             };
             verify_args_struct_by_command_run_with_identity_setup(
@@ -1877,6 +1919,14 @@ mod tests {
 
             let expected_args = RunArgs {
                 ledger_path: ledger_path.clone(),
+                accounts_db_config: AccountsDbConfig {
+                    index: Some(AccountsIndexConfig {
+                        drives: Some(vec![ledger_path.join("accounts_index")]),
+                        ..default_run_args.accounts_db_config.clone().index.unwrap()
+                    }),
+                    base_working_path: Some(ledger_path.clone()),
+                    ..default_run_args.accounts_db_config.clone()
+                },
                 ..default_run_args.clone()
             };
             verify_args_struct_by_command_run_with_identity_setup(
@@ -1896,8 +1946,17 @@ mod tests {
                 fs::remove_dir_all(&ledger_path).unwrap()
             };
 
+            let expected_ledger_path = absolute(&ledger_path).unwrap();
             let expected_args = RunArgs {
-                ledger_path: absolute(&ledger_path).unwrap(),
+                ledger_path: expected_ledger_path.clone(),
+                accounts_db_config: AccountsDbConfig {
+                    index: Some(AccountsIndexConfig {
+                        drives: Some(vec![expected_ledger_path.join("accounts_index")]),
+                        ..default_run_args.accounts_db_config.clone().index.unwrap()
+                    }),
+                    base_working_path: Some(expected_ledger_path.clone()),
+                    ..default_run_args.accounts_db_config.clone()
+                },
                 ..default_run_args.clone()
             };
             verify_args_struct_by_command_run_with_identity_setup(
@@ -1918,8 +1977,17 @@ mod tests {
                 fs::remove_dir_all(&ledger_path).unwrap()
             };
 
+            let expected_ledger_path = absolute(&ledger_path).unwrap();
             let expected_args = RunArgs {
-                ledger_path: absolute(&ledger_path).unwrap(),
+                ledger_path: expected_ledger_path.clone(),
+                accounts_db_config: AccountsDbConfig {
+                    index: Some(AccountsIndexConfig {
+                        drives: Some(vec![expected_ledger_path.join("accounts_index")]),
+                        ..default_run_args.accounts_db_config.clone().index.unwrap()
+                    }),
+                    base_working_path: Some(expected_ledger_path.clone()),
+                    ..default_run_args.accounts_db_config.clone()
+                },
                 ..default_run_args.clone()
             };
             verify_args_struct_by_command_run_with_identity_setup(
