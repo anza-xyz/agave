@@ -353,12 +353,12 @@ impl PubsubClient {
     /// This method corresponds directly to the [`accountSubscribe`] RPC method.
     ///
     /// [`accountSubscribe`]: https://solana.com/docs/rpc/websocket/accountsubscribe
-    pub fn account_subscribe(
-        url: &str,
+    pub fn account_subscribe<R: IntoClientRequest>(
+        request: R,
         pubkey: &Pubkey,
         config: Option<RpcAccountInfoConfig>,
     ) -> Result<AccountSubscription, PubsubClientError> {
-        let client_request = url.into_client_request().map_err(Box::new)?;
+        let client_request = request.into_client_request().map_err(Box::new)?;
         let socket = connect_with_retry(client_request)?;
         let (sender, receiver) = unbounded();
 
@@ -406,12 +406,12 @@ impl PubsubClient {
     /// This method corresponds directly to the [`blockSubscribe`] RPC method.
     ///
     /// [`blockSubscribe`]: https://solana.com/docs/rpc/websocket/blocksubscribe
-    pub fn block_subscribe(
-        url: &str,
+    pub fn block_subscribe<R: IntoClientRequest>(
+        request: R,
         filter: RpcBlockSubscribeFilter,
         config: Option<RpcBlockSubscribeConfig>,
     ) -> Result<BlockSubscription, PubsubClientError> {
-        let client_request = url.into_client_request().map_err(Box::new)?;
+        let client_request = request.into_client_request().map_err(Box::new)?;
         let socket = connect_with_retry(client_request)?;
         let (sender, receiver) = unbounded();
 
@@ -454,12 +454,12 @@ impl PubsubClient {
     /// This method corresponds directly to the [`logsSubscribe`] RPC method.
     ///
     /// [`logsSubscribe`]: https://solana.com/docs/rpc/websocket/logssubscribe
-    pub fn logs_subscribe(
-        url: &str,
+    pub fn logs_subscribe<R: IntoClientRequest>(
+        request: R,
         filter: RpcTransactionLogsFilter,
         config: RpcTransactionLogsConfig,
     ) -> Result<LogsSubscription, PubsubClientError> {
-        let client_request = url.into_client_request().map_err(Box::new)?;
+        let client_request = request.into_client_request().map_err(Box::new)?;
         let socket = connect_with_retry(client_request)?;
         let (sender, receiver) = unbounded();
 
@@ -503,12 +503,12 @@ impl PubsubClient {
     /// This method corresponds directly to the [`programSubscribe`] RPC method.
     ///
     /// [`programSubscribe`]: https://solana.com/docs/rpc/websocket/programsubscribe
-    pub fn program_subscribe(
-        url: &str,
+    pub fn program_subscribe<R: IntoClientRequest>(
+        request: R,
         pubkey: &Pubkey,
         config: Option<RpcProgramAccountsConfig>,
     ) -> Result<ProgramSubscription, PubsubClientError> {
-        let client_request = url.into_client_request().map_err(Box::new)?;
+        let client_request = request.into_client_request().map_err(Box::new)?;
         let socket = connect_with_retry(client_request)?;
         let (sender, receiver) = unbounded();
 
@@ -558,8 +558,10 @@ impl PubsubClient {
     /// This method corresponds directly to the [`voteSubscribe`] RPC method.
     ///
     /// [`voteSubscribe`]: https://solana.com/docs/rpc/websocket/votesubscribe
-    pub fn vote_subscribe(url: &str) -> Result<VoteSubscription, PubsubClientError> {
-        let client_request = url.into_client_request().map_err(Box::new)?;
+    pub fn vote_subscribe<R: IntoClientRequest>(
+        request: R,
+    ) -> Result<VoteSubscription, PubsubClientError> {
+        let client_request = request.into_client_request().map_err(Box::new)?;
         let socket = connect_with_retry(client_request)?;
         let (sender, receiver) = unbounded();
 
@@ -603,8 +605,10 @@ impl PubsubClient {
     /// This method corresponds directly to the [`rootSubscribe`] RPC method.
     ///
     /// [`rootSubscribe`]: https://solana.com/docs/rpc/websocket/rootsubscribe
-    pub fn root_subscribe(url: &str) -> Result<RootSubscription, PubsubClientError> {
-        let client_request = url.into_client_request().map_err(Box::new)?;
+    pub fn root_subscribe<R: IntoClientRequest>(
+        request: R,
+    ) -> Result<RootSubscription, PubsubClientError> {
+        let client_request = request.into_client_request().map_err(Box::new)?;
         let socket = connect_with_retry(client_request)?;
         let (sender, receiver) = unbounded();
 
@@ -649,12 +653,12 @@ impl PubsubClient {
     /// This method corresponds directly to the [`signatureSubscribe`] RPC method.
     ///
     /// [`signatureSubscribe`]: https://solana.com/docs/rpc/websocket/signaturesubscribe
-    pub fn signature_subscribe(
-        url: &str,
+    pub fn signature_subscribe<R: IntoClientRequest>(
+        request: R,
         signature: &Signature,
         config: Option<RpcSignatureSubscribeConfig>,
     ) -> Result<SignatureSubscription, PubsubClientError> {
-        let client_request = url.into_client_request().map_err(Box::new)?;
+        let client_request = request.into_client_request().map_err(Box::new)?;
         let socket = connect_with_retry(client_request)?;
         let (sender, receiver) = unbounded();
 
@@ -700,8 +704,10 @@ impl PubsubClient {
     /// This method corresponds directly to the [`slotSubscribe`] RPC method.
     ///
     /// [`slotSubscribe`]: https://solana.com/docs/rpc/websocket/slotsubscribe
-    pub fn slot_subscribe(url: &str) -> Result<SlotsSubscription, PubsubClientError> {
-        let client_request = url.into_client_request().map_err(Box::new)?;
+    pub fn slot_subscribe<R: IntoClientRequest>(
+        request: R,
+    ) -> Result<SlotsSubscription, PubsubClientError> {
+        let client_request = request.into_client_request().map_err(Box::new)?;
         let socket = connect_with_retry(client_request)?;
         let (sender, receiver) = unbounded::<SlotInfo>();
 
@@ -748,11 +754,11 @@ impl PubsubClient {
     /// This method corresponds directly to the [`slotUpdatesSubscribe`] RPC method.
     ///
     /// [`slotUpdatesSubscribe`]: https://solana.com/docs/rpc/websocket/slotsupdatessubscribe
-    pub fn slot_updates_subscribe(
-        url: &str,
+    pub fn slot_updates_subscribe<R: IntoClientRequest>(
+        request: R,
         handler: impl Fn(SlotUpdate) + Send + 'static,
     ) -> Result<PubsubClientSubscription<SlotUpdate>, PubsubClientError> {
-        let client_request = url.into_client_request().map_err(Box::new)?;
+        let client_request = request.into_client_request().map_err(Box::new)?;
         let socket = connect_with_retry(client_request)?;
 
         let socket = Arc::new(RwLock::new(socket));
