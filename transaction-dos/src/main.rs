@@ -13,7 +13,7 @@ use {
     solana_client::transaction_executor::TransactionExecutor,
     solana_commitment_config::CommitmentConfig,
     solana_faucet::faucet::{request_airdrop_transaction, FAUCET_PORT},
-    solana_gossip::gossip_service::discover,
+    solana_gossip::gossip_service::discover_peers,
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::{read_keypair_file, Keypair},
     solana_message::Message,
@@ -621,15 +621,15 @@ fn main() {
 
     let rpc_addr = if !skip_gossip {
         info!("Finding cluster entry: {entrypoint_addr:?}");
-        let (gossip_nodes, _validators) = discover(
-            None, // keypair
-            Some(&entrypoint_addr),
-            None,                    // num_nodes
-            Duration::from_secs(60), // timeout
-            None,                    // find_node_by_pubkey
-            Some(&entrypoint_addr),  // find_node_by_gossip_addr
-            None,                    // my_gossip_addr
-            shred_version.unwrap(),  // my_shred_version
+        let (gossip_nodes, _validators) = discover_peers(
+            None,
+            &vec![entrypoint_addr],
+            None,
+            Duration::from_secs(60),
+            None,
+            &[entrypoint_addr],
+            None,
+            shred_version.unwrap(),
             SocketAddrSpace::Unspecified,
         )
         .unwrap_or_else(|err| {
