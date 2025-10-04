@@ -17,6 +17,7 @@ Release channels have their own copy of this changelog:
 ### RPC
 #### Breaking
 #### Changes
+* `PubsubClient` can now be constructed with the URI of an RPC (as a `str`, `String`, or `Uri`) as well as an `http::Request<()>`. The addition of `Request` allows you to set request headers when establishing a websocket connection with an RPC.
 ### Validator
 #### Breaking
 #### Deprecations
