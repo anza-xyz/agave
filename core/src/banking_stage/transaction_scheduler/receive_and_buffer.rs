@@ -29,6 +29,7 @@ use {
     solana_cost_model::cost_model::CostModel,
     solana_fee_structure::FeeBudgetLimits,
     solana_measure::measure_us,
+    solana_message::v0::MessageAddressTableLookup,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
@@ -36,7 +37,10 @@ use {
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     solana_svm_transaction::svm_message::SVMMessage,
-    solana_transaction::sanitized::{MessageHash, SanitizedTransaction},
+    solana_transaction::{
+        sanitized::{MessageHash, SanitizedTransaction},
+        versioned::sanitized::SanitizedVersionedTransaction,
+    },
     solana_transaction_error::TransactionError,
     std::{
         sync::{Arc, RwLock},
@@ -260,6 +264,10 @@ impl SanitizedTransactionReceiveAndBuffer {
         let mut error_counts = TransactionErrorMetrics::default();
         for chunk in packets.chunks(CHUNK_SIZE) {
             for packet in chunk {
+                if total_num_locks(packet.transaction()) > transaction_account_lock_limit {
+                    num_dropped_on_lock_validation += 1;
+                    continue;
+                }
                 let Some((tx, deactivation_slot)) = packet.build_sanitized_transaction(
                     vote_only,
                     root_bank.as_ref(),
@@ -480,6 +488,24 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
     }
 }
 
+/// Returns the total number of locks required by the transaction.
+fn total_num_locks(tx: &SanitizedVersionedTransaction) -> usize {
+    let extract_table_key_len = |table: &MessageAddressTableLookup| {
+        table
+            .writable_indexes
+            .len()
+            .wrapping_add(table.readonly_indexes.len())
+    };
+
+    let message = &tx.get_message().message;
+    message.static_account_keys().len().wrapping_add(
+        message
+            .address_table_lookups()
+            .map(|l| l.iter().map(extract_table_key_len).sum())
+            .unwrap_or(0),
+    )
+}
+
 enum PacketHandlingError {
     Sanitization,
     LockValidation,
@@ -667,7 +693,12 @@ impl TransactionViewReceiveAndBuffer {
         transaction_account_lock_limit: usize,
     ) -> Result<TransactionViewState, PacketHandlingError> {
         // Parsing and basic sanitization checks
-        let Ok(view) = SanitizedTransactionView::try_new_sanitized(bytes, working_bank.feature_set.is_active(&agave_feature_set::static_instruction_limit::id())) else {
+        let Ok(view) = SanitizedTransactionView::try_new_sanitized(
+            bytes,
+            working_bank
+                .feature_set
+                .is_active(&agave_feature_set::static_instruction_limit::id()),
+        ) else {
             return Err(PacketHandlingError::Sanitization);
         };
 
@@ -682,6 +713,10 @@ impl TransactionViewReceiveAndBuffer {
         // Discard non-vote packets if in vote-only mode.
         if root_bank.vote_only_bank() && !view.is_simple_vote_transaction() {
             return Err(PacketHandlingError::Sanitization);
+        }
+
+        if usize::from(view.total_num_accounts()) > transaction_account_lock_limit {
+            return Err(PacketHandlingError::LockValidation);
         }
 
         // Load addresses for transaction.
@@ -800,7 +835,9 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
-        solana_message::{v0, AddressLookupTableAccount, VersionedMessage},
+        solana_message::{
+            v0, AccountMeta, AddressLookupTableAccount, Instruction, VersionedMessage,
+        },
         solana_packet::{Meta, PACKET_DATA_SIZE},
         solana_perf::packet::{to_packet_batches, Packet, PacketBatch, PinnedPacketBatch},
         solana_pubkey::Pubkey,
@@ -1357,5 +1394,143 @@ mod tests {
         assert_eq!(num_buffered, num_transactions);
 
         verify_container(&mut container, TEST_CONTAINER_CAPACITY);
+    }
+
+    #[test_case(setup_sanitized_transaction_receive_and_buffer; "testcase-sdk")]
+    #[test_case(setup_transaction_view_receive_and_buffer; "testcase-view")]
+    fn test_receive_and_buffer_too_many_keys<R: ReceiveAndBuffer>(
+        setup_receive_and_buffer: impl FnOnce(
+            Receiver<BankingPacketBatch>,
+            Arc<RwLock<BankForks>>,
+        ) -> (R, R::Container),
+    ) {
+        fn create_tx_with_n_keys(payer: &Keypair, n: usize) -> VersionedTransaction {
+            let alt_keys = (0..n - 2).map(|_| Pubkey::new_unique()).collect::<Vec<_>>();
+            VersionedTransaction::try_new(
+                VersionedMessage::V0(
+                    v0::Message::try_compile(
+                        &payer.pubkey(),
+                        &[Instruction::new_with_bytes(
+                            Pubkey::new_unique(),
+                            &[],
+                            alt_keys
+                                .iter()
+                                .map(|k| AccountMeta::new(*k, false))
+                                .collect::<Vec<_>>(),
+                        )],
+                        &[AddressLookupTableAccount {
+                            key: Pubkey::new_unique(),
+                            addresses: alt_keys,
+                        }],
+                        Hash::new_unique(),
+                    )
+                    .unwrap(),
+                ),
+                &[payer],
+            )
+            .unwrap()
+        }
+
+        let (sender, receiver) = unbounded();
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_receive_and_buffer(receiver, bank_forks.clone());
+
+        let transaction_account_lock_limit = bank_forks
+            .read()
+            .unwrap()
+            .root_bank()
+            .get_transaction_account_lock_limit();
+
+        // ALTs do not actually exist in the bank for this transaction - sanitization would cause failure if
+        // lock validation was not done first.
+        let bad_tx = create_tx_with_n_keys(&mint_keypair, transaction_account_lock_limit + 1);
+        let transactions = [bad_tx];
+
+        let packet_batches = Arc::new(to_packet_batches(&transactions, 17));
+        sender.send(packet_batches).unwrap();
+
+        let ReceivingStats {
+            num_received,
+            num_dropped_without_parsing,
+            num_dropped_on_parsing_and_sanitization,
+            num_dropped_on_lock_validation,
+            num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
+            num_dropped_on_capacity,
+            num_buffered,
+            receive_time_us: _,
+            buffer_time_us: _,
+        } = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
+            .unwrap();
+
+        assert_eq!(num_received, 1);
+        assert_eq!(num_dropped_without_parsing, 0);
+        assert_eq!(num_dropped_on_parsing_and_sanitization, 0);
+        assert_eq!(num_dropped_on_lock_validation, 1);
+        assert_eq!(num_dropped_on_compute_budget, 0);
+        assert_eq!(num_dropped_on_age, 0);
+        assert_eq!(num_dropped_on_already_processed, 0);
+        assert_eq!(num_dropped_on_fee_payer, 0);
+        assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_buffered, 0);
+
+        verify_container(&mut container, 0);
+    }
+
+    #[test]
+    fn test_total_num_locks() {
+        let transaction = transfer(
+            &Keypair::new(),
+            &Pubkey::new_unique(),
+            1,
+            Hash::new_unique(),
+        );
+        let total_locks = transaction.message.account_keys.len();
+        let svt = SanitizedVersionedTransaction::try_new(VersionedTransaction::from(transaction))
+            .unwrap();
+        assert_eq!(total_num_locks(&svt), total_locks);
+
+        // with ALTs
+        let fee_payer = Keypair::new();
+        let pk1 = Pubkey::new_unique();
+        let pk2 = Pubkey::new_unique();
+        let pk3 = Pubkey::new_unique();
+        let transaction = VersionedTransaction::try_new(
+            VersionedMessage::V0(
+                v0::Message::try_compile(
+                    &fee_payer.pubkey(),
+                    &[Instruction::new_with_bytes(
+                        Pubkey::new_unique(),
+                        &[],
+                        vec![
+                            AccountMeta::new(pk1, false),
+                            AccountMeta::new(pk2, false),
+                            AccountMeta::new_readonly(pk3, false),
+                        ],
+                    )],
+                    &[
+                        AddressLookupTableAccount {
+                            key: Pubkey::new_unique(),
+                            addresses: vec![pk1],
+                        },
+                        AddressLookupTableAccount {
+                            key: Pubkey::new_unique(),
+                            addresses: vec![pk2, pk3],
+                        },
+                    ],
+                    Hash::new_unique(),
+                )
+                .unwrap(),
+            ),
+            &[&fee_payer],
+        )
+        .unwrap();
+        let total_locks = 5; // fee-payer, program, pk1, pk2, pk3
+        let svt = SanitizedVersionedTransaction::try_new(transaction).unwrap();
+        assert_eq!(total_num_locks(&svt), total_locks);
     }
 }
