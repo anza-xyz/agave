@@ -40,6 +40,7 @@ pub struct ConnectionWorkersScheduler {
     update_identity_receiver: watch::Receiver<Option<StakeIdentity>>,
     cancel: CancellationToken,
     stats: Arc<SendTransactionStats>,
+    broadcaster: Arc<dyn WorkersBroadcaster>,
 }
 
 /// Errors that arise from running [`ConnectionWorkersSchedulerError`].
@@ -141,7 +142,7 @@ impl From<StakeIdentity> for QuicClientCertificate {
 /// [`ConnectionWorkersScheduler`] to distribute transactions to workers
 /// accordingly.
 #[async_trait]
-pub trait WorkersBroadcaster {
+pub trait WorkersBroadcaster: Send + Sync {
     /// Sends a `transaction_batch` to workers associated with the given
     /// `leaders` addresses.
     ///
@@ -149,6 +150,7 @@ pub trait WorkersBroadcaster {
     /// encounters an unrecoverable error. In this case, it will trigger
     /// stopping the scheduler and cleaning all the data.
     async fn send_to_workers(
+        &self,
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
@@ -171,7 +173,12 @@ impl ConnectionWorkersScheduler {
             update_identity_receiver,
             cancel,
             stats,
+            broadcaster: Arc::new(NonblockingBroadcaster),
         }
+    }
+
+    pub fn with_broadcaster(&mut self, broadcaster: Arc<dyn WorkersBroadcaster>) {
+        self.broadcaster = broadcaster;
     }
 
     /// Retrieves a reference to the statistics of the scheduler
@@ -223,6 +230,7 @@ impl ConnectionWorkersScheduler {
             mut update_identity_receiver,
             cancel,
             stats,
+            broadcaster,
         } = self;
         let mut endpoint = setup_endpoint(bind, stake_identity)?;
 
@@ -285,8 +293,9 @@ impl ConnectionWorkersScheduler {
                 }
             }
 
-            if let Err(error) =
-                Broadcaster::send_to_workers(&mut workers, &send_leaders, transaction_batch).await
+            if let Err(error) = broadcaster
+                .send_to_workers(&mut workers, &send_leaders, transaction_batch)
+                .await
             {
                 last_error = Some(error);
                 break;
@@ -331,6 +340,7 @@ struct NonblockingBroadcaster;
 #[async_trait]
 impl WorkersBroadcaster for NonblockingBroadcaster {
     async fn send_to_workers(
+        &self,
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
