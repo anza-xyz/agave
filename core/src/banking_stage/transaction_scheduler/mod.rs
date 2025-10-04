@@ -10,7 +10,6 @@ pub(crate) mod scheduler_common;
 pub mod scheduler_controller;
 pub(crate) mod scheduler_error;
 conditional_vis_mod!(scheduler_metrics, feature = "dev-context-only-utils", pub);
-mod thread_aware_account_locks;
 mod transaction_priority_id;
 conditional_vis_mod!(transaction_state, feature = "dev-context-only-utils", pub, pub(crate));
 conditional_vis_mod!(transaction_state_container, feature = "dev-context-only-utils", pub, pub(crate));
