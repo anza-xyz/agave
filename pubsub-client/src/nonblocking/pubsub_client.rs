@@ -208,7 +208,7 @@ use {
         },
         MaybeTlsStream, WebSocketStream,
     },
-    url::Url,
+    tungstenite::client::IntoClientRequest,
 };
 
 pub type PubsubClientResult<T = ()> = Result<T, PubsubClientError>;
@@ -273,7 +273,7 @@ pub struct PubsubClient {
 
 impl PubsubClient {
     pub async fn new(url: &str) -> PubsubClientResult<Self> {
-        let url = Url::parse(url)?;
+        let url = url.into_client_request().map_err(Box::new)?;
         let (ws, _response) = connect_async(url)
             .await
             .map_err(Box::new)
@@ -507,14 +507,14 @@ impl PubsubClient {
                 },
                 // Send `Message::Ping` each 10s if no any other communication
                 () = sleep(Duration::from_secs(10)) => {
-                    ws.send(Message::Ping(Vec::new())).await.map_err(Box::new)?;
+                    ws.send(Message::Ping(vec![].into())).await.map_err(Box::new)?;
                 },
                 // Read message for subscribe
                 Some((operation, params, response_sender)) = subscribe_receiver.recv() => {
                     request_id += 1;
                     let method = format!("{operation}Subscribe");
                     let text = json!({"jsonrpc":"2.0","id":request_id,"method":method,"params":params}).to_string();
-                    ws.send(Message::Text(text)).await.map_err(Box::new)?;
+                    ws.send(Message::Text(text.into())).await.map_err(Box::new)?;
                     requests_subscribe.insert(request_id, (operation, response_sender));
                 },
                 // Read message for unsubscribe
@@ -523,14 +523,14 @@ impl PubsubClient {
                     request_id += 1;
                     let method = format!("{operation}Unsubscribe");
                     let text = json!({"jsonrpc":"2.0","id":request_id,"method":method,"params":[sid]}).to_string();
-                    ws.send(Message::Text(text)).await.map_err(Box::new)?;
+                    ws.send(Message::Text(text.into())).await.map_err(Box::new)?;
                     requests_unsubscribe.insert(request_id, response_sender);
                 },
                 // Read message for other requests
                 Some((method, params, response_sender)) = request_receiver.recv() => {
                     request_id += 1;
                     let text = json!({"jsonrpc":"2.0","id":request_id,"method":method,"params":params}).to_string();
-                    ws.send(Message::Text(text)).await.map_err(Box::new)?;
+                    ws.send(Message::Text(text.into())).await.map_err(Box::new)?;
                     other_requests.insert(request_id, response_sender);
                 }
                 // Read incoming WebSocket message
@@ -543,7 +543,7 @@ impl PubsubClient {
 
                     // Get text from the message
                     let text = match msg {
-                        Message::Text(text) => text,
+                        Message::Text(text) => text.to_string(),
                         Message::Binary(_data) => continue, // Ignore
                         Message::Ping(data) => {
                             ws.send(Message::Pong(data)).await.map_err(Box::new)?;
