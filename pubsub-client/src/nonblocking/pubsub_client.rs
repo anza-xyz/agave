@@ -272,9 +272,9 @@ pub struct PubsubClient {
 }
 
 impl PubsubClient {
-    pub async fn new(url: &str) -> PubsubClientResult<Self> {
-        let url = url.into_client_request().map_err(Box::new)?;
-        let (ws, _response) = connect_async(url)
+    pub async fn new<R: IntoClientRequest>(request: R) -> PubsubClientResult<Self> {
+        let client_request = request.into_client_request().map_err(Box::new)?;
+        let (ws, _response) = connect_async(client_request)
             .await
             .map_err(Box::new)
             .map_err(PubsubClientError::ConnectionError)?;
