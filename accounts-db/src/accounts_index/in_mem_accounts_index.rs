@@ -268,7 +268,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// lookup 'pubkey' in disk map.
     /// If it is found, convert it to a cache entry and return the cache entry.
     /// Cache entries from this function will always not be dirty.
-    fn load_account_entry_from_disk(&self, pubkey: &Pubkey) -> Option<Arc<AccountMapEntry<T>>> {
+    fn load_account_entry_from_disk(&self, pubkey: &Pubkey) -> Option<AccountMapEntry<T>> {
         let entry_disk = self.load_from_disk(pubkey)?; // returns None if not on disk
         let entry_cache = self.disk_to_cache_entry(entry_disk.0, entry_disk.1);
         debug_assert!(!entry_cache.dirty());
@@ -330,37 +330,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     ) -> RT {
         // SAFETY: The entry Arc is not passed to `callback`, so
         // it cannot live beyond this function call.
-        self.get_internal(pubkey, |entry| callback(entry.map(Arc::as_ref)))
-    }
-
-    /// lookup 'pubkey' in the index (in_mem or disk).
-    /// call 'callback' whether found or not
-    pub(super) fn get_internal_cloned<RT>(
-        &self,
-        pubkey: &Pubkey,
-        callback: impl for<'a> FnOnce(Option<Arc<AccountMapEntry<T>>>) -> RT,
-    ) -> RT {
-        // SAFETY: Since we're passing the entry Arc clone to `callback`, we must
-        // also add the entry to the in-mem cache.
-        self.get_internal(pubkey, |entry| (true, callback(entry.cloned())))
-    }
-
-    /// lookup 'pubkey' in index (in_mem or disk).
-    /// call 'callback' whether found or not
-    ///
-    /// # Safety
-    ///
-    /// If the item is on-disk (and not in-mem), add if the item is/could be made dirty
-    /// *after* `callback` finishes (e.g. the entry Arc is cloned and saved by the caller),
-    /// then the disk entry *must* also be added to the in-mem cache.
-    ///
-    /// Prefer `get_internal_inner()` or `get_internal_cloned()` for safe alternatives.
-    pub(super) fn get_internal<RT>(
-        &self,
-        pubkey: &Pubkey,
-        // return true if item should be added to in_mem cache
-        callback: impl for<'a> FnOnce(Option<&Arc<AccountMapEntry<T>>>) -> (bool, RT),
-    ) -> RT {
         self.get_only_in_mem(pubkey, true, |entry| {
             if let Some(entry) = entry {
                 callback(Some(entry)).1
@@ -385,7 +354,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         // If the entry is now dirty, then it must be put in the cache or the modifications will be lost.
                         if add_to_cache || disk_entry.dirty() {
                             stats.inc_mem_count();
-                            vacant.insert(disk_entry);
+                            vacant.insert(Arc::new(disk_entry));
                         }
                         rt
                     }
@@ -576,11 +545,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         } else {
                             // not on disk, so insert new thing
                             self.stats().inc_insert();
-                            Arc::new(AccountMapEntry::new(
+                            AccountMapEntry::new(
                                 SlotList::new(),
                                 0,
                                 AccountMapEntryMeta::new_dirty(&self.storage, true),
-                            ))
+                            )
                         };
                         callback(&new_value);
 
@@ -591,7 +560,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                             "Callback must insert item into slot list"
                         );
                         assert!(new_value.dirty());
-                        vacant.insert(new_value);
+                        vacant.insert(Arc::new(new_value));
                         stats.inc_mem_count();
                     }
                 };
@@ -751,15 +720,15 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         &self,
         slot_list: SlotList<U>,
         ref_count: RefCount,
-    ) -> Arc<AccountMapEntry<T>> {
-        Arc::new(AccountMapEntry::new(
+    ) -> AccountMapEntry<T> {
+        AccountMapEntry::new(
             slot_list
                 .into_iter()
                 .map(|(slot, info)| (slot, info.into()))
                 .collect(),
             ref_count,
             AccountMapEntryMeta::new_clean(&self.storage),
-        ))
+        )
     }
 
     /// Queue up these insertions for when the flush thread is dealing with this bin.
@@ -858,7 +827,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         &mut ReclaimsSlotList::new(),
                         UpsertReclaim::IgnoreReclaims,
                     );
-                    vacant.insert(disk_entry);
+                    vacant.insert(Arc::new(disk_entry));
                     (
                         false, /* found in mem */
                         true,  /* already existed */

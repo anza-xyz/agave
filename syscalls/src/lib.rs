@@ -319,7 +319,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         enable_stack_frame_gaps: true,
         instruction_meter_checkpoint_distance: 10000,
         enable_instruction_meter: true,
-        enable_instruction_tracing: debugging_features,
+        enable_register_tracing: debugging_features,
         enable_symbol_and_section_labels: debugging_features,
         reject_broken_elfs: reject_deployment_of_broken_elfs,
         noop_instruction_rate: 256,
@@ -520,7 +520,7 @@ pub fn create_program_runtime_environment_v2<'a>(
         enable_stack_frame_gaps: false,
         instruction_meter_checkpoint_distance: 10000,
         enable_instruction_meter: true,
-        enable_instruction_tracing: debugging_features,
+        enable_register_tracing: debugging_features,
         enable_symbol_and_section_labels: debugging_features,
         reject_broken_elfs: true,
         noop_instruction_rate: 256,
@@ -2522,7 +2522,6 @@ mod tests {
                 .set_syscall_context(SyscallContext {
                     allocator: BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
                     accounts_metadata: Vec::new(),
-                    trace_log: Vec::new(),
                 })
                 .unwrap();
             let config = Config {

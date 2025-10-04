@@ -313,7 +313,7 @@ impl VoteHistoryError {
 mod test {
     use {
         super::*, crate::vote_history_storage::FileVoteHistoryStorage, solana_signer::Signer,
-        solana_votor_messages::vote::Vote,
+        solana_votor_messages::vote::Vote, tempfile::TempDir,
     };
 
     // Votes cast since is kept in HashMap, so order is not guaranteed.
@@ -515,7 +515,8 @@ mod test {
     fn test_save_and_restore() {
         let node_keypair = Keypair::new();
         let mut vote_history = VoteHistory::new(node_keypair.pubkey(), 0);
-        let vote_history_storage = FileVoteHistoryStorage::new(std::env::temp_dir());
+        let tmp_dir = TempDir::new().unwrap();
+        let vote_history_storage = FileVoteHistoryStorage::new(tmp_dir.path().to_path_buf());
 
         // Add Notarize on 1 and Skip on 2
         let vote_1 = Vote::new_notarization_vote(1, Hash::new_unique());

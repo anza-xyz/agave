@@ -363,7 +363,7 @@ pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a>> {
         enable_stack_frame_gaps: true,
         instruction_meter_checkpoint_distance: 10000,
         enable_instruction_meter: true,
-        enable_instruction_tracing: true,
+        enable_register_tracing: true,
         enable_symbol_and_section_labels: true,
         reject_broken_elfs: true,
         noop_instruction_rate: 256,

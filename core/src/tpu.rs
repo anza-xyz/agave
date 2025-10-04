@@ -7,7 +7,9 @@ pub use {
 use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
-        banking_stage::BankingStage,
+        banking_stage::{
+            transaction_scheduler::scheduler_controller::SchedulerConfig, BankingStage,
+        },
         banking_trace::{Channels, TracerThread},
         cluster_info_vote_listener::{
             ClusterInfoVoteListener, DuplicateConfirmedSlotsSender, GossipVerifiedVoteHashSender,
@@ -153,6 +155,7 @@ impl Tpu {
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         block_production_method: BlockProductionMethod,
         block_production_num_workers: NonZeroUsize,
+        block_production_scheduler_config: SchedulerConfig,
         transaction_struct: TransactionStructure,
         enable_block_production_forwarding: bool,
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
@@ -330,6 +333,7 @@ impl Tpu {
             tpu_vote_receiver,
             gossip_vote_receiver,
             block_production_num_workers,
+            block_production_scheduler_config,
             transaction_status_sender,
             replay_vote_sender,
             log_messages_bytes_limit,
