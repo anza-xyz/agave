@@ -1240,7 +1240,9 @@ pub(crate) mod tests {
         solana_system_interface::{instruction as system_instruction, program as system_program},
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
-        solana_transaction_status::{TransactionDetails, UiTransactionEncoding},
+        solana_transaction_status::{
+            MaxSupportedTransactionVersionConfig, TransactionDetails, UiTransactionEncoding,
+        },
         std::{collections::HashSet, sync::atomic::AtomicU64},
     };
 
@@ -1451,7 +1453,7 @@ pub(crate) mod tests {
             encoding: Some(UiTransactionEncoding::Json),
             transaction_details: Some(TransactionDetails::Signatures),
             show_rewards: None,
-            max_supported_transaction_version: None,
+            max_supported_transaction_version: MaxSupportedTransactionVersionConfig::default(),
         };
         let params = BlockSubscriptionParams {
             kind: BlockSubscriptionKind::All,
@@ -1498,7 +1500,8 @@ pub(crate) mod tests {
                 BlockEncodingOptions {
                     transaction_details: params.transaction_details,
                     show_rewards: false,
-                    max_supported_transaction_version: None,
+                    max_supported_transaction_version:
+                        MaxSupportedTransactionVersionConfig::default(),
                 },
             )
             .unwrap();
@@ -1571,7 +1574,7 @@ pub(crate) mod tests {
             encoding: Some(UiTransactionEncoding::Json),
             transaction_details: Some(TransactionDetails::Signatures),
             show_rewards: None,
-            max_supported_transaction_version: None,
+            max_supported_transaction_version: MaxSupportedTransactionVersionConfig::default(),
         };
         let params = BlockSubscriptionParams {
             kind: BlockSubscriptionKind::MentionsAccountOrProgram(keypair1.pubkey()),
@@ -1624,7 +1627,8 @@ pub(crate) mod tests {
                 BlockEncodingOptions {
                     transaction_details: params.transaction_details,
                     show_rewards: false,
-                    max_supported_transaction_version: None,
+                    max_supported_transaction_version:
+                        MaxSupportedTransactionVersionConfig::default(),
                 },
             )
             .unwrap();
@@ -1685,7 +1689,7 @@ pub(crate) mod tests {
             encoding: Some(UiTransactionEncoding::Json),
             transaction_details: Some(TransactionDetails::Signatures),
             show_rewards: None,
-            max_supported_transaction_version: None,
+            max_supported_transaction_version: MaxSupportedTransactionVersionConfig::default(),
         };
         let params = BlockSubscriptionParams {
             kind: BlockSubscriptionKind::All,
@@ -1736,7 +1740,8 @@ pub(crate) mod tests {
                 BlockEncodingOptions {
                     transaction_details: params.transaction_details,
                     show_rewards: false,
-                    max_supported_transaction_version: None,
+                    max_supported_transaction_version:
+                        MaxSupportedTransactionVersionConfig::default(),
                 },
             )
             .unwrap();
