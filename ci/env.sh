@@ -57,28 +57,6 @@ if [[ -n $CI ]]; then
       export CI_PULL_REQUEST=true
     fi
   fi
-
-  _arch="$(uname -m)"
-  if [[ $_arch = arm64 ]]; then
-    _arch=aarch64
-  fi
-
-  case $(uname | tr '[:upper:]' '[:lower:]') in
-  linux*)
-    export CI_OS_NAME=linux
-    export CI_BUILD_TARGET_TRIPLE="$_arch-unknown-linux-gnu"
-    ;;
-  darwin*)
-    export CI_OS_NAME=osx
-    export CI_BUILD_TARGET_TRIPLE="$_arch-apple-darwin"
-    ;;
-  msys*)
-    export CI_OS_NAME=windows
-    export CI_BUILD_TARGET_TRIPLE="$_arch-pc-windows-msvc"
-    ;;
-  *)
-    ;;
-  esac
 else
   export CI=
   export CI_BRANCH=
@@ -89,11 +67,6 @@ else
   export CI_PULL_REQUEST=
   export CI_REPO_SLUG=
   export CI_TAG=
-  export CI_BUILD_TARGET_TRIPLE
-  # Don't override ci/run-local.sh
-  if [[ -z $CI_LOCAL_RUN ]]; then
-    export CI_OS_NAME=
-  fi
 fi
 
 cat <<EOF
@@ -101,11 +74,9 @@ CI=$CI
 CI_BRANCH=$CI_BRANCH
 CI_BASE_BRANCH=$CI_BASE_BRANCH
 CI_BUILD_ID=$CI_BUILD_ID
-CI_BUILD_TARGET_TRIPLE=$CI_BUILD_TARGET_TRIPLE
 CI_COMMIT=$CI_COMMIT
 CI_JOB_ID=$CI_JOB_ID
 CI_PULL_REQUEST=$CI_PULL_REQUEST
-CI_OS_NAME=$CI_OS_NAME
 CI_REPO_SLUG=$CI_REPO_SLUG
 CI_TAG=$CI_TAG
 EOF
