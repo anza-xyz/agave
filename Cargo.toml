@@ -350,6 +350,7 @@ reqwest = { version = "0.12.23", default-features = false }
 reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.4"
+rts-alloc = { version = "0.1.1" }
 rustls = { version = "0.23.32", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.27"
@@ -364,6 +365,7 @@ serde_yaml = "0.9.34"
 serial_test = "2.0.0"
 sha2 = "0.10.9"
 sha3 = "0.10.8"
+shaq = { version = "0.1.0" }
 shuttle = "0.7.1"
 signal-hook = "0.3.18"
 siphasher = "1.0.1"
