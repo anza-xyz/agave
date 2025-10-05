@@ -113,7 +113,7 @@ where
 ///
 /// This type is a wrapper around Arc that allows checking whether there are
 /// other strong references to the inner value.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Eq, PartialEq)]
 pub struct ROValue<V> {
     inner: Arc<V>,
 }
@@ -211,5 +211,93 @@ mod tests {
         drop(v3);
         map.retain_if_accessed_or(|_k, v| **v >= 30);
         assert_eq!(map.inner.len(), 1);
+    }
+}
+
+#[cfg(all(test, feature = "shuttle-test"))]
+mod shuttle_tests {
+    use {
+        super::*,
+        shuttle::{sync::atomic::AtomicU64, thread},
+        std::{hash::RandomState, sync::atomic::Ordering},
+    };
+
+    const INSERT_RETAIN_RANDOM_ITERATIONS: usize = 200000;
+    const INSERT_RETAIN_DFS_ITERATIONS: Option<usize> = None;
+
+    const CONCURRENT_INSERTS_RANDOM_ITERATIONS: usize = 200000;
+    const CONCURRENT_INSERTS_DFS_ITERATIONS: Option<usize> = None;
+
+    fn do_test_shuttle_concurrent_inserts() {
+        let map = Arc::new(ReadOptimizedDashMap::new(
+            DashMap::with_hasher_and_shard_amount(RandomState::default(), 4),
+        ));
+        let handles = (0..2)
+            .map(|_| {
+                let map = Arc::clone(&map);
+                thread::spawn(move || {
+                    map.get_or_insert_with(&0, || AtomicU64::new(30))
+                        .fetch_add(10, Ordering::Relaxed);
+                })
+            })
+            .collect::<Vec<_>>();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        let v = map.get(&0).unwrap();
+        assert_eq!(v.load(Ordering::Relaxed), 50);
+    }
+
+    #[test]
+    fn test_shuttle_concurrent_inserts_dfs() {
+        shuttle::check_dfs(
+            do_test_shuttle_concurrent_inserts,
+            CONCURRENT_INSERTS_DFS_ITERATIONS,
+        );
+    }
+
+    #[test]
+    fn test_shuttle_concurrent_inserts_random() {
+        shuttle::check_random(
+            do_test_shuttle_concurrent_inserts,
+            CONCURRENT_INSERTS_RANDOM_ITERATIONS,
+        );
+    }
+
+    fn do_test_shuttle_insert_retain() {
+        let map = Arc::new(ReadOptimizedDashMap::new(
+            DashMap::with_hasher_and_shard_amount(RandomState::default(), 4),
+        ));
+        map.get_or_insert_with(&1, || 10);
+        let retain_th = thread::spawn({
+            let map = Arc::clone(&map);
+            move || {
+                map.retain_if_accessed_or(|_k, v| **v >= 20);
+            }
+        });
+        let insert_th = thread::spawn({
+            let map = Arc::clone(&map);
+            move || {
+                map.get_or_insert_with(&2, || 20);
+            }
+        });
+        retain_th.join().unwrap();
+        insert_th.join().unwrap();
+        assert_eq!(map.get(&1), None);
+        let v = map.get(&2).unwrap();
+        assert_eq!(*v, 20);
+    }
+
+    #[test]
+    fn test_shuttle_insert_retain_dfs() {
+        shuttle::check_dfs(do_test_shuttle_insert_retain, INSERT_RETAIN_DFS_ITERATIONS);
+    }
+
+    #[test]
+    fn test_shuttle_insert_retain_random() {
+        shuttle::check_random(
+            do_test_shuttle_insert_retain,
+            INSERT_RETAIN_RANDOM_ITERATIONS,
+        );
     }
 }
