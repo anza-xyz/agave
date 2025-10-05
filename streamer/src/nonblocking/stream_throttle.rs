@@ -55,7 +55,6 @@ impl StakedStreamLoadEMA {
         } else {
             0
         };
-        dbg!(max_unstaked_load_in_throttling_window);
 
         Self {
             current_load_ema: AtomicU64::default(),
