@@ -1736,8 +1736,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 pub mod tests {
     use {
         super::*,
-        crate::bucket_map_holder::{AtomicAge, BucketMapHolder},
-        account_map_entry::AccountMapEntryMeta,
+        crate::bucket_map_holder::BucketMapHolder,
         secondary::DashMapSecondaryIndexEntry,
         solana_account::{AccountSharedData, WritableAccount},
         solana_pubkey::PUBKEY_BYTES,
@@ -1794,27 +1793,6 @@ pub mod tests {
             SPL_TOKEN_ACCOUNT_OWNER_OFFSET + PUBKEY_BYTES,
             spl_token_owner_index_enabled(),
         )
-    }
-
-    impl<T: IndexValue> Clone for PreAllocatedAccountMapEntry<T> {
-        fn clone(&self) -> Self {
-            // clone the AccountMapEntryInner into a new Arc
-            match self {
-                PreAllocatedAccountMapEntry::Entry(entry) => {
-                    let (slot, account_info) = entry.slot_list_read_lock()[0];
-                    let meta = AccountMapEntryMeta {
-                        dirty: AtomicBool::new(entry.dirty()),
-                        age: AtomicAge::new(entry.age()),
-                    };
-                    PreAllocatedAccountMapEntry::Entry(Arc::new(AccountMapEntry::new(
-                        SlotList::from([(slot, account_info)]),
-                        entry.ref_count(),
-                        meta,
-                    )))
-                }
-                PreAllocatedAccountMapEntry::Raw(raw) => PreAllocatedAccountMapEntry::Raw(*raw),
-            }
-        }
     }
 
     #[test]
@@ -2407,7 +2385,6 @@ pub mod tests {
         let new_entry =
             PreAllocatedAccountMapEntry::new(slot, account_info, &index.storage.storage, false);
         assert_eq!(0, account_maps_stats_len(&index));
-        assert_eq!((slot, account_info), new_entry.clone().into());
 
         assert_eq!(0, account_maps_stats_len(&index));
         let r_account_maps = index.get_bin(&key);
@@ -2423,6 +2400,12 @@ pub mod tests {
         let mut ancestors = Ancestors::default();
         assert!(!index.contains_with(&key, Some(&ancestors), None));
         assert!(!index.contains_with(&key, None, None));
+        index.get_and_then(&key, |entry| {
+            let (stored_slot, value) = entry.unwrap().slot_list_read_lock()[0];
+            assert_eq!(stored_slot, slot);
+            assert_eq!(value, account_info);
+            (false, ())
+        });
 
         let mut num = 0;
         index
