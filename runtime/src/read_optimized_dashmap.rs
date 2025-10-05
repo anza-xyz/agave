@@ -14,7 +14,7 @@ use {
 
 type DashmapIteratorItem<'a, K, V, S> = RefMulti<'a, K, ROValue<V>, S>;
 
-// Wrapper around dashmap that stores (K, Arc<V>) to minimize shard contention.
+// Wrapper around dashmap that stores `Arc`s of values to minimize shard contention.
 #[derive(Debug)]
 pub struct ReadOptimizedDashMap<K, V, S>
 where
@@ -33,14 +33,9 @@ where
         Self { inner }
     }
 
-    /// Alternative to entry(k).or_insert_with(default) that returns an Arc<V> instead of returning a
-    /// guard that holds the underlying shard's write lock.
-    ///
-    /// # Safety
-    ///
-    /// - Care must be taken when mutating the returned value. If modifications are applied while
-    ///   another thread concurrently deletes the key, the changes may be lost.
-    pub unsafe fn get_or_insert_with(&self, k: &K, default: impl FnOnce() -> V) -> ROValue<V> {
+    /// Alternative to entry(k).or_insert_with(default) that returns a cloned `Arc` instead of
+    /// returning a guard that holds the underlying shard's write lock.
+    pub fn get_or_insert_with(&self, k: &K, default: impl FnOnce() -> V) -> ROValue<V> {
         match self.inner.get(k) {
             Some(v) => ROValue::clone(&*v),
             None => ROValue::clone(
@@ -53,12 +48,7 @@ where
     }
 
     /// Returns an Arc clone of the value corresponding to the key.
-    ///
-    /// # Safety
-    ///
-    /// - Care must be taken when mutating the returned value. If modifications are applied while
-    ///   another thread concurrently deletes the key, the changes may be lost.
-    pub unsafe fn get(&self, k: &K) -> Option<ROValue<V>> {
+    pub fn get(&self, k: &K) -> Option<ROValue<V>> {
         self.inner.get(k).map(|v| ROValue::clone(&v))
     }
 
@@ -79,10 +69,10 @@ where
     ///
     /// Returns Ok(Some(value)) if the entry was removed, Ok(None) if the entry did not exist, and
     /// Err(()) if the entry exists but is being accessed by another thread.
-    pub fn remove_if_not_accessed_and<P: Fn(&ROValue<V>) -> bool>(
+    pub fn remove_if_not_accessed_and(
         &self,
         k: &K,
-        pred: P,
+        pred: impl Fn(&ROValue<V>) -> bool,
     ) -> Result<Option<ROValue<V>>, ()> {
         let entry = self.inner.entry(k.clone());
         if let Entry::Occupied(e) = entry {
@@ -95,6 +85,12 @@ where
             }
         }
         Ok(None)
+    }
+
+    /// Retains only the elements specified by the predicate or that are being
+    /// accessed by other threads.
+    pub fn retain_if_accessed_or(&self, mut f: impl FnMut(&K, &mut ROValue<V>) -> bool) {
+        self.inner.retain(|k, v| v.shared() || f(k, v))
     }
 
     /// Retains only the elements specified by the predicate.
@@ -164,13 +160,13 @@ mod tests {
             RandomState::default(),
             4,
         ));
-        let v1 = unsafe { map.get_or_insert_with(&1, || 10) };
+        let v1 = map.get_or_insert_with(&1, || 10);
         assert_eq!(*v1, 10);
         assert!(v1.shared());
-        let v2 = unsafe { map.get(&1).unwrap() };
+        let v2 = map.get(&1).unwrap();
         assert_eq!(*v2, 10);
         assert!(v2.shared());
-        let v3 = unsafe { map.get(&2) };
+        let v3 = map.get(&2);
         assert!(v3.is_none());
     }
 
@@ -180,7 +176,7 @@ mod tests {
             RandomState::default(),
             4,
         ));
-        let v1 = unsafe { map.get_or_insert_with(&1, || 10) };
+        let v1 = map.get_or_insert_with(&1, || 10);
         assert_eq!(*v1, 10);
         // cannot remove while v1 is held
         assert!(map.remove_if_not_accessed(&1).is_err());
@@ -195,5 +191,25 @@ mod tests {
         // cannot remove non-existent key
         let removed = map.remove_if_not_accessed(&1).unwrap();
         assert!(removed.is_none());
+    }
+
+    #[test]
+    fn test_retain_if_accessed_or() {
+        let map = ReadOptimizedDashMap::new(DashMap::with_hasher_and_shard_amount(
+            RandomState::default(),
+            4,
+        ));
+
+        let v1 = map.get_or_insert_with(&1, || 10);
+        let v2 = map.get_or_insert_with(&2, || 20);
+        drop(v2);
+        let v3 = map.get_or_insert_with(&3, || 30);
+        assert_eq!(map.inner.len(), 3);
+        map.retain_if_accessed_or(|_k, v| **v >= 30);
+        assert_eq!(map.inner.len(), 2);
+        drop(v1);
+        drop(v3);
+        map.retain_if_accessed_or(|_k, v| **v >= 30);
+        assert_eq!(map.inner.len(), 1);
     }
 }
