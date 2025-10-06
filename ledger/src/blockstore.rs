@@ -2688,7 +2688,7 @@ impl Blockstore {
         )?;
 
         if slot_entries.is_empty() {
-            trace!("do_get_complete_block_with_entries() failed for {slot} (slot not full)");
+            trace!("do_get_complete_block_with_entries() failed for {slot} (no entries found)");
             return Err(BlockstoreError::SlotUnavailable);
         }
 
@@ -2697,7 +2697,6 @@ impl Blockstore {
             .map(|entry| entry.hash)
             .unwrap_or_else(|| panic!("Rooted slot {slot:?} must have blockhash"));
 
-        // Build entries summary if requested
         let mut starting_transaction_index = 0;
         let mut entries = if populate_entries {
             Vec::with_capacity(slot_entries.len())
@@ -2705,7 +2704,6 @@ impl Blockstore {
             Vec::new()
         };
 
-        // Create transaction iterator and collect entry summaries
         let slot_transaction_iterator = slot_entries
             .into_iter()
             .flat_map(|entry| {
@@ -2730,7 +2728,6 @@ impl Blockstore {
                 transaction
             });
 
-        // Get parent entries for previous blockhash
         let parent_slot_entries = slot_meta
             .parent_slot
             .and_then(|parent_slot| {
@@ -2743,18 +2740,15 @@ impl Blockstore {
                 .map(|(entries, _, _)| entries)
             })
             .unwrap_or_default();
-
         if parent_slot_entries.is_empty() && require_previous_blockhash {
             return Err(BlockstoreError::ParentEntriesUnavailable);
         }
-
         let previous_blockhash = if !parent_slot_entries.is_empty() {
             get_last_hash(parent_slot_entries.iter()).unwrap()
         } else {
             Hash::default()
         };
 
-        // Get rewards and partitions
         let (rewards, num_partitions) = self
             .rewards_cf
             .get_protobuf_or_bincode::<StoredExtendedRewards>(slot)?
