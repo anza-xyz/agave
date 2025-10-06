@@ -401,7 +401,7 @@ impl QuicClient {
                         .prepare_connection_us
                         .fetch_add(measure_prepare_connection.as_us(), Ordering::Relaxed);
                     trace!(
-                        "Succcessfully sent to {} with id {}, thread: {:?}, data len: {}, \
+                        "Successfully sent to {} with id {}, thread: {:?}, data len: {}, \
                          send_packet_us: {} prepare_connection_us: {}",
                         self.addr,
                         connection.stable_id(),
