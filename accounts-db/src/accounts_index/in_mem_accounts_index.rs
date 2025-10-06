@@ -1667,7 +1667,7 @@ mod tests {
         solana_logger::setup();
         let startup = false;
         let ref_count = 1;
-        let map: HashMap<Pubkey, Arc<AccountMapEntry<u64>>> = (0..=255)
+        let map: HashMap<_, _> = (0..=255)
             .map(|age| {
                 let pk = Pubkey::from([age; 32]);
                 let one_element_slot_list = SlotList::from([(0, 0)]);
