@@ -2047,7 +2047,6 @@ mod tests {
             &mut rng,
             slot,
             1200 * 5, // data_size
-            true,     // chained
             false,    // is_last_in_slot
         )
         .unwrap();
