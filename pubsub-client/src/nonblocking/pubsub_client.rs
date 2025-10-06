@@ -543,7 +543,7 @@ impl PubsubClient {
 
                     // Get text from the message
                     let text = match msg {
-                        Message::Text(text) => text.to_string(),
+                        Message::Text(text) => text,
                         Message::Binary(_data) => continue, // Ignore
                         Message::Ping(data) => {
                             ws.send(Message::Pong(data)).await.map_err(Box::new)?;
@@ -561,7 +561,7 @@ impl PubsubClient {
                     // `{"jsonrpc":"2.0","result":5308752,"id":1}`
                     if let Some(id) = json.get("id") {
                         let id = id.as_u64().ok_or_else(|| {
-                            PubsubClientError::SubscribeFailed { reason: "invalid `id` field".into(), message: text.clone() }
+                            PubsubClientError::SubscribeFailed { reason: "invalid `id` field".into(), message: text.to_string() }
                         })?;
 
                         let err = json.get("error").map(|error_object| {
@@ -580,11 +580,11 @@ impl PubsubClient {
                         if let Some(response_sender) = other_requests.remove(&id) {
                             match err {
                                 Some(reason) => {
-                                    let _ = response_sender.send(Err(PubsubClientError::RequestFailed { reason, message: text.clone()}));
+                                    let _ = response_sender.send(Err(PubsubClientError::RequestFailed { reason, message: text.to_string()}));
                                 },
                                 None => {
                                     let json_result = json.get("result").ok_or_else(|| {
-                                        PubsubClientError::RequestFailed { reason: "missing `result` field".into(), message: text.clone() }
+                                        PubsubClientError::RequestFailed { reason: "missing `result` field".into(), message: text.to_string() }
                                     })?;
                                     if response_sender.send(Ok(json_result.clone())).is_err() {
                                         break;
@@ -596,12 +596,12 @@ impl PubsubClient {
                         } else if let Some((operation, response_sender)) = requests_subscribe.remove(&id) {
                             match err {
                                 Some(reason) => {
-                                    let _ = response_sender.send(Err(PubsubClientError::SubscribeFailed { reason, message: text.clone()}));
+                                    let _ = response_sender.send(Err(PubsubClientError::SubscribeFailed { reason, message: text.to_string()}));
                                 },
                                 None => {
                                     // Subscribe Id
                                     let sid = json.get("result").and_then(Value::as_u64).ok_or_else(|| {
-                                        PubsubClientError::SubscribeFailed { reason: "invalid `result` field".into(), message: text.clone() }
+                                        PubsubClientError::SubscribeFailed { reason: "invalid `result` field".into(), message: text.to_string() }
                                     })?;
 
                                     // Create notifications channel and unsubscribe function
