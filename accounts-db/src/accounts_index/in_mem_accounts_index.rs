@@ -26,41 +26,6 @@ use {
     },
 };
 
-/// Statistics for disk flush operations
-#[derive(Debug, Default)]
-struct DiskFlushStats {
-    /// Time spent in flush update operation
-    flush_update_us: u64,
-    /// Time spent checking if entries should be evicted
-    flush_should_evict_us: u64,
-    /// Number of entries successfully written to disk
-    flush_entries_updated_on_disk: u64,
-    /// Time spent growing disk storage
-    flush_grow_us: u64,
-}
-
-impl DiskFlushStats {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn update_to_bucket_map_stats(&self, stats: &BucketMapHolderStats) {
-        Self::update_stat(&stats.flush_update_us, self.flush_update_us);
-        Self::update_stat(&stats.flush_should_evict_us, self.flush_should_evict_us);
-        Self::update_stat(
-            &stats.flush_entries_updated_on_disk,
-            self.flush_entries_updated_on_disk,
-        );
-        Self::update_stat(&stats.flush_grow_us, self.flush_grow_us);
-    }
-
-    fn update_stat(stat: &AtomicU64, value: u64) {
-        if value != 0 {
-            stat.fetch_add(value, Ordering::Relaxed);
-        }
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct StartupStats {
     pub copy_data_us: AtomicU64,
@@ -1358,6 +1323,41 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// Only intended to be called at startup, since it grabs the map's read lock.
     pub(crate) fn capacity_for_startup(&self) -> usize {
         self.map_internal.read().unwrap().capacity()
+    }
+}
+
+/// Statistics for disk flush operations
+#[derive(Debug, Default)]
+struct DiskFlushStats {
+    /// Time spent in flush update operation
+    flush_update_us: u64,
+    /// Time spent checking if entries should be evicted
+    flush_should_evict_us: u64,
+    /// Number of entries successfully written to disk
+    flush_entries_updated_on_disk: u64,
+    /// Time spent growing disk storage
+    flush_grow_us: u64,
+}
+
+impl DiskFlushStats {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn update_to_bucket_map_stats(&self, stats: &BucketMapHolderStats) {
+        Self::update_stat(&stats.flush_update_us, self.flush_update_us);
+        Self::update_stat(&stats.flush_should_evict_us, self.flush_should_evict_us);
+        Self::update_stat(
+            &stats.flush_entries_updated_on_disk,
+            self.flush_entries_updated_on_disk,
+        );
+        Self::update_stat(&stats.flush_grow_us, self.flush_grow_us);
+    }
+
+    fn update_stat(stat: &AtomicU64, value: u64) {
+        if value != 0 {
+            stat.fetch_add(value, Ordering::Relaxed);
+        }
     }
 }
 
