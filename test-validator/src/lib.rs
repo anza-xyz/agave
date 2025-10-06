@@ -1027,7 +1027,7 @@ impl TestValidator {
         let node = {
             let bind_ip_addr = config.node_config.bind_ip_addr;
             let validator_node_config = NodeConfig {
-                bind_ip_addrs: Arc::new(BindIpAddrs::new(vec![bind_ip_addr])?),
+                bind_ip_addrs: BindIpAddrs::new(vec![bind_ip_addr])?,
                 gossip_port: config.node_config.gossip_addr.port(),
                 port_range: config.node_config.port_range,
                 advertised_ip: bind_ip_addr,
