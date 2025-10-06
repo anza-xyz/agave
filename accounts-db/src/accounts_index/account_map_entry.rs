@@ -7,6 +7,7 @@ use {
     solana_clock::Slot,
     std::{
         fmt::Debug,
+        mem::ManuallyDrop,
         ops::Deref,
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -17,35 +18,34 @@ use {
 
 /// one entry in the in-mem accounts index
 /// Represents the value for an account key in the in-memory accounts index
-#[derive(Debug)]
-pub struct AccountMapEntry<T> {
+pub struct AccountMapEntry<T: Copy> {
     /// number of alive slots that contain >= 1 instances of account data for this pubkey
     /// where alive represents a slot that has not yet been removed by clean via AccountsDB::clean_stored_dead_slots() for containing no up to date account information
     ref_count: AtomicRefCount,
     /// list of slots in which this pubkey was updated
     /// Note that 'clean' removes outdated entries (ie. older roots) from this slot_list
     /// purge_slot() also removes non-rooted slots from this list
-    slot_list: RwLock<SlotList<T>>,
+    slot_list: RwLock<SlotListRepr<T>>,
     /// synchronization metadata for in-memory state since last flush to disk accounts index
     meta: AccountMapEntryMeta,
 }
 
 impl<T: IndexValue> AccountMapEntry<T> {
     pub fn new(slot_list: SlotList<T>, ref_count: RefCount, meta: AccountMapEntryMeta) -> Self {
+        let (is_single, slot_list_repr) = SlotListRepr::from_list(slot_list);
         Self {
-            slot_list: RwLock::new(slot_list),
+            slot_list: RwLock::new(slot_list_repr),
             ref_count: AtomicRefCount::new(ref_count),
-            meta,
+            meta: AccountMapEntryMeta {
+                is_single: AtomicBool::new(is_single),
+                ..meta
+            },
         }
     }
 
     #[cfg(test)]
     pub(super) fn empty_for_tests() -> Self {
-        Self {
-            slot_list: RwLock::default(),
-            ref_count: AtomicRefCount::default(),
-            meta: AccountMapEntryMeta::default(),
-        }
+        Self::new(SlotList::new(), 0, AccountMapEntryMeta::default())
     }
 
     pub fn ref_count(&self) -> RefCount {
@@ -114,9 +114,17 @@ impl<T: IndexValue> AccountMapEntry<T> {
 
     /// Return length of the slot list
     ///
-    /// Do not call it while guard from any locking function (`slot_list_*lock`) is active.
+    /// This function might need to acquire a read lock on the slot list, so it should not be called
+    /// while any slot list accessor is active (since they hold the lock).
     pub fn slot_list_lock_read_len(&self) -> usize {
-        self.slot_list.read().unwrap().len()
+        if !self.meta.is_single.load(Ordering::Acquire) {
+            let slot_list_repr = self.slot_list.read().unwrap();
+            if !self.meta.is_single.load(Ordering::Acquire) {
+                // Safety: `is_single` confirmed to be false while holding the lock
+                return unsafe { slot_list_repr.multiple.len() };
+            }
+        }
+        1 // single list
     }
 
     /// Acquire a read lock on the slot list and return accessor for interpreting its representation
@@ -124,7 +132,11 @@ impl<T: IndexValue> AccountMapEntry<T> {
     /// Do not call any locking function (`slot_list_*lock*`) on the same `AccountMapEntry` until accessor
     /// they return is dropped.
     pub fn slot_list_read_lock(&self) -> SlotListReadGuard<'_, T> {
-        SlotListReadGuard(self.slot_list.read().unwrap())
+        let repr_guard = self.slot_list.read().unwrap();
+        SlotListReadGuard {
+            repr_guard,
+            is_single: self.meta.is_single.load(Ordering::Acquire),
+        }
     }
 
     /// Acquire a write lock on the slot list and return accessor for modifying it
@@ -132,62 +144,170 @@ impl<T: IndexValue> AccountMapEntry<T> {
     /// Do not call any locking function (`slot_list_*lock*`) on the same `AccountMapEntry` until accessor
     /// they return is dropped.
     pub fn slot_list_write_lock(&self) -> SlotListWriteGuard<'_, T> {
-        SlotListWriteGuard(self.slot_list.write().unwrap())
+        SlotListWriteGuard {
+            repr_guard: self.slot_list.write().unwrap(),
+            meta: &self.meta,
+        }
     }
 }
 
-/// Holds slot list lock for reading and provides read access to its contents.
-#[derive(Debug)]
-pub struct SlotListReadGuard<'a, T>(RwLockReadGuard<'a, SlotList<T>>);
+impl<T: Copy> Debug for AccountMapEntry<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccountMapEntry")
+            .field("meta", &self.meta)
+            .field("ref_count", &self.ref_count)
+            .finish()
+    }
+}
 
-impl<T> Deref for SlotListReadGuard<'_, T> {
+impl<T: Copy> Drop for AccountMapEntry<T> {
+    fn drop(&mut self) {
+        if !self.meta.is_single.load(Ordering::Acquire) {
+            // Make drop panic-resistant
+            if let Ok(mut slot_list) = self.slot_list.write() {
+                // Safety: we operate on &mut self, so is_single==false won't change since above check
+                unsafe { ManuallyDrop::drop(&mut slot_list.multiple) }
+            }
+        }
+    }
+}
+
+/// Dynamic representation of a slot list with denominator stored in entry metadata to minimize memory usage
+union SlotListRepr<T: Copy> {
+    /// This variant is used when entry's metadata `is_single` loads as `true` while holding the lock
+    single: (Slot, T),
+    /// Slot list with potentially different number of elements than 1, used when `is_single` loads as `false`
+    // Vec holds data on heap, however its inline size is impacted by len and capacity fields, so it needs to
+    // be wrapped in a Box to minimize the size of the union.
+    #[allow(clippy::box_collection)]
+    multiple: ManuallyDrop<Box<Vec<(Slot, T)>>>,
+}
+
+impl<T: Copy> SlotListRepr<T> {
+    fn from_list(slot_list: SlotList<T>) -> (bool, Self) {
+        let is_single = slot_list.len() == 1;
+        let this = if is_single {
+            Self {
+                single: slot_list[0],
+            }
+        } else {
+            Self {
+                multiple: ManuallyDrop::new(Box::new(slot_list.to_vec())),
+            }
+        };
+        (is_single, this)
+    }
+
+    // Safety: `is_single` needs to match current representation mode, thus this function is unsafe
+    unsafe fn as_slice(&self, is_single: bool) -> &[(Slot, T)] {
+        unsafe {
+            if is_single {
+                std::slice::from_ref(&self.single)
+            } else {
+                &self.multiple
+            }
+        }
+    }
+}
+
+/// Holds slot list lock for reading and provides read access interpreting its representation.
+pub struct SlotListReadGuard<'a, T: Copy> {
+    repr_guard: RwLockReadGuard<'a, SlotListRepr<T>>,
+    is_single: bool,
+}
+
+impl<T: Copy> Deref for SlotListReadGuard<'_, T> {
     type Target = [(Slot, T)];
 
     fn deref(&self) -> &Self::Target {
-        self.0.as_slice()
+        unsafe { SlotListRepr::as_slice(&self.repr_guard, self.is_single) }
     }
 }
 
-impl<T> SlotListReadGuard<'_, T> {
+impl<T: Copy> SlotListReadGuard<'_, T> {
     #[cfg(test)]
     pub fn clone_list(&self) -> SlotList<T>
     where
         T: Copy,
     {
-        self.0.iter().copied().collect()
+        self.deref().iter().copied().collect()
     }
 }
 
-/// Holds slot list lock for writing and provides mutable API translating changes to the slot list.
-#[derive(Debug)]
-pub struct SlotListWriteGuard<'a, T>(RwLockWriteGuard<'a, SlotList<T>>);
+impl<T: Copy + Debug> Debug for SlotListReadGuard<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.deref().fmt(f)
+    }
+}
 
-impl<T> SlotListWriteGuard<'_, T> {
+/// Holds slot list lock for writing and provides mutable API translating changes to the representation.
+///
+/// Note: the adjustment of representation happens on-demand when transitioning from single to multiple
+/// and on `Drop` to check possible transition from list to single.
+pub struct SlotListWriteGuard<'a, T: Copy> {
+    repr_guard: RwLockWriteGuard<'a, SlotListRepr<T>>,
+    meta: &'a AccountMapEntryMeta,
+}
+
+impl<T: Copy> SlotListWriteGuard<'_, T> {
     /// Append element to the end of slot list
     pub fn push(&mut self, item: (Slot, T)) {
-        self.0.push(item);
+        self.change_to_multiple().push(item);
     }
 
     /// Retains only the elements specified by the predicate.
     ///
     /// Returns number of preserved elements (size of the slot list after processing).
-    pub fn retain_and_count<F>(&mut self, f: F) -> usize
+    pub fn retain_and_count<F>(&mut self, mut f: F) -> usize
     where
         F: FnMut(&mut (Slot, T)) -> bool,
     {
-        self.0.retain(f);
-        self.0.len()
+        if self.meta.is_single.load(Ordering::Acquire) {
+            let single_mut = &mut unsafe { self.repr_guard.single };
+            if !f(single_mut) {
+                self.meta.is_single.store(false, Ordering::Release);
+                self.repr_guard.multiple = ManuallyDrop::new(Box::new(vec![]));
+                0
+            } else {
+                1
+            }
+        } else {
+            let slot_list = unsafe { &mut self.repr_guard.multiple };
+            slot_list.retain_mut(f);
+            slot_list.len()
+        }
     }
 
     /// Clears the list, removing all elements.
     #[cfg(test)]
     pub fn clear(&mut self) {
-        self.0.clear();
+        self.change_to_multiple().clear();
+    }
+
+    fn change_to_multiple(&mut self) -> &mut Vec<(Slot, T)> {
+        if self.meta.is_single.swap(false, Ordering::AcqRel) {
+            let single = unsafe { self.repr_guard.single };
+            self.repr_guard.multiple = ManuallyDrop::new(Box::new(vec![single]));
+        }
+        unsafe { self.repr_guard.multiple.as_mut() }
+    }
+
+    fn try_change_to_single(&mut self) {
+        if !self.meta.is_single.load(Ordering::Acquire) {
+            let list = unsafe { &mut self.repr_guard.multiple };
+            if list.len() == 1 {
+                assert_eq!(list.len(), 1);
+                let item = list.pop().unwrap();
+                unsafe { ManuallyDrop::drop(list) };
+                self.repr_guard.single = item;
+                self.meta.is_single.store(true, Ordering::Release);
+            }
+        }
     }
 
     #[cfg(test)]
     pub fn assign(&mut self, value: impl IntoIterator<Item = (Slot, T)>) {
-        *self.0 = value.into_iter().collect();
+        *self.change_to_multiple() = value.into_iter().collect();
     }
 
     #[cfg(test)]
@@ -195,15 +315,28 @@ impl<T> SlotListWriteGuard<'_, T> {
     where
         T: Copy,
     {
-        self.0.iter().copied().collect()
+        self.deref().iter().copied().collect()
     }
 }
 
-impl<T> Deref for SlotListWriteGuard<'_, T> {
+impl<T: Copy> Drop for SlotListWriteGuard<'_, T> {
+    fn drop(&mut self) {
+        self.try_change_to_single();
+    }
+}
+
+impl<T: Copy> Deref for SlotListWriteGuard<'_, T> {
     type Target = [(Slot, T)];
 
     fn deref(&self) -> &Self::Target {
-        self.0.as_slice()
+        let is_single = self.meta.is_single.load(Ordering::Acquire);
+        unsafe { SlotListRepr::as_slice(&self.repr_guard, is_single) }
+    }
+}
+
+impl<T: Copy + Debug> Debug for SlotListWriteGuard<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.deref().fmt(f)
     }
 }
 
@@ -215,6 +348,11 @@ pub struct AccountMapEntryMeta {
     dirty: AtomicBool,
     /// 'age' at which this entry should be purged from the cache (implements lru)
     age: AtomicAge,
+    /// Marker for intepreting `SlotListRepr` as either a single or a multiple.
+    ///
+    /// It is updated when write access to the slot list is released and the size of the slot
+    /// list changes between 1 and != 1.
+    is_single: AtomicBool,
 }
 
 impl AccountMapEntryMeta {
@@ -225,6 +363,7 @@ impl AccountMapEntryMeta {
         AccountMapEntryMeta {
             dirty: AtomicBool::new(true),
             age: AtomicAge::new(storage.future_age_to_flush(is_cached)),
+            is_single: AtomicBool::default(), // overwritten when passed to create entry
         }
     }
     pub fn new_clean<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>(
@@ -233,6 +372,7 @@ impl AccountMapEntryMeta {
         AccountMapEntryMeta {
             dirty: AtomicBool::new(false),
             age: AtomicAge::new(storage.future_age_to_flush(false)),
+            is_single: AtomicBool::default(), // overwritten when passed to create entry
         }
     }
 }
