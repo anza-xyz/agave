@@ -23,7 +23,7 @@ pub struct AccountMapEntry<T> {
     /// purge_slot() also removes non-rooted slots from this list
     slot_list: RwLock<SlotList<T>>,
     /// synchronization metadata for in-memory state since last flush to disk accounts index
-    pub meta: AccountMapEntryMeta,
+    meta: AccountMapEntryMeta,
 }
 
 impl<T: IndexValue> AccountMapEntry<T> {
@@ -126,9 +126,9 @@ impl<T: IndexValue> AccountMapEntry<T> {
 #[derive(Debug, Default)]
 pub struct AccountMapEntryMeta {
     /// true if entry in in-mem idx has changes and needs to be written to disk
-    pub dirty: AtomicBool,
+    dirty: AtomicBool,
     /// 'age' at which this entry should be purged from the cache (implements lru)
-    pub age: AtomicAge,
+    age: AtomicAge,
 }
 
 impl AccountMapEntryMeta {
