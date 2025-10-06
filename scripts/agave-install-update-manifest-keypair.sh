@@ -4,8 +4,9 @@
 # environment
 #
 set -e
+SOLANA_ROOT="$(cd "$(dirname "$0")"/..; pwd)"
 
-source scripts/generate-target-triple.sh
+source "$SOLANA_ROOT"/scripts/generate-target-triple.sh
 TARGET="$BUILD_TARGET_TRIPLE"
 
 SOLANA_INSTALL_UPDATE_MANIFEST_KEYPAIR="SOLANA_INSTALL_UPDATE_MANIFEST_KEYPAIR_${TARGET//-/_}"

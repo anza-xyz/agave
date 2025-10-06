@@ -29,7 +29,7 @@ if [[ ! -f update_manifest_keypair.json ]]; then
   "$SOLANA_ROOT"/scripts/agave-install-update-manifest-keypair.sh "$OS"
 fi
 
-source scripts/generate-target-triple.sh
+source "$SOLANA_ROOT"/scripts/generate-target-triple.sh
 TARGET="$BUILD_TARGET_TRIPLE"
 
 case $URL in
