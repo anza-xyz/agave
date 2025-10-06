@@ -1667,11 +1667,9 @@ mod tests {
         solana_logger::setup();
         let startup = false;
         let ref_count = 1;
-        let pks = (0..=255)
-            .map(|i| Pubkey::from([i as u8; 32]))
-            .collect::<Vec<_>>();
-        let accounts = (0..=255)
+        let map: HashMap<Pubkey, Arc<AccountMapEntry<u64>>> = (0..=255)
             .map(|age| {
+                let pk = Pubkey::from([age; 32]);
                 let one_element_slot_list = SlotList::from([(0, 0)]);
                 let one_element_slot_list_entry = Arc::new(AccountMapEntry::new(
                     one_element_slot_list,
@@ -1679,17 +1677,16 @@ mod tests {
                     AccountMapEntryMeta::default(),
                 ));
                 one_element_slot_list_entry.set_age(age);
-                one_element_slot_list_entry
+                (pk, one_element_slot_list_entry)
             })
-            .collect::<Vec<_>>();
-        let both = pks.iter().zip(accounts.iter()).collect::<Vec<_>>();
+            .collect();
 
         for current_age in 0..=255 {
             for ages_flushing_now in 0..=255 {
                 let mut possible_evictions = PossibleEvictions::new(1);
                 possible_evictions.reset(1);
                 InMemAccountsIndex::<u64, u64>::gather_possible_evictions(
-                    both.iter().cloned(),
+                    map.iter(),
                     &mut possible_evictions,
                     startup,
                     current_age,
@@ -1700,17 +1697,18 @@ mod tests {
                     evictions.evictions_age_possible.len(),
                     1 + ages_flushing_now as usize
                 );
-                evictions.evictions_age_possible.iter().for_each(|(_k, v)| {
+                evictions.evictions_age_possible.iter().for_each(|key| {
+                    let entry = map.get(&key.0).unwrap();
                     assert!(
                         InMemAccountsIndex::<u64, u64>::should_evict_based_on_age(
                             current_age,
-                            v,
+                            entry,
                             startup,
                             ages_flushing_now,
                         ),
                         "current_age: {}, age: {}, ages_flushing_now: {}",
                         current_age,
-                        v.age(),
+                        entry.age(),
                         ages_flushing_now
                     );
                 });
