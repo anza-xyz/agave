@@ -2409,8 +2409,8 @@ pub struct Sockets {
 pub struct NodeConfig {
     /// The IP address advertised to the cluster in gossip
     pub advertised_ip: IpAddr,
-    /// The gossip port advertised to the cluster
-    pub gossip_port: u16,
+    pub gossip_sockets: Vec<UdpSocket>,
+    pub ip_echo_sockets: Vec<TcpListener>,
     pub port_range: PortRange,
     /// Multihoming: The IP addresses the node can bind to
     pub bind_ip_addrs: BindIpAddrs,
@@ -2882,9 +2882,13 @@ mod tests {
     fn new_with_external_ip_test_random() {
         let ip = Ipv4Addr::LOCALHOST;
         let port_range = localhost_port_range_for_tests();
+        let sockaddr = SocketAddr::new(IpAddr::V4(ip), port_range.0);
+        let gossip_sockets = vec![UdpSocket::bind(sockaddr).unwrap()];
+        let ip_echo_sockets = vec![TcpListener::bind(sockaddr).unwrap()];
         let config = NodeConfig {
             advertised_ip: IpAddr::V4(ip),
-            gossip_port: 0,
+            gossip_sockets,
+            ip_echo_sockets,
             port_range,
             bind_ip_addrs: BindIpAddrs::new(vec![IpAddr::V4(ip)]).unwrap(),
             public_tpu_addr: None,
@@ -2906,10 +2910,13 @@ mod tests {
         // port returned by `bind_in_range()` might be snatched up before `Node::new_with_external_ip()` runs
         let port_range = localhost_port_range_for_tests();
         let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let port = port_range.0;
+        let sockaddr = SocketAddr::new(ip, port_range.0);
+        let gossip_sockets = vec![UdpSocket::bind(sockaddr).unwrap()];
+        let ip_echo_sockets = vec![TcpListener::bind(sockaddr).unwrap()];
         let config = NodeConfig {
             advertised_ip: ip,
-            gossip_port: port,
+            gossip_sockets,
+            ip_echo_sockets,
             port_range,
             bind_ip_addrs: BindIpAddrs::new(vec![ip]).unwrap(),
             public_tpu_addr: None,

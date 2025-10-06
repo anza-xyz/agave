@@ -71,7 +71,7 @@ use {
     std::{
         collections::HashSet,
         fs::{self, File},
-        net::{IpAddr, Ipv4Addr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
         num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
         process::exit,
@@ -818,9 +818,18 @@ pub fn execute(
         value_t_or_exit!(matches, "tpu_max_connections_per_ipaddr_per_minute", u64);
     let max_streams_per_ms = value_t_or_exit!(matches, "tpu_max_streams_per_ms", u64);
 
+    // XXX: need to set sockoptions on the sockets that we are creating.
+    let mut gossip_sockets = vec![];
+    let mut ip_echo_sockets = vec![];
+    for ip in bind_addresses.iter() {
+        let sockaddr = SocketAddr::new(*ip, gossip_port);
+        gossip_sockets.push(UdpSocket::bind(sockaddr).unwrap());
+        ip_echo_sockets.push(TcpListener::bind(sockaddr).unwrap());
+    }
     let node_config = NodeConfig {
         advertised_ip,
-        gossip_port,
+        gossip_sockets,
+        ip_echo_sockets,
         port_range: dynamic_port_range,
         bind_ip_addrs: bind_addresses,
         public_tpu_addr,

@@ -64,7 +64,7 @@ use {
         fmt::Display,
         fs::{self, remove_dir_all, File},
         io::Read,
-        net::{IpAddr, Ipv4Addr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
         num::{NonZero, NonZeroU64},
         path::{Path, PathBuf},
         str::FromStr,
@@ -1026,9 +1026,13 @@ impl TestValidator {
         )?;
         let node = {
             let bind_ip_addr = config.node_config.bind_ip_addr;
+            let sockaddr = SocketAddr::new(bind_ip_addr, config.node_config.gossip_addr.port());
+            let gossip_sockets = vec![UdpSocket::bind(sockaddr).unwrap()];
+            let ip_echo_sockets = vec![TcpListener::bind(sockaddr).unwrap()];
             let validator_node_config = NodeConfig {
                 bind_ip_addrs: BindIpAddrs::new(vec![bind_ip_addr])?,
-                gossip_port: config.node_config.gossip_addr.port(),
+                gossip_sockets,
+                ip_echo_sockets,
                 port_range: config.node_config.port_range,
                 advertised_ip: bind_ip_addr,
                 public_tpu_addr: None,
