@@ -143,7 +143,7 @@ fn process_close_proof_context(invoke_context: &mut InvokeContext) -> Result<(),
             return Err(InstructionError::MissingRequiredSignature);
         }
 
-        *instruction_context.get_program_key()?
+        *instruction_context.get_key_of_instruction_account(2)?
     };
 
     let proof_context_account_pubkey = *instruction_context.get_key_of_instruction_account(0)?;
