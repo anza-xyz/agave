@@ -208,7 +208,7 @@ use {
         },
         MaybeTlsStream, WebSocketStream,
     },
-    tungstenite::client::IntoClientRequest,
+    tungstenite::{client::IntoClientRequest, Bytes},
 };
 
 pub type PubsubClientResult<T = ()> = Result<T, PubsubClientError>;
@@ -507,7 +507,7 @@ impl PubsubClient {
                 },
                 // Send `Message::Ping` each 10s if no any other communication
                 () = sleep(Duration::from_secs(10)) => {
-                    ws.send(Message::Ping(vec![].into())).await.map_err(Box::new)?;
+                    ws.send(Message::Ping(Bytes::new())).await.map_err(Box::new)?;
                 },
                 // Read message for subscribe
                 Some((operation, params, response_sender)) = subscribe_receiver.recv() => {
