@@ -1138,7 +1138,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                                         entry = None;
                                     }
                                 }
-                                internal_callback(entry.map(Arc::as_ref));
+                                internal_callback(entry);
                                 entry.is_some()
                             });
                     if !found && matches!(filter, ScanFilter::OnlyAbnormalWithVerify) {

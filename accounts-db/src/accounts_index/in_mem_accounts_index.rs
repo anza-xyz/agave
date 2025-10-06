@@ -281,7 +281,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         &self,
         pubkey: &Pubkey,
         update_age: bool,
-        callback: impl for<'a> FnOnce(Option<&'a Arc<AccountMapEntry<T>>>) -> RT,
+        callback: impl for<'a> FnOnce(Option<&'a AccountMapEntry<T>>) -> RT,
     ) -> RT {
         let mut found = true;
         let mut m = Measure::start("get");
@@ -1401,7 +1401,7 @@ mod tests {
             .map_internal
             .write()
             .unwrap()
-            .insert(pubkey, Arc::clone(&entry));
+            .insert(pubkey, entry);
 
         let mut callback_called = false;
         accounts_index.get_or_create_index_entry_for_pubkey(&pubkey, |entry| {
@@ -1642,11 +1642,11 @@ mod tests {
             let startup = false;
             let current_age = 0;
             let one_element_slot_list = SlotList::from([(0, 0)]);
-            let one_element_slot_list_entry = Arc::new(AccountMapEntry::new(
+            let one_element_slot_list_entry = AccountMapEntry::new(
                 one_element_slot_list,
                 ref_count,
                 AccountMapEntryMeta::default(),
-            ));
+            );
 
             // exceeded budget
             assert_eq!(
@@ -1726,20 +1726,16 @@ mod tests {
         let mut current_age = 0;
         let ref_count = 1;
         let one_element_slot_list = SlotList::from([(0, 0)]);
-        let one_element_slot_list_entry = Arc::new(AccountMapEntry::new(
+        let one_element_slot_list_entry = AccountMapEntry::new(
             one_element_slot_list,
             ref_count,
             AccountMapEntryMeta::default(),
-        ));
+        );
 
         // empty slot list
         assert!(!bucket.should_evict_from_mem(
             current_age,
-            &Arc::new(AccountMapEntry::new(
-                SlotList::new(),
-                ref_count,
-                AccountMapEntryMeta::default()
-            )),
+            &AccountMapEntry::new(SlotList::new(), ref_count, AccountMapEntryMeta::default()),
             startup,
             false,
             0,
@@ -1755,11 +1751,11 @@ mod tests {
         // 2 element slot list
         assert!(!bucket.should_evict_from_mem(
             current_age,
-            &Arc::new(AccountMapEntry::new(
+            &AccountMapEntry::new(
                 SlotList::from_iter([(0, 0u64), (1, 1)]),
                 ref_count,
                 AccountMapEntryMeta::default()
-            )),
+            ),
             startup,
             false,
             0,
@@ -1770,11 +1766,11 @@ mod tests {
             // 1 element slot list with a CACHED item - f64 acts like cached
             assert!(!bucket.should_evict_from_mem(
                 current_age,
-                &Arc::new(AccountMapEntry::new(
+                &AccountMapEntry::new(
                     SlotList::from([(0, 0.0)]),
                     ref_count,
                     AccountMapEntryMeta::default()
-                )),
+                ),
                 startup,
                 false,
                 0,
