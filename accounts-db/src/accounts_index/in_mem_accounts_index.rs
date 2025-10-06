@@ -657,14 +657,15 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
         // If we find an existing account at old_slot, replace it rather than adding a new entry to the list
         let mut found_slot = false;
-        slot_list.retain(|(cur_slot, cur_account_info)| {
+        slot_list.retain(|cur| {
+            let (cur_slot, cur_account_info) = cur;
             if *cur_slot == old_slot {
                 // Ensure we only find one!
                 assert!(!found_slot);
                 let is_cur_account_cached = cur_account_info.is_cached();
 
                 // Replace the item
-                let reclaim_item = (old_slot, mem::replace(cur_account_info, account_info));
+                let reclaim_item = mem::replace(cur, (slot, account_info));
                 match reclaim {
                     UpsertReclaim::ReclaimOldSlots | UpsertReclaim::PopulateReclaims => {
                         // Reclaims are used to reclaim other versions of accounts when they are
@@ -691,7 +692,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             } else if reclaim == UpsertReclaim::ReclaimOldSlots {
                 let is_cur_account_cached = cur_account_info.is_cached();
                 if !is_cur_account_cached && *cur_slot < slot {
-                    let reclaim_item = (old_slot, *cur_account_info);
+                    let reclaim_item = *cur;
                     reclaims.push(reclaim_item);
                     ref_count_change -= 1;
                     return false;
