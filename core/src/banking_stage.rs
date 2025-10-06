@@ -12,6 +12,7 @@ use {
     crate::{
         banking_stage::{
             consume_worker::ConsumeWorker,
+            consumer::ConsumerConfig,
             packet_deserializer::PacketDeserializer,
             transaction_scheduler::{
                 prio_graph_scheduler::PrioGraphScheduler,
@@ -524,6 +525,7 @@ impl BankingStage {
                 exit.clone(),
                 work_receiver,
                 Consumer::new(
+                    ConsumerConfig::default(),
                     context.committer.clone(),
                     context.transaction_recorder.clone(),
                     QosService::new(id),
@@ -601,6 +603,7 @@ impl BankingStage {
         let tpu_receiver = PacketReceiver::new(context.tpu_vote_receiver.clone());
         let gossip_receiver = PacketReceiver::new(context.gossip_vote_receiver.clone());
         let consumer = Consumer::new(
+            ConsumerConfig::default(),
             context.committer.clone(),
             context.transaction_recorder.clone(),
             QosService::new(0),

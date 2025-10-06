@@ -10,7 +10,9 @@ use {
     solana_account::{Account, ReadableAccount},
     solana_clock::Epoch,
     solana_core::banking_stage::{
-        committer::Committer, consumer::Consumer, qos_service::QosService,
+        committer::Committer,
+        consumer::{Consumer, ConsumerConfig},
+        qos_service::QosService,
     },
     solana_entry::entry::Entry,
     solana_keypair::Keypair,
@@ -83,7 +85,13 @@ fn create_transactions(bank: &Bank, num: usize) -> Vec<RuntimeTransaction<Saniti
 fn create_consumer(transaction_recorder: TransactionRecorder) -> Consumer {
     let (replay_vote_sender, _replay_vote_receiver) = unbounded();
     let committer = Committer::new(None, replay_vote_sender, Arc::default());
-    Consumer::new(committer, transaction_recorder, QosService::new(0), None)
+    Consumer::new(
+        ConsumerConfig::default(),
+        committer,
+        transaction_recorder,
+        QosService::new(0),
+        None,
+    )
 }
 
 struct BenchFrame {
