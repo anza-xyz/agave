@@ -44,8 +44,8 @@ use {
     },
 };
 
-pub type BuiltinFunctionWithContext = BuiltinFunction<InvokeContext<'static>>;
-pub type Executable = GenericExecutable<InvokeContext<'static>>;
+pub type BuiltinFunctionWithContext = BuiltinFunction<InvokeContext<'static, 'static>>;
+pub type Executable = GenericExecutable<InvokeContext<'static, 'static>>;
 pub type RegisterTrace<'a> = &'a [[u64; 12]];
 
 /// Adapter so we can unify the interfaces of built-in programs and syscalls
@@ -86,7 +86,7 @@ macro_rules! declare_process_instruction {
     };
 }
 
-impl ContextObject for InvokeContext<'_> {
+impl ContextObject for InvokeContext<'_, '_> {
     fn consume(&mut self, amount: u64) {
         // 1 to 1 instruction to compute unit mapping
         // ignore overflow, Ebpf will bail if exceeded
@@ -175,9 +175,9 @@ pub struct SerializedAccountMetadata {
 }
 
 /// Main pipeline from runtime to program execution.
-pub struct InvokeContext<'a> {
+pub struct InvokeContext<'a, 'ix_data> {
     /// Information about the currently executing transaction.
-    pub transaction_context: &'a mut TransactionContext,
+    pub transaction_context: &'a mut TransactionContext<'ix_data>,
     /// The local program cache for the transaction batch.
     pub program_cache_for_tx_batch: &'a mut ProgramCacheForTxBatch,
     /// Runtime configurations used to provision the invocation environment.
@@ -198,10 +198,10 @@ pub struct InvokeContext<'a> {
     register_traces: Vec<(usize, Vec<[u64; 12]>)>,
 }
 
-impl<'a> InvokeContext<'a> {
+impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        transaction_context: &'a mut TransactionContext,
+        transaction_context: &'a mut TransactionContext<'ix_data>,
         program_cache_for_tx_batch: &'a mut ProgramCacheForTxBatch,
         environment_config: EnvironmentConfig<'a>,
         log_collector: Option<Rc<RefCell<LogCollector>>>,
@@ -499,7 +499,7 @@ impl<'a> InvokeContext<'a> {
     }
 
     /// Processes a precompile instruction
-    pub fn process_precompile<'ix_data>(
+    pub fn process_precompile(
         &mut self,
         program_id: &Pubkey,
         instruction_data: &[u8],
@@ -855,6 +855,7 @@ macro_rules! with_mock_invoke_context {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(unused)]
 pub fn mock_process_instruction_with_feature_set<
     F: FnMut(&mut InvokeContext),
     G: FnMut(&mut InvokeContext),
