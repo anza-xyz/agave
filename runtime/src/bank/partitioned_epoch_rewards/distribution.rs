@@ -163,7 +163,7 @@ impl Bank {
         let metrics = RewardsStoreMetrics {
             pre_capitalization,
             post_capitalization: self.capitalization(),
-            total_stake_accounts_count: partition_rewards.all_stake_rewards.len(),
+            total_stake_accounts_count: partition_rewards.all_stake_rewards.num_rewards(),
             total_num_partitions: partition_rewards.partition_indices.len(),
             partition_index,
             store_stake_accounts_us,
@@ -269,8 +269,12 @@ impl Bank {
                 .unwrap_or_else(|| {
                     panic!(
                         "partition reward out of bound: {index} >= {}",
-                        partition_rewards.all_stake_rewards.len()
+                        partition_rewards.all_stake_rewards.total_len()
                     )
+                })
+                .as_ref()
+                .unwrap_or_else(|| {
+                    panic!("partition reward {index} is empty");
                 });
             let stake_pubkey = partitioned_stake_reward.stake_pubkey;
             let reward_amount = partitioned_stake_reward.stake_reward;
@@ -307,7 +311,7 @@ mod tests {
             bank::{
                 partitioned_epoch_rewards::{
                     epoch_rewards_hasher::hash_rewards_into_partitions, tests::convert_rewards,
-                    REWARD_CALCULATION_NUM_BLOCKS,
+                    PartitionedStakeRewards, REWARD_CALCULATION_NUM_BLOCKS,
                 },
                 tests::create_genesis_config,
             },
@@ -339,8 +343,8 @@ mod tests {
         let expected_num = 100;
 
         let stake_rewards = (0..expected_num)
-            .map(|_| PartitionedStakeReward::new_random())
-            .collect::<Vec<_>>();
+            .map(|_| Some(PartitionedStakeReward::new_random()))
+            .collect::<PartitionedStakeRewards>();
 
         let partition_indices =
             hash_rewards_into_partitions(&stake_rewards, &Hash::new_from_array([1; 32]), 2);
@@ -363,8 +367,8 @@ mod tests {
         let expected_num = 1;
 
         let stake_rewards = (0..expected_num)
-            .map(|_| PartitionedStakeReward::new_random())
-            .collect::<Vec<_>>();
+            .map(|_| Some(PartitionedStakeReward::new_random()))
+            .collect::<PartitionedStakeRewards>();
 
         let partition_indices = hash_rewards_into_partitions(
             &stake_rewards,
@@ -388,7 +392,7 @@ mod tests {
 
         bank.set_epoch_reward_status_distribution(
             bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
-            Arc::new(vec![]),
+            Arc::new(PartitionedStakeRewards::default()),
             vec![],
         );
 
@@ -745,11 +749,11 @@ mod tests {
             .map(|_| StakeReward::new_random())
             .collect::<Vec<_>>();
         populate_starting_stake_accounts_from_stake_rewards(&bank, &stake_rewards);
-        let converted_rewards: Vec<_> = convert_rewards(stake_rewards);
+        let converted_rewards = convert_rewards(stake_rewards);
 
         let expected_total = converted_rewards
-            .iter()
-            .map(|stake_reward| stake_reward.stake_reward)
+            .enumerated_rewards_iter()
+            .map(|(_, stake_reward)| stake_reward.stake_reward)
             .sum::<u64>();
 
         let partitioned_rewards = StartBlockHeightAndPartitionedRewards {
@@ -772,7 +776,7 @@ mod tests {
 
         let partitioned_rewards = StartBlockHeightAndPartitionedRewards {
             distribution_starting_block_height: bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
-            all_stake_rewards: Arc::new(vec![]),
+            all_stake_rewards: Arc::new(PartitionedStakeRewards::default()),
             partition_indices: vec![vec![]],
         };
 

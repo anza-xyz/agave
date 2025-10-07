@@ -163,7 +163,6 @@ pub fn snapshot_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .help("Use DIR for snapshot location [default: --ledger value]"),
         Arg::with_name("full_snapshot_archive_path")
             .long("full-snapshot-archive-path")
-            .alias("snapshot-archive-path")
             .value_name("DIR")
             .takes_value(true)
             .global(true)
