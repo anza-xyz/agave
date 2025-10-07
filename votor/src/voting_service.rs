@@ -263,6 +263,7 @@ mod tests {
         solana_bls_signatures::Signature as BLSSignature,
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_keypair::Keypair,
+        solana_net_utils::sockets::bind_to_localhost_unique,
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
@@ -359,7 +360,7 @@ mod tests {
         // Create listener thread on a random port we allocated and return SocketAddr to create VotingService
 
         // Bind to a random UDP port
-        let socket = solana_net_utils::bind_to_localhost().unwrap();
+        let socket = bind_to_localhost_unique().unwrap();
         let listener_addr = socket.local_addr().unwrap();
 
         // Create VotingService with the listener address
