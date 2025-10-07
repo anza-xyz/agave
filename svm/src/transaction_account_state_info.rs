@@ -30,7 +30,7 @@ impl TransactionAccountStateInfo {
                         // balances; however they will never be loaded as writable
                         debug_assert!(!native_loader::check_id(account.owner()));
 
-                        Some(get_account_rent_state(rent, &account))
+                        Some(get_account_rent_state(rent, &*account))
                     } else {
                         None
                     };
