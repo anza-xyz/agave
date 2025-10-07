@@ -49,8 +49,6 @@ pub const DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE: u64 = 8;
 // This will be adjusted and parameterized in follow-on PRs.
 pub const DEFAULT_QUIC_ENDPOINTS: usize = 1;
 
-pub const DEFAULT_TPU_COALESCE: Duration = Duration::from_millis(5);
-
 pub fn default_num_tpu_transaction_forward_receive_threads() -> usize {
     num_cpus::get().min(16)
 }
@@ -70,7 +68,7 @@ pub struct SpawnServerResult {
 }
 
 /// Controls the the channel size for the PacketBatch coalesce
-pub(crate) const DEFAULT_MAX_COALESCE_CHANNEL_SIZE: usize = 250_000;
+pub(crate) const DEFAULT_ACCUMULATOR_CHANNEL_SIZE: usize = 250_000;
 
 /// Returns default server configuration along with its PEM certificate chain.
 #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
@@ -631,8 +629,7 @@ pub struct QuicServerParams {
     pub max_streams_per_ms: u64,
     pub max_connections_per_ipaddr_per_min: u64,
     pub wait_for_chunk_timeout: Duration,
-    pub coalesce: Duration,
-    pub coalesce_channel_size: usize,
+    pub accumulator_channel_size: usize,
     pub num_threads: NonZeroUsize,
 }
 
@@ -645,8 +642,7 @@ impl Default for QuicServerParams {
             max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-            coalesce: DEFAULT_TPU_COALESCE,
-            coalesce_channel_size: DEFAULT_MAX_COALESCE_CHANNEL_SIZE,
+            accumulator_channel_size: DEFAULT_ACCUMULATOR_CHANNEL_SIZE,
             num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
         }
     }
@@ -660,7 +656,6 @@ impl QuicServerParams {
     pub fn default_for_tests() -> Self {
         // Shrink the channel size to avoid a massive allocation for tests
         Self {
-            coalesce_channel_size: 100_000,
             num_threads: Self::DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
             ..Self::default()
         }

@@ -62,7 +62,7 @@ use {
         snapshot_utils::{self, BANK_SNAPSHOTS_DIR},
     },
     solana_signer::Signer,
-    solana_streamer::quic::{QuicServerParams, DEFAULT_TPU_COALESCE},
+    solana_streamer::quic::QuicServerParams,
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_turbine::{
         broadcast_stage::BroadcastStageType,
@@ -78,7 +78,6 @@ use {
         process::exit,
         str::FromStr,
         sync::{atomic::AtomicBool, Arc, RwLock},
-        time::Duration,
     },
 };
 
@@ -162,9 +161,6 @@ pub fn execute(
 
     let private_rpc = matches.is_present("private_rpc");
     let do_port_check = !matches.is_present("no_port_check");
-    let tpu_coalesce = value_t!(matches, "tpu_coalesce_ms", u64)
-        .map(Duration::from_millis)
-        .unwrap_or(DEFAULT_TPU_COALESCE);
 
     let ledger_path = run_args.ledger_path;
 
@@ -587,7 +583,6 @@ pub fn execute(
         accounts_db_skip_shrink: true,
         accounts_db_force_initial_clean: matches.is_present("no_skip_initial_accounts_db_clean"),
         snapshot_config,
-        tpu_coalesce,
         no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
         wait_to_vote_slot: None,
         runtime_config: RuntimeConfig {
@@ -955,7 +950,6 @@ pub fn execute(
         max_unstaked_connections: tpu_max_unstaked_connections.try_into().unwrap(),
         max_streams_per_ms,
         max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-        coalesce: tpu_coalesce,
         num_threads: tpu_transaction_receive_threads,
         ..Default::default()
     };
@@ -966,7 +960,6 @@ pub fn execute(
         max_unstaked_connections: tpu_max_fwd_unstaked_connections.try_into().unwrap(),
         max_streams_per_ms,
         max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-        coalesce: tpu_coalesce,
         num_threads: tpu_transaction_forward_receive_threads,
         ..Default::default()
     };
