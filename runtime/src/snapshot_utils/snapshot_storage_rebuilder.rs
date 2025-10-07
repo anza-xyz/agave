@@ -16,13 +16,13 @@ use {
     },
     solana_accounts_db::{
         account_storage::AccountStorageMap,
-        accounts_db::{AccountsFileId, AtomicAccountsFileId},
+        accounts_db::{AccountStorageEntry, AccountsFileId, AtomicAccountsFileId},
         accounts_file::StorageAccess,
     },
     solana_clock::Slot,
     solana_nohash_hasher::BuildNoHashHasher,
     std::{
-        collections::HashMap,
+        collections::{hash_map::RandomState, HashMap},
         path::PathBuf,
         str::FromStr as _,
         sync::{
@@ -44,8 +44,8 @@ pub(crate) struct SnapshotStorageRebuilder {
     snapshot_storage_lengths: HashMap<Slot, HashMap<SerializedAccountsFileId, usize>>,
     /// Container for storing snapshot file paths
     storage_paths: DashMap<Slot, Mutex<Vec<PathBuf>>>,
-    /// Container for storing rebuilt snapshot storages
-    storage: AccountStorageMap,
+    /// Container for storing rebuilt snapshot storages (uses RandomState for better parallel insert performance)
+    storage: DashMap<Slot, Arc<AccountStorageEntry>, RandomState>,
     /// Tracks next append_vec_id
     next_append_vec_id: Arc<AtomicAccountsFileId>,
     /// Tracker for number of processed slots
@@ -99,9 +99,10 @@ impl SnapshotStorageRebuilder {
         storage_access: StorageAccess,
         obsolete_accounts: Option<DashMap<Slot, SerdeObsoleteAccounts>>,
     ) -> Self {
+        // Use RandomState for better parallel insert performance during rebuild
         let storage = DashMap::with_capacity_and_hasher(
             snapshot_storage_lengths.len(),
-            BuildNoHashHasher::default(),
+            RandomState::default(),
         );
         let storage_paths: DashMap<_, _> = snapshot_storage_lengths
             .iter()
@@ -161,7 +162,16 @@ impl SnapshotStorageRebuilder {
 
         // wait for asynchronous threads to complete
         rebuilder.wait_for_completion(exit_receiver)?;
-        Ok(Arc::try_unwrap(rebuilder).unwrap().storage)
+
+        // Convert from RandomState (good for parallel inserts) to BuildNoHashHasher (good for sequential access)
+        let temp_storage = Arc::try_unwrap(rebuilder).unwrap().storage;
+        let mut final_storage = DashMap::with_capacity_and_hasher(
+            temp_storage.len(),
+            BuildNoHashHasher::default(),
+        );
+        final_storage.extend(temp_storage);
+
+        Ok(final_storage)
     }
 
     /// Processes buffered append_vec_files
