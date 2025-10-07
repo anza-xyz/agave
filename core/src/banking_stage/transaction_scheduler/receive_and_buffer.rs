@@ -693,16 +693,7 @@ impl TransactionViewReceiveAndBuffer {
         transaction_account_lock_limit: usize,
     ) -> Result<TransactionViewState, PacketHandlingError> {
         // Parsing and basic sanitization checks
-<<<<<<< HEAD
         let Ok(view) = SanitizedTransactionView::try_new_sanitized(bytes) else {
-=======
-        let Ok(view) = SanitizedTransactionView::try_new_sanitized(
-            bytes,
-            working_bank
-                .feature_set
-                .is_active(&agave_feature_set::static_instruction_limit::id()),
-        ) else {
->>>>>>> f62de7212 (ReceiveAndBuffer: earlier lock count validation (#8329))
             return Err(PacketHandlingError::Sanitization);
         };
 
@@ -837,11 +828,10 @@ mod tests {
         crate::banking_stage::tests::create_slow_genesis_config,
         crossbeam_channel::{unbounded, Receiver},
         solana_hash::Hash,
+        solana_instruction::{AccountMeta, Instruction},
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
-        solana_message::{
-            v0, AccountMeta, AddressLookupTableAccount, Instruction, VersionedMessage,
-        },
+        solana_message::{v0, AddressLookupTableAccount, VersionedMessage},
         solana_packet::{Meta, PACKET_DATA_SIZE},
         solana_perf::packet::{to_packet_batches, Packet, PacketBatch, PinnedPacketBatch},
         solana_pubkey::Pubkey,
