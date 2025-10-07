@@ -16,7 +16,6 @@ use {
     },
 };
 
-#[allow(dead_code)]
 /// Inputs for the certificate pool thread
 pub(crate) struct ConsensusPoolContext {
     pub(crate) exit: Arc<AtomicBool>,
@@ -39,7 +38,6 @@ pub(crate) struct ConsensusPoolContext {
     pub(crate) commitment_sender: Sender<CommitmentAggregationData>,
 }
 
-#[allow(dead_code)]
 pub(crate) struct ConsensusPoolService {
     t_ingest: JoinHandle<()>,
 }

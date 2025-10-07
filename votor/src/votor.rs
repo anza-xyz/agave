@@ -72,7 +72,6 @@ use {
     std::sync::{atomic::AtomicBool, Arc, Condvar, Mutex, RwLock},
 };
 
-#[allow(dead_code)]
 /// Communication with the block creation loop to notify leader window
 #[derive(Default)]
 pub struct LeaderWindowNotifier {
@@ -81,7 +80,6 @@ pub struct LeaderWindowNotifier {
     pub highest_parent_ready: RwLock<(Slot, (Slot, Hash))>,
 }
 
-#[allow(dead_code)]
 /// Inputs to Votor
 pub struct VotorConfig {
     pub exit: Arc<AtomicBool>,
@@ -115,7 +113,6 @@ pub struct VotorConfig {
     pub consensus_message_receiver: Receiver<ConsensusMessage>,
 }
 
-#[allow(dead_code)]
 /// Context shared with block creation, replay, gossip, banking stage etc
 pub(crate) struct SharedContext {
     pub(crate) blockstore: Arc<Blockstore>,
@@ -126,7 +123,6 @@ pub(crate) struct SharedContext {
     pub(crate) vote_history_storage: Arc<dyn VoteHistoryStorage>,
 }
 
-#[allow(dead_code)]
 pub struct Votor {
     // TODO: Just a placeholder for how migration could look like,
     // will fix once we finish the strategy

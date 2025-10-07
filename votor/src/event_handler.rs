@@ -23,12 +23,10 @@ use {
     thiserror::Error,
 };
 
-#[allow(dead_code)]
 /// Banks that have completed replay, but are yet to be voted on
 /// in the form of (block, parent block)
 pub(crate) type PendingBlocks = BTreeMap<Slot, Vec<(Block, Block)>>;
 
-#[allow(dead_code)]
 /// Inputs for the event handler thread
 pub(crate) struct EventHandlerContext {
     pub(crate) exit: Arc<AtomicBool>,
@@ -61,12 +59,10 @@ enum EventLoopError {
     SetIdentityError(#[from] VoteHistoryError),
 }
 
-#[allow(dead_code)]
 pub(crate) struct EventHandler {
     t_event_handler: JoinHandle<()>,
 }
 
-#[allow(dead_code)]
 struct LocalContext {
     pub(crate) my_pubkey: Pubkey,
     pub(crate) pending_blocks: PendingBlocks,
