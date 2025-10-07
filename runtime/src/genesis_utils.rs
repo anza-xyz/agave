@@ -127,6 +127,7 @@ pub fn create_genesis_config_with_vote_accounts(
     )
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub fn create_genesis_config_with_alpenglow_vote_accounts(
     mint_lamports: u64,
     voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
@@ -157,17 +158,13 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
     let voting_keypair = voting_keypairs[0].borrow().vote_keypair.insecure_clone();
 
     let validator_pubkey = voting_keypairs[0].borrow().node_keypair.pubkey();
-    let validator_bls_pubkey = if is_alpenglow {
-        Some(
-            voting_keypairs[0]
-                .borrow()
-                .bls_keypair
-                .public
-                .to_bytes_compressed(),
-        )
-    } else {
-        None
-    };
+    let validator_bls_pubkey = Some(
+        voting_keypairs[0]
+            .borrow()
+            .bls_keypair
+            .public
+            .to_bytes_compressed(),
+    );
     let mut genesis_config = create_genesis_config_with_leader_ex(
         mint_lamports,
         &mint_keypair.pubkey(),
@@ -202,15 +199,11 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
 
         // Create accounts
         let node_account = Account::new(VALIDATOR_LAMPORTS, 0, &system_program::id());
-        let bls_pubkey_compressed = if is_alpenglow {
-            validator_voting_keypairs
-                .borrow()
-                .bls_keypair
-                .public
-                .to_bytes_compressed()
-        } else {
-            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]
-        };
+        let bls_pubkey_compressed = validator_voting_keypairs
+            .borrow()
+            .bls_keypair
+            .public
+            .to_bytes_compressed();
         let vote_account = if feature_set.is_active(&vote_state_v4::id()) {
             // Vote state v4 feature active. Create a v4 account.
             vote_state::create_v4_account_with_authorized(
@@ -287,13 +280,17 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
     ])
     .unwrap();
 
+    let bls_keypair =
+        BLSKeypair::derive_from_signer(&voting_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
+    let validator_bls_pubkey = Some(bls_keypair.public.to_bytes_compressed());
+
     let genesis_config = create_genesis_config_with_leader_ex(
         mint_lamports,
         &mint_keypair.pubkey(),
         validator_pubkey,
         &voting_keypair.pubkey(),
         &Pubkey::new_unique(),
-        None,
+        validator_bls_pubkey,
         validator_stake_lamports,
         VALIDATOR_LAMPORTS,
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees

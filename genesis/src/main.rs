@@ -64,6 +64,10 @@ use {
     },
 };
 
+// In order to satisfy the VAT we need to fund all vote accounts
+// This corresponds to 100 epochs worth of VAT
+const VAT_MINIMUM_LAMPORTS: u64 = 1_600_000_000_000; // 1600 SOL
+
 pub enum AccountFileFormat {
     Pubkey,
     Keypair,
@@ -283,6 +287,9 @@ fn add_validator_accounts(
             .map(|bls_pubkey| bls_pubkey.0)
             .unwrap_or([0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]);
         let vote_account = if vote_state_v4_enabled {
+            // Vote account needs enough lamports for rent exemption plus VAT
+            let vote_account_lamports =
+                rent.minimum_balance(VoteStateV4::size_of()) + VAT_MINIMUM_LAMPORTS;
             vote_state::create_v4_account_with_authorized(
                 identity_pubkey,
                 identity_pubkey,
@@ -292,7 +299,7 @@ fn add_validator_accounts(
                 identity_pubkey,
                 0,
                 identity_pubkey,
-                rent.minimum_balance(VoteStateV4::size_of()).max(1),
+                vote_account_lamports,
             )
         } else {
             vote_state::create_v3_account_with_authorized(

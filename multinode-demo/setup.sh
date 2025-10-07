@@ -6,13 +6,6 @@ source "$here"/common.sh
 
 set -e
 
-# Check if --alpenglow flag is present in arguments
-if [[ " $* " == *" --alpenglow "* ]]; then
-  alpenglow=true
-else
-  alpenglow=false
-fi
-
 rm -rf "$SOLANA_CONFIG_DIR"/bootstrap-validator
 mkdir -p "$SOLANA_CONFIG_DIR"/bootstrap-validator
 
@@ -39,6 +32,8 @@ else
   $solana_keygen new --no-passphrase -so "$SOLANA_CONFIG_DIR"/bootstrap-validator/vote-account.json
 fi
 
+bls_pubkey=$($solana_keygen bls_pubkey "$SOLANA_CONFIG_DIR"/bootstrap-validator/identity.json)
+
 args=(
   "$@"
   --max-genesis-archive-unpacked-size 1073741824
@@ -46,13 +41,8 @@ args=(
   --bootstrap-validator "$SOLANA_CONFIG_DIR"/bootstrap-validator/identity.json
                         "$SOLANA_CONFIG_DIR"/bootstrap-validator/vote-account.json
                         "$SOLANA_CONFIG_DIR"/bootstrap-validator/stake-account.json
+  --bootstrap-validator-bls-pubkey "$bls_pubkey"
 )
-
-# If alpenglow is enabled, derive and add BLS pubkey for the bootstrap validator
-if [[ $alpenglow = true ]]; then
-  bls_pubkey=$($solana_keygen bls_pubkey "$SOLANA_CONFIG_DIR"/bootstrap-validator/identity.json)
-  args+=(--bootstrap-validator-bls-pubkey "$bls_pubkey")
-fi
 
 "$SOLANA_ROOT"/fetch-core-bpf.sh
 if [[ -r core-bpf-genesis-args.sh ]]; then

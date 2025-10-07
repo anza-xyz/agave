@@ -793,11 +793,15 @@ mod tests {
             stakes::{Stakes, tests::create_staked_node_accounts},
         },
         agave_feature_set::{FeatureSet, delay_commission_updates},
+        bincode,
         rayon::ThreadPoolBuilder,
         solana_account::{
             AccountSharedData, ReadableAccount, accounts_equal, state_traits::StateMut,
         },
         solana_accounts_db::partitioned_rewards::PartitionedEpochRewardsConfig,
+        solana_bls_signatures::{
+            keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
+        },
         solana_epoch_schedule::EpochSchedule,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_reward_info::RewardType,
@@ -809,7 +813,7 @@ mod tests {
         solana_vote_interface::state::{
             BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteInit, VoteStateV4, VoteStateVersions,
         },
-        solana_vote_program::vote_state,
+        solana_vote_program::{authorized_voters::AuthorizedVoters, vote_state},
         std::{
             collections::HashSet,
             sync::{Arc, RwLockReadGuard},
@@ -1065,22 +1069,34 @@ mod tests {
         assert_eq!(bank.epoch(), op.epoch);
         for (vote_address, vote_op) in &op.vote_operations {
             if let Some(balance) = &vote_op.create_with_balance {
-                let vote_state = VoteStateVersions::V4(Box::new(VoteStateV4::new_with_defaults(
-                    vote_address,
-                    &VoteInit {
-                        node_pubkey: Pubkey::new_unique(),
-                        authorized_voter: Pubkey::new_unique(),
-                        authorized_withdrawer: Pubkey::new_unique(),
-                        commission: 0,
-                    },
-                    &bank.clock(),
-                )));
+                let vote_init = VoteInit {
+                    node_pubkey: Pubkey::new_unique(),
+                    authorized_voter: Pubkey::new_unique(),
+                    authorized_withdrawer: Pubkey::new_unique(),
+                    commission: 0,
+                };
+                // Create a BLS pubkey so the vote account passes VAT filtering
+                let bls_pubkey: BLSPubkeyCompressed = BLSKeypair::new().public.into();
+                let bls_pubkey_buffer = bincode::serialize(&bls_pubkey).unwrap();
+                let bls_pubkey_compressed = Some(bls_pubkey_buffer.try_into().unwrap());
+                let vote_state = VoteStateV4 {
+                    node_pubkey: vote_init.node_pubkey,
+                    authorized_voters: AuthorizedVoters::new(
+                        bank.epoch(),
+                        vote_init.authorized_voter,
+                    ),
+                    authorized_withdrawer: vote_init.authorized_withdrawer,
+                    bls_pubkey_compressed,
+                    ..VoteStateV4::default()
+                };
                 let mut account = solana_account::AccountSharedData::new(
                     *balance,
                     VoteStateV4::size_of(),
                     &solana_vote_program::id(),
                 );
-                account.serialize_data(&vote_state).unwrap();
+                account
+                    .serialize_data(&VoteStateVersions::new_v4(vote_state))
+                    .unwrap();
                 bank.store_account(vote_address, &account);
             }
 
