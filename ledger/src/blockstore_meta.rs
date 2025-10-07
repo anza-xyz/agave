@@ -1,8 +1,10 @@
 use {
     crate::{
         bit_vec::BitVec,
-        shred::{self, Shred, ShredType, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT},
+        blockstore::BlockstoreError,
+        shred::{self, Shred, ShredType, MAX_DATA_SHREDS_PER_SLOT},
     },
+    bincode::Options,
     bitflags::bitflags,
     serde::{Deserialize, Deserializer, Serialize, Serializer},
     solana_clock::{Slot, UnixTimestamp},
@@ -219,6 +221,30 @@ pub type SlotMeta = SlotMetaV1;
 pub type CompletedDataIndexes = CompletedDataIndexesV1;
 pub type SlotMetaFallback = SlotMetaV2;
 
+pub(crate) fn deserialize_slot_meta(data: &[u8]) -> Result<SlotMeta, BlockstoreError> {
+    // SlotMeta is being migrated to a new `completed_data_indexes` format.
+    //
+    // Ensure that reject trailing bytes is enabled to prevent false postivies in deserialization.
+    let config = bincode::DefaultOptions::new()
+        // `bincode::serialize` uses fixint encoding by default, so we need to use the same here
+        .with_fixint_encoding()
+        .reject_trailing_bytes();
+
+    // Migration strategy for new column format:
+    // 1. Release 1: Add ability to read new format as fallback, keep writing old format
+    // 2. Release 2: Switch to writing new format, keep reading old format as fallback
+    // 3. Release 3: Remove old format support once stable
+    // This allows safe downgrade to Release 1 since it can read both formats
+    let index: bincode::Result<SlotMeta> = config.deserialize(data);
+    match index {
+        Ok(index) => Ok(index),
+        Err(_) => {
+            let index: SlotMetaFallback = config.deserialize(data)?;
+            Ok(index.into())
+        }
+    }
+}
+
 // Serde implementation of serialize and deserialize for Option<u64>
 // where None is represented as u64::MAX; for backward compatibility.
 mod serde_compat {
@@ -247,6 +273,28 @@ pub type ShredIndex = ShredIndexV2;
 /// See https://github.com/anza-xyz/agave/issues/3570.
 pub type IndexFallback = IndexV1;
 pub type ShredIndexFallback = ShredIndexV1;
+
+pub(crate) fn deserialize_index(data: &[u8]) -> Result<Index, BlockstoreError> {
+    let config = bincode::DefaultOptions::new()
+        // `bincode::serialize` uses fixint encoding by default, so we need to use the same here
+        .with_fixint_encoding()
+        .reject_trailing_bytes();
+
+    // Migration strategy for new column format:
+    // 1. Release 1: Add ability to read new format as fallback, keep writing old format
+    // 2. Release 2: Switch to writing new format, keep reading old format as fallback
+    // 3. Release 3: Remove old format support once stable
+    // This allows safe downgrade to Release 1 since it can read both formats
+    // https://github.com/anza-xyz/agave/issues/3570
+    let index: bincode::Result<Index> = config.deserialize(data);
+    match index {
+        Ok(index) => Ok(index),
+        Err(_) => {
+            let index: IndexFallback = config.deserialize(data)?;
+            Ok(index.into())
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 /// Index recording presence/absence of shreds
@@ -341,14 +389,8 @@ mod serde_compat_cast {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct ErasureConfig {
-    pub(crate) num_data: usize,
-    pub(crate) num_coding: usize,
-}
-
-impl ErasureConfig {
-    pub(crate) fn is_fixed(&self) -> bool {
-        self.num_data == DATA_SHREDS_PER_FEC_BLOCK && self.num_coding == DATA_SHREDS_PER_FEC_BLOCK
-    }
+    num_data: usize,
+    num_coding: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -367,6 +409,59 @@ pub struct DuplicateSlotProof {
     pub shred1: shred::Payload,
     #[serde(with = "shred::serde_bytes_payload")]
     pub shred2: shred::Payload,
+}
+
+#[derive(Deserialize, Serialize)]
+pub enum BlockStatus {
+    /// The block is being ingested, of the shreds received there are no conflicts
+    Incomplete,
+
+    /// We are unable to recover the block with the shreds ingested
+    Conflicting,
+
+    /// The block `block_id` has been fully ingested, has consistent shreds and is ready for replay
+    Complete { block_id: Hash },
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct BlockVersions {
+    /// The version that was ingested by turbine or TowerBFT repair
+    pub original_version: BlockStatus,
+    /// The versions that were requested by AG repair, populated during
+    /// catchup, safeToNotar, and by notarize-fallback certificates during duplicate block events.
+    /// In rare cases there can be overlap with the Turbine version, if for example we were heavily delayed
+    /// in the turbine ingest and ended up repairing the same block via a certificate condition.
+    pub alternate_versions: [(Hash, BlockStatus); 3],
+}
+
+/// Which column an associated block currently resides
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BlockLocation {
+    Original,
+    Alternate { block_id: Hash },
+}
+
+impl BlockVersions {
+    pub(crate) fn get_location(self, block_id: Hash) -> Option<BlockLocation> {
+        match self.original_version {
+            BlockStatus::Complete { block_id: bid } if bid == block_id => {
+                return Some(BlockLocation::Original);
+            }
+            _ => (),
+        };
+
+        self.alternate_versions
+            .into_iter()
+            .find_map(|(bid, block_status)| match block_status {
+                BlockStatus::Complete {
+                    block_id: status_bid,
+                } if status_bid == block_id => {
+                    assert!(bid == status_bid);
+                    Some(BlockLocation::Alternate { block_id })
+                }
+                _ => None,
+            })
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]

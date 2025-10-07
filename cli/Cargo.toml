@@ -35,7 +35,7 @@ humantime = { workspace = true }
 log = { workspace = true }
 num-traits = { workspace = true }
 pretty-hex = { workspace = true }
-reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "rustls-tls-native-roots", "json"] }
+reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "json"] }
 semver = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
@@ -43,7 +43,9 @@ serde_json = { workspace = true }
 solana-account = "=3.0.0"
 solana-account-decoder = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
+solana-bls-signatures = { workspace = true, features = ["solana-signer-derive"] }
 solana-borsh = "=3.0.0"
+solana-bpf-loader-program = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-cli-output = { workspace = true }
@@ -79,7 +81,7 @@ solana-rent = "=3.0.0"
 solana-rpc-client = { workspace = true, features = ["default"] }
 solana-rpc-client-api = { workspace = true }
 solana-rpc-client-nonce-utils = { workspace = true, features = ["clap"] }
-solana-sbpf = { workspace = true, features = ["jit"] }
+solana-sbpf = { workspace = true }
 solana-sdk-ids = "=3.0.0"
 solana-signature = { version = "=3.1.0", default-features = false }
 solana-signer = "=3.0.0"
@@ -96,7 +98,9 @@ solana-transaction-status = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
 solana-udp-client = { workspace = true }
 solana-version = { workspace = true }
+solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
+solana-votor-messages = { workspace = true }
 spl-memo-interface = { version = "=2.0.0" }
 thiserror = { workspace = true }
 tiny-bip39 = { workspace = true }

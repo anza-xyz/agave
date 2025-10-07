@@ -173,7 +173,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
             None, // snapshot_controller
             None,
             &mut true,
-            &mut Vec::new(),
+            &mut vec![],
             &drop_bank_sender1,
             &mut tbft_structs,
         )

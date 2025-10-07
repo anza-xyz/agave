@@ -1,19 +1,17 @@
 use {
     serde::{Deserialize, Deserializer, Serialize, Serializer},
+    solana_account_decoder_client_types::{token::UiTokenAmount, UiAccount},
     solana_clock::{Epoch, Slot, UnixTimestamp},
+    solana_fee_calculator::{FeeCalculator, FeeRateGovernor},
     solana_inflation::Inflation,
-    solana_transaction_status_client_types::ConfirmedTransactionStatusWithSignature,
+    solana_transaction_error::TransactionResult as Result,
+    solana_transaction_status_client_types::{
+        ConfirmedTransactionStatusWithSignature, TransactionConfirmationStatus, UiConfirmedBlock,
+        UiInnerInstructions, UiLoadedAddresses, UiTransactionError, UiTransactionReturnData,
+        UiTransactionTokenBalance,
+    },
     std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr},
     thiserror::Error,
-};
-pub use {
-    solana_account_decoder_client_types::{token::UiTokenAmount, UiAccount},
-    solana_fee_calculator::{FeeCalculator, FeeRateGovernor},
-    solana_transaction_error::TransactionResult,
-    solana_transaction_status_client_types::{
-        TransactionConfirmationStatus, UiConfirmedBlock, UiInnerInstructions, UiLoadedAddresses,
-        UiTransactionError, UiTransactionReturnData, UiTransactionTokenBalance,
-    },
 };
 
 /// Wrapper for rpc return types of methods that provide responses both with and without context.
@@ -394,7 +392,7 @@ pub struct RpcVoteAccountInfo {
 #[serde(rename_all = "camelCase")]
 pub struct RpcSignatureConfirmation {
     pub confirmations: usize,
-    pub status: TransactionResult<()>,
+    pub status: Result<()>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

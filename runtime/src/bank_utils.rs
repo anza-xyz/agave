@@ -45,15 +45,18 @@ pub fn find_and_send_votes(
     commit_results: &[TransactionCommitResult],
     vote_sender: Option<&ReplayVoteSender>,
 ) {
-    if let Some(vote_sender) = vote_sender {
+    if vote_sender.is_some() {
         sanitized_txs
             .iter()
             .zip(commit_results.iter())
             .for_each(|(tx, commit_result)| {
                 if tx.is_simple_vote_transaction() && commit_result.was_executed_successfully() {
-                    if let Some(parsed_vote) = vote_parser::parse_sanitized_vote_transaction(tx) {
-                        if parsed_vote.1.last_voted_slot().is_some() {
-                            let _ = vote_sender.send(parsed_vote);
+                    if let Some(vote_sender) = vote_sender {
+                        if let Some(parsed_vote) = vote_parser::parse_sanitized_vote_transaction(tx)
+                        {
+                            if parsed_vote.1.last_voted_slot().is_some() {
+                                let _ = vote_sender.send(parsed_vote);
+                            }
                         }
                     }
                 }

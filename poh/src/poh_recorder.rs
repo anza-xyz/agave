@@ -100,6 +100,7 @@ pub struct WorkingBank {
     pub min_tick_height: u64,
     pub max_tick_height: u64,
     pub transaction_index: Option<usize>,
+    pub contains_valid_certificate: Arc<AtomicBool>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -196,9 +197,8 @@ pub struct PohRecorder {
     // Allocation to hold PohEntrys recorded into PoHStream.
     entries: Vec<PohEntry>,
     track_transaction_indexes: bool,
-
-    // Alpenglow related migration things
     pub is_alpenglow_enabled: bool,
+    pub use_alpenglow_tick_producer: bool,
 }
 
 impl PohRecorder {
@@ -229,6 +229,7 @@ impl PohRecorder {
             leader_schedule_cache,
             poh_config,
             is_exited,
+            false,
         )
     }
 
@@ -245,6 +246,7 @@ impl PohRecorder {
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         poh_config: &PohConfig,
         is_exited: Arc<AtomicBool>,
+        is_alpenglow_enabled: bool,
     ) -> (Self, Receiver<WorkingBankEntry>) {
         let tick_number = 0;
         let poh = Arc::new(Mutex::new(Poh::new_with_slot_info(
@@ -287,7 +289,8 @@ impl PohRecorder {
                 is_exited,
                 entries: Vec::with_capacity(64),
                 track_transaction_indexes: false,
-                is_alpenglow_enabled: false,
+                is_alpenglow_enabled,
+                use_alpenglow_tick_producer: is_alpenglow_enabled,
             },
             working_bank_receiver,
         )
@@ -298,7 +301,7 @@ impl PohRecorder {
     }
 
     // synchronize PoH with a bank
-    pub(crate) fn reset(&mut self, reset_bank: Arc<Bank>, next_leader_slot: Option<(Slot, Slot)>) {
+    pub fn reset(&mut self, reset_bank: Arc<Bank>, next_leader_slot: Option<(Slot, Slot)>) {
         self.clear_bank();
         self.reset_poh(reset_bank, true);
 
@@ -312,7 +315,7 @@ impl PohRecorder {
 
     // Returns the index of `transactions.first()` in the slot, if being tracked by WorkingBank
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    pub(crate) fn record(
+    pub fn record(
         &mut self,
         bank_slot: Slot,
         mixins: Vec<Hash>,
@@ -446,14 +449,16 @@ impl PohRecorder {
         }
     }
 
-    pub(crate) fn set_bank(&mut self, bank: BankWithScheduler) {
+    pub fn set_bank(&mut self, bank: BankWithScheduler) {
         assert!(self.working_bank.is_none());
+
         let working_bank = WorkingBank {
             min_tick_height: bank.tick_height(),
             max_tick_height: bank.max_tick_height(),
             bank,
             start: Arc::new(Instant::now()),
             transaction_index: self.track_transaction_indexes.then_some(0),
+            contains_valid_certificate: Arc::new(AtomicBool::new(false)),
         };
         trace!("new working bank");
         assert_eq!(working_bank.bank.ticks_per_slot(), self.ticks_per_slot());
@@ -522,9 +527,14 @@ impl PohRecorder {
 
     fn reset_poh(&mut self, reset_bank: Arc<Bank>, reset_start_bank: bool) {
         let blockhash = reset_bank.last_blockhash();
+        let hashes_per_tick = if self.use_alpenglow_tick_producer {
+            None
+        } else {
+            *reset_bank.hashes_per_tick()
+        };
         let poh_hash = {
             let mut poh = self.poh.lock().unwrap();
-            poh.reset(blockhash, *reset_bank.hashes_per_tick());
+            poh.reset(blockhash, hashes_per_tick);
             poh.hash
         };
         info!(
@@ -900,12 +910,52 @@ impl PohRecorder {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn set_bank_for_test(&mut self, bank: Arc<Bank>) {
-        self.set_bank(BankWithScheduler::new_without_scheduler(bank))
+        self.set_bank(BankWithScheduler::new_without_scheduler(bank));
     }
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn clear_bank_for_test(&mut self) {
         self.clear_bank();
+    }
+
+    pub fn tick_alpenglow(&mut self, slot_max_tick_height: u64) {
+        let (poh_entry, tick_lock_contention_us) = measure_us!({
+            let mut poh_l = self.poh.lock().unwrap();
+            poh_l.tick()
+        });
+        self.metrics.tick_lock_contention_us += tick_lock_contention_us;
+
+        // TODO(ksn): are the stores and loads here safe to do, if the tick heights can be
+        // externally modified?
+        if let Some(poh_entry) = poh_entry {
+            self.tick_height.store(slot_max_tick_height);
+
+            // Should be empty in most cases, but reset just to be safe
+            self.tick_cache = vec![];
+            self.tick_cache.push((
+                Entry {
+                    num_hashes: poh_entry.num_hashes,
+                    hash: poh_entry.hash,
+                    transactions: vec![],
+                },
+                self.tick_height.load(),
+            ));
+
+            let (_flush_res, flush_cache_and_tick_us) = measure_us!(self.flush_cache(true));
+            self.metrics.flush_cache_tick_us += flush_cache_and_tick_us;
+        }
+    }
+
+    pub fn migrate_to_alpenglow_poh(&mut self) {
+        self.tick_cache = vec![];
+        {
+            let mut poh = self.poh.lock().unwrap();
+            // sets PoH to low power mode
+            let hashes_per_tick = None;
+            let current_hash = poh.hash;
+            info!("migrating poh to low power mode");
+            poh.reset(current_hash, hashes_per_tick);
+        }
     }
 }
 
@@ -961,6 +1011,7 @@ fn do_create_test_recorder(
         crate::poh_service::DEFAULT_HASHES_PER_BATCH,
         record_receiver,
         poh_service_message_receiver,
+        || {},
     );
 
     (
@@ -1742,6 +1793,7 @@ mod tests {
             &Arc::new(LeaderScheduleCache::default()),
             &PohConfig::default(),
             Arc::new(AtomicBool::default()),
+            false,
         );
         poh_recorder.set_bank_for_test(bank);
         poh_recorder.clear_bank();

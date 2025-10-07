@@ -5,8 +5,8 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{self, ProcessShredsStats, ReedSolomonCache, Shredder},
+    solana_votor::event::VotorEventSender,
 };
-
 #[derive(Clone)]
 pub(super) struct BroadcastFakeShredsRun {
     last_blockhash: Hash,
@@ -38,6 +38,7 @@ impl BroadcastRun for BroadcastFakeShredsRun {
         receiver: &Receiver<WorkingBankEntry>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
+        _votor_event_sender: &VotorEventSender,
     ) -> Result<()> {
         // 1) Pull entries from banking stage
         let receive_results = broadcast_utils::recv_slot_entries(

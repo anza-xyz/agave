@@ -1,0 +1,25 @@
+[package]
+name = "solana-bls12-381"
+description = "Solana Bls12-381"
+documentation = "https://docs.rs/solana-bls12-381"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+bytemuck = { workspace = true }
+bytemuck_derive = { workspace = true }
+solana-curve-traits = { workspace = true }
+thiserror = { workspace = true }
+
+[target.'cfg(not(target_os = "solana"))'.dependencies]
+blst = { workspace = true }
+
+[target.'cfg(target_os = "solana")'.dependencies]
+solana-define-syscall = { workspace = true }
+
+[lints]
+workspace = true

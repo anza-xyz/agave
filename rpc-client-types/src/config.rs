@@ -1,9 +1,7 @@
 use {
     crate::filter::RpcFilterType,
-    solana_clock::{Epoch, Slot},
-};
-pub use {
     solana_account_decoder_client_types::{UiAccountEncoding, UiDataSliceConfig},
+    solana_clock::{Epoch, Slot},
     solana_commitment_config::{CommitmentConfig, CommitmentLevel},
     solana_transaction_status_client_types::{TransactionDetails, UiTransactionEncoding},
 };

@@ -7,7 +7,7 @@ use {
         xdp::XdpSender,
     },
     bytes::Bytes,
-    crossbeam_channel::{Receiver, RecvError, TryRecvError},
+    crossbeam_channel::{Receiver, Sender, TryRecvError},
     lru::LruCache,
     rand::Rng,
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
@@ -34,6 +34,7 @@ use {
         socket::SocketAddrSpace,
     },
     solana_time_utils::timestamp,
+    solana_votor::event::VotorEvent,
     static_assertions::const_assert_eq,
     std::{
         borrow::Cow,
@@ -294,7 +295,8 @@ fn retransmit(
     rpc_subscriptions: Option<&RpcSubscriptions>,
     slot_status_notifier: Option<&SlotStatusNotifier>,
     shred_buf: &mut Vec<Vec<shred::Payload>>,
-) -> Result<(), RecvError> {
+    votor_event_sender: &Sender<VotorEvent>,
+) -> Result<(), ()> {
     // Try to receive shreds from the channel without blocking. If the channel
     // is empty precompute turbine trees speculatively. If no cache updates are
     // made then block on the channel until some shreds are received.
@@ -302,7 +304,11 @@ fn retransmit(
         Ok(shreds) => {
             shred_buf.push(shreds);
         }
-        Err(TryRecvError::Disconnected) => return Err(RecvError),
+        Err(TryRecvError::Disconnected) => {
+            warn!("retransmit_receiver became disconnected.");
+            return Err(());
+        }
+
         Err(TryRecvError::Empty) => {
             if cache_retransmit_addrs(
                 thread_pool,
@@ -314,7 +320,10 @@ fn retransmit(
             ) {
                 return Ok(());
             }
-            shred_buf.push(retransmit_receiver.recv()?);
+            let shreds = retransmit_receiver.recv().map_err(|err| {
+                warn!("retransmit_receiver.recv() failed with {err:?}");
+            })?;
+            shred_buf.push(shreds);
         }
     };
     // now the batch has started
@@ -422,13 +431,14 @@ fn retransmit(
         })
     };
 
-    stats.upsert_slot_stats(
+    let () = stats.upsert_slot_stats(
         slot_stats,
         root_bank.slot(),
         addr_cache,
         rpc_subscriptions,
         slot_status_notifier,
-    );
+        votor_event_sender,
+    )?;
     timer_start.stop();
     stats.total_time += timer_start.as_us();
     stats.maybe_submit(&root_bank, &working_bank, cluster_info, cluster_nodes_cache);
@@ -640,6 +650,7 @@ impl RetransmitStage {
         rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
         slot_status_notifier: Option<SlotStatusNotifier>,
         xdp_sender: Option<XdpSender>,
+        votor_event_sender: Sender<VotorEvent>,
     ) -> Self {
         let cluster_nodes_cache = ClusterNodesCache::<RetransmitStage>::new(
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
@@ -661,10 +672,10 @@ impl RetransmitStage {
 
         let retransmit_thread_handle = Builder::new()
             .name("solRetransmittr".to_string())
-            .spawn({
-                move || {
-                    let mut shred_buf = Vec::with_capacity(RETRANSMIT_BATCH_SIZE);
-                    while retransmit(
+            .spawn(move || {
+                let mut shred_buf = Vec::with_capacity(RETRANSMIT_BATCH_SIZE);
+                loop {
+                    let res = retransmit(
                         &thread_pool,
                         &bank_forks,
                         &leader_schedule_cache,
@@ -681,9 +692,15 @@ impl RetransmitStage {
                         rpc_subscriptions.as_deref(),
                         slot_status_notifier.as_ref(),
                         &mut shred_buf,
-                    )
-                    .is_ok()
-                    {}
+                        &votor_event_sender,
+                    );
+                    match res {
+                        Ok(()) => (),
+                        Err(()) => {
+                            warn!("retransmit() loop exited");
+                            break;
+                        }
+                    }
                 }
             })
             .unwrap();
@@ -764,18 +781,20 @@ impl RetransmitStats {
         addr_cache: &mut AddrCache,
         rpc_subscriptions: Option<&RpcSubscriptions>,
         slot_status_notifier: Option<&SlotStatusNotifier>,
-    ) {
+        votor_event_sender: &Sender<VotorEvent>,
+    ) -> Result<(), ()> {
         for (slot, mut slot_stats) in feed {
             addr_cache.record(slot, &mut slot_stats);
             match self.slot_stats.get_mut(&slot) {
                 None => {
                     if slot > root {
-                        notify_subscribers(
+                        let () = notify_subscribers(
                             slot,
                             slot_stats.outset,
                             rpc_subscriptions,
                             slot_status_notifier,
-                        );
+                            votor_event_sender,
+                        )?;
                     }
                     self.slot_stats.put(slot, slot_stats);
                 }
@@ -793,6 +812,7 @@ impl RetransmitStats {
                 None => break,
             }
         }
+        Ok(())
     }
 }
 
@@ -868,7 +888,8 @@ fn notify_subscribers(
     timestamp: u64, // When the first shred in the slot was received.
     rpc_subscriptions: Option<&RpcSubscriptions>,
     slot_status_notifier: Option<&SlotStatusNotifier>,
-) {
+    votor_event_sender: &Sender<VotorEvent>,
+) -> Result<(), ()> {
     if let Some(rpc_subscriptions) = rpc_subscriptions {
         let slot_update = SlotUpdate::FirstShredReceived { slot, timestamp };
         rpc_subscriptions.notify_slot_update(slot_update);
@@ -880,6 +901,14 @@ fn notify_subscribers(
             .unwrap()
             .notify_first_shred_received(slot);
     }
+    votor_event_sender
+        .send(VotorEvent::FirstShred(slot))
+        .map_err(|err| {
+            warn!(
+                "Sending {:?} failed as channel became disconnected.  Ignoring.",
+                err.into_inner()
+            );
+        })
 }
 
 #[cfg(test)]

@@ -1,5 +1,7 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
+// TODO(ksn): remove this
+#![allow(deprecated)]
 
 pub mod account_info;
 pub mod account_locks;

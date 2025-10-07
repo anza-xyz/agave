@@ -16,6 +16,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 dev-context-only-utils = ["solana-core/dev-context-only-utils"]
 
 [dependencies]
+bincode = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
@@ -23,11 +24,13 @@ rand = { workspace = true }
 rayon = { workspace = true }
 solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
+solana-bls-signatures = { workspace = true }
 solana-client = { workspace = true }
 solana-client-traits = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
 solana-commitment-config = { workspace = true }
+solana-connection-cache = { workspace = true }
 solana-core = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }
@@ -61,13 +64,15 @@ solana-system-interface = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-tpu-client = { workspace = true }
-solana-transaction = { workspace = true }
+solana-transaction = { workspace = true, features = ["bincode"] }
 solana-transaction-error = { workspace = true }
 solana-turbine = { workspace = true }
 solana-validator-exit = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-interface = { workspace = true }
 solana-vote-program = { workspace = true }
+solana-votor = { workspace = true }
+solana-votor-messages = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 tempfile = { workspace = true }

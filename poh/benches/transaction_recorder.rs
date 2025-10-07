@@ -85,6 +85,7 @@ fn bench_record_transactions(c: &mut Criterion) {
         DEFAULT_HASHES_PER_BATCH,
         record_receiver,
         poh_service_message_receiver,
+        || {},
     );
 
     let mut group = c.benchmark_group("record_transactions");

@@ -67,6 +67,7 @@ use {
         xdp::{set_cpu_affinity, XdpConfig},
     },
     solana_validator_exit::Exit,
+    solana_votor::vote_history_storage,
     std::{
         collections::HashSet,
         fs::{self, File},
@@ -105,6 +106,7 @@ pub fn execute(
         replay_transactions_threads,
         tpu_transaction_forward_receive_threads,
         tpu_transaction_receive_threads,
+        tpu_alpenglow_receive_threads,
         tpu_vote_transaction_receive_threads,
         tvu_receive_threads,
         tvu_retransmit_threads,
@@ -300,6 +302,16 @@ pub fn execute(
         .unwrap_or_else(|| ledger_path.clone());
     let tower_storage: Arc<dyn tower_storage::TowerStorage> =
         Arc::new(tower_storage::FileTowerStorage::new(tower_path));
+
+    let vote_history_storage: Arc<dyn vote_history_storage::VoteHistoryStorage> = {
+        let vote_history_path = value_t!(matches, "vote_history_path", PathBuf)
+            .ok()
+            .unwrap_or_else(|| ledger_path.clone());
+
+        Arc::new(vote_history_storage::FileVoteHistoryStorage::new(
+            vote_history_path,
+        ))
+    };
 
     let mut accounts_index_config = AccountsIndexConfig {
         num_flush_threads: Some(accounts_index_flush_threads),
@@ -523,6 +535,7 @@ pub fn execute(
     let mut validator_config = ValidatorConfig {
         require_tower: matches.is_present("require_tower"),
         tower_storage,
+        vote_history_storage,
         halt_at_slot: value_t!(matches, "dev_halt_at_slot", Slot).ok(),
         max_genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         expected_genesis_hash: matches
@@ -601,6 +614,7 @@ pub fn execute(
         retransmit_xdp,
         broadcast_stage_type: BroadcastStageType::Standard,
         use_tpu_client_next: !matches.is_present("use_connection_cache"),
+        voting_service_test_override: None,
         block_verification_method: value_t_or_exit!(
             matches,
             "block_verification_method",
@@ -813,6 +827,8 @@ pub fn execute(
     let tpu_max_fwd_unstaked_connections =
         value_t_or_exit!(matches, "tpu_max_fwd_unstaked_connections", u64);
 
+    let tpu_max_alpenglow_connections =
+        value_t_or_exit!(matches, "tpu_max_alpenglow_connections", u64);
     let tpu_max_connections_per_ipaddr_per_minute: u64 =
         value_t_or_exit!(matches, "tpu_max_connections_per_ipaddr_per_minute", u64);
     let max_streams_per_ms = value_t_or_exit!(matches, "tpu_max_streams_per_ms", u64);
@@ -849,6 +865,7 @@ pub fn execute(
         node.info.remove_tpu_forwards();
         node.info.remove_tvu();
         node.info.remove_serve_repair();
+        node.info.remove_alpenglow();
 
         // A node in this configuration shouldn't be an entrypoint to other nodes
         node.sockets.ip_echo = None;
@@ -953,6 +970,18 @@ pub fn execute(
     vote_quic_server_config.max_unstaked_connections = 0;
     vote_quic_server_config.num_threads = tpu_vote_transaction_receive_threads;
 
+    // Alpenglow quic config, accept 1 connection per peer and no unstaked connections.
+    let alpenglow_quic_server_config = QuicServerParams {
+        max_connections_per_peer: 1,
+        max_staked_connections: tpu_max_alpenglow_connections.try_into().unwrap(),
+        max_unstaked_connections: 0,
+        max_streams_per_ms,
+        max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+        coalesce: tpu_coalesce,
+        num_threads: tpu_alpenglow_receive_threads,
+        ..Default::default()
+    };
+
     let validator = match Validator::new(
         node,
         identity_keypair,
@@ -973,6 +1002,7 @@ pub fn execute(
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
+            alpenglow_quic_server_config,
         },
         admin_service_post_init,
     ) {

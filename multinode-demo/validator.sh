@@ -19,6 +19,7 @@ vote_account=
 no_restart=0
 gossip_entrypoint=
 ledger_dir=
+alpenglow=
 
 usage() {
   if [[ -n $1 ]]; then
@@ -191,6 +192,9 @@ while [[ -n $1 ]]; do
     elif [[ $1 == --wen-restart-coordinator ]]; then
       args+=("$1" "$2")
       shift 2
+    elif [[ $1 == --alpenglow ]]; then
+      alpenglow=(--alpenglow)
+      shift
     elif [[ $1 = -h ]]; then
       usage "$@"
     else
@@ -329,8 +333,13 @@ setup_validator_accounts() {
       ) || return $?
     fi
 
-    echo "Creating validator vote account"
-    wallet create-vote-account "$vote_account" "$identity" "$authorized_withdrawer" || return $?
+    if [[ -n "$alpenglow" ]]; then
+      echo "Creating Alpenglow validator vote account"
+      wallet create-vote-account "$alpenglow" "$vote_account" "$identity" "$authorized_withdrawer" || return $?
+    else
+      echo "Creating POH validator vote account"
+      wallet create-vote-account "$vote_account" "$identity" "$authorized_withdrawer" || return $?
+    fi
   fi
   echo "Validator vote account configured"
 

@@ -824,6 +824,15 @@ pub enum BlockstoreProcessorError {
 
     #[error("invalid retransmitter signature final fec set")]
     InvalidRetransmitterSignatureFinalFecSet,
+
+    #[error("invalid notarization certificate in bank {0} for slot {1}")]
+    InvalidNotarizationCertificate(Slot, Slot),
+
+    #[error("invalid skip certificate in bank {0} for slot range {1} - {2}")]
+    InvalidSkipCertificate(Slot, Slot, Slot),
+
+    #[error("non consecutive leader slot for bank {0} parent {1}")]
+    NonConsecutiveLeaderSlot(Slot, Slot),
 }
 
 /// Callback for accessing bank state after each slot is confirmed while
@@ -2220,7 +2229,7 @@ pub fn process_single_slot(
     }
 
     let block_id = blockstore
-        .check_last_fec_set_and_get_block_id(slot, bank.hash(), &bank.feature_set)
+        .check_last_fec_set_and_get_block_id(slot, bank.hash(), false, &bank.feature_set)
         .inspect_err(|err| {
             warn!("slot {slot} failed last fec set checks: {err}");
             if blockstore.is_primary_access() {

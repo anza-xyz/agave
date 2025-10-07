@@ -134,6 +134,12 @@ Operate a configured testnet
  logs-specific options:
    none
 
+ netem-specific options:
+   --config            - Netem configuration (as a double quoted string)
+   --parition          - Percentage of network that should be configured with netem
+   --config-file       - Configuration file for partition and netem configuration
+   --netem-cmd         - Optional command argument to netem. Default is "add". Use "cleanup" to remove rules.
+
  update-specific options:
    --platform linux|osx|windows       - Deploy the tarball using 'agave-install deploy ...' for the
                                         given platform (multiple platforms may be specified)
@@ -313,6 +319,7 @@ startBootstrapLeader() {
   declare ipAddress=$1
   declare nodeIndex="$2"
   declare logFile="$3"
+  declare alpenglow="$4"
   echo "--- Starting bootstrap validator: $ipAddress"
   echo "start log: $logFile"
 
@@ -350,6 +357,7 @@ startBootstrapLeader() {
          \"$disableQuic\" \
          \"$enableUdp\" \
          \"$maybeWenRestart\" \
+         \"$alpenglow\" \
       "
 
   ) >> "$logFile" 2>&1 || {
@@ -363,6 +371,7 @@ startNode() {
   declare ipAddress=$1
   declare nodeType=$2
   declare nodeIndex="$3"
+  declare alpenglow="$4"
 
   initLogDir
   declare logFile="$netLogDir/validator-$ipAddress.log"
@@ -425,6 +434,7 @@ startNode() {
          \"$disableQuic\" \
          \"$enableUdp\" \
          \"$maybeWenRestart\" \
+         \"$alpenglow\" \
       "
   ) >> "$logFile" 2>&1 &
   declare pid=$!
@@ -636,7 +646,7 @@ deploy() {
     if $bootstrapLeader; then
       SECONDS=0
       declare bootstrapNodeDeployTime=
-      startBootstrapLeader "$nodeAddress" "$nodeIndex" "$netLogDir/bootstrap-validator-$ipAddress.log"
+      startBootstrapLeader "$nodeAddress" "$nodeIndex" "$netLogDir/bootstrap-validator-$ipAddress.log" "$alpenglow"
       bootstrapNodeDeployTime=$SECONDS
       $metricsWriteDatapoint "testnet-deploy net-bootnode-leader-started=1"
 
@@ -644,7 +654,7 @@ deploy() {
       SECONDS=0
       pids=()
     else
-      startNode "$ipAddress" "$nodeType" "$nodeIndex"
+      startNode "$ipAddress" "$nodeType" "$nodeIndex" "$alpenglow"
 
       # Stagger additional node start time. If too many nodes start simultaneously
       # the bootstrap node gets more rsync requests from the additional nodes than
@@ -832,6 +842,10 @@ debugBuild=false
 profileBuild=false
 doBuild=true
 gpuMode=auto
+netemPartition=""
+netemConfig=""
+netemConfigFile=""
+netemCommand="add"
 clientDelayStart=0
 netLogDir=
 maybeWarpSlot=
@@ -843,6 +857,7 @@ enableUdp=false
 clientType=tpu-client
 maybeUseUnstakedConnection=""
 maybeWenRestart=""
+alpenglow=false
 
 command=$1
 [[ -n $command ]] || usage
@@ -924,6 +939,18 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --profile ]]; then
       profileBuild=true
       shift 1
+    elif [[ $1 = --partition ]]; then
+      netemPartition=$2
+      shift 2
+    elif [[ $1 = --config ]]; then
+      netemConfig=$2
+      shift 2
+    elif [[ $1 == --config-file ]]; then
+      netemConfigFile=$2
+      shift 2
+    elif [[ $1 == --netem-cmd ]]; then
+      netemCommand=$2
+      shift 2
     elif [[ $1 = --gpu-mode ]]; then
       gpuMode=$2
       case "$gpuMode" in
@@ -988,6 +1015,9 @@ while [[ -n $1 ]]; do
       skipSetup=true
       maybeWenRestart="$2"
       shift 2
+    elif [[ $1 = --alpenglow ]]; then
+      alpenglow=true
+      shift 1
     else
       usage "Unknown long option: $1"
     fi
@@ -1097,7 +1127,7 @@ if [[ "$numClientsRequested" -eq 0 ]]; then
   numClientsRequested=$numClients
 else
   if [[ "$numClientsRequested" -gt "$numClients" ]]; then
-    echo "Error: More clients requested ($numClientsRequested) then available ($numClients)"
+    echo "Error: More clients requested ($numClientsRequested) than available ($numClients)"
     exit 1
   fi
 fi
@@ -1200,6 +1230,40 @@ logs)
   for ipAddress in "${blockstreamerIpList[@]}"; do
     fetchRemoteLog "$ipAddress" validator
   done
+  ;;
+netem)
+  if [[ -n $netemConfigFile ]]; then
+    remoteNetemConfigFile="$(basename "$netemConfigFile")"
+    if [[ $netemCommand = "add" ]]; then
+      for ipAddress in "${validatorIpList[@]}"; do
+        remoteHome=$(remoteHomeDir "$ipAddress")
+        remoteSolanaHome="${remoteHome}/solana"
+        "$here"/scp.sh "$netemConfigFile" solana@"$ipAddress":"$remoteSolanaHome"
+      done
+    fi
+    for i in "${!validatorIpList[@]}"; do
+      "$here"/ssh.sh solana@"${validatorIpList[$i]}" 'solana/scripts/net-shaper.sh' \
+      "$netemCommand" ~solana/solana/"$remoteNetemConfigFile" "${#validatorIpList[@]}" "$i"
+    done
+  else
+    num_nodes=$((${#validatorIpList[@]}*netemPartition/100))
+    if [[ $((${#validatorIpList[@]}*netemPartition%100)) -gt 0 ]]; then
+      num_nodes=$((num_nodes+1))
+    fi
+    if [[ "$num_nodes" -gt "${#validatorIpList[@]}" ]]; then
+      num_nodes=${#validatorIpList[@]}
+    fi
+
+    # Stop netem on all nodes
+    for ipAddress in "${validatorIpList[@]}"; do
+      "$here"/ssh.sh solana@"$ipAddress" 'solana/scripts/netem.sh delete < solana/netem.cfg || true'
+    done
+
+    # Start netem on required nodes
+    for ((i=0; i<num_nodes; i++ )); do :
+      "$here"/ssh.sh solana@"${validatorIpList[$i]}" "echo $netemConfig > solana/netem.cfg; solana/scripts/netem.sh add \"$netemConfig\""
+    done
+  fi
   ;;
 *)
   echo "Internal error: Unknown command: $command"

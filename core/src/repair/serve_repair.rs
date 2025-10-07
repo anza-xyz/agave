@@ -1,6 +1,8 @@
 #[cfg(test)]
 use {
     crate::repair::standard_repair_handler::StandardRepairHandler,
+    crossbeam_channel::unbounded,
+    solana_ledger::block_location_lookup::BlockLocationLookup,
     solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path_auto_delete},
     solana_runtime::bank_forks::BankForks,
 };
@@ -11,7 +13,7 @@ use {
             duplicate_repair_status::get_ancestor_hash_repair_sample_size,
             quic_endpoint::RemoteRequest,
             repair_handler::RepairHandler,
-            repair_service::{OutstandingShredRepairs, RepairStats, REPAIR_MS},
+            repair_service::{OutstandingShredRepairs, RepairInfo, RepairStats, REPAIR_MS},
             request_response::RequestResponse,
             result::{Error, RepairVerifyError, Result},
         },
@@ -34,7 +36,10 @@ use {
     },
     solana_hash::{Hash, HASH_BYTES},
     solana_keypair::{signable::Signable, Keypair},
-    solana_ledger::shred::{self, Nonce, ShredFetchStats, SIZE_OF_NONCE},
+    solana_ledger::{
+        blockstore_meta::BlockLocation,
+        shred::{self, Nonce, ShredFetchStats, SIZE_OF_NONCE},
+    },
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::{
         data_budget::DataBudget,
@@ -101,6 +106,15 @@ pub enum ShredRepairType {
     HighestShred(Slot, u64),
     /// Requesting the missing shred at a particular index
     Shred(Slot, u64),
+
+    // Block Id based variants. Note that unlike the above requests, these require that the responder has
+    // the full block in order to respond.
+    /// Requesting `MAX_ORPHAN_REPAIR_RESPONSES` parent shreds for the specific block ID
+    OrphanForBlockId(Slot, Hash),
+    /// Requesting any shred with index greater than or equal to the particular index for a specific block ID
+    HighestShredForBlockId(Slot, u64, Hash),
+    /// Requesting the missing shred at a particular index for a specific block ID
+    ShredForBlockId(Slot, u64, Hash),
 }
 
 impl ShredRepairType {
@@ -108,7 +122,21 @@ impl ShredRepairType {
         match self {
             ShredRepairType::Orphan(slot)
             | ShredRepairType::HighestShred(slot, _)
-            | ShredRepairType::Shred(slot, _) => *slot,
+            | ShredRepairType::Shred(slot, _)
+            | ShredRepairType::OrphanForBlockId(slot, _)
+            | ShredRepairType::HighestShredForBlockId(slot, _, _)
+            | ShredRepairType::ShredForBlockId(slot, _, _) => *slot,
+        }
+    }
+
+    pub fn block_id(&self) -> Option<Hash> {
+        match self {
+            ShredRepairType::OrphanForBlockId(_, bid)
+            | ShredRepairType::HighestShredForBlockId(_, _, bid)
+            | ShredRepairType::ShredForBlockId(_, _, bid) => Some(*bid),
+            ShredRepairType::Orphan(_)
+            | ShredRepairType::HighestShred(_, _)
+            | ShredRepairType::Shred(_, _) => None,
         }
     }
 }
@@ -117,8 +145,12 @@ impl RequestResponse for ShredRepairType {
     type Response = [u8]; // shred's payload
     fn num_expected_responses(&self) -> u32 {
         match self {
-            ShredRepairType::Orphan(_) => MAX_ORPHAN_REPAIR_RESPONSES as u32,
+            ShredRepairType::Orphan(_) | ShredRepairType::OrphanForBlockId(_, _) => {
+                MAX_ORPHAN_REPAIR_RESPONSES as u32
+            }
             ShredRepairType::Shred(_, _) | ShredRepairType::HighestShred(_, _) => 1,
+            ShredRepairType::HighestShredForBlockId(_, _, _)
+            | ShredRepairType::ShredForBlockId(_, _, _) => 1,
         }
     }
     fn verify_response(&self, shred: &Self::Response) -> bool {
@@ -130,11 +162,19 @@ impl RequestResponse for ShredRepairType {
             return false;
         };
         match self {
-            ShredRepairType::Orphan(slot) => shred_slot <= *slot,
+            ShredRepairType::Orphan(slot) | ShredRepairType::OrphanForBlockId(slot, _) => {
+                shred_slot <= *slot
+            }
             ShredRepairType::HighestShred(slot, index) => {
                 shred_slot == *slot && get_shred_index(shred) >= Some(*index)
             }
             ShredRepairType::Shred(slot, index) => {
+                shred_slot == *slot && get_shred_index(shred) == Some(*index)
+            }
+            ShredRepairType::HighestShredForBlockId(slot, index, _block_id) => {
+                shred_slot == *slot && get_shred_index(shred) >= Some(*index)
+            }
+            ShredRepairType::ShredForBlockId(slot, index, _block_id) => {
                 shred_slot == *slot && get_shred_index(shred) == Some(*index)
             }
         }
@@ -181,11 +221,15 @@ struct ServeRepairStats {
     total_response_bytes_unstaked: usize,
     processed: usize,
     window_index: usize,
+    window_index_for_block_id: usize,
     highest_window_index: usize,
+    highest_window_index_for_block_id: usize,
     orphan: usize,
+    orphan_for_block_id: usize,
     pong: usize,
     ancestor_hashes: usize,
     window_index_misses: usize,
+    window_index_for_block_id_misses: usize,
     ping_cache_check_failed: usize,
     pings_sent: usize,
     decode_time_us: u64,
@@ -229,7 +273,7 @@ type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiEnumVisitor, AbiExample),
-    frozen_abi(digest = "FGw38CCo7vg24qxe7TfGP11WdX2poe6T55BGN1r3XMFA")
+    frozen_abi(digest = "4zhY22Ens7hwEGMfq6wLyb9viynpcUYrSUCYnpgAS9rC")
 )]
 #[derive(Debug, Deserialize, Serialize)]
 pub enum RepairProtocol {
@@ -258,6 +302,23 @@ pub enum RepairProtocol {
     AncestorHashes {
         header: RepairRequestHeader,
         slot: Slot,
+    },
+    OrphanForBlockId {
+        header: RepairRequestHeader,
+        slot: Slot,
+        block_id: Hash,
+    },
+    HighestWindowIndexForBlockId {
+        header: RepairRequestHeader,
+        slot: Slot,
+        shred_index: u64,
+        block_id: Hash,
+    },
+    WindowIndexForBlockId {
+        header: RepairRequestHeader,
+        slot: Slot,
+        shred_index: u64,
+        block_id: Hash,
     },
 }
 
@@ -294,6 +355,9 @@ impl RepairProtocol {
             Self::HighestWindowIndex { header, .. } => Some(&header.sender),
             Self::Orphan { header, .. } => Some(&header.sender),
             Self::AncestorHashes { header, .. } => Some(&header.sender),
+            Self::OrphanForBlockId { header, .. } => Some(&header.sender),
+            Self::HighestWindowIndexForBlockId { header, .. } => Some(&header.sender),
+            Self::WindowIndexForBlockId { header, .. } => Some(&header.sender),
         }
     }
 
@@ -310,7 +374,10 @@ impl RepairProtocol {
             | Self::WindowIndex { .. }
             | Self::HighestWindowIndex { .. }
             | Self::Orphan { .. }
-            | Self::AncestorHashes { .. } => true,
+            | Self::AncestorHashes { .. }
+            | Self::OrphanForBlockId { .. }
+            | Self::HighestWindowIndexForBlockId { .. }
+            | Self::WindowIndexForBlockId { .. } => true,
         }
     }
 
@@ -318,8 +385,12 @@ impl RepairProtocol {
         match self {
             RepairProtocol::WindowIndex { .. }
             | RepairProtocol::HighestWindowIndex { .. }
-            | RepairProtocol::AncestorHashes { .. } => 1,
-            RepairProtocol::Orphan { .. } => MAX_ORPHAN_REPAIR_RESPONSES,
+            | RepairProtocol::AncestorHashes { .. }
+            | RepairProtocol::HighestWindowIndexForBlockId { .. }
+            | RepairProtocol::WindowIndexForBlockId { .. } => 1,
+            RepairProtocol::Orphan { .. } | RepairProtocol::OrphanForBlockId { .. } => {
+                MAX_ORPHAN_REPAIR_RESPONSES
+            }
             RepairProtocol::Pong(_) => 0, // no response
             RepairProtocol::LegacyWindowIndex
             | RepairProtocol::LegacyHighestWindowIndex
@@ -456,6 +527,7 @@ impl ServeRepair {
                         from_addr,
                         *slot,
                         *shred_index,
+                        None,
                         *nonce,
                     );
                     if batch.is_none() {
@@ -475,6 +547,7 @@ impl ServeRepair {
                             from_addr,
                             *slot,
                             *highest_index,
+                            None,
                             *nonce,
                         ),
                         "HighestWindowIndexWithNonce",
@@ -490,6 +563,7 @@ impl ServeRepair {
                             recycler,
                             from_addr,
                             *slot,
+                            None,
                             MAX_ORPHAN_REPAIR_RESPONSES,
                             *nonce,
                         ),
@@ -511,6 +585,63 @@ impl ServeRepair {
                     stats.pong += 1;
                     ping_cache.add(pong, *from_addr, Instant::now());
                     (None, "Pong")
+                }
+                RepairProtocol::OrphanForBlockId {
+                    header: RepairRequestHeader { nonce, .. },
+                    slot,
+                    block_id,
+                } => {
+                    stats.orphan_for_block_id += 1;
+                    (
+                        self.repair_handler.run_orphan(
+                            recycler,
+                            from_addr,
+                            *slot,
+                            Some(*block_id),
+                            MAX_ORPHAN_REPAIR_RESPONSES,
+                            *nonce,
+                        ),
+                        "OrphanForBlockIdWithNonce",
+                    )
+                }
+                RepairProtocol::HighestWindowIndexForBlockId {
+                    header: RepairRequestHeader { nonce, .. },
+                    slot,
+                    shred_index: highest_index,
+                    block_id,
+                } => {
+                    stats.highest_window_index_for_block_id += 1;
+                    (
+                        self.repair_handler.run_highest_window_request(
+                            recycler,
+                            from_addr,
+                            *slot,
+                            *highest_index,
+                            Some(*block_id),
+                            *nonce,
+                        ),
+                        "HighestWindowIndexForBlockIdWithNonce",
+                    )
+                }
+                RepairProtocol::WindowIndexForBlockId {
+                    header: RepairRequestHeader { nonce, .. },
+                    slot,
+                    shred_index,
+                    block_id,
+                } => {
+                    stats.window_index_for_block_id += 1;
+                    let batch = self.repair_handler.run_window_request(
+                        recycler,
+                        from_addr,
+                        *slot,
+                        *shred_index,
+                        Some(*block_id),
+                        *nonce,
+                    );
+                    if batch.is_none() {
+                        stats.window_index_for_block_id_misses += 1;
+                    }
+                    (batch, "WindowIndexForBlockIdWithNonce")
                 }
                 RepairProtocol::LegacyWindowIndex
                 | RepairProtocol::LegacyWindowIndexWithNonce
@@ -789,11 +920,22 @@ impl ServeRepair {
             ("self_repair", stats.err_self_repair, i64),
             ("window_index", stats.window_index, i64),
             (
+                "window_index_for_block_id",
+                stats.window_index_for_block_id,
+                i64
+            ),
+            (
                 "request-highest-window-index",
                 stats.highest_window_index,
                 i64
             ),
+            (
+                "request-highest-window-index-for-block-id",
+                stats.highest_window_index_for_block_id,
+                i64
+            ),
             ("orphan", stats.orphan, i64),
+            ("orphan_for_block_id", stats.orphan_for_block_id, i64),
             (
                 "serve_repair-request-ancestor-hashes",
                 stats.ancestor_hashes,
@@ -801,6 +943,11 @@ impl ServeRepair {
             ),
             ("pong", stats.pong, i64),
             ("window_index_misses", stats.window_index_misses, i64),
+            (
+                "window_index_for_block_id_misses",
+                stats.window_index_for_block_id_misses,
+                i64
+            ),
             (
                 "ping_cache_check_failed",
                 stats.ping_cache_check_failed,
@@ -898,7 +1045,10 @@ impl ServeRepair {
             RepairProtocol::WindowIndex { header, .. }
             | RepairProtocol::HighestWindowIndex { header, .. }
             | RepairProtocol::Orphan { header, .. }
-            | RepairProtocol::AncestorHashes { header, .. } => {
+            | RepairProtocol::AncestorHashes { header, .. }
+            | RepairProtocol::OrphanForBlockId { header, .. }
+            | RepairProtocol::HighestWindowIndexForBlockId { header, .. }
+            | RepairProtocol::WindowIndexForBlockId { header, .. } => {
                 if &header.recipient != my_id {
                     return Err(Error::from(RepairVerifyError::IdMismatch));
                 }
@@ -954,7 +1104,10 @@ impl ServeRepair {
             match request {
                 RepairProtocol::WindowIndex { .. }
                 | RepairProtocol::HighestWindowIndex { .. }
-                | RepairProtocol::Orphan { .. } => {
+                | RepairProtocol::Orphan { .. }
+                | RepairProtocol::OrphanForBlockId { .. }
+                | RepairProtocol::HighestWindowIndexForBlockId { .. }
+                | RepairProtocol::WindowIndexForBlockId { .. } => {
                     let ping = RepairResponse::Ping(ping);
                     Packet::from_data(Some(from_addr), ping).ok()
                 }
@@ -1079,11 +1232,10 @@ impl ServeRepair {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn repair_request(
         &self,
-        cluster_slots: &ClusterSlots,
+        repair_info: &RepairInfo,
         repair_request: ShredRepairType,
         peers_cache: &mut LruCache<Slot, RepairPeers>,
         repair_stats: &mut RepairStats,
-        repair_validators: &Option<HashSet<Pubkey>>,
         outstanding_requests: &mut OutstandingShredRepairs,
         identity_keypair: &Keypair,
         repair_request_quic_sender: &AsyncSender<(SocketAddr, Bytes)>,
@@ -1096,8 +1248,10 @@ impl ServeRepair {
             Some(entry) if entry.asof.elapsed() < REPAIR_PEERS_CACHE_TTL => entry,
             _ => {
                 peers_cache.pop(&slot);
-                let repair_peers = self.repair_peers(repair_validators, slot);
-                let weights = cluster_slots.compute_weights(slot, &repair_peers);
+                let repair_peers = self.repair_peers(&repair_info.repair_validators, slot);
+                let weights = repair_info
+                    .cluster_slots
+                    .compute_weights(slot, &repair_peers);
                 let repair_peers = RepairPeers::new(Instant::now(), &repair_peers, &weights)?;
                 peers_cache.put(slot, repair_peers);
                 peers_cache.get(&slot).unwrap()
@@ -1105,6 +1259,15 @@ impl ServeRepair {
         };
         let peer = repair_peers.sample(&mut rand::thread_rng());
         let nonce = outstanding_requests.add_request(repair_request, timestamp());
+        let location = repair_request
+            .block_id()
+            .map_or(BlockLocation::Original, |block_id| {
+                BlockLocation::Alternate { block_id }
+            });
+        repair_info
+            .block_location_lookup
+            .add_location(nonce, location);
+
         let out = self.map_repair_request(
             &repair_request,
             &peer.pubkey,
@@ -1216,6 +1379,38 @@ impl ServeRepair {
                 RepairProtocol::Orphan {
                     header,
                     slot: *slot,
+                }
+            }
+            ShredRepairType::OrphanForBlockId(slot, block_id) => {
+                repair_stats
+                    .orphan_for_block_id
+                    .update(repair_peer_id, *slot, 0);
+                RepairProtocol::OrphanForBlockId {
+                    header,
+                    slot: *slot,
+                    block_id: *block_id,
+                }
+            }
+            ShredRepairType::HighestShredForBlockId(slot, shred_index, block_id) => {
+                repair_stats
+                    .highest_shred_for_block_id
+                    .update(repair_peer_id, *slot, *shred_index);
+                RepairProtocol::HighestWindowIndexForBlockId {
+                    header,
+                    slot: *slot,
+                    shred_index: *shred_index,
+                    block_id: *block_id,
+                }
+            }
+            ShredRepairType::ShredForBlockId(slot, shred_index, block_id) => {
+                repair_stats
+                    .shred_for_block_id
+                    .update(repair_peer_id, *slot, *shred_index);
+                RepairProtocol::WindowIndexForBlockId {
+                    header,
+                    slot: *slot,
+                    shred_index: *shred_index,
+                    block_id: *block_id,
                 }
             }
         };
@@ -1775,7 +1970,8 @@ mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let handler = StandardRepairHandler::new(blockstore.clone());
-        let rv = handler.run_highest_window_request(&recycler, &socketaddr_any!(), 0, 0, nonce);
+        let rv =
+            handler.run_highest_window_request(&recycler, &socketaddr_any!(), 0, 0, None, nonce);
         assert!(rv.is_none());
 
         let _ = fill_blockstore_slot_with_ticks(
@@ -1788,7 +1984,7 @@ mod tests {
 
         let index = 1;
         let mut rv = handler
-            .run_highest_window_request(&recycler, &socketaddr_any!(), slot, index, nonce)
+            .run_highest_window_request(&recycler, &socketaddr_any!(), slot, index, None, nonce)
             .expect("packets");
         let request = ShredRepairType::HighestShred(slot, index);
         verify_responses(&request, rv.iter());
@@ -1813,6 +2009,7 @@ mod tests {
             &socketaddr_any!(),
             slot,
             index + 1,
+            None,
             nonce,
         );
         assert!(rv.is_none());
@@ -1828,7 +2025,7 @@ mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let handler = StandardRepairHandler::new(blockstore.clone());
-        let rv = handler.run_window_request(&recycler, &socketaddr_any!(), slot, 0, nonce);
+        let rv = handler.run_window_request(&recycler, &socketaddr_any!(), slot, 0, None, nonce);
         assert!(rv.is_none());
         let shredder = Shredder::new(slot, slot - 1, 0, 2).unwrap();
         let keypair = Keypair::new();
@@ -1851,7 +2048,7 @@ mod tests {
             .expect("Expect successful ledger write");
 
         let mut rv = handler
-            .run_window_request(&recycler, &socketaddr_any!(), slot, index, nonce)
+            .run_window_request(&recycler, &socketaddr_any!(), slot, index, None, nonce)
             .expect("packets");
         let request = ShredRepairType::Shred(slot, index);
         verify_responses(&request, rv.iter());
@@ -1881,22 +2078,39 @@ mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
-        let cluster_slots = ClusterSlots::default_for_tests();
+        let cluster_slots = Arc::new(ClusterSlots::default_for_tests());
         let cluster_info = Arc::new(new_test_cluster_info());
         let serve_repair = ServeRepair::new_for_test(
             cluster_info.clone(),
-            bank_forks,
+            bank_forks.clone(),
             Arc::new(RwLock::new(HashSet::default())),
         );
         let identity_keypair = cluster_info.keypair().clone();
         let mut outstanding_requests = OutstandingShredRepairs::default();
         let (repair_request_quic_sender, _) = tokio::sync::mpsc::channel(/*buffer:*/ 128);
+        let block_location_lookup = BlockLocationLookup::new_arc();
+        let (ancestor_duplicate_slots_sender, _) = unbounded();
+        let repair_info = RepairInfo {
+            bank_forks: bank_forks.clone(),
+            cluster_info: cluster_info.clone(),
+            cluster_slots: cluster_slots.clone(),
+            epoch_schedule: bank_forks
+                .read()
+                .unwrap()
+                .working_bank()
+                .epoch_schedule()
+                .clone(),
+            ancestor_duplicate_slots_sender: ancestor_duplicate_slots_sender.clone(),
+            repair_validators: None,
+            repair_whitelist: Arc::new(RwLock::new(HashSet::default())),
+            wen_restart_repair_slots: None,
+            block_location_lookup: block_location_lookup.clone(),
+        };
         let rv = serve_repair.repair_request(
-            &cluster_slots,
+            &repair_info,
             ShredRepairType::Shred(0, 0),
             &mut LruCache::new(100),
             &mut RepairStats::default(),
-            &None,
             &mut outstanding_requests,
             &identity_keypair,
             &repair_request_quic_sender,
@@ -1924,11 +2138,10 @@ mod tests {
         cluster_info.insert_info(nxt.clone());
         let rv = serve_repair
             .repair_request(
-                &cluster_slots,
+                &repair_info,
                 ShredRepairType::Shred(0, 0),
                 &mut LruCache::new(100),
                 &mut RepairStats::default(),
-                &None,
                 &mut outstanding_requests,
                 &identity_keypair,
                 &repair_request_quic_sender,
@@ -1963,11 +2176,10 @@ mod tests {
             //this randomly picks an option, so eventually it should pick both
             let rv = serve_repair
                 .repair_request(
-                    &cluster_slots,
+                    &repair_info,
                     ShredRepairType::Shred(0, 0),
                     &mut LruCache::new(100),
                     &mut RepairStats::default(),
-                    &None,
                     &mut outstanding_requests,
                     &identity_keypair,
                     &repair_request_quic_sender,
@@ -1996,7 +2208,7 @@ mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let handler = StandardRepairHandler::new(blockstore.clone());
-        let rv = handler.run_orphan(&recycler, &socketaddr_any!(), slot, 5, nonce);
+        let rv = handler.run_orphan(&recycler, &socketaddr_any!(), slot, None, 5, nonce);
         assert!(rv.is_none());
 
         // Create slots [slot, slot + num_slots) with 5 shreds apiece
@@ -2007,7 +2219,14 @@ mod tests {
             .expect("Expect successful ledger write");
 
         // We don't have slot `slot + num_slots`, so we don't know how to service this request
-        let rv = handler.run_orphan(&recycler, &socketaddr_any!(), slot + num_slots, 5, nonce);
+        let rv = handler.run_orphan(
+            &recycler,
+            &socketaddr_any!(),
+            slot + num_slots,
+            None,
+            5,
+            nonce,
+        );
         assert!(rv.is_none());
 
         // For a orphan request for `slot + num_slots - 1`, we should return the highest shreds
@@ -2017,6 +2236,7 @@ mod tests {
                 &recycler,
                 &socketaddr_any!(),
                 slot + num_slots - 1,
+                None,
                 5,
                 nonce,
             )
@@ -2077,7 +2297,7 @@ mod tests {
         // be corrupted
         let handler = StandardRepairHandler::new(blockstore.clone());
         let rv = handler
-            .run_orphan(&recycler, &socketaddr_any!(), 2, 5, nonce)
+            .run_orphan(&recycler, &socketaddr_any!(), 2, None, 5, nonce)
             .expect("run_orphan packets");
 
         // Verify responses
@@ -2182,7 +2402,7 @@ mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
-        let cluster_slots = ClusterSlots::default_for_tests();
+        let cluster_slots = Arc::new(ClusterSlots::default_for_tests());
         let cluster_info = Arc::new(new_test_cluster_info());
         let me = cluster_info.my_contact_info();
         let (repair_request_quic_sender, _) = tokio::sync::mpsc::channel(/*buffer:*/ 128);
@@ -2193,10 +2413,29 @@ mod tests {
         cluster_info.insert_info(contact_info3.clone());
         let identity_keypair = cluster_info.keypair().clone();
         let serve_repair = ServeRepair::new_for_test(
-            cluster_info,
-            bank_forks,
+            cluster_info.clone(),
+            bank_forks.clone(),
             Arc::new(RwLock::new(HashSet::default())),
         );
+
+        let block_location_lookup = BlockLocationLookup::new_arc();
+        let (ancestor_duplicate_slots_sender, _) = unbounded();
+        let mut repair_info = RepairInfo {
+            bank_forks: bank_forks.clone(),
+            cluster_info: cluster_info.clone(),
+            cluster_slots: cluster_slots.clone(),
+            epoch_schedule: bank_forks
+                .read()
+                .unwrap()
+                .working_bank()
+                .epoch_schedule()
+                .clone(),
+            ancestor_duplicate_slots_sender: ancestor_duplicate_slots_sender.clone(),
+            repair_validators: None,
+            repair_whitelist: Arc::new(RwLock::new(HashSet::default())),
+            wen_restart_repair_slots: None,
+            block_location_lookup: block_location_lookup.clone(),
+        };
 
         // If:
         // 1) repair validator set doesn't exist in gossip
@@ -2204,14 +2443,15 @@ mod tests {
         // then no repairs should be generated
         for pubkey in &[solana_pubkey::new_rand(), *me.pubkey()] {
             let known_validators = Some(vec![*pubkey].into_iter().collect());
+            repair_info.repair_validators = known_validators.clone();
             assert!(serve_repair.repair_peers(&known_validators, 1).is_empty());
+
             assert_matches!(
                 serve_repair.repair_request(
-                    &cluster_slots,
+                    &repair_info,
                     ShredRepairType::Shred(0, 0),
                     &mut LruCache::new(100),
                     &mut RepairStats::default(),
-                    &known_validators,
                     &mut OutstandingShredRepairs::default(),
                     &identity_keypair,
                     &repair_request_quic_sender,
@@ -2223,16 +2463,16 @@ mod tests {
 
         // If known validator exists in gossip, should return repair successfully
         let known_validators = Some(vec![*contact_info2.pubkey()].into_iter().collect());
+        repair_info.repair_validators = known_validators.clone();
         let repair_peers = serve_repair.repair_peers(&known_validators, 1);
         assert_eq!(repair_peers.len(), 1);
         assert_eq!(repair_peers[0].pubkey(), contact_info2.pubkey());
         assert_matches!(
             serve_repair.repair_request(
-                &cluster_slots,
+                &repair_info,
                 ShredRepairType::Shred(0, 0),
                 &mut LruCache::new(100),
                 &mut RepairStats::default(),
-                &known_validators,
                 &mut OutstandingShredRepairs::default(),
                 &identity_keypair,
                 &repair_request_quic_sender,
@@ -2253,11 +2493,10 @@ mod tests {
         assert!(repair_peers.contains(contact_info3.pubkey()));
         assert_matches!(
             serve_repair.repair_request(
-                &cluster_slots,
+                &repair_info,
                 ShredRepairType::Shred(0, 0),
                 &mut LruCache::new(100),
                 &mut RepairStats::default(),
-                &None,
                 &mut OutstandingShredRepairs::default(),
                 &identity_keypair,
                 &repair_request_quic_sender,
@@ -2290,7 +2529,10 @@ mod tests {
         match repair {
             ShredRepairType::Orphan(_)
             | ShredRepairType::HighestShred(_, _)
-            | ShredRepairType::Shred(_, _) => (),
+            | ShredRepairType::Shred(_, _)
+            | ShredRepairType::OrphanForBlockId(_, _)
+            | ShredRepairType::HighestShredForBlockId(_, _, _)
+            | ShredRepairType::ShredForBlockId(_, _, _) => (),
         };
 
         let slot = 9;

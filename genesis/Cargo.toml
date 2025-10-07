@@ -30,6 +30,7 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 solana-account = "=3.0.0"
 solana-accounts-db = { workspace = true }
+solana-bls-signatures = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-clock = "=3.0.0"
@@ -58,7 +59,9 @@ solana-stake-interface = { version = "=2.0.1", features = ["borsh"] }
 solana-stake-program = { workspace = true }
 solana-time-utils = "3.0.0"
 solana-version = { workspace = true }
+solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
+solana-votor-messages = { workspace = true }
 tempfile = { workspace = true }
 
 [dev-dependencies]

@@ -179,12 +179,22 @@ impl BlockCommitmentCache {
         }
     }
 
-    pub fn set_highest_confirmed_slot(&mut self, slot: Slot) {
-        self.commitment_slots.highest_confirmed_slot = slot;
+    pub fn set_slot(&mut self, slot: Slot) {
+        self.commitment_slots.slot = std::cmp::max(self.commitment_slots.slot, slot);
     }
 
-    pub fn set_highest_super_majority_root(&mut self, root: Slot) {
-        self.commitment_slots.highest_super_majority_root = root;
+    pub fn set_highest_confirmed_slot(&mut self, slot: Slot) {
+        self.commitment_slots.highest_confirmed_slot =
+            std::cmp::max(self.commitment_slots.highest_confirmed_slot, slot);
+    }
+
+    pub fn set_root(&mut self, slot: Slot) {
+        self.commitment_slots.root = std::cmp::max(self.commitment_slots.root, slot);
+    }
+
+    pub fn set_highest_super_majority_root(&mut self, slot: Slot) {
+        self.commitment_slots.highest_super_majority_root =
+            std::cmp::max(self.commitment_slots.highest_super_majority_root, slot);
     }
 
     pub fn initialize_slots(&mut self, slot: Slot, root: Slot) {
@@ -335,5 +345,29 @@ mod tests {
             BlockCommitmentCache::new(block_commitment, total_stake, commitment_slots);
 
         assert_eq!(block_commitment_cache.calculate_highest_confirmed_slot(), 0);
+    }
+
+    #[test]
+    fn test_setters_getters() {
+        let mut block_commitment_cache = BlockCommitmentCache::default();
+        // Setting bigger slots should be ok
+        block_commitment_cache.set_slot(1);
+        assert_eq!(block_commitment_cache.slot(), 1);
+        block_commitment_cache.set_highest_confirmed_slot(2);
+        assert_eq!(block_commitment_cache.highest_confirmed_slot(), 2);
+        block_commitment_cache.set_root(3);
+        assert_eq!(block_commitment_cache.root(), 3);
+        block_commitment_cache.set_highest_super_majority_root(4);
+        assert_eq!(block_commitment_cache.highest_super_majority_root(), 4);
+
+        // Setting smaller slots shuold be ignored
+        block_commitment_cache.set_slot(0);
+        assert_eq!(block_commitment_cache.slot(), 1);
+        block_commitment_cache.set_highest_confirmed_slot(1);
+        assert_eq!(block_commitment_cache.highest_confirmed_slot(), 2);
+        block_commitment_cache.set_root(2);
+        assert_eq!(block_commitment_cache.root(), 3);
+        block_commitment_cache.set_highest_super_majority_root(3);
+        assert_eq!(block_commitment_cache.highest_super_majority_root(), 4);
     }
 }

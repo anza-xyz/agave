@@ -1,6 +1,8 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 #![recursion_limit = "2048"]
+// TODO(ksn): remove this
+#![allow(deprecated)]
 //! The `solana` library implements the Solana high-performance blockchain architecture.
 //! It includes a full Rust implementation of the architecture (see
 //! [Validator](validator/struct.Validator.html)) as well as hooks to GPU implementations of its most
@@ -12,6 +14,8 @@ pub mod admin_rpc_post_init;
 pub mod banking_simulation;
 pub mod banking_stage;
 pub mod banking_trace;
+mod block_creation_loop;
+pub mod bls_sigverify;
 pub mod cluster_info_vote_listener;
 pub mod cluster_slots_service;
 pub mod commitment_service;
@@ -19,10 +23,10 @@ pub mod completed_data_sets_service;
 pub mod consensus;
 pub mod cost_update_service;
 pub mod drop_bank_service;
+pub mod ed25519_sigverifier;
 pub mod fetch_stage;
 pub mod forwarding_stage;
 pub mod gen_keys;
-mod mock_alpenglow_consensus;
 pub mod next_leader;
 pub mod optimistic_confirmation_verifier;
 pub mod repair;
@@ -30,7 +34,6 @@ pub mod replay_stage;
 mod result;
 pub mod sample_performance_service;
 mod shred_fetch_stage;
-pub mod sigverify;
 pub mod sigverify_stage;
 pub mod snapshot_packager_service;
 pub mod staked_nodes_updater_service;

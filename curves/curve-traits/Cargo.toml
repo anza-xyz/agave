@@ -1,0 +1,15 @@
+[package]
+name = "solana-curve-traits"
+description = "Solana Curve Traits"
+documentation = "https://docs.rs/solana-curve-traits"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -932,6 +932,15 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Controls the max concurrent connections for TPU-forward from unstaked nodes."),
     )
     .arg(
+        Arg::with_name("tpu_max_alpenglow_connections")
+            .long("tpu-max-alpenglow-connections")
+            .takes_value(true)
+            .default_value(&default_args.tpu_max_alpenglow_connections)
+            .validator(is_parsable::<u32>)
+            .hidden(hidden_unless_forced())
+            .help("Controls the max concurrent connections for TPU from Alpenglow nodes."),
+    )
+    .arg(
         Arg::with_name("tpu_max_streams_per_ms")
             .long("tpu-max-streams-per-ms")
             .takes_value(true)

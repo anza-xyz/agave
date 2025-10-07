@@ -2,10 +2,10 @@ use {
     crate::{
         banking_trace::BankingPacketSender,
         consensus::vote_stake_tracker::VoteStakeTracker,
+        ed25519_sigverifier::ed25519_verify_cpu,
         optimistic_confirmation_verifier::OptimisticConfirmationVerifier,
         replay_stage::DUPLICATE_THRESHOLD,
         result::{Error, Result},
-        sigverify,
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Select, Sender},
@@ -30,7 +30,6 @@ use {
         bank_forks::{BankForks, SharableBanks},
         bank_hash_cache::{BankHashCache, DumpedSlotSubscription},
         commitment::VOTE_THRESHOLD_SIZE,
-        epoch_stakes::VersionedEpochStakes,
         vote_sender_types::ReplayVoteReceiver,
     },
     solana_signature::Signature,
@@ -278,7 +277,7 @@ impl ClusterInfoVoteListener {
         let mut packet_batches = packet::to_packet_batches(&votes, 1);
 
         // Votes should already be filtered by this point.
-        sigverify::ed25519_verify_cpu(
+        ed25519_verify_cpu(
             &mut packet_batches,
             /*reject_non_vote=*/ false,
             votes.len(),
@@ -496,11 +495,9 @@ impl ClusterInfoVoteListener {
 
             // if we don't have stake information, ignore it
             let epoch = root_bank.epoch_schedule().get_epoch(slot);
-            let epoch_stakes = root_bank.epoch_stakes(epoch);
-            if epoch_stakes.is_none() {
+            let Some(epoch_stakes) = root_bank.epoch_stakes(epoch) else {
                 continue;
-            }
-            let epoch_stakes = epoch_stakes.unwrap();
+            };
 
             // We always track the last vote slot for optimistic confirmation. If we have replayed
             // the same version of last vote slot that is being voted on, then we also track the
@@ -681,7 +678,12 @@ impl ClusterInfoVoteListener {
                     // in gossip in the past, `is_new` would be false and it would have
                     // been filtered out above), so it's safe to increment the gossip-only
                     // stake
-                    Self::sum_stake(&mut gossip_only_stake, epoch_stakes, &pubkey);
+                    if let Some(epoch_stakes) = epoch_stakes {
+                        gossip_only_stake += epoch_stakes
+                            .stakes()
+                            .vote_accounts()
+                            .get_delegated_stake(&pubkey);
+                    }
                 }
 
                 // From the `slot_diff.retain` earlier, we know because there are
@@ -727,12 +729,6 @@ impl ClusterInfoVoteListener {
         w_slot_tracker
             .get_or_insert_optimistic_votes_tracker(hash)
             .add_vote_pubkey(pubkey, stake, total_epoch_stake, &THRESHOLDS_TO_CHECK)
-    }
-
-    fn sum_stake(sum: &mut u64, epoch_stakes: Option<&VersionedEpochStakes>, pubkey: &Pubkey) {
-        if let Some(stakes) = epoch_stakes {
-            *sum += stakes.stakes().vote_accounts().get_delegated_stake(pubkey)
-        }
     }
 }
 
@@ -1583,25 +1579,6 @@ mod tests {
         let (vote_txs, packets) = ClusterInfoVoteListener::verify_votes(votes, &sharable_banks);
         assert_eq!(vote_txs.len(), 2);
         verify_packets_len(&packets, 2);
-    }
-
-    #[test]
-    fn test_sum_stake() {
-        let SetupComponents {
-            bank,
-            validator_voting_keypairs,
-            ..
-        } = setup();
-        let vote_keypair = &validator_voting_keypairs[0].vote_keypair;
-        let epoch_stakes = bank.epoch_stakes(bank.epoch()).unwrap();
-        let mut gossip_only_stake = 0;
-
-        ClusterInfoVoteListener::sum_stake(
-            &mut gossip_only_stake,
-            Some(epoch_stakes),
-            &vote_keypair.pubkey(),
-        );
-        assert_eq!(gossip_only_stake, 100);
     }
 
     #[test]

@@ -1693,6 +1693,7 @@ impl TowerError {
 pub enum ExternalRootSource {
     Tower(Slot),
     HardFork(Slot),
+    VoteHistory(Slot),
 }
 
 impl ExternalRootSource {
@@ -1700,15 +1701,16 @@ impl ExternalRootSource {
         match self {
             ExternalRootSource::Tower(slot) => *slot,
             ExternalRootSource::HardFork(slot) => *slot,
+            ExternalRootSource::VoteHistory(slot) => *slot,
         }
     }
 }
 
-// Given an untimely crash, tower may have roots that are not reflected in blockstore,
+// Given an untimely crash, tower/vote history may have roots that are not reflected in blockstore,
 // or the reverse of this.
 // That's because we don't impose any ordering guarantee or any kind of write barriers
-// between tower (plain old POSIX fs calls) and blockstore (through RocksDB), when
-// `ReplayState::handle_votable_bank()` saves tower before setting blockstore roots.
+// between tower/vote history (plain old POSIX fs calls) and blockstore (through RocksDB), when
+// replay or voting loop saves tower/vote history before setting blockstore roots.
 pub fn reconcile_blockstore_roots_with_external_source(
     external_source: ExternalRootSource,
     blockstore: &Blockstore,

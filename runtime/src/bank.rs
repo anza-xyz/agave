@@ -1568,6 +1568,19 @@ impl Bank {
             .prune(new_root_slot, new_root_epoch);
     }
 
+    pub fn prune_program_cache_locked(
+        &self,
+        new_root_slot: Slot,
+        new_root_epoch: Epoch,
+        bank_forks: &BankForks,
+    ) {
+        self.transaction_processor
+            .global_program_cache
+            .write()
+            .unwrap()
+            .prune_locked(new_root_slot, new_root_epoch, bank_forks);
+    }
+
     pub fn prune_program_cache_by_deployment_slot(&self, deployment_slot: Slot) {
         self.transaction_processor
             .global_program_cache

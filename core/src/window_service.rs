@@ -17,6 +17,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
+        blockstore_meta::BlockLocation,
         leader_schedule_cache::LeaderScheduleCache,
         shred::{self, ReedSolomonCache, Shred},
     },
@@ -164,6 +165,13 @@ fn run_check_duplicate(
             }
         };
 
+        if root_bank
+            .feature_set
+            .is_active(&agave_feature_set::alpenglow::id())
+        {
+            return Ok(());
+        }
+
         // Propagate duplicate proof through gossip
         cluster_info.push_duplicate_shred(&shred1, &shred2)?;
         // Notify duplicate consensus state machine
@@ -180,7 +188,7 @@ fn run_check_duplicate(
 #[allow(clippy::too_many_arguments)]
 fn run_insert<F>(
     thread_pool: &ThreadPool,
-    verified_receiver: &Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool)>>,
+    verified_receiver: &Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
     blockstore: &Blockstore,
     leader_schedule_cache: &LeaderScheduleCache,
     handle_duplicate: F,
@@ -201,7 +209,7 @@ where
     shred_receiver_elapsed.stop();
     ws_metrics.shred_receiver_elapsed_us += shred_receiver_elapsed.as_us();
     ws_metrics.run_insert_count += 1;
-    let handle_shred = |(shred, repair): (shred::Payload, bool)| {
+    let handle_shred = |(shred, repair, block_location): (shred::Payload, bool, BlockLocation)| {
         if accept_repairs_only && !repair {
             return None;
         }
@@ -209,7 +217,7 @@ where
             ws_metrics.num_repairs.fetch_add(1, Ordering::Relaxed);
         }
         let shred = Shred::new_from_serialized_shred(shred).ok()?;
-        Some((Cow::Owned(shred), repair))
+        Some((Cow::Owned(shred), repair, block_location))
     };
     let now = Instant::now();
     let shreds: Vec<_> = thread_pool.install(|| {
@@ -221,7 +229,7 @@ where
     });
     ws_metrics.handle_packets_elapsed_us += now.elapsed().as_micros() as u64;
     ws_metrics.num_shreds_received += shreds.len();
-    let completed_data_sets = blockstore.insert_shreds_handle_duplicate(
+    let completed_data_sets = blockstore.insert_shreds_at_location_handle_duplicate(
         shreds,
         Some(leader_schedule_cache),
         false, // is_trusted
@@ -239,7 +247,7 @@ where
 }
 
 pub struct WindowServiceChannels {
-    pub verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool)>>,
+    pub verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
     pub retransmit_sender: EvictingSender<Vec<shred::Payload>>,
     pub completed_data_sets_sender: Option<CompletedDataSetsSender>,
     pub duplicate_slots_sender: DuplicateSlotSender,
@@ -248,7 +256,7 @@ pub struct WindowServiceChannels {
 
 impl WindowServiceChannels {
     pub fn new(
-        verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool)>>,
+        verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
         retransmit_sender: EvictingSender<Vec<shred::Payload>>,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
         duplicate_slots_sender: DuplicateSlotSender,
@@ -370,7 +378,7 @@ impl WindowService {
         exit: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
-        verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool)>>,
+        verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
         check_duplicate_sender: Sender<PossibleDuplicateShred>,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
         retransmit_sender: EvictingSender<Vec<shred::Payload>>,

@@ -1,4 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
+// TODO(ksn): remove this
+#![allow(deprecated)]
+
 mod cluster_tpu_info;
 pub mod filter;
 pub mod max_slots;

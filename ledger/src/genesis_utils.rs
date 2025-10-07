@@ -25,5 +25,6 @@ pub fn create_genesis_config_with_mint_keypair(
         mint_lamports,
         &Pubkey::new_unique(),
         bootstrap_validator_stake_lamports(),
+        false,
     )
 }

@@ -4,9 +4,9 @@ use {
         blockstore::error::Result,
         blockstore_meta::{self},
     },
-    bincode::Options as BincodeOptions,
     serde::{de::DeserializeOwned, Serialize},
     solana_clock::{Slot, UnixTimestamp},
+    solana_hash::{Hash, HASH_BYTES},
     solana_pubkey::{Pubkey, PUBKEY_BYTES},
     solana_signature::{Signature, SIGNATURE_BYTES},
     solana_storage_proto::convert::generated,
@@ -37,6 +37,16 @@ pub mod columns {
     /// * index type: `u64` (see [`SlotColumn`])
     /// * value type: [`blockstore_meta::SlotMeta`]
     pub struct SlotMeta;
+
+    #[derive(Debug)]
+    /// The alternate slot metadata column.
+    ///
+    /// Similar to [`SlotMeta`], however this column is only populated for alternate
+    /// versions fetched via block_id based repair.
+    ///
+    /// * index type: `(slot: u64, block_id: Hash)`
+    /// * value type: [`blockstore_meta::SlotMeta`]
+    pub struct AlternateSlotMeta;
 
     #[derive(Debug)]
     /// The orphans column.
@@ -88,6 +98,16 @@ pub mod columns {
     pub struct ErasureMeta;
 
     #[derive(Debug)]
+    /// The alternate erasure meta column.
+    ///
+    /// Similar to [`ErasureMeta`], however this column is only populated for alternate
+    /// versions fetched via block_id based repair.
+    ///
+    /// * index type: `(slot: u64, fec_set_index: u64, block_id: Hash)`
+    /// * value type: [`blockstore_meta::ErasureMeta`]
+    pub struct AlternateErasureMeta;
+
+    #[derive(Debug)]
     /// The bank hash column.
     ///
     /// This column family persists the bank hash of a given slot.  Note that
@@ -120,6 +140,16 @@ pub mod columns {
     pub struct Index;
 
     #[derive(Debug)]
+    /// The alternate index column.
+    ///
+    /// Similar to [`Index`], however this column is only populated for alternate
+    /// versions fetched via block_id based repair.
+    ///
+    /// * index type: `(slot: u64, block_id: Hash)`
+    /// * value type: [`blockstore_meta::Index`]
+    pub struct AlternateIndex;
+
+    #[derive(Debug)]
     /// The shred data column
     ///
     /// * index type: `(u64, u64)`
@@ -132,6 +162,26 @@ pub mod columns {
     /// * index type: `(u64, u64)`
     /// * value type: [`Vec<u8>`]
     pub struct ShredCode;
+
+    #[derive(Debug)]
+    /// The alternate shred data column
+    ///
+    /// Similar to [`ShredData`], however this column is only populated for alternate
+    /// versions fetched via block_id based repair.
+    ///
+    /// * index type: `(slot: u64, shred_index: u64, block_id: Hash)`
+    /// * value type: [`Vec<u8>`]
+    pub struct AlternateShredData;
+
+    #[derive(Debug)]
+    /// The block versions
+    ///
+    /// This column stores information about what versions of blocks in `slot` we
+    /// have available, for use in serving repair or switching replayed banks
+    ///
+    /// * index type: `u64` (see [`SlotColumn`])
+    /// * value type: [`blockstore_meta::BlockVersions`]
+    pub struct BlockVersions;
 
     #[derive(Debug)]
     /// The transaction status column
@@ -206,8 +256,28 @@ pub mod columns {
     /// Its index type is (Slot, fec_set_index).
     ///
     /// * index type: `crate::shred::ErasureSetId` `(Slot, fec_set_index: u32)`
-    /// * value type: [`blockstore_meta::MerkleRootMeta`]`
+    /// * value type: [`blockstore_meta::MerkleRootMeta`]
     pub struct MerkleRootMeta;
+
+    #[derive(Debug)]
+    /// The alternate merkle root meta column
+    ///
+    /// Similar to [`MerkleRootMeta`], however this column is only populated for alternate
+    /// versions fetched via block_id based repair.
+    ///
+    /// * index type: `(slot: u64, fec_set_index: u32, block_id: Hash)`
+    /// * value type: [`blockstore_meta::MerkleRootMeta`]
+    pub struct AlternateMerkleRootMeta;
+
+    #[derive(Debug)]
+    /// The vote certificate column
+    ///
+    /// Stores the `NotarizeFallback` and `Skip` certificates for each column
+    /// for use during catch up and to serve repair
+    ///
+    /// * index type: `u64` (see [`SlotColumn`])
+    /// * value type: [`blockstore_meta::SlotCertificates`]
+    pub struct SlotCertificates;
 }
 
 macro_rules! convert_column_index_to_key_bytes {
@@ -659,6 +729,47 @@ impl ColumnName for columns::ShredData {
     const NAME: &'static str = "data_shred";
 }
 
+impl Column for columns::AlternateShredData {
+    type Index = (Slot, /*shred index:*/ u64, /* block id*/ Hash);
+    type Key = [u8; std::mem::size_of::<Slot>() + std::mem::size_of::<u64>() + HASH_BYTES];
+
+    #[inline]
+    fn key((slot, index, hash): &Self::Index) -> Self::Key {
+        convert_column_index_to_key_bytes!(Key,
+            ..8 => &slot.to_be_bytes(),
+            8..16 => &index.to_be_bytes(),
+            16.. => &hash.to_bytes(),
+        )
+    }
+
+    fn index(key: &[u8]) -> Self::Index {
+        convert_column_key_bytes_to_index!(key,
+            0..8  => Slot::from_be_bytes,
+            8..16 => u64::from_be_bytes,  // shred index
+            16..48 => Hash::new_from_array,
+        )
+    }
+
+    fn slot(index: Self::Index) -> Slot {
+        index.0
+    }
+
+    fn as_index(slot: Slot) -> Self::Index {
+        (slot, 0, Hash::default())
+    }
+}
+impl ColumnName for columns::AlternateShredData {
+    const NAME: &'static str = "alt_data_shred";
+}
+
+impl SlotColumn for columns::BlockVersions {}
+impl ColumnName for columns::BlockVersions {
+    const NAME: &'static str = "block_versions";
+}
+impl TypedColumn for columns::BlockVersions {
+    type Type = blockstore_meta::BlockVersions;
+}
+
 impl SlotColumn for columns::Index {}
 impl ColumnName for columns::Index {
     const NAME: &'static str = "index";
@@ -667,25 +778,45 @@ impl TypedColumn for columns::Index {
     type Type = blockstore_meta::Index;
 
     fn deserialize(data: &[u8]) -> Result<Self::Type> {
-        let config = bincode::DefaultOptions::new()
-            // `bincode::serialize` uses fixint encoding by default, so we need to use the same here
-            .with_fixint_encoding()
-            .reject_trailing_bytes();
+        blockstore_meta::deserialize_index(data)
+    }
+}
 
-        // Migration strategy for new column format:
-        // 1. Release 1: Add ability to read new format as fallback, keep writing old format
-        // 2. Release 2: Switch to writing new format, keep reading old format as fallback
-        // 3. Release 3: Remove old format support once stable
-        // This allows safe downgrade to Release 1 since it can read both formats
-        // https://github.com/anza-xyz/agave/issues/3570
-        let index: bincode::Result<blockstore_meta::Index> = config.deserialize(data);
-        match index {
-            Ok(index) => Ok(index),
-            Err(_) => {
-                let index: blockstore_meta::IndexFallback = config.deserialize(data)?;
-                Ok(index.into())
-            }
-        }
+impl Column for columns::AlternateIndex {
+    type Index = (Slot, /* block_id */ Hash);
+    type Key = [u8; std::mem::size_of::<Slot>() + HASH_BYTES];
+
+    #[inline]
+    fn key((slot, block_id): &Self::Index) -> Self::Key {
+        convert_column_index_to_key_bytes!(Key,
+            ..8 => &slot.to_be_bytes(),
+            8.. => &block_id.to_bytes(),
+        )
+    }
+
+    fn index(key: &[u8]) -> Self::Index {
+        convert_column_key_bytes_to_index!(key,
+            0..8  => Slot::from_be_bytes,
+            8..40 => Hash::new_from_array, // block_id
+        )
+    }
+
+    fn slot(index: Self::Index) -> Slot {
+        index.0
+    }
+
+    fn as_index(slot: Slot) -> Self::Index {
+        (slot, Hash::default())
+    }
+}
+impl ColumnName for columns::AlternateIndex {
+    const NAME: &'static str = "alt_index";
+}
+impl TypedColumn for columns::AlternateIndex {
+    type Type = blockstore_meta::Index;
+
+    fn deserialize(data: &[u8]) -> Result<Self::Type> {
+        blockstore_meta::deserialize_index(data)
     }
 }
 
@@ -737,27 +868,45 @@ impl TypedColumn for columns::SlotMeta {
     type Type = blockstore_meta::SlotMeta;
 
     fn deserialize(data: &[u8]) -> Result<Self::Type> {
-        // SlotMeta is being migrated to a new `completed_data_indexes` format.
-        //
-        // Ensure that reject trailing bytes is enabled to prevent false postivies in deserialization.
-        let config = bincode::DefaultOptions::new()
-            // `bincode::serialize` uses fixint encoding by default, so we need to use the same here
-            .with_fixint_encoding()
-            .reject_trailing_bytes();
+        blockstore_meta::deserialize_slot_meta(data)
+    }
+}
 
-        // Migration strategy for new column format:
-        // 1. Release 1: Add ability to read new format as fallback, keep writing old format
-        // 2. Release 2: Switch to writing new format, keep reading old format as fallback
-        // 3. Release 3: Remove old format support once stable
-        // This allows safe downgrade to Release 1 since it can read both formats
-        let index: bincode::Result<blockstore_meta::SlotMeta> = config.deserialize(data);
-        match index {
-            Ok(index) => Ok(index),
-            Err(_) => {
-                let index: blockstore_meta::SlotMetaFallback = config.deserialize(data)?;
-                Ok(index.into())
-            }
-        }
+impl Column for columns::AlternateSlotMeta {
+    type Index = (Slot, /* block_id */ Hash);
+    type Key = [u8; std::mem::size_of::<Slot>() + HASH_BYTES];
+
+    #[inline]
+    fn key((slot, block_id): &Self::Index) -> Self::Key {
+        convert_column_index_to_key_bytes!(Key,
+            ..8 => &slot.to_be_bytes(),
+            8.. => &block_id.to_bytes(),
+        )
+    }
+
+    fn index(key: &[u8]) -> Self::Index {
+        convert_column_key_bytes_to_index!(key,
+            0..8  => Slot::from_be_bytes,
+            8..40 => Hash::new_from_array, // block_id
+        )
+    }
+
+    fn slot(index: Self::Index) -> Slot {
+        index.0
+    }
+
+    fn as_index(slot: Slot) -> Self::Index {
+        (slot, Hash::default())
+    }
+}
+impl ColumnName for columns::AlternateSlotMeta {
+    const NAME: &'static str = "alt_meta";
+}
+impl TypedColumn for columns::AlternateSlotMeta {
+    type Type = blockstore_meta::SlotMeta;
+
+    fn deserialize(data: &[u8]) -> Result<Self::Type> {
+        blockstore_meta::deserialize_slot_meta(data)
     }
 }
 
@@ -792,6 +941,42 @@ impl ColumnName for columns::ErasureMeta {
     const NAME: &'static str = "erasure_meta";
 }
 impl TypedColumn for columns::ErasureMeta {
+    type Type = blockstore_meta::ErasureMeta;
+}
+
+impl Column for columns::AlternateErasureMeta {
+    type Index = (Slot, /*fec_set_index:*/ u32, /* block_id */ Hash);
+    type Key = [u8; std::mem::size_of::<Slot>() + std::mem::size_of::<u32>() + HASH_BYTES];
+
+    #[inline]
+    fn key((slot, fec_set_index, block_id): &Self::Index) -> Self::Key {
+        convert_column_index_to_key_bytes!(Key,
+            ..8 => &slot.to_be_bytes(),
+            8..12 => &fec_set_index.to_be_bytes(),
+            12.. => &block_id.to_bytes(),
+        )
+    }
+
+    fn index(key: &[u8]) -> Self::Index {
+        convert_column_key_bytes_to_index!(key,
+            0..8  => Slot::from_be_bytes,
+            8..12 => u32::from_be_bytes,  // fec_set_index
+            12..44 => Hash::new_from_array, // block_id
+        )
+    }
+
+    fn slot(index: Self::Index) -> Slot {
+        index.0
+    }
+
+    fn as_index(slot: Slot) -> Self::Index {
+        (slot, 0, Hash::default())
+    }
+}
+impl ColumnName for columns::AlternateErasureMeta {
+    const NAME: &'static str = "alt_erasure_meta";
+}
+impl TypedColumn for columns::AlternateErasureMeta {
     type Type = blockstore_meta::ErasureMeta;
 }
 
@@ -835,5 +1020,42 @@ impl ColumnName for columns::MerkleRootMeta {
     const NAME: &'static str = "merkle_root_meta";
 }
 impl TypedColumn for columns::MerkleRootMeta {
+    type Type = blockstore_meta::MerkleRootMeta;
+}
+
+impl Column for columns::AlternateMerkleRootMeta {
+    type Index = (Slot, /*fec_set_index:*/ u32, /* block_id */ Hash);
+    type Key = [u8; std::mem::size_of::<Slot>() + std::mem::size_of::<u32>() + HASH_BYTES];
+
+    #[inline]
+    fn key((slot, fec_set_index, block_id): &Self::Index) -> Self::Key {
+        convert_column_index_to_key_bytes!(Key,
+            ..8 => &slot.to_be_bytes(),
+            8..12 => &fec_set_index.to_be_bytes(),
+            12.. => &block_id.to_bytes(),
+        )
+    }
+
+    fn index(key: &[u8]) -> Self::Index {
+        convert_column_key_bytes_to_index!(key,
+            0..8  => Slot::from_be_bytes,
+            8..12 => u32::from_be_bytes,  // fec_set_index
+            12..44 => Hash::new_from_array, // block_id
+        )
+    }
+
+    fn slot((slot, _fec_set_index, _block_id): Self::Index) -> Slot {
+        slot
+    }
+
+    fn as_index(slot: Slot) -> Self::Index {
+        (slot, 0, Hash::default())
+    }
+}
+
+impl ColumnName for columns::AlternateMerkleRootMeta {
+    const NAME: &'static str = "alt_merkle_root_meta";
+}
+impl TypedColumn for columns::AlternateMerkleRootMeta {
     type Type = blockstore_meta::MerkleRootMeta;
 }

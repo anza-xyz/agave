@@ -590,8 +590,6 @@ fn process_loader_upgradeable_instruction(
             let transaction_context = &invoke_context.transaction_context;
             let instruction_context = transaction_context.get_current_instruction_context()?;
             let caller_program_id = instruction_context.get_program_key()?;
-            // The conversion from `PubkeyError` to `InstructionError` through
-            // num-traits is incorrect, but it's the existing behavior.
             let signers = [[new_program_id.as_ref(), &[bump_seed]]]
                 .iter()
                 .map(|seeds| Pubkey::create_program_address(seeds, caller_program_id))

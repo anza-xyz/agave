@@ -1,6 +1,8 @@
 // This file is included as a module separately in each bench, which causes
 // a `dead_code` warning if the given bench doesn't `use` all functions.
 #![allow(dead_code)]
+// TODO(ksn): remove this
+#![allow(deprecated)]
 
 use {
     rand::{

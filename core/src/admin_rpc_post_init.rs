@@ -8,6 +8,7 @@ use {
     solana_pubkey::Pubkey,
     solana_quic_definitions::NotifyKeyUpdate,
     solana_runtime::bank_forks::BankForks,
+    solana_votor::event::VotorEventSender,
     std::{
         collections::{HashMap, HashSet},
         net::UdpSocket,
@@ -28,6 +29,8 @@ pub enum KeyUpdaterType {
     Forward,
     /// For the RPC service
     RpcService,
+    /// Tpu alpenglow key updater
+    TpuAlpenglow,
 }
 
 /// Responsible for managing the updaters for identity key change
@@ -79,6 +82,7 @@ pub struct AdminRpcRequestMetadataPostInit {
     pub repair_socket: Arc<UdpSocket>,
     pub outstanding_repair_requests: Arc<RwLock<OutstandingRequests<ShredRepairType>>>,
     pub cluster_slots: Arc<ClusterSlots>,
+    pub votor_event_sender: VotorEventSender,
     pub node: Option<Arc<NodeMultihoming>>,
     pub banking_stage: Arc<RwLock<Option<BankingStage>>>,
 }

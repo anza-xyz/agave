@@ -31,6 +31,8 @@ members = [
     "connection-cache",
     "core",
     "cost-model",
+    "curves/bls12-381",
+    "curves/curve-traits",
     "curves/curve25519",
     "dos",
     "download-utils",
@@ -55,6 +57,7 @@ members = [
     "memory-management",
     "merkle-tree",
     "metrics",
+    "net-shaper",
     "net-utils",
     "notifier",
     "perf",
@@ -212,6 +215,8 @@ bincode = "1.3.3"
 bitflags = { version = "2.9.4" }
 bitvec = { version = "1.0.1", features = ["serde"] }
 blake3 = "1.8.2"
+blst = "0.3.14"
+blstrs = "0.7.1"
 borsh = { version = "1.5.7", features = ["derive", "unstable__schema"] }
 bs58 = { version = "0.5.1", default-features = false }
 bv = "0.11.1"
@@ -224,7 +229,7 @@ caps = "0.5.5"
 cargo_metadata = "0.15.4"
 cfg-if = "1.0.3"
 cfg_eval = "0.1.2"
-chrono = { version = "0.4.42", default-features = false }
+chrono = { version = "0.4.41", default-features = false }
 chrono-humanize = "0.2.3"
 clap = "2.33.1"
 # Remove this dependency when procedural macros will support non-inline modules.
@@ -258,6 +263,7 @@ env_logger = "0.11.8"
 etcd-client = "0.11.1"
 fast-math = "0.1"
 fd-lock = "3.0.13"
+ff = "0.13.1"
 five8_const = "0.1.4"
 flate2 = "1.0.31"
 fnv = "1.0.7"
@@ -269,6 +275,7 @@ gethostname = "0.2.3"
 getrandom = "0.3.3"
 goauth = "0.13.1"
 governor = "0.6.3"
+group = "0.13.0"
 hex = "0.4.3"
 hidapi = { version = "2.6.3", default-features = false }
 histogram = "0.6.9"
@@ -278,7 +285,7 @@ humantime = "2.3.0"
 hyper = "0.14.32"
 hyper-proxy = "0.9.1"
 im = "15.1.0"
-indexmap = "2.11.1"
+indexmap = "2.11.0"
 indicatif = "0.18.0"
 io-uring = "0.7.10"
 itertools = "0.12.1"
@@ -375,7 +382,6 @@ solana-account-decoder = { path = "account-decoder", version = "=3.1.0" }
 solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=3.1.0" }
 solana-account-info = "3.0.0"
 solana-accounts-db = { path = "accounts-db", version = "=3.1.0" }
-solana-address = "1.0.0"
 solana-address-lookup-table-interface = "3.0.0"
 solana-atomic-u64 = "3.0.0"
 solana-banks-client = { path = "banks-client", version = "=3.1.0" }
@@ -387,6 +393,7 @@ solana-bincode = "3.0.0"
 solana-blake3-hasher = "3.0.0"
 solana-bloom = { path = "bloom", version = "=3.1.0" }
 solana-bls-signatures = { version = "0.3.0", features = ["serde"] }
+solana-bls12-381 = { path = "curves/bls12-381", version = "=3.1.0" }
 solana-bn254 = "3.0.0"
 solana-borsh = "3.0.0"
 solana-bpf-loader-program = { path = "programs/bpf_loader", version = "=3.1.0" }
@@ -412,6 +419,7 @@ solana-connection-cache = { path = "connection-cache", version = "=3.1.0", defau
 solana-core = { path = "core", version = "=3.1.0" }
 solana-cost-model = { path = "cost-model", version = "=3.1.0" }
 solana-cpi = "3.0.0"
+solana-curve-traits = { path = "curves/curve-traits", version = "=3.1.0" }
 solana-curve25519 = { path = "curves/curve25519", version = "=3.1.0" }
 solana-define-syscall = "3.0.0"
 solana-derivation-path = "3.0.0"
@@ -542,7 +550,9 @@ solana-tps-client = { path = "tps-client", version = "=3.1.0" }
 solana-tpu-client = { path = "tpu-client", version = "=3.1.0", default-features = false }
 solana-tpu-client-next = { path = "tpu-client-next", version = "=3.1.0" }
 solana-transaction = "3.0.1"
-solana-transaction-context = { path = "transaction-context", version = "=3.1.0", features = ["bincode"] }
+solana-transaction-context = { path = "transaction-context", version = "=3.1.0", features = [
+    "bincode",
+] }
 solana-transaction-error = "3.0.0"
 solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=3.1.0" }
 solana-transaction-status = { path = "transaction-status", version = "=3.1.0" }
@@ -556,7 +566,8 @@ solana-version = { path = "version", version = "=3.1.0" }
 solana-vote = { path = "vote", version = "=3.1.0" }
 solana-vote-interface = "4.0.2"
 solana-vote-program = { path = "programs/vote", version = "=3.1.0", default-features = false }
-solana-votor-messages = { path = "votor-messages", version = "=3.1.0" }
+solana-votor = { path = "votor" }
+solana-votor-messages = { path = "votor-messages" }
 solana-wen-restart = { path = "wen-restart", version = "=3.1.0" }
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=3.1.0" }
 solana-zk-sdk = "4.0.0"
@@ -585,7 +596,7 @@ tar = "0.4.44"
 tarpc = "0.29.0"
 tempfile = "3.22.0"
 test-case = "3.3.1"
-thiserror = "2.0.16"
+thiserror = "2.0.14"
 thread-priority = "1.2.0"
 tiny-bip39 = "0.8.2"
 tokio = "1.47.1"

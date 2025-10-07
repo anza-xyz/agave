@@ -11,9 +11,11 @@ use {
     bincode::serialize,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
+    solana_hash::Hash,
     solana_ledger::{
         ancestor_iterator::{AncestorIterator, AncestorIteratorWithHash},
         blockstore::Blockstore,
+        blockstore_meta::BlockLocation,
         shred::Nonce,
     },
     solana_perf::packet::{Packet, PacketBatch, PacketBatchRecycler, PinnedPacketBatch},
@@ -33,6 +35,7 @@ pub trait RepairHandler {
         &self,
         slot: Slot,
         shred_index: u64,
+        block_id: Option<Hash>,
         dest: &SocketAddr,
         nonce: Nonce,
     ) -> Option<Packet>;
@@ -43,10 +46,10 @@ pub trait RepairHandler {
         from_addr: &SocketAddr,
         slot: Slot,
         shred_index: u64,
+        block_id: Option<Hash>,
         nonce: Nonce,
     ) -> Option<PacketBatch> {
-        // Try to find the requested index in one of the slots
-        let packet = self.repair_response_packet(slot, shred_index, from_addr, nonce)?;
+        let packet = self.repair_response_packet(slot, shred_index, block_id, from_addr, nonce)?;
         Some(
             PinnedPacketBatch::new_unpinned_with_recycler_data(
                 recycler,
@@ -63,13 +66,24 @@ pub trait RepairHandler {
         from_addr: &SocketAddr,
         slot: Slot,
         highest_index: u64,
+        block_id: Option<Hash>,
         nonce: Nonce,
     ) -> Option<PacketBatch> {
-        // Try to find the requested index in one of the slots
-        let meta = self.blockstore().meta(slot).ok()??;
+        let location = match block_id {
+            None => BlockLocation::Original,
+            Some(block_id) => self
+                .blockstore()
+                .get_block_location(slot, block_id)
+                .expect("Unable to fetch block location from blockstore")?,
+        };
+        let meta = self
+            .blockstore()
+            .meta_from_location(slot, location)
+            .expect("Unable to fetch slot meta from blockstore")?;
         if meta.received > highest_index {
             // meta.received must be at least 1 by this point
-            let packet = self.repair_response_packet(slot, meta.received - 1, from_addr, nonce)?;
+            let packet =
+                self.repair_response_packet(slot, meta.received - 1, block_id, from_addr, nonce)?;
             return Some(
                 PinnedPacketBatch::new_unpinned_with_recycler_data(
                     recycler,
@@ -87,6 +101,7 @@ pub trait RepairHandler {
         recycler: &PacketBatchRecycler,
         from_addr: &SocketAddr,
         slot: Slot,
+        block_id: Option<Hash>,
         max_responses: usize,
         nonce: Nonce,
     ) -> Option<PacketBatch>;

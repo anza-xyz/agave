@@ -1,4 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
+// TODO(ksn): remove this
+#![allow(deprecated)]
 use {
     criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput},
     solana_account::{AccountSharedData, ReadableAccount},

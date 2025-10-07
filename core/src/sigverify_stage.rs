@@ -6,9 +6,9 @@
 //! if perf-libs are available
 
 use {
-    crate::sigverify,
+    crate::ed25519_sigverifier::ed25519_verify_disabled,
     core::time::Duration,
-    crossbeam_channel::{Receiver, RecvTimeoutError, SendError},
+    crossbeam_channel::{Receiver, RecvTimeoutError, SendError, TrySendError},
     itertools::Itertools,
     solana_measure::measure::Measure,
     solana_perf::{
@@ -43,6 +43,9 @@ const MAX_DISCARDED_PACKET_RATE: f64 = 0.10;
 pub enum SigVerifyServiceError<SendType> {
     #[error("send packets batch error")]
     Send(#[from] SendError<SendType>),
+
+    #[error("try_send packet errror")]
+    TrySend(#[from] TrySendError<SendType>),
 
     #[error("streamer error")]
     Streamer(#[from] StreamerError),
@@ -221,7 +224,7 @@ impl SigVerifier for DisabledSigVerifier {
         mut batches: Vec<PacketBatch>,
         _valid_packets: usize,
     ) -> Vec<PacketBatch> {
-        sigverify::ed25519_verify_disabled(&mut batches);
+        ed25519_verify_disabled(&mut batches);
         batches
     }
 
@@ -230,18 +233,8 @@ impl SigVerifier for DisabledSigVerifier {
     }
 }
 
+// Static Functions
 impl SigVerifyStage {
-    pub fn new<T: SigVerifier + 'static + Send>(
-        packet_receiver: Receiver<PacketBatch>,
-        verifier: T,
-        thread_name: &'static str,
-        metrics_name: &'static str,
-    ) -> Self {
-        let thread_hdl =
-            Self::verifier_service(packet_receiver, verifier, thread_name, metrics_name);
-        Self { thread_hdl }
-    }
-
     pub fn discard_excess_packets(batches: &mut [PacketBatch], mut max_packets: usize) {
         // Group packets by their incoming IP address.
         let mut addrs = batches
@@ -285,6 +278,17 @@ impl SigVerifyStage {
         let shrink_total = pre_packet_batches_len.saturating_sub(post_packet_batches_len);
         shrink_time.stop();
         (shrink_time.as_us(), shrink_total, packet_batches)
+    }
+
+    pub fn new<T: SigVerifier + 'static + Send>(
+        packet_receiver: Receiver<PacketBatch>,
+        verifier: T,
+        thread_name: &'static str,
+        metrics_name: &'static str,
+    ) -> Self {
+        let thread_hdl =
+            Self::verifier_service(packet_receiver, verifier, thread_name, metrics_name);
+        Self { thread_hdl }
     }
 
     fn verifier<const K: usize, T: SigVerifier>(
@@ -412,7 +416,7 @@ impl SigVerifyStage {
                             SigVerifyServiceError::Streamer(StreamerError::RecvTimeout(
                                 RecvTimeoutError::Timeout,
                             )) => (),
-                            SigVerifyServiceError::Send(_) => {
+                            SigVerifyServiceError::Send(_) | SigVerifyServiceError::TrySend(_) => {
                                 break;
                             }
                             _ => error!("{e:?}"),
@@ -437,7 +441,7 @@ impl SigVerifyStage {
 mod tests {
     use {
         super::*,
-        crate::{banking_trace::BankingTracer, sigverify::TransactionSigVerifier},
+        crate::{banking_trace::BankingTracer, ed25519_sigverifier::TransactionSigVerifier},
         crossbeam_channel::unbounded,
         solana_perf::{
             packet::{to_packet_batches, Packet, PinnedPacketBatch},

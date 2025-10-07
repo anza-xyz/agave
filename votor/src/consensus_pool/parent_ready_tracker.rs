@@ -237,6 +237,11 @@ impl ParentReadyTracker {
     pub fn update_pubkey(&mut self, new_pubkey: Pubkey) {
         self.my_pubkey = new_pubkey;
     }
+
+    #[cfg(test)]
+    pub fn my_pubkey(&self) -> Pubkey {
+        self.my_pubkey
+    }
 }
 
 #[cfg(test)]

@@ -1,7 +1,6 @@
 use {
     crate::{
         consensus::tower_storage::{SavedTowerVersions, TowerStorage},
-        mock_alpenglow_consensus::MockAlpenglowConsensus,
         next_leader::upcoming_leader_tpu_vote_sockets,
     },
     bincode::serialize,
@@ -9,14 +8,13 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_clock::{Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET},
     solana_connection_cache::client_connection::ClientConnection,
-    solana_gossip::{cluster_info::ClusterInfo, epoch_specs::EpochSpecs},
+    solana_gossip::cluster_info::ClusterInfo,
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::PohRecorder,
-    solana_runtime::bank_forks::BankForks,
     solana_transaction::Transaction,
     solana_transaction_error::TransportError,
     std::{
-        net::{SocketAddr, UdpSocket},
+        net::SocketAddr,
         sync::{Arc, RwLock},
         thread::{self, Builder, JoinHandle},
     },
@@ -33,15 +31,6 @@ pub enum VoteOp {
         tx: Transaction,
         last_voted_slot: Slot,
     },
-}
-
-impl VoteOp {
-    fn tx(&self) -> &Transaction {
-        match self {
-            VoteOp::PushVote { tx, .. } => tx,
-            VoteOp::RefreshVote { tx, .. } => tx,
-        }
-    }
 }
 
 #[derive(Debug, Error)]
@@ -87,53 +76,61 @@ impl VotingService {
         poh_recorder: Arc<RwLock<PohRecorder>>,
         tower_storage: Arc<dyn TowerStorage>,
         connection_cache: Arc<ConnectionCache>,
-        alpenglow_socket: Option<UdpSocket>,
-        bank_forks: Arc<RwLock<BankForks>>,
     ) -> Self {
         let thread_hdl = Builder::new()
             .name("solVoteService".to_string())
-            .spawn({
-                let mut mock_alpenglow = alpenglow_socket.map(|s| {
-                    MockAlpenglowConsensus::new(
-                        s,
-                        cluster_info.clone(),
-                        EpochSpecs::from(bank_forks.clone()),
-                    )
-                });
-                move || {
-                    for vote_op in vote_receiver.iter() {
-                        // Figure out if we are casting a vote for a new slot, and what slot it is for
-                        let vote_slot = match vote_op {
-                            VoteOp::PushVote {
-                                tx: _,
-                                ref tower_slots,
-                                ..
-                            } => tower_slots.iter().copied().last(),
-                            _ => None,
-                        };
-                        // perform all the normal vote handling routines
-                        Self::handle_vote(
-                            &cluster_info,
-                            &poh_recorder,
-                            tower_storage.as_ref(),
-                            vote_op,
-                            connection_cache.clone(),
-                        );
-                        // trigger mock alpenglow vote if we have just cast an actual vote
-                        if let Some(slot) = vote_slot {
-                            if let Some(ag) = mock_alpenglow.as_mut() {
-                                let root_bank = { bank_forks.read().unwrap().root_bank() };
-                                ag.signal_new_slot(slot, &root_bank);
-                            }
-                        }
-                    }
-                    if let Some(ag) = mock_alpenglow {
-                        let _ = ag.join();
-                    }
-                }
+            .spawn(move || loop {
+                let Ok(vote_op) = vote_receiver.recv() else {
+                    break;
+                };
+                Self::handle_vote(
+                    &cluster_info,
+                    &poh_recorder,
+                    tower_storage.as_ref(),
+                    vote_op,
+                    connection_cache.clone(),
+                );
             })
             .unwrap();
         Self { thread_hdl }
+    }
+
+    fn broadcast_tower_vote(
+        cluster_info: &ClusterInfo,
+        poh_recorder: &RwLock<PohRecorder>,
+        tx: &Transaction,
+        connection_cache: &Arc<ConnectionCache>,
+    ) {
+        // Attempt to send our vote transaction to the leaders for the next few
+        // slots. From the current slot to the forwarding slot offset
+        // (inclusive).
+        const UPCOMING_LEADER_FANOUT_SLOTS: u64 =
+            FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET.saturating_add(1);
+        #[cfg(test)]
+        static_assertions::const_assert_eq!(UPCOMING_LEADER_FANOUT_SLOTS, 3);
+
+        let leader_fanout = UPCOMING_LEADER_FANOUT_SLOTS;
+
+        let upcoming_leader_sockets = upcoming_leader_tpu_vote_sockets(
+            cluster_info,
+            poh_recorder,
+            leader_fanout,
+            connection_cache.protocol(),
+        );
+
+        if !upcoming_leader_sockets.is_empty() {
+            for tpu_vote_socket in upcoming_leader_sockets {
+                let _ = send_vote_transaction(
+                    cluster_info,
+                    tx,
+                    Some(tpu_vote_socket),
+                    connection_cache,
+                );
+            }
+        } else {
+            // Send to our own tpu vote socket if we cannot find a leader to send to
+            let _ = send_vote_transaction(cluster_info, tx, None, connection_cache);
+        }
     }
 
     pub fn handle_vote(
@@ -143,48 +140,22 @@ impl VotingService {
         vote_op: VoteOp,
         connection_cache: Arc<ConnectionCache>,
     ) {
-        if let VoteOp::PushVote { saved_tower, .. } = &vote_op {
-            let mut measure = Measure::start("tower storage save");
-            if let Err(err) = tower_storage.store(saved_tower) {
-                error!("Unable to save tower to storage: {err:?}");
-                std::process::exit(1);
-            }
-            measure.stop();
-            trace!("{measure}");
-        }
-
-        // Attempt to send our vote transaction to the leaders for the next few
-        // slots. From the current slot to the forwarding slot offset
-        // (inclusive).
-        const UPCOMING_LEADER_FANOUT_SLOTS: u64 =
-            FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET.saturating_add(1);
-        #[cfg(test)]
-        static_assertions::const_assert_eq!(UPCOMING_LEADER_FANOUT_SLOTS, 3);
-        let upcoming_leader_sockets = upcoming_leader_tpu_vote_sockets(
-            cluster_info,
-            poh_recorder,
-            UPCOMING_LEADER_FANOUT_SLOTS,
-            connection_cache.protocol(),
-        );
-
-        if !upcoming_leader_sockets.is_empty() {
-            for tpu_vote_socket in upcoming_leader_sockets {
-                let _ = send_vote_transaction(
-                    cluster_info,
-                    vote_op.tx(),
-                    Some(tpu_vote_socket),
-                    &connection_cache,
-                );
-            }
-        } else {
-            // Send to our own tpu vote socket if we cannot find a leader to send to
-            let _ = send_vote_transaction(cluster_info, vote_op.tx(), None, &connection_cache);
-        }
-
         match vote_op {
             VoteOp::PushVote {
-                tx, tower_slots, ..
+                tx,
+                tower_slots,
+                saved_tower,
             } => {
+                let mut measure = Measure::start("tower storage save");
+                if let Err(err) = tower_storage.store(&saved_tower) {
+                    error!("Unable to save tower to storage: {err:?}");
+                    std::process::exit(1);
+                }
+                measure.stop();
+                trace!("{measure}");
+
+                Self::broadcast_tower_vote(cluster_info, poh_recorder, &tx, &connection_cache);
+
                 cluster_info.push_vote(&tower_slots, tx);
             }
             VoteOp::RefreshVote {

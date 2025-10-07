@@ -28,7 +28,12 @@ use {
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_streamer::{
+        packet::PacketBatch,
+        quic::{spawn_server, QuicServerParams, SpawnServerResult},
+        socket::SocketAddrSpace,
+        streamer::StakedNodes,
+    },
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig, TpuSenderError},
@@ -37,9 +42,10 @@ use {
     solana_validator_exit::Exit,
     solana_vote::vote_transaction::{self, VoteTransaction},
     solana_vote_program::vote_state::TowerSync,
+    solana_votor_messages::consensus_message::ConsensusMessage,
     std::{
         collections::{HashMap, HashSet, VecDeque},
-        net::{SocketAddr, TcpListener},
+        net::{SocketAddr, TcpListener, UdpSocket},
         path::Path,
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -384,12 +390,83 @@ pub fn check_for_new_roots(
     connection_cache: &Arc<ConnectionCache>,
     test_name: &str,
 ) {
-    let mut roots = vec![HashSet::new(); contact_infos.len()];
+    check_for_new_commitment_slots(
+        num_new_roots,
+        contact_infos,
+        connection_cache,
+        test_name,
+        CommitmentConfig::finalized(),
+    );
+}
+
+/// For alpenglow, CommitmentConfig::processed() refers to the current voting loop slot,
+/// so this is more accurate for determining that each node is voting when stake distribution is
+/// uneven
+pub fn check_for_new_processed(
+    num_new_processed: usize,
+    contact_infos: &[ContactInfo],
+    connection_cache: &Arc<ConnectionCache>,
+    test_name: &str,
+) {
+    check_for_new_commitment_slots(
+        num_new_processed,
+        contact_infos,
+        connection_cache,
+        test_name,
+        CommitmentConfig::processed(),
+    );
+}
+
+pub fn start_quic_streamer_to_listen_for_votes_and_certs(
+    vote_listener_socket: std::net::UdpSocket,
+    validator_keys: &[Arc<Keypair>],
+    node_stakes: &[u64],
+) -> (
+    Arc<AtomicBool>,
+    JoinHandle<()>,
+    crossbeam_channel::Receiver<PacketBatch>,
+) {
+    let (sender, receiver) = crossbeam_channel::unbounded();
+    let exit = Arc::new(AtomicBool::new(false));
+    let stakes = validator_keys
+        .iter()
+        .zip(node_stakes)
+        .map(|(keypair, stake)| (keypair.pubkey(), *stake))
+        .collect();
+    let staked_nodes: Arc<RwLock<StakedNodes>> = Arc::new(RwLock::new(StakedNodes::new(
+        Arc::new(stakes),
+        HashMap::<Pubkey, u64>::default(), // overrides
+    )));
+    let SpawnServerResult {
+        thread: quic_server_thread,
+        ..
+    } = spawn_server(
+        "AlpenglowLocalClusterTest",
+        "quic_streamer_test",
+        [vote_listener_socket],
+        &Keypair::new(),
+        sender,
+        exit.clone(),
+        staked_nodes,
+        QuicServerParams::default_for_tests(),
+    )
+    .unwrap();
+    (exit, quic_server_thread, receiver)
+}
+
+fn check_for_new_commitment_slots(
+    num_new_slots: usize,
+    contact_infos: &[ContactInfo],
+    connection_cache: &Arc<ConnectionCache>,
+    test_name: &str,
+    commitment: CommitmentConfig,
+) {
+    let mut slots = vec![HashSet::new(); contact_infos.len()];
     let mut done = false;
     let mut last_print = Instant::now();
     let loop_start = Instant::now();
     let loop_timeout = Duration::from_secs(180);
-    let mut num_roots_map = HashMap::new();
+    let mut num_slots_map = HashMap::new();
     while !done {
         assert!(loop_start.elapsed() < loop_timeout);
 
@@ -397,16 +474,16 @@ pub fn check_for_new_roots(
             let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
             let root_slot = client
                 .rpc_client()
-                .get_slot_with_commitment(CommitmentConfig::finalized())
+                .get_slot_with_commitment(commitment)
                 .unwrap_or(0);
-            roots[i].insert(root_slot);
-            num_roots_map.insert(*ingress_node.pubkey(), roots[i].len());
-            let num_roots = roots.iter().map(|r| r.len()).min().unwrap();
-            done = num_roots >= num_new_roots;
+            slots[i].insert(root_slot);
+            num_slots_map.insert(*ingress_node.pubkey(), slots[i].len());
+            let num_slots = slots.iter().map(|r| r.len()).min().unwrap();
+            done = num_slots >= num_new_slots;
             if done || last_print.elapsed().as_secs() > 3 {
                 info!(
-                    "{test_name} waiting for {num_new_roots} new roots.. observed: \
-                     {num_roots_map:?}"
+                    "{} waiting for {} new {:?} slots.. observed: {:?}",
+                    test_name, num_new_slots, commitment.commitment, num_slots_map
                 );
                 last_print = Instant::now();
             }
@@ -484,6 +561,102 @@ pub fn check_no_new_roots(
     }
 }
 
+pub fn check_for_new_notarized_votes(
+    num_new_votes: usize,
+    contact_infos: &[ContactInfo],
+    connection_cache: &Arc<ConnectionCache>,
+    test_name: &str,
+    vote_listener_socket: UdpSocket,
+    validator_keys: &[Arc<Keypair>],
+    node_stakes: &[u64],
+) {
+    let loop_start = Instant::now();
+    let loop_timeout = Duration::from_secs(180);
+    // First get the current max root.
+    let Some(current_root) = contact_infos
+        .iter()
+        .map(|ingress_node| {
+            let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
+            let root_slot = client
+                .rpc_client()
+                .get_slot_with_commitment(CommitmentConfig::processed())
+                .unwrap_or(0);
+            root_slot
+        })
+        .max()
+    else {
+        panic!("No nodes found to get current root");
+    };
+
+    // Clone data for thread
+    let contact_infos_owned: Vec<ContactInfo> = contact_infos.to_vec();
+    let test_name_owned = test_name.to_string();
+
+    let (exit, quic_server_thread, receiver) = start_quic_streamer_to_listen_for_votes_and_certs(
+        vote_listener_socket,
+        validator_keys,
+        node_stakes,
+    );
+
+    // Now start vote listener and wait for new notarized votes.
+    let vote_listener = std::thread::spawn({
+        let mut num_new_notarized_votes = contact_infos_owned.iter().map(|_| 0).collect::<Vec<_>>();
+        let mut last_notarized = contact_infos_owned
+            .iter()
+            .map(|_| current_root)
+            .collect::<Vec<_>>();
+        let mut last_print = Instant::now();
+        let mut done = false;
+
+        move || {
+            while !done {
+                assert!(loop_start.elapsed() < loop_timeout);
+                let Ok(packet_batch) = receiver.recv() else {
+                    break;
+                };
+                for packet in packet_batch.iter() {
+                    let Ok(ConsensusMessage::Vote(vote_message)) = packet.deserialize_slice(..)
+                    else {
+                        continue;
+                    };
+                    let vote = vote_message.vote;
+                    if !vote.is_notarization() {
+                        continue;
+                    }
+                    let rank = vote_message.rank;
+                    if rank >= contact_infos_owned.len() as u16 {
+                        warn!(
+                            "Received vote with rank {} which is greater than number of nodes {}",
+                            rank,
+                            contact_infos_owned.len()
+                        );
+                        continue;
+                    }
+                    let slot = vote.slot();
+                    if slot <= last_notarized[rank as usize] {
+                        continue;
+                    }
+                    last_notarized[rank as usize] = slot;
+                    num_new_notarized_votes[rank as usize] += 1;
+                    done = num_new_notarized_votes.iter().all(|&x| x > num_new_votes);
+                    if done || last_print.elapsed().as_secs() > 3 {
+                        info!(
+                            "{test_name_owned} waiting for {num_new_votes} new notarized votes.. \
+                             observed: {num_new_notarized_votes:?}"
+                        );
+                        last_print = Instant::now();
+                        exit.store(true, Ordering::Relaxed);
+                    }
+                }
+            }
+        }
+    });
+    vote_listener.join().expect("Vote listener thread panicked");
+    quic_server_thread
+        .join()
+        .expect("QUIC server thread panicked");
+}
+
 fn poll_all_nodes_for_signature(
     entry_point_info: &ContactInfo,
     cluster_nodes: &[ContactInfo],
@@ -501,6 +674,9 @@ fn poll_all_nodes_for_signature(
     Ok(())
 }
 
+/// Represents a service that monitors the gossip network for votes, processes them according to
+/// provided filters and callbacks, and maintains a connection to the gossip network. Often used as
+/// a "spy" representing a Byzantine node in a cluster.
 pub struct GossipVoter {
     pub gossip_service: GossipService,
     pub tcp_listener: Option<TcpListener>,
@@ -517,9 +693,15 @@ impl GossipVoter {
     }
 }
 
-/// Reads votes from gossip and runs them through `vote_filter` to filter votes that then
-/// get passed to `generate_vote_tx` to create votes that are then pushed into gossip as if
-/// sent by a node with identity `node_keypair`.
+/// Creates and starts a gossip voter service that monitors the gossip network for votes.
+/// This service:
+/// 1. Connects to the gossip network at the specified address using the node's keypair
+/// 2. Waits for a specified number of peers to join before becoming active
+/// 3. Continuously polls for new votes in the network
+/// 4. Filters incoming votes through the provided `vote_filter` function
+/// 5. Processes filtered votes using the `process_vote_tx` callback
+/// 6. Maintains a queue of recent votes and periodically refreshes them
+/// 7. Returns a GossipVoter struct that can be used to control and shut down the service
 pub fn start_gossip_voter(
     gossip_addr: &SocketAddr,
     node_keypair: &Keypair,

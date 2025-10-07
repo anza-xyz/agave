@@ -5,6 +5,7 @@ use {
         qos_service::QosService,
         scheduler_messages::MaxAge,
     },
+    crossbeam_channel::unbounded,
     itertools::Itertools,
     solana_clock::MAX_PROCESSING_AGE,
     solana_fee::FeeFeatures,
@@ -28,7 +29,7 @@ use {
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     solana_transaction_error::TransactionError,
-    std::num::Saturating,
+    std::{num::Saturating, sync::Arc},
 };
 
 /// Consumer will create chunks of transactions from buffer with up to this size.
@@ -75,6 +76,19 @@ pub struct Consumer {
     transaction_recorder: TransactionRecorder,
     qos_service: QosService,
     log_messages_bytes_limit: Option<usize>,
+}
+
+impl From<&TransactionRecorder> for Consumer {
+    fn from(transaction_recorder: &TransactionRecorder) -> Self {
+        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+        let committer = Committer::new(None, replay_vote_sender, Arc::default());
+        Self::new(
+            committer,
+            transaction_recorder.clone(),
+            QosService::new(u32::MAX),
+            None,
+        )
+    }
 }
 
 impl Consumer {

@@ -452,7 +452,7 @@ impl VotePacketCountMetrics {
             "banking_stage-vote_packet_counts",
             ("slot", slot, i64),
             ("dropped_gossip_votes", self.dropped_gossip_votes, i64),
-            ("dropped_tpu_votes", self.dropped_tpu_votes, i64)
+            ("dropped_tpu_votes", self.dropped_tpu_votes, i64),
         );
     }
 }

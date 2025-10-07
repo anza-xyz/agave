@@ -31,7 +31,9 @@ solana-sdk-ids = { workspace = true }
 solana-stake-interface = { workspace = true, features = ["bincode"] }
 solana-sysvar = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
+solana-vote = { workspace = true }
 solana-vote-interface = { workspace = true, features = ["bincode"] }
+solana-votor-messages = { workspace = true }
 
 [lints]
 workspace = true

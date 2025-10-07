@@ -184,6 +184,7 @@ impl Rocks {
             new_cf_descriptor::<columns::Index>(options, oldest_slot),
             new_cf_descriptor::<columns::ShredData>(options, oldest_slot),
             new_cf_descriptor::<columns::ShredCode>(options, oldest_slot),
+            new_cf_descriptor::<columns::BlockVersions>(options, oldest_slot),
             new_cf_descriptor::<columns::TransactionStatus>(options, oldest_slot),
             new_cf_descriptor::<columns::AddressSignatures>(options, oldest_slot),
             new_cf_descriptor::<columns::TransactionMemos>(options, oldest_slot),
@@ -194,6 +195,11 @@ impl Rocks {
             new_cf_descriptor::<columns::BlockHeight>(options, oldest_slot),
             new_cf_descriptor::<columns::OptimisticSlots>(options, oldest_slot),
             new_cf_descriptor::<columns::MerkleRootMeta>(options, oldest_slot),
+            new_cf_descriptor::<columns::AlternateSlotMeta>(options, oldest_slot),
+            new_cf_descriptor::<columns::AlternateErasureMeta>(options, oldest_slot),
+            new_cf_descriptor::<columns::AlternateIndex>(options, oldest_slot),
+            new_cf_descriptor::<columns::AlternateShredData>(options, oldest_slot),
+            new_cf_descriptor::<columns::AlternateMerkleRootMeta>(options, oldest_slot),
         ];
 
         // If the access type is Secondary, we don't need to open all of the
@@ -242,7 +248,7 @@ impl Rocks {
         cf_descriptors
     }
 
-    const fn columns() -> [&'static str; 20] {
+    const fn columns() -> [&'static str; 26] {
         [
             columns::ErasureMeta::NAME,
             columns::DeadSlots::NAME,
@@ -254,6 +260,7 @@ impl Rocks {
             columns::SlotMeta::NAME,
             columns::ShredData::NAME,
             columns::ShredCode::NAME,
+            columns::BlockVersions::NAME,
             columns::TransactionStatus::NAME,
             columns::AddressSignatures::NAME,
             columns::TransactionMemos::NAME,
@@ -264,6 +271,11 @@ impl Rocks {
             columns::BlockHeight::NAME,
             columns::OptimisticSlots::NAME,
             columns::MerkleRootMeta::NAME,
+            columns::AlternateSlotMeta::NAME,
+            columns::AlternateErasureMeta::NAME,
+            columns::AlternateIndex::NAME,
+            columns::AlternateShredData::NAME,
+            columns::AlternateMerkleRootMeta::NAME,
         ]
     }
 

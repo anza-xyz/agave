@@ -2,12 +2,9 @@
 // deserializing the entire payload.
 #![deny(clippy::indexing_slicing)]
 use {
-    crate::{
-        blockstore_meta::ErasureConfig,
-        shred::{
-            self, merkle_tree::SIZE_OF_MERKLE_ROOT, traits::Shred, Error, Nonce, ShredFlags,
-            ShredId, ShredType, ShredVariant, SIZE_OF_COMMON_SHRED_HEADER,
-        },
+    crate::shred::{
+        self, merkle_tree::SIZE_OF_MERKLE_ROOT, traits::Shred, Error, Nonce, ShredFlags, ShredId,
+        ShredType, ShredVariant, SIZE_OF_COMMON_SHRED_HEADER,
     },
     solana_clock::Slot,
     solana_hash::Hash,
@@ -105,12 +102,6 @@ pub(super) fn get_version(shred: &[u8]) -> Option<u16> {
     Some(u16::from_le_bytes(bytes))
 }
 
-#[inline]
-pub fn get_fec_set_index(shred: &[u8]) -> Option<u32> {
-    let bytes = <[u8; 4]>::try_from(shred.get(79..79 + 4)?).unwrap();
-    Some(u32::from_le_bytes(bytes))
-}
-
 // The caller should verify first that the shred is data and not code!
 #[inline]
 pub(super) fn get_parent_offset(shred: &[u8]) -> Option<u16> {
@@ -170,34 +161,6 @@ pub(crate) fn get_data(shred: &[u8]) -> Result<&[u8], Error> {
             get_data_size(shred)?,
         ),
     }
-}
-
-/// Returns the ErasureConfig specified by the coding shred, or an Error if
-/// the shred is a data shred
-#[inline]
-pub(crate) fn get_erasure_config(shred: &[u8]) -> Result<ErasureConfig, Error> {
-    if !matches!(get_shred_type(shred).unwrap(), ShredType::Code) {
-        return Err(Error::InvalidShredType);
-    }
-    let Some(num_data_bytes) = shred.get(83..83 + 2) else {
-        return Err(Error::InvalidPayloadSize(shred.len()));
-    };
-    let Some(num_coding_bytes) = shred.get(85..85 + 2) else {
-        return Err(Error::InvalidPayloadSize(shred.len()));
-    };
-    let num_data = <[u8; 2]>::try_from(num_data_bytes)
-        .map(u16::from_le_bytes)
-        .map(usize::from)
-        .map_err(|_| Error::InvalidErasureConfig)?;
-    let num_coding = <[u8; 2]>::try_from(num_coding_bytes)
-        .map(u16::from_le_bytes)
-        .map(usize::from)
-        .map_err(|_| Error::InvalidErasureConfig)?;
-
-    Ok(ErasureConfig {
-        num_data,
-        num_coding,
-    })
 }
 
 #[inline]
@@ -455,9 +418,7 @@ pub(crate) fn corrupt_packet<R: Rng>(
 mod tests {
     use {
         super::*,
-        crate::shred::{
-            tests::make_merkle_shreds_for_tests, traits::ShredData, SHREDS_PER_FEC_BLOCK,
-        },
+        crate::shred::{tests::make_merkle_shreds_for_tests, traits::ShredData},
         assert_matches::assert_matches,
         rand::Rng,
         solana_perf::packet::PacketFlags,
@@ -482,14 +443,11 @@ mod tests {
         let mut shreds =
             make_merkle_shreds_for_tests(&mut rng, slot, data_size, chained, is_last_in_slot)
                 .unwrap();
-        // enumerate the shreds so that I have index of each shred
-        let shreds_len = shreds.len();
-        for (index, shred) in shreds.iter_mut().enumerate() {
+        for shred in shreds.iter_mut() {
             let keypair = Keypair::new();
             let signature = make_dummy_signature(&mut rng);
             let nonce = repaired.then(|| rng.gen::<Nonce>());
-            let is_last_batch = index >= shreds_len - SHREDS_PER_FEC_BLOCK;
-            if chained && is_last_in_slot && is_last_batch {
+            if chained && is_last_in_slot {
                 shred.set_retransmitter_signature(&signature).unwrap();
 
                 let packet = &mut shred.payload().to_packet(nonce);
@@ -542,11 +500,9 @@ mod tests {
         let mut shreds =
             make_merkle_shreds_for_tests(&mut rng, slot, data_size, chained, is_last_in_slot)
                 .unwrap();
-        let shreds_len = shreds.len();
-        for (index, shred) in shreds.iter_mut().enumerate() {
+        for shred in &mut shreds {
             let signature = make_dummy_signature(&mut rng);
-            let is_last_batch = index >= shreds_len - SHREDS_PER_FEC_BLOCK;
-            if chained && is_last_in_slot && is_last_batch {
+            if chained && is_last_in_slot {
                 shred.set_retransmitter_signature(&signature).unwrap();
             } else {
                 assert_matches!(
@@ -555,10 +511,8 @@ mod tests {
                 );
             }
         }
-
-        for (index, shred) in shreds.iter().enumerate() {
+        for shred in &shreds {
             let nonce = repaired.then(|| rng.gen::<Nonce>());
-            let is_last_batch = index >= shreds_len - SHREDS_PER_FEC_BLOCK;
             let mut packet = shred.payload().to_packet(nonce);
             if repaired {
                 packet.meta_mut().flags |= PacketFlags::REPAIR;
@@ -617,9 +571,9 @@ mod tests {
             }
             assert_eq!(
                 is_retransmitter_signed_variant(bytes).unwrap(),
-                chained && is_last_in_slot && is_last_batch,
+                chained && is_last_in_slot
             );
-            if chained && is_last_in_slot && is_last_batch {
+            if chained && is_last_in_slot {
                 assert_eq!(
                     get_retransmitter_signature_offset(bytes).unwrap(),
                     shred.retransmitter_signature_offset().unwrap(),

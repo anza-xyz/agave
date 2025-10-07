@@ -244,11 +244,11 @@ impl VoteSimulator {
             None, // snapshot_controller
             None,
             &mut true,
-            &mut Vec::new(),
+            &mut vec![],
             &drop_bank_sender,
             &mut self.tbft_structs,
         )
-        .unwrap()
+        .unwrap();
     }
 
     pub fn create_and_vote_new_branch(

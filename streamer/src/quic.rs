@@ -62,6 +62,10 @@ pub fn default_num_tpu_vote_transaction_receive_threads() -> usize {
     num_cpus::get().min(8)
 }
 
+pub fn default_num_tpu_alpenglow_receive_threads() -> usize {
+    num_cpus::get().min(8)
+}
+
 pub struct SpawnServerResult {
     pub endpoints: Vec<Endpoint>,
     pub thread: thread::JoinHandle<()>,

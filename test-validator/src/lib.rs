@@ -927,12 +927,14 @@ impl TestValidator {
             &validator_identity.pubkey(),
             &validator_vote_account.pubkey(),
             &validator_stake_account.pubkey(),
+            None,
             validator_stake_lamports,
             validator_identity_lamports,
             config.fee_rate_governor.clone(),
             config.rent.clone(),
             solana_cluster_type::ClusterType::Development,
             accounts.into_iter().collect(),
+            false,
         );
         genesis_config.epoch_schedule = config
             .epoch_schedule
@@ -949,7 +951,10 @@ impl TestValidator {
         }
 
         for feature in feature_set {
-            genesis_utils::activate_feature(&mut genesis_config, feature);
+            // TODO remove this
+            if feature != agave_feature_set::alpenglow::id() {
+                genesis_utils::activate_feature(&mut genesis_config, feature);
+            }
         }
 
         let ledger_path = match &config.ledger_path {

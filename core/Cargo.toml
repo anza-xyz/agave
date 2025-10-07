@@ -24,6 +24,7 @@ frozen-abi = [
     "dep:solana-frozen-abi-macro",
     "solana-accounts-db/frozen-abi",
     "solana-bloom/frozen-abi",
+    "solana-bls-signatures/frozen-abi",
     "solana-compute-budget/frozen-abi",
     "solana-cost-model/frozen-abi",
     "solana-frozen-abi/frozen-abi",
@@ -45,7 +46,6 @@ agave-banking-stage-ingress-types = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-verified-packet-receiver = { workspace = true }
-agave-votor = { workspace = true, features = ["agave-unstable-api"] }
 ahash = { workspace = true }
 anyhow = { workspace = true }
 arrayvec = { workspace = true }
@@ -53,8 +53,8 @@ assert_matches = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
+bitvec = { workspace = true }
 bs58 = { workspace = true }
-bytemuck = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }
 conditional-mod = { workspace = true }
@@ -70,6 +70,7 @@ lru = { workspace = true }
 min-max-heap = { workspace = true }
 num_cpus = { workspace = true }
 num_enum = { workspace = true }
+parking_lot = { workspace = true }
 prio-graph = { workspace = true }
 qualifier_attr = { workspace = true }
 quinn = { workspace = true }
@@ -87,6 +88,7 @@ solana-accounts-db = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
 solana-bincode = { workspace = true }
 solana-bloom = { workspace = true }
+solana-bls-signatures = { workspace = true, features = ["parallel"] }
 solana-builtins-default-costs = { workspace = true }
 solana-client = { workspace = true }
 solana-clock = { workspace = true }
@@ -144,6 +146,7 @@ solana-short-vec = { workspace = true }
 solana-shred-version = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
+solana-signer-store = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-slot-history = { workspace = true }
 solana-streamer = { workspace = true }
@@ -166,6 +169,8 @@ solana-validator-exit = { workspace = true }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
+solana-votor = { workspace = true }
+solana-votor-messages = { workspace = true }
 solana-wen-restart = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
@@ -223,7 +228,11 @@ name = "banking_stage"
 name = "gen_keys"
 
 [[bench]]
-name = "sigverify_stage"
+name = "ed25519_sigverify"
+
+[[bench]]
+name = "bls_sigverify"
+harness = false
 
 [[bench]]
 name = "receive_and_buffer"
