@@ -822,7 +822,7 @@ pub fn execute(
         advertised_ip,
         gossip_port,
         port_range: dynamic_port_range,
-        bind_ip_addrs: Arc::new(bind_addresses),
+        bind_ip_addrs: bind_addresses,
         public_tpu_addr,
         public_tpu_forwards_addr,
         num_tvu_receive_sockets: tvu_receive_threads,
@@ -1136,11 +1136,10 @@ fn new_snapshot_config(
         }
     }
 
-    let snapshots_dir = if let Some(snapshots) = matches.value_of("snapshots") {
-        Path::new(snapshots)
-    } else {
-        ledger_path
-    };
+    let snapshots_dir = matches
+        .value_of("snapshots")
+        .map(Path::new)
+        .unwrap_or(ledger_path);
     let snapshots_dir = create_and_canonicalize_directory(snapshots_dir).map_err(|err| {
         format!(
             "failed to create snapshots directory '{}': {err}",
@@ -1166,12 +1165,10 @@ fn new_snapshot_config(
         )
     })?;
 
-    let full_snapshot_archives_dir =
-        if let Some(full_snapshot_archive_path) = matches.value_of("full_snapshot_archive_path") {
-            PathBuf::from(full_snapshot_archive_path)
-        } else {
-            snapshots_dir.clone()
-        };
+    let full_snapshot_archives_dir = matches
+        .value_of("full_snapshot_archive_path")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| snapshots_dir.clone());
     fs::create_dir_all(&full_snapshot_archives_dir).map_err(|err| {
         format!(
             "failed to create full snapshot archives directory '{}': {err}",
@@ -1179,13 +1176,10 @@ fn new_snapshot_config(
         )
     })?;
 
-    let incremental_snapshot_archives_dir = if let Some(incremental_snapshot_archive_path) =
-        matches.value_of("incremental_snapshot_archive_path")
-    {
-        PathBuf::from(incremental_snapshot_archive_path)
-    } else {
-        snapshots_dir.clone()
-    };
+    let incremental_snapshot_archives_dir = matches
+        .value_of("incremental_snapshot_archive_path")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| snapshots_dir.clone());
     fs::create_dir_all(&incremental_snapshot_archives_dir).map_err(|err| {
         format!(
             "failed to create incremental snapshot archives directory '{}': {err}",

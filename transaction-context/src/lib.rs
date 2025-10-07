@@ -3,7 +3,7 @@
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
 use {
-    crate::transaction_accounts::{AccountRefMut, TransactionAccount, TransactionAccounts},
+    crate::transaction_accounts::{AccountRefMut, KeyedAccountSharedData, TransactionAccounts},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
     solana_instructions_sysvar as instructions,
@@ -126,7 +126,7 @@ impl TransactionContext {
     /// Constructs a new TransactionContext
     #[cfg(not(target_os = "solana"))]
     pub fn new(
-        transaction_accounts: Vec<TransactionAccount>,
+        transaction_accounts: Vec<KeyedAccountSharedData>,
         rent: Rent,
         instruction_stack_capacity: usize,
         instruction_trace_capacity: usize,
@@ -1051,7 +1051,7 @@ impl BorrowedInstructionAccount<'_> {
 /// Everything that needs to be recorded from a TransactionContext after execution
 #[cfg(not(target_os = "solana"))]
 pub struct ExecutionRecord {
-    pub accounts: Vec<TransactionAccount>,
+    pub accounts: Vec<KeyedAccountSharedData>,
     pub return_data: TransactionReturnData,
     pub touched_account_count: u64,
     pub accounts_resize_delta: i64,

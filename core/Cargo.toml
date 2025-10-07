@@ -42,6 +42,7 @@ frozen-abi = [
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
 agave-feature-set = { workspace = true }
+agave-scheduler-bindings = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-verified-packet-receiver = { workspace = true }
 agave-votor = { workspace = true, features = ["agave-unstable-api"] }
@@ -180,6 +181,8 @@ trees = { workspace = true }
 jemallocator = { workspace = true }
 
 [target."cfg(unix)".dependencies]
+rts-alloc = { workspace = true }
+shaq = { workspace = true }
 sysctl = { workspace = true }
 
 [dev-dependencies]

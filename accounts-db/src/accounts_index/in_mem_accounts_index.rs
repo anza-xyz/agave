@@ -281,7 +281,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         &self,
         pubkey: &Pubkey,
         update_age: bool,
-        callback: impl for<'a> FnOnce(Option<&'a Arc<AccountMapEntry<T>>>) -> RT,
+        callback: impl for<'a> FnOnce(Option<&'a AccountMapEntry<T>>) -> RT,
     ) -> RT {
         let mut found = true;
         let mut m = Measure::start("get");
@@ -330,38 +330,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     ) -> RT {
         // SAFETY: The entry Arc is not passed to `callback`, so
         // it cannot live beyond this function call.
-        self.get_internal(pubkey, |entry| callback(entry.map(Arc::as_ref)))
-    }
-
-    /// lookup 'pubkey' in the index (in_mem or disk).
-    /// call 'callback' whether found or not
-    #[cfg(test)]
-    pub(super) fn get_internal_cloned<RT>(
-        &self,
-        pubkey: &Pubkey,
-        callback: impl for<'a> FnOnce(Option<Arc<AccountMapEntry<T>>>) -> RT,
-    ) -> RT {
-        // SAFETY: Since we're passing the entry Arc clone to `callback`, we must
-        // also add the entry to the in-mem cache.
-        self.get_internal(pubkey, |entry| (true, callback(entry.cloned())))
-    }
-
-    /// lookup 'pubkey' in index (in_mem or disk).
-    /// call 'callback' whether found or not
-    ///
-    /// # Safety
-    ///
-    /// If the item is on-disk (and not in-mem), add if the item is/could be made dirty
-    /// *after* `callback` finishes (e.g. the entry Arc is cloned and saved by the caller),
-    /// then the disk entry *must* also be added to the in-mem cache.
-    ///
-    /// Prefer `get_internal_inner()` or `get_internal_cloned()` for safe alternatives.
-    fn get_internal<RT>(
-        &self,
-        pubkey: &Pubkey,
-        // return true if item should be added to in_mem cache
-        callback: impl for<'a> FnOnce(Option<&Arc<AccountMapEntry<T>>>) -> (bool, RT),
-    ) -> RT {
         self.get_only_in_mem(pubkey, true, |entry| {
             if let Some(entry) = entry {
                 callback(Some(entry)).1
@@ -379,7 +347,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 let retval = match entry {
                     Entry::Occupied(occupied) => callback(Some(occupied.get())).1,
                     Entry::Vacant(vacant) => {
-                        let disk_entry = Arc::new(disk_entry);
                         debug_assert!(!disk_entry.dirty());
                         let (add_to_cache, rt) = callback(Some(&disk_entry));
                         // We are holding a write lock to the in-memory map.
@@ -387,7 +354,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         // If the entry is now dirty, then it must be put in the cache or the modifications will be lost.
                         if add_to_cache || disk_entry.dirty() {
                             stats.inc_mem_count();
-                            vacant.insert(disk_entry);
+                            vacant.insert(Arc::new(disk_entry));
                         }
                         rt
                     }
@@ -1155,10 +1122,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         if !evictions_age_possible.is_empty() {
             // write to disk outside in-mem map read lock
             let disk = self.bucket.as_ref().unwrap();
-            let mut flush_entries_updated_on_disk = 0;
-            let mut flush_should_evict_us = 0;
+            let mut flush_stats = DiskFlushStats::new();
             // we don't care about lock time in this metric - bg threads can wait
-            let m = Measure::start("flush_update");
+            let flush_update_measure = Measure::start("flush_update");
             let evictions_age = evictions_age_possible
                 .into_iter()
                 .filter_map(|(k, v)| {
@@ -1172,7 +1138,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         ages_flushing_now,
                     );
                     mse.stop();
-                    flush_should_evict_us += mse.as_us();
+                    flush_stats.flush_should_evict_us += mse.as_us();
                     if !should_evict {
                         // not evicting, so don't write, even if dirty
                         return None;
@@ -1213,7 +1179,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                             match disk_resize {
                                 Ok(_) => {
                                     // successfully written to disk
-                                    flush_entries_updated_on_disk += 1;
+                                    flush_stats.flush_entries_updated_on_disk += 1;
                                     // exit disk-resize loop
                                     break;
                                 }
@@ -1221,7 +1187,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                                     // disk needs to resize. This item did not get written. Resize and try again.
                                     let m = Measure::start("flush_grow");
                                     disk.grow(err);
-                                    Self::update_time_stat(&self.stats().flush_grow_us, m);
+                                    flush_stats.flush_grow_us += m.end_as_us();
                                 }
                             }
                         }
@@ -1229,12 +1195,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     Some(k)
                 })
                 .collect();
-            Self::update_time_stat(&self.stats().flush_update_us, m);
-            Self::update_stat(&self.stats().flush_should_evict_us, flush_should_evict_us);
-            Self::update_stat(
-                &self.stats().flush_entries_updated_on_disk,
-                flush_entries_updated_on_disk,
-            );
+            flush_stats.flush_update_us = flush_update_measure.end_as_us();
+            flush_stats.update_to_bucket_map_stats(self.stats());
 
             let m = Measure::start("flush_evict");
             self.evict_from_cache(evictions_age, current_age, startup, ages_flushing_now);
@@ -1330,6 +1292,41 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// Only intended to be called at startup, since it grabs the map's read lock.
     pub(crate) fn capacity_for_startup(&self) -> usize {
         self.map_internal.read().unwrap().capacity()
+    }
+}
+
+/// Statistics for disk flush operations
+#[derive(Debug, Default)]
+struct DiskFlushStats {
+    /// Time spent in flush update operation
+    flush_update_us: u64,
+    /// Time spent checking if entries should be evicted
+    flush_should_evict_us: u64,
+    /// Number of entries successfully written to disk
+    flush_entries_updated_on_disk: u64,
+    /// Time spent growing disk storage
+    flush_grow_us: u64,
+}
+
+impl DiskFlushStats {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn update_to_bucket_map_stats(&self, stats: &BucketMapHolderStats) {
+        Self::update_stat(&stats.flush_update_us, self.flush_update_us);
+        Self::update_stat(&stats.flush_should_evict_us, self.flush_should_evict_us);
+        Self::update_stat(
+            &stats.flush_entries_updated_on_disk,
+            self.flush_entries_updated_on_disk,
+        );
+        Self::update_stat(&stats.flush_grow_us, self.flush_grow_us);
+    }
+
+    fn update_stat(stat: &AtomicU64, value: u64) {
+        if value != 0 {
+            stat.fetch_add(value, Ordering::Relaxed);
+        }
     }
 }
 
@@ -1434,7 +1431,7 @@ mod tests {
             .map_internal
             .write()
             .unwrap()
-            .insert(pubkey, Arc::clone(&entry));
+            .insert(pubkey, entry);
 
         let mut callback_called = false;
         accounts_index.get_or_create_index_entry_for_pubkey(&pubkey, |entry| {
@@ -1675,11 +1672,11 @@ mod tests {
             let startup = false;
             let current_age = 0;
             let one_element_slot_list = SlotList::from([(0, 0)]);
-            let one_element_slot_list_entry = Arc::new(AccountMapEntry::new(
+            let one_element_slot_list_entry = AccountMapEntry::new(
                 one_element_slot_list,
                 ref_count,
                 AccountMapEntryMeta::default(),
-            ));
+            );
 
             // exceeded budget
             assert_eq!(
@@ -1700,11 +1697,9 @@ mod tests {
         solana_logger::setup();
         let startup = false;
         let ref_count = 1;
-        let pks = (0..=255)
-            .map(|i| Pubkey::from([i as u8; 32]))
-            .collect::<Vec<_>>();
-        let accounts = (0..=255)
+        let map: HashMap<_, _> = (0..=255)
             .map(|age| {
+                let pk = Pubkey::from([age; 32]);
                 let one_element_slot_list = SlotList::from([(0, 0)]);
                 let one_element_slot_list_entry = Arc::new(AccountMapEntry::new(
                     one_element_slot_list,
@@ -1712,17 +1707,16 @@ mod tests {
                     AccountMapEntryMeta::default(),
                 ));
                 one_element_slot_list_entry.set_age(age);
-                one_element_slot_list_entry
+                (pk, one_element_slot_list_entry)
             })
-            .collect::<Vec<_>>();
-        let both = pks.iter().zip(accounts.iter()).collect::<Vec<_>>();
+            .collect();
 
         for current_age in 0..=255 {
             for ages_flushing_now in 0..=255 {
                 let mut possible_evictions = PossibleEvictions::new(1);
                 possible_evictions.reset(1);
                 InMemAccountsIndex::<u64, u64>::gather_possible_evictions(
-                    both.iter().cloned(),
+                    map.iter(),
                     &mut possible_evictions,
                     startup,
                     current_age,
@@ -1733,17 +1727,18 @@ mod tests {
                     evictions.evictions_age_possible.len(),
                     1 + ages_flushing_now as usize
                 );
-                evictions.evictions_age_possible.iter().for_each(|(_k, v)| {
+                evictions.evictions_age_possible.iter().for_each(|key| {
+                    let entry = map.get(&key.0).unwrap();
                     assert!(
                         InMemAccountsIndex::<u64, u64>::should_evict_based_on_age(
                             current_age,
-                            v,
+                            entry,
                             startup,
                             ages_flushing_now,
                         ),
                         "current_age: {}, age: {}, ages_flushing_now: {}",
                         current_age,
-                        v.age(),
+                        entry.age(),
                         ages_flushing_now
                     );
                 });
@@ -1759,20 +1754,16 @@ mod tests {
         let mut current_age = 0;
         let ref_count = 1;
         let one_element_slot_list = SlotList::from([(0, 0)]);
-        let one_element_slot_list_entry = Arc::new(AccountMapEntry::new(
+        let one_element_slot_list_entry = AccountMapEntry::new(
             one_element_slot_list,
             ref_count,
             AccountMapEntryMeta::default(),
-        ));
+        );
 
         // empty slot list
         assert!(!bucket.should_evict_from_mem(
             current_age,
-            &Arc::new(AccountMapEntry::new(
-                SlotList::new(),
-                ref_count,
-                AccountMapEntryMeta::default()
-            )),
+            &AccountMapEntry::new(SlotList::new(), ref_count, AccountMapEntryMeta::default()),
             startup,
             false,
             0,
@@ -1788,11 +1779,11 @@ mod tests {
         // 2 element slot list
         assert!(!bucket.should_evict_from_mem(
             current_age,
-            &Arc::new(AccountMapEntry::new(
+            &AccountMapEntry::new(
                 SlotList::from_iter([(0, 0u64), (1, 1)]),
                 ref_count,
                 AccountMapEntryMeta::default()
-            )),
+            ),
             startup,
             false,
             0,
@@ -1803,11 +1794,11 @@ mod tests {
             // 1 element slot list with a CACHED item - f64 acts like cached
             assert!(!bucket.should_evict_from_mem(
                 current_age,
-                &Arc::new(AccountMapEntry::new(
+                &AccountMapEntry::new(
                     SlotList::from([(0, 0.0)]),
                     ref_count,
                     AccountMapEntryMeta::default()
-                )),
+                ),
                 startup,
                 false,
                 0,

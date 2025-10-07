@@ -18,12 +18,16 @@
 //! tracks the number of commits to the entire data store. So the latest
 //! commit for each slot entry would be indexed.
 
+mod accounts_db_config;
 mod geyser_plugin_utils;
 pub mod stats;
 pub mod tests;
 
 #[cfg(test)]
 use crate::append_vec::StoredAccountMeta;
+pub use accounts_db_config::{
+    AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
+};
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
@@ -42,9 +46,8 @@ use {
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
             in_mem_accounts_index::StartupStats, AccountSecondaryIndexes, AccountsIndex,
-            AccountsIndexConfig, AccountsIndexRootsStats, AccountsIndexScanResult, IndexKey,
-            IsCached, ReclaimsSlotList, RefCount, ScanConfig, ScanFilter, ScanResult, SlotList,
-            UpsertReclaim, ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS, ACCOUNTS_INDEX_CONFIG_FOR_TESTING,
+            AccountsIndexRootsStats, AccountsIndexScanResult, IndexKey, IsCached, ReclaimsSlotList,
+            RefCount, ScanConfig, ScanFilter, ScanResult, SlotList, UpsertReclaim,
         },
         accounts_index_storage::Startup,
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
@@ -55,9 +58,7 @@ use {
         contains::Contains,
         is_zero_lamport::IsZeroLamport,
         obsolete_accounts::ObsoleteAccounts,
-        partitioned_rewards::{
-            PartitionedEpochRewardsConfig, DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
-        },
+        partitioned_rewards::PartitionedEpochRewardsConfig,
         read_only_accounts_cache::ReadOnlyAccountsCache,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
         u64_align, utils,
@@ -82,7 +83,7 @@ use {
         boxed::Box,
         collections::{BTreeSet, HashMap, HashSet, VecDeque},
         io, iter, mem,
-        num::{NonZeroUsize, Saturating},
+        num::Saturating,
         ops::RangeBounds,
         path::{Path, PathBuf},
         sync::{
@@ -287,51 +288,6 @@ pub(crate) struct ShrinkCollect<'a, T: ShrinkCollectRefs<'a>> {
     pub(crate) all_are_zero_lamports: bool,
 }
 
-pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
-    index: Some(ACCOUNTS_INDEX_CONFIG_FOR_TESTING),
-    account_indexes: None,
-    base_working_path: None,
-    shrink_paths: None,
-    shrink_ratio: DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION,
-    read_cache_limit_bytes: None,
-    read_cache_evict_sample_size: None,
-    write_cache_limit_bytes: None,
-    ancient_append_vec_offset: None,
-    ancient_storage_ideal_size: None,
-    max_ancient_storages: None,
-    skip_initial_hash_calc: false,
-    exhaustively_verify_refcounts: false,
-    partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
-    storage_access: StorageAccess::File,
-    scan_filter_for_shrinking: ScanFilter::OnlyAbnormalTest,
-    mark_obsolete_accounts: MarkObsoleteAccounts::Disabled,
-    num_background_threads: None,
-    num_foreground_threads: None,
-    memlock_budget_size: MEMLOCK_BUDGET_SIZE_FOR_TESTS,
-};
-pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig {
-    index: Some(ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS),
-    account_indexes: None,
-    base_working_path: None,
-    shrink_paths: None,
-    shrink_ratio: DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION,
-    read_cache_limit_bytes: None,
-    read_cache_evict_sample_size: None,
-    write_cache_limit_bytes: None,
-    ancient_append_vec_offset: None,
-    ancient_storage_ideal_size: None,
-    max_ancient_storages: None,
-    skip_initial_hash_calc: false,
-    exhaustively_verify_refcounts: false,
-    partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
-    storage_access: StorageAccess::File,
-    scan_filter_for_shrinking: ScanFilter::OnlyAbnormal,
-    mark_obsolete_accounts: MarkObsoleteAccounts::Disabled,
-    num_background_threads: None,
-    num_foreground_threads: None,
-    memlock_budget_size: MEMLOCK_BUDGET_SIZE_FOR_TESTS,
-};
-
 struct LoadAccountsIndexForShrink<'a, T: ShrinkCollectRefs<'a>> {
     /// all alive accounts
     alive_accounts: T,
@@ -422,42 +378,6 @@ const DEFAULT_ANCIENT_STORAGE_IDEAL_SIZE: u64 = 100_000;
 /// Default value for the number of ancient storages the ancient slot
 /// combining should converge to.
 pub const DEFAULT_MAX_ANCIENT_STORAGES: usize = 100_000;
-
-#[derive(Debug, Default, Clone)]
-pub struct AccountsDbConfig {
-    pub index: Option<AccountsIndexConfig>,
-    pub account_indexes: Option<AccountSecondaryIndexes>,
-    /// Base directory for various necessary files
-    pub base_working_path: Option<PathBuf>,
-    pub shrink_paths: Option<Vec<PathBuf>>,
-    pub shrink_ratio: AccountShrinkThreshold,
-    /// The low and high watermark sizes for the read cache, in bytes.
-    /// If None, defaults will be used.
-    pub read_cache_limit_bytes: Option<(usize, usize)>,
-    /// The number of elements that will be randomly sampled at eviction time,
-    /// the oldest of which will get evicted.
-    pub read_cache_evict_sample_size: Option<usize>,
-    pub write_cache_limit_bytes: Option<u64>,
-    /// if None, ancient append vecs are set to ANCIENT_APPEND_VEC_DEFAULT_OFFSET
-    /// Some(offset) means include slots up to (max_slot - (slots_per_epoch - 'offset'))
-    pub ancient_append_vec_offset: Option<i64>,
-    pub ancient_storage_ideal_size: Option<u64>,
-    pub max_ancient_storages: Option<usize>,
-    pub skip_initial_hash_calc: bool,
-    pub exhaustively_verify_refcounts: bool,
-    pub partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig,
-    pub storage_access: StorageAccess,
-    pub scan_filter_for_shrinking: ScanFilter,
-    pub mark_obsolete_accounts: MarkObsoleteAccounts,
-    /// Number of threads for background operations (`thread_pool_background')
-    pub num_background_threads: Option<NonZeroUsize>,
-    /// Number of threads for foreground operations (`thread_pool_foreground`)
-    pub num_foreground_threads: Option<NonZeroUsize>,
-    /// Amount of memory (in bytes) that is allowed to be locked during db operations.
-    /// On linux it's verified on start-up with the kernel limits, such that during runtime
-    /// parts of it can be utilized without panicking.
-    pub memlock_budget_size: usize,
-}
 
 #[cfg(not(test))]
 const ABSURD_CONSECUTIVE_FAILED_ITERATIONS: usize = 100;

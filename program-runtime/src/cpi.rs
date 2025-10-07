@@ -1277,7 +1277,7 @@ mod tests {
         solana_sdk_ids::{bpf_loader, system_program},
         solana_svm_feature_set::SVMFeatureSet,
         solana_transaction_context::{
-            transaction_accounts::TransactionAccount, IndexOfAccount, InstructionAccount,
+            transaction_accounts::KeyedAccountSharedData, IndexOfAccount, InstructionAccount,
         },
         std::{
             cell::{Cell, RefCell},
@@ -1309,7 +1309,7 @@ mod tests {
             let transaction_accounts = $transaction_accounts
                 .into_iter()
                 .map(|a| (a.0, a.1))
-                .collect::<Vec<TransactionAccount>>();
+                .collect::<Vec<KeyedAccountSharedData>>();
             let mut feature_set = SVMFeatureSet::all_enabled();
             feature_set.stricter_abi_and_runtime_constraints = false;
             let feature_set = &feature_set;

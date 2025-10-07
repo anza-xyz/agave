@@ -1966,6 +1966,107 @@ mod tests {
         assert_eq!(*bank3, deserialized_bank);
     }
 
+    /// Test that fastboot correctly handles zero lamport accounts
+    ///
+    /// slot 0:
+    ///     - send some lamports to Account2 (from mint) to bring it to life
+    ///     - send some lamports to Account1 (from mint) to bring it to life
+    ///
+    /// slot 1:
+    ///     - send all lamports to account2 from account1 to make account1 zero lamport
+    ///
+    /// slot 2:
+    ///     - send all lamports from account2 to the mint to make account2 zero lamport
+    ///
+    /// If zero lamport accounts are not handled correctly, Account1 or Account2 will come back
+    /// failing the test
+    #[test_case(MarkObsoleteAccounts::Disabled)]
+    fn test_fastboot_handle_zero_lamport_accounts(mark_obsolete_accounts: MarkObsoleteAccounts) {
+        let collector = Pubkey::new_unique();
+        let key1 = Keypair::new();
+        let key2 = Keypair::new();
+
+        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+
+        let (mut genesis_config, mint) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+
+        // Disable fees so fees don't need to be calculated
+        genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
+
+        let lamports = 123_456 * LAMPORTS_PER_SOL;
+        let bank_test_config = BankTestConfig {
+            accounts_db_config: AccountsDbConfig {
+                mark_obsolete_accounts,
+                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+            },
+        };
+
+        let bank0 = Bank::new_with_config_for_tests(&genesis_config, bank_test_config);
+        let (bank0, bank_forks) = Bank::wrap_with_bank_forks_for_tests(bank0);
+        bank0.transfer(lamports, &mint, &key2.pubkey()).unwrap();
+        bank0.transfer(lamports, &mint, &key1.pubkey()).unwrap();
+        bank0.fill_bank_with_ticks_for_tests();
+
+        // Squash and flush bank0 to ensure slot0 data is not cleaned before being written to storage
+        bank0.squash();
+        bank0.force_flush_accounts_cache();
+
+        // In slot 1 transfer from key1 to key2, such that key1 becomes zero lamport
+        let slot = 1;
+        let bank1 =
+            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+        bank1.transfer(lamports, &key1, &key2.pubkey()).unwrap();
+        assert_eq!(bank1.get_balance(&key1.pubkey()), 0,);
+        bank1.fill_bank_with_ticks_for_tests();
+
+        // In slot 2 transfer into key2 to mint such that key2 becomes zero lamport
+        let slot = slot + 1;
+        let bank2 =
+            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+        bank2.transfer(lamports * 2, &key2, &mint.pubkey()).unwrap();
+        bank2.fill_bank_with_ticks_for_tests();
+        assert_eq!(bank2.get_balance(&key2.pubkey()), 0);
+
+        // Take a full snapshot, passing `true` for `should_flush_and_hard_link_storages`.
+        // This ensures that `serialize_snapshot` performs all necessary steps to create
+        // a snapshot that supports fastbooting.
+        bank_to_full_snapshot_archive_with(
+            &bank_snapshots_dir,
+            &bank2,
+            SnapshotVersion::default(),
+            full_snapshot_archives_dir.path(),
+            full_snapshot_archives_dir.path(),
+            SnapshotConfig::default().archive_format,
+            true,
+        )
+        .unwrap();
+
+        let account_paths = &bank2.rc.accounts.accounts_db.paths;
+        let bank_snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
+
+        let deserialized_bank = bank_from_snapshot_dir(
+            account_paths,
+            &bank_snapshot,
+            &genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None,
+            false,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+
+        // Ensure both accounts are still zero lamport
+        assert_eq!(deserialized_bank.get_balance(&key1.pubkey()), 0);
+        assert_eq!(deserialized_bank.get_balance(&key2.pubkey()), 0);
+
+        // Ensure the deserialized bank matches the original bank
+        assert_eq!(*bank2, deserialized_bank);
+    }
+
     #[test_case(StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_bank_from_snapshot_dir(storage_access: StorageAccess) {
