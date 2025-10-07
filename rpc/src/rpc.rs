@@ -3876,20 +3876,7 @@ pub mod rpc_full {
                 }
 
                 let simulation_result = if let Some(err) = verification_error {
-                    TransactionSimulationResult {
-                        fee: None,
-                        inner_instructions: None,
-                        loaded_accounts_data_size: 0,
-                        logs: vec![],
-                        post_balances: None,
-                        post_simulation_accounts: vec![],
-                        post_token_balances: None,
-                        pre_balances: None,
-                        pre_token_balances: None,
-                        result: Err(err),
-                        return_data: None,
-                        units_consumed: 0,
-                    }
+                    TransactionSimulationResult::new_error(err)
                 } else {
                     preflight_bank.simulate_transaction(&transaction, false)
                 };
@@ -4016,20 +4003,7 @@ pub mod rpc_full {
             };
 
             let simulation_result = if let Some(err) = verification_error {
-                TransactionSimulationResult {
-                    fee: None,
-                    inner_instructions: None,
-                    loaded_accounts_data_size: 0,
-                    logs: vec![],
-                    post_balances: None,
-                    post_simulation_accounts: vec![],
-                    post_token_balances: None,
-                    pre_balances: None,
-                    pre_token_balances: None,
-                    result: Err(err),
-                    return_data: None,
-                    units_consumed: 0,
-                }
+                TransactionSimulationResult::new_error(err)
             } else {
                 bank.simulate_transaction(&transaction, enable_cpi_recording)
             };
