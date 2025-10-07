@@ -8,6 +8,7 @@ use {
     solana_clock::Slot,
     solana_nohash_hasher::IntMap,
     std::{
+        collections::hash_map::RandomState,
         ops::{Index, Range},
         sync::{
             atomic::{AtomicUsize, Ordering},

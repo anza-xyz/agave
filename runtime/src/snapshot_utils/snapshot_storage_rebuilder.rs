@@ -16,12 +16,12 @@ use {
     },
     solana_accounts_db::{
         account_storage::AccountStorageMap,
-        accounts_db::{AccountStorageEntry, AccountsFileId, AtomicAccountsFileId},
+        accounts_db::{AccountsFileId, AtomicAccountsFileId},
         accounts_file::StorageAccess,
     },
     solana_clock::Slot,
     std::{
-        collections::{hash_map::RandomState, HashMap},
+        collections::HashMap,
         path::PathBuf,
         str::FromStr as _,
         sync::{
@@ -43,8 +43,8 @@ pub(crate) struct SnapshotStorageRebuilder {
     snapshot_storage_lengths: HashMap<Slot, HashMap<SerializedAccountsFileId, usize>>,
     /// Container for storing snapshot file paths
     storage_paths: DashMap<Slot, Mutex<Vec<PathBuf>>>,
-    /// Container for storing rebuilt snapshot storages (uses RandomState for better parallel insert performance)
-    storage: DashMap<Slot, Arc<AccountStorageEntry>, RandomState>,
+    /// Container for storing rebuilt snapshot storages
+    storage: AccountStorageMap,
     /// Tracks next append_vec_id
     next_append_vec_id: Arc<AtomicAccountsFileId>,
     /// Tracker for number of processed slots
