@@ -343,6 +343,9 @@ async fn run_server(
 
             // check overall connection request rate limiter
             if overall_connection_rate_limiter.current_tokens() == 0 {
+                stats
+                    .connection_rate_limited_across_all
+                    .fetch_add(1, Ordering::Relaxed);
                 debug!(
                     "Ignoring incoming connection from {} due to overall rate limit.",
                     incoming.remote_address()
@@ -352,6 +355,9 @@ async fn run_server(
             }
             // then perform per IpAddr rate limiting
             if !rate_limiter.is_allowed(&incoming.remote_address().ip()) {
+                stats
+                    .connection_rate_limited_per_ipaddr
+                    .fetch_add(1, Ordering::Relaxed);
                 debug!(
                     "Ignoring incoming connection from {} due to per-IP rate limiting.",
                     incoming.remote_address()
