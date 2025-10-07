@@ -72,6 +72,7 @@ use {
     std::sync::{atomic::AtomicBool, Arc, Condvar, Mutex, RwLock},
 };
 
+#[allow(dead_code)]
 /// Communication with the block creation loop to notify leader window
 #[derive(Default)]
 pub struct LeaderWindowNotifier {
@@ -80,6 +81,7 @@ pub struct LeaderWindowNotifier {
     pub highest_parent_ready: RwLock<(Slot, (Slot, Hash))>,
 }
 
+#[allow(dead_code)]
 /// Inputs to Votor
 pub struct VotorConfig {
     pub exit: Arc<AtomicBool>,
