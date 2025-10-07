@@ -115,19 +115,19 @@ impl InstructionAccount {
 ///
 /// This context is valid for the entire duration of a transaction being processed.
 #[derive(Debug)]
-pub struct TransactionContext {
+pub struct TransactionContext<'ix_data> {
     accounts: Rc<TransactionAccounts>,
     instruction_stack_capacity: usize,
     instruction_trace_capacity: usize,
     instruction_stack: Vec<usize>,
-    instruction_trace: Vec<InstructionFrame>,
+    instruction_trace: Vec<InstructionFrame<'ix_data>>,
     top_level_instruction_index: usize,
     return_data: TransactionReturnData,
     #[cfg(not(target_os = "solana"))]
     rent: Rent,
 }
 
-impl TransactionContext {
+impl TransactionContext<'_> {
     /// Constructs a new TransactionContext
     #[cfg(not(target_os = "solana"))]
     pub fn new(
@@ -291,7 +291,7 @@ impl TransactionContext {
             .ok_or(InstructionError::CallDepth)?;
         instruction.program_account_index_in_tx = program_index;
         instruction.instruction_accounts = instruction_accounts;
-        instruction.instruction_data = instruction_data;
+        instruction.instruction_data = Cow::from(instruction_data);
         instruction.dedup_map = deduplication_map;
         Ok(())
     }
@@ -499,7 +499,7 @@ pub struct TransactionReturnData {
 
 /// Instruction shared between runtime and programs.
 #[derive(Debug, Clone, Default)]
-pub struct InstructionFrame {
+pub struct InstructionFrame<'ix_data> {
     pub nesting_level: usize,
     pub program_account_index_in_tx: IndexOfAccount,
     pub instruction_accounts: Vec<InstructionAccount>,
@@ -507,23 +507,23 @@ pub struct InstructionFrame {
     /// Usage: dedup_map[index_in_transaction] = index_in_instruction
     /// This is a vector of u8s to save memory, since many entries may be unused.
     dedup_map: Vec<u8>,
-    pub instruction_data: Vec<u8>,
+    pub instruction_data: Cow<'ix_data, [u8]>,
 }
 
 /// View interface to read instructions.
 #[derive(Debug, Clone)]
-pub struct InstructionContext<'a> {
-    transaction_context: &'a TransactionContext,
+pub struct InstructionContext<'a, 'ix_data> {
+    transaction_context: &'a TransactionContext<'ix_data>,
     // The rest of the fields are redundant shortcuts
     index_in_trace: usize,
     nesting_level: usize,
     program_account_index_in_tx: IndexOfAccount,
     instruction_accounts: &'a [InstructionAccount],
     dedup_map: &'a [u8],
-    instruction_data: &'a [u8],
+    instruction_data: &'ix_data [u8],
 }
 
-impl<'a> InstructionContext<'a> {
+impl<'a> InstructionContext<'a, '_> {
     /// How many Instructions were on the trace before this one was pushed
     pub fn get_index_in_trace(&self) -> usize {
         self.index_in_trace
@@ -715,14 +715,14 @@ impl<'a> InstructionContext<'a> {
 
 /// Shared account borrowed from the TransactionContext and an InstructionContext.
 #[derive(Debug)]
-pub struct BorrowedInstructionAccount<'a> {
-    transaction_context: &'a TransactionContext,
+pub struct BorrowedInstructionAccount<'a, 'ix_data> {
+    transaction_context: &'a TransactionContext<'ix_data>,
     account: AccountRefMut<'a>,
     instruction_account: InstructionAccount,
     index_in_transaction_of_instruction_program: IndexOfAccount,
 }
 
-impl BorrowedInstructionAccount<'_> {
+impl BorrowedInstructionAccount<'_, '_> {
     /// Returns the index of this account (transaction wide)
     #[inline]
     pub fn get_index_in_transaction(&self) -> IndexOfAccount {
@@ -1057,7 +1057,7 @@ pub struct ExecutionRecord {
 
 /// Used by the bank in the runtime to write back the processed accounts and recorded instructions
 #[cfg(not(target_os = "solana"))]
-impl From<TransactionContext> for ExecutionRecord {
+impl From<TransactionContext<'_>> for ExecutionRecord {
     fn from(context: TransactionContext) -> Self {
         let (accounts, touched_flags, resize_delta) = Rc::try_unwrap(context.accounts)
             .expect("transaction_context.accounts has unexpected outstanding refs")

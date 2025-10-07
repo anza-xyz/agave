@@ -279,12 +279,12 @@ macro_rules! register_feature_gated_function {
     };
 }
 
-pub fn create_program_runtime_environment_v1<'a>(
+pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
     feature_set: &SVMFeatureSet,
     compute_budget: &SVMTransactionExecutionBudget,
     reject_deployment_of_broken_elfs: bool,
     debugging_features: bool,
-) -> Result<BuiltinProgram<InvokeContext<'a>>, Error> {
+) -> Result<BuiltinProgram<InvokeContext<'a, 'ix_data>>, Error> {
     let enable_alt_bn128_syscall = feature_set.enable_alt_bn128_syscall;
     let enable_alt_bn128_compression_syscall = feature_set.enable_alt_bn128_compression_syscall;
     let enable_big_mod_exp_syscall = feature_set.enable_big_mod_exp_syscall;
@@ -513,10 +513,10 @@ pub fn create_program_runtime_environment_v1<'a>(
     Ok(result)
 }
 
-pub fn create_program_runtime_environment_v2<'a>(
+pub fn create_program_runtime_environment_v2<'a, 'ix_data>(
     compute_budget: &SVMTransactionExecutionBudget,
     debugging_features: bool,
-) -> BuiltinProgram<InvokeContext<'a>> {
+) -> BuiltinProgram<InvokeContext<'a, 'ix_data>> {
     let config = Config {
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,
@@ -4147,7 +4147,7 @@ mod tests {
     }
 
     type BuiltinFunctionRustInterface<'a> = fn(
-        &mut InvokeContext<'a>,
+        &mut InvokeContext<'a, 'a>,
         u64,
         u64,
         u64,
@@ -4157,7 +4157,7 @@ mod tests {
     ) -> Result<u64, Box<dyn std::error::Error>>;
 
     fn call_program_address_common<'a, 'b: 'a>(
-        invoke_context: &'a mut InvokeContext<'b>,
+        invoke_context: &'a mut InvokeContext<'b, 'b>,
         seeds: &[&[u8]],
         program_id: &Pubkey,
         overlap_outputs: bool,
@@ -4210,8 +4210,8 @@ mod tests {
         result.map(|_| (address, bump_seed))
     }
 
-    fn create_program_address(
-        invoke_context: &mut InvokeContext,
+    fn create_program_address<'a>(
+        invoke_context: &mut InvokeContext<'a, 'a>,
         seeds: &[&[u8]],
         address: &Pubkey,
     ) -> Result<Pubkey, Error> {
@@ -4225,8 +4225,8 @@ mod tests {
         Ok(address)
     }
 
-    fn try_find_program_address(
-        invoke_context: &mut InvokeContext,
+    fn try_find_program_address<'a>(
+        invoke_context: &mut InvokeContext<'a, 'a>,
         seeds: &[&[u8]],
         address: &Pubkey,
     ) -> Result<(Pubkey, u8), Error> {
