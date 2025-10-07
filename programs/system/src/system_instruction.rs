@@ -1101,7 +1101,8 @@ mod test {
                 &transaction_context
                     .accounts()
                     .try_borrow(NONCE_ACCOUNT_INDEX)
-                    .unwrap(),
+                    .unwrap()
+                    .as_account_shared_data_for_tests(),
                 DurableNonce::from_blockhash(&invoke_context.environment_config.blockhash)
                     .as_hash(),
             ),
@@ -1123,7 +1124,8 @@ mod test {
                 &transaction_context
                     .accounts()
                     .try_borrow(NONCE_ACCOUNT_INDEX)
-                    .unwrap(),
+                    .unwrap()
+                    .as_account_shared_data_for_tests(),
                 &Hash::default(),
             ),
             None
@@ -1163,7 +1165,8 @@ mod test {
                 &transaction_context
                     .accounts()
                     .try_borrow(NONCE_ACCOUNT_INDEX)
-                    .unwrap(),
+                    .unwrap()
+                    .as_account_shared_data_for_tests(),
                 DurableNonce::from_blockhash(&invoke_context.environment_config.blockhash)
                     .as_hash(),
             ),

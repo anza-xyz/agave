@@ -5718,9 +5718,9 @@ dependencies = [
 
 [[package]]
 name = "solana-account"
-version = "3.0.0"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f885ce7f937871ecb56aadbeaaec963b234a580b7d6ebbdb8fa4249a36f92433"
+checksum = "39e5a5c395c41a30f0e36fa487b8cda3280f0d9e4c7b461c0881fa23564f4c28"
 dependencies = [
  "bincode",
  "qualifier_attr",
