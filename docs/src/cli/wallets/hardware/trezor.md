@@ -4,7 +4,7 @@ pagination_label: "Hardware Wallets in the Solana CLI: Trezor"
 sidebar_label: Trezor
 ---
 
-This page describes how to use a Trezor Model T or Trezor Safe 3 device to
+This page describes how to use a Trezor Model T, Safe 3, or Safe 5 device to
 interact with Solana using the command line tools.
 
 ## Before You Begin
@@ -13,9 +13,12 @@ interact with Solana using the command line tools.
 - [Review Trezor and BIP-32](https://trezor.io/learn/a/what-is-bip32)
 - [Review Trezor and BIP-44](https://trezor.io/learn/a/what-is-bip44)
 
-## Use Trezor Model T or Trezor Safe 3 with Solana CLI
+## Use Trezor Model T, Safe 3, or Safe 5 with Solana CLI
 
-1. Plug your Trezor Model T or Trezor Safe 3 device into your computer's USB port
+1. Plug your Trezor device into your computer's USB port
+2. Tap to connect the device
+3. Enter your pin
+3. Ensure the screen reads the name of your device
 
 ### View your Wallet Addresses
 
@@ -26,8 +29,10 @@ solana-keygen pubkey usb://trezor?key=0/0
 ```
 
 This confirms your Trezor device is connected properly and in the correct state
-to interact with the Solana CLI. The command returns your Trezor device's first Solana account's
-external (receiving) wallet address using the [BIP-32](https://trezor.io/learn/a/what-is-bip32) derivation path `m/44'/501'/0'/0'`.
+to interact with the Solana CLI. The command returns your Trezor device's first
+Solana account's external (receiving) wallet address using the
+[BIP-32](https://trezor.io/learn/a/what-is-bip32) derivation path
+`m/44'/501'/0'/0'`.
 
 Your Trezor device supports an arbitrary number of valid wallet addresses and signers. To
 view any address, use the `solana-keygen pubkey` command, as shown below,
@@ -69,75 +74,13 @@ Now you have a wallet address (or multiple addresses), you can share any of
 these addresses publicly to act as a receiving address, and you can use the
 associated keypair URL as the signer for transactions from that address.
 
-### View your Balance
+### Wallet Operations
 
-To view the balance of any account, regardless of which wallet it uses, use the
-`solana balance` command:
-
-```bash
-solana balance SOME_WALLET_ADDRESS
-```
-
-For example, if your address is `7cvkjYAkUYs4W8XcXsca7cBrEGFeSUjeZmKoNBvEwyri`,
-then enter the following command to view the balance:
-
-```bash
-solana balance 7cvkjYAkUYs4W8XcXsca7cBrEGFeSUjeZmKoNBvEwyri
-```
-
-You can also view the balance of any account address on the Accounts tab in the
-[Explorer](https://explorer.solana.com/accounts) and paste the address in the
-box to view the balance in your web browser.
-
-Note: Any address with a balance of 0 SOL, such as a newly created one on your
-Trezor, will show as "Not Found" in the explorer. Empty accounts and
-non-existent accounts are treated the same in Solana. This will change when your
-account address has some SOL in it.
-
-### Send SOL from a Trezor
-
-To send some tokens from an address controlled by your Trezor, you will need to
-use the device to sign a transaction, using the same keypair URL you used to
-derive the address. To do this, make sure your Trezor is plugged in.
-
-The `solana transfer` command is used to specify to which address to send
-tokens, how many tokens to send, and uses the `--keypair` argument to specify
-which keypair is sending the tokens, which will sign the transaction, and the
-balance from the associated address will decrease.
-
-```bash
-solana transfer RECIPIENT_ADDRESS AMOUNT --keypair KEYPAIR_URL_OF_SENDER
-```
-
-Below is a full example. First, an address is viewed at a certain keypair URL.
-Second, the balance of that address is checked. Lastly, a transfer transaction
-is entered to send `1` SOL to the recipient address
-`7cvkjYAkUYs4W8XcXsca7cBrEGFeSUjeZmKoNBvEwyri`. When you hit Enter for a
-transfer command, you will be prompted to approve the transaction details on
-your Trezor device. Follow the prompts on the device and review the
-transaction details. If they look correct, follow the prompts on your device.
-
-```bash
-~$ solana-keygen pubkey usb://trezor?key=0/0
-CjeqzArkZt6xwdnZ9NZSf8D1CNJN1rjeFiyd8q7iLWAV
-
-~$ solana balance CjeqzArkZt6xwdnZ9NZSf8D1CNJN1rjeFiyd8q7iLWAV
-1.000005 SOL
-
-~$ solana transfer 7cvkjYAkUYs4W8XcXsca7cBrEGFeSUjeZmKoNBvEwyri 1 --keypair usb://trezor?key=0/0
-Waiting for your approval on Trezor hardware wallet
-✅ Approved
-
-Signature: kemu9jDEuPirKNRKiHan7ycybYsZp7pFefAdvWZRq5VRHCLgXTXaFVw3pfh87MQcWX4kQY4TjSBmESrwMApom1V
-```
-
-After approving the transaction on your device, the program will display the
-transaction signature, and wait for the maximum number of confirmations (32)
-before returning. This only takes a few seconds, and then the transaction is
-finalized on the Solana network. You can view details of this or any other
-transaction by going to the Transaction tab in the
-[Explorer](https://explorer.solana.com/transactions) and paste in the
-transaction signature.
+To use the device for wallet operations, such as balance fetching or
+transferring SOL, follow the guides for
+[viewing balance](./ledger.md#view-your-balance) or
+[sending SOL](./ledger.md#send-sol-from-a-nano), substituting `ledger` with
+`trezor` and your key path.
 
 ## Troubleshooting
 

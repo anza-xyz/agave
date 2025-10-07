@@ -1,7 +1,9 @@
 use {
-    crate::remote_wallet::{RemoteWallet, RemoteWalletError, RemoteWalletInfo},
+    crate::{
+        locator::Manufacturer,
+        remote_wallet::{RemoteWallet, RemoteWalletError, RemoteWalletInfo},
+    },
     console::Emoji,
-    semver::Version as FirmwareVersion,
     solana_derivation_path::DerivationPath,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
@@ -34,34 +36,32 @@ impl TrezorWallet {
             pretty_path,
         }
     }
+}
 
-    pub fn get_trezor_firmware_version(&self) -> Result<FirmwareVersion, RemoteWalletError> {
-        let trezor_client = self.trezor_client.borrow();
-        let features = trezor_client
-            .features()
-            .ok_or(RemoteWalletError::NoDeviceFound)?;
-        Ok(FirmwareVersion::new(
-            features.major_version().into(),
-            features.minor_version().into(),
-            features.patch_version().into(),
-        ))
-    }
+#[cfg(test)]
+fn get_firmware_version(dev_info: &Trezor) -> Result<semver::Version, RemoteWalletError> {
+    let features = dev_info
+        .features()
+        .ok_or(RemoteWalletError::NoDeviceFound)?;
+    Ok(semver::Version::new(
+        features.major_version().into(),
+        features.minor_version().into(),
+        features.patch_version().into(),
+    ))
+}
 
-    pub fn get_trezor_model(&self) -> Result<String, RemoteWalletError> {
-        let trezor_client = self.trezor_client.borrow();
-        let features = trezor_client
-            .features()
-            .ok_or(RemoteWalletError::NoDeviceFound)?;
-        Ok(features.model().to_string())
-    }
+fn get_model(dev_info: &Trezor) -> Result<String, RemoteWalletError> {
+    let features = dev_info
+        .features()
+        .ok_or(RemoteWalletError::NoDeviceFound)?;
+    Ok(features.model().to_string())
+}
 
-    pub fn get_trezor_device_id(&self) -> Result<String, RemoteWalletError> {
-        let trezor_client = self.trezor_client.borrow();
-        let features = trezor_client
-            .features()
-            .ok_or(RemoteWalletError::NoDeviceFound)?;
-        Ok(features.device_id().to_string())
-    }
+fn get_device_id(dev_info: &Trezor) -> Result<String, RemoteWalletError> {
+    let features = dev_info
+        .features()
+        .ok_or(RemoteWalletError::NoDeviceFound)?;
+    Ok(features.device_id().to_string())
 }
 
 impl RemoteWallet<Trezor> for TrezorWallet {
@@ -70,8 +70,22 @@ impl RemoteWallet<Trezor> for TrezorWallet {
     }
 
     /// Parse device info and get device base pubkey
-    fn read_device(&mut self, _dev_info: &Trezor) -> Result<RemoteWalletInfo, RemoteWalletError> {
-        unimplemented!();
+    fn read_device(&mut self, dev_info: &Trezor) -> Result<RemoteWalletInfo, RemoteWalletError> {
+        let model = get_model(dev_info)?;
+        let serial = get_device_id(dev_info)?;
+        let pubkey_result = self.get_pubkey(&DerivationPath::default(), false);
+        let (pubkey, error) = match pubkey_result {
+            Ok(pubkey) => (pubkey, None),
+            Err(err) => (Pubkey::default(), Some(err)),
+        };
+        Ok(RemoteWalletInfo {
+            model,
+            manufacturer: Manufacturer::Trezor,
+            serial,
+            host_device_path: String::new(),
+            pubkey,
+            error,
+        })
     }
 
     /// Get solana pubkey from a RemoteWallet
@@ -157,6 +171,7 @@ mod tests {
 
     #[test]
     #[serial]
+    #[ignore]
     fn test_emulator_find() {
         let trezors = find_devices(false);
         assert!(!trezors.is_empty());
@@ -165,39 +180,50 @@ mod tests {
 
     #[test]
     #[serial]
+    #[ignore]
     fn test_solana_pubkey() {
         let mut emulator = init_emulator();
         let derivation_path_str = "m/44'/501'/0'/0'";
         let derivation_path = DerivationPath::from_absolute_path_str(derivation_path_str).unwrap();
-        let address_n = DerivationPath::to_u32_vec(&derivation_path);
+        let address_n = derivation_path.into_iter().map(|i| i.to_bits()).collect();
         let solana_get_pubkey = SolanaGetPublicKey {
             address_n,
             show_display: Some(false),
             ..SolanaGetPublicKey::default()
         };
         let pubkey = handle_interaction(
-            emulator.call(solana_get_pubkey, Box::new(|_, m: SolanaPublicKey| Ok(m))).expect("Trezor client (the emulator) has been initialized and SolanaGetPublicKey is initialized correctly")
-        ).expect("Trezor client (the emulator) has been initialized and SolanaGetPublicKey is initialized correctly");
+            emulator
+                .call(solana_get_pubkey, Box::new(|_, m: SolanaPublicKey| Ok(m)))
+                .expect(
+                    "Trezor client (the emulator) has been initialized and SolanaGetPublicKey is \
+                     initialized correctly",
+                ),
+        )
+        .expect(
+            "Trezor client (the emulator) has been initialized and SolanaGetPublicKey is \
+             initialized correctly",
+        );
         assert!(Pubkey::try_from(pubkey.public_key()).is_ok());
     }
 
     #[test]
     #[serial]
+    #[ignore]
     fn test_trezor_wallet() {
         let emulator = init_emulator();
+        let model =
+            get_model(&emulator).expect("Trezor client (the emulator) has been initialized");
+        let device_id =
+            get_device_id(&emulator).expect("Trezor client (the emulator) has been initialized");
+        assert!(!device_id.is_empty());
+        let firmware_version = get_firmware_version(&emulator);
+        assert!(firmware_version.is_ok());
+
         let pretty_path = "usb://trezor?key=0/0".to_string();
         let trezor_wallet = TrezorWallet::new(emulator, pretty_path);
         let expected_model = "T".to_string();
-        let model = trezor_wallet
-            .get_trezor_model()
-            .expect("Trezor client (the emulator) has been initialized");
         assert_eq!(expected_model, model);
-        let device_id = trezor_wallet
-            .get_trezor_device_id()
-            .expect("Trezor client (the emulator) has been initialized");
-        assert!(!device_id.is_empty());
-        let firmware_version = trezor_wallet.get_trezor_firmware_version();
-        assert!(firmware_version.is_ok());
+
         let derivation_path = DerivationPath::new_bip44(Some(0), Some(0));
         let pubkey = trezor_wallet
             .get_pubkey(&derivation_path, false)

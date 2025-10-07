@@ -6,7 +6,6 @@ use {
         ledger_error::LedgerError,
         locator::{Locator, LocatorError, Manufacturer},
         trezor::TrezorWallet,
-        trezor_error::TrezorError,
     },
     log::*,
     parking_lot::RwLock,
@@ -58,8 +57,8 @@ pub enum RemoteWalletError {
     #[error("pubkey not found for given address")]
     PubkeyNotFound,
 
-    #[error(transparent)]
-    TrezorError(#[from] TrezorError),
+    #[error("trezor error: {0}")]
+    TrezorError(String),
 
     #[error("remote wallet operation rejected by the user")]
     UserCancel,
@@ -83,7 +82,7 @@ impl From<RemoteWalletError> for SignerError {
             RemoteWalletError::InvalidDevice => SignerError::Connection(err.to_string()),
             RemoteWalletError::InvalidInput(input) => SignerError::InvalidInput(input),
             RemoteWalletError::LedgerError(e) => SignerError::Protocol(e.to_string()),
-            RemoteWalletError::TrezorError(e) => SignerError::Protocol(e.to_string()),
+            RemoteWalletError::TrezorError(e) => SignerError::Protocol(e),
             RemoteWalletError::NoDeviceFound => SignerError::NoDeviceFound,
             RemoteWalletError::Protocol(e) => SignerError::Protocol(e.to_string()),
             RemoteWalletError::UserCancel => {
@@ -96,7 +95,7 @@ impl From<RemoteWalletError> for SignerError {
 
 impl From<TrezorClientError> for RemoteWalletError {
     fn from(err: TrezorClientError) -> RemoteWalletError {
-        RemoteWalletError::TrezorError(TrezorError::TrezorError(err))
+        RemoteWalletError::TrezorError(err.to_string())
     }
 }
 
