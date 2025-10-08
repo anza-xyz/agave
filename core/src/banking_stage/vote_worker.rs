@@ -16,6 +16,7 @@ use {
     },
     arrayvec::ArrayVec,
     crossbeam_channel::RecvTimeoutError,
+    itertools::Itertools,
     solana_accounts_db::account_locks::validate_account_locks,
     solana_clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
     solana_measure::{measure::Measure, measure_us},
@@ -228,23 +229,25 @@ impl VoteWorker {
         let mut reached_end_of_slot = false;
         let mut sanitized_transactions = Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE);
         let mut error_counters: TransactionErrorMetrics = TransactionErrorMetrics::default();
-        let mut vote_packets =
-            ArrayVec::<Arc<ImmutableDeserializedPacket>, UNPROCESSED_BUFFER_STEP_SIZE>::new();
-        for chunk in all_vote_packets.chunks(UNPROCESSED_BUFFER_STEP_SIZE) {
-            vote_packets.clear();
-            chunk.iter().for_each(|packet| {
+        for chunk in Itertools::chunks(all_vote_packets.into_iter(), UNPROCESSED_BUFFER_STEP_SIZE)
+            .into_iter()
+        {
+            let mut vote_packets =
+                ArrayVec::<ImmutableDeserializedPacket, UNPROCESSED_BUFFER_STEP_SIZE>::new();
+
+            for packet in chunk.into_iter() {
                 if consume_scan_should_process_packet(
                     bank,
                     banking_stage_stats,
-                    packet,
+                    &packet,
                     reached_end_of_slot,
                     &mut error_counters,
                     &mut sanitized_transactions,
                     slot_metrics_tracker,
                 ) {
-                    vote_packets.push(packet.clone());
+                    vote_packets.push(packet);
                 }
-            });
+            }
 
             if let Some(retryable_vote_indices) = self.do_process_packets(
                 bank,
@@ -256,11 +259,23 @@ impl VoteWorker {
                 vote_packets.len(),
                 slot_metrics_tracker,
             ) {
-                self.storage.reinsert_packets(
-                    retryable_vote_indices
-                        .into_iter()
-                        .map(|index| vote_packets[index].clone()),
-                );
+                let mut prev = 0;
+                debug_assert!(retryable_vote_indices.iter().all(|&index| {
+                    let ok = index >= prev;
+                    prev = index;
+
+                    ok
+                }));
+
+                let mut vote_packets = vote_packets.into_iter();
+                let mut offset = 0;
+                self.storage
+                    .reinsert_packets(retryable_vote_indices.into_iter().map(|index| {
+                        let additional = index - offset;
+                        offset += additional;
+
+                        vote_packets.nth(additional).unwrap()
+                    }));
             } else {
                 self.storage.reinsert_packets(vote_packets.drain(..));
             }
