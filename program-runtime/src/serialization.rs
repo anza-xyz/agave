@@ -669,7 +669,6 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
 #[cfg(test)]
 #[allow(clippy::indexing_slicing)]
 mod tests {
-    use std::borrow::Cow;
     use {
         super::*,
         crate::with_mock_invoke_context,
@@ -684,6 +683,7 @@ mod tests {
             InstructionAccount, TransactionContext, MAX_ACCOUNTS_PER_TRANSACTION,
         },
         std::{
+            borrow::Cow,
             cell::RefCell,
             mem::transmute,
             rc::Rc,

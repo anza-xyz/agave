@@ -26,7 +26,12 @@ pub(crate) fn process_message<'ix_data>(
         .enumerate()
     {
         invoke_context
-            .prepare_next_top_level_instruction(message, &instruction, *program_account_index)
+            .prepare_next_top_level_instruction(
+                message,
+                &instruction,
+                *program_account_index,
+                instruction.data,
+            )
             .map_err(|err| {
                 TransactionError::InstructionError(top_level_instruction_index as u8, err)
             })?;
