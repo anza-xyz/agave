@@ -1893,9 +1893,8 @@ mod tests {
                     other_slot,
                     &mut reclaims,
                     reclaim
-                )
-                .0,
-                1,
+                ),
+                (1, 1),
                 "other_slot: {other_slot:?}"
             );
             assert_eq!(slot_list.clone_list(), SlotList::from([at_new_slot]));
@@ -1923,9 +1922,8 @@ mod tests {
                 other_slot,
                 &mut reclaims,
                 reclaim
-            )
-            .0,
-            0,
+            ),
+            (0, 1),
             "other_slot: {other_slot:?}"
         );
         assert_eq!(slot_list.clone_list(), SlotList::from([at_new_slot]));
