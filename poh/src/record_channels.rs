@@ -90,6 +90,7 @@ impl RecordSender {
             .iter()
             .map(|batch| batch.len())
             .sum();
+        assert!(num_transactions > 0);
         loop {
             // Grab lock on `transaction_indexes` here to ensure we are sending
             // sequentially, ONLY if this exists.
@@ -320,7 +321,17 @@ impl SlotAllowedInsertions {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_transaction::versioned::VersionedTransaction};
+    use {super::*, solana_hash::Hash, solana_transaction::versioned::VersionedTransaction};
+
+    pub(super) fn test_record(slot: Slot, num_batches: usize) -> Record {
+        Record {
+            slot,
+            transaction_batches: (0..num_batches)
+                .map(|_| vec![VersionedTransaction::default()])
+                .collect(),
+            mixins: (0..num_batches).map(|_| Hash::default()).collect(),
+        }
+    }
 
     #[test]
     fn test_record_channels() {
@@ -328,11 +339,7 @@ mod tests {
 
         // Initially shutdown.
         assert!(matches!(
-            sender.try_send(Record {
-                slot: 0,
-                transaction_batches: vec![],
-                mixins: vec![],
-            }),
+            sender.try_send(test_record(0, 1)),
             Err(RecordSenderError::Shutdown)
         ));
 
@@ -341,51 +348,25 @@ mod tests {
 
         // Record for slot 0 fails.
         assert!(matches!(
-            sender.try_send(Record {
-                slot: 0,
-                transaction_batches: vec![],
-                mixins: vec![],
-            }),
+            sender.try_send(test_record(0, 1)),
             Err(RecordSenderError::InactiveSlot)
         ));
 
         // Record for slot 1 with 1 batch succeeds.
-        assert!(matches!(
-            sender.try_send(Record {
-                slot: 1,
-                transaction_batches: vec![vec![]],
-                mixins: vec![],
-            }),
-            Ok(None)
-        ));
+        assert!(matches!(sender.try_send(test_record(1, 1)), Ok(None)));
 
         // Record for slot 1 with 1023 batches fails (channel full).
         assert!(matches!(
-            sender.try_send(Record {
-                slot: 1,
-                transaction_batches: vec![vec![]; 1_023],
-                mixins: vec![],
-            }),
+            sender.try_send(test_record(1, 1023)),
             Err(RecordSenderError::Full)
         ));
 
-        // Record for slot 1 with 1023 batches succeeds (channel full).
-        assert!(matches!(
-            sender.try_send(Record {
-                slot: 1,
-                transaction_batches: vec![vec![]; 1_022],
-                mixins: vec![],
-            }),
-            Ok(None)
-        ));
+        // Record for slot 1 with 1022 batches succeeds (channel now full).
+        assert!(matches!(sender.try_send(test_record(1, 1022)), Ok(None)));
 
         // Record for slot 1 with 1 batch fails (channel full).
         assert!(matches!(
-            sender.try_send(Record {
-                slot: 1,
-                transaction_batches: vec![vec![]],
-                mixins: vec![],
-            }),
+            sender.try_send(test_record(1, 1)),
             Err(RecordSenderError::Full)
         ));
 
@@ -402,11 +383,7 @@ mod tests {
 
         // Initially shutdown.
         assert!(matches!(
-            sender.try_send(Record {
-                slot: 0,
-                transaction_batches: vec![],
-                mixins: vec![],
-            }),
+            sender.try_send(test_record(0, 1)),
             Err(RecordSenderError::Shutdown)
         ));
 
@@ -415,39 +392,21 @@ mod tests {
 
         // Record for slot 0 fails.
         assert!(matches!(
-            sender.try_send(Record {
-                slot: 0,
-                transaction_batches: vec![],
-                mixins: vec![],
-            }),
+            sender.try_send(test_record(0, 1)),
             Err(RecordSenderError::InactiveSlot)
         ));
 
         // Record for slot 1 with 1 batch succeeds.
-        assert!(matches!(
-            sender.try_send(Record {
-                slot: 1,
-                transaction_batches: vec![vec![VersionedTransaction::default()]],
-                mixins: vec![],
-            }),
-            Ok(Some(0))
-        ));
+        assert!(matches!(sender.try_send(test_record(1, 1)), Ok(Some(0))));
 
         // Record for slot 1 with 2 batches (3 transactions) succeeds.
-        assert!(matches!(
-            sender.try_send(Record {
-                slot: 1,
-                transaction_batches: vec![
-                    vec![VersionedTransaction::default()],
-                    vec![
-                        VersionedTransaction::default(),
-                        VersionedTransaction::default()
-                    ],
-                ],
-                mixins: vec![],
-            }),
-            Ok(Some(1))
-        ));
+        let mut record = test_record(1, 2);
+        record
+            .transaction_batches
+            .last_mut()
+            .unwrap()
+            .push(VersionedTransaction::default());
+        assert!(matches!(sender.try_send(record), Ok(Some(1))));
 
         assert!(*sender.transaction_indexes.as_ref().unwrap().lock().unwrap() == 4);
     }
@@ -455,7 +414,7 @@ mod tests {
 
 #[cfg(all(test, feature = "shuttle-test"))]
 mod shuttle_tests {
-    use {super::*, solana_hash::Hash};
+    use super::{tests::test_record, *};
 
     #[test]
     fn test_sender_shutdown_safety_race() {
@@ -471,14 +430,7 @@ mod shuttle_tests {
                     let mut slot = 0;
                     let mut had_successful_send = false;
                     while successful_sends < ITERATIONS_PER_RUN {
-                        if sender
-                            .try_send(Record {
-                                mixins: vec![Hash::default()],
-                                transaction_batches: vec![vec![]],
-                                slot,
-                            })
-                            .is_ok()
-                        {
+                        if sender.try_send(test_record(slot, 1)).is_ok() {
                             had_successful_send = true;
                             successful_sends += 1;
                         } else if had_successful_send {
