@@ -118,6 +118,9 @@ if [[ "$include_val_bins" -eq 0 ]]; then
   done
 fi
 
+cp "${build_dir}/bin/agave-install-init" "agave-install-init-${target}"
+cp "${build_dir}/version.yml" "${tarball_basename}-${target}.yml"
+
 output_tar="${tarball_basename}-${target}.tar.bz2"
 echo "--- Creating tarball"
 
