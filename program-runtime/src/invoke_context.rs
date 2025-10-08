@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use {
     crate::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
@@ -38,6 +37,7 @@ use {
     },
     std::{
         alloc::Layout,
+        borrow::Cow,
         cell::RefCell,
         fmt::{self, Debug},
         rc::Rc,
@@ -441,6 +441,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         message: &impl SVMMessage,
         instruction: &SVMInstruction,
         program_account_index: IndexOfAccount,
+        data: &'ix_data [u8],
     ) -> Result<(), InstructionError> {
         // We reference accounts by an u8 index, so we have a total of 256 accounts.
         // This algorithm allocates the array on the stack for speed.
@@ -474,7 +475,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             program_account_index,
             instruction_accounts,
             transaction_callee_map,
-            Cow::Owned(instruction.data.to_vec()),
+            Cow::Borrowed(data),
         )?;
         Ok(())
     }
@@ -1477,7 +1478,12 @@ mod tests {
         let svm_instruction =
             SVMInstruction::from(sanitized.message().instructions().first().unwrap());
         invoke_context
-            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, 90)
+            .prepare_next_top_level_instruction(
+                &sanitized,
+                &svm_instruction,
+                90,
+                svm_instruction.data,
+            )
             .unwrap();
 
         test_case_1(&invoke_context);
@@ -1486,7 +1492,12 @@ mod tests {
         let svm_instruction =
             SVMInstruction::from(sanitized.message().instructions().get(1).unwrap());
         invoke_context
-            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, 90)
+            .prepare_next_top_level_instruction(
+                &sanitized,
+                &svm_instruction,
+                90,
+                svm_instruction.data,
+            )
             .unwrap();
 
         test_case_2(&invoke_context);
@@ -1550,7 +1561,12 @@ mod tests {
             SVMInstruction::from(sanitized.message().instructions().first().unwrap());
 
         invoke_context
-            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, 90)
+            .prepare_next_top_level_instruction(
+                &sanitized,
+                &svm_instruction,
+                90,
+                svm_instruction.data,
+            )
             .unwrap();
 
         {
