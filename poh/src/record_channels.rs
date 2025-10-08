@@ -60,7 +60,7 @@ pub fn record_channels(track_transaction_indexes: bool) -> (RecordSender, Record
 
 pub enum RecordSenderError {
     /// The channel is full, the record was not sent.
-    Full(Record),
+    Full,
     /// The channel is in a shutdown state, it is not valid to
     /// send records for this slot anymore.
     Shutdown,
@@ -117,7 +117,7 @@ impl RecordSender {
                 return Err(RecordSenderError::InactiveSlot);
             }
             if allowed_insertions < record.transaction_batches.len() as u64 {
-                return Err(RecordSenderError::Full(record));
+                return Err(RecordSenderError::Full);
             }
 
             let new_slot_allowed_insertions = SlotAllowedInsertions::encoded_value(
@@ -366,7 +366,7 @@ mod tests {
                 transaction_batches: vec![vec![]; 1_023],
                 mixins: vec![],
             }),
-            Err(RecordSenderError::Full(_))
+            Err(RecordSenderError::Full)
         ));
 
         // Record for slot 1 with 1023 batches succeeds (channel full).
@@ -386,7 +386,7 @@ mod tests {
                 transaction_batches: vec![vec![]],
                 mixins: vec![],
             }),
-            Err(RecordSenderError::Full(_))
+            Err(RecordSenderError::Full)
         ));
 
         // Receive 1 record.

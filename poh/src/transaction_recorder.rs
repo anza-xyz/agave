@@ -76,7 +76,7 @@ impl TransactionRecorder {
                         starting_transaction_index: None,
                     }
                 }
-                Err(RecordSenderError::Full(_)) => {
+                Err(RecordSenderError::Full) => {
                     return RecordTransactionsSummary {
                         record_transactions_timings,
                         result: Err(PohRecorderError::ChannelFull),
