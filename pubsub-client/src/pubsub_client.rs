@@ -126,7 +126,7 @@ use {
         connect,
         http::{header, StatusCode},
         stream::MaybeTlsStream,
-        Message, WebSocket,
+        Bytes, Message, WebSocket,
     },
 };
 
@@ -834,7 +834,7 @@ impl PubsubClient {
 
             // Send ping if the interval has passed
             if last_ping_time.elapsed() >= ping_interval {
-                if let Err(err) = socket.write().unwrap().send(Message::Ping(vec![])) {
+                if let Err(err) = socket.write().unwrap().send(Message::Ping(Bytes::new())) {
                     info!("Error sending ping: {err:?}");
                     break;
                 }
