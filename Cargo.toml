@@ -374,7 +374,7 @@ smallvec = { version = "1.15.1", default-features = false, features = ["union"] 
 smpl_jwt = "0.7.1"
 socket2 = "0.6.0"
 soketto = "0.7"
-solana-account = "3.0.0"
+solana-account = "3.1.0"
 solana-account-decoder = { path = "account-decoder", version = "=3.1.0" }
 solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=3.1.0" }
 solana-account-info = "3.0.0"
