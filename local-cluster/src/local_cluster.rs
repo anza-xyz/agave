@@ -56,9 +56,9 @@ use {
     },
     solana_transaction::Transaction,
     solana_transaction_error::TransportError,
-    solana_vote_program::{
-        vote_instruction,
-        vote_state::{self, VoteInit},
+    solana_vote_instruction::{
+        instruction,
+        state::{self, VoteInit},
     },
     std::{
         collections::HashMap,
@@ -821,7 +821,7 @@ impl LocalCluster {
                 },
                 amount,
                 vote_instruction::CreateVoteAccountConfig {
-                    space: vote_state::VoteStateV3::size_of() as u64,
+                    space: vote_state::VoteStateV4::size_of() as u64,
                     ..vote_instruction::CreateVoteAccountConfig::default()
                 },
             );
@@ -902,14 +902,14 @@ impl LocalCluster {
                     (Some(stake_account), Some(vote_account)) => {
                         match (
                             stake_state::stake_from(&stake_account),
-                            vote_state::from(&vote_account),
+                            bincode::deserialize::<VoteStateVersions>(vote_account.data()).ok(),
                         ) {
                             (Some(stake_state), Some(vote_state)) => {
                                 if stake_state.delegation.voter_pubkey != vote_account_pubkey
                                     || stake_state.delegation.stake != amount
                                 {
                                     Err(Error::other("invalid stake account state"))
-                                } else if vote_state.node_pubkey != node_pubkey {
+                                } else if vote_state.node_pubkey() != node_pubkey {
                                     Err(Error::other("invalid vote account state"))
                                 } else {
                                     info!("node {node_pubkey} {stake_state:?} {vote_state:?}");

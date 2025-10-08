@@ -15,7 +15,7 @@ use {
     solana_signer::{null_signer::NullSigner, Signer},
     solana_streamer::socket::SocketAddrSpace,
     solana_test_validator::TestValidator,
-    solana_vote_program::vote_state::{VoteAuthorize, VoteStateV3},
+    solana_vote_interface::state::{VoteAuthorize, VoteStateRead, VoteStateV4, VoteStateVersions},
     test_case::test_case,
 };
 
@@ -63,11 +63,11 @@ fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     let vote_account = rpc_client
         .get_account(&vote_account_keypair.pubkey())
         .unwrap();
-    let vote_state = VoteStateV3::deserialize(vote_account.data()).unwrap();
-    let authorized_withdrawer = vote_state.authorized_withdrawer;
-    assert_eq!(authorized_withdrawer, config.signers[0].pubkey());
+    let vote_state = bincode::deserialize::<VoteStateVersions>(vote_account.data()).unwrap();
+    let authorized_withdrawer = vote_state.authorized_withdrawer();
+    assert_eq!(*authorized_withdrawer, config.signers[0].pubkey());
     let expected_balance = rpc_client
-        .get_minimum_balance_for_rent_exemption(VoteStateV3::size_of())
+        .get_minimum_balance_for_rent_exemption(VoteStateV4::size_of())
         .unwrap()
         .max(1);
     check_balance!(expected_balance, &rpc_client, &vote_account_pubkey);
@@ -117,9 +117,9 @@ fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     let vote_account = rpc_client
         .get_account(&vote_account_keypair.pubkey())
         .unwrap();
-    let vote_state = VoteStateV3::deserialize(vote_account.data()).unwrap();
-    let authorized_withdrawer = vote_state.authorized_withdrawer;
-    assert_eq!(authorized_withdrawer, first_withdraw_authority.pubkey());
+    let vote_state = bincode::deserialize::<VoteStateVersions>(vote_account.data()).unwrap();
+    let authorized_withdrawer = vote_state.authorized_withdrawer();
+    assert_eq!(*authorized_withdrawer, first_withdraw_authority.pubkey());
 
     // Authorize vote account withdrawal to another signer with checked instruction
     let withdraw_authority = Keypair::new();
@@ -164,9 +164,9 @@ fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     let vote_account = rpc_client
         .get_account(&vote_account_keypair.pubkey())
         .unwrap();
-    let vote_state = VoteStateV3::deserialize(vote_account.data()).unwrap();
-    let authorized_withdrawer = vote_state.authorized_withdrawer;
-    assert_eq!(authorized_withdrawer, withdraw_authority.pubkey());
+    let vote_state = bincode::deserialize::<VoteStateVersions>(vote_account.data()).unwrap();
+    let authorized_withdrawer = vote_state.authorized_withdrawer();
+    assert_eq!(*authorized_withdrawer, withdraw_authority.pubkey());
 
     // Withdraw from vote account
     let destination_account = solana_pubkey::new_rand(); // Send withdrawal to new account to make balance check easy
@@ -291,11 +291,11 @@ fn test_offline_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     let vote_account = rpc_client
         .get_account(&vote_account_keypair.pubkey())
         .unwrap();
-    let vote_state = VoteStateV3::deserialize(vote_account.data()).unwrap();
-    let authorized_withdrawer = vote_state.authorized_withdrawer;
-    assert_eq!(authorized_withdrawer, offline_keypair.pubkey());
+    let vote_state = bincode::deserialize::<VoteStateVersions>(vote_account.data()).unwrap();
+    let authorized_withdrawer = vote_state.authorized_withdrawer();
+    assert_eq!(*authorized_withdrawer, offline_keypair.pubkey());
     let expected_balance = rpc_client
-        .get_minimum_balance_for_rent_exemption(VoteStateV3::size_of())
+        .get_minimum_balance_for_rent_exemption(VoteStateV4::size_of())
         .unwrap()
         .max(1);
     check_balance!(expected_balance, &rpc_client, &vote_account_pubkey);
@@ -368,9 +368,9 @@ fn test_offline_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     let vote_account = rpc_client
         .get_account(&vote_account_keypair.pubkey())
         .unwrap();
-    let vote_state = VoteStateV3::deserialize(vote_account.data()).unwrap();
-    let authorized_withdrawer = vote_state.authorized_withdrawer;
-    assert_eq!(authorized_withdrawer, withdraw_authority.pubkey());
+    let vote_state = bincode::deserialize::<VoteStateVersions>(vote_account.data()).unwrap();
+    let authorized_withdrawer = vote_state.authorized_withdrawer();
+    assert_eq!(*authorized_withdrawer, withdraw_authority.pubkey());
 
     // Withdraw from vote account offline
     let destination_account = solana_pubkey::new_rand(); // Send withdrawal to new account to make balance check easy

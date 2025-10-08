@@ -40,7 +40,7 @@ use {
     },
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_error::TransactionError,
-    solana_vote_program::vote_state::VoteAuthorize,
+    solana_vote_interface::state::VoteAuthorize,
     std::{
         collections::HashMap, error, io::stdout, process::exit, rc::Rc, str::FromStr, sync::Arc,
         time::Duration,

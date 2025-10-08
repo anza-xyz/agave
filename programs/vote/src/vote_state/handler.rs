@@ -19,8 +19,8 @@ use {
         authorized_voters::AuthorizedVoters,
         error::VoteError,
         state::{
-            BlockTimestamp, LandedVote, Lockout, VoteInit, VoteState1_14_11, VoteStateV3,
-            VoteStateV4, VoteStateVersions, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
+            BlockTimestamp, LandedVote, Lockout, VoteInit, VoteState1_14_11, VoteStateRead,
+            VoteStateV3, VoteStateV4, VoteStateVersions, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
             MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY, VOTE_CREDITS_GRACE_SLOTS,
             VOTE_CREDITS_MAXIMUM_PER_SLOT,
         },
@@ -29,14 +29,10 @@ use {
 };
 
 /// Trait defining the interface for vote state operations.
-pub trait VoteStateHandle {
+pub trait VoteStateHandle: VoteStateRead {
     fn is_uninitialized(&self) -> bool;
-
-    fn authorized_withdrawer(&self) -> &Pubkey;
-
+    
     fn set_authorized_withdrawer(&mut self, authorized_withdrawer: Pubkey);
-
-    fn authorized_voters(&self) -> &AuthorizedVoters;
 
     fn set_new_authorized_voter<F>(
         &mut self,
@@ -53,15 +49,9 @@ pub trait VoteStateHandle {
         current_epoch: Epoch,
     ) -> Result<Pubkey, InstructionError>;
 
-    fn commission(&self) -> u8;
-
     fn set_commission(&mut self, commission: u8);
 
-    fn node_pubkey(&self) -> &Pubkey;
-
     fn set_node_pubkey(&mut self, node_pubkey: Pubkey);
-
-    fn votes(&self) -> &VecDeque<LandedVote>;
 
     fn votes_mut(&mut self) -> &mut VecDeque<LandedVote>;
 
@@ -74,17 +64,11 @@ pub trait VoteStateHandle {
 
     fn last_voted_slot(&self) -> Option<Slot>;
 
-    fn root_slot(&self) -> Option<Slot>;
-
     fn set_root_slot(&mut self, root_slot: Option<Slot>);
 
     fn current_epoch(&self) -> Epoch;
 
-    fn epoch_credits(&self) -> &Vec<(Epoch, u64, u64)>;
-
     fn epoch_credits_mut(&mut self) -> &mut Vec<(Epoch, u64, u64)>;
-
-    fn last_timestamp(&self) -> &BlockTimestamp;
 
     fn set_last_timestamp(&mut self, timestamp: BlockTimestamp);
 
@@ -224,15 +208,6 @@ pub trait VoteStateHandle {
     }
 
     #[cfg(test)]
-    fn credits(&self) -> u64 {
-        if self.epoch_credits().is_empty() {
-            0
-        } else {
-            self.epoch_credits().last().unwrap().1
-        }
-    }
-
-    #[cfg(test)]
     fn nth_recent_lockout(&self, position: usize) -> Option<&Lockout> {
         if position < self.votes().len() {
             let pos = self
@@ -252,16 +227,8 @@ impl VoteStateHandle for VoteStateV3 {
         self.authorized_voters.is_empty()
     }
 
-    fn authorized_withdrawer(&self) -> &Pubkey {
-        &self.authorized_withdrawer
-    }
-
     fn set_authorized_withdrawer(&mut self, authorized_withdrawer: Pubkey) {
         self.authorized_withdrawer = authorized_withdrawer;
-    }
-
-    fn authorized_voters(&self) -> &AuthorizedVoters {
-        &self.authorized_voters
     }
 
     fn set_new_authorized_voter<F>(
@@ -337,24 +304,12 @@ impl VoteStateHandle for VoteStateV3 {
         Ok(pubkey)
     }
 
-    fn commission(&self) -> u8 {
-        self.commission
-    }
-
     fn set_commission(&mut self, commission: u8) {
         self.commission = commission;
     }
 
-    fn node_pubkey(&self) -> &Pubkey {
-        &self.node_pubkey
-    }
-
     fn set_node_pubkey(&mut self, node_pubkey: Pubkey) {
         self.node_pubkey = node_pubkey;
-    }
-
-    fn votes(&self) -> &VecDeque<LandedVote> {
-        &self.votes
     }
 
     fn votes_mut(&mut self) -> &mut VecDeque<LandedVote> {
@@ -379,10 +334,6 @@ impl VoteStateHandle for VoteStateV3 {
         self.last_lockout().map(|v| v.slot())
     }
 
-    fn root_slot(&self) -> Option<Slot> {
-        self.root_slot
-    }
-
     fn set_root_slot(&mut self, root_slot: Option<Slot>) {
         self.root_slot = root_slot;
     }
@@ -395,16 +346,8 @@ impl VoteStateHandle for VoteStateV3 {
         }
     }
 
-    fn epoch_credits(&self) -> &Vec<(Epoch, u64, u64)> {
-        &self.epoch_credits
-    }
-
     fn epoch_credits_mut(&mut self) -> &mut Vec<(Epoch, u64, u64)> {
         &mut self.epoch_credits
-    }
-
-    fn last_timestamp(&self) -> &BlockTimestamp {
-        &self.last_timestamp
     }
 
     fn set_last_timestamp(&mut self, timestamp: BlockTimestamp) {
@@ -440,16 +383,8 @@ impl VoteStateHandle for VoteStateV4 {
         false
     }
 
-    fn authorized_withdrawer(&self) -> &Pubkey {
-        &self.authorized_withdrawer
-    }
-
     fn set_authorized_withdrawer(&mut self, authorized_withdrawer: Pubkey) {
         self.authorized_withdrawer = authorized_withdrawer;
-    }
-
-    fn authorized_voters(&self) -> &AuthorizedVoters {
-        &self.authorized_voters
     }
 
     fn set_new_authorized_voter<F>(
@@ -498,26 +433,14 @@ impl VoteStateHandle for VoteStateV4 {
         Ok(pubkey)
     }
 
-    fn commission(&self) -> u8 {
-        (self.inflation_rewards_commission_bps / 100) as u8
-    }
-
     #[allow(clippy::arithmetic_side_effects)]
     fn set_commission(&mut self, commission: u8) {
         // Safety: u16::MAX > u8::MAX * 100
         self.inflation_rewards_commission_bps = (commission as u16) * 100;
     }
 
-    fn node_pubkey(&self) -> &Pubkey {
-        &self.node_pubkey
-    }
-
     fn set_node_pubkey(&mut self, node_pubkey: Pubkey) {
         self.node_pubkey = node_pubkey;
-    }
-
-    fn votes(&self) -> &VecDeque<LandedVote> {
-        &self.votes
     }
 
     fn votes_mut(&mut self) -> &mut VecDeque<LandedVote> {
@@ -542,10 +465,6 @@ impl VoteStateHandle for VoteStateV4 {
         self.last_lockout().map(|v| v.slot())
     }
 
-    fn root_slot(&self) -> Option<Slot> {
-        self.root_slot
-    }
-
     fn set_root_slot(&mut self, root_slot: Option<Slot>) {
         self.root_slot = root_slot;
     }
@@ -558,16 +477,8 @@ impl VoteStateHandle for VoteStateV4 {
         }
     }
 
-    fn epoch_credits(&self) -> &Vec<(Epoch, u64, u64)> {
-        &self.epoch_credits
-    }
-
     fn epoch_credits_mut(&mut self) -> &mut Vec<(Epoch, u64, u64)> {
         &mut self.epoch_credits
-    }
-
-    fn last_timestamp(&self) -> &BlockTimestamp {
-        &self.last_timestamp
     }
 
     fn set_last_timestamp(&mut self, timestamp: BlockTimestamp) {
@@ -662,6 +573,64 @@ pub struct VoteStateHandler {
     target_state: TargetVoteState,
 }
 
+impl VoteStateRead for VoteStateHandler {
+    fn authorized_withdrawer(&self) -> &Pubkey {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => v3.authorized_withdrawer(),
+            TargetVoteState::V4(v4) => v4.authorized_withdrawer(),
+        }
+    }
+
+    fn authorized_voters(&self) -> &AuthorizedVoters {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => v3.authorized_voters(),
+            TargetVoteState::V4(v4) => v4.authorized_voters(),
+        }
+    }
+
+    fn inflation_rewards_commission_bps(&self) -> u16 {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => v3.inflation_rewards_commission_bps(),
+            TargetVoteState::V4(v4) => v4.inflation_rewards_commission_bps(),
+        }
+    }
+
+    fn node_pubkey(&self) -> &Pubkey {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => v3.node_pubkey(),
+            TargetVoteState::V4(v4) => v4.node_pubkey(),
+        }
+    }
+
+    fn votes(&self) -> &VecDeque<LandedVote> {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => v3.votes(),
+            TargetVoteState::V4(v4) => v4.votes(),
+        }
+    }
+
+    fn root_slot(&self) -> Option<Slot> {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => v3.root_slot(),
+            TargetVoteState::V4(v4) => v4.root_slot(),
+        }
+    }
+
+    fn epoch_credits(&self) -> &Vec<(Epoch, u64, u64)> {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => v3.epoch_credits(),
+            TargetVoteState::V4(v4) => v4.epoch_credits(),
+        }
+    }
+
+    fn last_timestamp(&self) -> &BlockTimestamp {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => v3.last_timestamp(),
+            TargetVoteState::V4(v4) => v4.last_timestamp(),
+        }
+    }
+}
+
 impl VoteStateHandle for VoteStateHandler {
     fn is_uninitialized(&self) -> bool {
         match &self.target_state {
@@ -670,24 +639,10 @@ impl VoteStateHandle for VoteStateHandler {
         }
     }
 
-    fn authorized_withdrawer(&self) -> &Pubkey {
-        match &self.target_state {
-            TargetVoteState::V3(v3) => v3.authorized_withdrawer(),
-            TargetVoteState::V4(v4) => v4.authorized_withdrawer(),
-        }
-    }
-
     fn set_authorized_withdrawer(&mut self, authorized_withdrawer: Pubkey) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_authorized_withdrawer(authorized_withdrawer),
             TargetVoteState::V4(v4) => v4.set_authorized_withdrawer(authorized_withdrawer),
-        }
-    }
-
-    fn authorized_voters(&self) -> &AuthorizedVoters {
-        match &self.target_state {
-            TargetVoteState::V3(v3) => v3.authorized_voters(),
-            TargetVoteState::V4(v4) => v4.authorized_voters(),
         }
     }
 
@@ -721,13 +676,6 @@ impl VoteStateHandle for VoteStateHandler {
         }
     }
 
-    fn commission(&self) -> u8 {
-        match &self.target_state {
-            TargetVoteState::V3(v3) => v3.commission(),
-            TargetVoteState::V4(v4) => v4.commission(),
-        }
-    }
-
     fn set_commission(&mut self, commission: u8) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_commission(commission),
@@ -735,10 +683,10 @@ impl VoteStateHandle for VoteStateHandler {
         }
     }
 
-    fn node_pubkey(&self) -> &Pubkey {
+    fn current_epoch(&self) -> Epoch {
         match &self.target_state {
-            TargetVoteState::V3(v3) => v3.node_pubkey(),
-            TargetVoteState::V4(v4) => v4.node_pubkey(),
+            TargetVoteState::V3(v3) => v3.current_epoch(),
+            TargetVoteState::V4(v4) => v4.current_epoch(),
         }
     }
 
@@ -746,13 +694,6 @@ impl VoteStateHandle for VoteStateHandler {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_node_pubkey(node_pubkey),
             TargetVoteState::V4(v4) => v4.set_node_pubkey(node_pubkey),
-        }
-    }
-
-    fn votes(&self) -> &VecDeque<LandedVote> {
-        match &self.target_state {
-            TargetVoteState::V3(v3) => v3.votes(),
-            TargetVoteState::V4(v4) => v4.votes(),
         }
     }
 
@@ -791,13 +732,6 @@ impl VoteStateHandle for VoteStateHandler {
         }
     }
 
-    fn root_slot(&self) -> Option<Slot> {
-        match &self.target_state {
-            TargetVoteState::V3(v3) => v3.root_slot(),
-            TargetVoteState::V4(v4) => v4.root_slot(),
-        }
-    }
-
     fn set_root_slot(&mut self, root_slot: Option<Slot>) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_root_slot(root_slot),
@@ -805,31 +739,10 @@ impl VoteStateHandle for VoteStateHandler {
         }
     }
 
-    fn current_epoch(&self) -> Epoch {
-        match &self.target_state {
-            TargetVoteState::V3(v3) => v3.current_epoch(),
-            TargetVoteState::V4(v4) => v4.current_epoch(),
-        }
-    }
-
-    fn epoch_credits(&self) -> &Vec<(Epoch, u64, u64)> {
-        match &self.target_state {
-            TargetVoteState::V3(v3) => v3.epoch_credits(),
-            TargetVoteState::V4(v4) => v4.epoch_credits(),
-        }
-    }
-
     fn epoch_credits_mut(&mut self) -> &mut Vec<(Epoch, u64, u64)> {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.epoch_credits_mut(),
             TargetVoteState::V4(v4) => v4.epoch_credits_mut(),
-        }
-    }
-
-    fn last_timestamp(&self) -> &BlockTimestamp {
-        match &self.target_state {
-            TargetVoteState::V3(v3) => v3.last_timestamp(),
-            TargetVoteState::V4(v4) => v4.last_timestamp(),
         }
     }
 
@@ -1956,7 +1869,7 @@ mod tests {
             (255, 25_500),
         ] {
             handler.set_commission(input);
-            assert_eq!(handler.commission(), input);
+            assert_eq!(handler.inflation_rewards_commission_bps(), expected);
 
             // Verify the internal V4 state has the correct basis points.
             let vote_state_v4 = handler.as_ref_v4();

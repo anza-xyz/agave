@@ -394,7 +394,7 @@ fn resolve_derived_address_program_id(matches: &ArgMatches<'_>, arg_name: &str) 
         match upper.as_str() {
             "NONCE" | "SYSTEM" => Some(system_program::id()),
             "STAKE" => Some(stake::id()),
-            "VOTE" => Some(solana_vote_program::id()),
+            "VOTE" => Some(solana_vote_interface::program::id()),
             _ => pubkey_of(matches, arg_name),
         }
     })

@@ -378,7 +378,7 @@ mod tests {
             runtime_config::RuntimeConfig,
         },
         assert_matches::assert_matches,
-        solana_account::{state_traits::StateMut, Account},
+        solana_account::{state_traits::StateMut, Account, WritableAccount},
         solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
@@ -558,19 +558,20 @@ mod tests {
             let vote_id = validator_vote_keypairs.vote_keypair.pubkey();
             let mut vote_account = bank.get_account(&vote_id).unwrap();
             // generate some rewards
-            let mut vote_state = Some(vote_state::from(&vote_account).unwrap());
+            let mut vote_state_versioned: VoteStateVersions =
+                bincode::deserialize(vote_account.data()).unwrap();
             for i in 0..MAX_LOCKOUT_HISTORY + 42 {
-                if let Some(v) = vote_state.as_mut() {
-                    vote_state::process_slot_vote_unchecked(v, i as u64)
-                }
-                let versioned = VoteStateVersions::V3(Box::new(vote_state.take().unwrap()));
-                vote_state::to(&versioned, &mut vote_account).unwrap();
-                match versioned {
+                match &mut vote_state_versioned {
                     VoteStateVersions::V3(v) => {
-                        vote_state = Some(*v);
+                        vote_state::process_slot_vote_unchecked(v.as_mut(), i as u64);
                     }
-                    _ => panic!("Has to be of type Current"),
-                };
+                    VoteStateVersions::V4(v) => {
+                        vote_state::process_slot_vote_unchecked(v.as_mut(), i as u64);
+                    }
+                    _ => panic!("Unexpected vote state version"),
+                }
+                let serialized = bincode::serialize(&vote_state_versioned).unwrap();
+                vote_account.data_as_mut_slice()[..serialized.len()].copy_from_slice(&serialized);
             }
             bank.store_account_and_update_capitalization(&vote_id, &vote_account);
         }

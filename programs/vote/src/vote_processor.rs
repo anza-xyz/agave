@@ -266,6 +266,7 @@ mod tests {
         bincode::serialize,
         solana_account::{
             self as account, state_traits::StateMut, Account, AccountSharedData, ReadableAccount,
+            WritableAccount,
         },
         solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,
@@ -455,7 +456,8 @@ mod tests {
         let (vote_pubkey, vote_account) = create_test_account();
         let vote_account_space = vote_account.data().len();
 
-        let mut vote_state = vote_state::from(&vote_account).unwrap();
+        // TODO: This will be updated when we add the v4 feature gate.
+        let mut vote_state = VoteStateV3::deserialize(vote_account.data()).unwrap();
         vote_state.authorized_withdrawer = vote_pubkey;
         vote_state.epoch_credits = Vec::new();
 
@@ -475,7 +477,11 @@ mod tests {
         let mut vote_account_with_epoch_credits =
             AccountSharedData::new(lamports, vote_account_space, &id());
         let versioned = VoteStateVersions::new_v3(vote_state);
-        vote_state::to(&versioned, &mut vote_account_with_epoch_credits);
+        VoteStateV3::serialize(
+            &versioned,
+            vote_account_with_epoch_credits.data_as_mut_slice(),
+        )
+        .unwrap();
 
         (vote_pubkey, vote_account_with_epoch_credits)
     }

@@ -165,6 +165,7 @@ solana-unified-scheduler-pool = { workspace = true }
 solana-validator-exit = { workspace = true }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
+solana-vote-interface = { workspace = true }
 solana-vote-program = { workspace = true }
 solana-wen-restart = { workspace = true }
 static_assertions = { workspace = true }

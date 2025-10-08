@@ -217,13 +217,13 @@ solana-fee-structure = "3.0.0"
 solana-genesis-config = "3.0.0"
 solana-hash = "3.0.0"
 solana-instruction = "3.0.0"
-solana-keypair = "3.0.0"
+solana-keypair = "3.0.1"
 solana-ledger = { workspace = true }
 solana-loader-v3-interface = "6.1.0"
 solana-loader-v4-interface = "3.1.0"
 solana-logger = { workspace = true }
 solana-measure = { workspace = true }
-solana-message = "3.0.0"
+solana-message = "3.0.1"
 solana-program = { workspace = true }
 solana-program-entrypoint = "3.1.0"
 solana-program-runtime = { workspace = true }
@@ -249,7 +249,7 @@ solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
 solana-system-interface = "2.0"
 solana-sysvar = "3.0.0"
-solana-transaction = "3.0.0"
+solana-transaction = "3.0.1"
 solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-error = "3.0.0"
 solana-transaction-status = { workspace = true }
