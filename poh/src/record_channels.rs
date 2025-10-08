@@ -241,9 +241,39 @@ impl RecordReceiver {
 
     /// Try to receive a record from the channel.
     pub fn try_recv(&self) -> Result<Record, TryRecvError> {
-        let record = self.receiver.try_recv()?;
-        self.on_received_record(record.transaction_batches.len() as u64);
-        Ok(record)
+        // In order to avoid returning None when there was an active sender
+        // we load `active_senders` prior to try_recv.
+        let sender_active = self.active_senders.load(Ordering::Acquire) > 0;
+
+        #[cfg(feature = "shuttle-test")]
+        let mut iters = 0u64;
+
+        loop {
+            #[cfg(feature = "shuttle-test")]
+            {
+                // Shuttle needs **some** bound or it will crash because it doesn't detect progres.
+                if iters == 100 {
+                    return Err(TryRecvError::Empty);
+                }
+                iters += 1;
+            }
+            match self.receiver.try_recv() {
+                Ok(record) => {
+                    self.on_received_record(record.transaction_batches.len() as u64);
+                    return Ok(record);
+                }
+                Err(TryRecvError::Empty) => {
+                    if sender_active {
+                        #[cfg(feature = "shuttle-test")]
+                        shuttle::thread::yield_now();
+                        continue; // retry until we receive OR disconnect.
+                    } else {
+                        return Err(TryRecvError::Empty);
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     /// Receive a record from the channel, waiting up to `duration`.
@@ -454,7 +484,7 @@ mod shuttle_tests {
                     }
 
                     if let Ok(record) = receiver.try_recv() {
-                        assert!(record.slot == current_slot);
+                        assert!(record.slot == current_slot, "slot mismatch!");
                         receives += 1;
                         receiver.shutdown();
                     }
