@@ -8783,6 +8783,22 @@ pub mod tests {
         )
         .unwrap()
         .is_none());
+
+        // Test invalid filters
+
+        // Filtering on invalid length pubkey
+        let owner = Pubkey::new_unique();
+        let mut first_half_bytes = owner.to_bytes().to_vec();
+        first_half_bytes.resize(16, 0);
+        assert!(get_spl_token_owner_filter(
+            &spl_generic_token::token::id(),
+            &[
+                RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, first_half_bytes)),
+                RpcFilterType::DataSize(165)
+            ],
+        )
+        .is_err_and(|err| err.code == ErrorCode::InvalidParams
+            && err.message == "Incorrect byte length 16 for SPL token owner filter, expected 32"));
     }
 
     #[test]
@@ -8871,6 +8887,25 @@ pub mod tests {
         )
         .unwrap()
         .is_none());
+
+        // Test invalid filters
+
+        // Filtering on invalid length pubkey
+        let owner = Pubkey::new_unique();
+        let mut first_half_bytes = owner.to_bytes().to_vec();
+        first_half_bytes.resize(16, 0);
+        assert!(get_spl_token_mint_filter(
+            &spl_generic_token::token::id(),
+            &[
+                RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, first_half_bytes)),
+                RpcFilterType::DataSize(165)
+            ],
+        )
+        .is_err_and(|err| {
+            print!("{err:?}");
+            err.code == ErrorCode::InvalidParams
+                && err.message == "Incorrect byte length 16 for SPL token mint filter, expected 32"
+        }));
     }
 
     #[test]
