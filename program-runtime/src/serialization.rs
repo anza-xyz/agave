@@ -669,6 +669,7 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
 #[cfg(test)]
 #[allow(clippy::indexing_slicing)]
 mod tests {
+    use std::borrow::Cow;
     use {
         super::*,
         crate::with_mock_invoke_context,
@@ -791,7 +792,7 @@ mod tests {
                             0,
                             instruction_accounts,
                             dedup_map,
-                            instruction_data.clone(),
+                            Cow::Owned(instruction_data.clone()),
                         )
                         .unwrap();
                 } else {

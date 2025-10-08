@@ -127,7 +127,7 @@ pub struct TransactionContext<'ix_data> {
     rent: Rent,
 }
 
-impl TransactionContext<'_> {
+impl<'ix_data> TransactionContext<'ix_data> {
     /// Constructs a new TransactionContext
     #[cfg(not(target_os = "solana"))]
     pub fn new(
@@ -282,7 +282,7 @@ impl TransactionContext<'_> {
         program_index: IndexOfAccount,
         instruction_accounts: Vec<InstructionAccount>,
         deduplication_map: Vec<u8>,
-        instruction_data: Vec<u8>,
+        instruction_data: Cow<'ix_data, [u8]>,
     ) -> Result<(), InstructionError> {
         debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
         let instruction = self
@@ -291,7 +291,7 @@ impl TransactionContext<'_> {
             .ok_or(InstructionError::CallDepth)?;
         instruction.program_account_index_in_tx = program_index;
         instruction.instruction_accounts = instruction_accounts;
-        instruction.instruction_data = Cow::from(instruction_data);
+        instruction.instruction_data = instruction_data;
         instruction.dedup_map = deduplication_map;
         Ok(())
     }
@@ -317,7 +317,7 @@ impl TransactionContext<'_> {
             program_index,
             instruction_accounts,
             dedup_map,
-            instruction_data,
+            Cow::Owned(instruction_data),
         )
     }
 
