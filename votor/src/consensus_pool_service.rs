@@ -60,10 +60,10 @@ pub(crate) struct ConsensusPoolService {
 impl ConsensusPoolService {
     pub(crate) fn new(ctx: ConsensusPoolContext) -> Self {
         let t_ingest = Builder::new()
-            .name("solCertPoolIngest".to_string())
+            .name("solCnsPoolIngst".to_string())
             .spawn(move || {
                 if let Err(e) = Self::consensus_pool_ingest_loop(ctx) {
-                    info!("Certificate pool service exited: {e:?}. Shutting down");
+                    info!("Consensus pool service exited: {e:?}. Shutting down");
                 }
             })
             .unwrap();
@@ -158,7 +158,8 @@ impl ConsensusPoolService {
         Err(())
     }
 
-    // Main loop for the certificate pool service, it only exits when any channel is disconnected
+    // Main loop for the consensus pool service. Only exits when signalled or if
+    // any channel is disconnected.
     fn consensus_pool_ingest_loop(mut ctx: ConsensusPoolContext) -> Result<(), ()> {
         let mut events = vec![];
         let mut my_pubkey = ctx.cluster_info.id();
@@ -166,9 +167,9 @@ impl ConsensusPoolService {
         let mut consensus_pool = ConsensusPool::new_from_root_bank(my_pubkey, &root_bank);
 
         // Wait until migration has completed
-        info!("{}: Certificate pool loop initialized", &my_pubkey);
+        info!("{}: Consensus pool loop initialized", &my_pubkey);
         Votor::wait_for_migration_or_exit(&ctx.exit, &ctx.start);
-        info!("{}: Certificate pool loop starting", &my_pubkey);
+        info!("{}: Consensus pool loop starting", &my_pubkey);
 
         // Standstill tracking
         let mut standstill_timer = Instant::now();
@@ -181,14 +182,14 @@ impl ConsensusPoolService {
             parent_block: root_block,
         });
 
-        // Ingest votes into certificate pool and notify voting loop of new events
+        // Ingest votes into consensus pool and notify voting loop of new events
         while !ctx.exit.load(Ordering::Relaxed) {
             // Update the current pubkey if it has changed
             let new_pubkey = ctx.cluster_info.id();
             if my_pubkey != new_pubkey {
                 my_pubkey = new_pubkey;
                 consensus_pool.update_pubkey(my_pubkey);
-                warn!("Certificate pool pubkey updated to {my_pubkey}");
+                warn!("Consensus pool pubkey updated to {my_pubkey}");
             }
 
             Self::add_produce_block_event(
@@ -260,9 +261,10 @@ impl ConsensusPoolService {
         Ok(())
     }
 
-    /// Adds a vote to the certificate pool and updates the commitment cache if necessary
+    /// Adds a message to the consensus pool and updates the commitment cache if necessary
     ///
-    /// If a new finalization slot was recognized, returns the slot
+    /// Returns any newly finalized slot as well as any new certificates to broadcast out.
+    /// Returns error if consensus message could not be added to the pool.
     fn add_message_and_maybe_update_commitment(
         root_bank: &Bank,
         my_pubkey: &Pubkey,
