@@ -969,23 +969,6 @@ pub fn create_test_recorder(
     do_create_test_recorder(bank, blockstore, poh_config, leader_schedule_cache, false)
 }
 
-#[allow(clippy::type_complexity)]
-pub fn create_test_recorder_with_index_tracking(
-    bank: Arc<Bank>,
-    blockstore: Arc<Blockstore>,
-    poh_config: Option<PohConfig>,
-    leader_schedule_cache: Option<Arc<LeaderScheduleCache>>,
-) -> (
-    Arc<AtomicBool>,
-    Arc<RwLock<PohRecorder>>,
-    PohController,
-    TransactionRecorder,
-    PohService,
-    Receiver<WorkingBankEntry>,
-) {
-    do_create_test_recorder(bank, blockstore, poh_config, leader_schedule_cache, true)
-}
-
 /// Wrapper around an arc-swapped bank that prevents modifying outside
 /// of `PohRecorder`.
 #[derive(Clone)]
