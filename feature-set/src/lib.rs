@@ -2068,8 +2068,8 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             discard_unexpected_data_complete_shreds::id(),
-            "SIMD-0337: Markers for Alpenglow Fast Leader Handover, \
-             DATA_COMPLETE_SHRED placement rules",
+            "SIMD-0337: Markers for Alpenglow Fast Leader Handover, DATA_COMPLETE_SHRED placement \
+             rules",
         ), /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
