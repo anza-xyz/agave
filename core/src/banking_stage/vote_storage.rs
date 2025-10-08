@@ -337,7 +337,7 @@ impl VoteStorage {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use {
         super::*,
         solana_clock::UnixTimestamp,
@@ -353,7 +353,7 @@ mod tests {
         std::{error::Error, sync::Arc},
     };
 
-    fn packet_from_slots(
+    pub(crate) fn packet_from_slots(
         slots: Vec<(u64, u32)>,
         keypairs: &ValidatorVoteKeypairs,
         timestamp: Option<UnixTimestamp>,
