@@ -2068,7 +2068,6 @@ mod tests {
 
         let fec_set_index = 64u32;
         let wrong_index = fec_set_index + 10; // Should be fec_set_index + 31 for DATA_COMPLETE_SHRED
-        let data_complete_flags = ShredFlags::DATA_COMPLETE_SHRED;
 
         // Modify the packet to have DATA_COMPLETE_SHRED flag with wrong index
         {
@@ -2081,8 +2080,16 @@ mod tests {
                 .seek(SeekFrom::Start(OFFSET_OF_FEC_SET_INDEX as u64))
                 .unwrap();
             cursor.write_all(&fec_set_index.to_le_bytes()).unwrap();
+
+            // Flags offset is at 85, where:
+            //
+            //     85 = SIZE_OF_COMMON_SHRED_HEADER (83) + size of parent offset (i.e., 2)
+            //
+            // See the top-level comments, which articulate data shred layout, for more details.
             cursor.seek(SeekFrom::Start(85)).unwrap(); // flags offset
-            cursor.write_all(&[data_complete_flags.bits()]).unwrap();
+            cursor
+                .write_all(&[ShredFlags::DATA_COMPLETE_SHRED.bits()])
+                .unwrap();
         }
 
         let mut stats = ShredFetchStats::default();

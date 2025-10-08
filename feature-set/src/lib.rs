@@ -2066,7 +2066,11 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             static_instruction_limit::id(),
             "SIMD-0160: static instruction limit",
         ),
-        /*************** ADD NEW FEATURES HERE ***************/
+        (
+            discard_unexpected_data_complete_shreds::id(),
+            "SIMD-0337: Markers for Alpenglow Fast Leader Handover, \
+             DATA_COMPLETE_SHRED placement rules",
+        ), /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
     .cloned()
