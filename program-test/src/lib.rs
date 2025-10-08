@@ -9,7 +9,10 @@ use {
     base64::{prelude::BASE64_STANDARD, Engine},
     chrono_humanize::{Accuracy, HumanTime, Tense},
     log::*,
-    solana_account::{create_account_shared_data_for_test, Account, AccountSharedData},
+    solana_account::{
+        create_account_shared_data_for_test, Account, AccountSharedData, ReadableAccount,
+        WritableAccount,
+    },
     solana_account_info::AccountInfo,
     solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
     solana_banks_client::start_client,
@@ -48,7 +51,9 @@ use {
     solana_svm_timings::ExecuteTimings,
     solana_sysvar::SysvarSerialize,
     solana_sysvar_id::SysvarId,
-    solana_vote_program::vote_state::{self, VoteStateV3, VoteStateVersions},
+    solana_vote_program::vote_state::{
+        handler::VoteStateHandle, VoteStateV4, VoteStateVersions,
+    },
     std::{
         cell::RefCell,
         collections::{HashMap, HashSet},
@@ -795,7 +800,7 @@ impl ProgramTest {
         };
         let bootstrap_validator_pubkey = Pubkey::new_unique();
         let bootstrap_validator_stake_lamports =
-            rent.minimum_balance(VoteStateV3::size_of()) + 1_000_000 * LAMPORTS_PER_SOL;
+            rent.minimum_balance(VoteStateV4::size_of()) + 1_000_000 * LAMPORTS_PER_SOL;
 
         let mint_keypair = Keypair::new();
         let voting_keypair = Keypair::new();
@@ -1095,14 +1100,26 @@ impl ProgramTestContext {
 
         // generate some vote activity for rewards
         let mut vote_account = bank.get_account(vote_account_address).unwrap();
-        let mut vote_state = vote_state::from(&vote_account).unwrap();
+        let mut vote_state: VoteStateVersions =
+            bincode::deserialize(vote_account.data()).unwrap();
 
         let epoch = bank.epoch();
-        for _ in 0..number_of_credits {
-            vote_state.increment_credits(epoch, 1);
+        match &mut vote_state {
+            VoteStateVersions::V3(state) => {
+                for _ in 0..number_of_credits {
+                    state.increment_credits(epoch, 1);
+                }
+            }
+            VoteStateVersions::V4(state) => {
+                for _ in 0..number_of_credits {
+                    state.increment_credits(epoch, 1);
+                }
+            }
+            _ => panic!("Unexpected vote state version"),
         }
-        let versioned = VoteStateVersions::new_v3(vote_state);
-        vote_state::to(&versioned, &mut vote_account).unwrap();
+
+        let serialized = bincode::serialize(&vote_state).unwrap();
+        vote_account.data_as_mut_slice()[..serialized.len()].copy_from_slice(&serialized);
         bank.store_account(vote_account_address, &vote_account);
     }
 

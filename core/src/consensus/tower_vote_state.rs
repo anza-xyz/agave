@@ -2,7 +2,7 @@ use {
     solana_clock::Slot,
     solana_vote::vote_state_view::VoteStateView,
     solana_vote_program::vote_state::{
-        Lockout, VoteState1_14_11, VoteStateV3, MAX_LOCKOUT_HISTORY,
+        Lockout, VoteState1_14_11, VoteStateV3, VoteStateV4, MAX_LOCKOUT_HISTORY,
     },
     std::collections::VecDeque,
 };
@@ -87,6 +87,22 @@ impl TowerVoteState {
 impl From<VoteStateV3> for TowerVoteState {
     fn from(vote_state: VoteStateV3) -> Self {
         let VoteStateV3 {
+            votes, root_slot, ..
+        } = vote_state;
+
+        Self {
+            votes: votes
+                .into_iter()
+                .map(|landed_vote| landed_vote.into())
+                .collect(),
+            root_slot,
+        }
+    }
+}
+
+impl From<VoteStateV4> for TowerVoteState {
+    fn from(vote_state: VoteStateV4) -> Self {
+        let VoteStateV4 {
             votes, root_slot, ..
         } = vote_state;
 

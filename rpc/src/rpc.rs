@@ -4580,10 +4580,10 @@ pub mod tests {
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
             TransactionDetails,
         },
-        solana_vote_interface::state::VoteStateV3,
+        solana_vote_interface::state::{VoteStateV3, VoteStateV4},
         solana_vote_program::{
             vote_instruction,
-            vote_state::{self, TowerSync, VoteInit, VoteStateVersions, MAX_LOCKOUT_HISTORY},
+            vote_state::{self, TowerSync, VoteInit, MAX_LOCKOUT_HISTORY},
         },
         spl_pod::optional_keys::OptionalNonZeroPubkey,
         spl_token_2022_interface::{
@@ -4751,6 +4751,13 @@ pub mod tests {
                 ],
             )
         }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    #[allow(dead_code)] // TODO: Vote state v4 feature gate
+    enum VoteStateVersion {
+        V3,
+        V4,
     }
 
     struct RpcHandler {
@@ -5034,14 +5041,31 @@ pub mod tests {
             bank
         }
 
-        fn store_vote_account(&self, vote_pubkey: &Pubkey, vote_state: VoteStateV3) {
+        fn store_vote_account(
+            &self,
+            vote_pubkey: &Pubkey,
+            vote_init: &VoteInit,
+            vote_state_version: VoteStateVersion,
+        ) {
             let bank = self.working_bank();
-            let versioned = VoteStateVersions::new_v3(vote_state);
-            let space = VoteStateV3::size_of();
-            let balance = bank.get_minimum_balance_for_rent_exemption(space);
-            let mut vote_account =
-                AccountSharedData::new(balance, space, &solana_vote_program::id());
-            vote_state::to(&versioned, &mut vote_account).unwrap();
+
+            let vote_account = match vote_state_version {
+                VoteStateVersion::V3 => vote_state::create_account(
+                    vote_pubkey,
+                    &vote_init.node_pubkey,
+                    vote_init.commission,
+                    bank.get_minimum_balance_for_rent_exemption(VoteStateV3::size_of()),
+                ),
+                VoteStateVersion::V4 => vote_state::create_v4_account_with_authorized(
+                    &vote_init.node_pubkey,
+                    &vote_init.authorized_voter,
+                    &vote_init.authorized_withdrawer,
+                    /* bls_pubkey_compressed */ None,
+                    (vote_init.commission as u16) * 100, // commission in bps
+                    bank.get_minimum_balance_for_rent_exemption(VoteStateV4::size_of()),
+                ),
+            };
+
             bank.store_account(vote_pubkey, &vote_account);
         }
 
@@ -7637,8 +7661,9 @@ pub mod tests {
         assert_eq!(response, expected);
     }
 
-    #[test]
-    fn test_get_vote_accounts() {
+    #[test_case(VoteStateVersion::V3)]
+    // #[test_case(VoteStateVersion::V4)] // TODO: Vote state v4 feature gate
+    fn test_get_vote_accounts(vote_state_version: VoteStateVersion) {
         let rpc = RpcHandler::start();
         let mut bank = rpc.working_bank();
         let RpcHandler {
@@ -7653,16 +7678,17 @@ pub mod tests {
 
         // Create a vote account with no stake.
         let alice_vote_keypair = Keypair::new();
-        let alice_vote_state = VoteStateV3::new(
-            &VoteInit {
-                node_pubkey: mint_keypair.pubkey(),
-                authorized_voter: alice_vote_keypair.pubkey(),
-                authorized_withdrawer: alice_vote_keypair.pubkey(),
-                commission: 0,
-            },
-            &bank.get_sysvar_cache_for_tests().get_clock().unwrap(),
+        let alice_vote_init = VoteInit {
+            node_pubkey: mint_keypair.pubkey(),
+            authorized_voter: alice_vote_keypair.pubkey(),
+            authorized_withdrawer: alice_vote_keypair.pubkey(),
+            commission: 0,
+        };
+        rpc.store_vote_account(
+            &alice_vote_keypair.pubkey(),
+            &alice_vote_init,
+            vote_state_version,
         );
-        rpc.store_vote_account(&alice_vote_keypair.pubkey(), alice_vote_state);
         assert_eq!(bank.vote_accounts().len(), 2);
 
         // Check getVoteAccounts: the bootstrap validator vote account will be delinquent as it has

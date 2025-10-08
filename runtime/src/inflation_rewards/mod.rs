@@ -260,28 +260,30 @@ mod tests {
     use {
         self::points::null_tracer, super::*, solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey, solana_stake_interface::state::Delegation,
-        solana_vote_program::vote_state::VoteStateV3, test_case::test_case,
+        solana_vote_interface::state::VoteStateRead,
+        solana_vote_program::vote_state::{handler::VoteStateHandle, VoteStateV3, VoteStateV4},
+        test_case::test_case,
     };
 
-    fn new_stake(
-        stake: u64,
-        voter_pubkey: &Pubkey,
-        vote_state: &VoteStateV3,
-        activation_epoch: Epoch,
-    ) -> Stake {
-        Stake {
-            delegation: Delegation::new(voter_pubkey, stake, activation_epoch),
-            credits_observed: vote_state.credits(),
-        }
+    #[derive(Debug, Clone, Copy)]
+    enum VoteStateVersion {
+        V3,
+        V4,
     }
 
-    #[test]
-    fn test_stake_state_redeem_rewards() {
-        let mut vote_state = VoteStateV3::default();
+    #[test_case(VoteStateVersion::V3)]
+    #[test_case(VoteStateVersion::V4)]
+    fn test_stake_state_redeem_rewards(vote_state_version: VoteStateVersion) {
+        match vote_state_version {
+            VoteStateVersion::V3 => {
+                let mut vote_state = VoteStateV3::default();
         // assume stake.stake() is right
         // bootstrap means fully-vested stake at epoch 0
         let stake_lamports = 1;
-        let mut stake = new_stake(stake_lamports, &Pubkey::default(), &vote_state, u64::MAX);
+        let mut stake = Stake {
+            delegation: Delegation::new(&Pubkey::default(), stake_lamports, u64::MAX),
+            credits_observed: vote_state.credits(),
+        };
 
         // this one can't collect now, credits_observed == vote_state.credits()
         assert_eq!(
@@ -326,6 +328,62 @@ mod tests {
             stake_lamports + (stake_lamports * 2)
         );
         assert_eq!(stake.credits_observed, 2);
+            }
+            VoteStateVersion::V4 => {
+                let mut vote_state = VoteStateV4::default();
+        // assume stake.stake() is right
+        // bootstrap means fully-vested stake at epoch 0
+        let stake_lamports = 1;
+        let mut stake = Stake {
+            delegation: Delegation::new(&Pubkey::default(), stake_lamports, u64::MAX),
+            credits_observed: vote_state.credits(),
+        };
+
+        // this one can't collect now, credits_observed == vote_state.credits()
+        assert_eq!(
+            None,
+            redeem_stake_rewards(
+                0,
+                &mut stake,
+                &PointValue {
+                    rewards: 1_000_000_000,
+                    points: 1
+                },
+                &VoteStateView::from(vote_state.clone()),
+                &StakeHistory::default(),
+                null_tracer(),
+                None,
+            )
+        );
+
+        // put 2 credits in at epoch 0
+        vote_state.increment_credits(0, 1);
+        vote_state.increment_credits(0, 1);
+
+        // this one should be able to collect exactly 2
+        assert_eq!(
+            Some((stake_lamports * 2, 0)),
+            redeem_stake_rewards(
+                0,
+                &mut stake,
+                &PointValue {
+                    rewards: 1,
+                    points: 1
+                },
+                &VoteStateView::from(vote_state),
+                &StakeHistory::default(),
+                null_tracer(),
+                None,
+            )
+        );
+
+        assert_eq!(
+            stake.delegation.stake,
+            stake_lamports + (stake_lamports * 2)
+        );
+        assert_eq!(stake.credits_observed, 2);
+            }
+        }
     }
 
     #[test]
@@ -333,7 +391,10 @@ mod tests {
         let mut vote_state = VoteStateV3::default();
         // assume stake.stake() is right
         // bootstrap means fully-vested stake at epoch 0
-        let mut stake = new_stake(1, &Pubkey::default(), &vote_state, u64::MAX);
+        let mut stake = Stake {
+            delegation: Delegation::new(&Pubkey::default(), 1, u64::MAX),
+            credits_observed: vote_state.credits(),
+        };
 
         // this one can't collect now, credits_observed == vote_state.credits()
         assert_eq!(
@@ -654,10 +715,13 @@ mod tests {
 
     #[test_case(u64::MAX, 1_000, u64::MAX => panics "Rewards intermediate calculation should fit within u128")]
     #[test_case(1, u64::MAX, u64::MAX => panics "Rewards should fit within u64")]
-    fn calculate_rewards_tests(stake: u64, rewards: u64, credits: u64) {
+    fn calculate_rewards_tests(stake_lamports: u64, rewards: u64, credits: u64) {
         let mut vote_state = VoteStateV3::default();
 
-        let stake = new_stake(stake, &Pubkey::default(), &vote_state, u64::MAX);
+        let stake = Stake {
+            delegation: Delegation::new(&Pubkey::default(), stake_lamports, u64::MAX),
+            credits_observed: vote_state.credits(),
+        };
 
         vote_state.increment_credits(0, credits);
 
@@ -678,12 +742,10 @@ mod tests {
 
         // bootstrap means fully-vested stake at epoch 0 with
         //  10_000_000 SOL is a big but not unreasaonable stake
-        let stake = new_stake(
-            10_000_000 * LAMPORTS_PER_SOL,
-            &Pubkey::default(),
-            &vote_state,
-            u64::MAX,
-        );
+        let stake = Stake {
+            delegation: Delegation::new(&Pubkey::default(), 10_000_000 * LAMPORTS_PER_SOL, u64::MAX),
+            credits_observed: vote_state.credits(),
+        };
 
         // this one can't collect now, credits_observed == vote_state.credits()
         assert_eq!(

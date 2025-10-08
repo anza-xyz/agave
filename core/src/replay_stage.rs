@@ -4442,6 +4442,7 @@ pub(crate) mod tests {
         },
         crossbeam_channel::unbounded,
         itertools::Itertools,
+        solana_account::{Account, ReadableAccount, WritableAccount},
         solana_client::connection_cache::ConnectionCache,
         solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
         solana_entry::entry::{self, Entry},
@@ -4476,6 +4477,7 @@ pub(crate) mod tests {
         solana_transaction_status::VersionedTransactionWithStatusMeta,
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::{self, TowerSync, VoteStateVersions},
+        test_case::test_matrix,
         std::{
             fs::remove_dir_all,
             iter,
@@ -5256,16 +5258,42 @@ pub(crate) mod tests {
         res
     }
 
-    #[test]
-    fn test_replay_commitment_cache() {
-        fn leader_vote(vote_slot: Slot, bank: &Bank, pubkey: &Pubkey) -> (Pubkey, TowerVoteState) {
+    #[derive(Debug, Clone, Copy)]
+    enum VoteStateVersion {
+        V3,
+        V4,
+    }
+
+    #[test_matrix([VoteStateVersion::V3, VoteStateVersion::V4])]
+    fn test_replay_commitment_cache(vote_state_version: VoteStateVersion) {
+        fn leader_vote(
+            vote_slot: Slot,
+            bank: &Bank,
+            pubkey: &Pubkey,
+        ) -> (Pubkey, TowerVoteState) {
             let mut leader_vote_account = bank.get_account(pubkey).unwrap();
-            let mut vote_state = vote_state::from(&leader_vote_account).unwrap();
-            vote_state::process_slot_vote_unchecked(&mut vote_state, vote_slot);
-            let versioned = VoteStateVersions::new_v3(vote_state.clone());
-            vote_state::to(&versioned, &mut leader_vote_account).unwrap();
+            let mut vote_state: VoteStateVersions =
+                bincode::deserialize(leader_vote_account.data()).unwrap();
+            match &mut vote_state {
+                VoteStateVersions::V3(state) => {
+                    vote_state::process_slot_vote_unchecked(state.as_mut(), vote_slot);
+                }
+                VoteStateVersions::V4(state) => {
+                    vote_state::process_slot_vote_unchecked(state.as_mut(), vote_slot);
+                }
+                _ => panic!("Unexpected vote state version"),
+            }
+            let serialized = bincode::serialize(&vote_state).unwrap();
+            leader_vote_account.data_as_mut_slice()[..serialized.len()]
+                .copy_from_slice(&serialized);
             bank.store_account(pubkey, &leader_vote_account);
-            (*pubkey, TowerVoteState::from(vote_state))
+
+            let tower_vote_state = match vote_state {
+                VoteStateVersions::V3(state) => TowerVoteState::from(*state),
+                VoteStateVersions::V4(state) => TowerVoteState::from(*state),
+                _ => panic!("Unexpected vote state version"),
+            };
+            (*pubkey, tower_vote_state)
         }
 
         let leader_pubkey = solana_pubkey::new_rand();
@@ -5276,6 +5304,28 @@ pub(crate) mod tests {
         let leader_voting_pubkey = genesis_config_info.voting_keypair.pubkey();
         genesis_config.epoch_schedule.warmup = false;
         genesis_config.ticks_per_slot = 4;
+
+        // Update vote account to the requested version
+        match vote_state_version {
+            VoteStateVersion::V3 => {
+                // Account is already V3 from create_genesis_config_with_leader
+            }
+            VoteStateVersion::V4 => {
+                // Replace with V4 vote account
+                let vote_account = vote_state::create_v4_account_with_authorized(
+                    &leader_pubkey,
+                    &leader_voting_pubkey,
+                    &leader_voting_pubkey,
+                    None,
+                    0,
+                    leader_lamports,
+                );
+                genesis_config
+                    .accounts
+                    .insert(leader_voting_pubkey, Account::from(vote_account));
+            }
+        }
+
         let bank0 = Bank::new_for_tests(&genesis_config);
         for _ in 0..genesis_config.ticks_per_slot {
             bank0.register_default_tick_for_test();

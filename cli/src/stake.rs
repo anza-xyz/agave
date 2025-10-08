@@ -60,6 +60,7 @@ use {
     },
     solana_system_interface::{error::SystemError, instruction as system_instruction},
     solana_transaction::Transaction,
+    solana_vote_interface::state::VoteStateRead,
     std::{ops::Deref, rc::Rc},
 };
 
@@ -1751,7 +1752,7 @@ pub fn process_deactivate_stake_account(
             &vote_account_address,
             rpc_client.commitment(),
         )?;
-        if !eligible_for_deactivate_delinquent(&vote_state.epoch_credits, current_epoch) {
+        if !eligible_for_deactivate_delinquent(vote_state.epoch_credits(), current_epoch) {
             return Err(CliError::BadParameter(format!(
                 "Stake has not been delinquent for {} epochs",
                 stake::MINIMUM_DELINQUENT_EPOCHS_FOR_DEACTIVATION,
