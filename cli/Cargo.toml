@@ -17,7 +17,10 @@ name = "solana"
 path = "src/main.rs"
 
 [features]
+default = ["remote-wallet-hidraw"]
 dev-context-only-utils = ["solana-faucet/dev-context-only-utils"]
+remote-wallet-hidraw = ["solana-remote-wallet/linux-static-hidraw"]
+remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 
 [dependencies]
 agave-feature-set = { workspace = true }
@@ -74,7 +77,7 @@ solana-program-runtime = { workspace = true }
 solana-pubkey = { version = "=3.0.0", default-features = false }
 solana-pubsub-client = { workspace = true }
 solana-quic-client = { workspace = true }
-solana-remote-wallet = { workspace = true, features = ["default"] }
+solana-remote-wallet = { workspace = true }
 solana-rent = "=3.0.0"
 solana-rpc-client = { workspace = true, features = ["default"] }
 solana-rpc-client-api = { workspace = true }

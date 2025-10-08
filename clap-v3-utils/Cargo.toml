@@ -16,7 +16,6 @@ targets = ["x86_64-unknown-linux-gnu"]
 name = "solana_clap_v3_utils"
 
 [features]
-default = []
 elgamal = ["dep:solana-zk-sdk"]
 
 [dependencies]
@@ -34,7 +33,7 @@ solana-message = { workspace = true }
 solana-native-token = { workspace = true }
 solana-presigner = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-remote-wallet = { workspace = true, features = ["default"] }
+solana-remote-wallet = { workspace = true }
 solana-seed-derivable = { workspace = true }
 solana-seed-phrase = { workspace = true }
 solana-signature = { workspace = true }
