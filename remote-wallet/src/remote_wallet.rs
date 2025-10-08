@@ -25,7 +25,7 @@ const HID_USB_DEVICE_CLASS: u8 = 0;
 /// Remote wallet error.
 #[derive(Error, Debug, Clone)]
 pub enum RemoteWalletError {
-    #[error("hidapi error")]
+    #[error("hidapi error: {0}")]
     Hid(String),
 
     #[error("device type mismatch")]
