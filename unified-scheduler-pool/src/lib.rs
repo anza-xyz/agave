@@ -3856,15 +3856,14 @@ mod tests {
                     BLOCKED_TRANSACTION_INDEX => {}
                     _ => unreachable!(),
                 };
-                // Always execute transactions with a faked context with the fixed block
-                // verification mode; Otherwise, the block production test variant will be
-                // encountered with CommitCancelled error from the poh recorder, which is fed with
-                // a dummy bank.
-                let faked_context = &SchedulingContext::new_with_mode(
-                    BlockVerification,
-                    scheduling_context.bank().unwrap().clone(),
+
+                DefaultTaskHandler::handle(
+                    result,
+                    timings,
+                    scheduling_context,
+                    task,
+                    handler_context,
                 );
-                DefaultTaskHandler::handle(result, timings, faked_context, task, handler_context);
             }
         }
 
@@ -3954,6 +3953,11 @@ mod tests {
             bank.slot().checked_add(1).unwrap(),
         ));
         assert_eq!(bank.transaction_count(), expected_transaction_count.0);
+
+        // Update the slot so recording can succeed on new bank's slot.
+        record_receiver.shutdown();
+        for _ in record_receiver.drain() {}
+        record_receiver.restart(bank.slot());
 
         let context = SchedulingContext::new_with_mode(scheduling_mode, bank.clone());
         let scheduler = pool.take_scheduler(context);
