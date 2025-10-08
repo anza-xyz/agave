@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use {
     crate::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
@@ -434,7 +435,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             program_account_index,
             instruction_accounts,
             transaction_callee_map,
-            instruction.data,
+            Cow::Owned(instruction.data),
         )?;
         Ok(())
     }
@@ -479,7 +480,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             program_account_index,
             instruction_accounts,
             transaction_callee_map,
-            instruction.data.to_vec(),
+            Cow::Owned(instruction.data.to_vec()),
         )?;
         Ok(())
     }
