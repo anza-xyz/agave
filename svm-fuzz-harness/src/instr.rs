@@ -29,7 +29,7 @@ use {
     solana_svm_log_collector::LogCollector,
     solana_svm_timings::ExecuteTimings,
     solana_transaction_context::{
-        transaction_accounts::TransactionAccount, IndexOfAccount, InstructionAccount,
+        transaction_accounts::KeyedAccountSharedData, IndexOfAccount, InstructionAccount,
         TransactionContext,
     },
     std::collections::HashSet,
@@ -104,7 +104,7 @@ fn create_invoke_context_fields(
         ));
     }
 
-    let transaction_accounts: Vec<TransactionAccount> = input
+    let transaction_accounts: Vec<KeyedAccountSharedData> = input
         .accounts
         .iter()
         .map(|(pubkey, account)| (*pubkey, AccountSharedData::from(account.clone())))
