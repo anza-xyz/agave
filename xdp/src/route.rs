@@ -360,7 +360,12 @@ impl Working {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        crate::netlink::{MacAddress, NeighborEntry, RouteEntry},
+        libc::{AF_INET, NUD_REACHABLE},
+        std::net::{IpAddr, Ipv4Addr},
+    };
 
     #[test]
     fn test_ipv4_match() {
@@ -417,5 +422,96 @@ mod tests {
         let router = Router::new().unwrap();
         let next_hop = router.route("1.1.1.1".parse().unwrap()).unwrap();
         eprintln!("{next_hop:?}");
+    }
+
+    #[test]
+    fn test_working_upsert_and_delete_route() {
+        let atomic_router = AtomicRouter::new().unwrap();
+        let router_before = atomic_router.load();
+        let before_routes = router_before.clone_routes();
+
+        let mut working = Working::from_atomic_router(&atomic_router);
+
+        // Create a unique, private IPv4 /32 route to avoid collisions
+        let test_dst = Ipv4Addr::new(10, 255, 255, 123);
+        let route = RouteEntry {
+            destination: Some(IpAddr::V4(test_dst)),
+            gateway: Some(IpAddr::V4(Ipv4Addr::new(10, 255, 255, 1))),
+            pref_src: None,
+            out_if_index: Some(1),
+            in_if_index: None,
+            priority: None,
+            table: None,
+            protocol: 0,
+            scope: 0,
+            type_: 0,
+            family: AF_INET as u8,
+            dst_len: 32,
+            flags: 0,
+        };
+
+        // Upsert new route and check that it was inserted and routes are dirty
+        working.upsert_route(route.clone());
+        assert!(working.dirty_routes());
+        atomic_router.publish_snapshot(&working);
+        working.clear_dirty();
+        assert!(!working.dirty_routes());
+
+        let router_after_insert = atomic_router.load();
+        let after_insert_routes = router_after_insert.clone_routes();
+        assert!(after_insert_routes.iter().any(|r| r == &route));
+        assert!(after_insert_routes.len() >= before_routes.len());
+
+        // Delete using same key should remove the route
+        working.delete_route(route.clone());
+        assert!(working.dirty_routes());
+        atomic_router.publish_snapshot(&working);
+        working.clear_dirty();
+
+        let router_after_delete = atomic_router.load();
+        let after_delete_routes = router_after_delete.clone_routes();
+        assert!(after_delete_routes.iter().all(|r| r != &route));
+        assert!(after_delete_routes.len() == before_routes.len());
+    }
+
+    #[test]
+    fn test_working_upsert_and_delete_neighbor() {
+        let atomic_router = AtomicRouter::new().unwrap();
+        let router_before = atomic_router.load();
+        let before_neigh = router_before.clone_neighbors();
+
+        let mut working = Working::from_atomic_router(&atomic_router);
+
+        // Create a unique, private neighbor entry on a dummy ifindex
+        let neigh_ip = Ipv4Addr::new(10, 255, 255, 77);
+        let entry = NeighborEntry {
+            destination: Some(IpAddr::V4(neigh_ip)),
+            lladdr: Some(MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01])),
+            ifindex: 1,
+            state: NUD_REACHABLE,
+        };
+
+        // Upsert new neighbor and check that it was inserted and neighbors are dirty
+        working.upsert_neighbor(entry.clone());
+        assert!(working.dirty_neigh());
+        atomic_router.publish_snapshot(&working);
+        working.clear_dirty();
+        assert!(!working.dirty_neigh());
+
+        let router_after_insert = atomic_router.load();
+        let after_insert_neigh = router_after_insert.clone_neighbors();
+        assert!(after_insert_neigh.iter().any(|n| n == &entry));
+        assert!(after_insert_neigh.len() >= before_neigh.len());
+
+        // Delete neighbor and check that it was deleted
+        working.delete_neighbor(neigh_ip, 1);
+        assert!(working.dirty_neigh());
+        atomic_router.publish_snapshot(&working);
+        working.clear_dirty();
+
+        let router_after_delete = atomic_router.load();
+        let after_delete_neigh = router_after_delete.clone_neighbors();
+        assert!(after_delete_neigh.iter().all(|n| n != &entry));
+        assert!(after_delete_neigh.len() == before_neigh.len());
     }
 }
