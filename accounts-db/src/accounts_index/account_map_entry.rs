@@ -122,14 +122,16 @@ impl<T: IndexValue> AccountMapEntry<T> {
 
     /// Acquire a read lock on the slot list and return accessor for interpreting its representation
     ///
-    /// Do not call any locking function (`slot_list_*lock*`) until the returned object is dropped.
+    /// Do not call any locking function (`slot_list_*lock*`) on the same `AccountMapEntry` until accessor
+    /// they return is dropped.
     pub fn slot_list_read_lock(&self) -> SlotListReadGuard<'_, T> {
         SlotListReadGuard(self.slot_list.read().unwrap())
     }
 
     /// Acquire a write lock on the slot list and return accessor for modifying it
     ///
-    /// Do not call any locking function (`slot_list_*lock*`) until the returned object is dropped.
+    /// Do not call any locking function (`slot_list_*lock*`) on the same `AccountMapEntry` until accessor
+    /// they return is dropped.
     pub fn slot_list_write_lock(&self) -> SlotListWriteGuard<'_, T> {
         SlotListWriteGuard(self.slot_list.write().unwrap())
     }
