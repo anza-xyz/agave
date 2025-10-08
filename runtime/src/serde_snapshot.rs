@@ -1050,12 +1050,7 @@ where
     );
 
     // Process deserialized data, set necessary fields in self
-    let start = Instant::now();
     accounts_db.storage.initialize(storage);
-    info!(
-        "Reconstructing accounts db from fields: initialized storage in {:?}",
-        start.elapsed()
-    );
     accounts_db
         .next_id
         .store(next_append_vec_id, Ordering::Release);
