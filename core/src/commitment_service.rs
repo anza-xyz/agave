@@ -271,7 +271,7 @@ impl AggregateCommitmentService {
 mod tests {
     use {
         super::*,
-        solana_account::Account,
+        solana_account::{Account, ReadableAccount, WritableAccount},
         solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
         solana_pubkey::Pubkey,
         solana_runtime::{
@@ -284,6 +284,7 @@ mod tests {
         solana_vote_program::vote_state::{
             self, process_slot_vote_unchecked, TowerSync, VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
+        test_case::test_matrix,
     };
 
     fn new_bank_from_parent_with_bank_forks(
@@ -405,7 +406,16 @@ mod tests {
         assert_eq!(rooted_stake[0], (root, lamports));
     }
 
-    fn do_test_aggregate_commitment_validity(with_node_vote_state: bool) {
+    #[derive(Debug, Clone, Copy)]
+    enum VoteStateVersion {
+        V3,
+        V4,
+    }
+
+    fn do_test_aggregate_commitment_validity(
+        with_node_vote_state: bool,
+        vote_state_version: VoteStateVersion,
+    ) {
         let ancestors = vec![3, 4, 5, 7, 9, 10, 11];
         let GenesisConfigInfo {
             mut genesis_config, ..
@@ -415,18 +425,52 @@ mod tests {
 
         let sk1 = solana_pubkey::new_rand();
         let pk1 = solana_pubkey::new_rand();
-        let mut vote_account1 =
-            vote_state::create_account(&pk1, &solana_pubkey::new_rand(), 0, 100);
+        let node_pubkey1 = solana_pubkey::new_rand();
+        let mut vote_account1 = match vote_state_version {
+            VoteStateVersion::V3 => vote_state::create_account(&pk1, &node_pubkey1, 0, 100),
+            VoteStateVersion::V4 => vote_state::create_v4_account_with_authorized(
+                &node_pubkey1,
+                &pk1,
+                &pk1,
+                None,
+                0,
+                100,
+            ),
+        };
         let stake_account1 =
             stake_state::create_account(&sk1, &pk1, &vote_account1, &genesis_config.rent, 100);
+
         let sk2 = solana_pubkey::new_rand();
         let pk2 = solana_pubkey::new_rand();
-        let mut vote_account2 = vote_state::create_account(&pk2, &solana_pubkey::new_rand(), 0, 50);
+        let node_pubkey2 = solana_pubkey::new_rand();
+        let mut vote_account2 = match vote_state_version {
+            VoteStateVersion::V3 => vote_state::create_account(&pk2, &node_pubkey2, 0, 50),
+            VoteStateVersion::V4 => vote_state::create_v4_account_with_authorized(
+                &node_pubkey2,
+                &pk2,
+                &pk2,
+                None,
+                0,
+                50,
+            ),
+        };
         let stake_account2 =
             stake_state::create_account(&sk2, &pk2, &vote_account2, &genesis_config.rent, 50);
+
         let sk3 = solana_pubkey::new_rand();
         let pk3 = solana_pubkey::new_rand();
-        let mut vote_account3 = vote_state::create_account(&pk3, &solana_pubkey::new_rand(), 0, 1);
+        let node_pubkey3 = solana_pubkey::new_rand();
+        let mut vote_account3 = match vote_state_version {
+            VoteStateVersion::V3 => vote_state::create_account(&pk3, &node_pubkey3, 0, 1),
+            VoteStateVersion::V4 => vote_state::create_v4_account_with_authorized(
+                &node_pubkey3,
+                &pk3,
+                &pk3,
+                None,
+                0,
+                1,
+            ),
+        };
         let stake_account3 = stake_state::create_account(
             &sk3,
             &pk3,
@@ -434,9 +478,21 @@ mod tests {
             &genesis_config.rent,
             rooted_stake_amount,
         );
+
         let sk4 = solana_pubkey::new_rand();
         let pk4 = solana_pubkey::new_rand();
-        let mut vote_account4 = vote_state::create_account(&pk4, &solana_pubkey::new_rand(), 0, 1);
+        let node_pubkey4 = solana_pubkey::new_rand();
+        let mut vote_account4 = match vote_state_version {
+            VoteStateVersion::V3 => vote_state::create_account(&pk4, &node_pubkey4, 0, 1),
+            VoteStateVersion::V4 => vote_state::create_v4_account_with_authorized(
+                &node_pubkey4,
+                &pk4,
+                &pk4,
+                None,
+                0,
+                1,
+            ),
+        };
         let stake_account4 = stake_state::create_account(
             &sk4,
             &pk4,
@@ -463,32 +519,70 @@ mod tests {
         // Create bank
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
-        let mut vote_state1 = vote_state::from(&vote_account1).unwrap();
-        process_slot_vote_unchecked(&mut vote_state1, 3);
-        process_slot_vote_unchecked(&mut vote_state1, 5);
+        let mut vote_state1: VoteStateVersions =
+            bincode::deserialize(vote_account1.data()).unwrap();
+        match &mut vote_state1 {
+            VoteStateVersions::V3(state) => {
+                process_slot_vote_unchecked(state.as_mut(), 3);
+                process_slot_vote_unchecked(state.as_mut(), 5);
+            }
+            VoteStateVersions::V4(state) => {
+                process_slot_vote_unchecked(state.as_mut(), 3);
+                process_slot_vote_unchecked(state.as_mut(), 5);
+            }
+            _ => panic!("Unexpected vote state version"),
+        }
         if !with_node_vote_state {
-            let versioned = VoteStateVersions::new_v3(vote_state1.clone());
-            vote_state::to(&versioned, &mut vote_account1).unwrap();
+            let serialized = bincode::serialize(&vote_state1).unwrap();
+            vote_account1.data_as_mut_slice()[..serialized.len()].copy_from_slice(&serialized);
             bank.store_account(&pk1, &vote_account1);
         }
 
-        let mut vote_state2 = vote_state::from(&vote_account2).unwrap();
-        process_slot_vote_unchecked(&mut vote_state2, 9);
-        process_slot_vote_unchecked(&mut vote_state2, 10);
-        let versioned = VoteStateVersions::new_v3(vote_state2);
-        vote_state::to(&versioned, &mut vote_account2).unwrap();
+        let mut vote_state2: VoteStateVersions =
+            bincode::deserialize(vote_account2.data()).unwrap();
+        match &mut vote_state2 {
+            VoteStateVersions::V3(state) => {
+                process_slot_vote_unchecked(state.as_mut(), 9);
+                process_slot_vote_unchecked(state.as_mut(), 10);
+            }
+            VoteStateVersions::V4(state) => {
+                process_slot_vote_unchecked(state.as_mut(), 9);
+                process_slot_vote_unchecked(state.as_mut(), 10);
+            }
+            _ => panic!("Unexpected vote state version"),
+        }
+        let serialized = bincode::serialize(&vote_state2).unwrap();
+        vote_account2.data_as_mut_slice()[..serialized.len()].copy_from_slice(&serialized);
         bank.store_account(&pk2, &vote_account2);
 
-        let mut vote_state3 = vote_state::from(&vote_account3).unwrap();
-        vote_state3.root_slot = Some(1);
-        let versioned = VoteStateVersions::new_v3(vote_state3);
-        vote_state::to(&versioned, &mut vote_account3).unwrap();
+        let mut vote_state3: VoteStateVersions =
+            bincode::deserialize(vote_account3.data()).unwrap();
+        match &mut vote_state3 {
+            VoteStateVersions::V3(state) => {
+                state.root_slot = Some(1);
+            }
+            VoteStateVersions::V4(state) => {
+                state.root_slot = Some(1);
+            }
+            _ => panic!("Unexpected vote state version"),
+        }
+        let serialized = bincode::serialize(&vote_state3).unwrap();
+        vote_account3.data_as_mut_slice()[..serialized.len()].copy_from_slice(&serialized);
         bank.store_account(&pk3, &vote_account3);
 
-        let mut vote_state4 = vote_state::from(&vote_account4).unwrap();
-        vote_state4.root_slot = Some(2);
-        let versioned = VoteStateVersions::new_v3(vote_state4);
-        vote_state::to(&versioned, &mut vote_account4).unwrap();
+        let mut vote_state4: VoteStateVersions =
+            bincode::deserialize(vote_account4.data()).unwrap();
+        match &mut vote_state4 {
+            VoteStateVersions::V3(state) => {
+                state.root_slot = Some(2);
+            }
+            VoteStateVersions::V4(state) => {
+                state.root_slot = Some(2);
+            }
+            _ => panic!("Unexpected vote state version"),
+        }
+        let serialized = bincode::serialize(&vote_state4).unwrap();
+        vote_account4.data_as_mut_slice()[..serialized.len()].copy_from_slice(&serialized);
         bank.store_account(&pk4, &vote_account4);
 
         let node_vote_pubkey = if with_node_vote_state {
@@ -498,10 +592,16 @@ mod tests {
             solana_pubkey::new_rand()
         };
 
+        let tower_vote_state = match vote_state1 {
+            VoteStateVersions::V3(state) => TowerVoteState::from(*state),
+            VoteStateVersions::V4(state) => TowerVoteState::from(*state),
+            _ => panic!("Unexpected vote state version"),
+        };
+
         let (commitment, rooted_stake) = AggregateCommitmentService::aggregate_commitment(
             &ancestors,
             &bank,
-            &(node_vote_pubkey, TowerVoteState::from(vote_state1)),
+            &(node_vote_pubkey, tower_vote_state),
         );
 
         for a in ancestors {
@@ -530,14 +630,15 @@ mod tests {
         assert_eq!(get_highest_super_majority_root(rooted_stake, 100), 1)
     }
 
-    #[test]
-    fn test_aggregate_commitment_validity_with_node_vote_state() {
-        do_test_aggregate_commitment_validity(true)
-    }
-
-    #[test]
-    fn test_aggregate_commitment_validity_without_node_vote_state() {
-        do_test_aggregate_commitment_validity(false);
+    #[test_matrix(
+        [true, false],
+        [VoteStateVersion::V3, VoteStateVersion::V4]
+    )]
+    fn test_aggregate_commitment_validity(
+        with_node_vote_state: bool,
+        vote_state_version: VoteStateVersion,
+    ) {
+        do_test_aggregate_commitment_validity(with_node_vote_state, vote_state_version);
     }
 
     #[test]

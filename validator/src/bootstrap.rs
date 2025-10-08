@@ -3,6 +3,7 @@ use {
     log::*,
     rand::{seq::SliceRandom, thread_rng, Rng},
     rayon::prelude::*,
+    solana_account::ReadableAccount,
     solana_clock::Slot,
     solana_commitment_config::CommitmentConfig,
     solana_core::validator::{ValidatorConfig, ValidatorStartProgress},
@@ -26,6 +27,7 @@ use {
     },
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
+    solana_vote_interface::state::{VoteStateRead, VoteStateVersions},
     std::{
         collections::{hash_map::RandomState, HashMap, HashSet},
         net::{SocketAddr, TcpListener, TcpStream, UdpSocket},
@@ -248,7 +250,7 @@ fn check_vote_account(
         .value
         .ok_or_else(|| format!("vote account does not exist: {vote_account_address}"))?;
 
-    if vote_account.owner != solana_vote_program::id() {
+    if vote_account.owner != solana_vote_interface::program::id() {
         return Err(format!(
             "not a vote account (owned by {}): {}",
             vote_account.owner, vote_account_address
@@ -261,16 +263,16 @@ fn check_vote_account(
         .value
         .ok_or_else(|| format!("identity account does not exist: {identity_pubkey}"))?;
 
-    let vote_state = solana_vote_program::vote_state::from(&vote_account);
+    let vote_state = bincode::deserialize::<VoteStateVersions>(vote_account.data()).ok();
     if let Some(vote_state) = vote_state {
         if vote_state.authorized_voters().is_empty() {
             return Err("Vote account not yet initialized".to_string());
         }
 
-        if vote_state.node_pubkey != *identity_pubkey {
+        if vote_state.node_pubkey() != identity_pubkey {
             return Err(format!(
                 "vote account's identity ({}) does not match the validator's identity {}).",
-                vote_state.node_pubkey, identity_pubkey
+                vote_state.node_pubkey(), identity_pubkey
             ));
         }
 

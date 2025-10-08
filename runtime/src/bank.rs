@@ -5995,7 +5995,9 @@ pub mod test_utils {
         solana_instruction::error::LamportsError,
         solana_pubkey::Pubkey,
         solana_sha256_hasher::hashv,
-        solana_vote_program::vote_state::{self, BlockTimestamp, VoteStateVersions},
+        solana_vote_program::vote_state::{
+            handler::VoteStateHandle, BlockTimestamp, VoteStateV3, VoteStateVersions,
+        },
         std::sync::Arc,
     };
     pub fn goto_end_of_slot(bank: Arc<Bank>) {
@@ -6019,11 +6021,25 @@ pub mod test_utils {
         bank: &Bank,
         vote_pubkey: &Pubkey,
     ) {
-        let mut vote_account = bank.get_account(vote_pubkey).unwrap_or_default();
-        let mut vote_state = vote_state::from(&vote_account).unwrap_or_default();
-        vote_state.last_timestamp = timestamp;
-        let versioned = VoteStateVersions::new_v3(vote_state);
-        vote_state::to(&versioned, &mut vote_account).unwrap();
+        let mut vote_account = bank.get_account(vote_pubkey).unwrap();
+        let mut vote_state: VoteStateVersions =
+            bincode::deserialize(vote_account.data()).unwrap_or_else(|_| {
+                // TODO: Vote state v4 feature gate
+                VoteStateVersions::new_v3(VoteStateV3::default())
+            });
+
+        match &mut vote_state {
+            VoteStateVersions::V3(state) => {
+                state.set_last_timestamp(timestamp);
+            }
+            VoteStateVersions::V4(state) => {
+                state.set_last_timestamp(timestamp);
+            }
+            _ => {}
+        }
+
+        let serialized = bincode::serialize(&vote_state).unwrap();
+        vote_account.data_as_mut_slice()[..serialized.len()].copy_from_slice(&serialized);
         bank.store_account(vote_pubkey, &vote_account);
     }
 

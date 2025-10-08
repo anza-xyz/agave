@@ -38,10 +38,13 @@ use {
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
     solana_system_interface::error::SystemError,
     solana_transaction::Transaction,
-    solana_vote_program::{
-        vote_error::VoteError,
-        vote_instruction::{self, withdraw, CreateVoteAccountConfig},
-        vote_state::{VoteAuthorize, VoteInit, VoteStateV3, VOTE_CREDITS_MAXIMUM_PER_SLOT},
+    solana_vote_interface::{
+        error::VoteError,
+        instruction::{self as vote_instruction, withdraw, CreateVoteAccountConfig},
+        state::{
+            VoteAuthorize, VoteInit, VoteStateRead, VoteStateV4, VoteStateVersions,
+            VOTE_CREDITS_MAXIMUM_PER_SLOT,
+        },
     },
     std::rc::Rc,
 };
@@ -809,7 +812,7 @@ pub fn process_create_vote_account(
     let vote_account = config.signers[vote_account];
     let vote_account_pubkey = vote_account.pubkey();
     let vote_account_address = if let Some(seed) = seed {
-        Pubkey::create_with_seed(&vote_account_pubkey, seed, &solana_vote_program::id())?
+        Pubkey::create_with_seed(&vote_account_pubkey, seed, &solana_vote_interface::program::id())?
     } else {
         vote_account_pubkey
     };
@@ -826,13 +829,13 @@ pub fn process_create_vote_account(
     )?;
 
     let required_balance = rpc_client
-        .get_minimum_balance_for_rent_exemption(VoteStateV3::size_of())?
+        .get_minimum_balance_for_rent_exemption(VoteStateV4::size_of())?
         .max(1);
     let amount = SpendAmount::Some(required_balance);
 
     let fee_payer = config.signers[fee_payer];
     let nonce_authority = config.signers[nonce_authority];
-    let space = VoteStateV3::size_of() as u64;
+    let space = VoteStateV4::size_of() as u64;
 
     let compute_unit_limit = match blockhash_query {
         BlockhashQuery::None(_) | BlockhashQuery::FeeCalculator(_, _) => ComputeUnitLimit::Default,
@@ -900,7 +903,7 @@ pub fn process_create_vote_account(
             rpc_client.get_account_with_commitment(&vote_account_address, config.commitment)
         {
             if let Some(vote_account) = response.value {
-                let err_msg = if vote_account.owner == solana_vote_program::id() {
+                let err_msg = if vote_account.owner == solana_vote_interface::program::id() {
                     format!("Vote account {vote_account_address} already exists")
                 } else {
                     format!(
@@ -981,7 +984,10 @@ pub fn process_vote_authorize(
                         )
                     })?;
                 check_current_authority(
-                    &[current_authorized_voter, vote_state.authorized_withdrawer],
+                    &[
+                        current_authorized_voter,
+                        *vote_state.authorized_withdrawer(),
+                    ],
                     &authorized.pubkey(),
                 )?;
                 if let Some(signer) = new_authorized_signer {
@@ -1001,7 +1007,10 @@ pub fn process_vote_authorize(
                 (new_authorized_pubkey, "new_authorized_pubkey".to_string()),
             )?;
             if let Some(vote_state) = vote_state {
-                check_current_authority(&[vote_state.authorized_withdrawer], &authorized.pubkey())?
+                check_current_authority(
+                    &[*vote_state.authorized_withdrawer()],
+                    &authorized.pubkey(),
+                )?
             }
         }
     }
@@ -1258,7 +1267,7 @@ pub(crate) fn get_vote_account(
     rpc_client: &RpcClient,
     vote_account_pubkey: &Pubkey,
     commitment_config: CommitmentConfig,
-) -> Result<(Account, VoteStateV3), Box<dyn std::error::Error>> {
+) -> Result<(Account, VoteStateVersions), Box<dyn std::error::Error>> {
     let vote_account = rpc_client
         .get_account_with_commitment(vote_account_pubkey, commitment_config)?
         .value
@@ -1266,13 +1275,13 @@ pub(crate) fn get_vote_account(
             CliError::RpcRequestError(format!("{vote_account_pubkey:?} account does not exist"))
         })?;
 
-    if vote_account.owner != solana_vote_program::id() {
+    if vote_account.owner != solana_vote_interface::program::id() {
         return Err(CliError::RpcRequestError(format!(
             "{vote_account_pubkey:?} is not a vote account"
         ))
         .into());
     }
-    let vote_state = VoteStateV3::deserialize(&vote_account.data).map_err(|_| {
+    let vote_state: VoteStateVersions = bincode::deserialize(&vote_account.data).map_err(|_| {
         CliError::RpcRequestError(
             "Account data could not be deserialized to vote state".to_string(),
         )
@@ -1300,8 +1309,8 @@ pub fn process_show_vote_account(
 
     let mut votes: Vec<CliLandedVote> = vec![];
     let mut epoch_voting_history: Vec<CliEpochVotingHistory> = vec![];
-    if !vote_state.votes.is_empty() {
-        for vote in &vote_state.votes {
+    if !vote_state.votes().is_empty() {
+        for vote in vote_state.votes() {
             votes.push(vote.into());
         }
         for (epoch, credits, prev_credits) in vote_state.epoch_credits().iter().copied() {
@@ -1324,6 +1333,8 @@ pub fn process_show_vote_account(
         }
     }
 
+    let commission = (vote_state.inflation_rewards_commission_bps() / 100) as u8;
+
     let epoch_rewards =
         with_rewards.and_then(|num_epochs| {
             match crate::stake::fetch_epoch_rewards(
@@ -1342,13 +1353,13 @@ pub fn process_show_vote_account(
 
     let vote_account_data = CliVoteAccount {
         account_balance: vote_account.lamports,
-        validator_identity: vote_state.node_pubkey.to_string(),
+        validator_identity: vote_state.node_pubkey().to_string(),
         authorized_voters: vote_state.authorized_voters().into(),
-        authorized_withdrawer: vote_state.authorized_withdrawer.to_string(),
+        authorized_withdrawer: vote_state.authorized_withdrawer().to_string(),
         credits: vote_state.credits(),
-        commission: vote_state.commission,
-        root_slot: vote_state.root_slot,
-        recent_timestamp: vote_state.last_timestamp.clone(),
+        commission,
+        root_slot: vote_state.root_slot(),
+        recent_timestamp: vote_state.last_timestamp().clone(),
         votes,
         epoch_voting_history,
         use_lamports_unit,
@@ -1426,7 +1437,7 @@ pub fn process_withdraw_from_vote_account(
     if !sign_only {
         let current_balance = rpc_client.get_balance(vote_account_pubkey)?;
         let minimum_balance =
-            rpc_client.get_minimum_balance_for_rent_exemption(VoteStateV3::size_of())?;
+            rpc_client.get_minimum_balance_for_rent_exemption(VoteStateV4::size_of())?;
         if let SpendAmount::Some(withdraw_amount) = withdraw_amount {
             let balance_remaining = current_balance.saturating_sub(withdraw_amount);
             if balance_remaining < minimum_balance && balance_remaining != 0 {

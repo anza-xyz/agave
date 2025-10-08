@@ -519,8 +519,9 @@ pub(crate) mod tests {
         solana_rent::Rent,
         solana_stake_interface as stake,
         solana_stake_program::stake_state,
-        solana_vote_interface::state::{VoteStateV3, VoteStateVersions},
+        solana_vote_interface::state::{VoteStateRead, VoteStateV3, VoteStateV4, VoteStateVersions},
         solana_vote_program::vote_state,
+        test_case::test_case,
     };
 
     //  set up some dummies for a staked node     ((     vote      )  (     stake     ))
@@ -635,14 +636,23 @@ pub(crate) mod tests {
         stakes_cache.check_and_store(&vote11_pubkey, &vote11_account, None);
         stakes_cache.check_and_store(&stake11_pubkey, &stake11_account, None);
 
-        let vote11_node_pubkey = vote_state::from(&vote11_account).unwrap().node_pubkey;
+        let vote11_state: VoteStateVersions =
+            bincode::deserialize(vote11_account.data()).unwrap();
+        let vote11_node_pubkey = *vote11_state.node_pubkey();
 
         let highest_staked_node = stakes_cache.stakes().highest_staked_node().copied();
         assert_eq!(highest_staked_node, Some(vote11_node_pubkey));
     }
 
-    #[test]
-    fn test_stakes_vote_account_disappear_reappear() {
+    #[derive(Debug, Clone, Copy)]
+    enum VoteStateVersion {
+        V3,
+        V4,
+    }
+
+    #[test_case(VoteStateVersion::V3)]
+    #[test_case(VoteStateVersion::V4)]
+    fn test_stakes_vote_account_disappear_reappear(vote_state_version: VoteStateVersion) {
         let stakes_cache = StakesCache::new(Stakes {
             epoch: 4,
             ..Stakes::default()
@@ -696,9 +706,12 @@ pub(crate) mod tests {
         }
 
         // Vote account uninitialized
-        let default_vote_state = VoteStateV3::default();
-        let versioned = VoteStateVersions::new_v3(default_vote_state);
-        vote_state::to(&versioned, &mut vote_account).unwrap();
+        let versioned = match vote_state_version {
+            VoteStateVersion::V3 => VoteStateVersions::new_v3(VoteStateV3::default()),
+            VoteStateVersion::V4 => VoteStateVersions::new_v4(VoteStateV4::default()),
+        };
+        let serialized = bincode::serialize(&versioned).unwrap();
+        vote_account.data_as_mut_slice()[..serialized.len()].copy_from_slice(&serialized);
         stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
 
         {

@@ -1,7 +1,7 @@
 //! Vote state, vote program
 //! Receive and processes votes from validators
 
-mod handler;
+pub mod handler;
 
 pub use {
     handler::VoteStateTargetVersion,
@@ -10,7 +10,7 @@ pub use {
 use {
     handler::{VoteStateHandle, VoteStateHandler},
     log::*,
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{AccountSharedData, WritableAccount},
     solana_clock::{Clock, Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
@@ -28,16 +28,6 @@ use {
 
 // TODO: Change me once the program has full v4 feature gate support.
 pub(crate) const TEMP_HARDCODED_TARGET_VERSION: VoteStateTargetVersion = VoteStateTargetVersion::V3;
-
-// utility function, used by Stakes, tests
-pub fn from<T: ReadableAccount>(account: &T) -> Option<VoteStateV3> {
-    VoteStateV3::deserialize(account.data()).ok()
-}
-
-// utility function, used by Stakes, tests
-pub fn to<T: WritableAccount>(versioned: &VoteStateVersions, account: &mut T) -> Option<()> {
-    VoteStateV3::serialize(versioned, account.data_as_mut_slice()).ok()
-}
 
 /// Checks the proposed vote state with the current and
 /// slot hashes, making adjustments to the root / filtering
@@ -749,7 +739,9 @@ pub fn update_commission<S: std::hash::BuildHasher>(
 ) -> Result<(), InstructionError> {
     let vote_state_result = VoteStateHandler::deserialize_and_convert(vote_account, target_version);
     let enforce_commission_update_rule = if let Ok(decoded_vote_state) = &vote_state_result {
-        commission > decoded_vote_state.commission()
+        // Convert commission percentage to basis points for comparison
+        // Safety: u16::MAX > u8::MAX * 100
+        (commission as u16) * 100 > decoded_vote_state.inflation_rewards_commission_bps()
     } else {
         true
     };
@@ -1084,7 +1076,7 @@ mod tests {
     use {
         super::*,
         assert_matches::assert_matches,
-        solana_account::AccountSharedData,
+        solana_account::{AccountSharedData, ReadableAccount},
         solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_sha256_hasher::hash,
         solana_transaction_context::{InstructionAccount, TransactionContext},
@@ -1161,7 +1153,7 @@ mod tests {
                 VoteState1_14_11 {
                     node_pubkey: *vote_state.node_pubkey(),
                     authorized_withdrawer: *vote_state.authorized_withdrawer(),
-                    commission: vote_state.commission(),
+                    commission: (vote_state.inflation_rewards_commission_bps() / 100) as u8,
                     votes: vote_state
                         .votes()
                         .iter()
@@ -1384,8 +1376,8 @@ mod tests {
         assert_eq!(
             VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
                 .unwrap()
-                .commission(),
-            10
+                .inflation_rewards_commission_bps(),
+            1000 // 10% = 1000 basis points
         );
         assert_matches!(
             update_commission(
@@ -1401,8 +1393,8 @@ mod tests {
         assert_eq!(
             VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
                 .unwrap()
-                .commission(),
-            11
+                .inflation_rewards_commission_bps(),
+            1100 // 11% = 1100 basis points
         );
 
         // Increase commission in second half of epoch -- disallowed
@@ -1420,8 +1412,8 @@ mod tests {
         assert_eq!(
             VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
                 .unwrap()
-                .commission(),
-            11
+                .inflation_rewards_commission_bps(),
+            1100 // Still 11% = 1100 basis points (update was rejected)
         );
 
         // Decrease commission in first half of epoch -- allowed
@@ -1439,15 +1431,15 @@ mod tests {
         assert_eq!(
             VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
                 .unwrap()
-                .commission(),
-            10
+                .inflation_rewards_commission_bps(),
+            1000 // 10% = 1000 basis points
         );
 
         assert_eq!(
             VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
                 .unwrap()
-                .commission(),
-            10
+                .inflation_rewards_commission_bps(),
+            1000 // Still 10% = 1000 basis points
         );
 
         assert_matches!(
@@ -1464,8 +1456,8 @@ mod tests {
         assert_eq!(
             VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
                 .unwrap()
-                .commission(),
-            9
+                .inflation_rewards_commission_bps(),
+            900 // 9% = 900 basis points
         );
     }
 

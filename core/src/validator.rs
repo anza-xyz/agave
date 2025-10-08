@@ -34,6 +34,7 @@ use {
     anyhow::{anyhow, Context, Result},
     crossbeam_channel::{bounded, unbounded, Receiver},
     quinn::Endpoint,
+    solana_account::ReadableAccount,
     solana_accounts_db::{
         accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
@@ -139,7 +140,7 @@ use {
     },
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_validator_exit::Exit,
-    solana_vote_program::vote_state,
+    solana_vote_interface::state::{VoteStateRead, VoteStateVersions},
     solana_wen_restart::wen_restart::{wait_for_wen_restart, WenRestartConfig},
     std::{
         borrow::Cow,
@@ -1962,8 +1963,8 @@ impl Validator {
 
 fn active_vote_account_exists_in_bank(bank: &Bank, vote_account: &Pubkey) -> bool {
     if let Some(account) = &bank.get_account(vote_account) {
-        if let Some(vote_state) = vote_state::from(account) {
-            return !vote_state.votes.is_empty();
+        if let Ok(vote_state) = bincode::deserialize::<VoteStateVersions>(account.data()) {
+            return !vote_state.votes().is_empty();
         }
     }
     false
