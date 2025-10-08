@@ -3,7 +3,8 @@ use {
     bzip2::bufread::BzDecoder,
     log::{debug, error, warn},
     regex::Regex,
-    solana_file_download::download_file,
+    serde::{Deserialize, Serialize},
+    solana_file_download::download_file_with_headers,
     std::{
         env,
         fs::{self, File},
@@ -16,6 +17,24 @@ use {
 
 pub(crate) const DEFAULT_PLATFORM_TOOLS_VERSION: &str = "v1.51";
 pub(crate) const DEFAULT_RUST_VERSION: &str = "1.84.1";
+
+// Common headers used for Github API.
+const USER_AGENT_HEADER: (&str, &str) = ("User-Agent", "cargo-build-sbf");
+const GITHUB_API_VERSION_HEADER: (&str, &str) = ("X-GitHub-Api-Version", "2022-11-28");
+
+// Headers necessary for querying Github and expecting a JSON response.
+const GITHUB_API_JSON_RESPONSE_HEADERS: [(&str, &str); 3] = [
+    USER_AGENT_HEADER,
+    GITHUB_API_VERSION_HEADER,
+    ("Accept", "application/vnd.github+json"),
+];
+
+// Headers necessary for downloading a file from Github API.
+const GITHUB_API_BYTES_RESPONSE_HEADERS: [(&str, &str); 3] = [
+    USER_AGENT_HEADER,
+    GITHUB_API_VERSION_HEADER,
+    ("Accept", "application/octet-stream"),
+];
 
 fn find_installed_platform_tools() -> Vec<String> {
     let solana = home_dir().join(".cache").join("solana");
@@ -130,11 +149,59 @@ pub(crate) fn get_base_rust_version(platform_tools_version: &str) -> String {
     }
 }
 
+fn retrieve_file_from_github_api(
+    download_file_name: &str,
+    platform_tools_version: &str,
+    download_file_path: &Path,
+) -> Result<(), String> {
+    #[derive(Debug, Deserialize, Serialize)]
+    struct Items {
+        name: String,
+        url: String,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    struct GithubResponse {
+        assets: Vec<Items>,
+    }
+
+    let client = reqwest::blocking::Client::new();
+    let query_url = format!("https://api.github.com/repos/anza-xyz/platform-tools/releases/tags/{platform_tools_version}");
+
+    let mut query_headers = reqwest::header::HeaderMap::new();
+    for item in GITHUB_API_JSON_RESPONSE_HEADERS {
+        query_headers.insert(item.0, item.1.parse().unwrap());
+    }
+    let response = client
+        .get(query_url)
+        .headers(query_headers)
+        .send()
+        .map_err(|err| format!("Failed to retrieve Github releases: {err}"))?;
+
+    let parsed_response: GithubResponse = response
+        .json()
+        .map_err(|err| format!("Failed to parse Github response: {err}"))?;
+
+    let download_url = parsed_response
+        .assets
+        .iter()
+        .find(|item| item.name == download_file_name)
+        .map(|item| item.url.as_str())
+        .ok_or(format!("File {download_file_name} not found for download").as_str())?;
+
+    download_file_with_headers(
+        download_url,
+        download_file_path,
+        true,
+        &mut None,
+        &GITHUB_API_BYTES_RESPONSE_HEADERS,
+    )
+}
+
 // Check whether a package is installed and install it if missing.
 fn install_if_missing(
     config: &Config,
     package: &str,
-    url: &str,
     download_file_name: &str,
     platform_tools_version: &str,
     target_path: &Path,
@@ -181,16 +248,15 @@ fn install_if_missing(
             fs::remove_file(target_path).map_err(|err| err.to_string())?;
         }
         fs::create_dir_all(target_path).map_err(|err| err.to_string())?;
-        let mut url = String::from(url);
-        url.push('/');
-        url.push_str(platform_tools_version);
-        url.push('/');
-        url.push_str(download_file_name);
         let download_file_path = target_path.join(download_file_name);
         if download_file_path.exists() {
             fs::remove_file(&download_file_path).map_err(|err| err.to_string())?;
         }
-        download_file(url.as_str(), &download_file_path, true, &mut None)?;
+        retrieve_file_from_github_api(
+            download_file_name,
+            platform_tools_version,
+            &download_file_path,
+        )?;
         let zip = File::open(&download_file_path).map_err(|err| err.to_string())?;
         let tar = BzDecoder::new(BufReader::new(zip));
         let mut archive = Archive::new(tar);
@@ -382,7 +448,6 @@ pub(crate) fn install_tools(
         install_if_missing(
             config,
             package,
-            "https://github.com/anza-xyz/platform-tools/releases/download",
             platform_tools_download_file_name.as_str(),
             &platform_tools_version,
             &target_path,

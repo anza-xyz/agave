@@ -23,9 +23,10 @@ clap = { version = "3.1.5", features = ["cargo", "env"] }
 itertools = { workspace = true }
 log = { workspace = true, features = ["std"] }
 regex = { workspace = true }
-reqwest = { workspace = true, features = ["blocking", "rustls-tls", "rustls-tls-native-roots" ] }
+reqwest = { workspace = true, features = ["blocking", "rustls-tls", "rustls-tls-native-roots", "json" ] }
 semver = { workspace = true }
-solana-file-download = "=3.0.0"
+serde = { workspace = true }
+solana-file-download = "=3.1.0"
 solana-keypair = "=3.0.1"
 solana-logger = "=3.0.0"
 tar = { workspace = true }
