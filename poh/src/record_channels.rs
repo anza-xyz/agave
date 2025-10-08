@@ -463,4 +463,38 @@ mod shuttle_tests {
             NUM_TEST_RUNS,
         )
     }
+
+    #[test]
+    fn test_try_recv_not_sent_on_inner_channel_yet() {
+        const NUM_TEST_RUNS: usize = 100_000;
+        shuttle::check_random(
+            || {
+                let (sender, mut receiver) = record_channels(false);
+                receiver.restart(0);
+
+                {
+                    let sender = sender.clone();
+                    shuttle::thread::spawn(move || {
+                        let _ = sender.try_send(test_record(0, 1));
+                    });
+                }
+
+                // Snapshot active_senders *before* try_recv
+                let active_at_start = sender.active_senders.load(Ordering::Acquire);
+
+                // Perform try_recv
+                let result = receiver.try_recv();
+
+                // Only fail if it returned None *and* we know there was an active sender at start
+                if result.is_err() && active_at_start > 0 {
+                    panic!(
+                        "try_recv returned None while a sender was active at start of call \
+                         (active_senders={})",
+                        active_at_start
+                    );
+                }
+            },
+            NUM_TEST_RUNS,
+        )
+    }
 }
