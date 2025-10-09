@@ -112,7 +112,8 @@ impl PacketReceiver {
                 match SanitizedTransactionView::try_new_sanitized(
                     // TODO: Review how scheduler re-uses SharedBytes.pkt.data(..)?.to_vec()
                     Arc::new(pkt.data(..)?.to_vec()),
-                    // TODO: Explain why this is always false for vote transactions.
+                    // NB: It's safe to always pass false in here as simple vote
+                    // transactions are guaranteed to be a single instruction.
                     false,
                 ) {
                     Ok(pkt) => Some(pkt),
