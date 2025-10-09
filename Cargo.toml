@@ -627,7 +627,7 @@ tower = "0.5.2"
 tracing = "0.1"
 trait-set = "0.3.0"
 trees = "0.4.2"
-trezor-client = { version = "0.1.4", default-features = false, features = ["solana"] }
+trezor-client = { version = "0.1.5", default-features = false, features = ["solana"] }
 tungstenite = "0.28.0"
 unwrap_none = "0.1.2"
 uriparse = "0.6.4"
