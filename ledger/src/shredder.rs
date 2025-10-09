@@ -76,7 +76,7 @@ impl Shredder {
         stats: &mut ProcessShredsStats,
     ) -> impl Iterator<Item = Shred> {
         let now = Instant::now();
-        let entries = bincode::serialize(entries).unwrap();
+        let entries = wincode::serialize(entries).unwrap();
         stats.serialize_elapsed += now.elapsed().as_micros() as u64;
         Self::make_shreds_from_data_slice(
             self,
@@ -362,7 +362,7 @@ mod tests {
             let shreds = data_shreds.iter().map(Shred::payload);
             Shredder::deshred(shreds).unwrap()
         };
-        let deshred_entries: Vec<Entry> = bincode::deserialize(&deshred_payload).unwrap();
+        let deshred_entries: Vec<Entry> = wincode::deserialize(&deshred_payload).unwrap();
         assert_eq!(entries, deshred_entries);
     }
 

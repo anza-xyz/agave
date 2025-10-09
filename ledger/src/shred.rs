@@ -866,8 +866,8 @@ pub fn max_entries_per_n_shred_last_or_not(
     num_shreds: u64,
     is_last_in_slot: bool,
 ) -> u64 {
-    let vec_size = bincode::serialized_size(&vec![entry]).unwrap();
-    let entry_size = bincode::serialized_size(entry).unwrap();
+    let vec_size = wincode::serialized_size(&vec![entry]).unwrap();
+    let entry_size = wincode::serialized_size(entry).unwrap();
     let count_size = vec_size - entry_size;
 
     // Default 32:32 erasure batches yields 64 shreds; log2(64) = 6.
@@ -898,8 +898,8 @@ pub fn max_entries_per_n_shred(
     // Default 32:32 erasure batches yields 64 shreds; log2(64) = 6.
     let data_buffer_size = ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ true).unwrap();
     let shred_data_size = shred_data_size.unwrap_or(data_buffer_size) as u64;
-    let vec_size = bincode::serialized_size(&vec![entry]).unwrap();
-    let entry_size = bincode::serialized_size(entry).unwrap();
+    let vec_size = wincode::serialized_size(&vec![entry]).unwrap();
+    let entry_size = wincode::serialized_size(entry).unwrap();
     let count_size = vec_size - entry_size;
 
     (shred_data_size * num_shreds - count_size) / entry_size

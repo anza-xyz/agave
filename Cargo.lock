@@ -5497,9 +5497,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.95"
+version = "1.0.101"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02b3e5e68a3a1a02aad3ec490a98007cbc13c37cbe84a3cd7b8e406d76e7f778"
+checksum = "89ae43fd86e4158d6db51ad8e2b80f313af9cc74f5c0e03ccb87de09998732de"
 dependencies = [
  "unicode-ident",
 ]
@@ -8509,9 +8509,11 @@ dependencies = [
  "dlopen2",
  "log",
  "num_cpus",
+ "proptest",
  "rand 0.8.5",
  "rayon",
  "serde",
+ "solana-address",
  "solana-entry",
  "solana-hash",
  "solana-keypair",
@@ -8525,11 +8527,13 @@ dependencies = [
  "solana-pubkey",
  "solana-runtime-transaction",
  "solana-sha256-hasher",
+ "solana-short-vec",
  "solana-signature",
  "solana-signer",
  "solana-system-transaction",
  "solana-transaction",
  "solana-transaction-error",
+ "wincode",
 ]
 
 [[package]]
@@ -9218,6 +9222,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "trees",
+ "wincode",
 ]
 
 [[package]]
@@ -11675,6 +11680,7 @@ dependencies = [
  "test-case",
  "thiserror 2.0.17",
  "tokio",
+ "wincode",
 ]
 
 [[package]]
@@ -13693,6 +13699,29 @@ name = "winapi-x86_64-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
+
+[[package]]
+name = "wincode"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c0b5bd8dce8a24aa92e1b16407ae2a60b35a103150e24e12bb63466e3786397"
+dependencies = [
+ "solana-short-vec",
+ "thiserror 2.0.17",
+ "wincode-derive",
+]
+
+[[package]]
+name = "wincode-derive"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b565e235fa7bbb5f898fc2d55639e41fde3ed66dc02ad7d570d075f41e1cfc1"
+dependencies = [
+ "darling",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+]
 
 [[package]]
 name = "windows"

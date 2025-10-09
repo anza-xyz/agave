@@ -1,6 +1,5 @@
 use {
     super::{Error, Result},
-    bincode::serialized_size,
     crossbeam_channel::Receiver,
     solana_clock::Slot,
     solana_entry::entry::Entry,
@@ -15,6 +14,7 @@ use {
         sync::Arc,
         time::{Duration, Instant},
     },
+    wincode::serialized_size,
 };
 
 const ENTRY_COALESCE_DURATION: Duration = Duration::from_millis(50);
