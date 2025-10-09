@@ -534,21 +534,12 @@ where
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        bincode::Options,
-        rand::Rng,
-        solana_account::WritableAccount,
-        solana_clock::Clock,
-        solana_pubkey::Pubkey,
-        solana_vote_interface::{
+        super::*, bincode::Options, rand::Rng, solana_account::WritableAccount, solana_clock::Clock, solana_pubkey::Pubkey, solana_vote_interface::{
             authorized_voters::AuthorizedVoters,
             state::{
-                VoteInit, VoteStateV3, VoteStateV4, VoteStateVersions,
-                BLS_PUBLIC_KEY_COMPRESSED_SIZE,
+                BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteInit, VoteStateV3, VoteStateV4, VoteStateVersions
             },
-        },
-        std::{collections::HashSet, iter::repeat_with},
-        test_case::test_case,
+        }, std::{collections::HashSet, iter::repeat_with}, test_case::test_case
     };
 
     const MIN_STAKE_FOR_STAKED_ACCOUNT: u64 = 1;
@@ -1147,5 +1138,24 @@ mod tests {
             identity_balances.keys().collect::<HashSet<&Pubkey>>(),
             identity_accounts.into_iter().collect::<HashSet<&Pubkey>>()
         );
+    }
+
+    #[test]
+    fn test_identity_accounts_for_staked_nodes_remove_zero_stake() {
+        solana_logger::setup();
+        let mut rng = rand::thread_rng();
+        let num_nodes = 10;
+        // Make sure our vote account to identity mapping is 1:1.
+        let vote_accounts = (0..num_nodes)
+            .map(|_| {
+                let account = new_rand_vote_account(&mut rng, None, true);
+                let vote_account = VoteAccount::try_from(account).unwrap();
+                let stake = rng.gen_range(0..MAX_STAKE_FOR_STAKED_ACCOUNT);
+                (Pubkey::new_unique(), (stake, vote_account))
+            })
+            .collect::<VoteAccounts>();
+        let num_staked_accounts = vote_accounts.staked_nodes().len();
+        let identity_accounts = vote_accounts.identity_accounts_for_staked_nodes();
+        assert_eq!(identity_accounts.len(), num_staked_accounts);
     }
 }
