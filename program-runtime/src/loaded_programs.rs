@@ -110,6 +110,11 @@ impl From<ProgramCacheEntryOwner> for Pubkey {
     - Loaded / FailedVerification => Loaded in UpgradeableLoaderInstruction::Upgrade
     - Loaded / FailedVerification => Closed in UpgradeableLoaderInstruction::Close
 
+    Loader migration:
+    - Closed => Closed (in the same slot)
+    - FailedVerification => FailedVerification (with different account_owner)
+    - Loaded => Loaded (with different account_owner)
+
     Eviction and unloading (in the same slot):
     - Unloaded => Loaded in ProgramCache::assign_program
     - Loaded => Unloaded in ProgramCache::unload_program_entry
@@ -904,6 +909,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 ProgramCacheEntryType::Unloaded(_),
                                 ProgramCacheEntryType::Loaded(_),
                             ) => {}
+                            (ProgramCacheEntryType::Closed, ProgramCacheEntryType::Closed)
+                                if existing.account_owner != entry.account_owner => {}
                             _ => {
                                 // Something is wrong, I can feel it ...
                                 error!(
