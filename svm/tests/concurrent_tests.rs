@@ -69,16 +69,15 @@ fn program_cache_execution(threads: usize) {
                 );
                 let mut result = {
                     let global_program_cache = processor.global_program_cache.read().unwrap();
-                    ProgramCacheForTxBatch::new_from_cache(
-                        processor.slot,
-                        processor.epoch,
-                        processor.epoch_boundary_preparation.clone(),
-                        &global_program_cache,
-                    )
+                    ProgramCacheForTxBatch::new_from_cache(processor.slot, &global_program_cache)
                 };
+                let program_runtime_environments_for_execution = processor
+                    .get_environments_for_epoch(processor.epoch)
+                    .unwrap();
                 processor.replenish_program_cache(
                     &account_loader,
                     &maps,
+                    &program_runtime_environments_for_execution,
                     &mut result,
                     &mut ExecuteTimings::default(),
                     false,

@@ -5910,10 +5910,6 @@ impl Bank {
     pub fn new_program_cache_for_tx_batch_for_slot(&self, slot: Slot) -> ProgramCacheForTxBatch {
         ProgramCacheForTxBatch::new_from_cache(
             slot,
-            self.epoch_schedule.get_epoch(slot),
-            self.transaction_processor
-                .epoch_boundary_preparation
-                .clone(),
             &self
                 .transaction_processor
                 .global_program_cache

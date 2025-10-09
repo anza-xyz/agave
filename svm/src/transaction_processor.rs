@@ -363,14 +363,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .then(|| BalanceCollector::new_with_transaction_count(sanitized_txs.len()));
 
         // Create the batch-local program cache.
+        let program_runtime_environments_for_execution =
+            self.get_environments_for_epoch(self.epoch).unwrap();
         let mut program_cache_for_tx_batch = {
             let global_program_cache = self.global_program_cache.read().unwrap();
-            let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new_from_cache(
-                self.slot,
-                self.epoch,
-                self.epoch_boundary_preparation.clone(),
-                &global_program_cache,
-            );
+            let mut program_cache_for_tx_batch =
+                ProgramCacheForTxBatch::new_from_cache(self.slot, &global_program_cache);
             drop(global_program_cache);
 
             let builtins = self.builtin_program_ids.read().unwrap().clone();
@@ -379,6 +377,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 self.replenish_program_cache(
                     &account_loader,
                     &builtins,
+                    &program_runtime_environments_for_execution,
                     &mut program_cache_for_tx_batch,
                     &mut execute_timings,
                     config.check_program_modification_slot,
@@ -464,6 +463,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         self.replenish_program_cache(
                             &account_loader,
                             &program_accounts_set,
+                            &program_runtime_environments_for_execution,
                             &mut program_cache_for_tx_batch,
                             &mut execute_timings,
                             config.check_program_modification_slot,
@@ -742,6 +742,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         &self,
         account_loader: &AccountLoader<CB>,
         program_accounts_set: &HashSet<Pubkey>,
+        program_runtime_environments_for_execution: &ProgramRuntimeEnvironments,
         program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
         execute_timings: &mut ExecuteTimings,
         check_program_modification_slot: bool,
@@ -772,6 +773,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 let program_to_load = global_program_cache.extract(
                     &mut missing_programs,
                     program_cache_for_tx_batch,
+                    program_runtime_environments_for_execution,
                     increment_usage_counter,
                     count_hits_and_misses,
                 );
@@ -781,10 +783,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     // Load, verify and compile one program.
                     let program = load_program_with_pubkey(
                         account_loader,
-                        &global_program_cache.get_environments_for_epoch(
-                            &self.epoch_boundary_preparation,
-                            self.epoch,
-                        ),
+                        program_runtime_environments_for_execution,
                         &key,
                         self.slot,
                         execute_timings,
@@ -809,12 +808,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     // This branch is taken when there is an error in assigning a program to a
                     // cache slot. It is not possible to mock this error for SVM unit
                     // tests purposes.
-                    *program_cache_for_tx_batch = ProgramCacheForTxBatch::new_from_cache(
-                        self.slot,
-                        self.epoch,
-                        self.epoch_boundary_preparation.clone(),
-                        &global_program_cache,
-                    );
+                    *program_cache_for_tx_batch =
+                        ProgramCacheForTxBatch::new_from_cache(self.slot, &global_program_cache);
                     program_cache_for_tx_batch.hit_max_limit = true;
                     return;
                 }
@@ -1481,17 +1476,13 @@ mod tests {
 
         let mut program_cache_for_tx_batch = {
             let global_program_cache = batch_processor.global_program_cache.read().unwrap();
-            ProgramCacheForTxBatch::new_from_cache(
-                batch_processor.slot,
-                batch_processor.epoch,
-                batch_processor.epoch_boundary_preparation.clone(),
-                &global_program_cache,
-            )
+            ProgramCacheForTxBatch::new_from_cache(batch_processor.slot, &global_program_cache)
         };
 
         batch_processor.replenish_program_cache(
             &account_loader,
             &account_set,
+            &ProgramRuntimeEnvironments::default(),
             &mut program_cache_for_tx_batch,
             &mut ExecuteTimings::default(),
             false,
@@ -1506,6 +1497,8 @@ mod tests {
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
         let batch_processor =
             TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None, None);
+        let program_runtime_environments_for_execution =
+            batch_processor.get_environments_for_epoch(0).unwrap();
         let key = Pubkey::new_unique();
 
         let mut account_data = AccountSharedData::default();
@@ -1524,17 +1517,13 @@ mod tests {
         for limit_to_load_programs in [false, true] {
             let mut program_cache_for_tx_batch = {
                 let global_program_cache = batch_processor.global_program_cache.read().unwrap();
-                ProgramCacheForTxBatch::new_from_cache(
-                    batch_processor.slot,
-                    batch_processor.epoch,
-                    batch_processor.epoch_boundary_preparation.clone(),
-                    &global_program_cache,
-                )
+                ProgramCacheForTxBatch::new_from_cache(batch_processor.slot, &global_program_cache)
             };
 
             batch_processor.replenish_program_cache(
                 &account_loader,
                 &account_set,
+                &program_runtime_environments_for_execution,
                 &mut program_cache_for_tx_batch,
                 &mut ExecuteTimings::default(),
                 false,
@@ -1900,10 +1889,11 @@ mod tests {
 
         let mut loaded_programs_for_tx_batch = ProgramCacheForTxBatch::new_from_cache(
             0,
-            0,
-            batch_processor.epoch_boundary_preparation.clone(),
             &batch_processor.global_program_cache.read().unwrap(),
         );
+        let program_runtime_environments = batch_processor
+            .get_environments_for_epoch(batch_processor.epoch)
+            .unwrap();
         batch_processor
             .global_program_cache
             .write()
@@ -1911,6 +1901,7 @@ mod tests {
             .extract(
                 &mut vec![(key, ProgramCacheMatchCriteria::NoCriteria)],
                 &mut loaded_programs_for_tx_batch,
+                &program_runtime_environments,
                 true,
                 true,
             );
