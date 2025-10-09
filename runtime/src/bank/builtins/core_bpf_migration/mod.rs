@@ -209,7 +209,10 @@ impl Bank {
             .global_program_cache
             .write()
             .unwrap()
-            .merge(&program_cache_for_tx_batch.drain_modified_entries());
+            .merge(
+                &self.transaction_processor.environments,
+                &program_cache_for_tx_batch.drain_modified_entries(),
+            );
 
         Ok(())
     }

@@ -164,6 +164,9 @@ pub struct TransactionBatchProcessor<FG: ForkGraph> {
     /// Programs required for transaction batch processing
     pub global_program_cache: Arc<RwLock<ProgramCache<FG>>>,
 
+    /// Environments of the current epoch
+    pub environments: ProgramRuntimeEnvironments,
+
     /// Builtin program ids
     pub builtin_program_ids: RwLock<HashSet<Pubkey>>,
 
@@ -191,6 +194,7 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
                 Slot::default(),
                 Epoch::default(),
             ))),
+            environments: ProgramRuntimeEnvironments::default(),
             builtin_program_ids: RwLock::new(HashSet::new()),
             execution_cost: SVMTransactionExecutionCost::default(),
         }
@@ -231,15 +235,19 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         program_runtime_environment_v1: Option<ProgramRuntimeEnvironment>,
         program_runtime_environment_v2: Option<ProgramRuntimeEnvironment>,
     ) -> Self {
-        let processor = Self::new_uninitialized(slot, epoch);
+        let mut processor = Self::new_uninitialized(slot, epoch);
         {
-            let mut global_program_cache = processor.global_program_cache.write().unwrap();
-            global_program_cache.set_fork_graph(fork_graph);
-            processor.configure_program_runtime_environments_inner(
-                &mut global_program_cache,
-                program_runtime_environment_v1,
-                program_runtime_environment_v2,
-            );
+            {
+                let mut global_program_cache = processor.global_program_cache.write().unwrap();
+                global_program_cache.set_fork_graph(fork_graph);
+                global_program_cache.latest_root_slot = processor.slot;
+                global_program_cache.latest_root_epoch = processor.epoch;
+            }
+            let empty_loader = || Arc::new(BuiltinProgram::new_loader(VmConfig::default()));
+            processor.environments.program_runtime_v1 =
+                program_runtime_environment_v1.unwrap_or(empty_loader());
+            processor.environments.program_runtime_v2 =
+                program_runtime_environment_v2.unwrap_or(empty_loader());
         }
         processor
     }
@@ -256,6 +264,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             epoch,
             sysvar_cache: RwLock::<SysvarCache>::default(),
             global_program_cache: self.global_program_cache.clone(),
+            environments: self.environments.clone(),
             builtin_program_ids: RwLock::new(self.builtin_program_ids.read().unwrap().clone()),
             execution_cost: self.execution_cost,
         }
@@ -267,34 +276,23 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.execution_cost = cost;
     }
 
-    fn configure_program_runtime_environments_inner(
-        &self,
-        global_program_cache: &mut ProgramCache<FG>,
-        program_runtime_environment_v1: Option<ProgramRuntimeEnvironment>,
-        program_runtime_environment_v2: Option<ProgramRuntimeEnvironment>,
-    ) {
-        let empty_loader = || Arc::new(BuiltinProgram::new_loader(VmConfig::default()));
-
-        global_program_cache.latest_root_slot = self.slot;
-        global_program_cache.latest_root_epoch = self.epoch;
-        global_program_cache.environments.program_runtime_v1 =
-            program_runtime_environment_v1.unwrap_or(empty_loader());
-        global_program_cache.environments.program_runtime_v2 =
-            program_runtime_environment_v2.unwrap_or(empty_loader());
-    }
-
     /// Configures the program runtime environments (loaders) in the
     /// transaction processor's program cache.
     pub fn configure_program_runtime_environments(
-        &self,
+        &mut self,
         program_runtime_environment_v1: Option<ProgramRuntimeEnvironment>,
         program_runtime_environment_v2: Option<ProgramRuntimeEnvironment>,
     ) {
-        self.configure_program_runtime_environments_inner(
-            &mut self.global_program_cache.write().unwrap(),
-            program_runtime_environment_v1,
-            program_runtime_environment_v2,
-        );
+        {
+            let mut global_program_cache = self.global_program_cache.write().unwrap();
+            global_program_cache.latest_root_slot = self.slot;
+            global_program_cache.latest_root_epoch = self.epoch;
+        }
+        let empty_loader = || Arc::new(BuiltinProgram::new_loader(VmConfig::default()));
+        self.environments.program_runtime_v1 =
+            program_runtime_environment_v1.unwrap_or(empty_loader());
+        self.environments.program_runtime_v2 =
+            program_runtime_environment_v2.unwrap_or(empty_loader());
     }
 
     /// Returns the current environments depending on the given epoch
@@ -303,7 +301,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.global_program_cache.try_read().ok().map(|cache| {
             cache
                 .get_upcoming_environments_for_epoch(epoch)
-                .unwrap_or_else(|| cache.environments.clone())
+                .unwrap_or_else(|| self.environments.clone())
         })
     }
 
@@ -759,7 +757,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 // Figure out which program needs to be loaded next.
                 let program_runtime_environments = global_program_cache
                     .get_upcoming_environments_for_epoch(self.epoch)
-                    .unwrap_or_else(|| global_program_cache.environments.clone());
+                    .unwrap_or_else(|| self.environments.clone());
                 let program_to_load = global_program_cache.extract(
                     &mut missing_programs,
                     program_cache_for_tx_batch,
@@ -792,8 +790,15 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 program_cache_for_tx_batch.loaded_missing = true;
                 let mut global_program_cache = self.global_program_cache.write().unwrap();
                 // Submit our last completed loading task.
-                if global_program_cache.finish_cooperative_loading_task(self.slot, key, program)
-                    && limit_to_load_programs
+                let program_runtime_environments = global_program_cache
+                    .get_upcoming_environments_for_epoch(self.epoch)
+                    .unwrap_or_else(|| self.environments.clone());
+                if global_program_cache.finish_cooperative_loading_task(
+                    &program_runtime_environments,
+                    self.slot,
+                    key,
+                    program,
+                ) && limit_to_load_programs
                 {
                     // This branch is taken when there is an error in assigning a program to a
                     // cache slot. It is not possible to mock this error for SVM unit
@@ -1057,10 +1062,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     /// Add a built-in program
     pub fn add_builtin(&self, program_id: Pubkey, builtin: ProgramCacheEntry) {
         self.builtin_program_ids.write().unwrap().insert(program_id);
-        self.global_program_cache
-            .write()
-            .unwrap()
-            .assign_program(program_id, Arc::new(builtin));
+        self.global_program_cache.write().unwrap().assign_program(
+            &self.environments,
+            program_id,
+            Arc::new(builtin),
+        );
     }
 
     #[cfg(feature = "dev-context-only-utils")]
