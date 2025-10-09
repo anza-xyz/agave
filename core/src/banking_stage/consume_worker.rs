@@ -69,7 +69,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     }
 
     pub fn run(self) -> Result<(), ConsumeWorkerError<Tx>> {
-        const STARTING_SLEEP_DURATION: Duration = Duration::from_micros(1);
+        const STARTING_SLEEP_DURATION: Duration = Duration::from_micros(250);
 
         let mut did_work = false;
         let mut last_empty_time = Instant::now();
