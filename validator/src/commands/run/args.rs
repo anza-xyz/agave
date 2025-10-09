@@ -1713,7 +1713,7 @@ mod tests {
                 known_validators,
                 socket_addr_space: SocketAddrSpace::Global,
                 rpc_bootstrap_config: RpcBootstrapConfig::default(),
-                blockstore_options: BlockstoreOptions::default(),
+                blockstore_options: BlockstoreOptions::default_for_tests(),
                 json_rpc_config: JsonRpcConfig {
                     health_check_slot_distance: 128,
                     max_multiple_accounts: Some(100),

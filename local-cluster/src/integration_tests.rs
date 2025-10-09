@@ -103,10 +103,8 @@ pub fn open_blockstore(ledger_path: &Path) -> Blockstore {
     Blockstore::open_with_options(
         ledger_path,
         BlockstoreOptions {
-            access_type: AccessType::Primary,
-            recovery_mode: None,
             enforce_ulimit_nofile: true,
-            ..BlockstoreOptions::default()
+            ..BlockstoreOptions::default_for_tests()
         },
     )
     // Fall back on Secondary if Primary fails; Primary will fail if
@@ -116,9 +114,8 @@ pub fn open_blockstore(ledger_path: &Path) -> Blockstore {
             ledger_path,
             BlockstoreOptions {
                 access_type: AccessType::Secondary,
-                recovery_mode: None,
                 enforce_ulimit_nofile: true,
-                ..BlockstoreOptions::default()
+                ..BlockstoreOptions::default_for_tests()
             },
         )
         .unwrap_or_else(|e| {

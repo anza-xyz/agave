@@ -1301,7 +1301,7 @@ pub mod tests {
     #[test]
     fn test_cf_names_and_descriptors_equal_length() {
         let path = PathBuf::default();
-        let options = BlockstoreOptions::default();
+        let options = BlockstoreOptions::default_for_tests();
         let oldest_slot = OldestSlot::default();
         // The names and descriptors don't need to be in the same order for our use cases;
         // however, there should be the same number of each. For example, adding a new column
@@ -1342,11 +1342,7 @@ pub mod tests {
 
         // Open with Primary to create the new database
         {
-            let options = BlockstoreOptions {
-                access_type: AccessType::Primary,
-                enforce_ulimit_nofile: false,
-                ..BlockstoreOptions::default()
-            };
+            let options = BlockstoreOptions::default_for_tests();
             let mut rocks = Rocks::open(db_path.to_path_buf(), options).unwrap();
 
             // Introduce a new column that will not be known
@@ -1361,17 +1357,12 @@ pub mod tests {
         {
             let options = BlockstoreOptions {
                 access_type: AccessType::Secondary,
-                enforce_ulimit_nofile: false,
-                ..BlockstoreOptions::default()
+                ..BlockstoreOptions::default_for_tests()
             };
             let _ = Rocks::open(db_path.to_path_buf(), options).unwrap();
         }
         {
-            let options = BlockstoreOptions {
-                access_type: AccessType::Primary,
-                enforce_ulimit_nofile: false,
-                ..BlockstoreOptions::default()
-            };
+            let options = BlockstoreOptions::default_for_tests();
             let _ = Rocks::open(db_path.to_path_buf(), options).unwrap();
         }
     }
@@ -1389,12 +1380,7 @@ pub mod tests {
 
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path();
-
-        let options = BlockstoreOptions {
-            access_type: AccessType::Primary,
-            enforce_ulimit_nofile: false,
-            ..BlockstoreOptions::default()
-        };
+        let options = BlockstoreOptions::default_for_tests();
 
         // Create a new database
         {

@@ -16,7 +16,10 @@ use {
     solana_ledger::{
         bank_forks_utils::{self, BankForksUtilsError},
         blockstore::{Blockstore, BlockstoreError},
-        blockstore_options::{AccessType, BlockstoreOptions, BlockstoreRecoveryMode},
+        blockstore_db::{default_num_compaction_threads, default_num_flush_threads},
+        blockstore_options::{
+            AccessType, BlockstoreOptions, BlockstoreRecoveryMode, LedgerColumnOptions,
+        },
         blockstore_processor::{
             self, BlockstoreProcessorError, ProcessOptions, TransactionStatusSender,
         },
@@ -218,10 +221,7 @@ pub fn load_and_process_ledger(
             );
             Blockstore::open_with_options(
                 blockstore.ledger_path(),
-                BlockstoreOptions {
-                    access_type: AccessType::PrimaryForMaintenance,
-                    ..BlockstoreOptions::default()
-                },
+                parse_blockstore_options(arg_matches, AccessType::PrimaryForMaintenance),
             )
             // Couldn't get Primary access, error out to be defensive.
             .map_err(LoadAndProcessLedgerError::CustomAccountsPathUnsupported)?;
@@ -432,21 +432,10 @@ pub fn open_blockstore(
     matches: &ArgMatches,
     access_type: AccessType,
 ) -> Blockstore {
-    let wal_recovery_mode = matches
-        .value_of("wal_recovery_mode")
-        .map(BlockstoreRecoveryMode::from);
+    let blockstore_options = parse_blockstore_options(matches, access_type);
     let force_update_to_open = matches.is_present("force_update_to_open");
-    let enforce_ulimit_nofile = !matches.is_present("ignore_ulimit_nofile_error");
 
-    match Blockstore::open_with_options(
-        ledger_path,
-        BlockstoreOptions {
-            access_type: access_type.clone(),
-            recovery_mode: wal_recovery_mode.clone(),
-            enforce_ulimit_nofile,
-            ..BlockstoreOptions::default()
-        },
-    ) {
+    match Blockstore::open_with_options(ledger_path, blockstore_options.clone()) {
         Ok(blockstore) => blockstore,
         Err(BlockstoreError::RocksDb(err)) => {
             // Missing essential file, indicative of blockstore not existing
@@ -460,7 +449,7 @@ pub fn open_blockstore(
             // The blockstore settings with Primary access can resolve the
             // above issues automatically, so only emit the help messages
             // if access type is Secondary
-            let is_secondary = access_type == AccessType::Secondary;
+            let is_secondary = blockstore_options.access_type == AccessType::Secondary;
 
             if missing_blockstore && is_secondary {
                 eprintln!(
@@ -480,18 +469,14 @@ pub fn open_blockstore(
                 eprintln!("Use --force-update-to-open flag to attempt to update the blockstore");
                 exit(1);
             }
-            open_blockstore_with_temporary_primary_access(
-                ledger_path,
-                access_type,
-                wal_recovery_mode,
-            )
-            .unwrap_or_else(|err| {
-                eprintln!(
+            open_blockstore_with_temporary_primary_access(ledger_path, blockstore_options)
+                .unwrap_or_else(|err| {
+                    eprintln!(
                     "Failed to open blockstore (with --force-update-to-open) at {ledger_path:?}: \
                      {err:?}"
                 );
-                exit(1);
-            })
+                    exit(1);
+                })
         }
         Err(err) => {
             eprintln!("Failed to open blockstore at {ledger_path:?}: {err:?}");
@@ -505,8 +490,7 @@ pub fn open_blockstore(
 /// column family(s)). Then, continue opening with `original_access_type`
 fn open_blockstore_with_temporary_primary_access(
     ledger_path: &Path,
-    original_access_type: AccessType,
-    wal_recovery_mode: Option<BlockstoreRecoveryMode>,
+    blockstore_options: BlockstoreOptions,
 ) -> Result<Blockstore, BlockstoreError> {
     // Open with Primary will allow any configuration that automatically
     // updates to take effect
@@ -516,25 +500,35 @@ fn open_blockstore_with_temporary_primary_access(
             ledger_path,
             BlockstoreOptions {
                 access_type: AccessType::PrimaryForMaintenance,
-                recovery_mode: wal_recovery_mode.clone(),
-                enforce_ulimit_nofile: true,
-                ..BlockstoreOptions::default()
+                ..blockstore_options.clone()
             },
         )?;
     }
-    // Now, attempt to open the blockstore with original AccessType
+    // Now, attempt to open the blockstore with original options (and AccessType)
     info!(
-        "Blockstore forced open succeeded, retrying with original access: {original_access_type:?}"
+        "Blockstore forced open succeeded, retrying with original access: {:?}",
+        blockstore_options.access_type
     );
-    Blockstore::open_with_options(
-        ledger_path,
-        BlockstoreOptions {
-            access_type: original_access_type,
-            recovery_mode: wal_recovery_mode,
-            enforce_ulimit_nofile: true,
-            ..BlockstoreOptions::default()
-        },
-    )
+    Blockstore::open_with_options(ledger_path, blockstore_options)
+}
+
+pub fn parse_blockstore_options(
+    matches: &ArgMatches,
+    access_type: AccessType,
+) -> BlockstoreOptions {
+    let recovery_mode = matches
+        .value_of("wal_recovery_mode")
+        .map(BlockstoreRecoveryMode::from);
+    let enforce_ulimit_nofile = !matches.is_present("ignore_ulimit_nofile_error");
+
+    BlockstoreOptions {
+        access_type,
+        recovery_mode,
+        enforce_ulimit_nofile,
+        column_options: LedgerColumnOptions::default(),
+        num_rocksdb_compaction_threads: default_num_compaction_threads(),
+        num_rocksdb_flush_threads: default_num_flush_threads(),
+    }
 }
 
 pub fn open_genesis_config_by(ledger_path: &Path, matches: &ArgMatches<'_>) -> GenesisConfig {

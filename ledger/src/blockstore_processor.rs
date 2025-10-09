@@ -2425,7 +2425,7 @@ pub mod tests {
                     blockstore.ledger_path(),
                     BlockstoreOptions {
                         access_type,
-                        ..BlockstoreOptions::default()
+                        ..BlockstoreOptions::default_for_tests()
                     },
                 )
                 .expect("Unable to open access to blockstore");

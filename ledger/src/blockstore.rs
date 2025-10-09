@@ -11,7 +11,7 @@ use {
         blockstore_db::{IteratorDirection, IteratorMode, LedgerColumn, Rocks, WriteBatch},
         blockstore_meta::*,
         blockstore_options::{
-            BlockstoreOptions, LedgerColumnOptions, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL,
+            AccessType, BlockstoreOptions, LedgerColumnOptions, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL,
         },
         blockstore_processor::BlockstoreProcessorError,
         leader_schedule_cache::LeaderScheduleCache,
@@ -71,6 +71,7 @@ use {
         fmt::Write,
         fs::{self, File},
         io::{Error as IoError, ErrorKind},
+        num::NonZeroUsize,
         ops::{Bound, Range},
         path::{Path, PathBuf},
         rc::Rc,
@@ -4810,9 +4811,14 @@ pub fn create_new_ledger(
     let blockstore = Blockstore::open_with_options(
         ledger_path,
         BlockstoreOptions {
+            access_type: AccessType::Primary,
+            recovery_mode: None,
             enforce_ulimit_nofile: false,
             column_options: column_options.clone(),
-            ..BlockstoreOptions::default()
+            // Not much parallelization required to insert a single slot of
+            // shreds so minimal threads will be sufficient
+            num_rocksdb_compaction_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
+            num_rocksdb_flush_threads: NonZeroUsize::new(2).expect("2 is non-zero"),
         },
     )?;
     let ticks_per_slot = genesis_config.ticks_per_slot;
@@ -5869,8 +5875,7 @@ pub mod tests {
     #[test]
     fn test_data_set_completed_on_insert() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let BlockstoreSignals { blockstore, .. } =
-            Blockstore::open_with_signal(ledger_path.path(), BlockstoreOptions::default()).unwrap();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         // Create enough entries to fill 2 shreds, only the later one is data complete
         let slot = 0;
@@ -5907,7 +5912,11 @@ pub mod tests {
             blockstore,
             ledger_signal_receiver: recvr,
             ..
-        } = Blockstore::open_with_signal(ledger_path.path(), BlockstoreOptions::default()).unwrap();
+        } = Blockstore::open_with_signal(
+            ledger_path.path(),
+            BlockstoreOptions::default_for_tests(),
+        )
+        .unwrap();
 
         let entries_per_slot = 50;
         // Create entries for slot 0
@@ -5988,7 +5997,11 @@ pub mod tests {
             blockstore,
             completed_slots_receiver: recvr,
             ..
-        } = Blockstore::open_with_signal(ledger_path.path(), BlockstoreOptions::default()).unwrap();
+        } = Blockstore::open_with_signal(
+            ledger_path.path(),
+            BlockstoreOptions::default_for_tests(),
+        )
+        .unwrap();
 
         let entries_per_slot = 10;
 
@@ -6013,7 +6026,11 @@ pub mod tests {
             blockstore,
             completed_slots_receiver: recvr,
             ..
-        } = Blockstore::open_with_signal(ledger_path.path(), BlockstoreOptions::default()).unwrap();
+        } = Blockstore::open_with_signal(
+            ledger_path.path(),
+            BlockstoreOptions::default_for_tests(),
+        )
+        .unwrap();
 
         let entries_per_slot = 10;
         let slots = [2, 5, 10];
@@ -6058,7 +6075,11 @@ pub mod tests {
             blockstore,
             completed_slots_receiver: recvr,
             ..
-        } = Blockstore::open_with_signal(ledger_path.path(), BlockstoreOptions::default()).unwrap();
+        } = Blockstore::open_with_signal(
+            ledger_path.path(),
+            BlockstoreOptions::default_for_tests(),
+        )
+        .unwrap();
 
         let entries_per_slot = 10;
         let mut slots = vec![2, 5, 10];

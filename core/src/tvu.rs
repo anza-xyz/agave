@@ -513,7 +513,7 @@ pub mod tests {
             blockstore,
             ledger_signal_receiver,
             ..
-        } = Blockstore::open_with_signal(&blockstore_path, BlockstoreOptions::default())
+        } = Blockstore::open_with_signal(&blockstore_path, BlockstoreOptions::default_for_tests())
             .expect("Expected to successfully open ledger");
         let blockstore = Arc::new(blockstore);
         let bank = bank_forks.read().unwrap().working_bank();
