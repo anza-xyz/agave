@@ -1535,7 +1535,7 @@ impl Bank {
                         .global_program_cache
                         .write()
                         .unwrap();
-                    program_cache.assign_program(key, recompiled);
+                    program_cache.assign_program(&upcoming_environments, key, recompiled);
                 }
             }
         } else if self.epoch != epoch_boundary_preparation.latest_root_epoch
@@ -1545,7 +1545,7 @@ impl Bank {
             // so we can try to recompile loaded programs before the feature transition hits.
             let (program_runtime_environment_v1, program_runtime_environment_v2) =
                 self.create_program_runtime_environments(&upcoming_feature_set);
-            let mut upcoming_environments = program_cache.environments.clone();
+            let mut upcoming_environments = self.transaction_processor.environments.clone();
             let changed_program_runtime_v1 =
                 *upcoming_environments.program_runtime_v1 != *program_runtime_environment_v1;
             let changed_program_runtime_v2 =
@@ -3268,12 +3268,11 @@ impl Bank {
             feature_set: self.feature_set.runtime_features(),
             program_runtime_environments_for_execution: self
                 .transaction_processor
-                .get_environments_for_epoch(self.epoch)
-                .unwrap(),
+                .environments
+                .clone(),
             program_runtime_environments_for_deployment: self
                 .transaction_processor
-                .get_environments_for_epoch(effective_epoch_of_deployments)
-                .unwrap(),
+                .get_environments_for_epoch(effective_epoch_of_deployments),
             rent: self.rent_collector.rent.clone(),
         };
 
@@ -3622,7 +3621,10 @@ impl Bank {
                                     .write()
                                     .unwrap()
                             })
-                            .merge(programs_modified_by_tx);
+                            .merge(
+                                &self.transaction_processor.environments,
+                                programs_modified_by_tx,
+                            );
                     }
                 }
             }
@@ -5935,7 +5937,7 @@ impl Bank {
     ) -> Option<Arc<ProgramCacheEntry>> {
         let environments = self
             .transaction_processor
-            .get_environments_for_epoch(effective_epoch)?;
+            .get_environments_for_epoch(effective_epoch);
         load_program_with_pubkey(
             self,
             &environments,

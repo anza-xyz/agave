@@ -68,9 +68,8 @@ fn program_cache_execution(threads: usize) {
                     0,
                 );
                 let mut result = ProgramCacheForTxBatch::new(processor.slot);
-                let program_runtime_environments_for_execution = processor
-                    .get_environments_for_epoch(processor.epoch)
-                    .unwrap();
+                let program_runtime_environments_for_execution =
+                    processor.get_environments_for_epoch(processor.epoch);
                 processor.replenish_program_cache(
                     &account_loader,
                     &maps,

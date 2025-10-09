@@ -137,8 +137,7 @@ impl Bank {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
         let program_runtime_environments = self
             .transaction_processor
-            .get_environments_for_epoch(self.epoch)
-            .unwrap();
+            .get_environments_for_epoch(self.epoch);
 
         // Configure a dummy `InvokeContext` from the runtime's current
         // environment, as well as the two `ProgramCacheForTxBatch`
@@ -202,7 +201,10 @@ impl Bank {
             .global_program_cache
             .write()
             .unwrap()
-            .merge(&program_cache_for_tx_batch.drain_modified_entries());
+            .merge(
+                &self.transaction_processor.environments,
+                &program_cache_for_tx_batch.drain_modified_entries(),
+            );
 
         Ok(())
     }

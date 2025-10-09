@@ -159,11 +159,9 @@ impl SvmTestEnvironment<'_> {
             feature_set: test_entry.feature_set,
             blockhash_lamports_per_signature: LAMPORTS_PER_SIGNATURE,
             program_runtime_environments_for_execution: batch_processor
-                .get_environments_for_epoch(EXECUTION_EPOCH)
-                .unwrap(),
+                .get_environments_for_epoch(EXECUTION_EPOCH),
             program_runtime_environments_for_deployment: batch_processor
-                .get_environments_for_epoch(EXECUTION_EPOCH)
-                .unwrap(),
+                .get_environments_for_epoch(EXECUTION_EPOCH),
             ..TransactionProcessingEnvironment::default()
         };
 
@@ -312,7 +310,7 @@ impl SvmTestEnvironment<'_> {
                         .global_program_cache
                         .write()
                         .unwrap()
-                        .merge(programs_modified_by_tx);
+                        .merge(&self.batch_processor.environments, programs_modified_by_tx);
                 }
             }
         }
