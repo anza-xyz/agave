@@ -55,6 +55,8 @@ pub struct VoteAccountsCopyStats {
     remove_copies: AtomicU64,
     add_stake_copies: AtomicU64,
     sub_stake_copies: AtomicU64,
+    add_node_stake_copies: AtomicU64,
+    sub_node_stake_copies: AtomicU64,
     last_report: Mutex<Instant>,
 }
 
@@ -65,6 +67,8 @@ impl Default for VoteAccountsCopyStats {
             remove_copies: AtomicU64::new(0),
             add_stake_copies: AtomicU64::new(0),
             sub_stake_copies: AtomicU64::new(0),
+            add_node_stake_copies: AtomicU64::new(0),
+            sub_node_stake_copies: AtomicU64::new(0),
             last_report: Mutex::new(Instant::now()),
         }
     }
@@ -85,16 +89,26 @@ impl VoteAccountsCopyStats {
         let remove_copies = self.remove_copies.swap(0, AtomicOrdering::Relaxed);
         let add_stake_copies = self.add_stake_copies.swap(0, AtomicOrdering::Relaxed);
         let sub_stake_copies = self.sub_stake_copies.swap(0, AtomicOrdering::Relaxed);
+        let add_node_stake_copies = self.add_node_stake_copies.swap(0, AtomicOrdering::Relaxed);
+        let sub_node_stake_copies = self.sub_node_stake_copies.swap(0, AtomicOrdering::Relaxed);
 
-        if insert_copies > 0 || remove_copies > 0 || add_stake_copies > 0 || sub_stake_copies > 0 {
+        let total_vote_accounts_copies =
+            insert_copies + remove_copies + add_stake_copies + sub_stake_copies;
+        let total_staked_nodes_copies = add_node_stake_copies + sub_node_stake_copies;
+
+        if total_vote_accounts_copies > 0 || total_staked_nodes_copies > 0 {
             datapoint_info!(
                 "vote_accounts_copy_on_write",
                 ("insert_copies", insert_copies, i64),
                 ("remove_copies", remove_copies, i64),
                 ("add_stake_copies", add_stake_copies, i64),
                 ("sub_stake_copies", sub_stake_copies, i64),
+                ("add_node_stake_copies", add_node_stake_copies, i64),
+                ("sub_node_stake_copies", sub_node_stake_copies, i64),
+                ("total_vote_accounts_copies", total_vote_accounts_copies, i64),
+                ("total_staked_nodes_copies", total_staked_nodes_copies, i64),
                 ("total_copies",
-                    insert_copies + remove_copies + add_stake_copies + sub_stake_copies,
+                    total_vote_accounts_copies + total_staked_nodes_copies,
                     i64
                 ),
             );
@@ -272,8 +286,8 @@ impl VoteAccounts {
                     if new_node_pubkey != old_node_pubkey {
                         // The node keys have changed, we move the stake from the old node to the
                         // new one
-                        Self::do_sub_node_stake(staked_nodes, *stake, old_node_pubkey);
-                        Self::do_add_node_stake(staked_nodes, *stake, *new_node_pubkey);
+                        Self::do_sub_node_stake(staked_nodes, *stake, old_node_pubkey, &self.copy_stats);
+                        Self::do_add_node_stake(staked_nodes, *stake, *new_node_pubkey, &self.copy_stats);
                     }
                 }
 
@@ -284,7 +298,7 @@ impl VoteAccounts {
                 // This is a new vote account. We don't know the stake yet, so we need to compute it.
                 let (stake, vote_account) = entry.insert((calculate_stake(), new_vote_account));
                 if let Some(staked_nodes) = self.staked_nodes.get_mut() {
-                    Self::do_add_node_stake(staked_nodes, *stake, *vote_account.node_pubkey());
+                    Self::do_add_node_stake(staked_nodes, *stake, *vote_account.node_pubkey(), &self.copy_stats);
                 }
                 None
             }
@@ -340,18 +354,29 @@ impl VoteAccounts {
             return;
         };
 
-        VoteAccounts::do_add_node_stake(staked_nodes, stake, *vote_account.node_pubkey());
+        VoteAccounts::do_add_node_stake(
+            staked_nodes,
+            stake,
+            *vote_account.node_pubkey(),
+            &self.copy_stats,
+        );
     }
 
     fn do_add_node_stake(
         staked_nodes: &mut Arc<HashMap<Pubkey, u64>>,
         stake: u64,
         node_pubkey: Pubkey,
+        copy_stats: &VoteAccountsCopyStats,
     ) {
         if stake == 0u64 {
             return;
         }
 
+        if Arc::strong_count(staked_nodes) > 1 {
+            copy_stats
+                .add_node_stake_copies
+                .fetch_add(1, AtomicOrdering::Relaxed);
+        }
         Arc::make_mut(staked_nodes)
             .entry(node_pubkey)
             .and_modify(|s| *s += stake)
@@ -363,18 +388,29 @@ impl VoteAccounts {
             return;
         };
 
-        VoteAccounts::do_sub_node_stake(staked_nodes, stake, vote_account.node_pubkey());
+        VoteAccounts::do_sub_node_stake(
+            staked_nodes,
+            stake,
+            vote_account.node_pubkey(),
+            &self.copy_stats,
+        );
     }
 
     fn do_sub_node_stake(
         staked_nodes: &mut Arc<HashMap<Pubkey, u64>>,
         stake: u64,
         node_pubkey: &Pubkey,
+        copy_stats: &VoteAccountsCopyStats,
     ) {
         if stake == 0u64 {
             return;
         }
 
+        if Arc::strong_count(staked_nodes) > 1 {
+            copy_stats
+                .sub_node_stake_copies
+                .fetch_add(1, AtomicOrdering::Relaxed);
+        }
         let staked_nodes = Arc::make_mut(staked_nodes);
         let current_stake = staked_nodes
             .get_mut(node_pubkey)
@@ -978,5 +1014,50 @@ mod tests {
                 .load(AtomicOrdering::Relaxed),
             1
         );
+    }
+
+    #[test]
+    fn test_vote_accounts_staked_nodes_copy_stats() {
+        use std::sync::atomic::Ordering as AtomicOrdering;
+
+        let stats = VoteAccountsCopyStats::default();
+
+        // Initially, no copies
+        assert_eq!(
+            stats.add_node_stake_copies.load(AtomicOrdering::Relaxed),
+            0
+        );
+        assert_eq!(
+            stats.sub_node_stake_copies.load(AtomicOrdering::Relaxed),
+            0
+        );
+
+        // Simulate a copy on add
+        stats
+            .add_node_stake_copies
+            .fetch_add(1, AtomicOrdering::Relaxed);
+        assert_eq!(
+            stats.add_node_stake_copies.load(AtomicOrdering::Relaxed),
+            1
+        );
+
+        // Simulate a copy on sub
+        stats
+            .sub_node_stake_copies
+            .fetch_add(1, AtomicOrdering::Relaxed);
+        assert_eq!(
+            stats.sub_node_stake_copies.load(AtomicOrdering::Relaxed),
+            1
+        );
+
+        // Verify that stats are shared across VoteAccounts instances through Arc
+        let vote_accounts1 = VoteAccounts::default();
+        let vote_accounts2 = vote_accounts1.clone();
+
+        // Both should share the same copy_stats Arc
+        assert!(Arc::ptr_eq(
+            &vote_accounts1.copy_stats,
+            &vote_accounts2.copy_stats
+        ));
     }
 }
