@@ -528,7 +528,7 @@ impl PubsubClient {
                     elapsed_pings += 1;
 
                     if elapsed_pings > DEFAULT_MAX_FAILED_PINGS {
-                        info!("No pong received after {} pings. Closing connection...", DEFAULT_MAX_FAILED_PINGS);
+                        info!("No pong received after {DEFAULT_MAX_FAILED_PINGS} pings. Closing connection...");
                         ws.close(Some(CloseFrame {
                             code: CloseCode::Normal,
                             reason: "No pong received".into(),
