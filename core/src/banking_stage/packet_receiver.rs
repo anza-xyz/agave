@@ -110,7 +110,6 @@ impl PacketReceiver {
             .flat_map(|banking_batch| banking_batch.iter())
             .filter_map(|pkt| {
                 match SanitizedTransactionView::try_new_sanitized(
-                    // TODO: Review how scheduler re-uses SharedBytes.pkt.data(..)?.to_vec()
                     Arc::new(pkt.data(..)?.to_vec()),
                     // NB: It's safe to always pass false in here as simple vote
                     // transactions are guaranteed to be a single instruction.
