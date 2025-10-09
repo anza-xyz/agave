@@ -186,18 +186,17 @@ pub fn deploy_program(
 #[macro_export]
 macro_rules! deploy_program {
     ($invoke_context:expr, $program_id:expr, $loader_key:expr, $account_size:expr, $programdata:expr, $deployment_slot:expr $(,)?) => {
-        let environments = $invoke_context
-            .get_environments_for_slot($deployment_slot.saturating_add(
-                solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
-            ))
-            .map_err(|_err| {
-                // This will never fail since the epoch schedule is already configured.
-                InstructionError::ProgramEnvironmentSetupFailure
-            })?;
+        assert_eq!(
+            $deployment_slot,
+            $invoke_context.program_cache_for_tx_batch.slot()
+        );
         let load_program_metrics = $crate::deploy_program(
             $invoke_context.get_log_collector(),
             $invoke_context.program_cache_for_tx_batch,
-            environments.program_runtime_v1.clone(),
+            $invoke_context
+                .get_program_runtime_environments_for_deployment()
+                .program_runtime_v1
+                .clone(),
             $program_id,
             $loader_key,
             $account_size,
