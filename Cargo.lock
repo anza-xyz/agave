@@ -11054,42 +11054,6 @@ name = "solana-svm-feature-set"
 version = "3.1.0"
 
 [[package]]
-name = "solana-svm-fuzz-harness"
-version = "3.1.0"
-dependencies = [
- "agave-feature-set",
- "agave-precompiles",
- "agave-syscalls",
- "bincode",
- "clap 4.5.31",
- "prost",
- "prost-build",
- "solana-account",
- "solana-builtins",
- "solana-clock",
- "solana-compute-budget",
- "solana-epoch-schedule",
- "solana-hash",
- "solana-instruction",
- "solana-instruction-error",
- "solana-last-restart-slot",
- "solana-logger",
- "solana-precompile-error",
- "solana-program-runtime",
- "solana-pubkey",
- "solana-rent",
- "solana-sdk-ids",
- "solana-stable-layout",
- "solana-svm",
- "solana-svm-callback",
- "solana-svm-log-collector",
- "solana-svm-timings",
- "solana-sysvar-id",
- "solana-transaction-context",
- "thiserror 2.0.17",
-]
-
-[[package]]
 name = "solana-svm-log-collector"
 version = "3.1.0"
 dependencies = [
