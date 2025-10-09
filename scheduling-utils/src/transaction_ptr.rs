@@ -31,7 +31,11 @@ impl TransactionPtr {
     }
 
     /// Translate the ptr type into a sharable region.
-    pub fn to_sharable_transaction_region(
+    ///
+    /// # Safety
+    /// - `allocator` must be the allocator owning the memory region pointed
+    ///   to by `self`.
+    pub unsafe fn to_sharable_transaction_region(
         &self,
         allocator: &Allocator,
     ) -> SharableTransactionRegion {
