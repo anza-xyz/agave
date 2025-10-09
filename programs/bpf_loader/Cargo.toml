@@ -19,6 +19,11 @@ name = "solana_bpf_loader_program"
 [features]
 default = ["metrics"]
 metrics = ["solana-program-runtime/metrics"]
+sbpf-debugger = [
+    "sbpf-interpreter-mode",
+    "solana-sbpf/debugger",
+]
+sbpf-interpreter-mode = []
 shuttle-test = [
     "solana-program-runtime/shuttle-test",
     "solana-sbpf/shuttle-test",

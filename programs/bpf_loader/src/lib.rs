@@ -1455,9 +1455,17 @@ fn execute<'a, 'b: 'a>(
     let program_id = *instruction_context.get_program_key()?;
     let is_loader_deprecated =
         instruction_context.get_program_owner()? == bpf_loader_deprecated::id();
-    #[cfg(any(target_os = "windows", not(target_arch = "x86_64")))]
+    #[cfg(any(
+        target_os = "windows",
+        not(target_arch = "x86_64"),
+        feature = "sbpf-interpreter-mode"
+    ))]
     let use_jit = false;
-    #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
+    #[cfg(all(
+        not(target_os = "windows"),
+        target_arch = "x86_64",
+        not(feature = "sbpf-interpreter-mode")
+    ))]
     let use_jit = executable.get_compiled_program().is_some();
     let stricter_abi_and_runtime_constraints = invoke_context
         .get_feature_set()
