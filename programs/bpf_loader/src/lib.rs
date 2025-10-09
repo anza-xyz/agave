@@ -1681,7 +1681,6 @@ mod test_utils {
     use {
         super::*, agave_syscalls::create_program_runtime_environment_v1,
         solana_account::ReadableAccount, solana_loader_v4_interface::state::LoaderV4State,
-        solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
         solana_sdk_ids::loader_v4,
     };
 
@@ -1737,9 +1736,6 @@ mod test_utils {
                     program_runtime_environment.clone(),
                     false,
                 ) {
-                    invoke_context
-                        .program_cache_for_tx_batch
-                        .set_slot_for_tests(DELAY_VISIBILITY_SLOT_OFFSET);
                     invoke_context
                         .program_cache_for_tx_batch
                         .store_modified_entry(*pubkey, Arc::new(loaded_program));
@@ -1819,13 +1815,17 @@ mod tests {
             is_signer: false,
             is_writable: false,
         };
+        let clock_account = create_account_for_test(&Clock {
+            slot: 1,
+            ..Clock::default()
+        });
 
         // Case: No program account
         process_instruction(
             &loader_id,
             None,
             &[],
-            Vec::new(),
+            vec![(sysvar::clock::id(), clock_account.clone())],
             Vec::new(),
             Err(InstructionError::UnsupportedProgramId),
         );
@@ -1835,7 +1835,10 @@ mod tests {
             &loader_id,
             Some(0),
             &[],
-            vec![(program_id, program_account.clone())],
+            vec![
+                (program_id, program_account.clone()),
+                (sysvar::clock::id(), clock_account.clone()),
+            ],
             Vec::new(),
             Ok(()),
         );
@@ -1848,6 +1851,7 @@ mod tests {
             vec![
                 (program_id, program_account.clone()),
                 (parameter_id, parameter_account.clone()),
+                (sysvar::clock::id(), clock_account.clone()),
             ],
             vec![parameter_meta.clone()],
             Ok(()),
@@ -1861,6 +1865,7 @@ mod tests {
             vec![
                 (program_id, program_account.clone()),
                 (parameter_id, parameter_account.clone()),
+                (sysvar::clock::id(), clock_account.clone()),
             ],
             vec![parameter_meta.clone(), parameter_meta],
             Ok(()),
@@ -1871,7 +1876,10 @@ mod tests {
             &loader_id,
             Some(0),
             &[],
-            vec![(program_id, program_account)],
+            vec![
+                (program_id, program_account),
+                (sysvar::clock::id(), clock_account.clone()),
+            ],
             Vec::new(),
             Err(InstructionError::ProgramFailedToComplete),
             Entrypoint::vm,
@@ -1887,7 +1895,10 @@ mod tests {
             &loader_id,
             Some(0),
             &[],
-            vec![(program_id, parameter_account.clone())],
+            vec![
+                (program_id, parameter_account.clone()),
+                (sysvar::clock::id(), clock_account.clone()),
+            ],
             Vec::new(),
             Err(InstructionError::UnsupportedProgramId),
             Entrypoint::vm,
@@ -1900,7 +1911,10 @@ mod tests {
             &loader_id,
             Some(0),
             &[],
-            vec![(program_id, parameter_account)],
+            vec![
+                (program_id, parameter_account),
+                (sysvar::clock::id(), clock_account),
+            ],
             Vec::new(),
             Err(InstructionError::UnsupportedProgramId),
         );
@@ -1919,6 +1933,10 @@ mod tests {
             is_signer: false,
             is_writable: false,
         };
+        let clock_account = create_account_for_test(&Clock {
+            slot: 1,
+            ..Clock::default()
+        });
 
         // Case: With program and parameter account
         process_instruction(
@@ -1928,6 +1946,7 @@ mod tests {
             vec![
                 (program_id, program_account.clone()),
                 (parameter_id, parameter_account.clone()),
+                (sysvar::clock::id(), clock_account.clone()),
             ],
             vec![parameter_meta.clone()],
             Ok(()),
@@ -1941,6 +1960,7 @@ mod tests {
             vec![
                 (program_id, program_account),
                 (parameter_id, parameter_account),
+                (sysvar::clock::id(), clock_account),
             ],
             vec![parameter_meta.clone(), parameter_meta],
             Ok(()),
@@ -1960,6 +1980,10 @@ mod tests {
             is_signer: false,
             is_writable: false,
         };
+        let clock_account = create_account_for_test(&Clock {
+            slot: 1,
+            ..Clock::default()
+        });
 
         // Case: With program and parameter account
         process_instruction(
@@ -1969,6 +1993,7 @@ mod tests {
             vec![
                 (program_id, program_account.clone()),
                 (parameter_id, parameter_account.clone()),
+                (sysvar::clock::id(), clock_account.clone()),
             ],
             vec![parameter_meta.clone()],
             Ok(()),
@@ -1982,6 +2007,7 @@ mod tests {
             vec![
                 (program_id, program_account),
                 (parameter_id, parameter_account),
+                (sysvar::clock::id(), clock_account),
             ],
             vec![parameter_meta.clone(), parameter_meta],
             Ok(()),
@@ -3978,6 +4004,9 @@ mod tests {
         invoke_context
             .program_cache_for_tx_batch
             .replenish(program_id, Arc::new(program));
+        invoke_context
+            .program_cache_for_tx_batch
+            .set_slot_for_tests(2);
 
         assert_matches!(
             deploy_test_program(&mut invoke_context, program_id,),
@@ -4017,6 +4046,9 @@ mod tests {
         invoke_context
             .program_cache_for_tx_batch
             .replenish(program_id, Arc::new(program));
+        invoke_context
+            .program_cache_for_tx_batch
+            .set_slot_for_tests(2);
 
         let program_id2 = Pubkey::new_unique();
         assert_matches!(
