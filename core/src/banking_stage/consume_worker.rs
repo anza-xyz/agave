@@ -71,15 +71,14 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     pub fn run(self) -> Result<(), ConsumeWorkerError<Tx>> {
         const STARTING_SLEEP_DURATION: Duration = Duration::from_micros(1);
 
-        let mut last_work_time = Instant::now();
+        let mut did_work = false;
+        let mut last_empty_time = Instant::now();
         let mut sleep_duration = STARTING_SLEEP_DURATION;
 
         while !self.exit.load(Ordering::Relaxed) {
-            let now = Instant::now();
             match self.consume_receiver.try_recv() {
                 Ok(work) => {
-                    last_work_time = now;
-                    sleep_duration = STARTING_SLEEP_DURATION;
+                    did_work = true;
                     match self.consume(work)? {
                         ProcessingStatus::Processed => {}
                         ProcessingStatus::CouldNotProcess(work) => {
@@ -88,7 +87,13 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
                     }
                 }
                 Err(TryRecvError::Empty) => {
-                    let idle_duration = now.duration_since(last_work_time);
+                    let now = Instant::now();
+
+                    if did_work {
+                        last_empty_time = now;
+                    }
+                    did_work = false;
+                    let idle_duration = now.duration_since(last_empty_time);
                     backoff(idle_duration, &mut sleep_duration);
                 }
                 Err(TryRecvError::Disconnected) => {
