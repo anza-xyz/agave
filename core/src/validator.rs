@@ -669,6 +669,8 @@ impl Validator {
 
         let start_time = Instant::now();
 
+        adjust_ulimit_nofile(config.blockstore_options.enforce_ulimit_nofile)?;
+
         // Initialize the global rayon pool first to ensure the value in config
         // is honored. Otherwise, some code accessing the global pool could
         // cause it to get initialized with Rayon's default (not ours)
@@ -2672,6 +2674,9 @@ pub enum ValidatorError {
     #[error(transparent)]
     TraceError(#[from] TraceError),
 
+    #[error("unable to set open file descriptor limit")]
+    UnableToSetOpenFileDescriptorLimit,
+
     #[error("Wen Restart finished, please continue with --wait-for-supermajority")]
     WenRestartFinished,
 }
@@ -2880,6 +2885,58 @@ pub fn is_snapshot_config_valid(snapshot_config: &SnapshotConfig) -> bool {
             full_snapshot_interval_slots > incremental_snapshot_interval_slots
         }
     }
+}
+
+#[cfg(not(unix))]
+fn adjust_ulimit_nofile(_enforce_ulimit_nofile: bool) -> Result<(), ValidatorError> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn adjust_ulimit_nofile(enforce_ulimit_nofile: bool) -> Result<(), ValidatorError> {
+    // Rocks DB likes to have many open files.  The default open file descriptor limit is
+    // usually not enough
+    // AppendVecs and disk Account Index are also heavy users of mmapped files.
+    // This should be kept in sync with published validator instructions.
+    // https://docs.anza.xyz/operations/guides/validator-start#system-tuning
+    let desired_nofile = 1_000_000;
+
+    fn get_nofile() -> libc::rlimit {
+        let mut nofile = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut nofile) } != 0 {
+            warn!("getrlimit(RLIMIT_NOFILE) failed");
+        }
+        nofile
+    }
+
+    let mut nofile = get_nofile();
+    let current = nofile.rlim_cur;
+    if current < desired_nofile {
+        nofile.rlim_cur = desired_nofile;
+        if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &nofile) } != 0 {
+            error!(
+                "Unable to increase the maximum open file descriptor limit to {} from {}",
+                nofile.rlim_cur, current,
+            );
+
+            if cfg!(target_os = "macos") {
+                error!(
+                    "On mac OS you may need to run |sudo launchctl limit maxfiles \
+                     {desired_nofile} {desired_nofile}| first",
+                );
+            }
+            if enforce_ulimit_nofile {
+                return Err(ValidatorError::UnableToSetOpenFileDescriptorLimit);
+            }
+        }
+
+        nofile = get_nofile();
+    }
+    info!("Maximum open file descriptors: {}", nofile.rlim_cur);
+    Ok(())
 }
 
 #[cfg(test)]
