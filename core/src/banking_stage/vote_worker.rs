@@ -229,11 +229,12 @@ impl VoteWorker {
         let mut reached_end_of_slot = false;
         let mut sanitized_transactions = Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE);
         let mut error_counters: TransactionErrorMetrics = TransactionErrorMetrics::default();
+        let mut vote_packets =
+            ArrayVec::<ImmutableDeserializedPacket, UNPROCESSED_BUFFER_STEP_SIZE>::new();
         for chunk in Itertools::chunks(all_vote_packets.into_iter(), UNPROCESSED_BUFFER_STEP_SIZE)
             .into_iter()
         {
-            let mut vote_packets =
-                ArrayVec::<ImmutableDeserializedPacket, UNPROCESSED_BUFFER_STEP_SIZE>::new();
+            vote_packets.clear();
 
             for packet in chunk.into_iter() {
                 if consume_scan_should_process_packet(
@@ -260,7 +261,7 @@ impl VoteWorker {
                 slot_metrics_tracker,
             ) {
                 self.storage.reinsert_packets(Self::extract_retryable(
-                    vote_packets,
+                    &mut vote_packets,
                     retryable_vote_indices,
                 ));
             } else {
@@ -485,25 +486,22 @@ impl VoteWorker {
     }
 
     fn extract_retryable(
-        vote_packets: ArrayVec<ImmutableDeserializedPacket, 16>,
+        vote_packets: &mut ArrayVec<ImmutableDeserializedPacket, 16>,
         retryable_vote_indices: Vec<usize>,
-    ) -> impl Iterator<Item = ImmutableDeserializedPacket> {
-        let mut prev = 0;
-        debug_assert!(retryable_vote_indices.iter().all(|&index| {
-            let ok = index >= prev;
-            prev = index;
+    ) -> impl Iterator<Item = ImmutableDeserializedPacket> + '_ {
+        debug_assert!(retryable_vote_indices.is_sorted());
+        let mut retryable_vote_indices = retryable_vote_indices.into_iter().peekable();
 
-            ok
-        }));
+        vote_packets
+            .drain(..)
+            .enumerate()
+            .filter_map(move |(i, packet)| {
+                (Some(&i) == retryable_vote_indices.peek()).then(|| {
+                    retryable_vote_indices.next();
 
-        let mut vote_packets = vote_packets.into_iter();
-        let mut offset = 0;
-        retryable_vote_indices.into_iter().map(move |index| {
-            let additional = index - offset;
-            offset += 1 + additional;
-
-            vote_packets.nth(additional).unwrap()
-        })
+                    packet
+                })
+            })
     }
 }
 
@@ -625,7 +623,7 @@ mod tests {
     #[test]
     fn extract_retryable_one_all_retryable() {
         let keypair_a = ValidatorVoteKeypairs::new_rand();
-        let packets = ArrayVec::from_iter([ImmutableDeserializedPacket::new(
+        let mut packets = ArrayVec::from_iter([ImmutableDeserializedPacket::new(
             packet_from_slots(vec![(1, 1)], &keypair_a, None).as_ref(),
         )
         .unwrap()]);
@@ -633,7 +631,7 @@ mod tests {
 
         // Assert - Able to extract exactly one packet.
         let expected = *packets[0].message_hash();
-        let mut extracted = VoteWorker::extract_retryable(packets, retryable_indices);
+        let mut extracted = VoteWorker::extract_retryable(&mut packets, retryable_indices);
         assert_eq!(extracted.next().unwrap().message_hash(), &expected);
         assert!(extracted.next().is_none());
     }
@@ -641,21 +639,21 @@ mod tests {
     #[test]
     fn extract_retryable_one_none_retryable() {
         let keypair_a = ValidatorVoteKeypairs::new_rand();
-        let packets = ArrayVec::from_iter([ImmutableDeserializedPacket::new(
+        let mut packets = ArrayVec::from_iter([ImmutableDeserializedPacket::new(
             packet_from_slots(vec![(1, 1)], &keypair_a, None).as_ref(),
         )
         .unwrap()]);
         let retryable_indices = vec![];
 
         // Assert - Able to extract exactly zero packets.
-        let mut extracted = VoteWorker::extract_retryable(packets, retryable_indices);
+        let mut extracted = VoteWorker::extract_retryable(&mut packets, retryable_indices);
         assert!(extracted.next().is_none());
     }
 
     #[test]
     fn extract_retryable_three_last_retryable() {
         let keypair_a = ValidatorVoteKeypairs::new_rand();
-        let packets = ArrayVec::from_iter(
+        let mut packets = ArrayVec::from_iter(
             [
                 packet_from_slots(vec![(5, 3)], &keypair_a, None).as_ref(),
                 packet_from_slots(vec![(6, 2)], &keypair_a, None).as_ref(),
@@ -668,7 +666,7 @@ mod tests {
 
         // Assert - Able to extract exactly one packet.
         let expected = *packets[2].message_hash();
-        let mut extracted = VoteWorker::extract_retryable(packets, retryable_indices);
+        let mut extracted = VoteWorker::extract_retryable(&mut packets, retryable_indices);
         assert_eq!(extracted.next().unwrap().message_hash(), &expected);
         assert!(extracted.next().is_none());
     }
@@ -676,7 +674,7 @@ mod tests {
     #[test]
     fn extract_retryable_three_first_last_retryable() {
         let keypair_a = ValidatorVoteKeypairs::new_rand();
-        let packets = ArrayVec::from_iter(
+        let mut packets = ArrayVec::from_iter(
             [
                 packet_from_slots(vec![(5, 3)], &keypair_a, None).as_ref(),
                 packet_from_slots(vec![(6, 2)], &keypair_a, None).as_ref(),
@@ -690,7 +688,7 @@ mod tests {
         // Assert - Able to extract exactly one packet.
         let expected0 = *packets[0].message_hash();
         let expected1 = *packets[2].message_hash();
-        let mut extracted = VoteWorker::extract_retryable(packets, retryable_indices);
+        let mut extracted = VoteWorker::extract_retryable(&mut packets, retryable_indices);
         assert_eq!(extracted.next().unwrap().message_hash(), &expected0);
         assert_eq!(extracted.next().unwrap().message_hash(), &expected1);
         assert!(extracted.next().is_none());
