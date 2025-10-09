@@ -16,6 +16,7 @@ use {
     },
     arrayvec::ArrayVec,
     crossbeam_channel::RecvTimeoutError,
+    itertools::Itertools,
     solana_accounts_db::account_locks::validate_account_locks,
     solana_clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
     solana_measure::{measure::Measure, measure_us},
@@ -229,22 +230,25 @@ impl VoteWorker {
         let mut sanitized_transactions = Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE);
         let mut error_counters: TransactionErrorMetrics = TransactionErrorMetrics::default();
         let mut vote_packets =
-            ArrayVec::<Arc<ImmutableDeserializedPacket>, UNPROCESSED_BUFFER_STEP_SIZE>::new();
-        for chunk in all_vote_packets.chunks(UNPROCESSED_BUFFER_STEP_SIZE) {
+            ArrayVec::<ImmutableDeserializedPacket, UNPROCESSED_BUFFER_STEP_SIZE>::new();
+        for chunk in Itertools::chunks(all_vote_packets.into_iter(), UNPROCESSED_BUFFER_STEP_SIZE)
+            .into_iter()
+        {
             vote_packets.clear();
-            chunk.iter().for_each(|packet| {
+
+            for packet in chunk.into_iter() {
                 if consume_scan_should_process_packet(
                     bank,
                     banking_stage_stats,
-                    packet,
+                    &packet,
                     reached_end_of_slot,
                     &mut error_counters,
                     &mut sanitized_transactions,
                     slot_metrics_tracker,
                 ) {
-                    vote_packets.push(packet.clone());
+                    vote_packets.push(packet);
                 }
-            });
+            }
 
             if let Some(retryable_vote_indices) = self.do_process_packets(
                 bank,
@@ -256,11 +260,10 @@ impl VoteWorker {
                 vote_packets.len(),
                 slot_metrics_tracker,
             ) {
-                self.storage.reinsert_packets(
-                    retryable_vote_indices
-                        .into_iter()
-                        .map(|index| vote_packets[index].clone()),
-                );
+                self.storage.reinsert_packets(Self::extract_retryable(
+                    &mut vote_packets,
+                    retryable_vote_indices,
+                ));
             } else {
                 self.storage.reinsert_packets(vote_packets.drain(..));
             }
@@ -481,6 +484,25 @@ impl VoteWorker {
             .filter_map(|(index, res)| res.as_ref().ok().map(|_| index))
             .collect()
     }
+
+    fn extract_retryable(
+        vote_packets: &mut ArrayVec<ImmutableDeserializedPacket, 16>,
+        retryable_vote_indices: Vec<usize>,
+    ) -> impl Iterator<Item = ImmutableDeserializedPacket> + '_ {
+        debug_assert!(retryable_vote_indices.is_sorted());
+        let mut retryable_vote_indices = retryable_vote_indices.into_iter().peekable();
+
+        vote_packets
+            .drain(..)
+            .enumerate()
+            .filter_map(move |(i, packet)| {
+                (Some(&i) == retryable_vote_indices.peek()).then(|| {
+                    retryable_vote_indices.next();
+
+                    packet
+                })
+            })
+    }
 }
 
 fn consume_scan_should_process_packet(
@@ -538,7 +560,11 @@ fn consume_scan_should_process_packet(
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_svm::account_loader::CheckedTransactionDetails};
+    use {
+        super::*, crate::banking_stage::vote_storage::tests::packet_from_slots,
+        solana_runtime::genesis_utils::ValidatorVoteKeypairs,
+        solana_svm::account_loader::CheckedTransactionDetails,
+    };
 
     #[test]
     fn test_bank_prepare_filter_for_pending_transaction() {
@@ -592,5 +618,79 @@ mod tests {
             ]),
             [0, 3, 4, 5]
         );
+    }
+
+    #[test]
+    fn extract_retryable_one_all_retryable() {
+        let keypair_a = ValidatorVoteKeypairs::new_rand();
+        let mut packets = ArrayVec::from_iter([ImmutableDeserializedPacket::new(
+            packet_from_slots(vec![(1, 1)], &keypair_a, None).as_ref(),
+        )
+        .unwrap()]);
+        let retryable_indices = vec![0];
+
+        // Assert - Able to extract exactly one packet.
+        let expected = *packets[0].message_hash();
+        let mut extracted = VoteWorker::extract_retryable(&mut packets, retryable_indices);
+        assert_eq!(extracted.next().unwrap().message_hash(), &expected);
+        assert!(extracted.next().is_none());
+    }
+
+    #[test]
+    fn extract_retryable_one_none_retryable() {
+        let keypair_a = ValidatorVoteKeypairs::new_rand();
+        let mut packets = ArrayVec::from_iter([ImmutableDeserializedPacket::new(
+            packet_from_slots(vec![(1, 1)], &keypair_a, None).as_ref(),
+        )
+        .unwrap()]);
+        let retryable_indices = vec![];
+
+        // Assert - Able to extract exactly zero packets.
+        let mut extracted = VoteWorker::extract_retryable(&mut packets, retryable_indices);
+        assert!(extracted.next().is_none());
+    }
+
+    #[test]
+    fn extract_retryable_three_last_retryable() {
+        let keypair_a = ValidatorVoteKeypairs::new_rand();
+        let mut packets = ArrayVec::from_iter(
+            [
+                packet_from_slots(vec![(5, 3)], &keypair_a, None).as_ref(),
+                packet_from_slots(vec![(6, 2)], &keypair_a, None).as_ref(),
+                packet_from_slots(vec![(7, 1)], &keypair_a, None).as_ref(),
+            ]
+            .into_iter()
+            .map(|packet| ImmutableDeserializedPacket::new(packet).unwrap()),
+        );
+        let retryable_indices = vec![2];
+
+        // Assert - Able to extract exactly one packet.
+        let expected = *packets[2].message_hash();
+        let mut extracted = VoteWorker::extract_retryable(&mut packets, retryable_indices);
+        assert_eq!(extracted.next().unwrap().message_hash(), &expected);
+        assert!(extracted.next().is_none());
+    }
+
+    #[test]
+    fn extract_retryable_three_first_last_retryable() {
+        let keypair_a = ValidatorVoteKeypairs::new_rand();
+        let mut packets = ArrayVec::from_iter(
+            [
+                packet_from_slots(vec![(5, 3)], &keypair_a, None).as_ref(),
+                packet_from_slots(vec![(6, 2)], &keypair_a, None).as_ref(),
+                packet_from_slots(vec![(7, 1)], &keypair_a, None).as_ref(),
+            ]
+            .into_iter()
+            .map(|packet| ImmutableDeserializedPacket::new(packet).unwrap()),
+        );
+        let retryable_indices = vec![0, 2];
+
+        // Assert - Able to extract exactly one packet.
+        let expected0 = *packets[0].message_hash();
+        let expected1 = *packets[2].message_hash();
+        let mut extracted = VoteWorker::extract_retryable(&mut packets, retryable_indices);
+        assert_eq!(extracted.next().unwrap().message_hash(), &expected0);
+        assert_eq!(extracted.next().unwrap().message_hash(), &expected1);
+        assert!(extracted.next().is_none());
     }
 }

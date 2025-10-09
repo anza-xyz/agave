@@ -16,6 +16,16 @@ use {
     std::sync::{Arc, RwLock},
 };
 
+#[allow(dead_code)]
+/// Structures that are not used in the event loop, but need to be updated
+/// or notified when setting root
+pub(crate) struct RootContext {
+    pub(crate) leader_schedule_cache: Arc<LeaderScheduleCache>,
+    pub(crate) snapshot_controller: Option<Arc<SnapshotController>>,
+    pub(crate) bank_notification_sender: Option<BankNotificationSenderConfig>,
+    pub(crate) drop_bank_sender: Sender<Vec<BankWithScheduler>>,
+}
+
 /// Sets the new root, additionally performs the callback after setting the bank forks root
 /// During this transition period where both replay stage and votor can root depending on the feature flag we
 /// have a callback that cleans up progress map and other tower bft structures. Then the callgraph is

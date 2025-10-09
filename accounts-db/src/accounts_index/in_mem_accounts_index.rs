@@ -20,6 +20,7 @@ use {
         cmp,
         collections::{hash_map::Entry, HashMap, HashSet},
         fmt::Debug,
+        mem,
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, Mutex, RwLock,
@@ -656,57 +657,57 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
         // If we find an existing account at old_slot, replace it rather than adding a new entry to the list
         let mut found_slot = false;
-        (0..slot_list.len())
-            .rev() // rev since we delete from the list in some cases
-            .for_each(|slot_list_index| {
-                let (cur_slot, cur_account_info) = &slot_list[slot_list_index];
-                if *cur_slot == old_slot {
-                    // Ensure we only find one!
-                    assert!(!found_slot);
-                    let is_cur_account_cached = cur_account_info.is_cached();
+        slot_list.retain(|cur_item| {
+            let (cur_slot, cur_account_info) = cur_item;
+            if *cur_slot == old_slot {
+                // Ensure we only find one!
+                assert!(!found_slot);
+                let is_cur_account_cached = cur_account_info.is_cached();
 
-                    // Replace the item
-                    let reclaim_item = slot_list.replace_at(slot_list_index, (slot, account_info));
-                    match reclaim {
-                        UpsertReclaim::ReclaimOldSlots | UpsertReclaim::PopulateReclaims => {
-                            // Reclaims are used to reclaim other versions of accounts when they are
-                            // rewritten elsewhere. Cached accounts are not in storage, so there is
-                            // no reason to store the reclaim.
-                            if !is_cur_account_cached {
-                                reclaims.push(reclaim_item);
-                            }
-                        }
-                        UpsertReclaim::PreviousSlotEntryWasCached => {
-                            assert!(is_cur_account_cached);
-                        }
-                        UpsertReclaim::IgnoreReclaims => {
-                            // do nothing. nothing to assert. nothing to return in reclaims
+                // Replace the item
+                let reclaim_item = mem::replace(cur_item, (slot, account_info));
+                match reclaim {
+                    UpsertReclaim::ReclaimOldSlots | UpsertReclaim::PopulateReclaims => {
+                        // Reclaims are used to reclaim other versions of accounts when they are
+                        // rewritten elsewhere. Cached accounts are not in storage, so there is
+                        // no reason to store the reclaim.
+                        if !is_cur_account_cached {
+                            reclaims.push(reclaim_item);
                         }
                     }
-
-                    found_slot = true;
-
-                    if !is_cur_account_cached {
-                        // current info at 'slot' is NOT cached, so we should NOT addref. This slot already has a ref count for this pubkey.
-                        ref_count_change -= 1
+                    UpsertReclaim::PreviousSlotEntryWasCached => {
+                        assert!(is_cur_account_cached);
                     }
-                } else if reclaim == UpsertReclaim::ReclaimOldSlots {
-                    let is_cur_account_cached = cur_account_info.is_cached();
-                    if !is_cur_account_cached && *cur_slot < slot {
-                        let reclaim_item = slot_list.remove_at(slot_list_index);
-                        reclaims.push(reclaim_item);
-                        ref_count_change -= 1;
+                    UpsertReclaim::IgnoreReclaims => {
+                        // do nothing. nothing to assert. nothing to return in reclaims
                     }
-                } else {
-                    // Slot is new item that is being added to the slot list
-                    // If slot is already in the slot list, it must be replaced otherwise it will
-                    // lead to the same slot being duplicated in the list
-                    assert_ne!(
-                        *cur_slot, slot,
-                        "slot_list has slot in slot_list but is not replacing it"
-                    );
                 }
-            });
+
+                found_slot = true;
+
+                if !is_cur_account_cached {
+                    // current info at 'slot' is NOT cached, so we should NOT addref. This slot already has a ref count for this pubkey.
+                    ref_count_change -= 1
+                }
+            } else if reclaim == UpsertReclaim::ReclaimOldSlots {
+                let is_cur_account_cached = cur_account_info.is_cached();
+                if !is_cur_account_cached && *cur_slot < slot {
+                    reclaims.push(*cur_item);
+                    ref_count_change -= 1;
+                    return false;
+                }
+            } else {
+                // Slot is new item that is being added to the slot list
+                // If slot is already in the slot list, it must be replaced otherwise it will
+                // lead to the same slot being duplicated in the list
+                assert_ne!(
+                    *cur_slot, slot,
+                    "slot_list has slot in slot_list but is not replacing it"
+                );
+            }
+            true
+        });
+
         if !found_slot {
             // if we make it here, we did not find the slot in the list
             slot_list.push((slot, account_info));

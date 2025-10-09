@@ -27,7 +27,6 @@ use {
     solana_keypair::Keypair,
     solana_ledger::shred::Shred,
     solana_pubkey::Pubkey,
-    solana_runtime::bank::Bank,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_time_utils::timestamp,
@@ -187,7 +186,6 @@ impl CrdsGossip {
         ping_cache: &Mutex<PingCache>,
         pings: &mut Vec<(SocketAddr, Ping)>,
         socket_addr_space: &SocketAddrSpace,
-        maybe_bank_ref: Option<&Bank>,
     ) {
         self.push.refresh_push_active_set(
             &self.crds,
@@ -198,7 +196,6 @@ impl CrdsGossip {
             ping_cache,
             pings,
             socket_addr_space,
-            maybe_bank_ref,
         )
     }
 
@@ -448,7 +445,6 @@ mod test {
             &ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
-            None,
         );
         let now = timestamp();
         //incorrect dest

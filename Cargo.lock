@@ -280,10 +280,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agave-low-pass-filter"
-version = "3.1.0"
-
-[[package]]
 name = "agave-precompiles"
 version = "3.1.0"
 dependencies = [
@@ -325,6 +321,17 @@ dependencies = [
 [[package]]
 name = "agave-scheduler-bindings"
 version = "3.1.0"
+
+[[package]]
+name = "agave-scheduling-utils"
+version = "3.1.0"
+dependencies = [
+ "agave-scheduler-bindings",
+ "agave-transaction-view",
+ "ahash 0.8.11",
+ "rts-alloc",
+ "solana-pubkey",
+]
 
 [[package]]
 name = "agave-store-histogram"
@@ -4672,9 +4679,9 @@ dependencies = [
 
 [[package]]
 name = "modular-bitfield"
-version = "0.11.2"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a53d79ba8304ac1c4f9eb3b9d281f21f7be9d4626f72ce7df4ad8fbde4f38a74"
+checksum = "be0d5274763b5572c8f29dadb5cd0bc59de64c805de433c1b556075f733b0a1a"
 dependencies = [
  "modular-bitfield-impl",
  "static_assertions",
@@ -4682,13 +4689,13 @@ dependencies = [
 
 [[package]]
 name = "modular-bitfield-impl"
-version = "0.11.2"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a7d5f7076603ebc68de2dc6a650ec331a062a13abaa346975be747bbfa4b789"
+checksum = "f8eec4327f127d4d18c54c8bfbf7b05d74cc9a1befdcc6283a241238ffbc84c6"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.106",
 ]
 
 [[package]]
@@ -8148,11 +8155,13 @@ dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
  "agave-scheduler-bindings",
+ "agave-scheduling-utils",
  "agave-transaction-view",
  "agave-verified-packet-receiver",
  "agave-votor",
  "ahash 0.8.11",
  "anyhow",
+ "arc-swap",
  "arrayvec",
  "assert_matches",
  "async-trait",
@@ -8856,7 +8865,6 @@ name = "solana-gossip"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
- "agave-low-pass-filter",
  "anyhow",
  "arrayvec",
  "assert_matches",
@@ -8884,7 +8892,6 @@ dependencies = [
  "serde_derive",
  "serial_test",
  "siphasher 1.0.1",
- "solana-account",
  "solana-bloom",
  "solana-clap-utils",
  "solana-client",
@@ -9595,6 +9602,7 @@ dependencies = [
  "log",
  "qualifier_attr",
  "rand 0.8.5",
+ "shuttle",
  "solana-clock",
  "solana-entry",
  "solana-hash",
@@ -11054,42 +11062,6 @@ dependencies = [
 [[package]]
 name = "solana-svm-feature-set"
 version = "3.1.0"
-
-[[package]]
-name = "solana-svm-fuzz-harness"
-version = "3.1.0"
-dependencies = [
- "agave-feature-set",
- "agave-precompiles",
- "agave-syscalls",
- "bincode",
- "clap 4.5.31",
- "prost",
- "prost-build",
- "solana-account",
- "solana-builtins",
- "solana-clock",
- "solana-compute-budget",
- "solana-epoch-schedule",
- "solana-hash",
- "solana-instruction",
- "solana-instruction-error",
- "solana-last-restart-slot",
- "solana-logger",
- "solana-precompile-error",
- "solana-program-runtime",
- "solana-pubkey",
- "solana-rent",
- "solana-sdk-ids",
- "solana-stable-layout",
- "solana-svm",
- "solana-svm-callback",
- "solana-svm-log-collector",
- "solana-svm-timings",
- "solana-sysvar-id",
- "solana-transaction-context",
- "thiserror 2.0.17",
-]
 
 [[package]]
 name = "solana-svm-log-collector"

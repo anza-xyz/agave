@@ -12,7 +12,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, epoch_stakes::VersionedEpochStakes},
     solana_sysvar::{self as sysvar, slot_hashes::SlotHashes},
-    std::{cmp, sync::Arc},
+    std::cmp,
 };
 
 /// Maximum number of votes a single receive call will accept
@@ -100,7 +100,7 @@ impl VoteStorage {
         self.insert_batch_with_replenish(
             deserialized_packets.filter_map(|deserialized_packet| {
                 LatestValidatorVotePacket::new_from_immutable(
-                    Arc::new(deserialized_packet),
+                    deserialized_packet,
                     vote_source,
                     should_deprecate_legacy_vote_ixs,
                 )
@@ -113,7 +113,7 @@ impl VoteStorage {
     // Re-insert re-tryable packets.
     pub(crate) fn reinsert_packets(
         &mut self,
-        packets: impl Iterator<Item = Arc<ImmutableDeserializedPacket>>,
+        packets: impl Iterator<Item = ImmutableDeserializedPacket>,
     ) {
         let should_deprecate_legacy_vote_ixs = self.deprecate_legacy_vote_ixs;
         self.insert_batch_with_replenish(
@@ -129,7 +129,7 @@ impl VoteStorage {
         );
     }
 
-    pub fn drain_unprocessed(&mut self, bank: &Bank) -> Vec<Arc<ImmutableDeserializedPacket>> {
+    pub fn drain_unprocessed(&mut self, bank: &Bank) -> Vec<ImmutableDeserializedPacket> {
         let slot_hashes = bank
             .get_account(&sysvar::slot_hashes::id())
             .and_then(|account| from_account::<SlotHashes, _>(&account));
@@ -337,7 +337,7 @@ impl VoteStorage {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use {
         super::*,
         solana_clock::UnixTimestamp,
@@ -350,10 +350,10 @@ mod tests {
         solana_signer::Signer,
         solana_vote::vote_transaction::new_tower_sync_transaction,
         solana_vote_program::vote_state::TowerSync,
-        std::error::Error,
+        std::{error::Error, sync::Arc},
     };
 
-    fn packet_from_slots(
+    pub(crate) fn packet_from_slots(
         slots: Vec<(u64, u32)>,
         keypairs: &ValidatorVoteKeypairs,
         timestamp: Option<UnixTimestamp>,
@@ -573,20 +573,24 @@ mod tests {
         );
 
         // Same votes with smaller timestamps should not override
-        let vote_a = from_slots(
-            vec![(0, 5), (1, 4), (3, 3), (10, 1)],
-            VoteSource::Gossip,
-            &keypair_a,
-            Some(2),
-        );
-        let vote_b = from_slots(
-            vec![(0, 5), (4, 2), (9, 1)],
-            VoteSource::Gossip,
-            &keypair_b,
-            Some(3),
-        );
-        vote_storage.update_latest_vote(vote_a.clone(), false /* should replenish */);
-        vote_storage.update_latest_vote(vote_b.clone(), false /* should replenish */);
+        let vote_a = || {
+            from_slots(
+                vec![(0, 5), (1, 4), (3, 3), (10, 1)],
+                VoteSource::Gossip,
+                &keypair_a,
+                Some(2),
+            )
+        };
+        let vote_b = || {
+            from_slots(
+                vec![(0, 5), (4, 2), (9, 1)],
+                VoteSource::Gossip,
+                &keypair_b,
+                Some(3),
+            )
+        };
+        vote_storage.update_latest_vote(vote_a(), false /* should replenish */);
+        vote_storage.update_latest_vote(vote_b(), false /* should replenish */);
 
         assert_eq!(2, vote_storage.len());
         assert_eq!(
@@ -607,13 +611,13 @@ mod tests {
         assert_eq!(0, vote_storage.len());
 
         // Same votes with same timestamps should not replenish without flag
-        vote_storage.update_latest_vote(vote_a.clone(), false /* should replenish */);
-        vote_storage.update_latest_vote(vote_b.clone(), false /* should replenish */);
+        vote_storage.update_latest_vote(vote_a(), false /* should replenish */);
+        vote_storage.update_latest_vote(vote_b(), false /* should replenish */);
         assert_eq!(0, vote_storage.len());
 
         // Same votes with same timestamps should replenish with the flag
-        vote_storage.update_latest_vote(vote_a, true /* should replenish */);
-        vote_storage.update_latest_vote(vote_b, true /* should replenish */);
+        vote_storage.update_latest_vote(vote_a(), true /* should replenish */);
+        vote_storage.update_latest_vote(vote_b(), true /* should replenish */);
         assert_eq!(0, vote_storage.len());
     }
 
