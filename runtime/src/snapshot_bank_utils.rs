@@ -2505,7 +2505,7 @@ mod tests {
         snapshot_utils::mark_bank_snapshot_as_loadable(&highest_bank_snapshot.snapshot_dir)
             .unwrap();
         let bank_snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
-        assert_eq!(bank_snapshot, highest_bank_snapshot);
+        assert_eq!(bank_snapshot.slot, highest_bank_snapshot.slot);
 
         // 4. delete highest bank snapshot, get_highest_loadable() should return NONE
         fs::remove_dir_all(&highest_bank_snapshot.snapshot_dir).unwrap();

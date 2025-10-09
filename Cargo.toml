@@ -95,6 +95,7 @@ members = [
     "runtime",
     "runtime-transaction",
     "scheduler-bindings",
+    "scheduling-utils",
     "send-transaction-service",
     "stake-accounts",
     "storage-bigtable",
@@ -184,6 +185,7 @@ agave-low-pass-filter = { path = "low-pass-filter", version = "=3.1.0" }
 agave-precompiles = { path = "precompiles", version = "=3.1.0" }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=3.1.0" }
 agave-scheduler-bindings = { path = "scheduler-bindings", version = "=3.1.0" }
+agave-scheduling-utils = { path = "scheduling-utils", version = "=3.1.0" }
 agave-syscalls = { path = "syscalls", version = "=3.1.0" }
 agave-thread-manager = { path = "thread-manager", version = "=3.1.0" }
 agave-transaction-view = { path = "transaction-view", version = "=3.1.0" }
@@ -312,7 +314,7 @@ memoffset = "0.9"
 merlin = { version = "3", default-features = false }
 min-max-heap = "1.3.0"
 mockall = "0.11.4"
-modular-bitfield = "0.11.2"
+modular-bitfield = "0.12.0"
 nix = "0.30.1"
 num-bigint = "0.4.6"
 num-derive = "0.4"

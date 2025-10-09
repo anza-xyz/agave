@@ -6,7 +6,6 @@ use {
     },
     crate::banking_stage::consumer::RetryableIndex,
     crossbeam_channel::{Receiver, RecvError, SendError, Sender},
-    solana_measure::measure_us,
     solana_poh::poh_recorder::SharedWorkingBank,
     solana_runtime::bank::Bank,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -28,6 +27,12 @@ pub enum ConsumeWorkerError<Tx> {
     Recv(#[from] RecvError),
     #[error("Failed to send finalized consume work to scheduler: {0}")]
     Send(#[from] SendError<FinishedConsumeWork<Tx>>),
+}
+
+enum ProcessingStatus<Tx> {
+    Processed,
+    /// Work could not be processed due to lack of bank.
+    CouldNotProcess(ConsumeWork<Tx>),
 }
 
 pub(crate) struct ConsumeWorker<Tx> {
@@ -66,62 +71,39 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     pub fn run(self) -> Result<(), ConsumeWorkerError<Tx>> {
         while !self.exit.load(Ordering::Relaxed) {
             let work = self.consume_receiver.recv()?;
-            self.consume_loop(work)?;
+            match self.consume(work)? {
+                ProcessingStatus::Processed => {}
+                ProcessingStatus::CouldNotProcess(work) => {
+                    self.retry_drain(work)?;
+                }
+            }
         }
         Ok(())
     }
 
-    fn consume_loop(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
-        let (maybe_consume_bank, get_bank_us) =
-            measure_us!(self.new_working_bank_with_timeout(None));
-        let Some(mut bank) = maybe_consume_bank else {
-            self.metrics
-                .timing_metrics
-                .wait_for_bank_failure_us
-                .fetch_add(get_bank_us, Ordering::Relaxed);
-            return self.retry_drain(work);
+    fn consume(
+        &self,
+        work: ConsumeWork<Tx>,
+    ) -> Result<ProcessingStatus<Tx>, ConsumeWorkerError<Tx>> {
+        let Some(bank) = self.active_working_bank_with_timeout() else {
+            return Ok(ProcessingStatus::CouldNotProcess(work));
         };
+
         self.metrics
-            .timing_metrics
-            .wait_for_bank_success_us
-            .fetch_add(get_bank_us, Ordering::Relaxed);
+            .count_metrics
+            .num_messages_processed
+            .fetch_add(1, Ordering::Relaxed);
 
-        for work in try_drain_iter(work, &self.consume_receiver) {
-            self.metrics
-                .count_metrics
-                .max_queue_len
-                .fetch_max(self.consume_receiver.len() as u64, Ordering::Relaxed);
-            if self.exit.load(Ordering::Relaxed) {
-                return Ok(());
-            }
-
-            // If necessary, get a new bank to consume against.
-            let (bank_usable, update_bank_us) =
-                measure_us!(self.update_working_bank_if_necessary(&mut bank));
-            if !bank_usable {
-                self.metrics
-                    .timing_metrics
-                    .wait_for_bank_failure_us
-                    .fetch_add(update_bank_us, Ordering::Relaxed);
-                return self.retry_drain(work);
-            }
-
-            self.metrics
-                .timing_metrics
-                .wait_for_bank_success_us
-                .fetch_add(update_bank_us, Ordering::Relaxed);
-            self.metrics
-                .count_metrics
-                .num_messages_processed
-                .fetch_add(1, Ordering::Relaxed);
-            self.consume(&bank, work)?;
-        }
-
-        Ok(())
+        self.consume_with_bank(
+            bank.as_ref()
+                .expect("active_working_bank_with_timeout only returns if the bank is Some"),
+            work,
+        )?;
+        Ok(ProcessingStatus::Processed)
     }
 
     /// Consume a single batch.
-    fn consume(
+    fn consume_with_bank(
         &self,
         bank: &Arc<Bank>,
         work: ConsumeWork<Tx>,
@@ -144,49 +126,42 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         Ok(())
     }
 
-    /// Get the current poh working bank with a timeout - if the Bank is
-    /// not available within the timeout, return None.
-    fn new_working_bank_with_timeout(&self, current_bank: Option<&Arc<Bank>>) -> Option<Arc<Bank>> {
+    /// Get active bank with timeout.
+    fn active_working_bank_with_timeout(&self) -> Option<arc_swap::Guard<Option<Arc<Bank>>>> {
+        // Do an initial bank load without sampling time. If we're in a hot loop
+        // of work this saves us from checking the time at all and we'd only end up
+        // checking between or after our leader slots.
+        if let Some(guard) = self.active_working_bank() {
+            return Some(guard);
+        }
+
+        // If the initial check above didn't find a bank, we will
+        // spin up to some timeout to wait for a bank to execute on.
+        // This is conservatively long because transitions between slots
+        // can occassionally be slow.
         const TIMEOUT: Duration = Duration::from_millis(50);
         let now = Instant::now();
         while now.elapsed() < TIMEOUT {
-            if let Some(new_bank) = self.shared_working_bank.load_ref().as_ref() {
-                match current_bank {
-                    Some(current_bank) if Arc::ptr_eq(new_bank, current_bank) => {}
-                    // If we don't currently have a bank OR we have a new bank, return it.
-                    _ => {
-                        return Some(Arc::clone(new_bank));
-                    }
-                }
+            if let Some(guard) = self.active_working_bank() {
+                return Some(guard);
             }
+            core::hint::spin_loop();
         }
 
         None
     }
 
-    /// Update the bank if it has changed.
-    /// Returns true if the bank is updated or still usable.
-    fn update_working_bank_if_necessary(&self, bank: &mut Arc<Bank>) -> bool {
-        if let Some(working_bank) = self.shared_working_bank.load_ref().as_ref() {
-            if !Arc::ptr_eq(working_bank, bank) {
-                // If we've loaded a new bank, update to it.
-                *bank = Arc::clone(working_bank);
-            }
-
-            // If the bank, whether new or old, is still not complete, return true.
-            if !bank.is_complete() {
-                return true;
-            }
+    fn active_working_bank(&self) -> Option<arc_swap::Guard<Option<Arc<Bank>>>> {
+        let guard = self.shared_working_bank.load_ref();
+        if guard
+            .as_ref()
+            .map(|bank| bank.is_complete())
+            .unwrap_or(true)
+        {
+            None
+        } else {
+            Some(guard)
         }
-
-        // If `working_bank` is None or the bank is complete, we try to get the next bank.
-        // If this is the last leader slot in our rotation, we will timeout.
-        if let Some(new_bank) = self.new_working_bank_with_timeout(Some(bank)) {
-            *bank = new_bank;
-            return true;
-        }
-
-        false
     }
 
     /// Retry current batch and all outstanding batches.
@@ -580,8 +555,6 @@ struct ConsumeWorkerTimingMetrics {
     record_us: AtomicU64,
     commit_us: AtomicU64,
     find_and_send_votes_us: AtomicU64,
-    wait_for_bank_success_us: AtomicU64,
-    wait_for_bank_failure_us: AtomicU64,
     num_batches_processed: AtomicU64,
 }
 
@@ -625,16 +598,6 @@ impl ConsumeWorkerTimingMetrics {
             (
                 "find_and_send_votes_us",
                 self.find_and_send_votes_us.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "wait_for_bank_success_us",
-                self.wait_for_bank_success_us.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "wait_for_bank_failure_us",
-                self.wait_for_bank_failure_us.swap(0, Ordering::Relaxed),
                 i64
             ),
         );

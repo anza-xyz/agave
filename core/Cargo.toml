@@ -43,11 +43,13 @@ frozen-abi = [
 agave-banking-stage-ingress-types = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-scheduler-bindings = { workspace = true }
+agave-scheduling-utils = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-verified-packet-receiver = { workspace = true }
 agave-votor = { workspace = true, features = ["agave-unstable-api"] }
 ahash = { workspace = true }
 anyhow = { workspace = true }
+arc-swap = { workspace = true }
 arrayvec = { workspace = true }
 assert_matches = { workspace = true }
 async-trait = { workspace = true }
