@@ -533,12 +533,8 @@ fn consume_scan_should_process_packet(
     }
 
     // Resolve the transaction (legacy does not have LUT so this is simple).
-    let Ok(view) = RuntimeTransactionView::try_from(
-        view,
-        None,
-        // TODO: receive_and_buffer uses root_bank instead of working, should confirm what is correct here.
-        bank.get_reserved_account_keys(),
-    ) else {
+    let Ok(view) = RuntimeTransactionView::try_from(view, None, bank.get_reserved_account_keys())
+    else {
         return None;
     };
 
