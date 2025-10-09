@@ -38,6 +38,7 @@ pub struct SVMFeatureSet {
     pub reenable_zk_elgamal_proof_program: bool,
     pub raise_cpi_nesting_limit_to_8: bool,
     pub provide_instruction_data_offset_in_vm_r2: bool,
+    pub vote_state_v4: bool,
 }
 
 impl SVMFeatureSet {
@@ -81,6 +82,7 @@ impl SVMFeatureSet {
             reenable_zk_elgamal_proof_program: true,
             raise_cpi_nesting_limit_to_8: true,
             provide_instruction_data_offset_in_vm_r2: true,
+            vote_state_v4: true,
         }
     }
 }

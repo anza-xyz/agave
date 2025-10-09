@@ -1,14 +1,13 @@
 //! Vote state, vote program
 //! Receive and processes votes from validators
 
-mod handler;
+pub mod handler;
 
 pub use {
-    handler::VoteStateTargetVersion,
+    handler::{VoteStateHandle, VoteStateHandler, VoteStateTargetVersion},
     solana_vote_interface::state::{vote_state_versions::*, *},
 };
 use {
-    handler::{VoteStateHandle, VoteStateHandler},
     log::*,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::{Clock, Epoch, Slot},
@@ -25,9 +24,6 @@ use {
         collections::{HashSet, VecDeque},
     },
 };
-
-// TODO: Change me once the program has full v4 feature gate support.
-pub(crate) const TEMP_HARDCODED_TARGET_VERSION: VoteStateTargetVersion = VoteStateTargetVersion::V3;
 
 // utility function, used by Stakes, tests
 pub fn from<T: ReadableAccount>(account: &T) -> Option<VoteStateV3> {
