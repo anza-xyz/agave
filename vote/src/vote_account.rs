@@ -534,12 +534,21 @@ where
 #[cfg(test)]
 mod tests {
     use {
-        super::*, bincode::Options, rand::Rng, solana_account::WritableAccount, solana_clock::Clock, solana_pubkey::Pubkey, solana_vote_interface::{
+        super::*,
+        bincode::Options,
+        rand::Rng,
+        solana_account::WritableAccount,
+        solana_clock::Clock,
+        solana_pubkey::Pubkey,
+        solana_vote_interface::{
             authorized_voters::AuthorizedVoters,
             state::{
-                BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteInit, VoteStateV3, VoteStateV4, VoteStateVersions
+                VoteInit, VoteStateV3, VoteStateV4, VoteStateVersions,
+                BLS_PUBLIC_KEY_COMPRESSED_SIZE,
             },
-        }, std::{collections::HashSet, iter::repeat_with}, test_case::test_case
+        },
+        std::{collections::HashSet, iter::repeat_with},
+        test_case::test_case,
     };
 
     const MIN_STAKE_FOR_STAKED_ACCOUNT: u64 = 1;
