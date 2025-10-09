@@ -5,14 +5,11 @@ members = [
     "accounts-cluster-bench",
     "accounts-db",
     "accounts-db/store-histogram",
-    "accounts-db/store-tool",
-    "banking-bench",
     "banking-stage-ingress-types",
     "banks-client",
     "banks-interface",
     "banks-server",
     "bench-streamer",
-    "bench-tps",
     "bench-vote",
     "bloom",
     "bucket_map",
@@ -32,7 +29,6 @@ members = [
     "core",
     "cost-model",
     "curves/curve25519",
-    "dos",
     "download-utils",
     "entry",
     "faucet",
@@ -48,7 +44,6 @@ members = [
     "keygen",
     "lattice-hash",
     "ledger",
-    "ledger-tool",
     "local-cluster",
     "low-pass-filter",
     "measure",
@@ -142,7 +137,11 @@ members = [
     "zk-token-sdk",
 ]
 
-exclude = ["programs/sbf", "svm/tests/example-programs"]
+exclude = [
+    "dev-bins",
+    "programs/sbf",
+    "svm/tests/example-programs",
+]
 
 resolver = "2"
 
