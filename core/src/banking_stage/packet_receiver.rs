@@ -8,7 +8,9 @@ use {
         transaction_scheduler::transaction_state_container::SharedBytes,
     },
     agave_banking_stage_ingress_types::BankingPacketReceiver,
-    agave_transaction_view::transaction_view::SanitizedTransactionView,
+    agave_transaction_view::{
+        result::TransactionViewError, transaction_view::SanitizedTransactionView,
+    },
     crossbeam_channel::RecvTimeoutError,
     solana_measure::{measure::Measure, measure_us},
     std::{
@@ -114,10 +116,16 @@ impl PacketReceiver {
                     false,
                 ) {
                     Ok(pkt) => Some(pkt),
-                    Err(_) => {
+                    Err(err) => {
                         errors += 1;
-                        // TODO:
-                        // packet_stats.increment_error_count(&err);
+                        match err {
+                            TransactionViewError::AddressLookupMismatch => {}
+                            TransactionViewError::ParseError
+                            | TransactionViewError::SanitizeError => {
+                                packet_stats.failed_sanitization_count += 1
+                            }
+                        }
+
                         None
                     }
                 }
