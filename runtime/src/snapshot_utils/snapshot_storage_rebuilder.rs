@@ -98,10 +98,7 @@ impl SnapshotStorageRebuilder {
         storage_access: StorageAccess,
         obsolete_accounts: Option<DashMap<Slot, SerdeObsoleteAccounts>>,
     ) -> Self {
-        let storage = AccountStorageMap::with_capacity_and_hasher(
-            snapshot_storage_lengths.len(),
-            ahash::RandomState::new(),
-        );
+        let storage = AccountStorageMap::with_capacity(snapshot_storage_lengths.len());
         let storage_paths: DashMap<_, _> = snapshot_storage_lengths
             .iter()
             .map(|(slot, storage_lengths)| {
