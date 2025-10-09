@@ -11,7 +11,7 @@ use {
         voting_service::BLSOp,
         votor::Votor,
     },
-    crossbeam_channel::{select, Receiver, Sender, TrySendError},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
@@ -62,6 +62,7 @@ impl ConsensusPoolService {
         let t_ingest = Builder::new()
             .name("solCnsPoolIngst".to_string())
             .spawn(move || {
+                info!("ConsensusPoolService has started");
                 if let Err(e) = Self::consensus_pool_ingest_loop(ctx) {
                     info!("Consensus pool service exited: {e:?}. Shutting down");
                 }
@@ -167,7 +168,10 @@ impl ConsensusPoolService {
         let mut consensus_pool = ConsensusPool::new_from_root_bank(my_pubkey, &root_bank);
 
         // Wait until migration has completed
-        info!("{}: Consensus pool loop initialized", &my_pubkey);
+        info!(
+            "{}: Consensus pool loop initialized, waiting for Alpenglow migration",
+            &my_pubkey
+        );
         Votor::wait_for_migration_or_exit(&ctx.exit, &ctx.start);
         info!("{}: Consensus pool loop starting", &my_pubkey);
 
@@ -189,16 +193,20 @@ impl ConsensusPoolService {
             if my_pubkey != new_pubkey {
                 my_pubkey = new_pubkey;
                 consensus_pool.update_pubkey(my_pubkey);
-                warn!("Consensus pool pubkey updated to {my_pubkey}");
+                info!("Consensus pool pubkey updated to {my_pubkey}");
             }
 
-            Self::add_produce_block_event(
+            if let Err(e) = Self::add_produce_block_event(
                 &mut highest_parent_ready,
                 &consensus_pool,
                 &my_pubkey,
                 &mut ctx,
                 &mut events,
-            );
+            ) {
+                error!("Error adding block event: {e}");
+                ctx.exit.store(true, Ordering::Relaxed);
+                return Err(());
+            }
 
             if standstill_timer.elapsed() > DELTA_STANDSTILL {
                 events.push(VotorEvent::Standstill(
@@ -227,14 +235,15 @@ impl ConsensusPoolService {
                 return Self::handle_channel_disconnected(&mut ctx, "Votor event receiver");
             }
 
-            let messages: Vec<ConsensusMessage> = select! {
-                recv(ctx.consensus_message_receiver) -> msg => {
-                    let Ok(first) = msg else {
-                        return Self::handle_channel_disconnected(&mut ctx, "BLS receiver");
-                    };
-                    std::iter::once(first).chain(ctx.consensus_message_receiver.try_iter()).collect()
-                },
-                default(Duration::from_secs(1)) => continue
+            let consensus_message_receiver = ctx.consensus_message_receiver.clone();
+            let messages = match consensus_message_receiver.recv_timeout(Duration::from_secs(1)) {
+                Ok(first_message) => {
+                    std::iter::once(first_message).chain(consensus_message_receiver.try_iter())
+                }
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Self::handle_channel_disconnected(&mut ctx, "BLS receiver");
+                }
             };
 
             for message in messages {
@@ -300,7 +309,7 @@ impl ConsensusPoolService {
         my_pubkey: &Pubkey,
         ctx: &mut ConsensusPoolContext,
         events: &mut Vec<VotorEvent>,
-    ) {
+    ) -> Result<(), String> {
         let Some(new_highest_parent_ready) = events
             .iter()
             .filter_map(|event| match event {
@@ -310,11 +319,11 @@ impl ConsensusPoolService {
             .max()
             .copied()
         else {
-            return;
+            return Ok(());
         };
 
         if new_highest_parent_ready <= *highest_parent_ready {
-            return;
+            return Ok(());
         }
         *highest_parent_ready = new_highest_parent_ready;
 
@@ -323,16 +332,14 @@ impl ConsensusPoolService {
             .leader_schedule_cache
             .slot_leader_at(*highest_parent_ready, Some(&root_bank))
         else {
-            error!(
+            return Err(format!(
                 "Unable to compute the leader at slot {highest_parent_ready}. Something is wrong, \
                  exiting"
-            );
-            ctx.exit.store(true, Ordering::Relaxed);
-            return;
+            ));
         };
 
         if &leader_pubkey != my_pubkey {
-            return;
+            return Ok(());
         }
 
         let start_slot = *highest_parent_ready;
@@ -343,7 +350,7 @@ impl ConsensusPoolService {
                 "{my_pubkey}: We have already produced shreds in the window \
                  {start_slot}-{end_slot}, skipping production of our leader window"
             );
-            return;
+            return Ok(());
         }
 
         match consensus_pool
@@ -358,11 +365,10 @@ impl ConsensusPoolService {
             }
             BlockProductionParent::ParentNotReady => {
                 // This can't happen, place holder depending on how we hook up optimistic
-                ctx.exit.store(true, Ordering::Relaxed);
-                panic!(
+                return Err(format!(
                     "Must have a block production parent: {:#?}",
                     consensus_pool.parent_ready_tracker
-                );
+                ));
             }
             BlockProductionParent::Parent(parent_block) => {
                 events.push(VotorEvent::ProduceWindow(LeaderWindowInfo {
@@ -374,6 +380,8 @@ impl ConsensusPoolService {
                 }));
             }
         }
+
+        Ok(())
     }
 
     pub(crate) fn join(self) -> thread::Result<()> {
