@@ -401,6 +401,7 @@ fn app<'a>(num_threads: &'a str, crate_version: &'a str) -> Command<'a> {
                         .index(1)
                         .value_name("KEYPAIR")
                         .takes_value(true)
+                        .required(true)
                         .value_parser(SignerSourceParserBuilder::default().allow_all().build())
                         .help("Filepath or URL to a keypair"),
                 )
@@ -1290,10 +1291,9 @@ mod tests {
         process_test_command(&[
             "solana-keygen",
             "bls_pubkey",
-            &keypair_file,
             "--outfile",
             &outfile_path,
-            // empty derivation path
+            &keypair_file,
         ])
         .unwrap();
 
