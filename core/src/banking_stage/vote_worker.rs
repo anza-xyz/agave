@@ -2,7 +2,6 @@ use {
     super::{
         consumer::Consumer,
         decision_maker::{BufferedPacketsDecision, DecisionMaker},
-        immutable_deserialized_packet::ImmutableDeserializedPacket,
         latest_validator_vote_packet::VoteSource,
         leader_slot_metrics::{
             CommittedTransactionsCounts, LeaderSlotMetricsTracker, ProcessTransactionsSummary,
@@ -11,9 +10,11 @@ use {
         vote_storage::VoteStorage,
         BankingStageStats, SLOT_BOUNDARY_CHECK_PERIOD,
     },
-    crate::banking_stage::consumer::{
-        ExecuteAndCommitTransactionsOutput, ProcessTransactionBatchOutput,
+    crate::banking_stage::{
+        consumer::{ExecuteAndCommitTransactionsOutput, ProcessTransactionBatchOutput},
+        transaction_scheduler::transaction_state_container::{RuntimeTransactionView, SharedBytes},
     },
+    agave_transaction_view::transaction_view::SanitizedTransactionView,
     arrayvec::ArrayVec,
     crossbeam_channel::RecvTimeoutError,
     itertools::Itertools,
@@ -22,14 +23,11 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_poh::poh_recorder::PohRecorderError,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
-    solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
-    },
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::{
         account_loader::TransactionCheckResult, transaction_error_metrics::TransactionErrorMetrics,
     },
     solana_time_utils::timestamp,
-    solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::TransactionError,
     std::{
         sync::{
@@ -229,8 +227,7 @@ impl VoteWorker {
         let mut reached_end_of_slot = false;
         let mut sanitized_transactions = Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE);
         let mut error_counters: TransactionErrorMetrics = TransactionErrorMetrics::default();
-        let mut vote_packets =
-            ArrayVec::<ImmutableDeserializedPacket, UNPROCESSED_BUFFER_STEP_SIZE>::new();
+        let mut vote_packets = ArrayVec::<_, UNPROCESSED_BUFFER_STEP_SIZE>::new();
         for chunk in Itertools::chunks(all_vote_packets.into_iter(), UNPROCESSED_BUFFER_STEP_SIZE)
             .into_iter()
         {
@@ -276,7 +273,7 @@ impl VoteWorker {
         &self,
         bank: &Bank,
         reached_end_of_slot: &mut bool,
-        sanitized_transactions: &mut Vec<RuntimeTransaction<SanitizedTransaction>>,
+        sanitized_transactions: &mut Vec<RuntimeTransactionView>,
         banking_stage_stats: &BankingStageStats,
         consumed_buffered_packets_count: &mut usize,
         rebuffered_packet_count: &mut usize,
@@ -486,9 +483,9 @@ impl VoteWorker {
     }
 
     fn extract_retryable(
-        vote_packets: &mut ArrayVec<ImmutableDeserializedPacket, 16>,
+        vote_packets: &mut ArrayVec<SanitizedTransactionView<SharedBytes>, 16>,
         retryable_vote_indices: Vec<usize>,
-    ) -> impl Iterator<Item = ImmutableDeserializedPacket> + '_ {
+    ) -> impl Iterator<Item = SanitizedTransactionView<SharedBytes>> + '_ {
         debug_assert!(retryable_vote_indices.is_sorted());
         let mut retryable_vote_indices = retryable_vote_indices.into_iter().peekable();
 
@@ -508,10 +505,10 @@ impl VoteWorker {
 fn consume_scan_should_process_packet(
     bank: &Bank,
     banking_stage_stats: &BankingStageStats,
-    packet: &ImmutableDeserializedPacket,
+    packet: &SanitizedTransactionView<SharedBytes>,
     reached_end_of_slot: bool,
     error_counters: &mut TransactionErrorMetrics,
-    sanitized_transactions: &mut Vec<RuntimeTransaction<SanitizedTransaction>>,
+    sanitized_transactions: &mut Vec<RuntimeTransactionView>,
     slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
 ) -> bool {
     // If end of the slot, return should process (quick loop after reached end of slot)
