@@ -2894,10 +2894,10 @@ fn adjust_ulimit_nofile(_enforce_ulimit_nofile: bool) -> Result<(), ValidatorErr
 
 #[cfg(unix)]
 fn adjust_ulimit_nofile(enforce_ulimit_nofile: bool) -> Result<(), ValidatorError> {
-    // Rocks DB likes to have many open files.  The default open file descriptor limit is
-    // usually not enough
-    // AppendVecs and disk Account Index are also heavy users of mmapped files.
-    // This should be kept in sync with published validator instructions.
+    // AccountsDB and RocksDB both may have many files open so bump the limit
+    // to ensure each database will be able to function properly
+    //
+    // This should be kept in sync with published validator instructions:
     // https://docs.anza.xyz/operations/guides/validator-start#system-tuning
     let desired_nofile = 1_000_000;
 
