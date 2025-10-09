@@ -1014,6 +1014,7 @@ mod tests {
     const SIZE_OF_SHRED_VARIANT: usize = 1;
     const SIZE_OF_VERSION: usize = 2;
     const SIZE_OF_FEC_SET_INDEX: usize = 4;
+    const SIZE_OF_PARENT_OFFSET: usize = 2;
 
     const OFFSET_OF_SHRED_VARIANT: usize = SIZE_OF_SIGNATURE;
     const OFFSET_OF_SHRED_SLOT: usize = SIZE_OF_SIGNATURE + SIZE_OF_SHRED_VARIANT;
@@ -1021,6 +1022,9 @@ mod tests {
     const OFFSET_OF_FEC_SET_INDEX: usize =
         OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX + SIZE_OF_VERSION;
     const OFFSET_OF_NUM_DATA: usize = OFFSET_OF_FEC_SET_INDEX + SIZE_OF_FEC_SET_INDEX;
+
+    const OFFSET_OF_PARENT_OFFSET: usize = OFFSET_OF_FEC_SET_INDEX + SIZE_OF_FEC_SET_INDEX;
+    const OFFSET_OF_SHRED_FLAGS: usize = OFFSET_OF_PARENT_OFFSET + SIZE_OF_PARENT_OFFSET;
 
     pub(super) fn make_merkle_shreds_for_tests<R: Rng>(
         rng: &mut R,
@@ -2086,7 +2090,9 @@ mod tests {
             //     85 = SIZE_OF_COMMON_SHRED_HEADER (83) + size of parent offset (i.e., 2)
             //
             // See the top-level comments, which articulate data shred layout, for more details.
-            cursor.seek(SeekFrom::Start(85)).unwrap(); // flags offset
+            cursor
+                .seek(SeekFrom::Start(OFFSET_OF_SHRED_FLAGS as u64))
+                .unwrap(); // flags offset
             cursor
                 .write_all(&[ShredFlags::DATA_COMPLETE_SHRED.bits()])
                 .unwrap();
