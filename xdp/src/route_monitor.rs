@@ -1,14 +1,15 @@
 use {
     crate::{
         netlink::{
-            is_supported_ipv4_neigh_header, is_supported_ipv4_route_header, parse_rtm_newneigh,
-            parse_rtm_newroute, NetlinkMessage, NetlinkSocket,
+            is_supported_ipv4_neigh_header, is_supported_ipv4_route_header, is_valid_link_update,
+            parse_ifinfomsg, parse_rtm_newneigh, parse_rtm_newroute, NetlinkMessage, NetlinkSocket,
         },
         route::{AtomicRouter, WorkingRouter},
     },
     libc::{
-        poll, pollfd, POLLERR, POLLHUP, POLLIN, POLLNVAL, RTMGRP_IPV4_ROUTE, RTMGRP_NEIGH,
-        RTM_DELNEIGH, RTM_DELROUTE, RTM_NEWNEIGH, RTM_NEWROUTE,
+        poll, pollfd, POLLERR, POLLHUP, POLLIN, POLLNVAL, RTMGRP_IPV4_ROUTE, RTMGRP_LINK,
+        RTMGRP_NEIGH, RTM_DELLINK, RTM_DELNEIGH, RTM_DELROUTE, RTM_NEWLINK, RTM_NEWNEIGH,
+        RTM_NEWROUTE,
     },
     log::*,
     std::{
@@ -34,7 +35,7 @@ impl RouteMonitor {
         drain_window: Duration,
     ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
-            let groups = (RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH) as u32;
+            let groups = (RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH | RTMGRP_LINK) as u32;
             let mut sock = match NetlinkSocket::open_multicast_listener(groups) {
                 Ok(s) => s,
                 Err(e) => {
@@ -172,7 +173,7 @@ impl RouteMonitor {
                 }
 
                 if let Some(w) = working.as_mut() {
-                    if w.dirty_routes() || w.dirty_neigh() {
+                    if w.dirty_routes() || w.dirty_neigh() || w.dirty_interfaces() {
                         atomic_router.publish_snapshot(w);
                         w.clear_dirty();
                     }
@@ -249,6 +250,20 @@ impl RouteMonitor {
                     if let Some(n) = parse_rtm_newneigh(m, None) {
                         if let Some(IpAddr::V4(ip)) = n.destination {
                             work.delete_neighbor(ip, n.ifindex);
+                        }
+                    }
+                }
+                RTM_NEWLINK => {
+                    if is_valid_link_update(m) {
+                        if let Some(interface_info) = parse_ifinfomsg(m) {
+                            work.upsert_interface(interface_info);
+                        }
+                    }
+                }
+                RTM_DELLINK => {
+                    if is_valid_link_update(m) {
+                        if let Some(interface_info) = parse_ifinfomsg(m) {
+                            work.delete_interface(interface_info.if_index);
                         }
                     }
                 }

@@ -1,10 +1,12 @@
 use {
     crate::netlink::{
-        netlink_get_neighbors, netlink_get_routes, MacAddress, NeighborEntry, RouteEntry,
+        netlink_get_interfaces, netlink_get_neighbors, netlink_get_routes, InterfaceInfo,
+        MacAddress, NeighborEntry, RouteEntry,
     },
     arc_swap::ArcSwap,
     libc::{AF_INET, AF_INET6},
     std::{
+        collections::HashMap,
         io,
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
         sync::Arc,
@@ -22,6 +24,9 @@ pub enum RouteError {
 
     #[error("could not resolve MAC address")]
     MacResolutionError,
+
+    #[error("unknown interface index {0}")]
+    UnknownInterfaceIndex(u32),
 }
 
 #[derive(Debug)]
@@ -117,16 +122,23 @@ fn is_ipv6_match(addr: Ipv6Addr, network: Ipv6Addr, prefix_len: u8) -> bool {
 pub struct Router {
     arp_table: Arc<ArpTable>,
     routes: Arc<Vec<RouteEntry>>,
+    interfaces: Arc<HashMap<u32, InterfaceInfo>>, // if_index (on host) -> InterfaceInfo map
 }
 
 impl Router {
     pub fn new() -> Result<Self, io::Error> {
         let arp_table = ArpTable::new()?;
         let routes = netlink_get_routes(AF_INET as u8)?;
+        let interfaces = netlink_get_interfaces()?;
+        let interface_map: HashMap<u32, InterfaceInfo> = interfaces
+            .into_iter()
+            .map(|if_info| (if_info.if_index, if_info))
+            .collect();
 
         Ok(Self {
             arp_table: Arc::new(arp_table),
             routes: Arc::new(routes),
+            interfaces: Arc::new(interface_map),
         })
     }
 
@@ -136,6 +148,10 @@ impl Router {
 
     pub fn clone_routes(&self) -> Vec<RouteEntry> {
         self.routes.as_ref().clone()
+    }
+
+    pub fn clone_interfaces(&self) -> HashMap<u32, InterfaceInfo> {
+        self.interfaces.as_ref().clone()
     }
 
     pub fn default(&self) -> Result<NextHop, RouteError> {
@@ -148,6 +164,9 @@ impl Router {
         let if_index = default_route
             .out_if_index
             .ok_or(RouteError::MissingOutputInterface)?;
+        if !self.interfaces.contains_key(&(if_index as u32)) {
+            return Err(RouteError::UnknownInterfaceIndex(if_index as u32));
+        }
 
         let next_hop_ip = match default_route.gateway {
             Some(gateway) => gateway,
@@ -169,6 +188,9 @@ impl Router {
         let if_index = route
             .out_if_index
             .ok_or(RouteError::MissingOutputInterface)?;
+        if !self.interfaces.contains_key(&(if_index as u32)) {
+            return Err(RouteError::UnknownInterfaceIndex(if_index as u32));
+        }
 
         let next_hop_ip = match route.gateway {
             Some(gateway) => gateway,
@@ -226,6 +248,12 @@ impl AtomicRouter {
         current_router.arp_table = Arc::new(ArpTable {
             neighbors: netlink_get_neighbors(None, AF_INET as u8)?,
         });
+        let interfaces = netlink_get_interfaces()?;
+        let interface_map: HashMap<u32, InterfaceInfo> = interfaces
+            .into_iter()
+            .map(|if_info| (if_info.if_index, if_info))
+            .collect();
+        current_router.interfaces = Arc::new(interface_map);
         self.router.store(Arc::new(current_router));
         Ok(())
     }
@@ -236,6 +264,7 @@ impl AtomicRouter {
                 neighbors: working.neigh.clone(),
             }),
             routes: Arc::new(working.routes.clone()),
+            interfaces: Arc::new(working.interfaces.clone()),
         };
         self.router.store(Arc::new(router));
     }
@@ -245,8 +274,10 @@ impl AtomicRouter {
 pub struct WorkingRouter {
     routes: Vec<RouteEntry>,
     neigh: Vec<NeighborEntry>,
+    interfaces: HashMap<u32, InterfaceInfo>,
     dirty_routes: bool,
     dirty_neigh: bool,
+    dirty_interfaces: bool,
 }
 
 impl WorkingRouter {
@@ -256,13 +287,17 @@ impl WorkingRouter {
         let router = router.load();
         let mut routes = router.clone_routes();
         let mut neigh = router.clone_neighbors();
+        let mut interfaces = router.clone_interfaces();
         routes.reserve(routes.len().saturating_mul(2).max(512));
         neigh.reserve(neigh.len().saturating_mul(2).max(128));
+        interfaces.reserve(interfaces.len().saturating_mul(2).max(128));
         Self {
             routes,
             neigh,
+            interfaces,
             dirty_routes: false,
             dirty_neigh: false,
+            dirty_interfaces: false,
         }
     }
 
@@ -274,9 +309,14 @@ impl WorkingRouter {
         self.dirty_neigh
     }
 
+    pub fn dirty_interfaces(&self) -> bool {
+        self.dirty_interfaces
+    }
+
     pub fn clear_dirty(&mut self) {
         self.dirty_routes = false;
         self.dirty_neigh = false;
+        self.dirty_interfaces = false;
     }
 
     #[inline]
@@ -356,14 +396,25 @@ impl WorkingRouter {
             self.dirty_neigh = true;
         }
     }
+
+    pub fn upsert_interface(&mut self, new_interface: InterfaceInfo) {
+        self.interfaces
+            .insert(new_interface.if_index, new_interface);
+        self.dirty_interfaces = true;
+    }
+
+    pub fn delete_interface(&mut self, if_index: u32) {
+        self.interfaces.remove(&if_index);
+        self.dirty_interfaces = true;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use {
         super::*,
-        crate::netlink::{MacAddress, NeighborEntry, RouteEntry},
-        libc::{AF_INET, NUD_REACHABLE},
+        crate::netlink::{InterfaceInfo, MacAddress, NeighborEntry, RouteEntry},
+        libc::{AF_INET, ARPHRD_ETHER, NUD_REACHABLE},
         std::net::{IpAddr, Ipv4Addr},
     };
 
@@ -513,5 +564,48 @@ mod tests {
         let after_delete_neigh = router_after_delete.clone_neighbors();
         assert!(after_delete_neigh.iter().all(|n| n != &entry));
         assert!(after_delete_neigh.len() == before_neigh.len());
+    }
+
+    #[test]
+    fn test_working_upsert_and_delete_interface() {
+        let atomic_router = AtomicRouter::new().unwrap();
+        let router_before = atomic_router.load();
+        let before_ifaces = router_before.clone_interfaces();
+
+        let mut working = WorkingRouter::from_atomic_router(&atomic_router);
+
+        // Create a new, synthetic interface
+        let if_index = 424242u32;
+        let iface = InterfaceInfo {
+            if_index,
+            if_name: "test424242".to_string(),
+            dev_type: ARPHRD_ETHER,
+        };
+
+        // Upsert interface and check that it was inserted and interfaces are dirty
+        working.upsert_interface(iface.clone());
+        assert!(working.dirty_interfaces());
+        atomic_router.publish_snapshot(&working);
+        working.clear_dirty();
+        assert!(!working.dirty_interfaces());
+
+        let router_after_insert = atomic_router.load();
+        let after_insert_ifaces = router_after_insert.clone_interfaces();
+        assert!(after_insert_ifaces.contains_key(&if_index));
+        let inserted = after_insert_ifaces.get(&if_index).unwrap();
+        assert_eq!(inserted.if_name, "test424242");
+        assert_eq!(inserted.dev_type, ARPHRD_ETHER);
+        assert!(after_insert_ifaces.len() >= before_ifaces.len());
+
+        // Delete the interface and check that it is removed
+        working.delete_interface(if_index);
+        assert!(working.dirty_interfaces());
+        atomic_router.publish_snapshot(&working);
+        working.clear_dirty();
+
+        let router_after_delete = atomic_router.load();
+        let after_delete_ifaces = router_after_delete.clone_interfaces();
+        assert!(!after_delete_ifaces.contains_key(&if_index));
+        assert_eq!(after_delete_ifaces.len(), before_ifaces.len());
     }
 }

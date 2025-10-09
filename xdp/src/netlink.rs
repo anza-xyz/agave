@@ -3,13 +3,14 @@
 use {
     libc::{
         bind, getsockname, nlattr, nlmsgerr, nlmsghdr, recv, send, setsockopt, sockaddr_nl, socket,
-        AF_INET, AF_INET6, AF_NETLINK, NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_ROUTE,
-        NLA_ALIGNTO, NLA_TYPE_MASK, NLMSG_DONE, NLMSG_ERROR, NLM_F_DUMP, NLM_F_MULTI,
-        NLM_F_REQUEST, NUD_PERMANENT, NUD_REACHABLE, NUD_STALE, RTA_DST, RTA_GATEWAY, RTA_IIF,
-        RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_F_CLONED, RTM_GETNEIGH, RTM_GETROUTE,
-        RTM_NEWNEIGH, RTM_NEWROUTE, RTN_BLACKHOLE, RTN_BROADCAST, RTN_LOCAL, RTN_MULTICAST,
-        RTN_THROW, RTN_UNICAST, RT_TABLE_LOCAL, RT_TABLE_MAIN, RT_TABLE_UNSPEC, SOCK_RAW,
-        SOL_NETLINK, SOL_SOCKET, SO_RCVBUF,
+        AF_INET, AF_INET6, AF_NETLINK, ARPHRD_ETHER, ARPHRD_IPGRE, ARPHRD_LOOPBACK, ARPHRD_NETROM,
+        IFLA_IFNAME, IFNAMSIZ, NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_ROUTE, NLA_ALIGNTO,
+        NLA_TYPE_MASK, NLMSG_DONE, NLMSG_ERROR, NLM_F_DUMP, NLM_F_MULTI, NLM_F_REQUEST,
+        NUD_PERMANENT, NUD_REACHABLE, NUD_STALE, RTA_DST, RTA_GATEWAY, RTA_IIF, RTA_OIF,
+        RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_F_CLONED, RTM_GETLINK, RTM_GETNEIGH,
+        RTM_GETROUTE, RTM_NEWLINK, RTM_NEWNEIGH, RTM_NEWROUTE, RTN_BLACKHOLE, RTN_BROADCAST,
+        RTN_LOCAL, RTN_MULTICAST, RTN_THROW, RTN_UNICAST, RT_TABLE_LOCAL, RT_TABLE_MAIN,
+        RT_TABLE_UNSPEC, SOCK_RAW, SOL_NETLINK, SOL_SOCKET, SO_RCVBUF,
     },
     std::{
         collections::HashMap,
@@ -22,6 +23,16 @@ use {
 };
 
 const NLA_HDR_LEN: usize = align_to(mem::size_of::<nlattr>(), NLA_ALIGNTO as usize);
+
+#[repr(C)]
+#[allow(non_camel_case_types)]
+pub(crate) struct ifinfomsg {
+    ifi_family: u8,
+    ifi_type: u16,
+    ifi_index: u32,
+    ifi_flags: u32,
+    ifi_change: u32,
+}
 
 #[inline]
 fn is_supported_route_type(ty: u8) -> bool {
@@ -722,4 +733,122 @@ pub fn netlink_get_default_gateway(family: u8) -> Result<Option<RouteEntry>, io:
     }
 
     Ok(None)
+}
+
+// Interface information structure
+#[derive(Debug, Clone)]
+pub struct InterfaceInfo {
+    pub if_index: u32,
+    pub if_name: String,
+    pub dev_type: u16,
+}
+
+// Get all interfaces via netlink (based off of FD: fd_netdev_netlink_load_table)
+pub fn netlink_get_interfaces() -> Result<Vec<InterfaceInfo>, io::Error> {
+    let socket = NetlinkSocket::open()?;
+
+    // Create request struct
+    #[repr(C)]
+    struct Request {
+        nlh: nlmsghdr,
+        ifi: ifinfomsg,
+    }
+
+    let request = Request {
+        nlh: nlmsghdr {
+            nlmsg_type: RTM_GETLINK,
+            nlmsg_flags: (NLM_F_REQUEST | NLM_F_DUMP) as u16,
+            nlmsg_len: mem::size_of::<Request>() as u32,
+            nlmsg_seq: 1,
+            nlmsg_pid: 0,
+        },
+        ifi: ifinfomsg {
+            ifi_family: AF_INET as u8,
+            ifi_type: ARPHRD_NETROM,
+            ifi_index: 0,
+            ifi_flags: 0,
+            ifi_change: 0,
+        },
+    };
+
+    // Send request
+    let request_bytes = bytes_of(&request);
+    socket.send(request_bytes)?;
+
+    // Receive and parse messages
+    let messages = socket.recv()?;
+    let mut interfaces = Vec::new();
+
+    for msg in messages {
+        // Check for netlink errors
+        if msg.header.nlmsg_type == NLMSG_ERROR as u16 {
+            let err = msg.error.unwrap();
+            if err.error != 0 {
+                return Err(io::Error::from_raw_os_error(-err.error));
+            }
+            continue;
+        }
+
+        if msg.header.nlmsg_type != RTM_NEWLINK {
+            continue;
+        }
+
+        if let Some(if_info) = parse_ifinfomsg(&msg) {
+            interfaces.push(if_info);
+        }
+    }
+
+    Ok(interfaces)
+}
+
+// Interface info parsing
+// Just parsing the interface info for:
+// - if_index
+// - if_name
+// - dev_type
+pub fn parse_ifinfomsg(msg: &NetlinkMessage) -> Option<InterfaceInfo> {
+    let ifi = parse_into_ifinfomsg(msg)?;
+
+    // Filter interface types
+    let ifi_type = ifi.ifi_type;
+    if ifi_type != ARPHRD_ETHER && ifi_type != ARPHRD_LOOPBACK && ifi_type != ARPHRD_IPGRE {
+        return None;
+    }
+
+    // Parse attributes
+    let Ok(attrs) = parse_attrs(&msg.data[mem::size_of::<ifinfomsg>()..]) else {
+        return None;
+    };
+
+    let mut if_name = format!("if{}", ifi.ifi_index);
+
+    // Parse IFLA_IFNAME
+    if let Some(attr) = attrs.get(&IFLA_IFNAME) {
+        if !attr.data.is_empty() && attr.data.len() <= IFNAMSIZ {
+            if let Ok(name) = String::from_utf8(attr.data.to_vec()) {
+                if_name = name.trim_end_matches('\0').to_string();
+            }
+        }
+    }
+
+    Some(InterfaceInfo {
+        if_index: ifi.ifi_index,
+        if_name,
+        dev_type: ifi.ifi_type,
+    })
+}
+
+pub(crate) fn is_valid_link_update(msg: &NetlinkMessage) -> bool {
+    if let Some(if_info_msg) = parse_into_ifinfomsg(msg) {
+        let ifi_type = if_info_msg.ifi_type;
+        return ifi_type == ARPHRD_ETHER || ifi_type == ARPHRD_LOOPBACK || ifi_type == ARPHRD_IPGRE;
+    }
+    false
+}
+
+fn parse_into_ifinfomsg(msg: &NetlinkMessage) -> Option<ifinfomsg> {
+    if msg.data.len() < mem::size_of::<ifinfomsg>() {
+        return None;
+    }
+    Some(unsafe { ptr::read_unaligned(msg.data.as_ptr() as *const ifinfomsg) })
 }
