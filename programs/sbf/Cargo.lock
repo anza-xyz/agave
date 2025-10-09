@@ -10027,6 +10027,7 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
+ "solana-metrics",
  "solana-packet",
  "solana-pubkey",
  "solana-sdk-ids",
