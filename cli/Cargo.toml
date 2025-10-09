@@ -38,7 +38,6 @@ pretty-hex = { workspace = true }
 reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "rustls-tls-native-roots", "json"] }
 semver = { workspace = true }
 serde = { workspace = true }
-serde_derive = { workspace = true }
 serde_json = { workspace = true }
 solana-account = "=3.1.0"
 solana-account-decoder = { workspace = true }

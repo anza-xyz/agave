@@ -52,8 +52,6 @@ pub use {
 
 #[macro_use]
 extern crate solana_metrics;
-#[macro_use]
-extern crate serde_derive;
 
 #[cfg_attr(feature = "frozen-abi", macro_use)]
 #[cfg(feature = "frozen-abi")]

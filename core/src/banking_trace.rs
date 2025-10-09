@@ -4,6 +4,7 @@ use {
     chrono::{DateTime, Local},
     crossbeam_channel::{unbounded, Receiver, SendError, Sender, TryRecvError},
     rolling_file::{RollingCondition, RollingConditionBasic, RollingFileAppender},
+    serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_hash::Hash,
     std::{

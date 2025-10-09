@@ -40,7 +40,6 @@ log = { workspace = true }
 percentage = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
 serde = { workspace = true, features = ["rc"] }
-serde_derive = { workspace = true }
 solana-account = { workspace = true }
 solana-clock = { workspace = true }
 solana-fee-structure = { workspace = true }

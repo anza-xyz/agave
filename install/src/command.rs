@@ -8,7 +8,7 @@ use {
     console::{style, Emoji},
     crossbeam_channel::unbounded,
     indicatif::{ProgressBar, ProgressStyle},
-    serde_derive::{Deserialize, Serialize},
+    serde::{Deserialize, Serialize},
     solana_config_interface::{
         instruction::{self as config_instruction},
         state::get_config_data,

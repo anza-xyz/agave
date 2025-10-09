@@ -28,7 +28,6 @@ reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip
 scopeguard = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
-serde_derive = { workspace = true }
 serde_yaml = { workspace = true }
 serde_yaml_08 = { package = "serde_yaml", version = "0.8.26" }
 solana-clap-utils = { workspace = true }

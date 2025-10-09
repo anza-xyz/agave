@@ -20,7 +20,6 @@ name = "solana_system_program"
 bincode = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
-serde_derive = { workspace = true }
 solana-account = { workspace = true }
 solana-bincode = { workspace = true }
 solana-fee-calculator = { workspace = true }

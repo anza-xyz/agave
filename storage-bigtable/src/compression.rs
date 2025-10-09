@@ -3,7 +3,7 @@ use {
     std::io::{self, BufReader, Read, Write},
 };
 
-#[derive(Debug, Serialize, Deserialize, Sequence)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Sequence)]
 pub enum CompressionMethod {
     NoCompression,
     Bzip2,

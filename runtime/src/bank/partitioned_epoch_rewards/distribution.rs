@@ -11,6 +11,7 @@ use {
         stake_account::StakeAccount,
     },
     log::error,
+    serde::{Deserialize, Serialize},
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount},
     solana_accounts_db::stake_rewards::StakeReward,
     solana_measure::measure_us,

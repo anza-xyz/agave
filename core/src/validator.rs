@@ -34,6 +34,7 @@ use {
     anyhow::{anyhow, Context, Result},
     crossbeam_channel::{bounded, unbounded, Receiver},
     quinn::Endpoint,
+    serde::{Deserialize, Serialize},
     solana_accounts_db::{
         accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         accounts_update_notifier_interface::AccountsUpdateNotifier,

@@ -354,7 +354,7 @@ mod tests {
             derive(AbiExample),
             frozen_abi(digest = "HxmFy4D1VFmq91rp4PDAMsunMnwxqdeQ2CNyaNkStnEw")
         )]
-        #[derive(Serialize)]
+        #[derive(serde::Serialize)]
         pub struct BankAbiTestWrapper {
             #[serde(serialize_with = "wrapper")]
             bank: PhantomData<Bank>,

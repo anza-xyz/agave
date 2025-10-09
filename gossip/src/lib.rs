@@ -51,9 +51,6 @@ extern crate log;
 #[macro_use]
 extern crate assert_matches;
 
-#[macro_use]
-extern crate serde_derive;
-
 #[cfg_attr(feature = "frozen-abi", macro_use)]
 #[cfg(feature = "frozen-abi")]
 extern crate solana_frozen_abi_macro;

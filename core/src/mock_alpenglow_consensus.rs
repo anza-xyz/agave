@@ -3,7 +3,7 @@ use {
     crate::consensus::Stake,
     bytemuck::{Pod, Zeroable},
     crossbeam_channel::{bounded, Receiver, Sender},
-    serde::de::DeserializeOwned,
+    serde::{de::DeserializeOwned, Deserialize, Serialize},
     solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
     solana_gossip::{cluster_info::ClusterInfo, epoch_specs::EpochSpecs},
     solana_keypair::Keypair,

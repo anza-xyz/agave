@@ -7,7 +7,7 @@ use {
         ping_pong::{self, Pong},
     },
     bincode::serialize,
-    serde::Serialize,
+    serde::{Deserialize, Serialize},
     solana_keypair::signable::Signable,
     solana_perf::packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,

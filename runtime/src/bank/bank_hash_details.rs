@@ -5,8 +5,9 @@ use {
     base64::{prelude::BASE64_STANDARD, Engine},
     log::*,
     serde::{
-        de::{self, Deserialize, Deserializer},
-        ser::{Serialize, SerializeSeq, Serializer},
+        de::{self, Deserializer},
+        ser::{SerializeSeq, Serializer},
+        Deserialize, Serialize,
     },
     solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_clock::Slot,

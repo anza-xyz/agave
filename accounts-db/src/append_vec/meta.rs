@@ -1,5 +1,6 @@
 use {
     crate::is_zero_lamport::IsZeroLamport,
+    serde::{Deserialize, Serialize},
     solana_account::ReadableAccount,
     solana_clock::Epoch,
     solana_pubkey::Pubkey,

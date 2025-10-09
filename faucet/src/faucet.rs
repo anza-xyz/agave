@@ -8,7 +8,7 @@ use {
     bincode::{deserialize, serialize, serialized_size},
     crossbeam_channel::{unbounded, Sender},
     log::*,
-    serde_derive::{Deserialize, Serialize},
+    serde::{Deserialize, Serialize},
     solana_cli_output::display::build_balance_message,
     solana_hash::Hash,
     solana_instruction::Instruction,

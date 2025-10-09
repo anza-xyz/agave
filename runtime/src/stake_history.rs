@@ -2,6 +2,7 @@
 //! unnecessary cloning of the underlying vector.
 pub use solana_stake_interface::stake_history::StakeHistoryGetEntry;
 use {
+    serde::{Deserialize, Serialize},
     solana_clock::Epoch,
     solana_stake_interface::stake_history::{self, StakeHistoryEntry},
     std::{

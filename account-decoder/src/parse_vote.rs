@@ -1,5 +1,6 @@
 use {
     crate::{parse_account_data::ParseAccountError, StringAmount},
+    serde::{Deserialize, Serialize},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_vote_interface::state::{BlockTimestamp, Lockout, VoteStateV3},

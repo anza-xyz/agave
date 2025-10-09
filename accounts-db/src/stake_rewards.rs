@@ -5,6 +5,7 @@ use {
         is_zero_lamport::IsZeroLamport,
         storable_accounts::{AccountForStorage, StorableAccounts},
     },
+    serde::{Deserialize, Serialize},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
     solana_pubkey::Pubkey,

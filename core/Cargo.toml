@@ -81,7 +81,6 @@ rolling-file = { workspace = true }
 rustls = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
-serde_derive = { workspace = true }
 slab = { workspace = true }
 solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }

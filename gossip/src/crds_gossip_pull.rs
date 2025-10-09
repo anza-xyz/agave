@@ -27,6 +27,7 @@ use {
         Rng,
     },
     rayon::{prelude::*, ThreadPool},
+    serde::{Deserialize, Serialize},
     solana_bloom::bloom::{Bloom, ConcurrentBloom},
     solana_hash::Hash,
     solana_keypair::Keypair,

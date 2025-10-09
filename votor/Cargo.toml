@@ -38,7 +38,6 @@ qualifier_attr = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
-serde_derive = { workspace = true }
 solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-bloom = { workspace = true }

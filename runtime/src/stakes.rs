@@ -8,6 +8,7 @@ use {
     log::error,
     num_derive::ToPrimitive,
     rayon::{prelude::*, ThreadPool},
+    serde::{Deserialize, Serialize},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
