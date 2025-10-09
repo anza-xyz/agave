@@ -802,6 +802,9 @@ mod tests {
         test_case::test_case,
     };
 
+    // Empirically derived to be long enough to allow the event handler time to
+    // process events but also short enough to not delay test execution for too
+    // long.
     const TEST_SHORT_TIMEOUT: Duration = Duration::from_millis(30);
 
     struct EventHandlerTestContext {
@@ -1150,6 +1153,7 @@ mod tests {
             .sharable_banks()
             .root();
         let bank1 = test_context.create_block_and_send_block_event(slot, root_bank);
+        test_context.wait_for_event_to_be_processed();
         let block_id_1 = bank1.block_id().unwrap();
 
         // We should receive Notarize Vote for block 1
@@ -1162,6 +1166,7 @@ mod tests {
 
         let slot = 2;
         let bank2 = test_context.create_block_and_send_block_event(slot, bank1.clone());
+        test_context.wait_for_event_to_be_processed();
         let block_id_2 = bank2.block_id().unwrap();
 
         // Because 2 is middle of window, we should see Notarize vote for block 2 even without parentready
@@ -1170,11 +1175,13 @@ mod tests {
 
         // Slot 3 somehow links to block 1, should not trigger Notarize vote because it has a wrong parent (not 2)
         let _ = test_context.create_block_and_send_block_event(3, bank1.clone());
+        test_context.wait_for_event_to_be_processed();
         test_context.check_no_vote_or_commitment();
 
         // Slot 4 completed replay without parent ready or parent notarized should not trigger Notarize vote
         let slot = 4;
         let bank4 = test_context.create_block_and_send_block_event(slot, bank2.clone());
+        test_context.wait_for_event_to_be_processed();
         let block_id_4 = bank4.block_id().unwrap();
         test_context.check_no_vote_or_commitment();
 
@@ -1217,6 +1224,7 @@ mod tests {
 
         let bank2 = test_context.create_block_and_send_block_event(2, bank1.clone());
         let block_id_2 = bank2.block_id().unwrap();
+        test_context.wait_for_event_to_be_processed();
         // Both Notarize and Finalize votes should trigger for 2
         test_context.check_for_vote(&Vote::new_notarization_vote(2, block_id_2));
         test_context.check_for_commitment(CommitmentType::Notarize, 2);
@@ -1231,11 +1239,13 @@ mod tests {
         test_context.check_no_vote_or_commitment();
 
         test_context.send_block_notarized_event((slot, block_id_3));
+        test_context.wait_for_event_to_be_processed();
         // Check no Finalize vote for 3
         test_context.check_no_vote_or_commitment();
 
         // Now send Block event simulating replay completed for 3
         test_context.send_block_event(slot, bank3.clone());
+        test_context.wait_for_event_to_be_processed();
         // There should be a notarization vote for 3
         test_context.check_for_vote(&Vote::new_notarization_vote(slot, block_id_3));
         test_context.check_for_commitment(CommitmentType::Notarize, slot);
@@ -1244,6 +1254,7 @@ mod tests {
 
         // After casting finalization vote for 3, we will not send skip fallback
         test_context.send_safe_to_skip_event(slot);
+        test_context.wait_for_event_to_be_processed();
         test_context.check_no_vote_or_commitment();
 
         // Simulate that block 4 never arrives, we create block 4 but send timeout event
@@ -1252,6 +1263,7 @@ mod tests {
         test_context.send_timeout_event(slot);
         // We did eventually complete replay for 4
         test_context.send_block_event(slot, bank4.clone());
+        test_context.wait_for_event_to_be_processed();
         // There should be a skip vote for 4 to 7 each
         test_context.check_for_vote(&Vote::new_skip_vote(slot));
         test_context.check_for_vote(&Vote::new_skip_vote(slot + 1));
@@ -1263,6 +1275,7 @@ mod tests {
         let slot = 5;
         let bank5 = test_context.create_block_only(slot, bank4.clone());
         test_context.send_block_event(slot, bank5.clone());
+        test_context.wait_for_event_to_be_processed();
         test_context.check_no_vote_or_commitment();
 
         test_context.exit.store(true, Ordering::Relaxed);
@@ -1313,6 +1326,7 @@ mod tests {
         // Now we got safe_to_notar event for slot 1 and a different block id
         let block_id_1_1 = Hash::new_unique();
         test_context.send_safe_to_notar_event((1, block_id_1_1));
+        test_context.wait_for_event_to_be_processed();
         // We should see rest of the window skipped
         test_context.check_for_vote(&Vote::new_skip_vote(2));
         test_context.check_for_vote(&Vote::new_skip_vote(3));
@@ -1325,12 +1339,14 @@ mod tests {
         // certificate pool implementation checks that.
         let block_id_1_2 = Hash::new_unique();
         test_context.send_safe_to_notar_event((1, block_id_1_2));
+        test_context.wait_for_event_to_be_processed();
         // No skips this time because we already skipped the rest of the window
         // We should also see notarize fallback for the new block id
         test_context.check_for_vote(&Vote::new_notarization_fallback_vote(1, block_id_1_2));
 
         // But getting safe_to_notar for a block id we voted before should be no-op
         test_context.send_safe_to_notar_event((1, block_id_1_1));
+        test_context.wait_for_event_to_be_processed();
         test_context.check_no_vote_or_commitment();
     }
 
@@ -1355,6 +1371,7 @@ mod tests {
 
         // Now we got safe_to_skip event for slot 1
         test_context.send_safe_to_skip_event(1);
+        test_context.wait_for_event_to_be_processed();
         // We should see rest of the window skipped
         test_context.check_for_vote(&Vote::new_skip_vote(2));
         test_context.check_for_vote(&Vote::new_skip_vote(3));
@@ -1363,6 +1380,7 @@ mod tests {
 
         // We can trigger safe_to_skip event again, this should be a no-op
         test_context.send_safe_to_skip_event(1);
+        test_context.wait_for_event_to_be_processed();
         test_context.check_no_vote_or_commitment();
     }
 
@@ -1380,6 +1398,7 @@ mod tests {
             .window_info
             .lock()
             .unwrap();
+        test_context.wait_for_event_to_be_processed();
         let (mut guard, timeout_res) = test_context
             .leader_window_notifier
             .window_notification
@@ -1403,6 +1422,7 @@ mod tests {
             .window_info
             .lock()
             .unwrap();
+        test_context.wait_for_event_to_be_processed();
         let (mut guard, timeout_res) = test_context
             .leader_window_notifier
             .window_notification
@@ -1441,6 +1461,7 @@ mod tests {
 
         // Now we got finalized event for slot 1
         test_context.send_finalized_event((1, block_id_1), true);
+        test_context.wait_for_event_to_be_processed();
         // Listen on drop bank receiver, it should get bank 0
         let dropped_banks = test_context
             .drop_bank_receiver
@@ -1581,6 +1602,7 @@ mod tests {
         let bank4 = test_context.create_block_and_send_block_event(slot, root_bank);
         let block_id_4 = bank4.block_id().unwrap();
         test_context.send_parent_ready_event(slot, (0, Hash::default()));
+        test_context.wait_for_event_to_be_processed();
         test_context.check_for_vote(&Vote::new_notarization_vote(slot, block_id_4));
         test_context.check_for_commitment(CommitmentType::Notarize, slot);
 
