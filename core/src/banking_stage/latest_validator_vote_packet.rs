@@ -30,7 +30,7 @@ pub struct LatestValidatorVotePacket {
 }
 
 impl LatestValidatorVotePacket {
-    pub fn new_from_immutable(
+    pub fn new_from_view(
         vote: SanitizedTransactionView<SharedBytes>,
         vote_source: VoteSource,
         deprecate_legacy_vote_ixs: bool,
@@ -88,12 +88,19 @@ impl LatestValidatorVotePacket {
         vote_source: VoteSource,
         deprecate_legacy_vote_ixs: bool,
     ) -> Result<Self, DeserializedPacketError> {
+        use std::sync::Arc;
+
         if !packet.meta().is_simple_vote_tx() {
             return Err(DeserializedPacketError::VoteTransactionError);
         }
 
-        let vote = ImmutableDeserializedPacket::new(packet)?;
-        Self::new_from_immutable(vote, vote_source, deprecate_legacy_vote_ixs)
+        let vote = SanitizedTransactionView::try_new_sanitized(
+            Arc::new(packet.data(..).unwrap().to_vec()),
+            false,
+        )
+        .unwrap();
+
+        Self::new_from_view(vote, vote_source, deprecate_legacy_vote_ixs)
     }
 
     pub fn vote_pubkey(&self) -> Pubkey {

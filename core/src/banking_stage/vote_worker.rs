@@ -569,8 +569,9 @@ fn consume_scan_should_process_packet(
 mod tests {
     use {
         super::*, crate::banking_stage::vote_storage::tests::packet_from_slots,
-        solana_runtime::genesis_utils::ValidatorVoteKeypairs,
-        solana_svm::account_loader::CheckedTransactionDetails,
+        solana_perf::packet::BytesPacket, solana_runtime::genesis_utils::ValidatorVoteKeypairs,
+        solana_runtime_transaction::transaction_meta::StaticMeta,
+        solana_svm::account_loader::CheckedTransactionDetails, std::collections::HashSet,
     };
 
     #[test]
@@ -630,10 +631,11 @@ mod tests {
     #[test]
     fn extract_retryable_one_all_retryable() {
         let keypair_a = ValidatorVoteKeypairs::new_rand();
-        let mut packets = ArrayVec::from_iter([ImmutableDeserializedPacket::new(
-            packet_from_slots(vec![(1, 1)], &keypair_a, None).as_ref(),
-        )
-        .unwrap()]);
+        let mut packets = ArrayVec::from_iter([to_runtime_transaction_view(packet_from_slots(
+            vec![(1, 1)],
+            &keypair_a,
+            None,
+        ))]);
         let retryable_indices = vec![0];
 
         // Assert - Able to extract exactly one packet.
@@ -646,10 +648,11 @@ mod tests {
     #[test]
     fn extract_retryable_one_none_retryable() {
         let keypair_a = ValidatorVoteKeypairs::new_rand();
-        let mut packets = ArrayVec::from_iter([ImmutableDeserializedPacket::new(
-            packet_from_slots(vec![(1, 1)], &keypair_a, None).as_ref(),
-        )
-        .unwrap()]);
+        let mut packets = ArrayVec::from_iter([to_runtime_transaction_view(packet_from_slots(
+            vec![(1, 1)],
+            &keypair_a,
+            None,
+        ))]);
         let retryable_indices = vec![];
 
         // Assert - Able to extract exactly zero packets.
@@ -662,12 +665,12 @@ mod tests {
         let keypair_a = ValidatorVoteKeypairs::new_rand();
         let mut packets = ArrayVec::from_iter(
             [
-                packet_from_slots(vec![(5, 3)], &keypair_a, None).as_ref(),
-                packet_from_slots(vec![(6, 2)], &keypair_a, None).as_ref(),
-                packet_from_slots(vec![(7, 1)], &keypair_a, None).as_ref(),
+                packet_from_slots(vec![(5, 3)], &keypair_a, None),
+                packet_from_slots(vec![(6, 2)], &keypair_a, None),
+                packet_from_slots(vec![(7, 1)], &keypair_a, None),
             ]
             .into_iter()
-            .map(|packet| ImmutableDeserializedPacket::new(packet).unwrap()),
+            .map(to_runtime_transaction_view),
         );
         let retryable_indices = vec![2];
 
@@ -683,12 +686,12 @@ mod tests {
         let keypair_a = ValidatorVoteKeypairs::new_rand();
         let mut packets = ArrayVec::from_iter(
             [
-                packet_from_slots(vec![(5, 3)], &keypair_a, None).as_ref(),
-                packet_from_slots(vec![(6, 2)], &keypair_a, None).as_ref(),
-                packet_from_slots(vec![(7, 1)], &keypair_a, None).as_ref(),
+                packet_from_slots(vec![(5, 3)], &keypair_a, None),
+                packet_from_slots(vec![(6, 2)], &keypair_a, None),
+                packet_from_slots(vec![(7, 1)], &keypair_a, None),
             ]
             .into_iter()
-            .map(|packet| ImmutableDeserializedPacket::new(packet).unwrap()),
+            .map(to_runtime_transaction_view),
         );
         let retryable_indices = vec![0, 2];
 
@@ -699,5 +702,19 @@ mod tests {
         assert_eq!(extracted.next().unwrap().message_hash(), &expected0);
         assert_eq!(extracted.next().unwrap().message_hash(), &expected1);
         assert!(extracted.next().is_none());
+    }
+
+    fn to_runtime_transaction_view(packet: BytesPacket) -> RuntimeTransactionView {
+        let tx =
+            SanitizedTransactionView::try_new_sanitized(Arc::new(packet.buffer().to_vec()), false)
+                .unwrap();
+        let tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+            tx,
+            MessageHash::Compute,
+            None,
+        )
+        .unwrap();
+
+        RuntimeTransactionView::try_from(tx, None, &HashSet::default()).unwrap()
     }
 }

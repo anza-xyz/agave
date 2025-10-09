@@ -98,7 +98,7 @@ impl VoteStorage {
         let should_deprecate_legacy_vote_ixs = self.deprecate_legacy_vote_ixs;
         self.insert_batch_with_replenish(
             deserialized_packets.filter_map(|deserialized_packet| {
-                LatestValidatorVotePacket::new_from_immutable(
+                LatestValidatorVotePacket::new_from_view(
                     deserialized_packet,
                     vote_source,
                     should_deprecate_legacy_vote_ixs,
@@ -117,7 +117,7 @@ impl VoteStorage {
         let should_deprecate_legacy_vote_ixs = self.deprecate_legacy_vote_ixs;
         self.insert_batch_with_replenish(
             packets.filter_map(|packet| {
-                LatestValidatorVotePacket::new_from_immutable(
+                LatestValidatorVotePacket::new_from_view(
                     packet,
                     VoteSource::Tpu, // incorrect, but this bug has been here w/o issue for a long time.
                     should_deprecate_legacy_vote_ixs,
@@ -386,6 +386,11 @@ pub(crate) mod tests {
         LatestValidatorVotePacket::new(packet.as_ref(), vote_source, true).unwrap()
     }
 
+    fn to_sanitized_view(packet: BytesPacket) -> SanitizedTransactionView<SharedBytes> {
+        SanitizedTransactionView::try_new_sanitized(Arc::new(packet.buffer().to_vec()), false)
+            .unwrap()
+    }
+
     #[test]
     fn test_reinsert_packets() -> Result<(), Box<dyn Error>> {
         let node_keypair = Keypair::new();
@@ -408,10 +413,7 @@ pub(crate) mod tests {
         vote.meta_mut().flags.set(PacketFlags::SIMPLE_VOTE_TX, true);
 
         let mut vote_storage = VoteStorage::new_for_tests(&[vote_keypair.pubkey()]);
-        vote_storage.insert_batch(
-            VoteSource::Tpu,
-            std::iter::once(ImmutableDeserializedPacket::new(vote.as_ref())?),
-        );
+        vote_storage.insert_batch(VoteSource::Tpu, std::iter::once(to_sanitized_view(vote)));
         assert_eq!(1, vote_storage.len());
 
         // Drain all packets, then re-insert.
@@ -678,18 +680,20 @@ pub(crate) mod tests {
         let vote_b = packet_from_slots(vec![(vote_b_slot, 1)], &keypair_b, None);
         let vote_c = packet_from_slots(vec![(vote_c_slot, 1)], &keypair_c, None);
         let vote_d = packet_from_slots(vec![(4, 1)], &keypair_d, None);
-        let votes = vec![
-            ImmutableDeserializedPacket::new(vote_a.as_ref()).unwrap(),
-            ImmutableDeserializedPacket::new(vote_b.as_ref()).unwrap(),
-            ImmutableDeserializedPacket::new(vote_c.as_ref()).unwrap(),
-            ImmutableDeserializedPacket::new(vote_d.as_ref()).unwrap(),
-        ];
+        let votes = || {
+            vec![
+                to_sanitized_view(vote_a.clone()),
+                to_sanitized_view(vote_b.clone()),
+                to_sanitized_view(vote_c.clone()),
+                to_sanitized_view(vote_d.clone()),
+            ]
+        };
 
         let bank_0 = Bank::new_for_tests(&GenesisConfig::default());
         let mut vote_storage = VoteStorage::new(&bank_0);
 
         // Insert batch should filter out all votes as they are unstaked
-        vote_storage.insert_batch(VoteSource::Tpu, votes.clone().into_iter());
+        vote_storage.insert_batch(VoteSource::Tpu, votes().into_iter());
         assert!(vote_storage.is_empty());
 
         // Bank in same epoch should not update stakes
@@ -704,7 +708,7 @@ pub(crate) mod tests {
         );
         assert_eq!(bank.epoch(), 0);
         vote_storage.cache_epoch_boundary_info(&bank);
-        vote_storage.insert_batch(VoteSource::Tpu, votes.clone().into_iter());
+        vote_storage.insert_batch(VoteSource::Tpu, votes().into_iter());
         assert!(vote_storage.is_empty());
 
         // Bank in next epoch should update stakes
@@ -719,7 +723,7 @@ pub(crate) mod tests {
         );
         assert_eq!(bank.epoch(), 1);
         vote_storage.cache_epoch_boundary_info(&bank);
-        vote_storage.insert_batch(VoteSource::Gossip, votes.clone().into_iter());
+        vote_storage.insert_batch(VoteSource::Gossip, votes().into_iter());
         assert_eq!(vote_storage.len(), 1);
         assert_eq!(
             vote_storage.get_latest_vote_slot(keypair_b.vote_keypair.pubkey()),
@@ -739,7 +743,7 @@ pub(crate) mod tests {
         assert_eq!(bank.epoch(), 2);
         vote_storage.cache_epoch_boundary_info(&bank);
         assert_eq!(vote_storage.len(), 0);
-        vote_storage.insert_batch(VoteSource::Tpu, votes.into_iter());
+        vote_storage.insert_batch(VoteSource::Tpu, votes().into_iter());
         assert_eq!(vote_storage.len(), 1);
         assert_eq!(
             vote_storage.get_latest_vote_slot(keypair_c.vote_keypair.pubkey()),
