@@ -1473,6 +1473,12 @@ impl Bank {
             .stats
             .reset();
 
+        // Report vote accounts copy-on-write statistics
+        new.stakes_cache
+            .stakes()
+            .vote_accounts()
+            .maybe_report_copy_stats();
+
         new
     }
 

@@ -8,6 +8,7 @@ use {
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
+    solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
     std::{
         cmp::Ordering,
@@ -15,7 +16,11 @@ use {
         fmt,
         iter::FromIterator,
         mem,
-        sync::{Arc, OnceLock},
+        sync::{
+            atomic::{AtomicU64, Ordering as AtomicOrdering},
+            Arc, Mutex, OnceLock,
+        },
+        time::{Duration, Instant},
     },
     thiserror::Error,
 };
@@ -40,6 +45,65 @@ struct VoteAccountInner {
 }
 
 pub type VoteAccountsHashMap = HashMap<Pubkey, (/*stake:*/ u64, VoteAccount)>;
+
+const REPORT_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Stats for tracking copy-on-write operations on VoteAccounts
+#[derive(Debug)]
+pub struct VoteAccountsCopyStats {
+    insert_copies: AtomicU64,
+    remove_copies: AtomicU64,
+    add_stake_copies: AtomicU64,
+    sub_stake_copies: AtomicU64,
+    last_report: Mutex<Instant>,
+}
+
+impl Default for VoteAccountsCopyStats {
+    fn default() -> Self {
+        Self {
+            insert_copies: AtomicU64::new(0),
+            remove_copies: AtomicU64::new(0),
+            add_stake_copies: AtomicU64::new(0),
+            sub_stake_copies: AtomicU64::new(0),
+            last_report: Mutex::new(Instant::now()),
+        }
+    }
+}
+
+impl VoteAccountsCopyStats {
+    /// Report stats if 10 seconds have elapsed since last report.
+    /// Uses swap to atomically reset counters after reading.
+    pub fn maybe_report(&self) {
+        let mut last_report = self.last_report.lock().unwrap();
+        let now = Instant::now();
+        if now.duration_since(*last_report) < REPORT_INTERVAL {
+            return;
+        }
+
+        // Atomically swap out the current values and reset to 0
+        let insert_copies = self.insert_copies.swap(0, AtomicOrdering::Relaxed);
+        let remove_copies = self.remove_copies.swap(0, AtomicOrdering::Relaxed);
+        let add_stake_copies = self.add_stake_copies.swap(0, AtomicOrdering::Relaxed);
+        let sub_stake_copies = self.sub_stake_copies.swap(0, AtomicOrdering::Relaxed);
+
+        if insert_copies > 0 || remove_copies > 0 || add_stake_copies > 0 || sub_stake_copies > 0 {
+            datapoint_info!(
+                "vote_accounts_copy_on_write",
+                ("insert_copies", insert_copies, i64),
+                ("remove_copies", remove_copies, i64),
+                ("add_stake_copies", add_stake_copies, i64),
+                ("sub_stake_copies", sub_stake_copies, i64),
+                ("total_copies",
+                    insert_copies + remove_copies + add_stake_copies + sub_stake_copies,
+                    i64
+                ),
+            );
+        }
+
+        *last_report = now;
+    }
+}
+
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VoteAccounts {
@@ -55,6 +119,8 @@ pub struct VoteAccounts {
             >,
         >,
     >,
+    #[serde(skip)]
+    copy_stats: Arc<VoteAccountsCopyStats>,
 }
 
 impl Clone for VoteAccounts {
@@ -66,6 +132,8 @@ impl Clone for VoteAccounts {
             // never accessed. See [`VoteAccounts::add_stake`] [`VoteAccounts::sub_stake`] and
             // [`VoteAccounts::staked_nodes`].
             staked_nodes: OnceLock::new(),
+            // Share the copy_stats with the cloned instance
+            copy_stats: Arc::clone(&self.copy_stats),
         }
     }
 }
@@ -189,6 +257,9 @@ impl VoteAccounts {
         new_vote_account: VoteAccount,
         calculate_stake: impl FnOnce() -> u64,
     ) -> Option<VoteAccount> {
+        if Arc::strong_count(&self.vote_accounts) > 1 {
+            self.copy_stats.insert_copies.fetch_add(1, AtomicOrdering::Relaxed);
+        }
         let vote_accounts = Arc::make_mut(&mut self.vote_accounts);
         match vote_accounts.entry(pubkey) {
             Entry::Occupied(mut entry) => {
@@ -221,6 +292,9 @@ impl VoteAccounts {
     }
 
     pub fn remove(&mut self, pubkey: &Pubkey) -> Option<(u64, VoteAccount)> {
+        if Arc::strong_count(&self.vote_accounts) > 1 {
+            self.copy_stats.remove_copies.fetch_add(1, AtomicOrdering::Relaxed);
+        }
         let vote_accounts = Arc::make_mut(&mut self.vote_accounts);
         let entry = vote_accounts.remove(pubkey);
         if let Some((stake, ref vote_account)) = entry {
@@ -230,6 +304,9 @@ impl VoteAccounts {
     }
 
     pub fn add_stake(&mut self, pubkey: &Pubkey, delta: u64) {
+        if Arc::strong_count(&self.vote_accounts) > 1 {
+            self.copy_stats.add_stake_copies.fetch_add(1, AtomicOrdering::Relaxed);
+        }
         let vote_accounts = Arc::make_mut(&mut self.vote_accounts);
         if let Some((stake, vote_account)) = vote_accounts.get_mut(pubkey) {
             *stake += delta;
@@ -239,6 +316,9 @@ impl VoteAccounts {
     }
 
     pub fn sub_stake(&mut self, pubkey: &Pubkey, delta: u64) {
+        if Arc::strong_count(&self.vote_accounts) > 1 {
+            self.copy_stats.sub_stake_copies.fetch_add(1, AtomicOrdering::Relaxed);
+        }
         let vote_accounts = Arc::make_mut(&mut self.vote_accounts);
         if let Some((stake, vote_account)) = vote_accounts.get_mut(pubkey) {
             *stake = stake
@@ -247,6 +327,12 @@ impl VoteAccounts {
             let vote_account = vote_account.clone();
             self.sub_node_stake(delta, &vote_account);
         }
+    }
+
+    /// Report copy-on-write statistics to metrics if 10 seconds have elapsed since last report.
+    /// This should be called periodically (e.g., on each bank operation).
+    pub fn maybe_report_copy_stats(&self) {
+        self.copy_stats.maybe_report();
     }
 
     fn add_node_stake(&mut self, stake: u64, vote_account: &VoteAccount) {
@@ -354,6 +440,7 @@ impl Default for VoteAccounts {
         Self {
             vote_accounts: Arc::default(),
             staked_nodes: OnceLock::new(),
+            copy_stats: Arc::default(),
         }
     }
 }
@@ -363,6 +450,7 @@ impl PartialEq<VoteAccounts> for VoteAccounts {
         let Self {
             vote_accounts,
             staked_nodes: _,
+            copy_stats: _,
         } = self;
         vote_accounts == &other.vote_accounts
     }
@@ -373,6 +461,7 @@ impl From<Arc<VoteAccountsHashMap>> for VoteAccounts {
         Self {
             vote_accounts,
             staked_nodes: OnceLock::new(),
+            copy_stats: Arc::default(),
         }
     }
 }
@@ -821,5 +910,73 @@ mod tests {
                 assert_eq!(value, &other);
             }
         }
+    }
+
+    #[test]
+    fn test_vote_accounts_copy_stats() {
+        use std::sync::atomic::Ordering as AtomicOrdering;
+
+        let mut rng = rand::thread_rng();
+        let vote_accounts = VoteAccounts::default();
+
+        // Initially, all stats should be 0
+        assert_eq!(
+            vote_accounts
+                .copy_stats
+                .insert_copies
+                .load(AtomicOrdering::Relaxed),
+            0
+        );
+
+        // Create a clone to force copy-on-write
+        let mut vote_accounts_clone = vote_accounts.clone();
+
+        // This should trigger a copy since we have 2 references
+        let pubkey = Pubkey::new_unique();
+        let account = new_rand_vote_account(&mut rng, None);
+        let vote_account = VoteAccount::try_from(account).unwrap();
+        vote_accounts_clone.insert(pubkey, vote_account, || 42);
+
+        // Check that the stat was incremented (shared across clones)
+        assert_eq!(
+            vote_accounts
+                .copy_stats
+                .insert_copies
+                .load(AtomicOrdering::Relaxed),
+            1
+        );
+
+        // Test remove copy
+        let mut vote_accounts2 = vote_accounts_clone.clone();
+        vote_accounts2.remove(&pubkey);
+        assert_eq!(
+            vote_accounts
+                .copy_stats
+                .remove_copies
+                .load(AtomicOrdering::Relaxed),
+            1
+        );
+
+        // Test add_stake copy
+        let mut vote_accounts3 = vote_accounts_clone.clone();
+        vote_accounts3.add_stake(&pubkey, 10);
+        assert_eq!(
+            vote_accounts
+                .copy_stats
+                .add_stake_copies
+                .load(AtomicOrdering::Relaxed),
+            1
+        );
+
+        // Test sub_stake copy
+        let mut vote_accounts4 = vote_accounts_clone.clone();
+        vote_accounts4.sub_stake(&pubkey, 5);
+        assert_eq!(
+            vote_accounts
+                .copy_stats
+                .sub_stake_copies
+                .load(AtomicOrdering::Relaxed),
+            1
+        );
     }
 }
