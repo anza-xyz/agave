@@ -13,8 +13,10 @@ edition = { workspace = true }
 agave-scheduler-bindings = { workspace = true }
 agave-transaction-view = { workspace = true }
 ahash = { workspace = true }
-rts-alloc = { workspace = true }
 solana-pubkey = { workspace = true }
+
+[target."cfg(unix)".dependencies]
+rts-alloc = { workspace = true }
 
 [lints]
 workspace = true
