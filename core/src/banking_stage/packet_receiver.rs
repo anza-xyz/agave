@@ -160,14 +160,12 @@ impl PacketReceiver {
 
         let mut dropped_packets_count = Saturating(0);
         let mut newly_buffered_packets_count = 0;
-        let mut newly_buffered_forwarded_packets_count = 0;
         Self::push_unprocessed(
             vote_storage,
             vote_source,
             deserialized_packets,
             &mut dropped_packets_count,
             &mut newly_buffered_packets_count,
-            &mut newly_buffered_forwarded_packets_count,
             banking_stage_stats,
             slot_metrics_tracker,
         );
@@ -200,7 +198,6 @@ impl PacketReceiver {
         deserialized_packets: Vec<SanitizedTransactionView<SharedBytes>>,
         dropped_packets_count: &mut Saturating<usize>,
         newly_buffered_packets_count: &mut usize,
-        newly_buffered_forwarded_packets_count: &mut usize,
         banking_stage_stats: &mut BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) {
@@ -210,10 +207,6 @@ impl PacketReceiver {
                 .increment(deserialized_packets.len() as u64);
 
             *newly_buffered_packets_count += deserialized_packets.len();
-            // *newly_buffered_forwarded_packets_count += deserialized_packets
-            //     .iter()
-            //     .filter(|p| p.forwarded())
-            //     .count();
             slot_metrics_tracker
                 .increment_newly_buffered_packets_count(deserialized_packets.len() as u64);
 

@@ -14,7 +14,9 @@ use {
         consumer::{ExecuteAndCommitTransactionsOutput, ProcessTransactionBatchOutput},
         transaction_scheduler::transaction_state_container::{RuntimeTransactionView, SharedBytes},
     },
-    agave_transaction_view::transaction_view::SanitizedTransactionView,
+    agave_transaction_view::{
+        transaction_version::TransactionVersion, transaction_view::SanitizedTransactionView,
+    },
     arrayvec::ArrayVec,
     crossbeam_channel::RecvTimeoutError,
     itertools::Itertools,
@@ -23,11 +25,15 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_poh::poh_recorder::PohRecorderError,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
-    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    solana_runtime_transaction::{
+        runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
+    },
     solana_svm::{
         account_loader::TransactionCheckResult, transaction_error_metrics::TransactionErrorMetrics,
     },
+    solana_svm_transaction::svm_message::SVMMessage,
     solana_time_utils::timestamp,
+    solana_transaction::sanitized::MessageHash,
     solana_transaction_error::TransactionError,
     std::{
         sync::{
@@ -225,44 +231,56 @@ impl VoteWorker {
         let all_vote_packets = self.storage.drain_unprocessed(bank);
 
         let mut reached_end_of_slot = false;
-        let mut sanitized_transactions = Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE);
         let mut error_counters: TransactionErrorMetrics = TransactionErrorMetrics::default();
-        let mut vote_packets = ArrayVec::<_, UNPROCESSED_BUFFER_STEP_SIZE>::new();
+        let mut resolved_txs = ArrayVec::<_, UNPROCESSED_BUFFER_STEP_SIZE>::new();
         for chunk in Itertools::chunks(all_vote_packets.into_iter(), UNPROCESSED_BUFFER_STEP_SIZE)
             .into_iter()
         {
-            vote_packets.clear();
+            debug_assert!(resolved_txs.is_empty());
 
+            // TODO:
+            //
+            // 1. Convert SanitizedTransactionView -> RuntimeTransactionView.
+            // 2. If reached end of slot, bail and recover the converted transactions for reinsertion.
+            //   a. vote_packets
+            //   b. remaining in chunk
+            // 3. Call do_process_packets once we've finished all the mappings.
+
+            // Short circuit if we've reached the end of slot.
+            if reached_end_of_slot {
+                self.storage.reinsert_packets(chunk.into_iter());
+
+                continue;
+            }
+
+            // Sanitize & resolve our chunk.
             for packet in chunk.into_iter() {
-                if consume_scan_should_process_packet(
-                    bank,
-                    banking_stage_stats,
-                    &packet,
-                    reached_end_of_slot,
-                    &mut error_counters,
-                    &mut sanitized_transactions,
-                    slot_metrics_tracker,
-                ) {
-                    vote_packets.push(packet);
+                if let Some(tx) =
+                    consume_scan_should_process_packet(bank, packet, &mut error_counters)
+                {
+                    resolved_txs.push(tx);
                 }
             }
 
             if let Some(retryable_vote_indices) = self.do_process_packets(
                 bank,
                 &mut reached_end_of_slot,
-                &mut sanitized_transactions,
+                &resolved_txs,
                 banking_stage_stats,
                 consumed_buffered_packets_count,
                 rebuffered_packet_count,
-                vote_packets.len(),
                 slot_metrics_tracker,
             ) {
-                self.storage.reinsert_packets(Self::extract_retryable(
-                    &mut vote_packets,
-                    retryable_vote_indices,
-                ));
+                self.storage.reinsert_packets(
+                    Self::extract_retryable(&mut resolved_txs, retryable_vote_indices)
+                        .map(|tx| tx.into_inner_transaction().into_view()),
+                );
             } else {
-                self.storage.reinsert_packets(vote_packets.drain(..));
+                self.storage.reinsert_packets(
+                    resolved_txs
+                        .drain(..)
+                        .map(|tx| tx.into_inner_transaction().into_view()),
+                );
             }
         }
 
@@ -273,11 +291,10 @@ impl VoteWorker {
         &self,
         bank: &Bank,
         reached_end_of_slot: &mut bool,
-        sanitized_transactions: &mut Vec<RuntimeTransactionView>,
+        sanitized_transactions: &[RuntimeTransactionView],
         banking_stage_stats: &BankingStageStats,
         consumed_buffered_packets_count: &mut usize,
         rebuffered_packet_count: &mut usize,
-        packets_to_process_len: usize,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) -> Option<Vec<usize>> {
         if *reached_end_of_slot {
@@ -294,9 +311,6 @@ impl VoteWorker {
 
         slot_metrics_tracker
             .increment_process_packets_transactions_us(process_packets_transactions_us);
-
-        // Clear sanitized_transactions for next iteration
-        sanitized_transactions.clear();
 
         let ProcessTransactionsSummary {
             reached_max_poh_height,
@@ -315,8 +329,9 @@ impl VoteWorker {
         // duplicate signature, etc.)
         //
         // Note: This assumes that every packet deserializes into one transaction!
-        *consumed_buffered_packets_count +=
-            packets_to_process_len.saturating_sub(retryable_transaction_indexes.len());
+        *consumed_buffered_packets_count += sanitized_transactions
+            .len()
+            .saturating_sub(retryable_transaction_indexes.len());
 
         // Out of the buffered packets just retried, collect any still unprocessed
         // transactions in this batch
@@ -483,9 +498,9 @@ impl VoteWorker {
     }
 
     fn extract_retryable(
-        vote_packets: &mut ArrayVec<SanitizedTransactionView<SharedBytes>, 16>,
+        vote_packets: &mut ArrayVec<RuntimeTransactionView, 16>,
         retryable_vote_indices: Vec<usize>,
-    ) -> impl Iterator<Item = SanitizedTransactionView<SharedBytes>> + '_ {
+    ) -> impl Iterator<Item = RuntimeTransactionView> + '_ {
         debug_assert!(retryable_vote_indices.is_sorted());
         let mut retryable_vote_indices = retryable_vote_indices.into_iter().peekable();
 
@@ -504,55 +519,50 @@ impl VoteWorker {
 
 fn consume_scan_should_process_packet(
     bank: &Bank,
-    banking_stage_stats: &BankingStageStats,
-    packet: &SanitizedTransactionView<SharedBytes>,
-    reached_end_of_slot: bool,
+    packet: SanitizedTransactionView<SharedBytes>,
     error_counters: &mut TransactionErrorMetrics,
-    sanitized_transactions: &mut Vec<RuntimeTransactionView>,
-    slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
-) -> bool {
-    // If end of the slot, return should process (quick loop after reached end of slot)
-    if reached_end_of_slot {
-        return true;
+) -> Option<RuntimeTransactionView> {
+    // Construct the RuntimeTransaction.
+    let Ok(view) = RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+        packet,
+        MessageHash::Compute,
+        None,
+    ) else {
+        return None;
+    };
+
+    // TODO: Do we need to confirm the TX is a simple vote TX?
+    // TODO: Can we rely on banking to do validation for us?
+    // TODO: Can this ever be triggered?
+    if !matches!(view.version(), TransactionVersion::Legacy) {
+        return None;
     }
 
-    // Try to sanitize the packet. Ignore deactivation slot since we are
-    // immediately attempting to process the transaction.
-    let (maybe_sanitized_transaction, sanitization_time_us) = measure_us!(packet
-        .build_sanitized_transaction(
-            bank.vote_only_bank(),
-            bank,
-            bank.get_reserved_account_keys(),
-        )
-        .map(|(tx, _deactivation_slot)| tx));
+    // Resolve the transaction (legacy does not have LUT so this is simple).
+    let Ok(view) = RuntimeTransactionView::try_from(
+        view,
+        None,
+        // TODO: receive_and_buffer uses root_bank instead of working, should confirm what is correct here.
+        bank.get_reserved_account_keys(),
+    ) else {
+        return None;
+    };
 
-    slot_metrics_tracker.increment_transactions_from_packets_us(sanitization_time_us);
-    banking_stage_stats
-        .packet_conversion_elapsed
-        .fetch_add(sanitization_time_us, Ordering::Relaxed);
-
-    if let Some(sanitized_transaction) = maybe_sanitized_transaction {
-        let message = sanitized_transaction.message();
-
-        // Check the number of locks and whether there are duplicates
-        if validate_account_locks(
-            message.account_keys(),
-            bank.get_transaction_account_lock_limit(),
-        )
-        .is_err()
-        {
-            return false;
-        }
-
-        if Consumer::check_fee_payer_unlocked(bank, &sanitized_transaction, error_counters).is_err()
-        {
-            return false;
-        }
-        sanitized_transactions.push(sanitized_transaction);
-        true
-    } else {
-        false
+    // Check the number of locks and whether there are duplicates
+    if validate_account_locks(
+        view.account_keys(),
+        bank.get_transaction_account_lock_limit(),
+    )
+    .is_err()
+    {
+        return None;
     }
+
+    if Consumer::check_fee_payer_unlocked(bank, &view, error_counters).is_err() {
+        return None;
+    }
+
+    Some(view)
 }
 
 #[cfg(test)]

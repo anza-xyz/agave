@@ -51,7 +51,7 @@ impl LatestValidatorVotePacket {
             }
         };
 
-        match limited_deserialize::<VoteInstruction>(&instruction.data, PACKET_DATA_SIZE as u64) {
+        match limited_deserialize::<VoteInstruction>(instruction.data, PACKET_DATA_SIZE as u64) {
             Ok(vote_state_update_instruction)
                 if instruction_filter(&vote_state_update_instruction) =>
             {
