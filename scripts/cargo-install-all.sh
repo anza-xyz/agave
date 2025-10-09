@@ -29,7 +29,7 @@ usage() {
     echo "Error: $*"
   fi
   cat <<EOF
-usage: $0 [+<cargo version>] [--debug] [--validator-only] [--release-with-debug] <install directory>
+usage: $0 [+<cargo version>] [--debug] [--validator-only] [--release-with-debug] [--no-spl-token] <install directory>
 EOF
   exit $exitcode
 }
@@ -42,6 +42,7 @@ installDir=
 buildProfileArg='--profile release'
 buildProfile='release'
 validatorOnly=
+noSPLToken=
 
 while [[ -n $1 ]]; do
   if [[ ${1:0:1} = - ]]; then
@@ -59,6 +60,9 @@ while [[ -n $1 ]]; do
       shift
     elif [[ $1 = --validator-only ]]; then
       validatorOnly=true
+      shift
+    elif [[ $1 = --no-spl-token ]]; then
+      noSPLToken=true
       shift
     else
       usage "Unknown option: $1"
@@ -98,7 +102,7 @@ else
   echo "Building binaries for all platforms: ${AGAVE_BINS_DEV[*]} ${AGAVE_BINS_END_USER[*]} ${AGAVE_BINS_DEPRECATED[*]}"
   BINS+=("${AGAVE_BINS_DEV[@]}" "${AGAVE_BINS_END_USER[@]}" "${AGAVE_BINS_DEPRECATED[@]}")
 
-  if [[ $CI_OS_NAME != windows ]]; then
+  if [[ $OSTYPE != msys ]]; then
     echo "Building binaries for linux and osx only: ${AGAVE_BINS_VAL_OP[*]}, ${AGAVE_BINS_DCOU[*]}"
     BINS+=("${AGAVE_BINS_VAL_OP[@]}")
     DCOU_BINS+=("${AGAVE_BINS_DCOU[@]}")
@@ -163,8 +167,8 @@ check_dcou() {
     cargo_build "${dcouBinArgs[@]}"
   fi
 
-  # Exclude `spl-token` binary for net.sh builds
-  if [[ -z "$validatorOnly" ]]; then
+  # Exclude `spl-token` if requested
+  if [[ -z "$noSPLToken" ]]; then
     # shellcheck source=scripts/spl-token-cli-version.sh
     source "$SOLANA_ROOT"/scripts/spl-token-cli-version.sh
 
@@ -177,7 +181,7 @@ for bin in "${BINS[@]}" "${DCOU_BINS[@]}"; do
   cp -fv "target/$buildProfile/$bin" "$installDir"/bin
 done
 
-if [[ $CI_OS_NAME != windows ]]; then
+if [[ $OSTYPE != msys ]]; then
   ./fetch-perf-libs.sh
 
   if [[ -d target/perf-libs ]]; then

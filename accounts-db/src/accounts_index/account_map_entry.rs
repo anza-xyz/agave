@@ -5,9 +5,13 @@ use {
         is_zero_lamport::IsZeroLamport,
     },
     solana_clock::Slot,
-    std::sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, RwLock, RwLockReadGuard, RwLockWriteGuard,
+    std::{
+        fmt::Debug,
+        ops::Deref,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, RwLock, RwLockReadGuard, RwLockWriteGuard,
+        },
     },
 };
 
@@ -23,7 +27,7 @@ pub struct AccountMapEntry<T> {
     /// purge_slot() also removes non-rooted slots from this list
     slot_list: RwLock<SlotList<T>>,
     /// synchronization metadata for in-memory state since last flush to disk accounts index
-    pub meta: AccountMapEntryMeta,
+    meta: AccountMapEntryMeta,
 }
 
 impl<T: IndexValue> AccountMapEntry<T> {
@@ -108,16 +112,95 @@ impl<T: IndexValue> AccountMapEntry<T> {
         );
     }
 
+    /// Return length of the slot list
+    ///
+    /// Do not call it while guard from any locking function (`slot_list_*lock`) is active.
     pub fn slot_list_lock_read_len(&self) -> usize {
         self.slot_list.read().unwrap().len()
     }
 
-    pub fn slot_list_read_lock(&self) -> RwLockReadGuard<SlotList<T>> {
-        self.slot_list.read().unwrap()
+    /// Acquire a read lock on the slot list and return accessor for interpreting its representation
+    ///
+    /// Do not call any locking function (`slot_list_*lock*`) on the same `AccountMapEntry` until accessor
+    /// they return is dropped.
+    pub fn slot_list_read_lock(&self) -> SlotListReadGuard<'_, T> {
+        SlotListReadGuard(self.slot_list.read().unwrap())
     }
 
-    pub fn slot_list_write_lock(&self) -> RwLockWriteGuard<SlotList<T>> {
-        self.slot_list.write().unwrap()
+    /// Acquire a write lock on the slot list and return accessor for modifying it
+    ///
+    /// Do not call any locking function (`slot_list_*lock*`) on the same `AccountMapEntry` until accessor
+    /// they return is dropped.
+    pub fn slot_list_write_lock(&self) -> SlotListWriteGuard<'_, T> {
+        SlotListWriteGuard(self.slot_list.write().unwrap())
+    }
+}
+
+/// Holds slot list lock for reading and provides read access to its contents.
+#[derive(Debug)]
+pub struct SlotListReadGuard<'a, T>(RwLockReadGuard<'a, SlotList<T>>);
+
+impl<T> Deref for SlotListReadGuard<'_, T> {
+    type Target = [(Slot, T)];
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_slice()
+    }
+}
+
+impl<T> SlotListReadGuard<'_, T> {
+    #[cfg(test)]
+    pub fn clone_list(&self) -> SlotList<T>
+    where
+        T: Copy,
+    {
+        self.0.iter().copied().collect()
+    }
+}
+
+/// Holds slot list lock for writing and provides mutable API translating changes to the slot list.
+#[derive(Debug)]
+pub struct SlotListWriteGuard<'a, T>(RwLockWriteGuard<'a, SlotList<T>>);
+
+impl<T> SlotListWriteGuard<'_, T> {
+    /// Append element to the end of slot list
+    pub fn push(&mut self, item: (Slot, T)) {
+        self.0.push(item);
+    }
+
+    /// Retains only the elements specified by the predicate.
+    pub fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&mut (Slot, T)) -> bool,
+    {
+        self.0.retain(f)
+    }
+
+    /// Clears the list, removing all elements.
+    #[cfg(test)]
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    #[cfg(test)]
+    pub fn assign(&mut self, value: impl IntoIterator<Item = (Slot, T)>) {
+        *self.0 = value.into_iter().collect();
+    }
+
+    #[cfg(test)]
+    pub fn clone_list(&self) -> SlotList<T>
+    where
+        T: Copy,
+    {
+        self.0.iter().copied().collect()
+    }
+}
+
+impl<T> Deref for SlotListWriteGuard<'_, T> {
+    type Target = [(Slot, T)];
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_slice()
     }
 }
 
@@ -126,9 +209,9 @@ impl<T: IndexValue> AccountMapEntry<T> {
 #[derive(Debug, Default)]
 pub struct AccountMapEntryMeta {
     /// true if entry in in-mem idx has changes and needs to be written to disk
-    pub dirty: AtomicBool,
+    dirty: AtomicBool,
     /// 'age' at which this entry should be purged from the cache (implements lru)
-    pub age: AtomicAge,
+    age: AtomicAge,
 }
 
 impl AccountMapEntryMeta {

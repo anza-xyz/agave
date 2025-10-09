@@ -321,6 +321,25 @@ pub struct TransactionSimulationResult {
     pub post_token_balances: Option<Vec<SvmTokenInfo>>,
 }
 
+impl TransactionSimulationResult {
+    pub fn new_error(err: TransactionError) -> Self {
+        Self {
+            fee: None,
+            inner_instructions: None,
+            loaded_accounts_data_size: 0,
+            logs: vec![],
+            post_balances: None,
+            post_simulation_accounts: vec![],
+            post_token_balances: None,
+            pre_balances: None,
+            pre_token_balances: None,
+            result: Err(err),
+            return_data: None,
+            units_consumed: 0,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct TransactionBalancesSet {
     pub pre_balances: TransactionBalances,

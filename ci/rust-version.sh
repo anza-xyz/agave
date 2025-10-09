@@ -15,7 +15,7 @@
 #   $ cargo +"$rust_nightly" build
 #
 
-if [[ -n $RUST_STABLE_VERSION ]]; then
+if [[ -n ${RUST_STABLE_VERSION:-} ]]; then
   stable_version="$RUST_STABLE_VERSION"
 else
   # read rust version from rust-toolchain.toml file
@@ -26,7 +26,7 @@ else
   stable_version=$(readCargoVariable channel "$base/../rust-toolchain.toml")
 fi
 
-if [[ -n $RUST_NIGHTLY_VERSION ]]; then
+if [[ -n ${RUST_NIGHTLY_VERSION:-} ]]; then
   nightly_version="$RUST_NIGHTLY_VERSION"
 else
   nightly_version=2025-02-16
@@ -37,7 +37,7 @@ export rust_stable="$stable_version"
 
 export rust_nightly=nightly-"$nightly_version"
 
-if [[ -n $NO_INSTALL ]]; then
+if [[ -n ${NO_INSTALL:-} ]]; then
   return
 fi
 

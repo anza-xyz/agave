@@ -8,7 +8,6 @@ use {
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_vote_program::vote_instruction::VoteInstruction,
-    std::sync::Arc,
 };
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
@@ -18,11 +17,11 @@ pub enum VoteSource {
 }
 
 /// Holds deserialized vote messages as well as their source, and slot
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct LatestValidatorVotePacket {
     vote_source: VoteSource,
     vote_pubkey: Pubkey,
-    vote: Option<Arc<ImmutableDeserializedPacket>>,
+    vote: Option<ImmutableDeserializedPacket>,
     slot: Slot,
     hash: Hash,
     timestamp: Option<UnixTimestamp>,
@@ -30,7 +29,7 @@ pub struct LatestValidatorVotePacket {
 
 impl LatestValidatorVotePacket {
     pub fn new_from_immutable(
-        vote: Arc<ImmutableDeserializedPacket>,
+        vote: ImmutableDeserializedPacket,
         vote_source: VoteSource,
         deprecate_legacy_vote_ixs: bool,
     ) -> Result<Self, DeserializedPacketError> {
@@ -93,7 +92,7 @@ impl LatestValidatorVotePacket {
             return Err(DeserializedPacketError::VoteTransactionError);
         }
 
-        let vote = Arc::new(ImmutableDeserializedPacket::new(packet)?);
+        let vote = ImmutableDeserializedPacket::new(packet)?;
         Self::new_from_immutable(vote, vote_source, deprecate_legacy_vote_ixs)
     }
 
@@ -121,7 +120,7 @@ impl LatestValidatorVotePacket {
         self.vote.is_none()
     }
 
-    pub fn take_vote(&mut self) -> Option<Arc<ImmutableDeserializedPacket>> {
+    pub fn take_vote(&mut self) -> Option<ImmutableDeserializedPacket> {
         self.vote.take()
     }
 }

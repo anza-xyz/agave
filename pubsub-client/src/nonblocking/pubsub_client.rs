@@ -208,7 +208,7 @@ use {
         },
         MaybeTlsStream, WebSocketStream,
     },
-    url::Url,
+    tungstenite::{client::IntoClientRequest, Bytes},
 };
 
 pub type PubsubClientResult<T = ()> = Result<T, PubsubClientError>;
@@ -272,9 +272,9 @@ pub struct PubsubClient {
 }
 
 impl PubsubClient {
-    pub async fn new(url: &str) -> PubsubClientResult<Self> {
-        let url = Url::parse(url)?;
-        let (ws, _response) = connect_async(url)
+    pub async fn new<R: IntoClientRequest>(request: R) -> PubsubClientResult<Self> {
+        let client_request = request.into_client_request().map_err(Box::new)?;
+        let (ws, _response) = connect_async(client_request)
             .await
             .map_err(Box::new)
             .map_err(PubsubClientError::ConnectionError)?;
@@ -507,14 +507,14 @@ impl PubsubClient {
                 },
                 // Send `Message::Ping` each 10s if no any other communication
                 () = sleep(Duration::from_secs(10)) => {
-                    ws.send(Message::Ping(Vec::new())).await.map_err(Box::new)?;
+                    ws.send(Message::Ping(Bytes::new())).await.map_err(Box::new)?;
                 },
                 // Read message for subscribe
                 Some((operation, params, response_sender)) = subscribe_receiver.recv() => {
                     request_id += 1;
                     let method = format!("{operation}Subscribe");
                     let text = json!({"jsonrpc":"2.0","id":request_id,"method":method,"params":params}).to_string();
-                    ws.send(Message::Text(text)).await.map_err(Box::new)?;
+                    ws.send(Message::Text(text.into())).await.map_err(Box::new)?;
                     requests_subscribe.insert(request_id, (operation, response_sender));
                 },
                 // Read message for unsubscribe
@@ -523,14 +523,14 @@ impl PubsubClient {
                     request_id += 1;
                     let method = format!("{operation}Unsubscribe");
                     let text = json!({"jsonrpc":"2.0","id":request_id,"method":method,"params":[sid]}).to_string();
-                    ws.send(Message::Text(text)).await.map_err(Box::new)?;
+                    ws.send(Message::Text(text.into())).await.map_err(Box::new)?;
                     requests_unsubscribe.insert(request_id, response_sender);
                 },
                 // Read message for other requests
                 Some((method, params, response_sender)) = request_receiver.recv() => {
                     request_id += 1;
                     let text = json!({"jsonrpc":"2.0","id":request_id,"method":method,"params":params}).to_string();
-                    ws.send(Message::Text(text)).await.map_err(Box::new)?;
+                    ws.send(Message::Text(text.into())).await.map_err(Box::new)?;
                     other_requests.insert(request_id, response_sender);
                 }
                 // Read incoming WebSocket message
@@ -561,7 +561,7 @@ impl PubsubClient {
                     // `{"jsonrpc":"2.0","result":5308752,"id":1}`
                     if let Some(id) = json.get("id") {
                         let id = id.as_u64().ok_or_else(|| {
-                            PubsubClientError::SubscribeFailed { reason: "invalid `id` field".into(), message: text.clone() }
+                            PubsubClientError::SubscribeFailed { reason: "invalid `id` field".into(), message: text.to_string() }
                         })?;
 
                         let err = json.get("error").map(|error_object| {
@@ -580,11 +580,11 @@ impl PubsubClient {
                         if let Some(response_sender) = other_requests.remove(&id) {
                             match err {
                                 Some(reason) => {
-                                    let _ = response_sender.send(Err(PubsubClientError::RequestFailed { reason, message: text.clone()}));
+                                    let _ = response_sender.send(Err(PubsubClientError::RequestFailed { reason, message: text.to_string()}));
                                 },
                                 None => {
                                     let json_result = json.get("result").ok_or_else(|| {
-                                        PubsubClientError::RequestFailed { reason: "missing `result` field".into(), message: text.clone() }
+                                        PubsubClientError::RequestFailed { reason: "missing `result` field".into(), message: text.to_string() }
                                     })?;
                                     if response_sender.send(Ok(json_result.clone())).is_err() {
                                         break;
@@ -596,12 +596,12 @@ impl PubsubClient {
                         } else if let Some((operation, response_sender)) = requests_subscribe.remove(&id) {
                             match err {
                                 Some(reason) => {
-                                    let _ = response_sender.send(Err(PubsubClientError::SubscribeFailed { reason, message: text.clone()}));
+                                    let _ = response_sender.send(Err(PubsubClientError::SubscribeFailed { reason, message: text.to_string()}));
                                 },
                                 None => {
                                     // Subscribe Id
                                     let sid = json.get("result").and_then(Value::as_u64).ok_or_else(|| {
-                                        PubsubClientError::SubscribeFailed { reason: "invalid `result` field".into(), message: text.clone() }
+                                        PubsubClientError::SubscribeFailed { reason: "invalid `result` field".into(), message: text.to_string() }
                                     })?;
 
                                     // Create notifications channel and unsubscribe function

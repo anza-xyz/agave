@@ -39,6 +39,7 @@ use {
         validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
     },
     solana_cost_model::{cost_model::CostModel, cost_tracker::CostTracker},
+    solana_entry::entry::create_ticks,
     solana_feature_gate_interface::{self as feature, Feature},
     solana_inflation::Inflation,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
@@ -61,6 +62,7 @@ use {
         },
         bank_forks::BankForks,
         inflation_rewards::points::{InflationPointCalculationEvent, PointValue},
+        installed_scheduler_pool::BankWithScheduler,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils,
         snapshot_minimizer::SnapshotMinimizer,
@@ -2370,7 +2372,16 @@ fn main() {
                     }
 
                     if child_bank_required {
-                        bank.fill_bank_with_ticks_for_tests();
+                        let num_ticks_per_slot = bank.ticks_per_slot();
+                        let num_hashes_per_tick = bank.hashes_per_tick().unwrap_or(0);
+                        let parent_blockhash = bank.last_blockhash();
+                        let tick_entries =
+                            create_ticks(num_ticks_per_slot, num_hashes_per_tick, parent_blockhash);
+
+                        let scheduler = BankWithScheduler::no_scheduler_available();
+                        tick_entries.iter().for_each(|tick_entry| {
+                            bank.register_tick(&tick_entry.hash, &scheduler);
+                        });
                     }
 
                     let pre_capitalization = bank.capitalization();

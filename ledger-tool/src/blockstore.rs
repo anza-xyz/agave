@@ -716,7 +716,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
 
             println!(
                 "{:>20} {:>44} {:>32} {:>13}",
-                "Slot", "Hash", "Timestamp", "Vote Only?"
+                "Slot", "Bank Hash", "Timestamp", "Vote Only?"
             );
             for (slot, hash_and_timestamp_opt, contains_nonvote) in slots.iter() {
                 let (time_str, hash_str) = if let Some((hash, timestamp)) = hash_and_timestamp_opt {

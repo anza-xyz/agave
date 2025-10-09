@@ -91,7 +91,11 @@ where
     };
 
     // create context state if additional accounts are provided with the instruction
-    if instruction_context.get_number_of_instruction_accounts() > accessed_accounts {
+    if instruction_context.get_number_of_instruction_accounts()
+        >= accessed_accounts
+            .checked_add(2)
+            .ok_or(InstructionError::ArithmeticOverflow)?
+    {
         let context_state_authority = *instruction_context
             .try_borrow_instruction_account(accessed_accounts.checked_add(1).unwrap())?
             .get_key();

@@ -25,7 +25,7 @@ const HID_USB_DEVICE_CLASS: u8 = 0;
 /// Remote wallet error.
 #[derive(Error, Debug, Clone)]
 pub enum RemoteWalletError {
-    #[error("hidapi error")]
+    #[error("hidapi error: {0}")]
     Hid(String),
 
     #[error("device type mismatch")]
@@ -116,7 +116,12 @@ impl RemoteWalletManager {
         let mut detected_devices = vec![];
         let mut errors = vec![];
         for device_info in devices.filter(|&device_info| {
-            is_valid_hid_device(device_info.usage_page(), device_info.interface_number())
+            #[cfg(not(any(feature = "linux-static-libusb", feature = "linux-shared-libusb")))]
+            let is_valid_hid_device =
+                is_valid_hid_device(device_info.usage_page(), device_info.interface_number());
+            #[cfg(any(feature = "linux-static-libusb", feature = "linux-shared-libusb"))]
+            let is_valid_hid_device = true; // libusb backend does not provide DeviceInfo::usage_page()
+            is_valid_hid_device
                 && is_valid_ledger(device_info.vendor_id(), device_info.product_id())
         }) {
             match usb.open_path(device_info.path()) {

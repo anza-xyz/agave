@@ -1141,6 +1141,10 @@ pub mod static_instruction_limit {
     solana_pubkey::declare_id!("64ixypL1HPu8WtJhNSMb9mSgfFaJvsANuRkTbHyuLfnx");
 }
 
+pub mod discard_unexpected_data_complete_shreds {
+    solana_pubkey::declare_id!("8MhfKhoZEoiySpVe248bDkisyEcBA7JQLyUS94xoTSqN");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2062,7 +2066,11 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             static_instruction_limit::id(),
             "SIMD-0160: static instruction limit",
         ),
-        /*************** ADD NEW FEATURES HERE ***************/
+        (
+            discard_unexpected_data_complete_shreds::id(),
+            "SIMD-0337: Markers for Alpenglow Fast Leader Handover, DATA_COMPLETE_SHRED placement \
+             rules",
+        ), /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
     .cloned()

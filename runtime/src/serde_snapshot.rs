@@ -6,7 +6,6 @@ use {
         epoch_stakes::VersionedEpochStakes,
         rent_collector::RentCollector,
         runtime_config::RuntimeConfig,
-        serde_snapshot::storage::SerdeObsoleteAccounts,
         snapshot_utils::{SnapshotError, StorageAndNextAccountsFileId},
         stake_account::StakeAccount,
         stakes::{serialize_stake_accounts_to_delegation_format, Stakes},
@@ -63,7 +62,7 @@ mod utils;
 
 pub(crate) use {
     status_cache::{deserialize_status_cache, serialize_status_cache},
-    storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
+    storage::{SerdeObsoleteAccounts, SerializableAccountStorageEntry, SerializedAccountsFileId},
 };
 
 const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;

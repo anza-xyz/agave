@@ -60,7 +60,7 @@ impl Node {
         let port_range = localhost_port_range_for_tests();
         let bind_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let config = NodeConfig {
-            bind_ip_addrs: Arc::new(BindIpAddrs::new(vec![bind_ip_addr]).expect("should bind")),
+            bind_ip_addrs: BindIpAddrs::new(vec![bind_ip_addr]).expect("should bind"),
             gossip_port: port_range.0,
             port_range,
             advertised_ip: bind_ip_addr,
@@ -359,7 +359,7 @@ impl Node {
         Node {
             info,
             sockets,
-            bind_ip_addrs,
+            bind_ip_addrs: Arc::new(bind_ip_addrs),
             addresses: MultihomingAddresses {
                 tvu: tvu_addresses,
                 tpu_vote: tpu_vote_addresses,
