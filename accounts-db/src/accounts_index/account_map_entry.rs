@@ -263,7 +263,7 @@ impl<T: Copy> SlotListWriteGuard<'_, T> {
         F: FnMut(&mut (Slot, T)) -> bool,
     {
         if self.meta.is_single.load(Ordering::Acquire) {
-            let single_mut = &mut unsafe { self.repr_guard.single };
+            let single_mut = unsafe { &mut self.repr_guard.single };
             if !f(single_mut) {
                 self.meta.is_single.store(false, Ordering::Release);
                 self.repr_guard.multiple = ManuallyDrop::new(Box::new(vec![]));
