@@ -37,7 +37,7 @@ use {
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
             ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheForTxBatch,
-            ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
+            ProgramCacheMatchCriteria, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
         },
         solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
         sysvar_cache::SysvarCache,
@@ -135,6 +135,11 @@ pub struct TransactionProcessingEnvironment {
     pub epoch_total_stake: u64,
     /// Runtime feature set to use for the transaction batch.
     pub feature_set: SVMFeatureSet,
+    /// The current ProgramRuntimeEnvironments derived from the SVMFeatureSet.
+    pub program_runtime_environments_for_execution: ProgramRuntimeEnvironments,
+    /// Depending on the next slot this is either the current or the upcoming
+    /// ProgramRuntimeEnvironments.
+    pub program_runtime_environments_for_deployment: ProgramRuntimeEnvironments,
     /// Rent calculator to use for the transaction batch.
     pub rent: Rent,
 }
@@ -294,11 +299,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
     /// Returns the current environments depending on the given epoch
     /// Returns None if the call could result in a deadlock
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn get_environments_for_epoch(
-        &self,
-        epoch: Epoch,
-    ) -> Option<solana_program_runtime::loaded_programs::ProgramRuntimeEnvironments> {
+    pub fn get_environments_for_epoch(&self, epoch: Epoch) -> Option<ProgramRuntimeEnvironments> {
         self.global_program_cache
             .try_read()
             .ok()
