@@ -9041,6 +9041,7 @@ dependencies = [
  "dirs-next",
  "num_cpus",
  "serde_json",
+ "solana-bls-signatures",
  "solana-clap-v3-utils",
  "solana-cli-config",
  "solana-derivation-path",
@@ -9052,6 +9053,7 @@ dependencies = [
  "solana-seed-derivable",
  "solana-signer",
  "solana-version",
+ "solana-votor-messages",
  "tempfile",
  "tiny-bip39",
 ]
