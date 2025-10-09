@@ -1,0 +1,3 @@
+[submodule "svm-fuzz-harness/protosol"]
+	path = svm-fuzz-harness/protosol
+	url = https://github.com/firedancer-io/protosol.git
