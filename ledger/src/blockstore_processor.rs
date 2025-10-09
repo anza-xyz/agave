@@ -5245,7 +5245,7 @@ pub mod tests {
             }),
         );
 
-        // pre_commit_callback() should alwasy be called regardless of tx_result
+        // pre_commit_callback() should always be called regardless of tx_result
         assert!(is_called);
 
         if should_commit {
