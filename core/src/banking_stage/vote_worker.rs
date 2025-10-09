@@ -238,14 +238,6 @@ impl VoteWorker {
         {
             debug_assert!(resolved_txs.is_empty());
 
-            // TODO:
-            //
-            // 1. Convert SanitizedTransactionView -> RuntimeTransactionView.
-            // 2. If reached end of slot, bail and recover the converted transactions for reinsertion.
-            //   a. vote_packets
-            //   b. remaining in chunk
-            // 3. Call do_process_packets once we've finished all the mappings.
-
             // Short circuit if we've reached the end of slot.
             if reached_end_of_slot {
                 self.storage.reinsert_packets(chunk.into_iter());
