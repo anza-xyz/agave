@@ -1,9 +1,8 @@
 use {
-    super::{
-        immutable_deserialized_packet::ImmutableDeserializedPacket,
-        latest_validator_vote_packet::{LatestValidatorVotePacket, VoteSource},
-    },
+    super::latest_validator_vote_packet::{LatestValidatorVotePacket, VoteSource},
+    crate::banking_stage::transaction_scheduler::transaction_state_container::SharedBytes,
     agave_feature_set as feature_set,
+    agave_transaction_view::transaction_view::SanitizedTransactionView,
     ahash::HashMap,
     itertools::Itertools,
     rand::{thread_rng, Rng},
@@ -94,7 +93,7 @@ impl VoteStorage {
     pub(crate) fn insert_batch(
         &mut self,
         vote_source: VoteSource,
-        deserialized_packets: impl Iterator<Item = ImmutableDeserializedPacket>,
+        deserialized_packets: impl Iterator<Item = SanitizedTransactionView<SharedBytes>>,
     ) -> VoteBatchInsertionMetrics {
         let should_deprecate_legacy_vote_ixs = self.deprecate_legacy_vote_ixs;
         self.insert_batch_with_replenish(
@@ -113,7 +112,7 @@ impl VoteStorage {
     // Re-insert re-tryable packets.
     pub(crate) fn reinsert_packets(
         &mut self,
-        packets: impl Iterator<Item = ImmutableDeserializedPacket>,
+        packets: impl Iterator<Item = SanitizedTransactionView<SharedBytes>>,
     ) {
         let should_deprecate_legacy_vote_ixs = self.deprecate_legacy_vote_ixs;
         self.insert_batch_with_replenish(
@@ -129,7 +128,7 @@ impl VoteStorage {
         );
     }
 
-    pub fn drain_unprocessed(&mut self, bank: &Bank) -> Vec<ImmutableDeserializedPacket> {
+    pub fn drain_unprocessed(&mut self, bank: &Bank) -> Vec<SanitizedTransactionView<SharedBytes>> {
         let slot_hashes = bank
             .get_account(&sysvar::slot_hashes::id())
             .and_then(|account| from_account::<SlotHashes, _>(&account));
