@@ -26,7 +26,8 @@ use {
     solana_poh::poh_recorder::PohRecorderError,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
+        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
+        transaction_with_meta::TransactionWithMeta,
     },
     solana_svm::{
         account_loader::TransactionCheckResult, transaction_error_metrics::TransactionErrorMetrics,
@@ -523,10 +524,11 @@ fn consume_scan_should_process_packet(
         return None;
     };
 
-    // TODO: Do we need to confirm the TX is a simple vote TX?
-    // TODO: Can we rely on banking to do validation for us?
-    // TODO: Can this ever be triggered?
+    // Filter invalid votes (should never be triggered).
     if !matches!(view.version(), TransactionVersion::Legacy) {
+        return None;
+    }
+    if !view.is_simple_vote_transaction() {
         return None;
     }
 
