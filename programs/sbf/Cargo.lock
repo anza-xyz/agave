@@ -148,7 +148,10 @@ version = "3.1.0"
 name = "agave-scheduling-utils"
 version = "3.1.0"
 dependencies = [
+ "agave-scheduler-bindings",
+ "agave-transaction-view",
  "ahash 0.8.11",
+ "rts-alloc",
  "solana-pubkey",
 ]
 
