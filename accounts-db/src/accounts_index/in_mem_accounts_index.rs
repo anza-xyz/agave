@@ -657,7 +657,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
         // If we find an existing account at old_slot, replace it rather than adding a new entry to the list
         let mut found_slot = false;
-        let mut remaining_len = slot_list.retain(|cur_item| {
+        let mut final_len = slot_list.retain(|cur_item| {
             let (cur_slot, cur_account_info) = cur_item;
             if *cur_slot == old_slot {
                 // Ensure we only find one!
@@ -711,9 +711,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         if !found_slot {
             // if we make it here, we did not find the slot in the list
             slot_list.push((slot, account_info));
-            remaining_len += 1;
+            final_len += 1;
         }
-        (ref_count_change, remaining_len)
+        (ref_count_change, final_len)
     }
 
     // convert from raw data on disk to AccountMapEntry, set to age in future
