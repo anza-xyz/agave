@@ -976,7 +976,6 @@ fn make_shreds_code_header_only(
 pub(crate) fn make_shreds_from_data(
     thread_pool: &ThreadPool,
     keypair: &Keypair,
-    // The Merkle root of the previous erasure batch if chained.
     chained_merkle_root: Hash,
     data: &[u8], // Serialized &[Entry]
     slot: Slot,
