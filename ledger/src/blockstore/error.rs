@@ -26,8 +26,6 @@ pub enum BlockstoreError {
     SlotCleanedUp,
     #[error("unpack error: {0}")]
     UnpackError(#[from] UnpackError),
-    #[error("unable to set open file descriptor limit")]
-    UnableToSetOpenFileDescriptorLimit,
     #[error("transaction status slot mismatch")]
     TransactionStatusSlotMismatch,
     #[error("empty epoch stakes")]
