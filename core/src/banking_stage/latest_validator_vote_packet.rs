@@ -20,7 +20,7 @@ pub enum VoteSource {
 
 /// Holds deserialized vote messages as well as their source, and slot
 #[derive(Debug)]
-pub struct LatestValidatorVotePacket {
+pub struct LatestValidatorVote {
     vote_source: VoteSource,
     vote_pubkey: Pubkey,
     vote: Option<SanitizedTransactionView<SharedBytes>>,
@@ -29,7 +29,7 @@ pub struct LatestValidatorVotePacket {
     timestamp: Option<UnixTimestamp>,
 }
 
-impl LatestValidatorVotePacket {
+impl LatestValidatorVote {
     pub fn new_from_view(
         vote: SanitizedTransactionView<SharedBytes>,
         vote_source: VoteSource,
@@ -147,10 +147,10 @@ mod tests {
     fn deserialize_packets(
         packet_batch: &PacketBatch,
         vote_source: VoteSource,
-    ) -> impl Iterator<Item = LatestValidatorVotePacket> + '_ {
-        packet_batch.iter().filter_map(move |packet| {
-            LatestValidatorVotePacket::new(packet, vote_source, true).ok()
-        })
+    ) -> impl Iterator<Item = LatestValidatorVote> + '_ {
+        packet_batch
+            .iter()
+            .filter_map(move |packet| LatestValidatorVote::new(packet, vote_source, true).ok())
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use {
-    super::latest_validator_vote_packet::{LatestValidatorVotePacket, VoteSource},
+    super::latest_validator_vote_packet::{LatestValidatorVote, VoteSource},
     crate::banking_stage::transaction_scheduler::transaction_state_container::SharedBytes,
     agave_feature_set as feature_set,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
@@ -39,7 +39,7 @@ impl VoteBatchInsertionMetrics {
 
 #[derive(Debug)]
 pub struct VoteStorage {
-    latest_vote_per_vote_pubkey: HashMap<Pubkey, LatestValidatorVotePacket>,
+    latest_vote_per_vote_pubkey: HashMap<Pubkey, LatestValidatorVote>,
     num_unprocessed_votes: usize,
     cached_epoch_stakes: VersionedEpochStakes,
     deprecate_legacy_vote_ixs: bool,
@@ -93,13 +93,13 @@ impl VoteStorage {
     pub(crate) fn insert_batch(
         &mut self,
         vote_source: VoteSource,
-        packets: impl Iterator<Item = SanitizedTransactionView<SharedBytes>>,
+        votes: impl Iterator<Item = SanitizedTransactionView<SharedBytes>>,
     ) -> VoteBatchInsertionMetrics {
         let should_deprecate_legacy_vote_ixs = self.deprecate_legacy_vote_ixs;
         self.insert_batch_with_replenish(
-            packets.filter_map(|packet| {
-                LatestValidatorVotePacket::new_from_view(
-                    packet,
+            votes.filter_map(|vote| {
+                LatestValidatorVote::new_from_view(
+                    vote,
                     vote_source,
                     should_deprecate_legacy_vote_ixs,
                 )
@@ -117,7 +117,7 @@ impl VoteStorage {
         let should_deprecate_legacy_vote_ixs = self.deprecate_legacy_vote_ixs;
         self.insert_batch_with_replenish(
             packets.filter_map(|packet| {
-                LatestValidatorVotePacket::new_from_view(
+                LatestValidatorVote::new_from_view(
                     packet,
                     VoteSource::Tpu, // incorrect, but this bug has been here w/o issue for a long time.
                     should_deprecate_legacy_vote_ixs,
@@ -199,7 +199,7 @@ impl VoteStorage {
 
     fn insert_batch_with_replenish(
         &mut self,
-        votes: impl Iterator<Item = LatestValidatorVotePacket>,
+        votes: impl Iterator<Item = LatestValidatorVote>,
         should_replenish_taken_votes: bool,
     ) -> VoteBatchInsertionMetrics {
         let mut num_dropped_gossip = 0;
@@ -232,9 +232,9 @@ impl VoteStorage {
     /// Otherwise returns None
     fn update_latest_vote(
         &mut self,
-        vote: LatestValidatorVotePacket,
+        vote: LatestValidatorVote,
         should_replenish_taken_votes: bool,
-    ) -> Option<LatestValidatorVotePacket> {
+    ) -> Option<LatestValidatorVote> {
         let vote_pubkey = vote.vote_pubkey();
         // Grab write-lock to insert new vote.
         match self.latest_vote_per_vote_pubkey.entry(vote_pubkey) {
@@ -263,8 +263,8 @@ impl VoteStorage {
     /// We directly compare as options to prioritize votes for same slot with timestamp as
     /// Some > None
     fn allow_update(
-        vote: &LatestValidatorVotePacket,
-        latest_vote: &LatestValidatorVotePacket,
+        vote: &LatestValidatorVote,
+        latest_vote: &LatestValidatorVote,
         should_replenish_taken_votes: bool,
     ) -> bool {
         let slot = vote.slot();
@@ -306,10 +306,7 @@ impl VoteStorage {
     }
 
     /// Check if `vote` can land in our fork based on `slot_hashes`
-    fn is_valid_for_our_fork(
-        vote: &LatestValidatorVotePacket,
-        slot_hashes: &Option<SlotHashes>,
-    ) -> bool {
+    fn is_valid_for_our_fork(vote: &LatestValidatorVote, slot_hashes: &Option<SlotHashes>) -> bool {
         let Some(slot_hashes) = slot_hashes else {
             // When slot hashes is not present we do not filter
             return true;
@@ -381,9 +378,9 @@ pub(crate) mod tests {
         vote_source: VoteSource,
         keypairs: &ValidatorVoteKeypairs,
         timestamp: Option<UnixTimestamp>,
-    ) -> LatestValidatorVotePacket {
+    ) -> LatestValidatorVote {
         let packet = packet_from_slots(slots, keypairs, timestamp);
-        LatestValidatorVotePacket::new(packet.as_ref(), vote_source, true).unwrap()
+        LatestValidatorVote::new(packet.as_ref(), vote_source, true).unwrap()
     }
 
     fn to_sanitized_view(packet: BytesPacket) -> SanitizedTransactionView<SharedBytes> {
