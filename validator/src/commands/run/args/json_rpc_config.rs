@@ -98,6 +98,15 @@ pub(crate) fn args<'a, 'b>(default_args: &'a DefaultArgs) -> Vec<Arg<'a, 'b>> {
             .long("skip-preflight-health-check")
             .takes_value(false)
             .help("Skip health check when running a preflight check"),
+        Arg::with_name("rpc_max_multiple_accounts")
+            .long("rpc-max-multiple-accounts")
+            .value_name("MAX ACCOUNTS")
+            .takes_value(true)
+            .default_value(&default_args.rpc_max_multiple_accounts)
+            .help(
+                "Override the default maximum accounts accepted by the getMultipleAccounts JSON \
+                 RPC method",
+            ),
     ]
 }
 

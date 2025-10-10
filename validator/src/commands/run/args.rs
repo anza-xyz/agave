@@ -300,17 +300,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Do not perform TCP/UDP reachable port checks at start-up"),
     )
     .arg(
-        Arg::with_name("rpc_max_multiple_accounts")
-            .long("rpc-max-multiple-accounts")
-            .value_name("MAX ACCOUNTS")
-            .takes_value(true)
-            .default_value(&default_args.rpc_max_multiple_accounts)
-            .help(
-                "Override the default maximum accounts accepted by the getMultipleAccounts JSON \
-                 RPC method",
-            ),
-    )
-    .arg(
         Arg::with_name("account_paths")
             .long("accounts")
             .value_name("PATHS")
