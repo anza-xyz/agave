@@ -89,7 +89,6 @@ impl PacketReceiver {
         let mut messages = vec![packet_batches];
 
         while let Ok(packet_batches) = self.banking_packet_receiver.try_recv() {
-            trace!("got more packet batches in packet deserializer");
             num_packets_received += packet_batches
                 .iter()
                 .map(|batch| batch.len())
