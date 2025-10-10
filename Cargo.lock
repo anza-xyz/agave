@@ -11128,6 +11128,7 @@ dependencies = [
  "solana-svm-log-collector",
  "solana-svm-type-overrides",
  "solana-system-interface",
+ "solana-system-program",
  "solana-sysvar",
  "solana-transaction-context",
 ]
