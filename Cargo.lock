@@ -7100,6 +7100,7 @@ dependencies = [
  "libc",
  "libsecp256k1",
  "log",
+ "lz4",
  "memmap2 0.9.8",
  "memoffset 0.9.1",
  "modular-bitfield",
