@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 #[macro_use]
 extern crate eager;
 use {
