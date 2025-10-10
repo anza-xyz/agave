@@ -1,8 +1,6 @@
 //! This module defines [`ConnectionWorkersScheduler`] which sends transactions
 //! to the upcoming leaders.
 
-#[cfg(feature = "agave-unstable-api")]
-use qualifier_attr::qualifiers;
 use {
     super::leader_updater::LeaderUpdater,
     crate::{
@@ -305,8 +303,7 @@ impl ConnectionWorkersScheduler {
 }
 
 /// Sets up the QUIC endpoint for the scheduler to handle connections.
-#[cfg_attr(feature = "agave-unstable-api", qualifiers(pub))]
-fn setup_endpoint(
+pub fn setup_endpoint(
     bind: BindTarget,
     stake_identity: Option<StakeIdentity>,
 ) -> Result<Endpoint, ConnectionWorkersSchedulerError> {
@@ -366,7 +363,6 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
 ///
 /// This function selects up to `send_fanout` addresses from the `leaders` list, ensuring that
 /// only unique addresses are included while maintaining their original order.
-#[cfg_attr(feature = "agave-unstable-api", qualifiers(pub))]
 pub fn extract_send_leaders(leaders: &[SocketAddr], send_fanout: usize) -> Vec<SocketAddr> {
     let send_count = send_fanout.min(leaders.len());
     remove_duplicates(&leaders[..send_count])
