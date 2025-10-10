@@ -105,8 +105,8 @@ impl VotePacketReceiver {
         let mut errors = Saturating::<usize>(0);
         let parsed_packets: Vec<_> = messages
             .iter()
+            .flat_map(|batches| batches.iter())
             .flat_map(|batch| batch.iter())
-            .flat_map(|banking_batch| banking_batch.iter())
             .filter_map(|pkt| {
                 match SanitizedTransactionView::try_new_sanitized(
                     Arc::new(pkt.data(..)?.to_vec()),
