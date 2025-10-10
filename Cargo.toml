@@ -535,7 +535,7 @@ solana-svm-log-collector = { path = "svm-log-collector", version = "=3.1.0", fea
 solana-svm-measure = { path = "svm-measure", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-svm-timings = { path = "svm-timings", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-svm-transaction = { path = "svm-transaction", version = "=3.1.0", features = ["agave-unstable-api"] }
-solana-svm-type-overrides = { path = "svm-type-overrides", version = "=3.1.0" }
+solana-svm-type-overrides = { path = "svm-type-overrides", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-system-interface = "2.0"
 solana-system-program = { path = "programs/system", version = "=3.1.0" }
 solana-system-transaction = "3.0.0"
