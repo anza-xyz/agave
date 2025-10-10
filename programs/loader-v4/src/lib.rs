@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 #[cfg(feature = "agave-unstable-api")]
 use qualifier_attr::qualifiers;
 use {
