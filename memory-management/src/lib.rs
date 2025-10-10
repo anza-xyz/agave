@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 #![deny(clippy::arithmetic_side_effects)]
 pub mod aligned_memory;
 
