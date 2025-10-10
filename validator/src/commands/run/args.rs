@@ -329,14 +329,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Skip health check when running a preflight check"),
     )
     .arg(
-        Arg::with_name("rpc_faucet_addr")
-            .long("rpc-faucet-address")
-            .value_name("HOST:PORT")
-            .takes_value(true)
-            .validator(solana_net_utils::is_host_port)
-            .help("Enable the JSON RPC 'requestAirdrop' API with this faucet address."),
-    )
-    .arg(
         Arg::with_name("account_paths")
             .long("accounts")
             .value_name("PATHS")

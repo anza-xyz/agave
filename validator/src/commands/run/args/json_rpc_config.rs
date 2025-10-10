@@ -75,6 +75,12 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
                 "Include CPI inner instructions, logs, and return data in the historical \
                  transaction info stored",
             ),
+        Arg::with_name("rpc_faucet_addr")
+            .long("rpc-faucet-address")
+            .value_name("HOST:PORT")
+            .takes_value(true)
+            .validator(solana_net_utils::is_host_port)
+            .help("Enable the JSON RPC 'requestAirdrop' API with this faucet address."),
     ]
 }
 
