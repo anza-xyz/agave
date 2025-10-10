@@ -376,7 +376,7 @@ smpl_jwt = "0.7.1"
 socket2 = "0.6.1"
 soketto = "0.7"
 solana-account = "3.1.0"
-solana-account-decoder = { path = "account-decoder", version = "=3.1.0" }
+solana-account-decoder = { path = "account-decoder", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=3.1.0" }
 solana-account-info = "3.0.0"
 solana-accounts-db = { path = "accounts-db", version = "=3.1.0" }
