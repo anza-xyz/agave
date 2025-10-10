@@ -17,6 +17,9 @@ targets = ["x86_64-unknown-linux-gnu"]
 crate-type = ["lib"]
 name = "agave_verified_packet_receiver"
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 solana-perf = { workspace = true }
 solana-streamer = { workspace = true }
