@@ -273,6 +273,7 @@ name = "agave-precompiles"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-precompiles",
  "bincode",
  "bytemuck",
  "digest 0.10.7",
