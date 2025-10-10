@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 #![cfg(target_os = "linux")]
 mod ring;
 mod slab;
