@@ -16,6 +16,8 @@ targets = ["x86_64-unknown-linux-gnu"]
 name = "solana_clap_v3_utils"
 
 [features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
 elgamal = ["dep:solana-zk-sdk"]
 
 [dependencies]
