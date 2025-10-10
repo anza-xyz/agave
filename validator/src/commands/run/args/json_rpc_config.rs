@@ -49,14 +49,14 @@ impl FromClapArgMatches for JsonRpcConfig {
     }
 }
 
-pub(crate) fn args<'a, 'b>(default_args: &'a DefaultArgs) -> Vec<Arg<'a, 'b>> {
+pub(crate) fn args<'a>(default_args: &DefaultArgs) -> Vec<Arg<'_, 'a>> {
     vec![
         Arg::with_name("enable_rpc_transaction_history")
             .long("enable-rpc-transaction-history")
             .takes_value(false)
             .help(
                 "Enable historical transaction info over JSON RPC, including the \
-                'getConfirmedBlock' API. This will cause an increase in disk usage and IOPS",
+                 'getConfirmedBlock' API. This will cause an increase in disk usage and IOPS",
             ),
         Arg::with_name("enable_rpc_bigtable_ledger_storage")
             .long("enable-rpc-bigtable-ledger-storage")
@@ -64,7 +64,7 @@ pub(crate) fn args<'a, 'b>(default_args: &'a DefaultArgs) -> Vec<Arg<'a, 'b>> {
             .takes_value(false)
             .help(
                 "Fetch historical transaction info from a BigTable instance as a fallback to \
-                     local ledger data",
+                 local ledger data",
             ),
         Arg::with_name("enable_bigtable_ledger_upload")
             .long("enable-bigtable-ledger-upload")
@@ -92,8 +92,8 @@ pub(crate) fn args<'a, 'b>(default_args: &'a DefaultArgs) -> Vec<Arg<'a, 'b>> {
             .default_value(&default_args.health_check_slot_distance)
             .help(
                 "Report this validator as healthy if its latest replayed optimistically confirmed \
-                         slot is within the specified number of slots from the cluster's latest \
-                         optimistically confirmed slot",
+                 slot is within the specified number of slots from the cluster's latest \
+                 optimistically confirmed slot",
             ),
         Arg::with_name("skip_preflight_health_check")
             .long("skip-preflight-health-check")
@@ -135,7 +135,7 @@ pub(crate) fn args<'a, 'b>(default_args: &'a DefaultArgs) -> Vec<Arg<'a, 'b>> {
             .default_value(&default_args.rpc_blocking_threads)
             .help(
                 "Number of blocking threads to use for servicing CPU bound RPC requests (eg \
-                         getMultipleAccounts)",
+                 getMultipleAccounts)",
             ),
         Arg::with_name("rpc_niceness_adj")
             .long("rpc-niceness-adjustment")
@@ -145,7 +145,7 @@ pub(crate) fn args<'a, 'b>(default_args: &'a DefaultArgs) -> Vec<Arg<'a, 'b>> {
             .default_value(&default_args.rpc_niceness_adjustment)
             .help(
                 "Add this value to niceness of RPC threads. Negative value increases priority, \
-                         positive value decreases priority.",
+                 positive value decreases priority.",
             ),
         Arg::with_name("full_rpc_api")
             .long("full-rpc-api")

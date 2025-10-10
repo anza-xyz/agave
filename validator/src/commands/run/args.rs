@@ -1516,7 +1516,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .args(&pub_sub_config::args())
-    .args(&json_rpc_config::args(&default_args))
+    .args(&json_rpc_config::args(default_args))
 }
 
 fn validators_set(
