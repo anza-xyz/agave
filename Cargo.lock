@@ -7990,6 +7990,7 @@ dependencies = [
  "solana-borsh",
  "solana-builtins-default-costs",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-compute-budget-interface",
  "solana-hash",
  "solana-instruction",
