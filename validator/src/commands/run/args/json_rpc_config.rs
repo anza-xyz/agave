@@ -115,6 +115,28 @@ pub(crate) fn args<'a, 'b>(default_args: &'a DefaultArgs) -> Vec<Arg<'a, 'b>> {
             .takes_value(true)
             .default_value(&default_args.rpc_threads)
             .help("Number of threads to use for servicing RPC requests"),
+        Arg::with_name("rpc_blocking_threads")
+            .long("rpc-blocking-threads")
+            .value_name("NUMBER")
+            .validator(is_parsable::<usize>)
+            .validator(|value| {
+                value
+                    .parse::<u64>()
+                    .map_err(|err| format!("error parsing '{value}': {err}"))
+                    .and_then(|threads| {
+                        if threads > 0 {
+                            Ok(())
+                        } else {
+                            Err("value must be >= 1".to_string())
+                        }
+                    })
+            })
+            .takes_value(true)
+            .default_value(&default_args.rpc_blocking_threads)
+            .help(
+                "Number of blocking threads to use for servicing CPU bound RPC requests (eg \
+                         getMultipleAccounts)",
+            ),
     ]
 }
 

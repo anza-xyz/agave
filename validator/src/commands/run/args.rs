@@ -936,30 +936,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("rpc_blocking_threads")
-            .long("rpc-blocking-threads")
-            .value_name("NUMBER")
-            .validator(is_parsable::<usize>)
-            .validator(|value| {
-                value
-                    .parse::<u64>()
-                    .map_err(|err| format!("error parsing '{value}': {err}"))
-                    .and_then(|threads| {
-                        if threads > 0 {
-                            Ok(())
-                        } else {
-                            Err("value must be >= 1".to_string())
-                        }
-                    })
-            })
-            .takes_value(true)
-            .default_value(&default_args.rpc_blocking_threads)
-            .help(
-                "Number of blocking threads to use for servicing CPU bound RPC requests (eg \
-                 getMultipleAccounts)",
-            ),
-    )
-    .arg(
         Arg::with_name("rpc_niceness_adj")
             .long("rpc-niceness-adjustment")
             .value_name("ADJUSTMENT")
