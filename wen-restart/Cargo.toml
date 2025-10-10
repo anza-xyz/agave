@@ -16,6 +16,9 @@ targets = ["x86_64-unknown-linux-gnu"]
 [lib]
 name = "solana_wen_restart"
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 anyhow = { workspace = true }
 log = { workspace = true }
