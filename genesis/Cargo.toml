@@ -19,6 +19,9 @@ name = "solana_genesis"
 name = "solana-genesis"
 path = "src/main.rs"
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-snapshots = { workspace = true }
@@ -63,5 +66,6 @@ tempfile = { workspace = true }
 
 [dev-dependencies]
 solana-borsh = { workspace = true }
+solana-genesis = { path = ".", features = ["agave-unstable-api"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
