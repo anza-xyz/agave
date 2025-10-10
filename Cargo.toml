@@ -458,7 +458,7 @@ solana-loader-v4-interface = "3.1.0"
 solana-loader-v4-program = { path = "programs/loader-v4", version = "=3.1.0" }
 solana-local-cluster = { path = "local-cluster", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-logger = "3.0.0"
-solana-measure = { path = "measure", version = "=3.1.0" }
+solana-measure = { path = "measure", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-merkle-tree = { path = "merkle-tree", version = "=3.1.0" }
 solana-message = "3.0.1"
 solana-metrics = { path = "metrics", version = "=3.1.0" }
