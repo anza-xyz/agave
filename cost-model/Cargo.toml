@@ -17,6 +17,8 @@ crate-type = ["lib"]
 name = "solana_cost_model"
 
 [features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
 dev-context-only-utils = [
     "dep:solana-hash",
     "dep:solana-message",
