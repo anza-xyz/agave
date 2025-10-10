@@ -580,7 +580,7 @@ pub fn translate_accounts_rust<'a>(
         check_aligned,
     )?;
 
-    translate_and_update_accounts(
+    translate_accounts_common(
         &account_info_keys,
         account_infos,
         account_infos_addr,
@@ -705,7 +705,7 @@ pub fn translate_accounts_c<'a>(
         check_aligned,
     )?;
 
-    translate_and_update_accounts(
+    translate_accounts_common(
         &account_info_keys,
         account_infos,
         account_infos_addr,
@@ -940,7 +940,7 @@ where
 
 // Finish translating accounts, build CallerAccount values and update callee
 // accounts in preparation of executing the callee.
-fn translate_and_update_accounts<'a, T, F>(
+fn translate_accounts_common<'a, T, F>(
     account_info_keys: &[&Pubkey],
     account_infos: &[T],
     account_infos_addr: u64,
