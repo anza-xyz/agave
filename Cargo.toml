@@ -562,7 +562,7 @@ solana-version = { path = "version", version = "=3.1.0", features = ["agave-unst
 solana-vote = { path = "vote", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-vote-interface = "4.0.4"
 solana-vote-program = { path = "programs/vote", version = "=3.1.0", default-features = false }
-solana-wen-restart = { path = "wen-restart", version = "=3.1.0" }
+solana-wen-restart = { path = "wen-restart", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=3.1.0" }
 solana-zk-sdk = "4.0.0"
 solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=3.1.0" }
