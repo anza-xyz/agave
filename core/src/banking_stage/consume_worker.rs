@@ -5,7 +5,7 @@ use {
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
     crate::banking_stage::consumer::RetryableIndex,
-    crossbeam_channel::{Receiver, RecvError, SendError, Sender},
+    crossbeam_channel::{Receiver, SendError, Sender, TryRecvError},
     solana_poh::poh_recorder::SharedWorkingBank,
     solana_runtime::bank::Bank,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -24,7 +24,7 @@ use {
 #[derive(Debug, Error)]
 pub enum ConsumeWorkerError<Tx> {
     #[error("Failed to receive work from scheduler: {0}")]
-    Recv(#[from] RecvError),
+    Recv(#[from] TryRecvError),
     #[error("Failed to send finalized consume work to scheduler: {0}")]
     Send(#[from] SendError<FinishedConsumeWork<Tx>>),
 }
@@ -69,15 +69,39 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     }
 
     pub fn run(self) -> Result<(), ConsumeWorkerError<Tx>> {
+        const STARTING_SLEEP_DURATION: Duration = Duration::from_micros(250);
+
+        let mut did_work = false;
+        let mut last_empty_time = Instant::now();
+        let mut sleep_duration = STARTING_SLEEP_DURATION;
+
         while !self.exit.load(Ordering::Relaxed) {
-            let work = self.consume_receiver.recv()?;
-            match self.consume(work)? {
-                ProcessingStatus::Processed => {}
-                ProcessingStatus::CouldNotProcess(work) => {
-                    self.retry_drain(work)?;
+            match self.consume_receiver.try_recv() {
+                Ok(work) => {
+                    did_work = true;
+                    match self.consume(work)? {
+                        ProcessingStatus::Processed => {}
+                        ProcessingStatus::CouldNotProcess(work) => {
+                            self.retry_drain(work)?;
+                        }
+                    }
+                }
+                Err(TryRecvError::Empty) => {
+                    let now = Instant::now();
+
+                    if did_work {
+                        last_empty_time = now;
+                    }
+                    did_work = false;
+                    let idle_duration = now.duration_since(last_empty_time);
+                    backoff(idle_duration, &mut sleep_duration);
+                }
+                Err(TryRecvError::Disconnected) => {
+                    return Err(ConsumeWorkerError::Recv(TryRecvError::Disconnected))
                 }
             }
         }
+
         Ok(())
     }
 
@@ -205,6 +229,18 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
 /// starting with the given work item.
 fn try_drain_iter<T>(work: T, receiver: &Receiver<T>) -> impl Iterator<Item = T> + '_ {
     std::iter::once(work).chain(receiver.try_iter())
+}
+
+fn backoff(idle_duration: Duration, sleep_duration: &mut Duration) {
+    const MAX_SLEEP_DURATION: Duration = Duration::from_millis(1);
+    const IDLE_SLEEP_THRESHOLD: Duration = Duration::from_millis(1);
+
+    if idle_duration < IDLE_SLEEP_THRESHOLD {
+        core::hint::spin_loop();
+    } else {
+        std::thread::sleep(*sleep_duration);
+        *sleep_duration = sleep_duration.saturating_mul(2).min(MAX_SLEEP_DURATION);
+    }
 }
 
 /// Metrics tracking number of packets processed by the consume worker.
