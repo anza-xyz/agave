@@ -11824,6 +11824,7 @@ dependencies = [
  "solana-signer",
  "solana-svm-transaction",
  "solana-transaction",
+ "solana-vote",
  "solana-vote-interface",
  "static_assertions",
  "thiserror 2.0.17",
