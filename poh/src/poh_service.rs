@@ -257,7 +257,7 @@ impl PohService {
         let record = record_receiver.recv_timeout(timeout);
         if let Ok(record) = record {
             match poh_recorder.write().unwrap().record(
-                record.slot,
+                record.bank_id,
                 record.mixins,
                 record.transaction_batches,
             ) {
@@ -400,7 +400,7 @@ impl PohService {
                 let mut record_time = Measure::start("record");
                 loop {
                     match poh_recorder_l.record(
-                        record.slot,
+                        record.bank_id,
                         record.mixins,
                         std::mem::take(&mut record.transaction_batches),
                     ) {
