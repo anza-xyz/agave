@@ -1,7 +1,19 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 // Deprecate the crate
-#![deprecated(
-    since = "3.0.0",
-    note = "use the `solana-zk-sdk` instead: https://github.com/solana-program/zk-elgamal-proof/tree/main/zk-sdk"
+#![cfg_attr(
+    feature = "agave-unstable-api",
+    deprecated(
+        since = "3.0.0",
+        note = "use the `solana-zk-sdk` instead: https://github.com/solana-program/zk-elgamal-proof/tree/main/zk-sdk"
+    )
 )]
 // Allow deprecated warnings to be suppressed in the crate
 #![allow(deprecated)]
