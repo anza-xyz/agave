@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 use {
     log::*,
     solana_accounts_db::hardened_unpack::unpack_genesis_archive,
