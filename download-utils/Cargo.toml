@@ -16,6 +16,10 @@ targets = ["x86_64-unknown-linux-gnu"]
 crate-type = ["lib"]
 name = "solana_download_utils"
 
+[features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
+
 [dependencies]
 log = { workspace = true }
 solana-clock = { workspace = true }
