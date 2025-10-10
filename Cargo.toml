@@ -555,7 +555,7 @@ solana-transaction-status = { path = "transaction-status", version = "=3.1.0", f
 solana-transaction-status-client-types = { path = "transaction-status-client-types", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-turbine = { path = "turbine", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-udp-client = { path = "udp-client", version = "=3.1.0", features = ["agave-unstable-api"] }
-solana-unified-scheduler-logic = { path = "unified-scheduler-logic", version = "=3.1.0" }
+solana-unified-scheduler-logic = { path = "unified-scheduler-logic", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=3.1.0" }
 solana-validator-exit = "3.0.0"
 solana-version = { path = "version", version = "=3.1.0" }
