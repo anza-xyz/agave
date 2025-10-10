@@ -38,6 +38,7 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 * The subscription server now prioritizes processing received messages before sending out responses. This ensures that new subscription requests and time-sensitive messages like `PING` opcodes take priority over notifications.
+* The RPC subscriptions client (`solana_pubsub_client`) now sends PING messages after periods of inactivity, to keep the WebSocket connection alive.
 
 ### Validator
 
