@@ -532,7 +532,7 @@ solana-svm-callback = { path = "svm-callback", version = "=3.1.0", features = ["
 solana-svm-feature-set = { path = "svm-feature-set", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-svm-fuzz-harness = { path = "svm-fuzz-harness", version = "=3.1.0" }
 solana-svm-log-collector = { path = "svm-log-collector", version = "=3.1.0", features = ["agave-unstable-api"] }
-solana-svm-measure = { path = "svm-measure", version = "=3.1.0" }
+solana-svm-measure = { path = "svm-measure", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-svm-timings = { path = "svm-timings", version = "=3.1.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=3.1.0" }
 solana-svm-type-overrides = { path = "svm-type-overrides", version = "=3.1.0" }
