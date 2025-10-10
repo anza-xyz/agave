@@ -936,18 +936,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("rpc_niceness_adj")
-            .long("rpc-niceness-adjustment")
-            .value_name("ADJUSTMENT")
-            .takes_value(true)
-            .validator(solana_perf::thread::is_niceness_adjustment_valid)
-            .default_value(&default_args.rpc_niceness_adjustment)
-            .help(
-                "Add this value to niceness of RPC threads. Negative value increases priority, \
-                 positive value decreases priority.",
-            ),
-    )
-    .arg(
         Arg::with_name("rpc_bigtable_timeout")
             .long("rpc-bigtable-timeout")
             .value_name("SECONDS")

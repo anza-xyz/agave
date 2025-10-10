@@ -137,6 +137,16 @@ pub(crate) fn args<'a, 'b>(default_args: &'a DefaultArgs) -> Vec<Arg<'a, 'b>> {
                 "Number of blocking threads to use for servicing CPU bound RPC requests (eg \
                          getMultipleAccounts)",
             ),
+        Arg::with_name("rpc_niceness_adj")
+            .long("rpc-niceness-adjustment")
+            .value_name("ADJUSTMENT")
+            .takes_value(true)
+            .validator(solana_perf::thread::is_niceness_adjustment_valid)
+            .default_value(&default_args.rpc_niceness_adjustment)
+            .help(
+                "Add this value to niceness of RPC threads. Negative value increases priority, \
+                         positive value decreases priority.",
+            ),
     ]
 }
 
