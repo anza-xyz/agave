@@ -69,7 +69,7 @@ impl TransactionRecorder {
                 Ok(starting_index) => {
                     starting_transaction_index = starting_index;
                 }
-                Err(RecordSenderError::InactiveSlot | RecordSenderError::Shutdown) => {
+                Err(RecordSenderError::InactiveBankId | RecordSenderError::Shutdown) => {
                     return RecordTransactionsSummary {
                         record_transactions_timings,
                         result: Err(PohRecorderError::MaxHeightReached),
