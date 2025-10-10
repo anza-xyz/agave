@@ -428,7 +428,7 @@ solana-epoch-rewards = "3.0.0"
 solana-epoch-rewards-hasher = "3.0.0"
 solana-epoch-schedule = "3.0.0"
 solana-example-mocks = "3.0.0"
-solana-faucet = { path = "faucet", version = "=3.1.0" }
+solana-faucet = { path = "faucet", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-feature-gate-interface = "3.0.0"
 solana-fee = { path = "fee", version = "=3.1.0" }
 solana-fee-calculator = "3.0.0"
