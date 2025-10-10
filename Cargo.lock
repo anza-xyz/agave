@@ -9214,7 +9214,6 @@ version = "3.1.0"
 dependencies = [
  "bincode",
  "log",
- "qualifier_attr",
  "solana-account",
  "solana-bincode",
  "solana-bpf-loader-program",

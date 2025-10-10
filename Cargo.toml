@@ -455,7 +455,7 @@ solana-ledger = { path = "ledger", version = "=3.1.0", features = ["agave-unstab
 solana-loader-v2-interface = "3.0.0"
 solana-loader-v3-interface = "6.1.0"
 solana-loader-v4-interface = "3.1.0"
-solana-loader-v4-program = { path = "programs/loader-v4", version = "=3.1.0" }
+solana-loader-v4-program = { path = "programs/loader-v4", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-local-cluster = { path = "local-cluster", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-logger = "3.0.0"
 solana-measure = { path = "measure", version = "=3.1.0", features = ["agave-unstable-api"] }
