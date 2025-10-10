@@ -18,6 +18,7 @@ name = "solana_vote_program"
 
 [features]
 default = ["metrics"]
+agave-unstable-api = []
 dev-context-only-utils = []
 frozen-abi = [
     "dep:solana-frozen-abi",
@@ -74,6 +75,7 @@ solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-svm-feature-set = { workspace = true }
+solana-vote-program = { path = ".", features = ["agave-unstable-api"] }
 test-case = { workspace = true }
 
 [[bench]]
