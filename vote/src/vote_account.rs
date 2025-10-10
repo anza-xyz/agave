@@ -8,6 +8,7 @@ use {
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
+    solana_measure::measure_us,
     solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
     solana_time_utils::AtomicInterval,
@@ -57,6 +58,8 @@ pub struct VoteAccountsCopyStats {
     sub_stake_copies: AtomicU64,
     add_node_stake_copies: AtomicU64,
     sub_node_stake_copies: AtomicU64,
+    vote_accounts_make_mut_us: AtomicU64,
+    staked_nodes_make_mut_us: AtomicU64,
     last_report: AtomicInterval,
 }
 
@@ -69,6 +72,8 @@ impl Default for VoteAccountsCopyStats {
             sub_stake_copies: AtomicU64::new(0),
             add_node_stake_copies: AtomicU64::new(0),
             sub_node_stake_copies: AtomicU64::new(0),
+            vote_accounts_make_mut_us: AtomicU64::new(0),
+            staked_nodes_make_mut_us: AtomicU64::new(0),
             last_report: AtomicInterval::default(),
         }
     }
@@ -93,6 +98,8 @@ impl VoteAccountsCopyStats {
         let sub_stake_copies = self.sub_stake_copies.swap(0, AtomicOrdering::Relaxed);
         let add_node_stake_copies = self.add_node_stake_copies.swap(0, AtomicOrdering::Relaxed);
         let sub_node_stake_copies = self.sub_node_stake_copies.swap(0, AtomicOrdering::Relaxed);
+        let vote_accounts_make_mut_us = self.vote_accounts_make_mut_us.swap(0, AtomicOrdering::Relaxed);
+        let staked_nodes_make_mut_us = self.staked_nodes_make_mut_us.swap(0, AtomicOrdering::Relaxed);
 
         let total_vote_accounts_copies =
             insert_copies + remove_copies + add_stake_copies + sub_stake_copies;
@@ -113,6 +120,8 @@ impl VoteAccountsCopyStats {
                     total_vote_accounts_copies + total_staked_nodes_copies,
                     i64
                 ),
+                ("vote_accounts_make_mut_us", vote_accounts_make_mut_us, i64),
+                ("staked_nodes_make_mut_us", staked_nodes_make_mut_us, i64),
             );
         }
     }
@@ -274,7 +283,10 @@ impl VoteAccounts {
         if Arc::strong_count(&self.vote_accounts) > 1 {
             self.copy_stats.insert_copies.fetch_add(1, AtomicOrdering::Relaxed);
         }
-        let vote_accounts = Arc::make_mut(&mut self.vote_accounts);
+        let (vote_accounts, make_mut_us) = measure_us!(Arc::make_mut(&mut self.vote_accounts));
+        self.copy_stats
+            .vote_accounts_make_mut_us
+            .fetch_add(make_mut_us, AtomicOrdering::Relaxed);
         match vote_accounts.entry(pubkey) {
             Entry::Occupied(mut entry) => {
                 // This is an upsert, we need to update the vote state and move the stake if needed.
@@ -309,7 +321,10 @@ impl VoteAccounts {
         if Arc::strong_count(&self.vote_accounts) > 1 {
             self.copy_stats.remove_copies.fetch_add(1, AtomicOrdering::Relaxed);
         }
-        let vote_accounts = Arc::make_mut(&mut self.vote_accounts);
+        let (vote_accounts, make_mut_us) = measure_us!(Arc::make_mut(&mut self.vote_accounts));
+        self.copy_stats
+            .vote_accounts_make_mut_us
+            .fetch_add(make_mut_us, AtomicOrdering::Relaxed);
         let entry = vote_accounts.remove(pubkey);
         if let Some((stake, ref vote_account)) = entry {
             self.sub_node_stake(stake, vote_account);
@@ -321,7 +336,10 @@ impl VoteAccounts {
         if Arc::strong_count(&self.vote_accounts) > 1 {
             self.copy_stats.add_stake_copies.fetch_add(1, AtomicOrdering::Relaxed);
         }
-        let vote_accounts = Arc::make_mut(&mut self.vote_accounts);
+        let (vote_accounts, make_mut_us) = measure_us!(Arc::make_mut(&mut self.vote_accounts));
+        self.copy_stats
+            .vote_accounts_make_mut_us
+            .fetch_add(make_mut_us, AtomicOrdering::Relaxed);
         if let Some((stake, vote_account)) = vote_accounts.get_mut(pubkey) {
             *stake += delta;
             let vote_account = vote_account.clone();
@@ -333,7 +351,10 @@ impl VoteAccounts {
         if Arc::strong_count(&self.vote_accounts) > 1 {
             self.copy_stats.sub_stake_copies.fetch_add(1, AtomicOrdering::Relaxed);
         }
-        let vote_accounts = Arc::make_mut(&mut self.vote_accounts);
+        let (vote_accounts, make_mut_us) = measure_us!(Arc::make_mut(&mut self.vote_accounts));
+        self.copy_stats
+            .vote_accounts_make_mut_us
+            .fetch_add(make_mut_us, AtomicOrdering::Relaxed);
         if let Some((stake, vote_account)) = vote_accounts.get_mut(pubkey) {
             *stake = stake
                 .checked_sub(delta)
@@ -377,7 +398,11 @@ impl VoteAccounts {
                 .add_node_stake_copies
                 .fetch_add(1, AtomicOrdering::Relaxed);
         }
-        Arc::make_mut(staked_nodes)
+        let (staked_nodes_map, make_mut_us) = measure_us!(Arc::make_mut(staked_nodes));
+        copy_stats
+            .staked_nodes_make_mut_us
+            .fetch_add(make_mut_us, AtomicOrdering::Relaxed);
+        staked_nodes_map
             .entry(node_pubkey)
             .and_modify(|s| *s += stake)
             .or_insert(stake);
@@ -411,14 +436,17 @@ impl VoteAccounts {
                 .sub_node_stake_copies
                 .fetch_add(1, AtomicOrdering::Relaxed);
         }
-        let staked_nodes = Arc::make_mut(staked_nodes);
-        let current_stake = staked_nodes
+        let (staked_nodes_map, make_mut_us) = measure_us!(Arc::make_mut(staked_nodes));
+        copy_stats
+            .staked_nodes_make_mut_us
+            .fetch_add(make_mut_us, AtomicOrdering::Relaxed);
+        let current_stake = staked_nodes_map
             .get_mut(node_pubkey)
             .expect("this should not happen");
         match (*current_stake).cmp(&stake) {
             Ordering::Less => panic!("subtraction value exceeds node's stake"),
             Ordering::Equal => {
-                staked_nodes.remove(node_pubkey);
+                staked_nodes_map.remove(node_pubkey);
             }
             Ordering::Greater => *current_stake -= stake,
         }

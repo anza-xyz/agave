@@ -11835,6 +11835,7 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-logger",
+ "solana-measure",
  "solana-metrics",
  "solana-packet",
  "solana-pubkey",
