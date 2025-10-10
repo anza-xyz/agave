@@ -156,6 +156,13 @@ pub(crate) fn args<'a, 'b>(default_args: &'a DefaultArgs) -> Vec<Arg<'a, 'b>> {
             .takes_value(false)
             .requires("enable_rpc_transaction_history")
             .help("Verifies blockstore roots on boot and fixes any gaps"),
+        Arg::with_name("rpc_max_request_body_size")
+            .long("rpc-max-request-body-size")
+            .value_name("BYTES")
+            .takes_value(true)
+            .validator(is_parsable::<usize>)
+            .default_value(&default_args.rpc_max_request_body_size)
+            .help("The maximum request body size accepted by rpc service"),
     ]
 }
 

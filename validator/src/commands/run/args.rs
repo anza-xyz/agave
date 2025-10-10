@@ -1055,15 +1055,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("rpc_max_request_body_size")
-            .long("rpc-max-request-body-size")
-            .value_name("BYTES")
-            .takes_value(true)
-            .validator(is_parsable::<usize>)
-            .default_value(&default_args.rpc_max_request_body_size)
-            .help("The maximum request body size accepted by rpc service"),
-    )
-    .arg(
         Arg::with_name("geyser_plugin_config")
             .long("geyser-plugin-config")
             .alias("accountsdb-plugin-config")
