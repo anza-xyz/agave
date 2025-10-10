@@ -474,7 +474,7 @@ solana-packet = "3.0.0"
 solana-perf = { path = "perf", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-poh = { path = "poh", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-poh-config = "3.0.0"
-solana-poseidon = { path = "poseidon", version = "=3.1.0" }
+solana-poseidon = { path = "poseidon", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-precompile-error = "3.0.0"
 solana-presigner = "3.0.0"
 solana-program = { version = "3.0.0", default-features = false }
