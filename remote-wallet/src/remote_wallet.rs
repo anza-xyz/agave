@@ -1,4 +1,3 @@
-use crate::transport::transport_trait::Transport;
 #[cfg(feature = "hidapi")]
 use {
     crate::errors::RemoteWalletError,
@@ -222,11 +221,9 @@ impl RemoteWalletManager {
     /// Returns `true` if at least one device was successfully connected, `false` otherwise
     pub fn try_connect_polling(&self, max_polling_duration: &Duration) -> bool {
         let start_time = Instant::now();
-        let mut last_device_count = self.devices.read().len();
-
         while start_time.elapsed() <= *max_polling_duration {
             match self.update_devices() {
-                Ok(new_device_count) => {
+                Ok(_new_device_count) => {
                     let current_total = self.devices.read().len();
                     if current_total > 0 {
                         let plural = if current_total == 1 {
@@ -237,7 +234,6 @@ impl RemoteWalletManager {
                         trace!("{} Remote Wallet{} found", current_total, plural);
                         return true;
                     }
-                    last_device_count = current_total;
                 }
                 Err(err) => {
                     debug!("Error during device discovery: {:?}", err);
@@ -457,17 +453,13 @@ pub fn initialize_wallet_manager() -> Result<Rc<RemoteWalletManager>, RemoteWall
 /// Returns `Some(manager)` if devices are found, `None` if no devices are detected
 pub fn maybe_wallet_manager() -> Result<Option<Rc<RemoteWalletManager>>, RemoteWalletError> {
     let wallet_manager = initialize_wallet_manager()?;
-    let total_devices = wallet_manager.devices.read().len();
 
     // Perform initial device scan
     wallet_manager.update_devices()?;
     let found_devices = wallet_manager.devices.read().len();
 
-    if found_devices > 0 {
-        debug!(
-            "Wallet manager initialized with {} device(s)",
-            found_devices
-        );
+    if wallet_manager.devices.read().len() > 0 {
+        debug!("Wallet manager initialized with {found_devices} device(s)");
         Ok(Some(wallet_manager))
     } else {
         debug!("No hardware wallets detected, returning None");
