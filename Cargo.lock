@@ -9899,6 +9899,7 @@ dependencies = [
  "solana-packet",
  "solana-perf",
  "solana-pubkey",
+ "solana-quic-client",
  "solana-quic-definitions",
  "solana-rpc-client-api",
  "solana-signer",
