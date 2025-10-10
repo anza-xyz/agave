@@ -94,6 +94,10 @@ pub(crate) fn args<'a, 'b>(default_args: &'a DefaultArgs) -> Vec<Arg<'a, 'b>> {
                          slot is within the specified number of slots from the cluster's latest \
                          optimistically confirmed slot",
             ),
+        Arg::with_name("skip_preflight_health_check")
+            .long("skip-preflight-health-check")
+            .takes_value(false)
+            .help("Skip health check when running a preflight check"),
     ]
 }
 

@@ -311,12 +311,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("skip_preflight_health_check")
-            .long("skip-preflight-health-check")
-            .takes_value(false)
-            .help("Skip health check when running a preflight check"),
-    )
-    .arg(
         Arg::with_name("account_paths")
             .long("accounts")
             .value_name("PATHS")
