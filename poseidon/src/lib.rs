@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 //! Hashing with the [Poseidon] hash function.
 //!
 //! [Poseidon]: https://www.poseidon-hash.info/
