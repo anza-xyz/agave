@@ -1,6 +1,6 @@
 use {
     crate::{broadcast_stage::BroadcastStage, retransmit_stage::RetransmitStage},
-    agave_feature_set as feature_set,
+    agave_feature_set::{self as feature_set},
     itertools::Either,
     lazy_lru::LruCache,
     rand::{seq::SliceRandom, Rng, SeedableRng},
@@ -206,8 +206,9 @@ impl ClusterNodes<BroadcastStage> {
         cluster_info: &ClusterInfo,
         cluster_type: ClusterType,
         stakes: &HashMap<Pubkey, u64>,
+        use_cha_cha_8: bool,
     ) -> Self {
-        new_cluster_nodes(cluster_info, cluster_type, stakes)
+        new_cluster_nodes(cluster_info, cluster_type, stakes, use_cha_cha_8)
     }
 
     pub(crate) fn get_broadcast_peer(&self, shred: &ShredId) -> Option<&ContactInfo> {
@@ -306,6 +307,7 @@ pub fn new_cluster_nodes<T: 'static>(
     cluster_info: &ClusterInfo,
     cluster_type: ClusterType,
     stakes: &HashMap<Pubkey, u64>,
+    use_cha_cha_8: bool,
 ) -> ClusterNodes<T> {
     let self_pubkey = cluster_info.id();
     let nodes = get_nodes(cluster_info, cluster_type, stakes);
@@ -326,7 +328,7 @@ pub fn new_cluster_nodes<T: 'static>(
         index,
         weighted_shuffle,
         _phantom: PhantomData,
-        use_cha_cha_8: true,
+        use_cha_cha_8,
     }
 }
 
@@ -554,6 +556,11 @@ impl<T: 'static> ClusterNodesCache<T> {
             let cache = self.cache.read().unwrap();
             get_epoch_entry(&cache, epoch, self.ttl)
         };
+        let use_cha_cha_8 = check_feature_activation(
+            &feature_set::switch_to_chacha8_turbine::ID,
+            shred_slot,
+            root_bank,
+        );
         // Fall back to exclusive lock if there is a cache miss or the cached
         // entry has already expired.
         let entry: Arc<OnceLock<_>> = entry.unwrap_or_else(|| {
@@ -579,8 +586,12 @@ impl<T: 'static> ClusterNodesCache<T> {
                     inc_new_counter_error!("cluster_nodes-unknown_epoch_staked_nodes", 1);
                     Arc::<HashMap<Pubkey, /*stake:*/ u64>>::default()
                 });
-            let nodes =
-                new_cluster_nodes::<T>(cluster_info, root_bank.cluster_type(), &epoch_staked_nodes);
+            let nodes = new_cluster_nodes::<T>(
+                cluster_info,
+                root_bank.cluster_type(),
+                &epoch_staked_nodes,
+                use_cha_cha_8,
+            );
             (Instant::now(), Arc::new(nodes))
         });
         nodes.clone()
@@ -748,15 +759,18 @@ mod tests {
 
     #[test_case(true /* chacha8 */)]
     #[test_case(false /* chacha20 */)]
-    fn test_chacha_both_variants_distribution(variant: bool) {
+    fn test_chacha_both_variants_distribution(use_cha_cha_8: bool) {
         let mut rng = rand::thread_rng();
 
         let (nodes, stakes, cluster_info) = make_test_cluster(&mut rng, 10_000, Some((0, 1)));
         let slot_leader = nodes[0].pubkey();
 
-        let mut cluster_nodes =
-            new_cluster_nodes::<RetransmitStage>(&cluster_info, ClusterType::Development, &stakes);
-        cluster_nodes.use_cha_cha_8 = variant;
+        let cluster_nodes = new_cluster_nodes::<RetransmitStage>(
+            &cluster_info,
+            ClusterType::Development,
+            &stakes,
+            use_cha_cha_8,
+        );
 
         let shred = Shredder::new(2, 1, 0, 0)
             .unwrap()
@@ -779,7 +793,7 @@ mod tests {
             weighted_shuffle.remove_index(*i);
         }
 
-        let mut chacha_rng: Box<dyn RngCore> = if variant {
+        let mut chacha_rng: Box<dyn RngCore> = if use_cha_cha_8 {
             Box::new(get_seeded_rng(slot_leader, &shred.id()))
         } else {
             Box::new(get_seeded_legacy_rng(slot_leader, &shred.id()))
@@ -829,8 +843,12 @@ mod tests {
             cluster_info.tvu_peers(GossipContactInfo::clone).len(),
             nodes.len() - 1
         );
-        let cluster_nodes =
-            new_cluster_nodes::<RetransmitStage>(&cluster_info, ClusterType::Development, &stakes);
+        let cluster_nodes = new_cluster_nodes::<RetransmitStage>(
+            &cluster_info,
+            ClusterType::Development,
+            &stakes,
+            false,
+        );
         // All nodes with contact-info should be in the index.
         // Staked nodes with no contact-info should be included.
         assert!(cluster_nodes.nodes.len() > nodes.len());
@@ -868,8 +886,12 @@ mod tests {
             cluster_info.tvu_peers(GossipContactInfo::clone).len(),
             nodes.len() - 1
         );
-        let cluster_nodes =
-            ClusterNodes::<BroadcastStage>::new(&cluster_info, ClusterType::Development, &stakes);
+        let cluster_nodes = ClusterNodes::<BroadcastStage>::new(
+            &cluster_info,
+            ClusterType::Development,
+            &stakes,
+            false,
+        );
         // All nodes with contact-info should be in the index.
         // Excluding this node itself.
         // Staked nodes with no contact-info should be included.
