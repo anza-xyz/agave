@@ -16,6 +16,9 @@ targets = ["x86_64-unknown-linux-gnu"]
 crate-type = ["lib"]
 name = "solana_stake_program"
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 agave-feature-set = { workspace = true }
 bincode = { workspace = true }
