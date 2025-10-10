@@ -272,7 +272,7 @@ impl<T: Copy> SlotListWriteGuard<'_, T> {
                 1
             }
         } else {
-            let slot_list = unsafe { &mut self.repr_guard.multiple };
+            let slot_list = unsafe { self.repr_guard.multiple.as_mut() };
             slot_list.retain_mut(f);
             slot_list.len()
         }
