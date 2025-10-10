@@ -525,14 +525,12 @@ fn consume_scan_should_process_packet(
     };
 
     // Filter invalid votes (should never be triggered).
-    if !matches!(view.version(), TransactionVersion::Legacy) {
-        return None;
-    }
     if !view.is_simple_vote_transaction() {
         return None;
     }
 
-    // Resolve the transaction (legacy does not have LUT so this is simple).
+    // Resolve the transaction (votes do not have LUTs).
+    debug_assert!(!matches!(view.version(), TransactionVersion::V0));
     let Ok(view) = RuntimeTransactionView::try_from(view, None, bank.get_reserved_account_keys())
     else {
         return None;

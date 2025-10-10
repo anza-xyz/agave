@@ -88,14 +88,12 @@ impl LatestValidatorVotePacket {
         vote_source: VoteSource,
         deprecate_legacy_vote_ixs: bool,
     ) -> Result<Self, DeserializedPacketError> {
-        use std::sync::Arc;
-
         if !packet.meta().is_simple_vote_tx() {
             return Err(DeserializedPacketError::VoteTransactionError);
         }
 
         let vote = SanitizedTransactionView::try_new_sanitized(
-            Arc::new(packet.data(..).unwrap().to_vec()),
+            std::sync::Arc::new(packet.data(..).unwrap().to_vec()),
             false,
         )
         .unwrap();
