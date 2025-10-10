@@ -17,6 +17,8 @@ crate-type = ["lib"]
 name = "solana_accounts_db"
 
 [features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
 dev-context-only-utils = [
     "dep:qualifier_attr",
     "dep:solana-keypair",
