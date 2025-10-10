@@ -21,6 +21,8 @@ name = "solana-faucet"
 path = "src/bin/faucet.rs"
 
 [features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
 dev-context-only-utils = []
 
 [dependencies]
