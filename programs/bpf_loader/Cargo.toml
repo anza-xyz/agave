@@ -34,6 +34,7 @@ svm-internal = []
 [dependencies]
 agave-syscalls = { workspace = true }
 bincode = { workspace = true }
+cfg-if = { workspace = true }
 qualifier_attr = { workspace = true }
 solana-account = { workspace = true }
 solana-bincode = { workspace = true }
