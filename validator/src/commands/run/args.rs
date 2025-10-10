@@ -309,13 +309,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("enable_bigtable_ledger_upload")
-            .long("enable-bigtable-ledger-upload")
-            .requires("enable_rpc_transaction_history")
-            .takes_value(false)
-            .help("Upload new confirmed blocks into a BigTable instance"),
-    )
-    .arg(
         Arg::with_name("enable_extended_tx_metadata_storage")
             .long("enable-extended-tx-metadata-storage")
             .requires("enable_rpc_transaction_history")
