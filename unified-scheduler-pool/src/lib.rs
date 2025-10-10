@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 //! Transaction scheduling code.
 //!
 //! This crate implements 3 solana-runtime traits [`InstalledScheduler`], [`UninstalledScheduler`]
