@@ -1,6 +1,6 @@
 use {
     crate::commands::{FromClapArgMatches, Result},
-    clap::{value_t, ArgMatches},
+    clap::{value_t, Arg, ArgMatches},
     solana_accounts_db::accounts_index::AccountSecondaryIndexes,
     solana_rpc::rpc::{JsonRpcConfig, RpcBigtableConfig},
 };
@@ -43,6 +43,10 @@ impl FromClapArgMatches for JsonRpcConfig {
             disable_health_check: false,
         })
     }
+}
+
+pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
+    vec![]
 }
 
 #[cfg(test)]
