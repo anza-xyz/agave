@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 //! # Feature flags
 //!
 //! Tpu-client-next supports three features:
