@@ -408,7 +408,7 @@ solana-client-traits = "3.0.0"
 solana-clock = "3.0.0"
 solana-cluster-type = "3.0.0"
 solana-commitment-config = "3.0.0"
-solana-compute-budget = { path = "compute-budget", version = "=3.1.0" }
+solana-compute-budget = { path = "compute-budget", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-compute-budget-instruction = { path = "compute-budget-instruction", version = "=3.1.0" }
 solana-compute-budget-interface = "3.0.0"
 solana-compute-budget-program = { path = "programs/compute-budget", version = "=3.1.0" }
