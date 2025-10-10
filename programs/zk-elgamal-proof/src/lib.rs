@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 #![forbid(unsafe_code)]
 
 use {
