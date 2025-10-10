@@ -17,6 +17,8 @@ crate-type = ["lib"]
 name = "solana_poh"
 
 [features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
 dev-context-only-utils = []
 shuttle-test = ["dep:shuttle"]
 
