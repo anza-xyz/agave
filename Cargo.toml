@@ -395,7 +395,7 @@ solana-bls-signatures = { version = "1.0.0", features = ["serde"] }
 solana-bn254 = "3.0.0"
 solana-borsh = "3.0.0"
 solana-bpf-loader-program = { path = "programs/bpf_loader", version = "=3.1.0" }
-solana-bucket-map = { path = "bucket_map", version = "=3.1.0" }
+solana-bucket-map = { path = "bucket_map", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-builtins = { path = "builtins", version = "=3.1.0" }
 solana-builtins-default-costs = { path = "builtins-default-costs", version = "=3.1.0" }
 solana-clap-utils = { path = "clap-utils", version = "=3.1.0" }
