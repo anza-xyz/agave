@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 //! A client for the ledger state, from the perspective of an arbitrary validator.
 //!
 //! Use start_tcp_client() to create a client and then import BanksClientExt to
