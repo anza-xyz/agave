@@ -17,6 +17,8 @@ crate-type = ["lib"]
 name = "solana_compute_budget_instruction"
 
 [features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
 dev-context-only-utils = []
 
 [dependencies]
