@@ -50,7 +50,7 @@ extern crate solana_frozen_abi_macro;
 
 #[doc(hidden)]
 pub mod macro_reexports {
-    pub use solana_accounts_db::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE;
+    pub use agave_snapshots::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE;
 }
 
 mod wire_format_tests;

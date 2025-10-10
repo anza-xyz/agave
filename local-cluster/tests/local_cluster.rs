@@ -1,6 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    agave_snapshots::SnapshotInterval,
+    agave_snapshots::{hardened_unpack::open_genesis_config, SnapshotInterval},
     assert_matches::assert_matches,
     crossbeam_channel::{unbounded, Receiver},
     gag::BufferRedirect,
@@ -9,9 +9,7 @@ use {
     rand::seq::SliceRandom,
     serial_test::serial,
     solana_account::AccountSharedData,
-    solana_accounts_db::{
-        hardened_unpack::open_genesis_config, utils::create_accounts_run_and_snapshot_dirs,
-    },
+    solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
     solana_client_traits::AsyncClient,
     solana_clock::{
         self as clock, Slot, DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE,
