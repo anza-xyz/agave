@@ -827,15 +827,15 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
     // CPI exit.
     //
     // Synchronize the callee's account changes so the caller can see them.
-    for translate_account in accounts.iter_mut() {
+    for translated_account in accounts.iter_mut() {
         let mut callee_account = instruction_context
-            .try_borrow_instruction_account(translate_account.index_in_caller)?;
-        if translate_account.update_caller_account_info {
+            .try_borrow_instruction_account(translated_account.index_in_caller)?;
+        if translated_account.update_caller_account_info {
             update_caller_account(
                 invoke_context,
                 memory_mapping,
                 check_aligned,
-                &mut translate_account.caller_account,
+                &mut translated_account.caller_account,
                 &mut callee_account,
                 stricter_abi_and_runtime_constraints,
                 account_data_direct_mapping,
@@ -844,14 +844,14 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
     }
 
     if stricter_abi_and_runtime_constraints {
-        for translate_account in accounts.iter() {
+        for translated_account in accounts.iter() {
             let mut callee_account = instruction_context
-                .try_borrow_instruction_account(translate_account.index_in_caller)?;
-            if translate_account.update_caller_account_region {
+                .try_borrow_instruction_account(translated_account.index_in_caller)?;
+            if translated_account.update_caller_account_region {
                 update_caller_account_region(
                     memory_mapping,
                     check_aligned,
-                    &translate_account.caller_account,
+                    &translated_account.caller_account,
                     &mut callee_account,
                     account_data_direct_mapping,
                 )?;
