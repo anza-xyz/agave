@@ -311,18 +311,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("health_check_slot_distance")
-            .long("health-check-slot-distance")
-            .value_name("SLOT_DISTANCE")
-            .takes_value(true)
-            .default_value(&default_args.health_check_slot_distance)
-            .help(
-                "Report this validator as healthy if its latest replayed optimistically confirmed \
-                 slot is within the specified number of slots from the cluster's latest \
-                 optimistically confirmed slot",
-            ),
-    )
-    .arg(
         Arg::with_name("skip_preflight_health_check")
             .long("skip-preflight-health-check")
             .takes_value(false)
@@ -1612,7 +1600,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .args(&pub_sub_config::args())
-    .args(&json_rpc_config::args())
+    .args(&json_rpc_config::args(&default_args))
 }
 
 fn validators_set(

@@ -1,5 +1,8 @@
 use {
-    crate::commands::{FromClapArgMatches, Result},
+    crate::{
+        cli::DefaultArgs,
+        commands::{FromClapArgMatches, Result},
+    },
     clap::{value_t, Arg, ArgMatches},
     solana_accounts_db::accounts_index::AccountSecondaryIndexes,
     solana_rpc::rpc::{JsonRpcConfig, RpcBigtableConfig},
@@ -45,7 +48,7 @@ impl FromClapArgMatches for JsonRpcConfig {
     }
 }
 
-pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
+pub(crate) fn args<'a, 'b>(default_args: &'a DefaultArgs) -> Vec<Arg<'a, 'b>> {
     vec![
         Arg::with_name("enable_rpc_transaction_history")
             .long("enable-rpc-transaction-history")
@@ -81,6 +84,16 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .takes_value(true)
             .validator(solana_net_utils::is_host_port)
             .help("Enable the JSON RPC 'requestAirdrop' API with this faucet address."),
+        Arg::with_name("health_check_slot_distance")
+            .long("health-check-slot-distance")
+            .value_name("SLOT_DISTANCE")
+            .takes_value(true)
+            .default_value(&default_args.health_check_slot_distance)
+            .help(
+                "Report this validator as healthy if its latest replayed optimistically confirmed \
+                         slot is within the specified number of slots from the cluster's latest \
+                         optimistically confirmed slot",
+            ),
     ]
 }
 
