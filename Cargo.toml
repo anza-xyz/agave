@@ -461,7 +461,7 @@ solana-logger = "3.0.0"
 solana-measure = { path = "measure", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-merkle-tree = { path = "merkle-tree", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-message = "3.0.1"
-solana-metrics = { path = "metrics", version = "=3.1.0" }
+solana-metrics = { path = "metrics", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-msg = "3.0.0"
 solana-native-token = "3.0.0"
 solana-net-utils = { path = "net-utils", version = "=3.1.0" }
