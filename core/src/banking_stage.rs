@@ -7,7 +7,8 @@ use qualifier_attr::qualifiers;
 use {
     self::{
         committer::Committer, consumer::Consumer, decision_maker::DecisionMaker,
-        packet_receiver::PacketReceiver, qos_service::QosService, vote_storage::VoteStorage,
+        qos_service::QosService, vote_packet_receiver::VotePacketReceiver,
+        vote_storage::VoteStorage,
     },
     crate::{
         banking_stage::{
@@ -75,8 +76,8 @@ mod immutable_deserialized_packet;
 mod latest_validator_vote_packet;
 mod leader_slot_timing_metrics;
 conditional_vis_mod!(packet_deserializer, feature = "dev-context-only-utils", pub);
-mod packet_receiver;
 mod read_write_account_set;
+mod vote_packet_receiver;
 conditional_vis_mod!(scheduler_messages, feature = "dev-context-only-utils", pub);
 pub mod transaction_scheduler;
 conditional_vis_mod!(unified_scheduler, feature = "dev-context-only-utils", pub, pub(crate));
@@ -601,8 +602,8 @@ impl BankingStage {
 
     fn spawn_vote_worker(context: &BankingStageContext) -> JoinHandle<()> {
         let vote_storage = VoteStorage::new(&context.bank_forks.read().unwrap().working_bank());
-        let tpu_receiver = PacketReceiver::new(context.tpu_vote_receiver.clone());
-        let gossip_receiver = PacketReceiver::new(context.gossip_vote_receiver.clone());
+        let tpu_receiver = VotePacketReceiver::new(context.tpu_vote_receiver.clone());
+        let gossip_receiver = VotePacketReceiver::new(context.gossip_vote_receiver.clone());
         let consumer = Consumer::new(
             context.committer.clone(),
             context.transaction_recorder.clone(),

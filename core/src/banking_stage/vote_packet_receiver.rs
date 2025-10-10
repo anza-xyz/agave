@@ -20,11 +20,11 @@ use {
     },
 };
 
-pub struct PacketReceiver {
+pub struct VotePacketReceiver {
     banking_packet_receiver: BankingPacketReceiver,
 }
 
-impl PacketReceiver {
+impl VotePacketReceiver {
     pub fn new(banking_packet_receiver: BankingPacketReceiver) -> Self {
         Self {
             banking_packet_receiver,

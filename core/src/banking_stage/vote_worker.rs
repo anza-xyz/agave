@@ -6,7 +6,7 @@ use {
         leader_slot_metrics::{
             CommittedTransactionsCounts, LeaderSlotMetricsTracker, ProcessTransactionsSummary,
         },
-        packet_receiver::PacketReceiver,
+        vote_packet_receiver::VotePacketReceiver,
         vote_storage::VoteStorage,
         BankingStageStats, SLOT_BOUNDARY_CHECK_PERIOD,
     },
@@ -57,8 +57,8 @@ pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 16;
 pub struct VoteWorker {
     exit: Arc<AtomicBool>,
     decision_maker: DecisionMaker,
-    tpu_receiver: PacketReceiver,
-    gossip_receiver: PacketReceiver,
+    tpu_receiver: VotePacketReceiver,
+    gossip_receiver: VotePacketReceiver,
     storage: VoteStorage,
     bank_forks: Arc<RwLock<BankForks>>,
     consumer: Consumer,
@@ -68,8 +68,8 @@ impl VoteWorker {
     pub fn new(
         exit: Arc<AtomicBool>,
         decision_maker: DecisionMaker,
-        tpu_receiver: PacketReceiver,
-        gossip_receiver: PacketReceiver,
+        tpu_receiver: VotePacketReceiver,
+        gossip_receiver: VotePacketReceiver,
         storage: VoteStorage,
         bank_forks: Arc<RwLock<BankForks>>,
         consumer: Consumer,
