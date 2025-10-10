@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 use {
     log::*,
     rand::Rng,
