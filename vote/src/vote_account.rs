@@ -10,6 +10,7 @@ use {
     solana_instruction::error::InstructionError,
     solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
+    solana_time_utils::AtomicInterval,
     std::{
         cmp::Ordering,
         collections::{hash_map::Entry, HashMap},
@@ -18,9 +19,8 @@ use {
         mem,
         sync::{
             atomic::{AtomicU64, Ordering as AtomicOrdering},
-            Arc, Mutex, OnceLock,
+            Arc, OnceLock,
         },
-        time::{Duration, Instant},
     },
     thiserror::Error,
 };
@@ -46,7 +46,7 @@ struct VoteAccountInner {
 
 pub type VoteAccountsHashMap = HashMap<Pubkey, (/*stake:*/ u64, VoteAccount)>;
 
-const REPORT_INTERVAL: Duration = Duration::from_secs(10);
+const REPORT_INTERVAL_MS: u64 = 10_000;
 
 /// Stats for tracking copy-on-write operations on VoteAccounts
 #[derive(Debug)]
@@ -57,7 +57,7 @@ pub struct VoteAccountsCopyStats {
     sub_stake_copies: AtomicU64,
     add_node_stake_copies: AtomicU64,
     sub_node_stake_copies: AtomicU64,
-    last_report: Mutex<Instant>,
+    last_report: AtomicInterval,
 }
 
 impl Default for VoteAccountsCopyStats {
@@ -69,7 +69,7 @@ impl Default for VoteAccountsCopyStats {
             sub_stake_copies: AtomicU64::new(0),
             add_node_stake_copies: AtomicU64::new(0),
             sub_node_stake_copies: AtomicU64::new(0),
-            last_report: Mutex::new(Instant::now()),
+            last_report: AtomicInterval::default(),
         }
     }
 }
@@ -78,9 +78,11 @@ impl VoteAccountsCopyStats {
     /// Report stats if 10 seconds have elapsed since last report.
     /// Uses swap to atomically reset counters after reading.
     pub fn maybe_report(&self) {
-        let mut last_report = self.last_report.lock().unwrap();
-        let now = Instant::now();
-        if now.duration_since(*last_report) < REPORT_INTERVAL {
+        if self.last_report.elapsed_ms() < REPORT_INTERVAL_MS {
+            return;
+        }
+
+        if !self.last_report.should_update(REPORT_INTERVAL_MS) {
             return;
         }
 
@@ -113,8 +115,6 @@ impl VoteAccountsCopyStats {
                 ),
             );
         }
-
-        *last_report = now;
     }
 }
 

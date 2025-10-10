@@ -46,6 +46,7 @@ solana-serialize-utils = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-svm-transaction = { workspace = true }
+solana-time-utils = { workspace = true }
 solana-transaction = { workspace = true, features = ["bincode"] }
 solana-vote-interface = { workspace = true, features = ["bincode"] }
 thiserror = { workspace = true }
