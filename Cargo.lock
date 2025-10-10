@@ -8698,6 +8698,7 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-feature-gate-interface",
  "solana-fee-calculator",
+ "solana-genesis",
  "solana-genesis-config",
  "solana-inflation",
  "solana-keypair",
