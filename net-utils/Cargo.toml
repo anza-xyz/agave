@@ -17,7 +17,6 @@ name = "solana_net_utils"
 
 [features]
 agave-unstable-api = []
-default = []
 dev-context-only-utils = ["dep:pcap-file", "dep:hxdmp"]
 shuttle-test = ["dep:shuttle", "solana-svm-type-overrides/shuttle-test"]
 
@@ -43,6 +42,7 @@ url = { workspace = true }
 
 [dev-dependencies]
 solana-logger = { workspace = true }
+solana-net-utils = { path = ".", features = ["agave-unstable-api"] }
 
 [lints]
 workspace = true
