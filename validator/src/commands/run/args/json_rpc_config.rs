@@ -5,6 +5,7 @@ use {
     },
     clap::{value_t, Arg, ArgMatches},
     solana_accounts_db::accounts_index::AccountSecondaryIndexes,
+    solana_clap_utils::input_validators::is_parsable,
     solana_rpc::rpc::{JsonRpcConfig, RpcBigtableConfig},
 };
 
@@ -107,6 +108,13 @@ pub(crate) fn args<'a, 'b>(default_args: &'a DefaultArgs) -> Vec<Arg<'a, 'b>> {
                 "Override the default maximum accounts accepted by the getMultipleAccounts JSON \
                  RPC method",
             ),
+        Arg::with_name("rpc_threads")
+            .long("rpc-threads")
+            .value_name("NUMBER")
+            .validator(is_parsable::<usize>)
+            .takes_value(true)
+            .default_value(&default_args.rpc_threads)
+            .help("Number of threads to use for servicing RPC requests"),
     ]
 }
 

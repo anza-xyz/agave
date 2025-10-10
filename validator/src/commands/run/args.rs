@@ -936,15 +936,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("rpc_threads")
-            .long("rpc-threads")
-            .value_name("NUMBER")
-            .validator(is_parsable::<usize>)
-            .takes_value(true)
-            .default_value(&default_args.rpc_threads)
-            .help("Number of threads to use for servicing RPC requests"),
-    )
-    .arg(
         Arg::with_name("rpc_blocking_threads")
             .long("rpc-blocking-threads")
             .value_name("NUMBER")
