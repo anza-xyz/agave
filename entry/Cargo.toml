@@ -17,6 +17,7 @@ crate-type = ["lib"]
 name = "solana_entry"
 
 [features]
+agave-unstable-api = []
 dev-context-only-utils = []
 
 [dependencies]
@@ -48,7 +49,7 @@ wincode = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 assert_matches = { workspace = true }
 proptest = { workspace = true }
-solana-entry = { path = ".", features = ["dev-context-only-utils"] }
+solana-entry = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
 solana-message = { workspace = true }
