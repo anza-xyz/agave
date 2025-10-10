@@ -10128,6 +10128,7 @@ dependencies = [
  "solana-keypair",
  "solana-message",
  "solana-pubkey",
+ "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-signature",
  "solana-signer",
