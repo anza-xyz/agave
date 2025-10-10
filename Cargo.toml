@@ -187,7 +187,7 @@ agave-scheduling-utils = { path = "scheduling-utils", version = "=3.1.0", featur
 agave-snapshots = { path = "snapshots", version = "=3.1.0" }
 agave-syscalls = { path = "syscalls", version = "=3.1.0", features = ["agave-unstable-api"] }
 agave-thread-manager = { path = "thread-manager", version = "=3.1.0", features = ["agave-unstable-api"] }
-agave-transaction-view = { path = "transaction-view", version = "=3.1.0" }
+agave-transaction-view = { path = "transaction-view", version = "=3.1.0", features = ["agave-unstable-api"] }
 agave-verified-packet-receiver = { path = "verified-packet-receiver", version = "=3.1.0" }
 agave-votor = { path = "votor", version = "=3.1.0" }
 agave-votor-messages = { path = "votor-messages", version = "=3.1.0" }
