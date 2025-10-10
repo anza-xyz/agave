@@ -498,7 +498,7 @@ solana-rpc = { path = "rpc", version = "=3.1.0", features = ["agave-unstable-api
 solana-rpc-client = { path = "rpc-client", version = "=3.1.0", default-features = false, features = ["agave-unstable-api"] }
 solana-rpc-client-api = { path = "rpc-client-api", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-rpc-client-nonce-utils = { path = "rpc-client-nonce-utils", version = "=3.1.0", features = ["agave-unstable-api"] }
-solana-rpc-client-types = { path = "rpc-client-types", version = "=3.1.0" }
+solana-rpc-client-types = { path = "rpc-client-types", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-runtime = { path = "runtime", version = "=3.1.0" }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=3.1.0" }
 solana-sanitize = "3.0.1"
