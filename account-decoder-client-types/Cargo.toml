@@ -15,6 +15,7 @@ all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
 [features]
+agave-unstable-api = []
 zstd = ["dep:zstd"]
 
 [dependencies]
