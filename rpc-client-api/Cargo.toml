@@ -18,7 +18,6 @@ jsonrpc-core = { workspace = true }
 reqwest = { workspace = true, default-features = false, features = ["rustls-tls"] }
 reqwest-middleware = { workspace = true }
 serde = { workspace = true }
-serde_derive = { workspace = true }
 serde_json = { workspace = true }
 solana-account-decoder-client-types = { workspace = true }
 solana-clock = { workspace = true }

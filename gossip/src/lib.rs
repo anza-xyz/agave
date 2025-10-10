@@ -41,7 +41,6 @@ mod protocol;
 mod push_active_set;
 mod received_cache;
 pub mod restart_crds_values;
-pub mod stake_weighting_config;
 pub mod weighted_shuffle;
 
 #[macro_use]
@@ -50,9 +49,6 @@ extern crate log;
 #[cfg(test)]
 #[macro_use]
 extern crate assert_matches;
-
-#[macro_use]
-extern crate serde_derive;
 
 #[cfg_attr(feature = "frozen-abi", macro_use)]
 #[cfg(feature = "frozen-abi")]

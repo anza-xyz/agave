@@ -1,5 +1,6 @@
 use {
     crate::parse_account_data::{ParsableAccount, ParseAccountError},
+    serde::{Deserialize, Serialize},
     solana_address_lookup_table_interface::state::AddressLookupTable,
     solana_instruction::error::InstructionError,
 };

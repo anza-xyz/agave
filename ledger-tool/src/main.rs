@@ -20,7 +20,7 @@ use {
     },
     dashmap::DashMap,
     log::*,
-    serde_derive::Serialize,
+    serde::Serialize,
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount},
     solana_accounts_db::accounts_index::{ScanConfig, ScanOrder},
     solana_clap_utils::{

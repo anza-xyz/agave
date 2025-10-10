@@ -68,7 +68,7 @@ use {
     log::*,
     partitioned_epoch_rewards::PartitionedRewardsCalculation,
     rayon::{ThreadPool, ThreadPoolBuilder},
-    serde::Serialize,
+    serde::{Deserialize, Serialize},
     solana_account::{
         create_account_shared_data_with_fields as create_account, from_account, Account,
         AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,

@@ -8,7 +8,7 @@ use {
     arrayvec::ArrayVec,
     bincode::serialize,
     rand::Rng,
-    serde::de::{Deserialize, Deserializer},
+    serde::{de::Deserializer, Deserialize, Serialize},
     solana_hash::Hash,
     solana_keypair::{signable::Signable, Keypair},
     solana_packet::PACKET_DATA_SIZE,

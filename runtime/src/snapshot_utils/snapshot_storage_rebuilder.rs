@@ -20,7 +20,6 @@ use {
         accounts_file::StorageAccess,
     },
     solana_clock::Slot,
-    solana_nohash_hasher::BuildNoHashHasher,
     std::{
         collections::HashMap,
         path::PathBuf,
@@ -99,10 +98,7 @@ impl SnapshotStorageRebuilder {
         storage_access: StorageAccess,
         obsolete_accounts: Option<DashMap<Slot, SerdeObsoleteAccounts>>,
     ) -> Self {
-        let storage = DashMap::with_capacity_and_hasher(
-            snapshot_storage_lengths.len(),
-            BuildNoHashHasher::default(),
-        );
+        let storage = AccountStorageMap::with_capacity(snapshot_storage_lengths.len());
         let storage_paths: DashMap<_, _> = snapshot_storage_lengths
             .iter()
             .map(|(slot, storage_lengths)| {

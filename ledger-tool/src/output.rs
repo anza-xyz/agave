@@ -6,8 +6,10 @@ use {
     chrono::{Local, TimeZone},
     itertools::Either,
     pretty_hex::PrettyHex,
-    serde::ser::{Impossible, SerializeSeq, SerializeStruct, Serializer},
-    serde_derive::{Deserialize, Serialize},
+    serde::{
+        ser::{Impossible, SerializeSeq, SerializeStruct, Serializer},
+        Deserialize, Serialize,
+    },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
         accounts_index::{ScanConfig, ScanOrder},

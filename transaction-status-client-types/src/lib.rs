@@ -6,9 +6,8 @@ use {
     serde::{
         de::{self, Deserialize as DeserializeTrait, Error as DeserializeError},
         ser::{Serialize as SerializeTrait, SerializeTupleVariant},
-        Deserializer,
+        Deserialize, Deserializer, Serialize,
     },
-    serde_derive::{Deserialize, Serialize},
     serde_json::{from_value, Value},
     solana_account_decoder_client_types::token::UiTokenAmount,
     solana_commitment_config::CommitmentConfig,

@@ -3,7 +3,6 @@
 
 #[macro_use]
 extern crate log;
-extern crate serde_derive;
 
 pub mod commitment;
 pub mod common;

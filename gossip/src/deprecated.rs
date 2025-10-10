@@ -1,4 +1,7 @@
-use solana_clock::Slot;
+use {
+    serde::{Deserialize, Serialize},
+    solana_clock::Slot,
+};
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]

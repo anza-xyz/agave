@@ -2,6 +2,7 @@
 use crate::contact_info::{sanitize_socket, ContactInfo, Error, Protocol, SOCKET_ADDR_UNSPECIFIED};
 use {
     crate::crds_data::MAX_WALLCLOCK,
+    serde::{Deserialize, Serialize},
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     solana_streamer::socket::SocketAddrSpace,

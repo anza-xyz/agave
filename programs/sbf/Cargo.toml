@@ -109,8 +109,7 @@ net2 = "0.2.37"
 num-derive = "0.4.2"
 num-traits = "0.2"
 rand = "0.8"
-serde = "1.0.112"                                                                             # must match the serde_derive version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
-serde_derive = "1.0.112"                                                                      # must match the serde version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
+serde = { version = "1.0.112", features = ["derive"] }
 serde_json = "1.0.56"
 sha2 = "0.10.8"
 sha3 = "0.10.8"

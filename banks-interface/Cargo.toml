@@ -18,7 +18,6 @@ name = "solana_banks_interface"
 
 [dependencies]
 serde = { workspace = true }
-serde_derive = { workspace = true }
 solana-account = { workspace = true, features = [ "serde" ] }
 solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true, features = [ "serde" ] }

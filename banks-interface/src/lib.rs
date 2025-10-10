@@ -1,7 +1,7 @@
 #![allow(deprecated)]
 
 use {
-    serde_derive::{Deserialize, Serialize},
+    serde::{Deserialize, Serialize},
     solana_account::Account,
     solana_clock::Slot,
     solana_commitment_config::CommitmentLevel,

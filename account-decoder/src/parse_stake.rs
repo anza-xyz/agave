@@ -4,6 +4,7 @@ use {
         StringAmount,
     },
     bincode::deserialize,
+    serde::{Deserialize, Serialize},
     solana_clock::{Epoch, UnixTimestamp},
     solana_stake_interface::state::{Authorized, Delegation, Lockup, Meta, Stake, StakeStateV2},
 };

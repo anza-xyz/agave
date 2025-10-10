@@ -1,5 +1,6 @@
 use {
     crate::filter::RpcFilterType,
+    serde::{Deserialize, Serialize},
     solana_clock::{Epoch, Slot},
 };
 pub use {
