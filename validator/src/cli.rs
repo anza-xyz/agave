@@ -1,5 +1,5 @@
 use {
-    crate::commands,
+    crate::{commands, commands::run::args::pub_sub_config},
     clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches, SubCommand},
     solana_accounts_db::{
         accounts_db::{
@@ -587,18 +587,6 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .help("Application profile id to use in Bigtable requests"),
         )
         .arg(
-            Arg::with_name("rpc_pubsub_enable_vote_subscription")
-                .long("rpc-pubsub-enable-vote-subscription")
-                .takes_value(false)
-                .help("Enable the unstable RPC PubSub `voteSubscribe` subscription"),
-        )
-        .arg(
-            Arg::with_name("rpc_pubsub_enable_block_subscription")
-                .long("rpc-pubsub-enable-block-subscription")
-                .takes_value(false)
-                .help("Enable the unstable RPC PubSub `blockSubscribe` subscription"),
-        )
-        .arg(
             Arg::with_name("bpf_program")
                 .long("bpf-program")
                 .value_names(&["ADDRESS_OR_KEYPAIR", "SBF_PROGRAM.SO"])
@@ -934,6 +922,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                      silently ignored",
                 ),
         )
+        .args(&pub_sub_config::args::<true>())
 }
 
 pub struct DefaultTestArgs {
