@@ -562,6 +562,20 @@ mod tests {
         solana_svm::account_loader::CheckedTransactionDetails, std::collections::HashSet,
     };
 
+    fn to_runtime_transaction_view(packet: BytesPacket) -> RuntimeTransactionView {
+        let tx =
+            SanitizedTransactionView::try_new_sanitized(Arc::new(packet.buffer().to_vec()), false)
+                .unwrap();
+        let tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+            tx,
+            MessageHash::Compute,
+            None,
+        )
+        .unwrap();
+
+        RuntimeTransactionView::try_from(tx, None, &HashSet::default()).unwrap()
+    }
+
     #[test]
     fn test_bank_prepare_filter_for_pending_transaction() {
         assert_eq!(
@@ -690,19 +704,5 @@ mod tests {
         assert_eq!(extracted.next().unwrap().message_hash(), &expected0);
         assert_eq!(extracted.next().unwrap().message_hash(), &expected1);
         assert!(extracted.next().is_none());
-    }
-
-    fn to_runtime_transaction_view(packet: BytesPacket) -> RuntimeTransactionView {
-        let tx =
-            SanitizedTransactionView::try_new_sanitized(Arc::new(packet.buffer().to_vec()), false)
-                .unwrap();
-        let tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
-            tx,
-            MessageHash::Compute,
-            None,
-        )
-        .unwrap();
-
-        RuntimeTransactionView::try_from(tx, None, &HashSet::default()).unwrap()
     }
 }
