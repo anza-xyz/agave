@@ -509,7 +509,7 @@ solana-secp256k1-recover = "3.0.0"
 solana-secp256r1-program = "3.0.0"
 solana-seed-derivable = "3.0.0"
 solana-seed-phrase = "3.0.0"
-solana-send-transaction-service = { path = "send-transaction-service", version = "=3.1.0" }
+solana-send-transaction-service = { path = "send-transaction-service", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-serde = "3.0.0"
 solana-serde-varint = "3.0.0"
 solana-serialize-utils = "3.1.0"
