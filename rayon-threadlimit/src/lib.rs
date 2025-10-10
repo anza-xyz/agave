@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 use {log::warn, std::env};
 //TODO remove this hack when rayon fixes itself
 
