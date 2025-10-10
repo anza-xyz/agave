@@ -300,15 +300,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Do not perform TCP/UDP reachable port checks at start-up"),
     )
     .arg(
-        Arg::with_name("enable_rpc_transaction_history")
-            .long("enable-rpc-transaction-history")
-            .takes_value(false)
-            .help(
-                "Enable historical transaction info over JSON RPC, including the \
-                 'getConfirmedBlock' API. This will cause an increase in disk usage and IOPS",
-            ),
-    )
-    .arg(
         Arg::with_name("enable_extended_tx_metadata_storage")
             .long("enable-extended-tx-metadata-storage")
             .requires("enable_rpc_transaction_history")

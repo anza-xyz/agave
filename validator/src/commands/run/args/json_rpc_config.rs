@@ -47,6 +47,13 @@ impl FromClapArgMatches for JsonRpcConfig {
 
 pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
     vec![
+        Arg::with_name("enable_rpc_transaction_history")
+            .long("enable-rpc-transaction-history")
+            .takes_value(false)
+            .help(
+                "Enable historical transaction info over JSON RPC, including the \
+                'getConfirmedBlock' API. This will cause an increase in disk usage and IOPS",
+            ),
         Arg::with_name("enable_rpc_bigtable_ledger_storage")
             .long("enable-rpc-bigtable-ledger-storage")
             .requires("enable_rpc_transaction_history")
