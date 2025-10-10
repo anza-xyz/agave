@@ -14,6 +14,8 @@ crate-type = ["lib"]
 name = "solana_bucket_map"
 
 [features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
 dev-context-only-utils = []
 
 [dependencies]
