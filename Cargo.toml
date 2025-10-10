@@ -451,7 +451,7 @@ solana-keccak-hasher = "3.0.0"
 solana-keypair = "3.0.1"
 solana-last-restart-slot = "3.0.0"
 solana-lattice-hash = { path = "lattice-hash", version = "=3.1.0", features = ["agave-unstable-api"] }
-solana-ledger = { path = "ledger", version = "=3.1.0" }
+solana-ledger = { path = "ledger", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-loader-v2-interface = "3.0.0"
 solana-loader-v3-interface = "6.1.0"
 solana-loader-v4-interface = "3.1.0"
