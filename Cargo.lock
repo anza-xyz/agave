@@ -9402,6 +9402,7 @@ dependencies = [
  "shuttle",
  "socket2 0.6.1",
  "solana-logger",
+ "solana-net-utils",
  "solana-serde",
  "solana-svm-type-overrides",
  "tokio",
