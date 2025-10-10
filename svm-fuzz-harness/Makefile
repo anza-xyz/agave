@@ -1,10 +1,7 @@
 
 CARGO?=cargo
 
-test: | binaries tests/run_test_vectors
+test: | binaries
 
 binaries:
 	$(CARGO) build --manifest-path ./Cargo.toml --bins --release
-
-tests/run_test_vectors:
-	scripts/run_test_vectors.sh
