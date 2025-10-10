@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 // Deprecate the crate
 #![deprecated(
     since = "3.0.0",

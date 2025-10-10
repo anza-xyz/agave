@@ -12,6 +12,10 @@ edition = { workspace = true }
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
+
 [dependencies]
 base64 = { workspace = true }
 bytemuck = { workspace = true }
