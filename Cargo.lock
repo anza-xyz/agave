@@ -11895,6 +11895,7 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-context",
  "solana-vote-interface",
+ "solana-vote-program",
  "test-case",
  "thiserror 2.0.17",
 ]
