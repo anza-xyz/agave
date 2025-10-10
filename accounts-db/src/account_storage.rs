@@ -2,11 +2,12 @@
 
 use {
     crate::accounts_db::{AccountStorageEntry, AccountsFileId},
+    ahash::RandomState,
     dashmap::DashMap,
     rand::seq::SliceRandom,
     rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
     solana_clock::Slot,
-    solana_nohash_hasher::{BuildNoHashHasher, IntMap},
+    solana_nohash_hasher::IntMap,
     std::{
         ops::{Index, Range},
         sync::{
@@ -18,7 +19,7 @@ use {
 
 pub mod stored_account_info;
 
-pub type AccountStorageMap = DashMap<Slot, Arc<AccountStorageEntry>, BuildNoHashHasher<Slot>>;
+pub type AccountStorageMap = DashMap<Slot, Arc<AccountStorageEntry>, RandomState>;
 
 #[derive(Default, Debug)]
 pub struct AccountStorage {
@@ -228,7 +229,7 @@ impl AccountStorage {
 
 /// iterate contents of AccountStorage without exposing internals
 pub struct AccountStorageIter<'a> {
-    iter: dashmap::iter::Iter<'a, Slot, Arc<AccountStorageEntry>, BuildNoHashHasher<Slot>>,
+    iter: dashmap::iter::Iter<'a, Slot, Arc<AccountStorageEntry>, RandomState>,
 }
 
 impl<'a> AccountStorageIter<'a> {

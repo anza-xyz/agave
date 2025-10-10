@@ -26,7 +26,6 @@ mod tests {
         },
         solana_epoch_schedule::EpochSchedule,
         solana_genesis_config::create_genesis_config,
-        solana_nohash_hasher::BuildNoHashHasher,
         solana_pubkey::Pubkey,
         solana_stake_interface::state::Stake,
         std::{
@@ -49,7 +48,7 @@ mod tests {
         let storage_entries = accounts_db.get_storages(RangeFull).0;
         let storage: AccountStorageMap = AccountStorageMap::with_capacity_and_hasher(
             storage_entries.len(),
-            BuildNoHashHasher::default(),
+            ahash::RandomState::new(),
         );
         let mut next_append_vec_id = 0;
         for storage_entry in storage_entries.into_iter() {
