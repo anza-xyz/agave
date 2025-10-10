@@ -439,7 +439,7 @@ solana-frozen-abi-macro = "3.0.0"
 solana-genesis = { path = "genesis", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-genesis-config = "3.0.0"
 solana-genesis-utils = { path = "genesis-utils", version = "=3.1.0", features = ["agave-unstable-api"] }
-solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=3.1.0" }
+solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-gossip = { path = "gossip", version = "=3.1.0" }
 solana-hard-forks = "3.0.0"
 solana-hash = "3.0.0"
