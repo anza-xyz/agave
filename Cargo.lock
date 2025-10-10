@@ -7390,6 +7390,7 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "serde",
+ "solana-bloom",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-hash",
