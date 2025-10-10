@@ -1055,13 +1055,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("rpc_scan_and_fix_roots")
-            .long("rpc-scan-and-fix-roots")
-            .takes_value(false)
-            .requires("enable_rpc_transaction_history")
-            .help("Verifies blockstore roots on boot and fixes any gaps"),
-    )
-    .arg(
         Arg::with_name("rpc_max_request_body_size")
             .long("rpc-max-request-body-size")
             .value_name("BYTES")

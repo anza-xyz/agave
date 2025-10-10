@@ -151,6 +151,11 @@ pub(crate) fn args<'a, 'b>(default_args: &'a DefaultArgs) -> Vec<Arg<'a, 'b>> {
             .long("full-rpc-api")
             .takes_value(false)
             .help("Expose RPC methods for querying chain state and transaction history"),
+        Arg::with_name("rpc_scan_and_fix_roots")
+            .long("rpc-scan-and-fix-roots")
+            .takes_value(false)
+            .requires("enable_rpc_transaction_history")
+            .help("Verifies blockstore roots on boot and fixes any gaps"),
     ]
 }
 
