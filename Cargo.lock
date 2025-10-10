@@ -199,6 +199,7 @@ version = "3.1.0"
 dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
+ "agave-snapshots",
  "agave-syscalls",
  "assert_cmd",
  "bs58",
@@ -331,6 +332,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-snapshots"
+version = "3.1.0"
+dependencies = [
+ "assert_matches",
+ "bzip2",
+ "crossbeam-channel",
+ "log",
+ "lz4",
+ "rand 0.8.5",
+ "solana-accounts-db",
+ "solana-genesis-config",
+ "solana-logger",
+ "strum",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.17",
+ "zstd",
+]
+
+[[package]]
 name = "agave-store-histogram"
 version = "3.1.0"
 dependencies = [
@@ -454,6 +475,7 @@ name = "agave-validator"
 version = "3.1.0"
 dependencies = [
  "agave-geyser-plugin-interface",
+ "agave-snapshots",
  "assert_cmd",
  "chrono",
  "clap 2.33.3",
@@ -7069,7 +7091,6 @@ dependencies = [
  "bv",
  "bytemuck",
  "bytemuck_derive",
- "bzip2",
  "criterion",
  "crossbeam-channel",
  "dashmap",
@@ -7138,7 +7159,6 @@ dependencies = [
  "static_assertions",
  "strum",
  "strum_macros",
- "tar",
  "tempfile",
  "test-case",
  "thiserror 2.0.17",
@@ -8145,6 +8165,7 @@ dependencies = [
  "agave-reserved-account-keys",
  "agave-scheduler-bindings",
  "agave-scheduling-utils",
+ "agave-snapshots",
  "agave-transaction-view",
  "agave-verified-packet-receiver",
  "agave-votor",
@@ -8450,6 +8471,7 @@ dependencies = [
 name = "solana-download-utils"
 version = "3.1.0"
 dependencies = [
+ "agave-snapshots",
  "log",
  "solana-clock",
  "solana-file-download",
@@ -8738,6 +8760,7 @@ name = "solana-genesis"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-snapshots",
  "base64 0.22.1",
  "bincode",
  "clap 2.33.3",
@@ -8746,7 +8769,6 @@ dependencies = [
  "serde_json",
  "serde_yaml 0.9.34+deprecated",
  "solana-account",
- "solana-accounts-db",
  "solana-borsh",
  "solana-clap-utils",
  "solana-cli-config",
@@ -8813,8 +8835,8 @@ dependencies = [
 name = "solana-genesis-utils"
 version = "3.1.0"
 dependencies = [
+ "agave-snapshots",
  "log",
- "solana-accounts-db",
  "solana-download-utils",
  "solana-genesis-config",
  "solana-hash",
@@ -9105,6 +9127,7 @@ version = "3.1.0"
 dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
+ "agave-snapshots",
  "anyhow",
  "assert_matches",
  "bincode",
@@ -9284,6 +9307,7 @@ dependencies = [
 name = "solana-local-cluster"
 version = "3.1.0"
 dependencies = [
+ "agave-snapshots",
  "assert_matches",
  "crossbeam-channel",
  "fs_extra",
@@ -10038,6 +10062,7 @@ version = "3.1.0"
 dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
+ "agave-snapshots",
  "base64 0.22.1",
  "bincode",
  "bs58",
@@ -10307,6 +10332,7 @@ dependencies = [
  "agave-feature-set",
  "agave-precompiles",
  "agave-reserved-account-keys",
+ "agave-snapshots",
  "agave-syscalls",
  "agave-transaction-view",
  "ahash 0.8.11",
@@ -11204,6 +11230,7 @@ name = "solana-test-validator"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-snapshots",
  "base64 0.22.1",
  "bincode",
  "crossbeam-channel",
@@ -11917,6 +11944,7 @@ dependencies = [
 name = "solana-wen-restart"
 version = "3.1.0"
 dependencies = [
+ "agave-snapshots",
  "anyhow",
  "assert_matches",
  "crossbeam-channel",
@@ -11928,7 +11956,6 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "serial_test",
- "solana-accounts-db",
  "solana-clock",
  "solana-entry",
  "solana-gossip",

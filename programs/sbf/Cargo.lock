@@ -152,6 +152,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-snapshots"
+version = "3.1.0"
+dependencies = [
+ "assert_matches",
+ "bzip2",
+ "crossbeam-channel",
+ "log",
+ "lz4",
+ "rand 0.8.5",
+ "solana-accounts-db",
+ "solana-genesis-config",
+ "solana-logger",
+ "strum",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.17",
+ "zstd",
+]
+
+[[package]]
 name = "agave-syscalls"
 version = "3.1.0"
 dependencies = [
@@ -212,6 +232,7 @@ name = "agave-validator"
 version = "3.1.0"
 dependencies = [
  "agave-geyser-plugin-interface",
+ "agave-snapshots",
  "chrono",
  "clap",
  "console 0.16.1",
@@ -5805,7 +5826,6 @@ dependencies = [
  "bv",
  "bytemuck",
  "bytemuck_derive",
- "bzip2",
  "crossbeam-channel",
  "dashmap",
  "indexmap 2.11.4",
@@ -5857,7 +5877,6 @@ dependencies = [
  "solana-vote-program",
  "spl-generic-token",
  "static_assertions",
- "tar",
  "tempfile",
  "thiserror 2.0.17",
 ]
@@ -6427,6 +6446,7 @@ dependencies = [
  "agave-feature-set",
  "agave-scheduler-bindings",
  "agave-scheduling-utils",
+ "agave-snapshots",
  "agave-transaction-view",
  "agave-verified-packet-receiver",
  "agave-votor",
@@ -6653,6 +6673,7 @@ dependencies = [
 name = "solana-download-utils"
 version = "3.1.0"
 dependencies = [
+ "agave-snapshots",
  "log",
  "solana-clock",
  "solana-file-download",
@@ -6905,8 +6926,8 @@ dependencies = [
 name = "solana-genesis-utils"
 version = "3.1.0"
 dependencies = [
+ "agave-snapshots",
  "log",
- "solana-accounts-db",
  "solana-download-utils",
  "solana-genesis-config",
  "solana-hash",
@@ -7146,6 +7167,7 @@ version = "3.1.0"
 dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
+ "agave-snapshots",
  "anyhow",
  "assert_matches",
  "bincode",
@@ -7900,6 +7922,7 @@ name = "solana-rpc"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-snapshots",
  "base64 0.22.1",
  "bincode",
  "bs58",
@@ -8083,6 +8106,7 @@ dependencies = [
  "agave-feature-set",
  "agave-precompiles",
  "agave-reserved-account-keys",
+ "agave-snapshots",
  "agave-syscalls",
  "ahash 0.8.11",
  "aquamarine",
@@ -9599,6 +9623,7 @@ name = "solana-test-validator"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-snapshots",
  "base64 0.22.1",
  "bincode",
  "crossbeam-channel",

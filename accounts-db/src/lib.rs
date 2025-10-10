@@ -26,7 +26,6 @@ mod bucket_map_holder_stats;
 mod buffered_reader;
 pub mod contains;
 mod file_io;
-pub mod hardened_unpack;
 mod io_uring;
 pub mod is_loadable;
 mod is_zero_lamport;
@@ -46,7 +45,8 @@ pub mod utils;
 pub mod waitable_condvar;
 
 pub use {
-    buffered_reader::large_file_buf_reader, file_io::validate_memlock_limit_for_disk_io,
+    buffered_reader::large_file_buf_reader,
+    file_io::{file_creator, validate_memlock_limit_for_disk_io, FileCreator},
     obsolete_accounts::ObsoleteAccounts,
 };
 

@@ -31,6 +31,12 @@ use {
         tpu::{ForwardingClientOption, Tpu, TpuSockets, DEFAULT_TPU_COALESCE},
         tvu::{Tvu, TvuConfig, TvuSockets},
     },
+    agave_snapshots::{
+        hardened_unpack::{
+            open_genesis_config, OpenGenesisConfigError, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+        },
+        SnapshotInterval,
+    },
     anyhow::{anyhow, Context, Result},
     crossbeam_channel::{bounded, unbounded, Receiver},
     quinn::Endpoint,
@@ -38,9 +44,6 @@ use {
     solana_accounts_db::{
         accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
-        hardened_unpack::{
-            open_genesis_config, OpenGenesisConfigError, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
-        },
         utils::move_and_async_delete_path_contents,
     },
     solana_client::{
@@ -124,7 +127,7 @@ use {
         snapshot_config::SnapshotConfig,
         snapshot_controller::SnapshotController,
         snapshot_hash::StartingSnapshotHashes,
-        snapshot_utils::{self, clean_orphaned_account_snapshot_dirs, SnapshotInterval},
+        snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
     },
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_shred_version::compute_shred_version,

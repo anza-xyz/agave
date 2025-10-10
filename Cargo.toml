@@ -96,6 +96,7 @@ members = [
     "scheduler-bindings",
     "scheduling-utils",
     "send-transaction-service",
+    "snapshots",
     "stake-accounts",
     "storage-bigtable",
     "storage-bigtable/build-proto",
@@ -183,6 +184,7 @@ agave-precompiles = { path = "precompiles", version = "=3.1.0" }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=3.1.0" }
 agave-scheduler-bindings = { path = "scheduler-bindings", version = "=3.1.0" }
 agave-scheduling-utils = { path = "scheduling-utils", version = "=3.1.0" }
+agave-snapshots = { path = "snapshots", version = "=3.1.0" }
 agave-syscalls = { path = "syscalls", version = "=3.1.0" }
 agave-thread-manager = { path = "thread-manager", version = "=3.1.0" }
 agave-transaction-view = { path = "transaction-view", version = "=3.1.0" }

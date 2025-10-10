@@ -1,9 +1,9 @@
 use {
-    crate::file_io::{file_creator, FileCreator},
     bzip2::bufread::BzDecoder,
     crossbeam_channel::Sender,
     log::*,
     rand::{thread_rng, Rng},
+    solana_accounts_db::{file_creator, FileCreator},
     solana_genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
     std::{
         collections::HashMap,

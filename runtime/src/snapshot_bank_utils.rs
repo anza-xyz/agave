@@ -27,12 +27,13 @@ use {
         snapshot_utils::{
             self, get_highest_bank_snapshot, get_highest_full_snapshot_archive_info,
             get_highest_incremental_snapshot_archive_info, rebuild_storages_from_snapshot_dir,
-            verify_and_unarchive_snapshots, ArchiveFormat, BankSnapshotInfo, SnapshotError,
-            SnapshotVersion, StorageAndNextAccountsFileId, UnarchivedSnapshots,
-            VerifyEpochStakesError, VerifySlotDeltasError, VerifySlotHistoryError,
+            verify_and_unarchive_snapshots, BankSnapshotInfo, SnapshotError, SnapshotVersion,
+            StorageAndNextAccountsFileId, UnarchivedSnapshots, VerifyEpochStakesError,
+            VerifySlotDeltasError, VerifySlotHistoryError,
         },
         status_cache,
     },
+    agave_snapshots::ArchiveFormat,
     log::*,
     solana_accounts_db::{
         accounts_db::{AccountsDbConfig, AtomicAccountsFileId},
