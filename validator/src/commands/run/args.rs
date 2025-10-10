@@ -300,16 +300,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Do not perform TCP/UDP reachable port checks at start-up"),
     )
     .arg(
-        Arg::with_name("enable_extended_tx_metadata_storage")
-            .long("enable-extended-tx-metadata-storage")
-            .requires("enable_rpc_transaction_history")
-            .takes_value(false)
-            .help(
-                "Include CPI inner instructions, logs, and return data in the historical \
-                 transaction info stored",
-            ),
-    )
-    .arg(
         Arg::with_name("rpc_max_multiple_accounts")
             .long("rpc-max-multiple-accounts")
             .value_name("MAX ACCOUNTS")

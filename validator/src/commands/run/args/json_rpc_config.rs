@@ -67,6 +67,14 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .requires("enable_rpc_transaction_history")
             .takes_value(false)
             .help("Upload new confirmed blocks into a BigTable instance"),
+        Arg::with_name("enable_extended_tx_metadata_storage")
+            .long("enable-extended-tx-metadata-storage")
+            .requires("enable_rpc_transaction_history")
+            .takes_value(false)
+            .help(
+                "Include CPI inner instructions, logs, and return data in the historical \
+                 transaction info stored",
+            ),
     ]
 }
 
