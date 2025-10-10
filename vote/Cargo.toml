@@ -17,6 +17,7 @@ crate-type = ["lib"]
 name = "solana_vote"
 
 [features]
+agave-unstable-api = []
 dev-context-only-utils = ["dep:rand", "dep:bincode"]
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 
@@ -59,6 +60,7 @@ solana-logger = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true, features = ["bincode"] }
+solana-vote = { path = ".", features = ["agave-unstable-api"] }
 solana-vote-interface = { workspace = true, features = ["bincode", "dev-context-only-utils"] }
 static_assertions = { workspace = true }
 
