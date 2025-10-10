@@ -861,7 +861,6 @@ macro_rules! with_mock_invoke_context {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(unused)]
 pub fn mock_process_instruction_with_feature_set<
     F: FnMut(&mut InvokeContext),
     G: FnMut(&mut InvokeContext),
