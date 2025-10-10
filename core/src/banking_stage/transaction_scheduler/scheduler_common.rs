@@ -2,16 +2,14 @@
 use qualifier_attr::qualifiers;
 use {
     super::{
-        in_flight_tracker::InFlightTracker,
-        scheduler_error::SchedulerError,
-        thread_aware_account_locks::{ThreadAwareAccountLocks, ThreadId, ThreadSet},
+        in_flight_tracker::InFlightTracker, scheduler_error::SchedulerError,
         transaction_state_container::StateContainer,
     },
-    crate::banking_stage::{
-        scheduler_messages::{
-            ConsumeWork, FinishedConsumeWork, MaxAge, TransactionBatchId, TransactionId,
-        },
-        transaction_scheduler::thread_aware_account_locks::MAX_THREADS,
+    crate::banking_stage::scheduler_messages::{
+        ConsumeWork, FinishedConsumeWork, MaxAge, TransactionBatchId, TransactionId,
+    },
+    agave_scheduling_utils::thread_aware_account_locks::{
+        ThreadAwareAccountLocks, ThreadId, ThreadSet, MAX_THREADS,
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     itertools::izip,

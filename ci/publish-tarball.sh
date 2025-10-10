@@ -24,21 +24,11 @@ if [[ -z $CHANNEL_OR_TAG ]]; then
   exit 0
 fi
 
-case "$CI_OS_NAME" in
-osx)
-  _cputype="$(uname -m)"
-  if [[ $_cputype = arm64 ]]; then
-    _cputype=aarch64
-  fi
-  TARGET=${_cputype}-apple-darwin
-  ;;
-linux)
-  TARGET=x86_64-unknown-linux-gnu
-  ;;
-windows)
-  TARGET=x86_64-pc-windows-msvc
-  # Enable symlinks used by some build.rs files
-  # source: https://stackoverflow.com/a/52097145/10242004
+source scripts/generate-target-triple.sh
+
+TARGET="$BUILD_TARGET_TRIPLE"
+
+if [[ $TARGET == *windows* ]]; then
   (
     set -x
     git --version
@@ -48,12 +38,7 @@ windows)
     # patched crossbeam doesn't build on windows
     sed -i 's/^crossbeam-epoch/#crossbeam-epoch/' Cargo.toml
   )
-  ;;
-*)
-  echo CI_OS_NAME unset
-  exit 1
-  ;;
-esac
+fi
 
 RELEASE_BASENAME="${RELEASE_BASENAME:=solana-release}"
 TARBALL_BASENAME="${TARBALL_BASENAME:="$RELEASE_BASENAME"}"
@@ -66,7 +51,7 @@ scripts/create-release-tarball.sh --build-dir "$RELEASE_BASENAME" \
 
 # Maybe tarballs are platform agnostic, only publish them from the Linux build
 MAYBE_TARBALLS=
-if [[ "$CI_OS_NAME" = linux ]]; then
+if [[ $TARGET == *linux* ]]; then
   (
     set -x
     platform-tools-sdk/sbf/scripts/package.sh

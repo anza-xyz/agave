@@ -4,23 +4,10 @@
 # environment
 #
 set -e
+SOLANA_ROOT="$(cd "$(dirname "$0")"/..; pwd)"
 
-OS=${1:-linux}
-
-case "$OS" in
-osx)
-  TARGET=$(uname -m)-apple-darwin
-  ;;
-linux)
-  TARGET=x86_64-unknown-linux-gnu
-  ;;
-windows)
-  TARGET=x86_64-pc-windows-msvc
-  ;;
-*)
-  TARGET=unknown-unknown-unknown
-  ;;
-esac
+source "$SOLANA_ROOT"/scripts/generate-target-triple.sh
+TARGET="$BUILD_TARGET_TRIPLE"
 
 SOLANA_INSTALL_UPDATE_MANIFEST_KEYPAIR="SOLANA_INSTALL_UPDATE_MANIFEST_KEYPAIR_${TARGET//-/_}"
 

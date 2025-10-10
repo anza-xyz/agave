@@ -1,0 +1,22 @@
+[package]
+name = "agave-scheduling-utils"
+description = "Common utilities for building Agave scheduler implementations"
+documentation = "https://docs.rs/agave-scheduling-utils"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+agave-scheduler-bindings = { workspace = true }
+agave-transaction-view = { workspace = true }
+ahash = { workspace = true }
+solana-pubkey = { workspace = true }
+
+[target."cfg(unix)".dependencies]
+rts-alloc = { workspace = true }
+
+[lints]
+workspace = true

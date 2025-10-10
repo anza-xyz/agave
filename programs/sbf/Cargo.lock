@@ -108,10 +108,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agave-low-pass-filter"
-version = "3.1.0"
-
-[[package]]
 name = "agave-precompiles"
 version = "3.1.0"
 dependencies = [
@@ -143,6 +139,17 @@ dependencies = [
 [[package]]
 name = "agave-scheduler-bindings"
 version = "3.1.0"
+
+[[package]]
+name = "agave-scheduling-utils"
+version = "3.1.0"
+dependencies = [
+ "agave-scheduler-bindings",
+ "agave-transaction-view",
+ "ahash 0.8.11",
+ "rts-alloc",
+ "solana-pubkey",
+]
 
 [[package]]
 name = "agave-syscalls"
@@ -2640,19 +2647,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f154ce46856750ed433c8649605bf7ed2de3bc35fd9d2a9f30cddd873c80cb08"
 
 [[package]]
-name = "hidapi"
-version = "2.6.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03b876ecf37e86b359573c16c8366bc3eba52b689884a0fc42ba3f67203d2a8b"
-dependencies = [
- "cc",
- "cfg-if 1.0.3",
- "libc",
- "pkg-config",
- "windows-sys 0.48.0",
-]
-
-[[package]]
 name = "histogram"
 version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3824,9 +3818,9 @@ dependencies = [
 
 [[package]]
 name = "modular-bitfield"
-version = "0.11.2"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a53d79ba8304ac1c4f9eb3b9d281f21f7be9d4626f72ce7df4ad8fbde4f38a74"
+checksum = "be0d5274763b5572c8f29dadb5cd0bc59de64c805de433c1b556075f733b0a1a"
 dependencies = [
  "modular-bitfield-impl",
  "static_assertions",
@@ -3834,13 +3828,13 @@ dependencies = [
 
 [[package]]
 name = "modular-bitfield-impl"
-version = "0.11.2"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a7d5f7076603ebc68de2dc6a650ec331a062a13abaa346975be747bbfa4b789"
+checksum = "f8eec4327f127d4d18c54c8bfbf7b05d74cc9a1befdcc6283a241238ffbc84c6"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.87",
 ]
 
 [[package]]
@@ -6439,11 +6433,13 @@ dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-feature-set",
  "agave-scheduler-bindings",
+ "agave-scheduling-utils",
  "agave-transaction-view",
  "agave-verified-packet-receiver",
  "agave-votor",
  "ahash 0.8.11",
  "anyhow",
+ "arc-swap",
  "arrayvec",
  "assert_matches",
  "async-trait",
@@ -6956,7 +6952,6 @@ name = "solana-gossip"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
- "agave-low-pass-filter",
  "arrayvec",
  "assert_matches",
  "bincode",
@@ -6977,7 +6972,6 @@ dependencies = [
  "serde_bytes",
  "serde_derive",
  "siphasher 1.0.1",
- "solana-account",
  "solana-bloom",
  "solana-clap-utils",
  "solana-client",
@@ -7869,7 +7863,6 @@ version = "3.1.0"
 dependencies = [
  "console 0.16.1",
  "dialoguer",
- "hidapi",
  "log",
  "num-derive",
  "num-traits",

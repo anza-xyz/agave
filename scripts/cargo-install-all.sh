@@ -102,7 +102,7 @@ else
   echo "Building binaries for all platforms: ${AGAVE_BINS_DEV[*]} ${AGAVE_BINS_END_USER[*]} ${AGAVE_BINS_DEPRECATED[*]}"
   BINS+=("${AGAVE_BINS_DEV[@]}" "${AGAVE_BINS_END_USER[@]}" "${AGAVE_BINS_DEPRECATED[@]}")
 
-  if [[ $CI_OS_NAME != windows ]]; then
+  if [[ $OSTYPE != msys ]]; then
     echo "Building binaries for linux and osx only: ${AGAVE_BINS_VAL_OP[*]}, ${AGAVE_BINS_DCOU[*]}"
     BINS+=("${AGAVE_BINS_VAL_OP[@]}")
     DCOU_BINS+=("${AGAVE_BINS_DCOU[@]}")
@@ -181,7 +181,7 @@ for bin in "${BINS[@]}" "${DCOU_BINS[@]}"; do
   cp -fv "target/$buildProfile/$bin" "$installDir"/bin
 done
 
-if [[ $CI_OS_NAME != windows ]]; then
+if [[ $OSTYPE != msys ]]; then
   ./fetch-perf-libs.sh
 
   if [[ -d target/perf-libs ]]; then

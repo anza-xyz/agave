@@ -29,7 +29,7 @@ solana-message = { workspace = true }
 solana-native-token = { workspace = true }
 solana-presigner = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-remote-wallet = { workspace = true, features = ["default"] }
+solana-remote-wallet = { workspace = true }
 solana-seed-phrase = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }

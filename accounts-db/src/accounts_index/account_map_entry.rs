@@ -7,7 +7,6 @@ use {
     solana_clock::Slot,
     std::{
         fmt::Debug,
-        mem,
         ops::Deref,
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -170,21 +169,14 @@ impl<T> SlotListWriteGuard<'_, T> {
     }
 
     /// Retains only the elements specified by the predicate.
-    pub fn retain<F>(&mut self, f: F)
+    ///
+    /// Returns number of preserved elements (size of the slot list after processing).
+    pub fn retain<F>(&mut self, f: F) -> usize
     where
         F: FnMut(&mut (Slot, T)) -> bool,
     {
-        self.0.retain(f)
-    }
-
-    /// Removes and returns the element at position `index` within the list, shifting all elements after it to the left.
-    pub fn remove_at(&mut self, index: usize) -> (Slot, T) {
-        self.0.remove(index)
-    }
-
-    /// Replaces the element at position `index` within the list returning the previous element stored there.
-    pub fn replace_at(&mut self, index: usize, item: (Slot, T)) -> (Slot, T) {
-        mem::replace(&mut self.0[index], item)
+        self.0.retain(f);
+        self.0.len()
     }
 
     /// Clears the list, removing all elements.
