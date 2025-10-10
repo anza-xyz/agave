@@ -46,7 +46,14 @@ impl FromClapArgMatches for JsonRpcConfig {
 }
 
 pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
-    vec![]
+    vec![Arg::with_name("enable_rpc_bigtable_ledger_storage")
+        .long("enable-rpc-bigtable-ledger-storage")
+        .requires("enable_rpc_transaction_history")
+        .takes_value(false)
+        .help(
+            "Fetch historical transaction info from a BigTable instance as a fallback to \
+                     local ledger data",
+        )]
 }
 
 #[cfg(test)]

@@ -309,16 +309,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("enable_rpc_bigtable_ledger_storage")
-            .long("enable-rpc-bigtable-ledger-storage")
-            .requires("enable_rpc_transaction_history")
-            .takes_value(false)
-            .help(
-                "Fetch historical transaction info from a BigTable instance as a fallback to \
-                 local ledger data",
-            ),
-    )
-    .arg(
         Arg::with_name("enable_bigtable_ledger_upload")
             .long("enable-bigtable-ledger-upload")
             .requires("enable_rpc_transaction_history")
