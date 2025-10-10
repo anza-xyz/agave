@@ -242,7 +242,7 @@ impl Bank {
             distributed_rewards: total_vote_rewards,
             point_value: point_value.clone(),
             stake_rewards: Arc::clone(stake_rewards),
-            rewards_calculation: rewards_calculation,
+            rewards_calculation,
         }
     }
 
@@ -1573,8 +1573,6 @@ mod tests {
         let stake_history = stakes.history().clone();
         let vote_accounts = stakes.vote_accounts();
 
-        println!("Testing with {} stake accounts", stake_delegations.len());
-
         let start = std::time::Instant::now();
         let result1 = bank.calculate_rewards_and_distribute_vote_rewards(
             &stake_history,
@@ -1616,13 +1614,11 @@ mod tests {
         );
 
         // Cache hit should be significantly faster (at least 10x)
-        println!("First computation: {:?}", first_duration);
-        println!("Cache hit: {:?}", second_duration);
         assert!(
             second_duration < first_duration / 10,
-            "Cache hit should be much faster than computation. First: {:?}, Second: {:?}",
-            first_duration,
-            second_duration
+            "Cache hit should be much faster than computation. first: {}, second: {}",
+            first_duration.as_millis(),
+            second_duration.as_millis(),
         );
     }
 }
