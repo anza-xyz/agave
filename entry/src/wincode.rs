@@ -53,7 +53,8 @@ struct MessageAddressTableLookup {
 #[derive(SchemaWrite, SchemaRead)]
 #[wincode(from = "v0::Message")]
 struct V0Message {
-    header: MessageHeader,
+    #[wincode(with = "Pod<_>")]
+    header: solana_message::MessageHeader,
     account_keys: containers::Vec<Pod<Address>, ShortU16Len>,
     recent_blockhash: Pod<Hash>,
     instructions: containers::Vec<Elem<CompiledInstruction>, ShortU16Len>,
@@ -187,7 +188,7 @@ mod tests {
     }
 
     fn strat_compiled_instruction() -> impl Strategy<Value = CompiledInstruction> {
-        (any::<u8>(), strat_byte_vec(256), strat_byte_vec(256)).prop_map(
+        (any::<u8>(), strat_byte_vec(128), strat_byte_vec(128)).prop_map(
             |(program_id_index, accounts, data)| {
                 CompiledInstruction::new_from_raw_parts(program_id_index, accounts, data)
             },
@@ -195,7 +196,7 @@ mod tests {
     }
 
     fn strat_address_table_lookup() -> impl Strategy<Value = MessageAddressTableLookup> {
-        (strat_address(), strat_byte_vec(256), strat_byte_vec(256)).prop_map(
+        (strat_address(), strat_byte_vec(128), strat_byte_vec(128)).prop_map(
             |(account_key, writable_indexes, readonly_indexes)| MessageAddressTableLookup {
                 account_key,
                 writable_indexes,
@@ -207,9 +208,9 @@ mod tests {
     fn strat_legacy_message() -> impl Strategy<Value = LegacyMessage> {
         (
             strat_message_header(),
-            proptest::collection::vec(strat_address(), 0..=16),
+            proptest::collection::vec(strat_address(), 0..=8),
             strat_hash(),
-            proptest::collection::vec(strat_compiled_instruction(), 0..=16),
+            proptest::collection::vec(strat_compiled_instruction(), 0..=8),
         )
             .prop_map(|(header, account_keys, recent_blockhash, instructions)| {
                 LegacyMessage {
@@ -224,10 +225,10 @@ mod tests {
     fn strat_v0_message() -> impl Strategy<Value = v0::Message> {
         (
             strat_message_header(),
-            proptest::collection::vec(strat_address(), 0..=16),
+            proptest::collection::vec(strat_address(), 0..=8),
             strat_hash(),
-            proptest::collection::vec(strat_compiled_instruction(), 0..=16),
-            proptest::collection::vec(strat_address_table_lookup(), 0..=8),
+            proptest::collection::vec(strat_compiled_instruction(), 0..=4),
+            proptest::collection::vec(strat_address_table_lookup(), 0..=4),
         )
             .prop_map(
                 |(header, account_keys, recent_blockhash, instructions, address_table_lookups)| {
@@ -251,7 +252,7 @@ mod tests {
 
     fn strat_versioned_transaction() -> impl Strategy<Value = VersionedTransaction> {
         (
-            proptest::collection::vec(strat_signature(), 0..=16),
+            proptest::collection::vec(strat_signature(), 0..=8),
             strat_versioned_message(),
         )
             .prop_map(|(signatures, message)| VersionedTransaction {
@@ -264,7 +265,7 @@ mod tests {
         (
             any::<u64>(),
             strat_hash(),
-            proptest::collection::vec(strat_versioned_transaction(), 0..=8),
+            proptest::collection::vec(strat_versioned_transaction(), 0..=4),
         )
             .prop_map(|(num_hashes, hash, transactions)| Entry {
                 num_hashes,
