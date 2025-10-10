@@ -139,6 +139,7 @@ members = [
     "watchtower",
     "wen-restart",
     "xdp",
+    "xtask",
     "zk-token-sdk",
 ]
 
@@ -320,6 +321,7 @@ num-derive = "0.4"
 num-traits = "0.2"
 num_cpus = "1.17.0"
 num_enum = "0.7.4"
+octocrab = "0.44.1"
 openssl = "0.10"
 parking_lot = "0.12"
 pbkdf2 = { version = "0.11.0", default-features = false }
@@ -599,6 +601,7 @@ tokio-stream = "0.1.17"
 tokio-tungstenite = "0.28.0"
 tokio-util = "0.7.16"
 toml = "0.8.12"
+toml_edit = "0.22.27"
 tonic = "0.9.2"
 tonic-build = "0.9.2"
 tower = "0.5.2"
@@ -610,6 +613,7 @@ unwrap_none = "0.1.2"
 uriparse = "0.6.4"
 url = "2.5.7"
 vec_extract_if_polyfill = "0.1.0"
+walkdir = "2.5.0"
 wasm-bindgen = "0.2"
 winapi = "0.3.8"
 wincode = { version = "0.1.0", features = ["derive", "solana-short-vec"] }
