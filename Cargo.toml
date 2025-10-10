@@ -478,7 +478,7 @@ solana-poseidon = { path = "poseidon", version = "=3.1.0", features = ["agave-un
 solana-precompile-error = "3.0.0"
 solana-presigner = "3.0.0"
 solana-program = { version = "3.0.0", default-features = false }
-solana-program-binaries = { path = "program-binaries", version = "=3.1.0" }
+solana-program-binaries = { path = "program-binaries", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-program-entrypoint = "3.1.0"
 solana-program-error = "3.0.0"
 solana-program-memory = "3.0.0"
