@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 #[derive(Clone, Copy, Default)]
 pub struct SVMFeatureSet {
     pub move_precompile_verification_to_svm: bool,
