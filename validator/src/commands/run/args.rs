@@ -281,12 +281,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Enable JSON RPC on this port, and the next port for the RPC websocket"),
     )
     .arg(
-        Arg::with_name("full_rpc_api")
-            .long("full-rpc-api")
-            .takes_value(false)
-            .help("Expose RPC methods for querying chain state and transaction history"),
-    )
-    .arg(
         Arg::with_name("private_rpc")
             .long("private-rpc")
             .takes_value(false)

@@ -147,6 +147,10 @@ pub(crate) fn args<'a, 'b>(default_args: &'a DefaultArgs) -> Vec<Arg<'a, 'b>> {
                 "Add this value to niceness of RPC threads. Negative value increases priority, \
                          positive value decreases priority.",
             ),
+        Arg::with_name("full_rpc_api")
+            .long("full-rpc-api")
+            .takes_value(false)
+            .help("Expose RPC methods for querying chain state and transaction history"),
     ]
 }
 
