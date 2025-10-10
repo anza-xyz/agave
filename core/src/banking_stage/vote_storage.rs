@@ -93,13 +93,13 @@ impl VoteStorage {
     pub(crate) fn insert_batch(
         &mut self,
         vote_source: VoteSource,
-        deserialized_packets: impl Iterator<Item = SanitizedTransactionView<SharedBytes>>,
+        packets: impl Iterator<Item = SanitizedTransactionView<SharedBytes>>,
     ) -> VoteBatchInsertionMetrics {
         let should_deprecate_legacy_vote_ixs = self.deprecate_legacy_vote_ixs;
         self.insert_batch_with_replenish(
-            deserialized_packets.filter_map(|deserialized_packet| {
+            packets.filter_map(|packet| {
                 LatestValidatorVotePacket::new_from_view(
-                    deserialized_packet,
+                    packet,
                     vote_source,
                     should_deprecate_legacy_vote_ixs,
                 )
