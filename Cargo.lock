@@ -9936,6 +9936,7 @@ version = "3.1.0"
 dependencies = [
  "log",
  "num_cpus",
+ "solana-rayon-threadlimit",
 ]
 
 [[package]]

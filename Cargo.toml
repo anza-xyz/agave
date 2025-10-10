@@ -490,7 +490,7 @@ solana-pubkey = { version = "3.0.0", default-features = false }
 solana-pubsub-client = { path = "pubsub-client", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-quic-client = { path = "quic-client", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-quic-definitions = "3.0.0"
-solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=3.1.0" }
+solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-remote-wallet = { path = "remote-wallet", version = "=3.1.0", default-features = false }
 solana-rent = "3.0.0"
 solana-reward-info = "3.0.0"
