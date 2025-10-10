@@ -484,7 +484,7 @@ solana-program-error = "3.0.0"
 solana-program-memory = "3.0.0"
 solana-program-option = "3.0.0"
 solana-program-pack = "3.0.0"
-solana-program-runtime = { path = "program-runtime", version = "=3.1.0" }
+solana-program-runtime = { path = "program-runtime", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-program-test = { path = "program-test", version = "=3.1.0" }
 solana-pubkey = { version = "3.0.0", default-features = false }
 solana-pubsub-client = { path = "pubsub-client", version = "=3.1.0" }
