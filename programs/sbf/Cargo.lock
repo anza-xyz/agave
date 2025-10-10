@@ -5833,7 +5833,6 @@ dependencies = [
  "itertools 0.12.1",
  "libc",
  "log",
- "lz4",
  "memmap2 0.9.8",
  "modular-bitfield",
  "num_cpus",
