@@ -1,11 +1,11 @@
 use {
     crate::LEDGER_TOOL_DIRECTORY,
+    agave_snapshots::hardened_unpack::open_genesis_config,
     clap::{value_t, value_t_or_exit, values_t_or_exit, ArgMatches},
     crossbeam_channel::unbounded,
     log::*,
-    solana_accounts_db::{
-        hardened_unpack::open_genesis_config,
-        utils::{create_all_accounts_run_and_snapshot_dirs, move_and_async_delete_path_contents},
+    solana_accounts_db::utils::{
+        create_all_accounts_run_and_snapshot_dirs, move_and_async_delete_path_contents,
     },
     solana_clock::Slot,
     solana_core::validator::BlockVerificationMethod,

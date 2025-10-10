@@ -1,12 +1,12 @@
 use {
     crate::commands,
-    agave_snapshots::{SnapshotVersion, DEFAULT_ARCHIVE_COMPRESSION},
+    agave_snapshots::{
+        hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, SnapshotVersion,
+        DEFAULT_ARCHIVE_COMPRESSION,
+    },
     clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches, SubCommand},
-    solana_accounts_db::{
-        accounts_db::{
-            DEFAULT_ACCOUNTS_SHRINK_OPTIMIZE_TOTAL_SPACE, DEFAULT_ACCOUNTS_SHRINK_RATIO,
-        },
-        hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+    solana_accounts_db::accounts_db::{
+        DEFAULT_ACCOUNTS_SHRINK_OPTIMIZE_TOTAL_SPACE, DEFAULT_ACCOUNTS_SHRINK_RATIO,
     },
     solana_clap_utils::{
         hidden_unless_forced,
