@@ -1,9 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
-#![feature(test)]
-
-extern crate test;
 
 use {
+    bencher::{benchmark_group, benchmark_main, Bencher},
     rand::Rng,
     solana_entry::entry::{create_ticks, Entry},
     solana_hash::Hash,
@@ -14,7 +12,7 @@ use {
         CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK,
     },
     solana_perf::test_tx,
-    test::{black_box, Bencher},
+    std::hint::black_box,
 };
 
 fn make_test_entry(txs_per_entry: u64) -> Entry {
@@ -34,7 +32,6 @@ const SHRED_SIZE_TYPICAL: usize = {
     batch_payload / DATA_SHREDS_PER_FEC_BLOCK
 };
 
-#[bench]
 fn bench_shredder_ticks(bencher: &mut Bencher) {
     let kp = Keypair::new();
 
@@ -59,7 +56,6 @@ fn bench_shredder_ticks(bencher: &mut Bencher) {
     })
 }
 
-#[bench]
 fn bench_shredder_large_entries(bencher: &mut Bencher) {
     let kp = Keypair::new();
     let shred_size = SHRED_SIZE_TYPICAL;
@@ -89,7 +85,6 @@ fn bench_shredder_large_entries(bencher: &mut Bencher) {
     })
 }
 
-#[bench]
 fn bench_deshredder(bencher: &mut Bencher) {
     let kp = Keypair::new();
     let shred_size = SHRED_SIZE_TYPICAL;
@@ -116,7 +111,6 @@ fn bench_deshredder(bencher: &mut Bencher) {
     })
 }
 
-#[bench]
 fn bench_deserialize_hdr(bencher: &mut Bencher) {
     let keypair = Keypair::new();
     let shredder = Shredder::new(2, 1, 0, 0).unwrap();
@@ -150,7 +144,6 @@ fn make_entries() -> Vec<Entry> {
     make_large_unchained_entries(txs_per_entry, num_entries)
 }
 
-#[bench]
 fn bench_shredder_coding(bencher: &mut Bencher) {
     let entries = make_entries();
     let shredder = Shredder::new(1, 0, 0, 0).unwrap();
@@ -173,7 +166,6 @@ fn bench_shredder_coding(bencher: &mut Bencher) {
     })
 }
 
-#[bench]
 fn bench_shredder_decoding(bencher: &mut Bencher) {
     let entries = make_entries();
     let shredder = Shredder::new(1, 0, 0, 0).unwrap();
@@ -199,3 +191,14 @@ fn bench_shredder_decoding(bencher: &mut Bencher) {
         }
     })
 }
+
+benchmark_group!(
+    benches,
+    bench_shredder_ticks,
+    bench_shredder_large_entries,
+    bench_deshredder,
+    bench_deserialize_hdr,
+    bench_shredder_coding,
+    bench_shredder_decoding
+);
+benchmark_main!(benches);
