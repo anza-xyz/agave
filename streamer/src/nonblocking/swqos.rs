@@ -1,12 +1,12 @@
 use {
     crate::{
         nonblocking::{
+            qos::{ConnectionContext, QosController},
             quic::{
                 get_connection_stake, update_open_connections_stat, ClientConnectionTracker,
-                ConnectionContext, ConnectionHandlerError, ConnectionPeerType, ConnectionTable,
-                ConnectionTableKey, ConnectionTableType, QosController,
-                CONNECTION_CLOSE_CODE_DISALLOWED, CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT,
-                CONNECTION_CLOSE_REASON_DISALLOWED,
+                ConnectionHandlerError, ConnectionPeerType, ConnectionTable, ConnectionTableKey,
+                ConnectionTableType, CONNECTION_CLOSE_CODE_DISALLOWED,
+                CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT, CONNECTION_CLOSE_REASON_DISALLOWED,
                 CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT,
             },
             stream_throttle::{
@@ -450,7 +450,8 @@ impl QosController<SwQosConnectionContext> for SwQos {
     }
 
     fn on_stream_accepted(&self, conn_context: &SwQosConnectionContext) {
-        self.staked_stream_load_ema.increment_load(conn_context.peer_type);
+        self.staked_stream_load_ema
+            .increment_load(conn_context.peer_type);
     }
 
     fn on_stream_error(&self, _conn_context: &SwQosConnectionContext) {

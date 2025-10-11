@@ -1,10 +1,11 @@
 use {
     crate::{
         nonblocking::{
+            qos::{ConnectionContext, QosController},
             quic::{
                 get_connection_stake, update_open_connections_stat, ClientConnectionTracker,
-                ConnectionContext, ConnectionHandlerError, ConnectionPeerType, ConnectionTable,
-                ConnectionTableKey, ConnectionTableType, QosController,
+                ConnectionHandlerError, ConnectionPeerType, ConnectionTable, ConnectionTableKey,
+                ConnectionTableType,
             },
             stream_throttle::{ConnectionStreamCounter, STREAM_THROTTLING_INTERVAL},
         },
