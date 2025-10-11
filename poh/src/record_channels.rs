@@ -11,7 +11,7 @@ use std::sync::{
 use {
     crate::poh_recorder::Record,
     crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender, TryRecvError},
-    solana_clock::Slot,
+    solana_clock::BankId,
     std::time::Duration,
 };
 
@@ -20,20 +20,20 @@ use {
 /// PohService receives them.
 ///
 /// The receiver can shutdown the channel, preventing any further sends,
-/// and can restart the channel for a new slot, re-enabling sends.
+/// and can restart the channel for a new bank id, re-enabling sends.
 /// The sender does not wait for the receiver to pick up records, and will return
-/// immediately if the channel is full, shutdown, or if the slot has changed.
+/// immediately if the channel is full, shutdown, or if the bank id has changed.
 ///
 /// The channel has a bounded capacity based on the maximum number of allowed
 /// insertions at a given time. This is for guaranteeing that once shutdown the
 /// service can always process all sent records correctly without dropping any
 /// i.e. once sent records can be guaranteed to be recorded.
 pub fn record_channels(track_transaction_indexes: bool) -> (RecordSender, RecordReceiver) {
-    const CAPACITY: usize = SlotAllowedInsertions::MAX_ALLOWED_INSERTIONS as usize;
+    const CAPACITY: usize = BankIdAllowedInsertions::MAX_ALLOWED_INSERTIONS as usize;
     let (sender, receiver) = bounded(CAPACITY);
 
     // Begin in a shutdown state.
-    let slot_allowed_insertions = SlotAllowedInsertions::new_shutdown();
+    let bank_id_allowed_insertions = BankIdAllowedInsertions::new_shutdown();
     let transaction_indexes = if track_transaction_indexes {
         Some(Arc::new(Mutex::new(0)))
     } else {
@@ -44,13 +44,13 @@ pub fn record_channels(track_transaction_indexes: bool) -> (RecordSender, Record
     (
         RecordSender {
             active_senders: active_senders.clone(),
-            slot_allowed_insertions: slot_allowed_insertions.clone(),
+            bank_id_allowed_insertions: bank_id_allowed_insertions.clone(),
             sender,
             transaction_indexes: transaction_indexes.clone(),
         },
         RecordReceiver {
             active_senders,
-            slot_allowed_insertions,
+            bank_id_allowed_insertions,
             receiver,
             capacity: CAPACITY as u64,
             transaction_indexes,
@@ -62,23 +62,23 @@ pub enum RecordSenderError {
     /// The channel is full, the record was not sent.
     Full,
     /// The channel is in a shutdown state, it is not valid to
-    /// send records for this slot anymore.
+    /// send records for this bank anymore.
     Shutdown,
-    /// The record's slot does not match the current slot of the channel.
-    InactiveSlot,
+    /// The record's bank id does not match the current bank id of the channel.
+    InactiveBankId,
     /// The receiver has been dropped, the channel is disconnected.
     Disconnected,
 }
 
 /// A sender for sending [`Record`]s to PohService.
 /// The sender does not wait for service to pick up the records, and will return
-/// immediately if the channel is full, shutdown, or if the slot has changed.
+/// immediately if the channel is full, shutdown, or if the bank id has changed.
 #[derive(Clone, Debug)]
 pub struct RecordSender {
-    /// Used to track active senders for the current slot. Used so that the receiver
+    /// Used to track active senders for the current bank id. Used so that the receiver
     /// side can determine that no more sends are in-flight while shutting down.
     active_senders: Arc<AtomicU64>,
-    slot_allowed_insertions: SlotAllowedInsertions,
+    bank_id_allowed_insertions: BankIdAllowedInsertions,
     sender: Sender<Record>,
     transaction_indexes: Option<Arc<Mutex<usize>>>,
 }
@@ -99,30 +99,30 @@ impl RecordSender {
                 .as_ref()
                 .map(|transaction_indexes| transaction_indexes.lock().unwrap());
 
-            // Get the current slot and allowed insertions.
+            // Get the current bank_id and allowed insertions.
             // If the number of allowed insertions is less than the number of
             // batches, the channel is full - just return immediately.
-            // If the `record`'s slot is different from the current slot,
+            // If the `record`'s bank_id is different from the current bank_id,
             // return immediately.
-            let current_slot_allowed_insertions =
-                self.slot_allowed_insertions.0.load(Ordering::Acquire);
-            let (slot, allowed_insertions) = (
-                SlotAllowedInsertions::slot(current_slot_allowed_insertions),
-                SlotAllowedInsertions::allowed_insertions(current_slot_allowed_insertions),
+            let current_bank_id_allowed_insertions =
+                self.bank_id_allowed_insertions.0.load(Ordering::Acquire);
+            let (bank_id, allowed_insertions) = (
+                BankIdAllowedInsertions::bank_id(current_bank_id_allowed_insertions),
+                BankIdAllowedInsertions::allowed_insertions(current_bank_id_allowed_insertions),
             );
 
-            if slot == SlotAllowedInsertions::DISABLED_SLOT {
+            if bank_id == BankIdAllowedInsertions::DISABLED_BANK_ID {
                 return Err(RecordSenderError::Shutdown);
             }
-            if slot != record.slot {
-                return Err(RecordSenderError::InactiveSlot);
+            if bank_id != record.bank_id {
+                return Err(RecordSenderError::InactiveBankId);
             }
             if allowed_insertions < record.transaction_batches.len() as u64 {
                 return Err(RecordSenderError::Full);
             }
 
-            let new_slot_allowed_insertions = SlotAllowedInsertions::encoded_value(
-                slot,
+            let new_bank_id_allowed_insertions = BankIdAllowedInsertions::encoded_value(
+                bank_id,
                 allowed_insertions.wrapping_sub(record.transaction_batches.len() as u64),
             );
 
@@ -130,11 +130,11 @@ impl RecordSender {
             self.active_senders.fetch_add(1, Ordering::AcqRel);
 
             if self
-                .slot_allowed_insertions
+                .bank_id_allowed_insertions
                 .0
                 .compare_exchange(
-                    current_slot_allowed_insertions,
-                    new_slot_allowed_insertions,
+                    current_bank_id_allowed_insertions,
+                    new_bank_id_allowed_insertions,
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 )
@@ -166,11 +166,11 @@ impl RecordSender {
 
 /// A receiver for receiving [`Record`]s in PohService.
 /// The receiver can shutdown the channel, preventing any further sends,
-/// and can restart the channel for a new slot, re-enabling sends.
+/// and can restart the channel for a new bank id, re-enabling sends.
 pub struct RecordReceiver {
     capacity: u64,
     active_senders: Arc<AtomicU64>,
-    slot_allowed_insertions: SlotAllowedInsertions,
+    bank_id_allowed_insertions: BankIdAllowedInsertions,
     receiver: Receiver<Record>,
     transaction_indexes: Option<Arc<Mutex<usize>>>,
 }
@@ -187,18 +187,18 @@ impl RecordReceiver {
 
     /// Shutdown the channel immediately.
     pub fn shutdown(&mut self) {
-        self.slot_allowed_insertions.shutdown();
+        self.bank_id_allowed_insertions.shutdown();
     }
 
     /// Check if the channel is shutdown.
     pub(crate) fn is_shutdown(&self) -> bool {
-        SlotAllowedInsertions::slot(self.slot_allowed_insertions.0.load(Ordering::Acquire))
-            == SlotAllowedInsertions::DISABLED_SLOT
+        BankIdAllowedInsertions::bank_id(self.bank_id_allowed_insertions.0.load(Ordering::Acquire))
+            == BankIdAllowedInsertions::DISABLED_BANK_ID
     }
 
     /// Re-enable the channel after a shutdown.
-    pub fn restart(&mut self, slot: Slot) {
-        assert!(slot <= SlotAllowedInsertions::MAX_SLOT);
+    pub fn restart(&mut self, bank_id: BankId) {
+        assert!(bank_id <= BankIdAllowedInsertions::MAX_BANK_ID);
         assert!(self.receiver.is_empty()); // Should be empty before restarting.
 
         // Reset transaction indexes if tracking them - BEFORE allowing new insertions.
@@ -211,13 +211,13 @@ impl RecordReceiver {
                     lock
                 });
 
-        self.slot_allowed_insertions.0.store(
-            SlotAllowedInsertions::encoded_value(slot, self.capacity),
+        self.bank_id_allowed_insertions.0.store(
+            BankIdAllowedInsertions::encoded_value(bank_id, self.capacity),
             Ordering::Release,
         );
 
         // Drop lock AFTER allowing new insertions. This makes any sends grabbing locks
-        // wait until after the slot has been changed. Meaning the CAS in try_send
+        // wait until after the bank id has been changed. Meaning the CAS in try_send
         // will always succeed, if passing previous checks.
         drop(transaction_indexes_lock);
     }
@@ -278,13 +278,13 @@ impl RecordReceiver {
     fn on_received_record(&self, num_batches: u64) {
         // The record has been received and processed, so increment the number
         // of allowed insertions, so that new records can be sent.
-        self.slot_allowed_insertions
+        self.bank_id_allowed_insertions
             .0
             .fetch_add(num_batches, Ordering::AcqRel);
     }
 }
 
-/// Encoded u64 where the upper 54 bits are the slot and the lower 10 bits are
+/// Encoded u64 where the upper 54 bits are the bank_id and the lower 10 bits are
 /// the number of allowed insertions at the current time.
 /// The number of allowed insertions is based on the number of **batches** sent,
 /// not the number of [`Record`]. This is because each batch is a separate hash
@@ -297,23 +297,23 @@ impl RecordReceiver {
 /// sent/inserted into the channel, and incremented when something is received
 /// from the channel.
 #[derive(Clone, Debug)]
-struct SlotAllowedInsertions(Arc<AtomicU64>);
+struct BankIdAllowedInsertions(Arc<AtomicU64>);
 
-impl SlotAllowedInsertions {
+impl BankIdAllowedInsertions {
     const NUM_BITS: u64 = 64;
     /// Number of bits used to track allowed insertions.
     const ALLOWED_INSERTIONS_BITS: u64 = 10;
-    const SLOT_BITS: u64 = Self::NUM_BITS - Self::ALLOWED_INSERTIONS_BITS;
+    const BANK_ID_BITS: u64 = Self::NUM_BITS - Self::ALLOWED_INSERTIONS_BITS;
 
-    const DISABLED_SLOT: Slot = (1 << Self::SLOT_BITS) - 1;
-    const MAX_SLOT: Slot = Self::DISABLED_SLOT - 1;
+    const DISABLED_BANK_ID: BankId = (1 << Self::BANK_ID_BITS) - 1;
+    const MAX_BANK_ID: BankId = Self::DISABLED_BANK_ID - 1;
     const MAX_ALLOWED_INSERTIONS: u64 = (1 << Self::ALLOWED_INSERTIONS_BITS) - 1;
 
-    const SHUTDOWN: u64 = Self::encoded_value(Self::DISABLED_SLOT, 0);
+    const SHUTDOWN: u64 = Self::encoded_value(Self::DISABLED_BANK_ID, 0);
 
-    /// Create a new `SlotAllowedInsertions` with state consistent with a
+    /// Create a new `BankIdAllowedInsertions` with state consistent with a
     /// shutdown state:
-    /// - slot = `DISABLED_SLOT`
+    /// - bank_id = `DISABLED_BANK_ID`
     /// - allowed_insertions = 0
     fn new_shutdown() -> Self {
         Self(Arc::new(AtomicU64::new(Self::SHUTDOWN)))
@@ -324,15 +324,15 @@ impl SlotAllowedInsertions {
         self.0.store(Self::SHUTDOWN, Ordering::Release);
     }
 
-    const fn encoded_value(slot: Slot, allowed_insertions: u64) -> u64 {
-        assert!(slot <= Self::DISABLED_SLOT);
+    const fn encoded_value(bank_id: BankId, allowed_insertions: u64) -> u64 {
+        assert!(bank_id <= Self::DISABLED_BANK_ID);
         assert!(allowed_insertions <= Self::MAX_ALLOWED_INSERTIONS);
-        (slot << Self::ALLOWED_INSERTIONS_BITS) | allowed_insertions
+        (bank_id << Self::ALLOWED_INSERTIONS_BITS) | allowed_insertions
     }
 
-    /// The current slot, or `DISABLED_SLOT` if shutdown.
-    fn slot(value: u64) -> Slot {
-        (value >> Self::ALLOWED_INSERTIONS_BITS) & Self::DISABLED_SLOT
+    /// The current bank_id, or [`Self::DISABLED_BANK_ID`] if shutdown.
+    fn bank_id(value: u64) -> BankId {
+        (value >> Self::ALLOWED_INSERTIONS_BITS) & Self::DISABLED_BANK_ID
     }
 
     /// How many insertions/sends are allowed at this time.
@@ -345,9 +345,9 @@ impl SlotAllowedInsertions {
 mod tests {
     use {super::*, solana_hash::Hash, solana_transaction::versioned::VersionedTransaction};
 
-    pub(super) fn test_record(slot: Slot, num_batches: usize) -> Record {
+    pub(super) fn test_record(bank_id: BankId, num_batches: usize) -> Record {
         Record {
-            slot,
+            bank_id,
             transaction_batches: (0..num_batches)
                 .map(|_| vec![VersionedTransaction::default()])
                 .collect(),
@@ -365,28 +365,28 @@ mod tests {
             Err(RecordSenderError::Shutdown)
         ));
 
-        // Restart for slot 1.
+        // Restart for bank_id 1.
         receiver.restart(1);
 
-        // Record for slot 0 fails.
+        // Record for bank_id 0 fails.
         assert!(matches!(
             sender.try_send(test_record(0, 1)),
-            Err(RecordSenderError::InactiveSlot)
+            Err(RecordSenderError::InactiveBankId)
         ));
 
-        // Record for slot 1 with 1 batch succeeds.
+        // Record for bank_id 1 with 1 batch succeeds.
         assert!(matches!(sender.try_send(test_record(1, 1)), Ok(None)));
 
-        // Record for slot 1 with 1023 batches fails (channel full).
+        // Record for bank_id 1 with 1023 batches fails (channel full).
         assert!(matches!(
             sender.try_send(test_record(1, 1023)),
             Err(RecordSenderError::Full)
         ));
 
-        // Record for slot 1 with 1022 batches succeeds (channel now full).
+        // Record for bank_id 1 with 1022 batches succeeds (channel now full).
         assert!(matches!(sender.try_send(test_record(1, 1022)), Ok(None)));
 
-        // Record for slot 1 with 1 batch fails (channel full).
+        // Record for bank_id 1 with 1 batch fails (channel full).
         assert!(matches!(
             sender.try_send(test_record(1, 1)),
             Err(RecordSenderError::Full)
@@ -409,19 +409,19 @@ mod tests {
             Err(RecordSenderError::Shutdown)
         ));
 
-        // Restart for slot 1.
+        // Restart for bank_id 1.
         receiver.restart(1);
 
-        // Record for slot 0 fails.
+        // Record for bank_id 0 fails.
         assert!(matches!(
             sender.try_send(test_record(0, 1)),
-            Err(RecordSenderError::InactiveSlot)
+            Err(RecordSenderError::InactiveBankId)
         ));
 
-        // Record for slot 1 with 1 batch succeeds.
+        // Record for bank_id 1 with 1 batch succeeds.
         assert!(matches!(sender.try_send(test_record(1, 1)), Ok(Some(0))));
 
-        // Record for slot 1 with 2 batches (3 transactions) succeeds.
+        // Record for bank_id 1 with 2 batches (3 transactions) succeeds.
         let mut record = test_record(1, 2);
         record
             .transaction_batches
@@ -449,14 +449,14 @@ mod shuttle_tests {
 
                 shuttle::thread::spawn(move || {
                     let mut successful_sends = 0;
-                    let mut slot = 0;
+                    let mut bank_id = 0;
                     let mut had_successful_send = false;
                     while successful_sends < ITERATIONS_PER_RUN {
-                        if sender.try_send(test_record(slot, 1)).is_ok() {
+                        if sender.try_send(test_record(bank_id, 1)).is_ok() {
                             had_successful_send = true;
                             successful_sends += 1;
                         } else if had_successful_send {
-                            slot += 1;
+                            bank_id += 1;
                             had_successful_send = false;
                         }
                     }
@@ -465,18 +465,18 @@ mod shuttle_tests {
                 // If receiver/sender interaction is buggy there is a race where
                 // the receiver can receive a record after shutdown is called.
                 // This can cause PoH to panic because it may receive a record
-                // for a slot that has already been completed.
-                let mut current_slot = 0;
-                receiver.restart(current_slot);
+                // for a bank_id that has already been completed.
+                let mut current_bank_id = 0;
+                receiver.restart(current_bank_id);
                 let mut receives = 0;
                 while receives < ITERATIONS_PER_RUN {
                     if receiver.is_shutdown() && receiver.is_safe_to_restart() {
-                        current_slot += 1;
-                        receiver.restart(current_slot);
+                        current_bank_id += 1;
+                        receiver.restart(current_bank_id);
                     }
 
                     if let Ok(record) = receiver.try_recv() {
-                        assert!(record.slot == current_slot, "slot mismatch!");
+                        assert!(record.bank_id == current_bank_id, "bank_id mismatch!");
                         receives += 1;
                         receiver.shutdown();
                     }
