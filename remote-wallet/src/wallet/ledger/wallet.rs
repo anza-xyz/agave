@@ -211,7 +211,7 @@ impl LedgerWallet {
             let n = self
                 .transport
                 .write(&hid_chunk[..])
-                .map_err(|e| RemoteWalletError::Hid(e))?;
+                .map_err(RemoteWalletError::Hid)?;
             if n < size + header {
                 return Err(RemoteWalletError::Protocol("Incomplete write"));
             }
@@ -489,7 +489,7 @@ impl RemoteWallet<hidapi::DeviceInfo> for LedgerWallet {
         } else {
             extend_and_serialize_multiple(&[derivation_path])
         };
-        if data.len() > u16::max_value() as usize {
+        if data.len() > u16::MAX as usize {
             return Err(RemoteWalletError::InvalidInput(
                 "Message to sign is too long".to_string(),
             ));

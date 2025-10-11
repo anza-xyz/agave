@@ -1,5 +1,5 @@
 use crate::remote_wallet::RemoteWalletInfo;
-use crate::wallet::ledger::ledger::LedgerWallet;
+use crate::wallet::ledger::wallet::LedgerWallet;
 use std::rc::Rc;
 
 #[derive(Debug)]

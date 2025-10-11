@@ -1,3 +1,3 @@
 pub mod error;
-pub mod ledger;
-pub use ledger::LedgerWallet;
+pub mod wallet;
+pub use wallet::LedgerWallet;

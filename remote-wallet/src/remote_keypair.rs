@@ -3,7 +3,7 @@ use {
         errors::RemoteWalletError,
         locator::{Locator, Manufacturer},
         remote_wallet::{RemoteWallet, RemoteWalletInfo, RemoteWalletManager},
-        wallet::{ledger::ledger::get_ledger_from_info, types::RemoteWalletType},
+        wallet::{ledger::wallet::get_ledger_from_info, types::RemoteWalletType},
     },
     solana_derivation_path::DerivationPath,
     solana_pubkey::Pubkey,

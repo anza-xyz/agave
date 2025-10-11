@@ -4,7 +4,7 @@ use {
     crate::{
         locator::{Locator, Manufacturer},
         wallet::{
-            ledger::ledger::LedgerWallet,
+            ledger::wallet::LedgerWallet,
             types::{Device, RemoteWalletType},
             WalletProbe,
         },
@@ -84,7 +84,7 @@ impl RemoteWalletManager {
     /// Create wallet probes for supported hardware wallets
     #[cfg(feature = "hidapi")]
     fn create_wallet_probes(&self) -> Vec<Box<dyn WalletProbe>> {
-        use crate::wallet::ledger::ledger::LedgerProbe;
+        use crate::wallet::ledger::wallet::LedgerProbe;
         vec![Box::new(LedgerProbe)]
     }
 
@@ -231,12 +231,12 @@ impl RemoteWalletManager {
                         } else {
                             LOG_DEVICE_PLURAL
                         };
-                        trace!("{} Remote Wallet{} found", current_total, plural);
+                        trace!("{current_total} Remote Wallet{plural} found");
                         return true;
                     }
                 }
                 Err(err) => {
-                    debug!("Error during device discovery: {:?}", err);
+                    debug!("Error during device discovery: {err:?}");
                     // Continue trying despite errors
                 }
             }
@@ -246,8 +246,7 @@ impl RemoteWalletManager {
         }
 
         debug!(
-            "Polling timeout reached. No devices found after {:?}",
-            max_polling_duration
+            "Polling timeout reached. No devices found after {max_polling_duration:?}"
         );
         false
     }
@@ -458,7 +457,7 @@ pub fn maybe_wallet_manager() -> Result<Option<Rc<RemoteWalletManager>>, RemoteW
     wallet_manager.update_devices()?;
     let found_devices = wallet_manager.devices.read().len();
 
-    if wallet_manager.devices.read().len() > 0 {
+    if wallet_manager.devices.read().is_empty() {
         debug!("Wallet manager initialized with {found_devices} device(s)");
         Ok(Some(wallet_manager))
     } else {
