@@ -482,11 +482,13 @@ impl QosController<SwQosConnectionContext> for SwQos {
             let stable_id = connection.stable_id();
             let remote_addr = connection.remote_address();
 
-            lock.remove_connection(
+            let removed_count = lock.remove_connection(
                 ConnectionTableKey::new(remote_addr.ip(), params.remote_pubkey()),
                 remote_addr.port(),
                 stable_id,
-            )
+            );
+            update_open_connections_stat(&self.stats, &lock);
+            removed_count
         }
     }
 
