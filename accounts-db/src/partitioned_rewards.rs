@@ -6,7 +6,7 @@
 /// This constant affects consensus.
 const MAX_PARTITIONED_REWARDS_PER_BLOCK: u64 = 4096;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 /// Configuration options for partitioned epoch rewards.
 pub struct PartitionedEpochRewardsConfig {
     /// number of stake accounts to store in one block during partitioned reward interval
