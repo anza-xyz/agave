@@ -3,9 +3,10 @@ use {
         nonblocking::{
             quic::{
                 get_connection_stake, update_open_connections_stat, ClientConnectionTracker,
-                ConnectionHandlerError, ConnectionPeerType, ConnectionQosParams, ConnectionTable,
-                ConnectionTableKey, ConnectionTableType, Qos, CONNECTION_CLOSE_CODE_DISALLOWED,
-                CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT, CONNECTION_CLOSE_REASON_DISALLOWED,
+                ConnectionContext, ConnectionHandlerError, ConnectionPeerType, ConnectionTable,
+                ConnectionTableKey, ConnectionTableType, QosController,
+                CONNECTION_CLOSE_CODE_DISALLOWED, CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT,
+                CONNECTION_CLOSE_REASON_DISALLOWED,
                 CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT,
             },
             stream_throttle::{
@@ -56,7 +57,7 @@ pub struct SwQosParams {
     in_staked_table: bool,
 }
 
-impl ConnectionQosParams for SwQosParams {
+impl ConnectionContext for SwQosParams {
     fn peer_type(&self) -> ConnectionPeerType {
         self.peer_type
     }
@@ -301,8 +302,8 @@ impl SwQos {
     }
 }
 
-impl Qos<SwQosParams> for SwQos {
-    fn derive_qos_params(
+impl QosController<SwQosParams> for SwQos {
+    fn derive_connection_context(
         &self,
         connection: &Connection,
         staked_nodes: &RwLock<StakedNodes>,

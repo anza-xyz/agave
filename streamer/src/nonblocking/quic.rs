@@ -312,7 +312,7 @@ impl ClientConnectionTracker {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn run_server<Q, P>(
+async fn run_server<Q, C>(
     name: &'static str,
     endpoints: Vec<Endpoint>,
     packet_batch_sender: Sender<PacketAccumulator>,
@@ -323,8 +323,8 @@ async fn run_server<Q, P>(
     qos: Arc<Q>,
 ) -> TaskTracker
 where
-    Q: Qos<P> + Send + Sync + 'static,
-    P: ConnectionQosParams + Send + Sync + 'static,
+    Q: QosController<C> + Send + Sync + 'static,
+    C: ConnectionContext + Send + Sync + 'static,
 {
     let rate_limiter = Arc::new(ConnectionRateLimiter::new(
         quic_server_params.max_connections_per_ipaddr_per_min,
@@ -469,16 +469,26 @@ pub(crate) enum ConnectionHandlerError {
     MaxStreamError,
 }
 
-pub(crate) trait ConnectionQosParams: Clone + Send + Sync {
+/// A trait to provide context about a connection, such as peer type,
+/// remote pubkey. This is opaque to the framework and is provided by
+/// the concrete implementation of QosController.
+pub(crate) trait ConnectionContext: Clone + Send + Sync {
     fn peer_type(&self) -> ConnectionPeerType;
     fn max_connections_per_peer(&self) -> usize;
     fn remote_pubkey(&self) -> Option<solana_pubkey::Pubkey>;
     fn total_stake(&self) -> u64;
 }
 
-pub(crate) trait Qos<P: ConnectionQosParams> {
-    /// Derive the QosParams for a connection
-    fn derive_qos_params(&self, connection: &Connection, staked_nodes: &RwLock<StakedNodes>) -> P;
+/// A trait to manage QoS for connections. This includes
+/// 1) deriving the ConnectionContext for a connection
+/// 2) managing connect caching and connection limits
+pub(crate) trait QosController<C: ConnectionContext> {
+    /// Derive the ConnectionContext for a connection
+    fn derive_connection_context(
+        &self,
+        connection: &Connection,
+        staked_nodes: &RwLock<StakedNodes>,
+    ) -> C;
 
     /// Try to add a new connection. If successful, return a CancellationToken and
     /// a ConnectionStreamCounter to track the streams created on this connection.
@@ -486,7 +496,7 @@ pub(crate) trait Qos<P: ConnectionQosParams> {
         &self,
         client_connection_tracker: ClientConnectionTracker,
         connection: &quinn::Connection,
-        params: &mut P,
+        context: &mut C,
     ) -> impl std::future::Future<
         Output = Option<(
             Arc<AtomicU64>,
@@ -497,16 +507,25 @@ pub(crate) trait Qos<P: ConnectionQosParams> {
 
     /// The maximum number of streams that can be opened per throttling interval
     /// on this connection.
-    fn max_streams_per_throttling_interval(&self, params: &P) -> u64;
+    fn max_streams_per_throttling_interval(&self, context: &C) -> u64;
 
-    fn on_stream_accepted(&self, params: &P);
-    fn on_stream_error(&self, params: &P);
-    fn on_stream_closed(&self, params: &P);
+    /// Called when a stream is accepted on a connection
+    fn on_stream_accepted(&self, context: &C);
+
+    /// Called when a stream has an error
+    fn on_stream_error(&self, context: &C);
+
+    /// Called when a stream is closed
+    fn on_stream_closed(&self, context: &C);
+
+    /// Remove a connection. Return the number of open connections after removal.
     fn remove_connection(
         &self,
-        params: &P,
+        context: &C,
         connection: Connection,
     ) -> impl std::future::Future<Output = usize> + Send;
+
+    /// The timeout duration to wait for a chunk to arrive on a stream
     fn wait_for_chunk_timeout(&self) -> Duration;
 }
 
@@ -526,7 +545,7 @@ pub(crate) fn update_open_connections_stat(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn setup_connection<Q, P>(
+async fn setup_connection<Q, C>(
     connecting: Connecting,
     rate_limiter: Arc<ConnectionRateLimiter>,
     overall_connection_rate_limiter: Arc<TotalConnectionRateLimiter>,
@@ -537,8 +556,8 @@ async fn setup_connection<Q, P>(
     qos: Arc<Q>,
     tasks: TaskTracker,
 ) where
-    Q: Qos<P> + Send + Sync + 'static,
-    P: ConnectionQosParams + Send + Sync + 'static,
+    Q: QosController<C> + Send + Sync + 'static,
+    C: ConnectionContext + Send + Sync + 'static,
 {
     let from = connecting.remote_address();
     let res = timeout(QUIC_CONNECTION_HANDSHAKE_TIMEOUT, connecting).await;
@@ -577,9 +596,14 @@ async fn setup_connection<Q, P>(
                     return;
                 }
 
-                let mut params = qos.derive_qos_params(&new_connection, &staked_nodes);
+                let mut conn_context =
+                    qos.derive_connection_context(&new_connection, &staked_nodes);
                 if let Some((last_update, cancel_connection, stream_counter)) = qos
-                    .try_add_connection(client_connection_tracker, &new_connection, &mut params)
+                    .try_add_connection(
+                        client_connection_tracker,
+                        &new_connection,
+                        &mut conn_context,
+                    )
                     .await
                 {
                     tasks.spawn(handle_connection(
@@ -587,7 +611,7 @@ async fn setup_connection<Q, P>(
                         new_connection,
                         stats,
                         last_update,
-                        params.clone(),
+                        conn_context.clone(),
                         qos,
                         stream_counter,
                         cancel_connection,
@@ -795,21 +819,21 @@ fn track_streamer_fetch_packet_performance(
         .fetch_add(measure.as_us(), Ordering::Relaxed);
 }
 
-async fn handle_connection<Q, P>(
+async fn handle_connection<Q, C>(
     packet_sender: Sender<PacketAccumulator>,
     connection: Connection,
     stats: Arc<StreamerStats>,
     last_update: Arc<AtomicU64>,
-    params: P,
+    context: C,
     qos: Arc<Q>,
     stream_counter: Arc<ConnectionStreamCounter>,
     cancel: CancellationToken,
 ) where
-    Q: Qos<P> + Send + Sync + 'static,
-    P: ConnectionQosParams + Send + Sync + 'static,
+    Q: QosController<C> + Send + Sync + 'static,
+    C: ConnectionContext + Send + Sync + 'static,
 {
-    let peer_type = params.peer_type();
-    let total_stake = params.total_stake();
+    let peer_type = context.peer_type();
+    let total_stake = context.total_stake();
     let remote_addr = connection.remote_address();
     debug!(
         "quic new connection {} streams: {} connections: {}",
@@ -833,7 +857,7 @@ async fn handle_connection<Q, P>(
             _ = cancel.cancelled() => break,
         };
 
-        let max_streams_per_throttling_interval = qos.max_streams_per_throttling_interval(&params);
+        let max_streams_per_throttling_interval = qos.max_streams_per_throttling_interval(&context);
 
         let throttle_interval_start = stream_counter.reset_throttling_params_if_needed();
         let streams_read_in_throttle_interval = stream_counter.stream_count.load(Ordering::Relaxed);
@@ -866,7 +890,7 @@ async fn handle_connection<Q, P>(
                 sleep(throttle_duration).await;
             }
         }
-        qos.on_stream_accepted(&params);
+        qos.on_stream_accepted(&context);
         stream_counter.stream_count.fetch_add(1, Ordering::Relaxed);
         stats.active_streams.fetch_add(1, Ordering::Relaxed);
         stats.total_new_streams.fetch_add(1, Ordering::Relaxed);
@@ -940,17 +964,17 @@ async fn handle_connection<Q, P>(
                         CONNECTION_CLOSE_REASON_INVALID_STREAM,
                     );
                     stats.active_streams.fetch_sub(1, Ordering::Relaxed);
-                    qos.on_stream_error(&params);
+                    qos.on_stream_error(&context);
                     break 'conn;
                 }
             }
         }
 
         stats.active_streams.fetch_sub(1, Ordering::Relaxed);
-        qos.on_stream_closed(&params);
+        qos.on_stream_closed(&context);
     }
 
-    let removed_connection_count = qos.remove_connection(&params, connection).await;
+    let removed_connection_count = qos.remove_connection(&context, connection).await;
     if removed_connection_count > 0 {
         stats
             .connection_removed

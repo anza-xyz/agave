@@ -3,8 +3,8 @@ use {
         nonblocking::{
             quic::{
                 get_connection_stake, update_open_connections_stat, ClientConnectionTracker,
-                ConnectionHandlerError, ConnectionPeerType, ConnectionQosParams, ConnectionTable,
-                ConnectionTableKey, ConnectionTableType, Qos,
+                ConnectionContext, ConnectionHandlerError, ConnectionPeerType, ConnectionTable,
+                ConnectionTableKey, ConnectionTableType, QosController,
             },
             stream_throttle::{ConnectionStreamCounter, STREAM_THROTTLING_INTERVAL},
         },
@@ -106,7 +106,7 @@ struct SimpleQosParams {
     total_stake: u64,
 }
 
-impl ConnectionQosParams for SimpleQosParams {
+impl ConnectionContext for SimpleQosParams {
     fn peer_type(&self) -> ConnectionPeerType {
         self.peer_type
     }
@@ -123,8 +123,8 @@ impl ConnectionQosParams for SimpleQosParams {
     }
 }
 
-impl Qos<SimpleQosParams> for SimpleQos {
-    fn derive_qos_params(
+impl QosController<SimpleQosParams> for SimpleQos {
+    fn derive_connection_context(
         &self,
         connection: &Connection,
         staked_nodes: &RwLock<StakedNodes>,
@@ -152,7 +152,7 @@ impl Qos<SimpleQosParams> for SimpleQos {
         &self,
         client_connection_tracker: ClientConnectionTracker,
         connection: &quinn::Connection,
-        params: &mut SimpleQosParams,
+        context: &mut SimpleQosParams,
     ) -> impl std::future::Future<
         Output = Option<(
             Arc<AtomicU64>,
@@ -162,7 +162,7 @@ impl Qos<SimpleQosParams> for SimpleQos {
     > + Send {
         async move {
             const PRUNE_RANDOM_SAMPLE_SIZE: usize = 2;
-            match params.peer_type() {
+            match context.peer_type() {
                 ConnectionPeerType::Staked(stake) => {
                     let mut connection_table_l = self.staked_connection_table.lock().await;
 
@@ -181,7 +181,7 @@ impl Qos<SimpleQosParams> for SimpleQos {
                                 client_connection_tracker,
                                 connection,
                                 connection_table_l,
-                                params,
+                                context,
                             )
                         {
                             self.stats
@@ -197,13 +197,13 @@ impl Qos<SimpleQosParams> for SimpleQos {
         }
     }
 
-    fn on_stream_accepted(&self, _params: &SimpleQosParams) {}
+    fn on_stream_accepted(&self, _context: &SimpleQosParams) {}
 
-    fn on_stream_error(&self, _params: &SimpleQosParams) {}
+    fn on_stream_error(&self, _context: &SimpleQosParams) {}
 
-    fn on_stream_closed(&self, _params: &SimpleQosParams) {}
+    fn on_stream_closed(&self, _context: &SimpleQosParams) {}
 
-    fn max_streams_per_throttling_interval(&self, _params: &SimpleQosParams) -> u64 {
+    fn max_streams_per_throttling_interval(&self, _context: &SimpleQosParams) -> u64 {
         let interval_ms = STREAM_THROTTLING_INTERVAL.as_millis() as u64;
         (self.max_streams_per_second * interval_ms / 1000).max(1)
     }
@@ -211,7 +211,7 @@ impl Qos<SimpleQosParams> for SimpleQos {
     #[allow(clippy::manual_async_fn)]
     fn remove_connection(
         &self,
-        params: &SimpleQosParams,
+        context: &SimpleQosParams,
         connection: Connection,
     ) -> impl std::future::Future<Output = usize> + Send {
         async move {
@@ -220,7 +220,7 @@ impl Qos<SimpleQosParams> for SimpleQos {
 
             let mut connection_table = self.staked_connection_table.lock().await;
             let removed_connection_count = connection_table.remove_connection(
-                ConnectionTableKey::new(remote_addr.ip(), params.remote_pubkey()),
+                ConnectionTableKey::new(remote_addr.ip(), context.remote_pubkey()),
                 remote_addr.port(),
                 stable_id,
             );
