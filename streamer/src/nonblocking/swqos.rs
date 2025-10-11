@@ -47,7 +47,7 @@ pub struct SwQos {
 
 // QoS Params for Stake weighted QoS
 #[derive(Clone)]
-pub struct SwQosParams {
+pub struct SwQosConnectionContext {
     peer_type: ConnectionPeerType,
     max_connections_per_peer: usize,
     max_stake: u64,
@@ -57,7 +57,7 @@ pub struct SwQosParams {
     in_staked_table: bool,
 }
 
-impl ConnectionContext for SwQosParams {
+impl ConnectionContext for SwQosConnectionContext {
     fn peer_type(&self) -> ConnectionPeerType {
         self.peer_type
     }
@@ -184,7 +184,7 @@ impl SwQos {
         client_connection_tracker: ClientConnectionTracker,
         connection: &Connection,
         mut connection_table_l: MutexGuard<ConnectionTable>,
-        params: &SwQosParams,
+        params: &SwQosConnectionContext,
     ) -> Result<
         (
             Arc<AtomicU64>,
@@ -273,7 +273,7 @@ impl SwQos {
         connection: &Connection,
         connection_table: Arc<Mutex<ConnectionTable>>,
         max_connections: usize,
-        params: &SwQosParams,
+        params: &SwQosConnectionContext,
     ) -> Result<
         (
             Arc<AtomicU64>,
@@ -302,14 +302,14 @@ impl SwQos {
     }
 }
 
-impl QosController<SwQosParams> for SwQos {
+impl QosController<SwQosConnectionContext> for SwQos {
     fn derive_connection_context(
         &self,
         connection: &Connection,
         staked_nodes: &RwLock<StakedNodes>,
-    ) -> SwQosParams {
+    ) -> SwQosConnectionContext {
         get_connection_stake(connection, staked_nodes).map_or(
-            SwQosParams {
+            SwQosConnectionContext {
                 peer_type: ConnectionPeerType::Unstaked,
                 max_connections_per_peer: self.max_connections_per_peer,
                 max_stake: 0,
@@ -335,7 +335,7 @@ impl QosController<SwQosParams> for SwQos {
                     }
                 };
 
-                SwQosParams {
+                SwQosConnectionContext {
                     peer_type,
                     max_connections_per_peer: self.max_connections_per_peer,
                     max_stake,
@@ -353,7 +353,7 @@ impl QosController<SwQosParams> for SwQos {
         &self,
         client_connection_tracker: ClientConnectionTracker,
         connection: &quinn::Connection,
-        params: &mut SwQosParams,
+        params: &mut SwQosConnectionContext,
     ) -> impl std::future::Future<
         Output = Option<(
             Arc<AtomicU64>,
@@ -449,19 +449,19 @@ impl QosController<SwQosParams> for SwQos {
         }
     }
 
-    fn on_stream_accepted(&self, params: &SwQosParams) {
+    fn on_stream_accepted(&self, params: &SwQosConnectionContext) {
         self.staked_stream_load_ema.increment_load(params.peer_type);
     }
 
-    fn on_stream_error(&self, _params: &SwQosParams) {
+    fn on_stream_error(&self, _params: &SwQosConnectionContext) {
         self.staked_stream_load_ema.update_ema_if_needed();
     }
 
-    fn on_stream_closed(&self, _params: &SwQosParams) {
+    fn on_stream_closed(&self, _params: &SwQosConnectionContext) {
         self.staked_stream_load_ema.update_ema_if_needed();
     }
 
-    fn max_streams_per_throttling_interval(&self, params: &SwQosParams) -> u64 {
+    fn max_streams_per_throttling_interval(&self, params: &SwQosConnectionContext) -> u64 {
         self.staked_stream_load_ema
             .available_load_capacity_in_throttling_duration(params.peer_type, params.total_stake)
     }
@@ -469,7 +469,7 @@ impl QosController<SwQosParams> for SwQos {
     #[allow(clippy::manual_async_fn)]
     fn remove_connection(
         &self,
-        params: &SwQosParams,
+        params: &SwQosConnectionContext,
         connection: Connection,
     ) -> impl std::future::Future<Output = usize> + Send {
         async move {

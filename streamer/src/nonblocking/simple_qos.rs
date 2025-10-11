@@ -57,7 +57,7 @@ impl SimpleQos {
         client_connection_tracker: ClientConnectionTracker,
         connection: &Connection,
         mut connection_table_l: MutexGuard<ConnectionTable>,
-        params: &SimpleQosParams,
+        params: &SimpleQosConnectionContext,
     ) -> Result<
         (
             Arc<AtomicU64>,
@@ -99,14 +99,14 @@ impl SimpleQos {
 }
 
 #[derive(Clone)]
-struct SimpleQosParams {
+struct SimpleQosConnectionContext {
     peer_type: ConnectionPeerType,
     max_connections_per_peer: usize,
     remote_pubkey: Option<solana_pubkey::Pubkey>,
     total_stake: u64,
 }
 
-impl ConnectionContext for SimpleQosParams {
+impl ConnectionContext for SimpleQosConnectionContext {
     fn peer_type(&self) -> ConnectionPeerType {
         self.peer_type
     }
@@ -123,12 +123,12 @@ impl ConnectionContext for SimpleQosParams {
     }
 }
 
-impl QosController<SimpleQosParams> for SimpleQos {
+impl QosController<SimpleQosConnectionContext> for SimpleQos {
     fn derive_connection_context(
         &self,
         connection: &Connection,
         staked_nodes: &RwLock<StakedNodes>,
-    ) -> SimpleQosParams {
+    ) -> SimpleQosConnectionContext {
         let (peer_type, remote_pubkey, total_stake) =
             get_connection_stake(connection, staked_nodes).map_or(
                 (ConnectionPeerType::Unstaked, None, 0),
@@ -139,7 +139,7 @@ impl QosController<SimpleQosParams> for SimpleQos {
                 },
             );
 
-        SimpleQosParams {
+        SimpleQosConnectionContext {
             peer_type,
             max_connections_per_peer: self.max_connections_per_peer,
             remote_pubkey,
@@ -152,7 +152,7 @@ impl QosController<SimpleQosParams> for SimpleQos {
         &self,
         client_connection_tracker: ClientConnectionTracker,
         connection: &quinn::Connection,
-        context: &mut SimpleQosParams,
+        context: &mut SimpleQosConnectionContext,
     ) -> impl std::future::Future<
         Output = Option<(
             Arc<AtomicU64>,
@@ -197,13 +197,13 @@ impl QosController<SimpleQosParams> for SimpleQos {
         }
     }
 
-    fn on_stream_accepted(&self, _context: &SimpleQosParams) {}
+    fn on_stream_accepted(&self, _context: &SimpleQosConnectionContext) {}
 
-    fn on_stream_error(&self, _context: &SimpleQosParams) {}
+    fn on_stream_error(&self, _context: &SimpleQosConnectionContext) {}
 
-    fn on_stream_closed(&self, _context: &SimpleQosParams) {}
+    fn on_stream_closed(&self, _context: &SimpleQosConnectionContext) {}
 
-    fn max_streams_per_throttling_interval(&self, _context: &SimpleQosParams) -> u64 {
+    fn max_streams_per_throttling_interval(&self, _context: &SimpleQosConnectionContext) -> u64 {
         let interval_ms = STREAM_THROTTLING_INTERVAL.as_millis() as u64;
         (self.max_streams_per_second * interval_ms / 1000).max(1)
     }
@@ -211,7 +211,7 @@ impl QosController<SimpleQosParams> for SimpleQos {
     #[allow(clippy::manual_async_fn)]
     fn remove_connection(
         &self,
-        context: &SimpleQosParams,
+        context: &SimpleQosConnectionContext,
         connection: Connection,
     ) -> impl std::future::Future<Output = usize> + Send {
         async move {

@@ -226,7 +226,6 @@ where
             .map_err(QuicServerError::EndpointFailed)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let stats = Arc::<StreamerStats>::default();
     let (packet_batch_sender, packet_batch_receiver) =
         bounded(quic_server_params.accumulator_channel_size);
     task::spawn_blocking({
