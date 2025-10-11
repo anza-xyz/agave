@@ -279,7 +279,7 @@ mod tests {
         super::*,
         itertools::Itertools,
         rand::SeedableRng,
-        rand_chacha::ChaChaRng,
+        rand_chacha::{ChaCha8Rng, ChaChaRng},
         solana_hash::Hash,
         std::{
             convert::TryInto,
@@ -388,14 +388,14 @@ mod tests {
     fn test_weighted_shuffle_zero_weights() {
         let weights = vec![0u64; 5];
         let seed = [37u8; 32];
-        let mut rng = ChaChaRng::from_seed(seed);
+        let mut rng = ChaCha8Rng::from_seed(seed);
         let shuffle = WeightedShuffle::new("", weights);
         assert_eq!(
             shuffle.clone().shuffle(&mut rng).collect::<Vec<_>>(),
-            [1, 4, 2, 3, 0]
+            [4, 3, 1, 2, 0],
         );
-        let mut rng = ChaChaRng::from_seed(seed);
-        assert_eq!(shuffle.first(&mut rng), Some(1));
+        let mut rng = ChaCha8Rng::from_seed(seed);
+        assert_eq!(shuffle.first(&mut rng), Some(4));
     }
 
     // Asserts that each index is selected proportional to its weight.
