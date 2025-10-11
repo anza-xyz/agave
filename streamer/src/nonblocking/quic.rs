@@ -224,18 +224,12 @@ pub fn spawn_server_with_cancel(
         .collect::<Result<Vec<_>, _>>()?;
     let stats = Arc::<StreamerStats>::default();
     let (packet_batch_sender, packet_batch_receiver) =
-        bounded(quic_server_params.coalesce_channel_size);
+        bounded(quic_server_params.accumulator_channel_size);
     task::spawn_blocking({
         let cancel = cancel.clone();
         let stats = stats.clone();
         move || {
-            run_packet_batch_sender(
-                packet_sender,
-                packet_batch_receiver,
-                stats,
-                quic_server_params.coalesce,
-                cancel,
-            );
+            run_packet_batch_sender(packet_sender, packet_batch_receiver, stats, cancel);
         }
     });
 
@@ -947,11 +941,9 @@ fn run_packet_batch_sender(
     packet_sender: Sender<PacketBatch>,
     packet_receiver: Receiver<PacketAccumulator>,
     stats: Arc<StreamerStats>,
-    coalesce: Duration,
     cancel: CancellationToken,
 ) {
     trace!("enter packet_batch_sender");
-    let mut batch_start_time = Instant::now();
     loop {
         let mut packet_perf_measure: Vec<([u8; 64], Instant)> = Vec::default();
         let mut packet_batch = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);
@@ -968,10 +960,7 @@ fn run_packet_batch_sender(
             if cancel.is_cancelled() {
                 return;
             }
-            let elapsed = batch_start_time.elapsed();
-            if packet_batch.len() >= PACKETS_PER_BATCH
-                || (!packet_batch.is_empty() && elapsed >= coalesce)
-            {
+            if !packet_batch.is_empty() {
                 let len = packet_batch.len();
                 track_streamer_fetch_packet_performance(&packet_perf_measure, &stats);
 
@@ -1004,28 +993,8 @@ fn run_packet_batch_sender(
                 break;
             }
 
-            let timeout_res = if !packet_batch.is_empty() {
-                // If we get here, elapsed < coalesce (see above if condition)
-                packet_receiver.recv_timeout(coalesce - elapsed)
-            } else {
-                // Small bit of non-idealness here: the holder(s) of the other end
-                // of packet_receiver must drop it (without waiting for us to exit)
-                // or we have a chance of sleeping here forever
-                // and never polling exit. Not a huge deal in practice as the
-                // only time this happens is when we tear down the server
-                // and at that time the other end does indeed not wait for us
-                // to exit here
-                packet_receiver
-                    .recv()
-                    .map_err(|_| crossbeam_channel::RecvTimeoutError::Disconnected)
-            };
-
-            if let Ok(mut packet_accumulator) = timeout_res {
-                // Start the timeout from when the packet batch first becomes non-empty
-                if packet_batch.is_empty() {
-                    batch_start_time = Instant::now();
-                }
-
+            /* try_iter() just calls try_recv().ok() under the hood, so we skip the abstraction here */
+            while let Ok(mut packet_accumulator) = packet_receiver.try_recv() {
                 // 86% of transactions/packets come in one chunk. In that case,
                 // we can just move the chunk to the `Packet` and no copy is
                 // made.
@@ -1641,7 +1610,6 @@ pub mod test {
                     setup_quic_server, SpawnTestServerResult,
                 },
             },
-            quic::DEFAULT_TPU_COALESCE,
         },
         assert_matches::assert_matches,
         crossbeam_channel::{unbounded, Receiver},
@@ -1794,13 +1762,7 @@ pub mod test {
         let handle = task::spawn_blocking({
             let cancel = cancel.clone();
             move || {
-                run_packet_batch_sender(
-                    pkt_batch_sender,
-                    pkt_receiver,
-                    stats,
-                    DEFAULT_TPU_COALESCE,
-                    cancel,
-                );
+                run_packet_batch_sender(pkt_batch_sender, pkt_receiver, stats, cancel);
             }
         });
 
