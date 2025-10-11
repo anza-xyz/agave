@@ -8,6 +8,7 @@ use {
         sync::{atomic::AtomicU64, Arc},
         time::Duration,
     },
+    tokio_util::sync::CancellationToken,
 };
 
 /// A trait to provide context about a connection, such as peer type,
@@ -27,6 +28,7 @@ pub(crate) trait QosController<C: ConnectionContext> {
 
     /// Try to add a new connection. If successful, return a CancellationToken and
     /// a ConnectionStreamCounter to track the streams created on this connection.
+    /// Otherwise return None.
     fn try_add_connection(
         &self,
         client_connection_tracker: ClientConnectionTracker,
@@ -35,7 +37,7 @@ pub(crate) trait QosController<C: ConnectionContext> {
     ) -> impl std::future::Future<
         Output = Option<(
             Arc<AtomicU64>,
-            tokio_util::sync::CancellationToken,
+            CancellationToken,
             Arc<ConnectionStreamCounter>,
         )>,
     > + Send;

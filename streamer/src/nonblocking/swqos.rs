@@ -345,7 +345,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
     ) -> impl std::future::Future<
         Output = Option<(
             Arc<AtomicU64>,
-            tokio_util::sync::CancellationToken,
+            CancellationToken,
             Arc<ConnectionStreamCounter>,
         )>,
     > + Send {
