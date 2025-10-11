@@ -243,20 +243,48 @@ impl ClusterNodes<RetransmitStage> {
             if let Some(index) = self.index.get(slot_leader) {
                 weighted_shuffle.remove_index(*index);
             }
-            let mut rng = get_seeded_rng(slot_leader, shred);
-            let (index, peers) = get_retransmit_peers(
-                fanout,
-                |k| self.nodes[k].pubkey() == &self.pubkey,
-                weighted_shuffle.shuffle(&mut rng),
-            );
-            let protocol = get_broadcast_protocol(shred);
-            let peers = peers
-                .filter_map(|k| self.nodes[k].contact_info()?.tvu(protocol))
-                .filter(|addr| socket_addr_space.check(addr))
-                .collect();
-            let root_distance = get_root_distance(index, fanout);
-            Ok((root_distance, peers))
+            Ok(if self.use_cha_cha_8 {
+                let mut rng = get_seeded_rng(slot_leader, shred);
+                self.get_retransmit_addrs_inner(
+                    shred,
+                    fanout,
+                    socket_addr_space,
+                    weighted_shuffle,
+                    &mut rng,
+                )
+            } else {
+                let mut rng = get_seeded_legacy_rng(slot_leader, shred);
+                self.get_retransmit_addrs_inner(
+                    shred,
+                    fanout,
+                    socket_addr_space,
+                    weighted_shuffle,
+                    &mut rng,
+                )
+            })
         })
+    }
+
+    fn get_retransmit_addrs_inner<R: Rng>(
+        &self,
+        shred: &ShredId,
+        fanout: usize,
+        socket_addr_space: &SocketAddrSpace,
+        weighted_shuffle: &mut WeightedShuffle<u64>,
+        mut rng: R,
+    ) -> (u8, Vec<SocketAddr>) {
+        let (index, peers) = get_retransmit_peers(
+            fanout,
+            |k| self.nodes[k].pubkey() == &self.pubkey,
+            weighted_shuffle.shuffle(&mut rng),
+        );
+        let protocol = get_broadcast_protocol(shred);
+        let peers = peers
+            .filter_map(|k| self.nodes[k].contact_info()?.tvu(protocol))
+            .filter(|addr| socket_addr_space.check(addr))
+            .collect();
+        let root_distance = get_root_distance(index, fanout);
+        (root_distance, peers)
     }
 
     // Returns the parent node in the turbine broadcast tree.
