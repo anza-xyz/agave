@@ -174,7 +174,7 @@ pub struct PohRecorder {
     /// if they exist.
     /// This field MUST be kept consistent with the `shared_working_bank` field.
     working_bank: Option<WorkingBank>,
-    /// This is used to store the current working bank - just the Arc<Bank> without
+    /// This is used to store the current working bank - just the [`Arc<Bank>`] without
     /// schduler or any other metadata. It MUST be kept consistent with
     /// the `working_bank` field of this struct.
     shared_working_bank: SharedWorkingBank,

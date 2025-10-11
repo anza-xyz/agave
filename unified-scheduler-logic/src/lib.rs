@@ -70,7 +70,7 @@
 //! scheduler thread (i.e.  constant; no allocations nor syscalls), while being proportional to the
 //! number of addresses in a given transaction. Note that this statement is held true, regardless
 //! of conflicts. This is because the preloading also pre-allocates some scratch-pad area
-//! ([`blocked_usages_from_tasks`](UsageQueueInner::blocked_usages_from_tasks)) to stash blocked
+//! ([`blocked_usages_from_tasks`](UsageQueueInner::Priority::blocked_usages_from_tasks)) to stash blocked
 //! ones. So, a conflict only incurs some additional fixed number of mem stores, within error
 //! margin of the constant complexity. And additional memory allocation for the scratchpad could
 //! said to be amortized, if such an unusual event should occur.

@@ -45,7 +45,7 @@ pub struct Pong {
 /// Maintains records of remote nodes which have returned a valid response to a
 /// ping message, and on-the-fly ping messages pending a pong response from the
 /// remote node.
-/// Const generic parameter N corresponds to token size in Ping<N> type.
+/// Const generic parameter N corresponds to token size in [`Ping<N>`] type.
 pub struct PingCache<const N: usize> {
     // Time-to-live of received pong messages.
     ttl: Duration,

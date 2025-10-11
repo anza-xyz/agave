@@ -102,7 +102,7 @@ impl SocketConfiguration {
     /// **Note:** On Linux the kernel will double the value you specify.
     /// For example, if you specify `16MB`, the kernel will configure the
     /// socket to use `32MB`.
-    /// See: https://man7.org/linux/man-pages/man7/socket.7.html: SO_RCVBUF
+    /// See: <https://man7.org/linux/man-pages/man7/socket.7.html>: SO_RCVBUF
     pub fn recv_buffer_size(mut self, size: usize) -> Self {
         self.recv_buffer_size = Some(size);
         self
@@ -113,7 +113,7 @@ impl SocketConfiguration {
     /// **Note:** On Linux the kernel will double the value you specify.
     /// For example, if you specify `16MB`, the kernel will configure the
     /// socket to use `32MB`.
-    /// See: https://man7.org/linux/man-pages/man7/socket.7.html: SO_SNDBUF
+    /// See: <https://man7.org/linux/man-pages/man7/socket.7.html>: SO_SNDBUF
     pub fn send_buffer_size(mut self, size: usize) -> Self {
         self.send_buffer_size = Some(size);
         self

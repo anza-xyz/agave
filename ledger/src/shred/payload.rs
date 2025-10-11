@@ -29,6 +29,7 @@ impl Payload {
         self.bytes.into()
     }
 
+    #[allow(rustdoc::private_intra_doc_links)]
     /// Get a mutable reference via [`PayloadMutGuard`] to the payload's _full_ inner bytes.
     /// See [`Payload::get_mut`] for selecting a subset of the payload's inner bytes.
     ///
@@ -40,6 +41,7 @@ impl Payload {
     }
 
     #[inline]
+    #[allow(rustdoc::private_intra_doc_links)]
     /// Get a mutable reference via [`PayloadMutGuard`] to a subset of the payload's inner bytes.
     ///
     /// If the payload is unique (single reference), this will not perform any copying. Otherwise it

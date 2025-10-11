@@ -52,6 +52,7 @@ use {
 
 mod packet_container;
 
+#[allow(rustdoc::private_intra_doc_links)]
 /// [`ForwardingClientOption`] enum represents the available client types for
 /// TPU communication:
 /// * [`ConnectionCacheClient`]: Uses a shared [`ConnectionCache`] to manage

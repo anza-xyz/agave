@@ -7,7 +7,7 @@
 //!    `solana_transaction::versioned::sanitized::SanitizedVersionedTransaction`, which can be wrapped into
 //!    `RuntimeTransaction` with static transaction metadata extracted.
 //! 2. Dynamically Loaded: after successfully loaded account addresses from onchain
-//!    ALT, RuntimeTransaction<SanitizedMessage> transits into Dynamically Loaded state,
+//!    ALT, [`RuntimeTransaction<SanitizedMessage>`] transits into Dynamically Loaded state,
 //!    with its dynamic metadata loaded.
 use {
     crate::transaction_meta::{DynamicMeta, StaticMeta, TransactionMeta},
