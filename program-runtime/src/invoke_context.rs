@@ -38,14 +38,15 @@ use {
     },
     std::{
         alloc::Layout,
+        borrow::Cow,
         cell::RefCell,
         fmt::{self, Debug},
         rc::Rc,
     },
 };
 
-pub type BuiltinFunctionWithContext = BuiltinFunction<InvokeContext<'static>>;
-pub type Executable = GenericExecutable<InvokeContext<'static>>;
+pub type BuiltinFunctionWithContext = BuiltinFunction<InvokeContext<'static, 'static>>;
+pub type Executable = GenericExecutable<InvokeContext<'static, 'static>>;
 pub type RegisterTrace<'a> = &'a [[u64; 12]];
 
 /// Adapter so we can unify the interfaces of built-in programs and syscalls
@@ -86,7 +87,7 @@ macro_rules! declare_process_instruction {
     };
 }
 
-impl ContextObject for InvokeContext<'_> {
+impl ContextObject for InvokeContext<'_, '_> {
     fn consume(&mut self, amount: u64) {
         // 1 to 1 instruction to compute unit mapping
         // ignore overflow, Ebpf will bail if exceeded
@@ -175,9 +176,9 @@ pub struct SerializedAccountMetadata {
 }
 
 /// Main pipeline from runtime to program execution.
-pub struct InvokeContext<'a> {
+pub struct InvokeContext<'a, 'ix_data> {
     /// Information about the currently executing transaction.
-    pub transaction_context: &'a mut TransactionContext,
+    pub transaction_context: &'a mut TransactionContext<'ix_data>,
     /// The local program cache for the transaction batch.
     pub program_cache_for_tx_batch: &'a mut ProgramCacheForTxBatch,
     /// Runtime configurations used to provision the invocation environment.
@@ -198,10 +199,10 @@ pub struct InvokeContext<'a> {
     register_traces: Vec<(usize, Vec<[u64; 12]>)>,
 }
 
-impl<'a> InvokeContext<'a> {
+impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        transaction_context: &'a mut TransactionContext,
+        transaction_context: &'a mut TransactionContext<'ix_data>,
         program_cache_for_tx_batch: &'a mut ProgramCacheForTxBatch,
         environment_config: EnvironmentConfig<'a>,
         log_collector: Option<Rc<RefCell<LogCollector>>>,
@@ -434,7 +435,7 @@ impl<'a> InvokeContext<'a> {
             program_account_index,
             instruction_accounts,
             transaction_callee_map,
-            instruction.data,
+            Cow::Owned(instruction.data),
         )?;
         Ok(())
     }
@@ -446,6 +447,7 @@ impl<'a> InvokeContext<'a> {
         message: &impl SVMMessage,
         instruction: &SVMInstruction,
         program_account_index: IndexOfAccount,
+        data: &'ix_data [u8],
     ) -> Result<(), InstructionError> {
         // We reference accounts by an u8 index, so we have a total of 256 accounts.
         // This algorithm allocates the array on the stack for speed.
@@ -479,7 +481,7 @@ impl<'a> InvokeContext<'a> {
             program_account_index,
             instruction_accounts,
             transaction_callee_map,
-            instruction.data.to_vec(),
+            Cow::Borrowed(data),
         )?;
         Ok(())
     }
@@ -499,7 +501,7 @@ impl<'a> InvokeContext<'a> {
     }
 
     /// Processes a precompile instruction
-    pub fn process_precompile<'ix_data>(
+    pub fn process_precompile(
         &mut self,
         program_id: &Pubkey,
         instruction_data: &[u8],
@@ -1464,7 +1466,12 @@ mod tests {
         let svm_instruction =
             SVMInstruction::from(sanitized.message().instructions().first().unwrap());
         invoke_context
-            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, 90)
+            .prepare_next_top_level_instruction(
+                &sanitized,
+                &svm_instruction,
+                90,
+                svm_instruction.data,
+            )
             .unwrap();
 
         test_case_1(&invoke_context);
@@ -1473,7 +1480,12 @@ mod tests {
         let svm_instruction =
             SVMInstruction::from(sanitized.message().instructions().get(1).unwrap());
         invoke_context
-            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, 90)
+            .prepare_next_top_level_instruction(
+                &sanitized,
+                &svm_instruction,
+                90,
+                svm_instruction.data,
+            )
             .unwrap();
 
         test_case_2(&invoke_context);
@@ -1537,7 +1549,12 @@ mod tests {
             SVMInstruction::from(sanitized.message().instructions().first().unwrap());
 
         invoke_context
-            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, 90)
+            .prepare_next_top_level_instruction(
+                &sanitized,
+                &svm_instruction,
+                90,
+                svm_instruction.data,
+            )
             .unwrap();
 
         {
