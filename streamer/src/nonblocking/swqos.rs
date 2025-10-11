@@ -353,7 +353,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
         &self,
         client_connection_tracker: ClientConnectionTracker,
         connection: &quinn::Connection,
-        params: &mut SwQosConnectionContext,
+        conn_context: &mut SwQosConnectionContext,
     ) -> impl std::future::Future<
         Output = Option<(
             Arc<AtomicU64>,
@@ -364,7 +364,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
         async move {
             const PRUNE_RANDOM_SAMPLE_SIZE: usize = 2;
 
-            match params.peer_type() {
+            match conn_context.peer_type() {
                 ConnectionPeerType::Staked(stake) => {
                     let mut connection_table_l = self.staked_connection_table.lock().await;
 
@@ -383,13 +383,13 @@ impl QosController<SwQosConnectionContext> for SwQos {
                                 client_connection_tracker,
                                 connection,
                                 connection_table_l,
-                                params,
+                                conn_context,
                             )
                         {
                             self.stats
                                 .connection_added_from_staked_peer
                                 .fetch_add(1, Ordering::Relaxed);
-                            params.in_staked_table = true;
+                            conn_context.in_staked_table = true;
                             return Some((last_update, cancel_connection, stream_counter));
                         }
                     } else {
@@ -402,14 +402,14 @@ impl QosController<SwQosConnectionContext> for SwQos {
                                 connection,
                                 self.unstaked_connection_table.clone(),
                                 self.max_unstaked_connections,
-                                params,
+                                conn_context,
                             )
                             .await
                         {
                             self.stats
                                 .connection_added_from_staked_peer
                                 .fetch_add(1, Ordering::Relaxed);
-                            params.in_staked_table = false;
+                            conn_context.in_staked_table = false;
                             return Some((last_update, cancel_connection, stream_counter));
                         } else {
                             self.stats
@@ -428,14 +428,14 @@ impl QosController<SwQosConnectionContext> for SwQos {
                             connection,
                             self.unstaked_connection_table.clone(),
                             self.max_unstaked_connections,
-                            params,
+                            conn_context,
                         )
                         .await
                     {
                         self.stats
                             .connection_added_from_unstaked_peer
                             .fetch_add(1, Ordering::Relaxed);
-                        params.in_staked_table = false;
+                        conn_context.in_staked_table = false;
                         return Some((last_update, cancel_connection, stream_counter));
                     } else {
                         self.stats
@@ -449,15 +449,15 @@ impl QosController<SwQosConnectionContext> for SwQos {
         }
     }
 
-    fn on_stream_accepted(&self, params: &SwQosConnectionContext) {
-        self.staked_stream_load_ema.increment_load(params.peer_type);
+    fn on_stream_accepted(&self, conn_context: &SwQosConnectionContext) {
+        self.staked_stream_load_ema.increment_load(conn_context.peer_type);
     }
 
-    fn on_stream_error(&self, _params: &SwQosConnectionContext) {
+    fn on_stream_error(&self, _conn_context: &SwQosConnectionContext) {
         self.staked_stream_load_ema.update_ema_if_needed();
     }
 
-    fn on_stream_closed(&self, _params: &SwQosConnectionContext) {
+    fn on_stream_closed(&self, _conn_context: &SwQosConnectionContext) {
         self.staked_stream_load_ema.update_ema_if_needed();
     }
 
@@ -469,11 +469,11 @@ impl QosController<SwQosConnectionContext> for SwQos {
     #[allow(clippy::manual_async_fn)]
     fn remove_connection(
         &self,
-        params: &SwQosConnectionContext,
+        conn_context: &SwQosConnectionContext,
         connection: Connection,
     ) -> impl std::future::Future<Output = usize> + Send {
         async move {
-            let mut lock = if params.in_staked_table {
+            let mut lock = if conn_context.in_staked_table {
                 self.staked_connection_table.lock().await
             } else {
                 self.unstaked_connection_table.lock().await
@@ -483,7 +483,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
             let remote_addr = connection.remote_address();
 
             let removed_count = lock.remove_connection(
-                ConnectionTableKey::new(remote_addr.ip(), params.remote_pubkey()),
+                ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey()),
                 remote_addr.port(),
                 stable_id,
             );

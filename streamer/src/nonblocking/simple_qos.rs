@@ -152,7 +152,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
         &self,
         client_connection_tracker: ClientConnectionTracker,
         connection: &quinn::Connection,
-        context: &mut SimpleQosConnectionContext,
+        conn_context: &mut SimpleQosConnectionContext,
     ) -> impl std::future::Future<
         Output = Option<(
             Arc<AtomicU64>,
@@ -162,7 +162,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
     > + Send {
         async move {
             const PRUNE_RANDOM_SAMPLE_SIZE: usize = 2;
-            match context.peer_type() {
+            match conn_context.peer_type() {
                 ConnectionPeerType::Staked(stake) => {
                     let mut connection_table_l = self.staked_connection_table.lock().await;
 
@@ -181,7 +181,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
                                 client_connection_tracker,
                                 connection,
                                 connection_table_l,
-                                context,
+                                conn_context,
                             )
                         {
                             self.stats
@@ -197,11 +197,11 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
         }
     }
 
-    fn on_stream_accepted(&self, _context: &SimpleQosConnectionContext) {}
+    fn on_stream_accepted(&self, _conn_context: &SimpleQosConnectionContext) {}
 
-    fn on_stream_error(&self, _context: &SimpleQosConnectionContext) {}
+    fn on_stream_error(&self, _conn_context: &SimpleQosConnectionContext) {}
 
-    fn on_stream_closed(&self, _context: &SimpleQosConnectionContext) {}
+    fn on_stream_closed(&self, _conn_context: &SimpleQosConnectionContext) {}
 
     fn max_streams_per_throttling_interval(&self, _context: &SimpleQosConnectionContext) -> u64 {
         let interval_ms = STREAM_THROTTLING_INTERVAL.as_millis() as u64;
@@ -211,7 +211,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
     #[allow(clippy::manual_async_fn)]
     fn remove_connection(
         &self,
-        context: &SimpleQosConnectionContext,
+        conn_context: &SimpleQosConnectionContext,
         connection: Connection,
     ) -> impl std::future::Future<Output = usize> + Send {
         async move {
@@ -220,7 +220,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
 
             let mut connection_table = self.staked_connection_table.lock().await;
             let removed_connection_count = connection_table.remove_connection(
-                ConnectionTableKey::new(remote_addr.ip(), context.remote_pubkey()),
+                ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey()),
                 remote_addr.port(),
                 stable_id,
             );
