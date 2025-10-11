@@ -106,7 +106,6 @@ pub fn open_blockstore(ledger_path: &Path) -> Blockstore {
         BlockstoreOptions {
             access_type: AccessType::Primary,
             recovery_mode: None,
-            enforce_ulimit_nofile: true,
             ..BlockstoreOptions::default()
         },
     )
@@ -118,7 +117,6 @@ pub fn open_blockstore(ledger_path: &Path) -> Blockstore {
             BlockstoreOptions {
                 access_type: AccessType::Secondary,
                 recovery_mode: None,
-                enforce_ulimit_nofile: true,
                 ..BlockstoreOptions::default()
             },
         )

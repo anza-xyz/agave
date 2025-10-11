@@ -43,6 +43,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         no_os_network_stats_reporting: config.no_os_network_stats_reporting,
         no_os_cpu_stats_reporting: config.no_os_cpu_stats_reporting,
         no_os_disk_stats_reporting: config.no_os_disk_stats_reporting,
+        enforce_ulimit_nofile: config.enforce_ulimit_nofile,
         poh_pinned_cpu_core: config.poh_pinned_cpu_core,
         warp_slot: config.warp_slot,
         accounts_db_skip_shrink: config.accounts_db_skip_shrink,

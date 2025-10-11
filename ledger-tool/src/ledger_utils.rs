@@ -443,7 +443,6 @@ pub fn open_blockstore(
         BlockstoreOptions {
             access_type: access_type.clone(),
             recovery_mode: wal_recovery_mode.clone(),
-            enforce_ulimit_nofile,
             ..BlockstoreOptions::default()
         },
     ) {
@@ -517,7 +516,6 @@ fn open_blockstore_with_temporary_primary_access(
             BlockstoreOptions {
                 access_type: AccessType::PrimaryForMaintenance,
                 recovery_mode: wal_recovery_mode.clone(),
-                enforce_ulimit_nofile: true,
                 ..BlockstoreOptions::default()
             },
         )?;
@@ -531,7 +529,6 @@ fn open_blockstore_with_temporary_primary_access(
         BlockstoreOptions {
             access_type: original_access_type,
             recovery_mode: wal_recovery_mode,
-            enforce_ulimit_nofile: true,
             ..BlockstoreOptions::default()
         },
     )
