@@ -51,7 +51,7 @@ impl SerializableStorage for SerializableAccountStorageEntry {
 impl solana_frozen_abi::abi_example::TransparentAsHelper for SerializableAccountStorageEntry {}
 
 /// This structure handles the load/store of obsolete accounts during snapshot restoration.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub(crate) struct SerdeObsoleteAccounts {
     /// The ID of the associated account file. Used for verification to ensure the restored
     /// obsolete accounts correspond to the correct account file
@@ -62,4 +62,17 @@ pub(crate) struct SerdeObsoleteAccounts {
     pub bytes: u64,
     /// A list of accounts that are obsolete in the storage being restored.
     pub accounts: ObsoleteAccounts,
+}
+
+impl SerdeObsoleteAccounts {
+    pub fn new_from_storage_entry_at_slot(
+        storage: &AccountStorageEntry,
+        snapshot_slot: Slot,
+    ) -> Self {
+        SerdeObsoleteAccounts {
+            id: storage.id() as SerializedAccountsFileId,
+            bytes: storage.get_obsolete_bytes(Some(snapshot_slot)) as u64,
+            accounts: storage.obsolete_accounts_at_slot(snapshot_slot),
+        }
+    }
 }
