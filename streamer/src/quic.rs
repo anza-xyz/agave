@@ -623,17 +623,29 @@ pub fn spawn_server_multi(
     )
 }
 
+#[derive(Clone, Debug)]
+pub enum QosMode {
+    /// The maximum number of streams per millisecond across all connections
+    StakeWeighted {
+        max_streams_per_ms: u64,
+    },
+    // The maximum number of streams per second allowed for each peer
+    SimpleStreamsPerSecond {
+        max_streams_per_second: u64,
+    },
+}
+
 #[derive(Clone)]
 pub struct QuicServerParams {
     pub max_connections_per_peer: usize,
     pub max_staked_connections: usize,
     pub max_unstaked_connections: usize,
-    pub max_streams_per_ms: u64,
     pub max_connections_per_ipaddr_per_min: u64,
     pub wait_for_chunk_timeout: Duration,
     pub coalesce: Duration,
     pub coalesce_channel_size: usize,
     pub num_threads: NonZeroUsize,
+    pub qos_mode: QosMode,
 }
 
 impl Default for QuicServerParams {
@@ -642,12 +654,14 @@ impl Default for QuicServerParams {
             max_connections_per_peer: 1,
             max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS,
             max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
-            max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             coalesce: DEFAULT_TPU_COALESCE,
             coalesce_channel_size: DEFAULT_MAX_COALESCE_CHANNEL_SIZE,
             num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
+            qos_mode: QosMode::StakeWeighted {
+                max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
+            },
         }
     }
 }
@@ -755,7 +769,9 @@ mod test {
         crate::nonblocking::{quic::test::*, testing_utilities::check_multiple_streams},
         crossbeam_channel::unbounded,
         solana_net_utils::sockets::bind_to_localhost_unique,
-        std::net::SocketAddr,
+        solana_pubkey::Pubkey,
+        solana_signer::Signer,
+        std::{collections::HashMap, net::SocketAddr},
     };
 
     fn rt_for_test() -> Runtime {
@@ -765,7 +781,10 @@ mod test {
         )
     }
 
-    fn setup_quic_server() -> (
+    fn setup_quic_server_with_params(
+        server_params: QuicServerParams,
+        staked_nodes: Arc<RwLock<StakedNodes>>,
+    ) -> (
         std::thread::JoinHandle<()>,
         crossbeam_channel::Receiver<PacketBatch>,
         SocketAddr,
@@ -775,7 +794,6 @@ mod test {
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
-        let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let cancel = CancellationToken::new();
         let SpawnServerResult {
             endpoints: _,
@@ -788,11 +806,21 @@ mod test {
             &keypair,
             sender,
             staked_nodes,
-            QuicServerParams::default_for_tests(),
+            server_params,
             cancel.clone(),
         )
         .unwrap();
         (t, receiver, server_address, cancel)
+    }
+
+    fn setup_quic_server() -> (
+        std::thread::JoinHandle<()>,
+        crossbeam_channel::Receiver<PacketBatch>,
+        SocketAddr,
+        CancellationToken,
+    ) {
+        let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        setup_quic_server_with_params(QuicServerParams::default_for_tests(), staked_nodes)
     }
 
     #[test]
@@ -864,6 +892,47 @@ mod test {
 
         let runtime = rt_for_test();
         runtime.block_on(check_multiple_writes(receiver, server_address, None));
+        cancel.cancel();
+        t.join().unwrap();
+    }
+
+    #[test]
+    fn test_quic_server_multiple_packets_with_simple_qos() {
+        // Send multiple writes from a staked node with SimpleStreamsPerSecond QoS mode
+        // with a super low staked client stake to ensure it can send all packets
+        // within the rate limit.
+        solana_logger::setup();
+        let client_keypair = Keypair::new();
+        let rich_node_keypair = Keypair::new();
+
+        let stakes = HashMap::from([
+            (client_keypair.pubkey(), 1_000), // very small staked node
+            (rich_node_keypair.pubkey(), 1_000_000_000),
+        ]);
+        let staked_nodes = StakedNodes::new(
+            Arc::new(stakes),
+            HashMap::<Pubkey, u64>::default(), // overrides
+        );
+
+        let server_params = QuicServerParams {
+            max_unstaked_connections: 0,
+            qos_mode: QosMode::SimpleStreamsPerSecond {
+                max_streams_per_second: 50,
+            },
+            ..QuicServerParams::default_for_tests()
+        };
+        let (t, receiver, server_address, cancel) =
+            setup_quic_server_with_params(server_params, Arc::new(RwLock::new(staked_nodes)));
+
+        let runtime = rt_for_test();
+        let num_expected_packets = 50;
+
+        runtime.block_on(check_multiple_packets(
+            receiver,
+            server_address,
+            Some(&client_keypair),
+            num_expected_packets,
+        ));
         cancel.cancel();
         t.join().unwrap();
     }
