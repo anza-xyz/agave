@@ -61,15 +61,14 @@ impl ShredData {
         (flags & ShredFlags::SHRED_TICK_REFERENCE_MASK).bits()
     }
 
-    // Possibly trimmed payload;
-    // Should only be used when storing shreds to blockstore.
+    // Returns the canonical payload to persist to blockstore.
     pub(super) fn bytes_to_store(&self) -> &[u8] {
         match self {
             Self::Merkle(shred) => shred.payload(),
         }
     }
 
-    // Possibly zero pads bytes stored in blockstore.
+    // Validates Merkle Data shred payload size and returns it unchanged; errors on wrong type/size. No padding performed.
     pub(crate) fn resize_stored_shred(shred: Vec<u8>) -> Result<Vec<u8>, Error> {
         match shred::layout::get_shred_variant(&shred)? {
             ShredVariant::MerkleCode { .. } => Err(Error::InvalidShredType),
@@ -83,8 +82,8 @@ impl ShredData {
     }
 
     // Maximum size of ledger data that can be embedded in a data-shred.
-    // merkle_proof_size is the number of merkle proof entries.
-    // None indicates a legacy data-shred.
+    // proof_size is the number of Merkle proof entries.
+    // resigned indicates the presence of a retransmitter signature.
     pub fn capacity(proof_size: u8, resigned: bool) -> Result<usize, Error> {
         merkle::ShredData::capacity(proof_size, resigned)
     }
