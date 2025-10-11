@@ -2,10 +2,10 @@ use {
     crate::{
         nonblocking::{
             quic::{
-                get_connection_stake, ClientConnectionTracker, ConnectionHandlerError,
-                ConnectionPeerType, ConnectionQosParams, ConnectionTable, ConnectionTableKey, Qos,
-                CONNECTION_CLOSE_CODE_DISALLOWED, CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT,
-                CONNECTION_CLOSE_REASON_DISALLOWED,
+                get_connection_stake, update_open_connections_stat, ClientConnectionTracker,
+                ConnectionHandlerError, ConnectionPeerType, ConnectionQosParams, ConnectionTable,
+                ConnectionTableKey, ConnectionTableType, Qos, CONNECTION_CLOSE_CODE_DISALLOWED,
+                CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT, CONNECTION_CLOSE_REASON_DISALLOWED,
                 CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT,
             },
             stream_throttle::{
@@ -38,6 +38,7 @@ pub struct SwQos {
     max_unstaked_connections: usize,
     max_connections_per_peer: usize,
     staked_stream_load_ema: Arc<StakedStreamLoadEMA>,
+    wait_for_chunk_timeout: std::time::Duration,
     stats: Arc<StreamerStats>,
     unstaked_connection_table: Arc<Mutex<ConnectionTable>>,
     staked_connection_table: Arc<Mutex<ConnectionTable>>,
@@ -79,20 +80,29 @@ impl SwQos {
         max_staked_connections: usize,
         max_unstaked_connections: usize,
         max_connections_per_peer: usize,
+        wait_for_chunk_timeout: std::time::Duration,
         stats: Arc<StreamerStats>,
+        cancel: CancellationToken,
     ) -> Self {
         Self {
             max_staked_connections,
             max_unstaked_connections,
             max_connections_per_peer,
+            wait_for_chunk_timeout,
             staked_stream_load_ema: Arc::new(StakedStreamLoadEMA::new(
                 stats.clone(),
                 max_unstaked_connections,
                 max_streams_per_ms,
             )),
             stats,
-            unstaked_connection_table: Arc::new(Mutex::new(ConnectionTable::new())),
-            staked_connection_table: Arc::new(Mutex::new(ConnectionTable::new())),
+            unstaked_connection_table: Arc::new(Mutex::new(ConnectionTable::new(
+                ConnectionTableType::Unstaked,
+                cancel.clone(),
+            ))),
+            staked_connection_table: Arc::new(Mutex::new(ConnectionTable::new(
+                ConnectionTableType::Staked,
+                cancel,
+            ))),
         }
     }
 }
@@ -211,6 +221,7 @@ impl SwQos {
                     params.max_connections_per_peer(),
                 )
             {
+                update_open_connections_stat(&self.stats, &connection_table_l);
                 drop(connection_table_l);
 
                 if let Ok(receive_window) = receive_window {
@@ -249,7 +260,9 @@ impl SwQos {
 
             let max_connections = max_percentage_full.apply_to(max_unstaked_connections);
             let num_pruned = unstaked_connection_table.prune_oldest(max_connections);
-            stats.num_evictions.fetch_add(num_pruned, Ordering::Relaxed);
+            stats
+                .num_evictions_unstaked
+                .fetch_add(num_pruned, Ordering::Relaxed);
         }
     }
 
@@ -358,8 +371,9 @@ impl Qos<SwQosParams> for SwQos {
                         let num_pruned =
                             connection_table_l.prune_random(PRUNE_RANDOM_SAMPLE_SIZE, stake);
                         self.stats
-                            .num_evictions
+                            .num_evictions_staked
                             .fetch_add(num_pruned, Ordering::Relaxed);
+                        update_open_connections_stat(&self.stats, &connection_table_l);
                     }
 
                     if connection_table_l.total_size < self.max_staked_connections {
@@ -473,6 +487,10 @@ impl Qos<SwQosParams> for SwQos {
                 stable_id,
             )
         }
+    }
+
+    fn wait_for_chunk_timeout(&self) -> std::time::Duration {
+        self.wait_for_chunk_timeout
     }
 }
 

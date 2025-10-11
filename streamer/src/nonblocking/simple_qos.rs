@@ -2,8 +2,9 @@ use {
     crate::{
         nonblocking::{
             quic::{
-                get_connection_stake, ClientConnectionTracker, ConnectionHandlerError,
-                ConnectionPeerType, ConnectionQosParams, ConnectionTable, ConnectionTableKey, Qos,
+                get_connection_stake, update_open_connections_stat, ClientConnectionTracker,
+                ConnectionHandlerError, ConnectionPeerType, ConnectionQosParams, ConnectionTable,
+                ConnectionTableKey, ConnectionTableType, Qos,
             },
             stream_throttle::{ConnectionStreamCounter, STREAM_THROTTLING_INTERVAL},
         },
@@ -17,12 +18,14 @@ use {
         Arc, RwLock,
     },
     tokio::sync::{Mutex, MutexGuard},
+    tokio_util::sync::CancellationToken,
 };
 
 pub struct SimpleQos {
     max_streams_per_second: u64,
     max_staked_connections: usize,
     max_connections_per_peer: usize,
+    wait_for_chunk_timeout: std::time::Duration,
     stats: Arc<StreamerStats>,
     staked_connection_table: Arc<Mutex<ConnectionTable>>,
 }
@@ -32,14 +35,20 @@ impl SimpleQos {
         max_streams_per_second: u64,
         max_connections_per_peer: usize,
         max_staked_connections: usize,
+        wait_for_chunk_timeout: std::time::Duration,
         stats: Arc<StreamerStats>,
+        cancel: CancellationToken,
     ) -> Self {
         Self {
             max_streams_per_second,
             max_connections_per_peer,
             max_staked_connections,
+            wait_for_chunk_timeout,
             stats,
-            staked_connection_table: Arc::new(Mutex::new(ConnectionTable::new())),
+            staked_connection_table: Arc::new(Mutex::new(ConnectionTable::new(
+                ConnectionTableType::Staked,
+                cancel,
+            ))),
         }
     }
 
@@ -76,6 +85,7 @@ impl SimpleQos {
                 params.max_connections_per_peer(),
             )
         {
+            update_open_connections_stat(&self.stats, &connection_table_l);
             drop(connection_table_l);
 
             Ok((last_update, cancel_connection, stream_counter))
@@ -160,8 +170,9 @@ impl Qos<SimpleQosParams> for SimpleQos {
                         let num_pruned =
                             connection_table_l.prune_random(PRUNE_RANDOM_SAMPLE_SIZE, stake);
                         self.stats
-                            .num_evictions
+                            .num_evictions_staked
                             .fetch_add(num_pruned, Ordering::Relaxed);
+                        update_open_connections_stat(&self.stats, &connection_table_l);
                     }
 
                     if connection_table_l.total_size < self.max_staked_connections {
@@ -207,11 +218,18 @@ impl Qos<SimpleQosParams> for SimpleQos {
             let stable_id = connection.stable_id();
             let remote_addr = connection.remote_address();
 
-            self.staked_connection_table.lock().await.remove_connection(
+            let mut connection_table = self.staked_connection_table.lock().await;
+            let removed_connection_count = connection_table.remove_connection(
                 ConnectionTableKey::new(remote_addr.ip(), params.remote_pubkey()),
                 remote_addr.port(),
                 stable_id,
-            )
+            );
+            update_open_connections_stat(&self.stats, &connection_table);
+            removed_connection_count
         }
+    }
+
+    fn wait_for_chunk_timeout(&self) -> std::time::Duration {
+        self.wait_for_chunk_timeout
     }
 }

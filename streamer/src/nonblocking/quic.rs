@@ -205,7 +205,9 @@ where
         quic_server_params.max_staked_connections,
         quic_server_params.max_unstaked_connections,
         quic_server_params.max_connections_per_peer,
+        quic_server_params.wait_for_chunk_timeout,
         stats.clone(),
+        cancel.clone(),
     ));
 
     let sockets: Vec<_> = sockets.into_iter().collect();
@@ -248,6 +250,7 @@ where
                 stats.clone(),
                 quic_server_params,
                 cancel,
+                swqos,
             )
             .await;
             tasks.close();
@@ -317,7 +320,12 @@ async fn run_server<Q, P>(
     stats: Arc<StreamerStats>,
     quic_server_params: QuicServerParams,
     cancel: CancellationToken,
-) -> TaskTracker {
+    qos: Arc<Q>,
+) -> TaskTracker
+where
+    Q: Qos<P> + Send + Sync + 'static,
+    P: ConnectionQosParams + Send + Sync + 'static,
+{
     let rate_limiter = Arc::new(ConnectionRateLimiter::new(
         quic_server_params.max_connections_per_ipaddr_per_min,
     ));
@@ -331,15 +339,6 @@ async fn run_server<Q, P>(
     stats
         .quic_endpoints_count
         .store(endpoints.len(), Ordering::Relaxed);
-    let (sender, receiver) = bounded(coalesce_channel_size);
-
-    thread::spawn({
-        let exit = exit.clone();
-        let stats = stats.clone();
-        move || {
-            packet_batch_sender(packet_sender, receiver, exit, stats, coalesce);
-        }
-    });
 
     let mut accepts = endpoints
         .iter()
@@ -508,6 +507,22 @@ pub(crate) trait Qos<P: ConnectionQosParams> {
         params: &P,
         connection: Connection,
     ) -> impl std::future::Future<Output = usize> + Send;
+    fn wait_for_chunk_timeout(&self) -> Duration;
+}
+
+pub(crate) fn update_open_connections_stat(
+    stats: &StreamerStats,
+    connection_table: &ConnectionTable,
+) {
+    if connection_table.is_staked() {
+        stats
+            .open_staked_connections
+            .store(connection_table.table_size(), Ordering::Relaxed);
+    } else {
+        stats
+            .open_unstaked_connections
+            .store(connection_table.table_size(), Ordering::Relaxed);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -567,16 +582,15 @@ async fn setup_connection<Q, P>(
                     .try_add_connection(client_connection_tracker, &new_connection, &mut params)
                     .await
                 {
-                    tokio::spawn(handle_connection(
+                    tasks.spawn(handle_connection(
                         packet_sender.clone(),
                         new_connection,
                         stats,
                         last_update,
-                        cancel_connection,
                         params.clone(),
-                        wait_for_chunk_timeout,
                         qos,
                         stream_counter,
+                        cancel_connection,
                     ));
                 }
             }
@@ -786,9 +800,7 @@ async fn handle_connection<Q, P>(
     connection: Connection,
     stats: Arc<StreamerStats>,
     last_update: Arc<AtomicU64>,
-    cancel: CancellationToken,
     params: P,
-    wait_for_chunk_timeout: Duration,
     qos: Arc<Q>,
     stream_counter: Arc<ConnectionStreamCounter>,
     cancel: CancellationToken,
@@ -880,7 +892,7 @@ async fn handle_connection<Q, P>(
             // packet loss or the peer stops sending for whatever reason.
             let n_chunks = match tokio::select! {
                 chunk = tokio::time::timeout(
-                    params.wait_for_chunk_timeout,
+                    qos.wait_for_chunk_timeout(),
                     stream.read_chunks(&mut chunks)) => chunk,
 
                 // If the peer gets disconnected stop the task right away.
@@ -1127,7 +1139,7 @@ impl ConnectionTableKey {
     }
 }
 
-enum ConnectionTableType {
+pub(crate) enum ConnectionTableType {
     Staked,
     Unstaked,
 }
@@ -1144,14 +1156,24 @@ pub(crate) struct ConnectionTable {
 ///
 /// Return number pruned
 impl ConnectionTable {
-    fn new(table_type: ConnectionTableType, cancel: CancellationToken) -> Self {
+    pub(crate) fn new(table_type: ConnectionTableType, cancel: CancellationToken) -> Self {
         Self {
             table: IndexMap::default(),
             total_size: 0,
+            table_type,
+            cancel,
         }
     }
 
-    fn prune_oldest(&mut self, max_size: usize) -> usize {
+    fn table_size(&self) -> usize {
+        self.total_size
+    }
+
+    fn is_staked(&self) -> bool {
+        matches!(self.table_type, ConnectionTableType::Staked)
+    }
+
+    pub(crate) fn prune_oldest(&mut self, max_size: usize) -> usize {
         let mut num_pruned = 0;
         let key = |(_, connections): &(_, &Vec<_>)| {
             connections.iter().map(ConnectionEntry::last_update).min()
