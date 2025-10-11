@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 #![allow(clippy::arithmetic_side_effects)]
 use {
     clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches, SubCommand},

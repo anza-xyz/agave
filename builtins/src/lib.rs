@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 //! Solana builtin programs.
 //!
 //! Warning: This crate is not for public consumption. It will change, and

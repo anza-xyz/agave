@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 pub use self::{
     cpi::{SyscallInvokeSignedC, SyscallInvokeSignedRust},
     logging::{

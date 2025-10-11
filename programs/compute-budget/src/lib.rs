@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 use solana_program_runtime::declare_process_instruction;
 
 pub const DEFAULT_COMPUTE_UNITS: u64 = 150;

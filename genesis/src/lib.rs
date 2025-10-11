@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 #![allow(clippy::arithmetic_side_effects)]
 pub mod address_generator;
 pub mod genesis_accounts;

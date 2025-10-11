@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 pub use log;
 use std::{cell::RefCell, rc::Rc};
 

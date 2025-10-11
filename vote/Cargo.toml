@@ -17,6 +17,8 @@ crate-type = ["lib"]
 name = "solana_vote"
 
 [features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
 dev-context-only-utils = ["dep:rand", "dep:bincode"]
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 

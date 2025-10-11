@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 #![allow(rustdoc::private_intra_doc_links)]
 //! The task (transaction) scheduling code for the unified scheduler
 //!

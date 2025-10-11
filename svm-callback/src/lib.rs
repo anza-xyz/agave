@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 use {
     solana_account::AccountSharedData, solana_clock::Slot,
     solana_precompile_error::PrecompileError, solana_pubkey::Pubkey,

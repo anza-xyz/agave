@@ -16,6 +16,8 @@ targets = ["x86_64-unknown-linux-gnu"]
 name = "solana_perf"
 
 [features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
 dev-context-only-utils = [
     "dep:solana-clock",
     "dep:solana-keypair",

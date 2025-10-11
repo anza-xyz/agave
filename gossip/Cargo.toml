@@ -21,6 +21,7 @@ path = "src/main.rs"
 bench = false
 
 [features]
+default = ["agave-unstable-api"]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",

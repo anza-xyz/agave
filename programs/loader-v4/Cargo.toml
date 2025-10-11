@@ -16,6 +16,7 @@ crate-type = ["lib"]
 name = "solana_loader_v4_program"
 
 [features]
+default = ["agave-unstable-api"]
 agave-unstable-api = []
 shuttle-test = [
     "solana-program-runtime/shuttle-test",

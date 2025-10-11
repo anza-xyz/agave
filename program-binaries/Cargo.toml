@@ -8,6 +8,10 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
+
 [dependencies]
 bincode = { workspace = true }
 serde = { workspace = true }

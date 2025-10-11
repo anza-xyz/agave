@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 //! Core types for solana-transaction-status
 use {
     crate::option_serializer::OptionSerializer,

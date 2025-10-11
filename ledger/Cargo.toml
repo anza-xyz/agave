@@ -17,6 +17,7 @@ crate-type = ["lib"]
 name = "solana_ledger"
 
 [features]
+default = ["agave-unstable-api"]
 dev-context-only-utils = ["solana-perf/dev-context-only-utils"]
 frozen-abi = [
     "dep:solana-frozen-abi",

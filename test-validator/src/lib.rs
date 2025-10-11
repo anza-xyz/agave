@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 #![allow(clippy::arithmetic_side_effects)]
 use {
     agave_feature_set::{alpenglow, raise_cpi_nesting_limit_to_8, FeatureSet, FEATURE_NAMES},

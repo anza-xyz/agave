@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 //! Durable transaction nonce helpers.
 
 pub mod blockhash_query;

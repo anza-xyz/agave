@@ -17,6 +17,8 @@ crate-type = ["lib"]
 name = "solana_rpc"
 
 [features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
 dev-context-only-utils = [
     "solana-ledger/dev-context-only-utils",
     "solana-rpc/dev-context-only-utils",

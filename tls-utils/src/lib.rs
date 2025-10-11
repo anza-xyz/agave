@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 //! Collection of TLS related code fragments that end up popping up everywhere where quic is used.
 //! Aggregated here to avoid bugs due to conflicting implementations of the same functionality.
 

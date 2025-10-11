@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 use {
     agave_feature_set::{enable_secp256r1_precompile, FeatureSet},

@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 #![allow(clippy::arithmetic_side_effects)]
 pub mod system_instruction;
 pub mod system_processor;

@@ -8,6 +8,10 @@ license = { workspace = true }
 edition = { workspace = true }
 publish = true
 
+[features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
+
 [dependencies]
 crossbeam-channel = { workspace = true }
 libc = { workspace = true }

@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 #![no_std]
 
 //! Messages passed between agave and an external pack process.

@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 macro_rules! ACCOUNT_STRING {
     () => {
         r#" Address is one of:

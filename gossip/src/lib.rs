@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 // Activate some of the Rust 2024 lints to make the future migration easier.

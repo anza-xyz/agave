@@ -12,6 +12,10 @@ edition = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
+
 [dependencies]
 Inflector = { workspace = true }
 agave-reserved-account-keys = { workspace = true }

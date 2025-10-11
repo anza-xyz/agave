@@ -10,6 +10,8 @@ edition = { workspace = true }
 readme = false
 
 [features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 
 [dependencies]

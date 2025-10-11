@@ -17,6 +17,8 @@ crate-type = ["lib"]
 name = "solana_svm"
 
 [features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
 dev-context-only-utils = [
     "dep:qualifier_attr",
     "solana-program-runtime/dev-context-only-utils",

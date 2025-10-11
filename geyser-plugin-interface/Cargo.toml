@@ -12,6 +12,10 @@ edition = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
+
 [dependencies]
 log = { workspace = true, features = ["std"] }
 solana-clock = { workspace = true }

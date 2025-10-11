@@ -16,8 +16,8 @@ targets = ["x86_64-unknown-linux-gnu"]
 name = "solana_net_utils"
 
 [features]
+default = ["agave-unstable-api"]
 agave-unstable-api = []
-default = []
 dev-context-only-utils = ["dep:pcap-file", "dep:hxdmp"]
 shuttle-test = ["dep:shuttle", "solana-svm-type-overrides/shuttle-test"]
 

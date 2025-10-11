@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 use {
     serde::{Deserialize, Serialize},
     solana_account_decoder::{

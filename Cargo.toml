@@ -413,7 +413,7 @@ solana-compute-budget-instruction = { path = "compute-budget-instruction", versi
 solana-compute-budget-interface = "3.0.0"
 solana-compute-budget-program = { path = "programs/compute-budget", version = "=3.1.0" }
 solana-config-interface = "2.0.0"
-solana-connection-cache = { path = "connection-cache", version = "=3.1.0", default-features = false }
+solana-connection-cache = { path = "connection-cache", version = "=3.1.0", default-features = false, features = ["agave-unstable-api"] }
 solana-core = { path = "core", version = "=3.1.0" }
 solana-cost-model = { path = "cost-model", version = "=3.1.0" }
 solana-cpi = "3.0.0"
@@ -491,11 +491,11 @@ solana-pubsub-client = { path = "pubsub-client", version = "=3.1.0" }
 solana-quic-client = { path = "quic-client", version = "=3.1.0" }
 solana-quic-definitions = "3.0.0"
 solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=3.1.0" }
-solana-remote-wallet = { path = "remote-wallet", version = "=3.1.0", default-features = false }
+solana-remote-wallet = { path = "remote-wallet", version = "=3.1.0", default-features = false, features = ["agave-unstable-api"] }
 solana-rent = "3.0.0"
 solana-reward-info = "3.0.0"
 solana-rpc = { path = "rpc", version = "=3.1.0" }
-solana-rpc-client = { path = "rpc-client", version = "=3.1.0", default-features = false }
+solana-rpc-client = { path = "rpc-client", version = "=3.1.0", default-features = false, features = ["agave-unstable-api"] }
 solana-rpc-client-api = { path = "rpc-client-api", version = "=3.1.0" }
 solana-rpc-client-nonce-utils = { path = "rpc-client-nonce-utils", version = "=3.1.0" }
 solana-rpc-client-types = { path = "rpc-client-types", version = "=3.1.0" }
@@ -544,7 +544,7 @@ solana-test-validator = { path = "test-validator", version = "=3.1.0" }
 solana-time-utils = "3.0.0"
 solana-tls-utils = { path = "tls-utils", version = "=3.1.0" }
 solana-tps-client = { path = "tps-client", version = "=3.1.0" }
-solana-tpu-client = { path = "tpu-client", version = "=3.1.0", default-features = false }
+solana-tpu-client = { path = "tpu-client", version = "=3.1.0", default-features = false, features = ["agave-unstable-api"] }
 solana-tpu-client-next = { path = "tpu-client-next", version = "=3.1.0" }
 solana-transaction = "3.0.1"
 solana-transaction-context = { path = "transaction-context", version = "=3.1.0", features = ["bincode"] }
@@ -560,7 +560,7 @@ solana-validator-exit = "3.0.0"
 solana-version = { path = "version", version = "=3.1.0" }
 solana-vote = { path = "vote", version = "=3.1.0" }
 solana-vote-interface = "4.0.2"
-solana-vote-program = { path = "programs/vote", version = "=3.1.0", default-features = false }
+solana-vote-program = { path = "programs/vote", version = "=3.1.0", default-features = false, features = ["agave-unstable-api"] }
 solana-votor-messages = { path = "votor-messages", version = "=3.1.0" }
 solana-wen-restart = { path = "wen-restart", version = "=3.1.0" }
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=3.1.0" }

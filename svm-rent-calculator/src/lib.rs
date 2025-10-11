@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 //! Solana SVM Rent Calculator.
 //!
 //! Rent management for SVM.

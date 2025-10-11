@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 pub use solana_file_download::DownloadProgressRecord;
 use {
     agave_snapshots::{ArchiveFormat, ZstdConfig},

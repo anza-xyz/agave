@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 // Activate some of the Rust 2024 lints to make the future migration easier.
 #![warn(if_let_rescope)]
 #![warn(keyword_idents_2024)]

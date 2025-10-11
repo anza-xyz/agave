@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 //! Alpenglow vote message types
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![deny(missing_docs)]

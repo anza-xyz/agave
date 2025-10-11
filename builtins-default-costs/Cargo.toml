@@ -18,6 +18,8 @@ crate-type = ["lib"]
 name = "solana_builtins_default_costs"
 
 [features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
 frozen-abi = ["dep:solana-frozen-abi", "solana-vote-program/frozen-abi"]
 dev-context-only-utils = ["dep:qualifier_attr"]
 

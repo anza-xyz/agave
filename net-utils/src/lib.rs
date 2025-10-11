@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 //! The `net_utils` module assists with networking
 
 // Activate some of the Rust 2024 lints to make the future migration easier.

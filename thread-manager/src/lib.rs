@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 use {
     anyhow::Ok,
     serde::{Deserialize, Serialize},
