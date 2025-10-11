@@ -1,14 +1,11 @@
 use {
-    crate::{
-        nonblocking::{
-            quic::{ClientConnectionTracker, ConnectionPeerType},
-            stream_throttle::ConnectionStreamCounter,
-        },
-        streamer::StakedNodes,
+    crate::nonblocking::{
+        quic::{ClientConnectionTracker, ConnectionPeerType},
+        stream_throttle::ConnectionStreamCounter,
     },
     quinn::Connection,
     std::{
-        sync::{atomic::AtomicU64, Arc, RwLock},
+        sync::{atomic::AtomicU64, Arc},
         time::Duration,
     },
 };
@@ -18,9 +15,7 @@ use {
 /// the concrete implementation of QosController.
 pub(crate) trait ConnectionContext: Clone + Send + Sync {
     fn peer_type(&self) -> ConnectionPeerType;
-    fn max_connections_per_peer(&self) -> usize;
     fn remote_pubkey(&self) -> Option<solana_pubkey::Pubkey>;
-    fn total_stake(&self) -> u64;
 }
 
 /// A trait to manage QoS for connections. This includes
@@ -28,11 +23,7 @@ pub(crate) trait ConnectionContext: Clone + Send + Sync {
 /// 2) managing connect caching and connection limits
 pub(crate) trait QosController<C: ConnectionContext> {
     /// Derive the ConnectionContext for a connection
-    fn derive_connection_context(
-        &self,
-        connection: &Connection,
-        staked_nodes: &RwLock<StakedNodes>,
-    ) -> C;
+    fn derive_connection_context(&self, connection: &Connection) -> C;
 
     /// Try to add a new connection. If successful, return a CancellationToken and
     /// a ConnectionStreamCounter to track the streams created on this connection.
@@ -52,6 +43,8 @@ pub(crate) trait QosController<C: ConnectionContext> {
     /// The maximum number of streams that can be opened per throttling interval
     /// on this connection.
     fn max_streams_per_throttling_interval(&self, context: &C) -> u64;
+
+    fn total_stake(&self) -> u64;
 
     /// Called when a stream is accepted on a connection
     fn on_stream_accepted(&self, context: &C);

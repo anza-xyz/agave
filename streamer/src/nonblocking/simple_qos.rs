@@ -29,6 +29,7 @@ pub struct SimpleQos {
     wait_for_chunk_timeout: std::time::Duration,
     stats: Arc<StreamerStats>,
     staked_connection_table: Arc<Mutex<ConnectionTable>>,
+    staked_nodes: Arc<RwLock<StakedNodes>>,
 }
 
 impl SimpleQos {
@@ -38,6 +39,7 @@ impl SimpleQos {
         max_staked_connections: usize,
         wait_for_chunk_timeout: std::time::Duration,
         stats: Arc<StreamerStats>,
+        staked_nodes: Arc<RwLock<StakedNodes>>,
         cancel: CancellationToken,
     ) -> Self {
         Self {
@@ -46,6 +48,7 @@ impl SimpleQos {
             max_staked_connections,
             wait_for_chunk_timeout,
             stats,
+            staked_nodes,
             staked_connection_table: Arc::new(Mutex::new(ConnectionTable::new(
                 ConnectionTableType::Staked,
                 cancel,
@@ -83,7 +86,7 @@ impl SimpleQos {
                 Some(connection.clone()),
                 params.peer_type(),
                 timing::timestamp(),
-                params.max_connections_per_peer(),
+                self.max_connections_per_peer,
             )
         {
             update_open_connections_stat(&self.stats, &connection_table_l);
@@ -102,9 +105,7 @@ impl SimpleQos {
 #[derive(Clone)]
 struct SimpleQosConnectionContext {
     peer_type: ConnectionPeerType,
-    max_connections_per_peer: usize,
     remote_pubkey: Option<solana_pubkey::Pubkey>,
-    total_stake: u64,
 }
 
 impl ConnectionContext for SimpleQosConnectionContext {
@@ -112,26 +113,15 @@ impl ConnectionContext for SimpleQosConnectionContext {
         self.peer_type
     }
 
-    fn max_connections_per_peer(&self) -> usize {
-        self.max_connections_per_peer
-    }
-
     fn remote_pubkey(&self) -> Option<solana_pubkey::Pubkey> {
         self.remote_pubkey
-    }
-    fn total_stake(&self) -> u64 {
-        self.total_stake
     }
 }
 
 impl QosController<SimpleQosConnectionContext> for SimpleQos {
-    fn derive_connection_context(
-        &self,
-        connection: &Connection,
-        staked_nodes: &RwLock<StakedNodes>,
-    ) -> SimpleQosConnectionContext {
-        let (peer_type, remote_pubkey, total_stake) =
-            get_connection_stake(connection, staked_nodes).map_or(
+    fn derive_connection_context(&self, connection: &Connection) -> SimpleQosConnectionContext {
+        let (peer_type, remote_pubkey, _total_stake) =
+            get_connection_stake(connection, &self.staked_nodes).map_or(
                 (ConnectionPeerType::Unstaked, None, 0),
                 |(pubkey, stake, total_stake, _max_stake, _min_stake)| {
                     // The heuristic is that the stake should be large engouh to have 1 stream pass throuh within one throttle
@@ -142,9 +132,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
 
         SimpleQosConnectionContext {
             peer_type,
-            max_connections_per_peer: self.max_connections_per_peer,
             remote_pubkey,
-            total_stake,
         }
     }
 
@@ -232,5 +220,9 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
 
     fn wait_for_chunk_timeout(&self) -> std::time::Duration {
         self.wait_for_chunk_timeout
+    }
+
+    fn total_stake(&self) -> u64 {
+        self.staked_nodes.read().map_or(0, |sn| sn.total_stake())
     }
 }

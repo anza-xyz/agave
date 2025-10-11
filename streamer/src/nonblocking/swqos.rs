@@ -41,6 +41,7 @@ pub struct SwQos {
     staked_stream_load_ema: Arc<StakedStreamLoadEMA>,
     wait_for_chunk_timeout: std::time::Duration,
     stats: Arc<StreamerStats>,
+    staked_nodes: Arc<RwLock<StakedNodes>>,
     unstaked_connection_table: Arc<Mutex<ConnectionTable>>,
     staked_connection_table: Arc<Mutex<ConnectionTable>>,
 }
@@ -49,7 +50,6 @@ pub struct SwQos {
 #[derive(Clone)]
 pub struct SwQosConnectionContext {
     peer_type: ConnectionPeerType,
-    max_connections_per_peer: usize,
     max_stake: u64,
     min_stake: u64,
     remote_pubkey: Option<solana_pubkey::Pubkey>,
@@ -62,16 +62,8 @@ impl ConnectionContext for SwQosConnectionContext {
         self.peer_type
     }
 
-    fn max_connections_per_peer(&self) -> usize {
-        self.max_connections_per_peer
-    }
-
     fn remote_pubkey(&self) -> Option<solana_pubkey::Pubkey> {
         self.remote_pubkey
-    }
-
-    fn total_stake(&self) -> u64 {
-        self.total_stake
     }
 }
 
@@ -83,6 +75,7 @@ impl SwQos {
         max_connections_per_peer: usize,
         wait_for_chunk_timeout: std::time::Duration,
         stats: Arc<StreamerStats>,
+        staked_nodes: Arc<RwLock<StakedNodes>>,
         cancel: CancellationToken,
     ) -> Self {
         Self {
@@ -96,6 +89,7 @@ impl SwQos {
                 max_streams_per_ms,
             )),
             stats,
+            staked_nodes,
             unstaked_connection_table: Arc::new(Mutex::new(ConnectionTable::new(
                 ConnectionTableType::Unstaked,
                 cancel.clone(),
@@ -219,7 +213,7 @@ impl SwQos {
                     Some(connection.clone()),
                     params.peer_type(),
                     timing::timestamp(),
-                    params.max_connections_per_peer(),
+                    self.max_connections_per_peer,
                 )
             {
                 update_open_connections_stat(&self.stats, &connection_table_l);
@@ -303,15 +297,10 @@ impl SwQos {
 }
 
 impl QosController<SwQosConnectionContext> for SwQos {
-    fn derive_connection_context(
-        &self,
-        connection: &Connection,
-        staked_nodes: &RwLock<StakedNodes>,
-    ) -> SwQosConnectionContext {
-        get_connection_stake(connection, staked_nodes).map_or(
+    fn derive_connection_context(&self, connection: &Connection) -> SwQosConnectionContext {
+        get_connection_stake(connection, &self.staked_nodes).map_or(
             SwQosConnectionContext {
                 peer_type: ConnectionPeerType::Unstaked,
-                max_connections_per_peer: self.max_connections_per_peer,
                 max_stake: 0,
                 min_stake: 0,
                 total_stake: 0,
@@ -337,7 +326,6 @@ impl QosController<SwQosConnectionContext> for SwQos {
 
                 SwQosConnectionContext {
                     peer_type,
-                    max_connections_per_peer: self.max_connections_per_peer,
                     max_stake,
                     min_stake,
                     total_stake,
@@ -460,6 +448,10 @@ impl QosController<SwQosConnectionContext> for SwQos {
 
     fn on_stream_closed(&self, _conn_context: &SwQosConnectionContext) {
         self.staked_stream_load_ema.update_ema_if_needed();
+    }
+
+    fn total_stake(&self) -> u64 {
+        self.staked_nodes.read().map_or(0, |sn| sn.total_stake())
     }
 
     fn max_streams_per_throttling_interval(&self, params: &SwQosConnectionContext) -> u64 {

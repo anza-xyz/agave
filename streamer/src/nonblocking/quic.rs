@@ -208,6 +208,7 @@ where
         quic_server_params.max_connections_per_peer,
         quic_server_params.wait_for_chunk_timeout,
         stats.clone(),
+        staked_nodes,
         cancel.clone(),
     ));
 
@@ -246,7 +247,6 @@ where
                 name,
                 endpoints.clone(),
                 packet_batch_sender,
-                staked_nodes,
                 stats.clone(),
                 quic_server_params,
                 cancel,
@@ -316,7 +316,6 @@ async fn run_server<Q, C>(
     name: &'static str,
     endpoints: Vec<Endpoint>,
     packet_batch_sender: Sender<PacketAccumulator>,
-    staked_nodes: Arc<RwLock<StakedNodes>>,
     stats: Arc<StreamerStats>,
     quic_server_params: QuicServerParams,
     cancel: CancellationToken,
@@ -417,7 +416,6 @@ where
                         overall_connection_rate_limiter,
                         client_connection_tracker,
                         packet_batch_sender.clone(),
-                        staked_nodes.clone(),
                         stats.clone(),
                         qos.clone(),
                         tasks.clone(),
@@ -491,7 +489,6 @@ async fn setup_connection<Q, C>(
     overall_connection_rate_limiter: Arc<TotalConnectionRateLimiter>,
     client_connection_tracker: ClientConnectionTracker,
     packet_sender: Sender<PacketAccumulator>,
-    staked_nodes: Arc<RwLock<StakedNodes>>,
     stats: Arc<StreamerStats>,
     qos: Arc<Q>,
     tasks: TaskTracker,
@@ -536,8 +533,7 @@ async fn setup_connection<Q, C>(
                     return;
                 }
 
-                let mut conn_context =
-                    qos.derive_connection_context(&new_connection, &staked_nodes);
+                let mut conn_context = qos.derive_connection_context(&new_connection);
                 if let Some((last_update, cancel_connection, stream_counter)) = qos
                     .try_add_connection(
                         client_connection_tracker,
@@ -773,7 +769,7 @@ async fn handle_connection<Q, C>(
     C: ConnectionContext + Send + Sync + 'static,
 {
     let peer_type = context.peer_type();
-    let total_stake = context.total_stake();
+    let total_stake = qos.total_stake();
     let remote_addr = connection.remote_address();
     debug!(
         "quic new connection {} streams: {} connections: {}",
