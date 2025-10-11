@@ -6,7 +6,9 @@ use {
 pub use {
     solana_account_decoder_client_types::{UiAccountEncoding, UiDataSliceConfig},
     solana_commitment_config::{CommitmentConfig, CommitmentLevel},
-    solana_transaction_status_client_types::{TransactionDetails, UiTransactionEncoding},
+    solana_transaction_status_client_types::{
+        MaxSupportedTransactionVersionConfig, TransactionDetails, UiTransactionEncoding,
+    },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -214,7 +216,8 @@ pub struct RpcBlockSubscribeConfig {
     pub encoding: Option<UiTransactionEncoding>,
     pub transaction_details: Option<TransactionDetails>,
     pub show_rewards: Option<bool>,
-    pub max_supported_transaction_version: Option<u8>,
+    #[serde(flatten)]
+    pub max_supported_transaction_version: MaxSupportedTransactionVersionConfig,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -267,7 +270,8 @@ pub struct RpcBlockConfig {
     pub rewards: Option<bool>,
     #[serde(flatten)]
     pub commitment: Option<CommitmentConfig>,
-    pub max_supported_transaction_version: Option<u8>,
+    #[serde(flatten)]
+    pub max_supported_transaction_version: MaxSupportedTransactionVersionConfig,
 }
 
 impl EncodingConfig for RpcBlockConfig {
@@ -308,7 +312,8 @@ pub struct RpcTransactionConfig {
     pub encoding: Option<UiTransactionEncoding>,
     #[serde(flatten)]
     pub commitment: Option<CommitmentConfig>,
-    pub max_supported_transaction_version: Option<u8>,
+    #[serde(flatten)]
+    pub max_supported_transaction_version: MaxSupportedTransactionVersionConfig,
 }
 
 impl EncodingConfig for RpcTransactionConfig {

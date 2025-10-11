@@ -31,9 +31,9 @@ use {
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_status::{
         BlockEncodingOptions, ConfirmedBlock, Encodable, EncodedConfirmedBlock,
-        EncodedTransactionWithStatusMeta, EntrySummary, Rewards, TransactionDetails,
-        UiTransactionEncoding, VersionedConfirmedBlock, VersionedConfirmedBlockWithEntries,
-        VersionedTransactionWithStatusMeta,
+        EncodedTransactionWithStatusMeta, EntrySummary, MaxSupportedTransactionVersionConfig,
+        Rewards, TransactionDetails, UiTransactionEncoding, VersionedConfirmedBlock,
+        VersionedConfirmedBlockWithEntries, VersionedTransactionWithStatusMeta,
     },
     std::{
         cell::RefCell,
@@ -472,7 +472,7 @@ pub(crate) fn encode_confirmed_block(
         BlockEncodingOptions {
             transaction_details: TransactionDetails::Full,
             show_rewards: true,
-            max_supported_transaction_version: Some(0),
+            max_supported_transaction_version: MaxSupportedTransactionVersionConfig::new(0),
         },
     )?;
 
