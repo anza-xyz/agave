@@ -69,7 +69,13 @@ use {
         snapshot_controller::SnapshotController,
     },
     solana_votor_messages::consensus_message::ConsensusMessage,
-    std::sync::{atomic::AtomicBool, Arc, Condvar, Mutex, RwLock},
+    std::{
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, Condvar, Mutex, RwLock,
+        },
+        time::Duration,
+    },
 };
 
 /// Communication with the block creation loop to notify leader window
@@ -131,4 +137,20 @@ pub struct Votor {
     event_handler: EventHandler,
     consensus_pool_service: ConsensusPoolService,
     timer_manager: Arc<PlRwLock<TimerManager>>,
+}
+
+impl Votor {
+    pub(crate) fn wait_for_migration_or_exit(
+        exit: &AtomicBool,
+        (lock, cvar): &(Mutex<bool>, Condvar),
+    ) {
+        let mut started = lock.lock().unwrap();
+        while !*started {
+            if exit.load(Ordering::Relaxed) {
+                return;
+            }
+            // Add timeout to check for exit flag
+            (started, _) = cvar.wait_timeout(started, Duration::from_secs(5)).unwrap();
+        }
+    }
 }
