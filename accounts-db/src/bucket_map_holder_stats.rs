@@ -63,6 +63,7 @@ pub struct BucketMapHolderStats {
     last_time: AtomicInterval,
     bins: u64,
     pub flush_should_evict_us: AtomicU64,
+    pub flush_read_lock_us: AtomicU64,
 }
 
 impl BucketMapHolderStats {
@@ -420,6 +421,11 @@ impl BucketMapHolderStats {
                 (
                     "flush_evict_us",
                     self.flush_evict_us.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "flush_read_lock_us",
+                    self.flush_read_lock_us.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
