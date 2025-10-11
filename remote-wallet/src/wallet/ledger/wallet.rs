@@ -1,6 +1,14 @@
+use crate::transport::hid_transport::HidTransport;
 use {
-    crate::remote_wallet::{
-        RemoteWallet, RemoteWalletError, RemoteWalletInfo, RemoteWalletManager,
+    super::error::LedgerError,
+    crate::{
+        errors::RemoteWalletError,
+        remote_wallet::{RemoteWallet, RemoteWalletInfo, RemoteWalletManager},
+        transport::transport_trait::Transport,
+        wallet::{
+            types::{Device, RemoteWalletType},
+            WalletProbe,
+        },
     },
     console::Emoji,
     dialoguer::{theme::ColorfulTheme, Select},
@@ -10,7 +18,7 @@ use {
 };
 #[cfg(feature = "hidapi")]
 use {
-    crate::{ledger_error::LedgerError, locator::Manufacturer},
+    crate::locator::Manufacturer,
     log::*,
     num_traits::FromPrimitive,
     solana_pubkey::Pubkey,
@@ -100,23 +108,22 @@ pub struct LedgerSettings {
 
 /// Ledger Wallet device
 pub struct LedgerWallet {
-    #[cfg(feature = "hidapi")]
-    pub device: hidapi::HidDevice,
+    pub transport: Box<dyn Transport>,
     pub pretty_path: String,
     pub version: FirmwareVersion,
 }
 
 impl fmt::Debug for LedgerWallet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "HidDevice")
+        write!(f, "LedgerWallet")
     }
 }
 
 #[cfg(feature = "hidapi")]
 impl LedgerWallet {
-    pub fn new(device: hidapi::HidDevice) -> Self {
+    pub fn new(transport: Box<dyn Transport>) -> Self {
         Self {
-            device,
+            transport,
             pretty_path: String::default(),
             version: FirmwareVersion::new(0, 0, 0),
         }
@@ -201,9 +208,12 @@ impl LedgerWallet {
                 chunk[header..header + size].copy_from_slice(&data[offset..offset + size]);
             }
             trace!("Ledger write {:?}", &hid_chunk[..]);
-            let n = self.device.write(&hid_chunk[..])?;
+            let n = self
+                .transport
+                .write(&hid_chunk[..])
+                .map_err(RemoteWalletError::Hid)?;
             if n < size + header {
-                return Err(RemoteWalletError::Protocol("Write data size mismatch"));
+                return Err(RemoteWalletError::Protocol("Incomplete write"));
             }
             offset += size;
             sequence_number += 1;
@@ -232,17 +242,16 @@ impl LedgerWallet {
 
         // terminate the loop if `sequence_number` reaches its max_value and report error
         for chunk_index in 0..=0xffff {
-            let mut chunk: [u8; HID_PACKET_SIZE] = [0; HID_PACKET_SIZE];
-            let chunk_size = self.device.read(&mut chunk)?;
+            let chunk = self.transport.read().map_err(RemoteWalletError::Hid)?;
             trace!("Ledger read {:?}", &chunk[..]);
-            if chunk_size < LEDGER_TRANSPORT_HEADER_LEN
+            if chunk.len() < LEDGER_TRANSPORT_HEADER_LEN
                 || chunk[0] != 0x01
                 || chunk[1] != 0x01
                 || chunk[2] != APDU_TAG
             {
                 return Err(RemoteWalletError::Protocol("Unexpected chunk header"));
             }
-            let seq = ((chunk[3] as usize) << 8) | (chunk[4] as usize);
+            let seq = (chunk[3] as usize) << 8 | (chunk[4] as usize);
             if seq != chunk_index {
                 return Err(RemoteWalletError::Protocol("Unexpected chunk header"));
             }
@@ -250,13 +259,13 @@ impl LedgerWallet {
             let mut offset = 5;
             if seq == 0 {
                 // Read message size and status word.
-                if chunk_size < 7 {
+                if chunk.len() < 7 {
                     return Err(RemoteWalletError::Protocol("Unexpected chunk header"));
                 }
-                message_size = ((chunk[5] as usize) << 8) | (chunk[6] as usize);
+                message_size = (chunk[5] as usize) << 8 | (chunk[6] as usize);
                 offset += 2;
             }
-            message.extend_from_slice(&chunk[offset..chunk_size]);
+            message.extend_from_slice(&chunk[offset..chunk.len()]);
             message.truncate(message_size);
             if message.len() == message_size {
                 break;
@@ -367,6 +376,35 @@ impl LedgerWallet {
         } else {
             Err(RemoteWalletError::Protocol("Unknown error"))
         }
+    }
+}
+
+use hidapi::{DeviceInfo, HidApi};
+
+pub struct LedgerProbe;
+
+#[cfg(not(feature = "hidapi"))]
+impl WalletProbe<Self> for LedgerProbe {}
+#[cfg(feature = "hidapi")]
+impl WalletProbe for LedgerProbe {
+    fn is_supported_device(&self, device_info: &hidapi::DeviceInfo) -> bool {
+        is_valid_ledger(device_info.vendor_id(), device_info.product_id())
+    }
+
+    fn open(&self, usb: &mut HidApi, devinfo: DeviceInfo) -> Result<Device, RemoteWalletError> {
+        let handle = usb
+            .open_path(devinfo.path())
+            .map_err(|e| RemoteWalletError::Hid(e.to_string()))?;
+        let mut wallet = LedgerWallet::new(Box::new(HidTransport::new(handle)));
+        let info = wallet
+            .read_device(&devinfo)
+            .map_err(|e| RemoteWalletError::Hid(e.to_string()))?;
+        wallet.pretty_path = info.get_pretty_path();
+        Ok(Device {
+            path: devinfo.path().to_string_lossy().into_owned(),
+            info,
+            wallet_type: RemoteWalletType::Ledger(Rc::new(wallet)),
+        })
     }
 }
 
