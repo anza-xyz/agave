@@ -6,12 +6,12 @@
 //! and signer.
 //!
 //! The default path to the configuration file can be retrieved from
-//! [`CONFIG_FILE`], which is a [LazyLock] of `Option<String>`, the value of
-//! which is
+//! [`CONFIG_FILE`], which is a [LazyLock](std::sync::LazyLock) of `Option<String>`,
+//! the value of which is
 //!
 //! > `~/.config/solana/cli/config.yml`
 //!
-//! [`CONFIG_FILE`]: struct@CONFIG_FILE
+//! [`CONFIG_FILE`]: static@CONFIG_FILE
 //!
 //! `CONFIG_FILE` will only be `None` if it is unable to identify the user's
 //! home directory, which should not happen under typical OS environments.

@@ -8,9 +8,9 @@ use {
 
 /// [`ClientOption`] enum represents the available client types for TPU
 /// communication:
-/// * [`ConnectionCacheClient`]: Uses a shared [`ConnectionCache`] to manage
+/// * `ConnectionCacheClient`: Uses a shared [`ConnectionCache`] to manage
 ///   connections efficiently.
-/// * [`TpuClientNextClient`]: Relies on the `tpu-client-next` crate and
+/// * `TpuClientNextClient`: Relies on the `tpu-client-next` crate and
 ///   requires a reference to a [`Keypair`].
 pub enum ClientOption<'a> {
     ConnectionCache(Arc<ConnectionCache>),

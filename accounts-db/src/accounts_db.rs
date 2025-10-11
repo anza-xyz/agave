@@ -12,11 +12,13 @@
 //! The only required in memory data structure with a write lock is the index,
 //! which should be fast to update.
 //!
-//! [`AppendVec`]'s only store accounts for single slots.  To bootstrap the
-//! index from a persistent store of [`AppendVec`]'s, the entries include
+//! [`AppendVec`][av]'s only store accounts for single slots.  To bootstrap the
+//! index from a persistent store of [`AppendVec`][av]'s, the entries include
 //! a "write_version".  A single global atomic `AccountsDb::write_version`
 //! tracks the number of commits to the entire data store. So the latest
 //! commit for each slot entry would be indexed.
+//!
+//! [av]: StorageLocation::AppendVec
 
 mod accounts_db_config;
 mod geyser_plugin_utils;

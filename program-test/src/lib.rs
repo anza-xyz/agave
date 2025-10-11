@@ -621,7 +621,7 @@ impl ProgramTest {
     /// the builtin version of the program, allowing the provided BPF program
     /// to be used at the designated program ID instead.
     ///
-    /// See https://github.com/anza-xyz/agave/blob/c038908600b8a1b0080229dea015d7fc9939c418/runtime/src/bank.rs#L5109-L5126.
+    /// See <https://github.com/anza-xyz/agave/blob/c038908600b8a1b0080229dea015d7fc9939c418/runtime/src/bank.rs#L5109-L5126>.
     pub fn add_upgradeable_program_to_genesis(
         &mut self,
         program_name: &'static str,

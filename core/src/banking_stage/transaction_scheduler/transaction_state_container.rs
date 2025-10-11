@@ -91,6 +91,7 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
         }
     }
 
+    #[allow(rustdoc::private_intra_doc_links)]
     /// Pushes transaction ids into the priority queue. If the queue if full,
     /// the lowest priority transactions will be dropped (removed from the
     /// queue and map) **after** all ids have been pushed.

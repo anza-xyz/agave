@@ -217,6 +217,7 @@ impl<const NUM_BITS: usize> BitVec<NUM_BITS> {
         (self.words[word_idx] & (1 << bit_idx)) != 0
     }
 
+    #[allow(rustdoc::private_intra_doc_links)]
     /// Get an iterator over the bits in the array within the given range.
     ///
     /// See [`BitVecSlice::from_range_bounds`] for more information.

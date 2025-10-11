@@ -2530,9 +2530,10 @@ impl Blockstore {
         missing_indexes
     }
 
+    #[allow(rustdoc::private_intra_doc_links)]
     /// Find missing data shreds for the given `slot`.
     ///
-    /// For more details on the arguments, see [`find_missing_indexes`].
+    /// For more details on the arguments, see [`Blockstore::find_missing_indexes`].
     pub fn find_missing_data_indexes(
         &self,
         slot: Slot,

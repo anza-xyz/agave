@@ -224,8 +224,8 @@ impl SVMTransactionExecutionCost {
     ///
     /// 61*n^2 + 542
     ///
-    /// Which aproximates the results of benchmarks of light-posiedon
-    /// library[0]. These results assume 1 CU per 33 ns. Examples:
+    /// Which aproximates the results of benchmarks of [light-posiedon
+    /// library][lpl]. These results assume 1 CU per 33 ns. Examples:
     ///
     /// * 1 input
     ///   * light-poseidon benchmark: `18,303 / 33 ≈ 555`
@@ -237,7 +237,7 @@ impl SVMTransactionExecutionCost {
     ///   * light-poseidon benchmark: `37,549 / 33 ≈ 1,138`
     ///   * function; `61*3^2 + 542 = 1091`
     ///
-    /// [0] https://github.com/Lightprotocol/light-poseidon#performance
+    /// [lpl]: https://github.com/Lightprotocol/light-poseidon#performance
     pub fn poseidon_cost(&self, nr_inputs: u64) -> Option<u64> {
         let squared_inputs = nr_inputs.checked_pow(2)?;
         let mul_result = self

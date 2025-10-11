@@ -55,7 +55,7 @@ impl Node {
     }
 
     /// create localhost node for tests with provided pubkey
-    /// unlike the [new_with_external_ip], this will also bind RPC sockets.
+    /// unlike the [`Node::new_with_external_ip`], this will also bind RPC sockets.
     pub fn new_localhost_with_pubkey(pubkey: &Pubkey) -> Self {
         let port_range = localhost_port_range_for_tests();
         let bind_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);

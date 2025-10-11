@@ -58,6 +58,12 @@ use {
     tokio::time::sleep,
 };
 
+#[cfg(doc)]
+use {
+    solana_commitment_config::CommitmentLevel, solana_rpc_client_api::client_error,
+    std::collections::HashMap,
+};
+
 /// A client of a remote Solana node.
 ///
 /// `RpcClient` communicates with a Solana node over [JSON-RPC], with the
@@ -104,14 +110,12 @@ use {
 /// # Errors
 ///
 /// Methods on `RpcClient` return
-/// [`client_error::Result`][solana_rpc_client_api::client_error::Result], and many of them
-/// return the [`RpcResult`][solana_rpc_client_api::response::RpcResult] typedef, which
-/// contains [`Response<T>`][solana_rpc_client_api::response::Response] on `Ok`. Both
-/// `client_error::Result` and [`RpcResult`] contain `ClientError` on error. In
-/// the case of `RpcResult`, the actual return value is in the
+/// [`client_error::Result`], and many of them return the [`RpcResult`] typedef, which contains
+/// [`Response<T>`] on `Ok`. Both `client_error::Result` and [`RpcResult`] contain `ClientError` on
+/// error. In the case of `RpcResult`, the actual return value is in the
 /// [`value`][solana_rpc_client_api::response::Response::value] field, with RPC contextual
-/// information in the [`context`][solana_rpc_client_api::response::Response::context]
-/// field, so it is common for the value to be accessed with `?.value`, as in
+/// information in the [`context`][solana_rpc_client_api::response::Response::context] field, so it
+/// is common for the value to be accessed with `?.value`, as in
 ///
 /// ```
 /// # use solana_hash::Hash;
@@ -133,7 +137,7 @@ use {
 ///
 /// Requests may timeout, in which case they return a [`ClientError`] where the
 /// [`ClientErrorKind`] is [`ClientErrorKind::Reqwest`], and where the interior
-/// [`reqwest::Error`](solana_rpc_client_api::client_error::reqwest::Error)s
+/// [`reqwest::Error`]s
 /// [`is_timeout`](solana_rpc_client_api::client_error::reqwest::Error::is_timeout) method
 /// returns `true`. The default timeout is 30 seconds, and may be changed by
 /// calling an appropriate constructor with a `timeout` parameter.
@@ -2344,9 +2348,8 @@ impl RpcClient {
 
     /// Returns identity and transaction information about a confirmed block in the ledger.
     ///
-    /// The encodings are returned in [`UiTransactionEncoding::Json`][uite]
-    /// format. To return transactions in other encodings, use
-    /// [`get_block_with_encoding`].
+    /// The encodings are returned in [`UiTransactionEncoding::Json`] format. To return
+    /// transactions in other encodings, use [`get_block_with_encoding`].
     ///
     /// [`get_block_with_encoding`]: RpcClient::get_block_with_encoding
     /// [uite]: UiTransactionEncoding::Json

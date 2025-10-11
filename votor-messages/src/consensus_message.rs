@@ -70,7 +70,7 @@ pub enum CertificateType {
 }
 
 impl Certificate {
-    /// Create a new certificate from a CertificateType, Slot, and Option<Hash>
+    /// Create a new certificate from a [`CertificateType`], [`Slot`], and [`Option<Hash>`]
     pub fn new(certificate_type: CertificateType, slot: Slot, hash: Option<Hash>) -> Self {
         match (certificate_type, hash) {
             (CertificateType::Finalize, None) => Certificate::Finalize(slot),
