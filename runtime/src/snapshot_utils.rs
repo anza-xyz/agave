@@ -4,9 +4,9 @@ use {
     crate::{
         bank::{BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
         serde_snapshot::{
-            self, AccountsDbFields, ExtraFieldsToSerialize, SerdeObsoleteAccounts,
-            SerializableAccountStorageEntry, SerializedAccountsFileId, SnapshotAccountsDbFields,
-            SnapshotBankFields, SnapshotStreams,
+            self, AccountsDbFields, ExtraFieldsToSerialize, SerdeObsoleteAccountsMap,
+            SerializableAccountStorageEntry, SnapshotAccountsDbFields, SnapshotBankFields,
+            SnapshotStreams,
         },
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfo,
@@ -20,14 +20,15 @@ use {
         },
     },
     crossbeam_channel::{Receiver, Sender},
-    dashmap::DashMap,
     log::*,
     regex::Regex,
     semver::Version,
     solana_accounts_db::{
         account_storage::{AccountStorageMap, AccountStoragesOrderer},
         account_storage_reader::AccountStorageReader,
-        accounts_db::{AccountStorageEntry, AccountsDbConfig, AtomicAccountsFileId},
+        accounts_db::{
+            AccountStorageEntry, AccountsDbConfig, AccountsFileId, AtomicAccountsFileId,
+        },
         accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
         hardened_unpack::{self, UnpackError},
         utils::{move_and_async_delete_path, ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR},
@@ -366,7 +367,7 @@ pub enum SnapshotError {
         "snapshot accounts file id mismatch: deserialized obsolete accounts file id: {0}, \
          snapshot archive: {1}"
     )]
-    MismatchedAccountsFileId(SerializedAccountsFileId, SerializedAccountsFileId),
+    MismatchedAccountsFileId(AccountsFileId, AccountsFileId),
 
     #[error("snapshot slot deltas are invalid: {0}")]
     VerifySlotDeltas(#[from] VerifySlotDeltasError),
@@ -1303,7 +1304,8 @@ pub fn write_obsolete_accounts_to_snapshot(
     snapshot_storages: &[Arc<AccountStorageEntry>],
     snapshot_slot: Slot,
 ) -> Result<u64> {
-    let obsolete_accounts = collect_obsolete_accounts(snapshot_storages, snapshot_slot);
+    let obsolete_accounts =
+        SerdeObsoleteAccountsMap::new_from_storages(snapshot_storages, snapshot_slot);
     serialize_obsolete_accounts(
         bank_snapshot_dir,
         &obsolete_accounts,
@@ -1311,23 +1313,9 @@ pub fn write_obsolete_accounts_to_snapshot(
     )
 }
 
-fn collect_obsolete_accounts(
-    snapshot_storages: &[Arc<AccountStorageEntry>],
-    snapshot_slot: Slot,
-) -> HashMap<Slot, SerdeObsoleteAccounts> {
-    snapshot_storages
-        .iter()
-        .map(|storage| {
-            let obsolete_accounts =
-                SerdeObsoleteAccounts::new_from_storage_entry_at_slot(storage, snapshot_slot);
-            (storage.slot(), obsolete_accounts)
-        })
-        .collect()
-}
-
 fn serialize_obsolete_accounts(
     bank_snapshot_dir: impl AsRef<Path>,
-    obsolete_accounts_map: &HashMap<Slot, SerdeObsoleteAccounts>,
+    obsolete_accounts_map: &SerdeObsoleteAccountsMap,
     maximum_obsolete_accounts_file_size: u64,
 ) -> Result<u64> {
     let obsolete_accounts_path = bank_snapshot_dir
@@ -1336,7 +1324,7 @@ fn serialize_obsolete_accounts(
     let obsolete_accounts_file = fs::File::create(&obsolete_accounts_path)?;
     let mut file_stream = BufWriter::new(obsolete_accounts_file);
 
-    serde_snapshot::serialize_obsolete_accounts(&mut file_stream, obsolete_accounts_map)?;
+    serde_snapshot::serialize_into(&mut file_stream, obsolete_accounts_map)?;
 
     file_stream.flush()?;
 
@@ -1355,7 +1343,7 @@ fn serialize_obsolete_accounts(
 fn deserialize_obsolete_accounts(
     bank_snapshot_dir: impl AsRef<Path>,
     maximum_obsolete_accounts_file_size: u64,
-) -> Result<DashMap<Slot, SerdeObsoleteAccounts>> {
+) -> Result<SerdeObsoleteAccountsMap> {
     let obsolete_accounts_path = bank_snapshot_dir
         .as_ref()
         .join(SNAPSHOT_OBSOLETE_ACCOUNTS_FILENAME);
@@ -1375,7 +1363,7 @@ fn deserialize_obsolete_accounts(
 
     let mut data_file_stream = BufReader::new(obsolete_accounts_file);
 
-    let obsolete_accounts = serde_snapshot::deserialize_obsolete_accounts(&mut data_file_stream)?;
+    let obsolete_accounts = serde_snapshot::deserialize_from(&mut data_file_stream)?;
 
     Ok(obsolete_accounts)
 }
@@ -3673,10 +3661,8 @@ mod tests {
                 .unwrap();
 
         // Verify
-        assert_eq!(deserialized_accounts.len(), num_storages as usize);
         for storage in &snapshot_storages {
-            assert!(deserialized_accounts.contains_key(&storage.slot()));
-            assert!(deserialized_accounts.get(&storage.slot()).unwrap().bytes == 0);
+            assert!(deserialized_accounts.remove(&storage.slot()).unwrap().2 == 0);
         }
     }
 
@@ -3702,7 +3688,8 @@ mod tests {
         }
 
         // write obsolete accounts to snapshot
-        let obsolete_accounts = collect_obsolete_accounts(&snapshot_storages, snapshot_slot);
+        let obsolete_accounts =
+            SerdeObsoleteAccountsMap::new_from_storages(&snapshot_storages, snapshot_slot);
 
         // Limit the file size to something low for the test
         let result = serialize_obsolete_accounts(bank_snapshot_dir, &obsolete_accounts, 100);

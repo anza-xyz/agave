@@ -24,7 +24,7 @@ use {
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::AncestorsForSerialization,
         blockhash_queue::BlockhashQueue,
-        ObsoleteAccountItem, ObsoleteAccounts,
+        ObsoleteAccounts,
     },
     solana_clock::{Epoch, Slot, UnixTimestamp},
     solana_epoch_schedule::EpochSchedule,
@@ -62,9 +62,7 @@ mod types;
 mod utils;
 
 pub(crate) use {
-    obsolete_accounts::{
-        deserialize_obsolete_accounts, serialize_obsolete_accounts, SerdeObsoleteAccounts,
-    },
+    obsolete_accounts::SerdeObsoleteAccountsMap,
     status_cache::{deserialize_status_cache, serialize_status_cache},
     storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
 };
@@ -373,7 +371,7 @@ impl<T> SnapshotAccountsDbFields<T> {
     }
 }
 
-fn deserialize_from<R, T>(reader: R) -> bincode::Result<T>
+pub fn deserialize_from<R, T>(reader: R) -> bincode::Result<T>
 where
     R: Read,
     T: DeserializeOwned,
@@ -383,6 +381,16 @@ where
         .with_fixint_encoding()
         .allow_trailing_bytes()
         .deserialize_from::<R, T>(reader)
+}
+
+pub fn serialize_into<W, T>(writer: W, value: &T) -> bincode::Result<()>
+where
+    W: Write,
+    T: Serialize,
+{
+    bincode::options()
+        .with_fixint_encoding()
+        .serialize_into(writer, value)
 }
 
 fn deserialize_accounts_db_fields<R>(
@@ -859,33 +867,21 @@ pub(crate) fn reconstruct_single_storage(
     current_len: usize,
     id: AccountsFileId,
     storage_access: StorageAccess,
-    obsolete_accounts: Option<SerdeObsoleteAccounts>,
+    obsolete_accounts: Option<(ObsoleteAccounts, AccountsFileId, usize)>,
 ) -> Result<Arc<AccountStorageEntry>, SnapshotError> {
     // When restoring from an archive, obsolete accounts will always be `None`
     // When restoring from fastboot, obsolete accounts will be 'Some' if the storage contained
     // accounts marked obsolete at the time the snapshot was taken.
     let (current_len, obsolete_accounts) = if let Some(obsolete_accounts) = obsolete_accounts {
-        let updated_len = current_len + obsolete_accounts.bytes as usize;
-        let id = id as SerializedAccountsFileId;
-        if obsolete_accounts.id != id {
+        let updated_len = current_len + obsolete_accounts.2;
+        if obsolete_accounts.1 != id {
             return Err(SnapshotError::MismatchedAccountsFileId(
                 id,
-                obsolete_accounts.id,
+                obsolete_accounts.1,
             ));
         }
-        let accounts = ObsoleteAccounts {
-            accounts: obsolete_accounts
-                .accounts
-                .into_iter()
-                .map(|(offset, data_len, slot)| ObsoleteAccountItem {
-                    offset,
-                    data_len,
-                    slot,
-                })
-                .collect(),
-        };
 
-        (updated_len, accounts)
+        (updated_len, obsolete_accounts.0)
     } else {
         (current_len, ObsoleteAccounts::default())
     };
