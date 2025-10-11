@@ -11,8 +11,21 @@ set -e
 cd "$(dirname "$0")"/..
 source ci/_
 
-_ ci/buildkite-pipeline.sh pipeline.yml
-echo +++ pipeline
-cat pipeline.yml
+if [[ $BUILDKITE_BRANCH == gh-readonly-queue* ]]; then
 
-_ buildkite-agent pipeline upload pipeline.yml
+  cat <<EOF | tee /dev/tty | buildkite-agent pipeline upload
+steps:
+  - name: "checks"
+    command: "ci/docker-run-default-image.sh ci/test-checks.sh"
+    timeout_in_minutes: 30
+    agents:
+      queue: "check"
+EOF
+
+else
+  _ ci/buildkite-pipeline.sh pipeline.yml
+  echo +++ pipeline
+  cat pipeline.yml
+
+  _ buildkite-agent pipeline upload pipeline.yml
+fi
