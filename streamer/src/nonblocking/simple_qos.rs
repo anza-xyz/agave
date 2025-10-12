@@ -103,7 +103,7 @@ impl SimpleQos {
 }
 
 #[derive(Clone)]
-struct SimpleQosConnectionContext {
+pub struct SimpleQosConnectionContext {
     peer_type: ConnectionPeerType,
     remote_pubkey: Option<solana_pubkey::Pubkey>,
     last_update: Arc<AtomicU64>,

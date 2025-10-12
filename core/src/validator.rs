@@ -134,7 +134,11 @@ use {
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_shred_version::compute_shred_version,
     solana_signer::Signer,
-    solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace, streamer::StakedNodes},
+    solana_streamer::{
+        quic::{QuicServerParams, SimpleQosQuicServerParams},
+        socket::SocketAddrSpace,
+        streamer::StakedNodes,
+    },
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{
         DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
@@ -566,7 +570,7 @@ pub struct ValidatorTpuConfig {
     /// QUIC server config for TPU forward
     pub tpu_fwd_quic_server_config: QuicServerParams,
     /// QUIC server config for Vote
-    pub vote_quic_server_config: QuicServerParams,
+    pub vote_quic_server_config: SimpleQosQuicServerParams,
 }
 
 impl ValidatorTpuConfig {
@@ -587,7 +591,15 @@ impl ValidatorTpuConfig {
         };
 
         // vote and tpu_fwd share the same characteristics -- disallow non-staked connections:
-        let vote_quic_server_config = tpu_fwd_quic_server_config.clone();
+        let vote_quic_server_config = SimpleQosQuicServerParams {
+            quic_server_params: QuicServerParams {
+                max_connections_per_ipaddr_per_min: 32,
+                max_unstaked_connections: 0,
+                coalesce_channel_size: 100_000, // smaller channel size for faster test
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
         ValidatorTpuConfig {
             use_quic: DEFAULT_TPU_USE_QUIC,

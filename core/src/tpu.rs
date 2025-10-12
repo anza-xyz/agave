@@ -49,7 +49,10 @@ use {
         vote_sender_types::{ReplayVoteReceiver, ReplayVoteSender},
     },
     solana_streamer::{
-        quic::{spawn_server_with_cancel, QuicServerParams, SpawnServerResult},
+        quic::{
+            spawn_server_with_cancel, spawn_simple_qos_server_with_cancel, QuicServerParams,
+            SimpleQosQuicServerParams, SpawnServerResult,
+        },
         streamer::StakedNodes,
     },
     solana_turbine::{
@@ -148,7 +151,7 @@ impl Tpu {
         tpu_enable_udp: bool,
         tpu_quic_server_config: QuicServerParams,
         tpu_fwd_quic_server_config: QuicServerParams,
-        vote_quic_server_config: QuicServerParams,
+        vote_quic_server_config: SimpleQosQuicServerParams,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         block_production_method: BlockProductionMethod,
         block_production_num_workers: NonZeroUsize,
@@ -209,7 +212,7 @@ impl Tpu {
             endpoints: _,
             thread: tpu_vote_quic_t,
             key_updater: vote_streamer_key_updater,
-        } = spawn_server_with_cancel(
+        } = spawn_simple_qos_server_with_cancel(
             "solQuicTVo",
             "quic_streamer_tpu_vote",
             tpu_vote_quic_sockets,

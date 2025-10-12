@@ -626,7 +626,6 @@ pub struct QuicServerParams {
     pub max_connections_per_peer: usize,
     pub max_staked_connections: usize,
     pub max_unstaked_connections: usize,
-    // pub max_streams_per_ms: u64,
     pub max_connections_per_ipaddr_per_min: u64,
     pub wait_for_chunk_timeout: Duration,
     pub accumulator_channel_size: usize,
@@ -645,6 +644,21 @@ impl Default for QuicServerParams {
             accumulator_channel_size: DEFAULT_ACCUMULATOR_CHANNEL_SIZE,
             num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
             max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct SimpleQosQuicServerParams {
+    pub quic_server_params: QuicServerParams,
+    pub max_streams_per_second: u64,
+}
+
+impl Default for SimpleQosQuicServerParams {
+    fn default() -> Self {
+        SimpleQosQuicServerParams {
+            quic_server_params: QuicServerParams::default(),
+            max_streams_per_second: DEFAULT_MAX_STREAMS_PER_MS * 1000,
         }
     }
 }
@@ -717,6 +731,51 @@ pub fn spawn_server_with_cancel(
     let result = {
         let _guard = runtime.enter();
         crate::nonblocking::quic::spawn_server_with_cancel(
+            metrics_name,
+            sockets,
+            keypair,
+            packet_sender,
+            staked_nodes,
+            quic_server_params,
+            cancel,
+        )
+    }?;
+    let handle = thread::Builder::new()
+        .name(thread_name.into())
+        .spawn(move || {
+            if let Err(e) = runtime.block_on(result.thread) {
+                warn!("error from runtime.block_on: {e:?}");
+            }
+        })
+        .unwrap();
+    let updater = EndpointKeyUpdater {
+        endpoints: result.endpoints.clone(),
+    };
+    Ok(SpawnServerResult {
+        endpoints: result.endpoints,
+        thread: handle,
+        key_updater: Arc::new(updater),
+    })
+}
+
+/// Spawns a tokio runtime and a streamer instance inside it.
+pub fn spawn_simple_qos_server_with_cancel(
+    thread_name: &'static str,
+    metrics_name: &'static str,
+    sockets: impl IntoIterator<Item = UdpSocket>,
+    keypair: &Keypair,
+    packet_sender: Sender<PacketBatch>,
+    staked_nodes: Arc<RwLock<StakedNodes>>,
+    quic_server_params: SimpleQosQuicServerParams,
+    cancel: CancellationToken,
+) -> Result<SpawnServerResult, QuicServerError> {
+    let runtime = rt(
+        format!("{thread_name}Rt"),
+        quic_server_params.quic_server_params.num_threads,
+    );
+    let result = {
+        let _guard = runtime.enter();
+        crate::nonblocking::quic::spawn_simple_qos_server_with_cancel(
             metrics_name,
             sockets,
             keypair,
