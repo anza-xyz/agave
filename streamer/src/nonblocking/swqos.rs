@@ -55,6 +55,7 @@ pub struct SwQosConnectionContext {
     remote_pubkey: Option<solana_pubkey::Pubkey>,
     total_stake: u64,
     in_staked_table: bool,
+    last_update: Arc<AtomicU64>,
 }
 
 impl ConnectionContext for SwQosConnectionContext {
@@ -173,12 +174,12 @@ fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stake: u
 }
 
 impl SwQos {
-    fn handle_and_cache_new_connection(
+    fn cache_new_connection(
         &self,
         client_connection_tracker: ClientConnectionTracker,
         connection: &Connection,
         mut connection_table_l: MutexGuard<ConnectionTable>,
-        params: &SwQosConnectionContext,
+        conn_context: &SwQosConnectionContext,
     ) -> Result<
         (
             Arc<AtomicU64>,
@@ -188,18 +189,21 @@ impl SwQos {
         ConnectionHandlerError,
     > {
         if let Ok(max_uni_streams) = VarInt::from_u64(compute_max_allowed_uni_streams(
-            params.peer_type(),
-            params.total_stake,
+            conn_context.peer_type(),
+            conn_context.total_stake,
         ) as u64)
         {
             let remote_addr = connection.remote_address();
-            let receive_window =
-                compute_recieve_window(params.max_stake, params.min_stake, params.peer_type());
+            let receive_window = compute_recieve_window(
+                conn_context.max_stake,
+                conn_context.min_stake,
+                conn_context.peer_type(),
+            );
 
             debug!(
                 "Peer type {:?}, total stake {}, max streams {} receive_window {:?} from peer {}",
-                params.peer_type(),
-                params.total_stake,
+                conn_context.peer_type(),
+                conn_context.total_stake,
                 max_uni_streams.into_inner(),
                 receive_window,
                 remote_addr,
@@ -207,12 +211,12 @@ impl SwQos {
 
             if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
                 .try_add_connection(
-                    ConnectionTableKey::new(remote_addr.ip(), params.remote_pubkey),
+                    ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey),
                     remote_addr.port(),
                     client_connection_tracker,
                     Some(connection.clone()),
-                    params.peer_type(),
-                    timing::timestamp(),
+                    conn_context.peer_type(),
+                    conn_context.last_update.clone(),
                     self.max_connections_per_peer,
                 )
             {
@@ -267,7 +271,7 @@ impl SwQos {
         connection: &Connection,
         connection_table: Arc<Mutex<ConnectionTable>>,
         max_connections: usize,
-        params: &SwQosConnectionContext,
+        conn_context: &SwQosConnectionContext,
     ) -> Result<
         (
             Arc<AtomicU64>,
@@ -280,11 +284,11 @@ impl SwQos {
         if max_connections > 0 {
             let mut connection_table = connection_table.lock().await;
             self.prune_unstaked_connection_table(&mut connection_table, max_connections, stats);
-            self.handle_and_cache_new_connection(
+            self.cache_new_connection(
                 client_connection_tracker,
                 connection,
                 connection_table,
-                params,
+                conn_context,
             )
         } else {
             connection.close(
@@ -306,6 +310,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                 total_stake: 0,
                 remote_pubkey: None,
                 in_staked_table: false,
+                last_update: Arc::new(AtomicU64::new(timing::timestamp())),
             },
             |(pubkey, stake, total_stake, max_stake, min_stake)| {
                 // The heuristic is that the stake should be large engouh to have 1 stream pass throuh within one throttle
@@ -331,6 +336,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                     total_stake,
                     remote_pubkey: Some(pubkey),
                     in_staked_table: false,
+                    last_update: Arc::new(AtomicU64::new(timing::timestamp())),
                 }
             },
         )
@@ -342,13 +348,8 @@ impl QosController<SwQosConnectionContext> for SwQos {
         client_connection_tracker: ClientConnectionTracker,
         connection: &quinn::Connection,
         conn_context: &mut SwQosConnectionContext,
-    ) -> impl std::future::Future<
-        Output = Option<(
-            Arc<AtomicU64>,
-            CancellationToken,
-            Arc<ConnectionStreamCounter>,
-        )>,
-    > + Send {
+    ) -> impl std::future::Future<Output = Option<(CancellationToken, Arc<ConnectionStreamCounter>)>>
+           + Send {
         async move {
             const PRUNE_RANDOM_SAMPLE_SIZE: usize = 2;
 
@@ -367,7 +368,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
 
                     if connection_table_l.total_size < self.max_staked_connections {
                         if let Ok((last_update, cancel_connection, stream_counter)) = self
-                            .handle_and_cache_new_connection(
+                            .cache_new_connection(
                                 client_connection_tracker,
                                 connection,
                                 connection_table_l,
@@ -378,7 +379,8 @@ impl QosController<SwQosConnectionContext> for SwQos {
                                 .connection_added_from_staked_peer
                                 .fetch_add(1, Ordering::Relaxed);
                             conn_context.in_staked_table = true;
-                            return Some((last_update, cancel_connection, stream_counter));
+                            conn_context.last_update = last_update;
+                            return Some((cancel_connection, stream_counter));
                         }
                     } else {
                         // If we couldn't prune a connection in the staked connection table, let's
@@ -398,7 +400,8 @@ impl QosController<SwQosConnectionContext> for SwQos {
                                 .connection_added_from_staked_peer
                                 .fetch_add(1, Ordering::Relaxed);
                             conn_context.in_staked_table = false;
-                            return Some((last_update, cancel_connection, stream_counter));
+                            conn_context.last_update = last_update;
+                            return Some((cancel_connection, stream_counter));
                         } else {
                             self.stats
                                 .connection_add_failed_on_pruning
@@ -424,7 +427,8 @@ impl QosController<SwQosConnectionContext> for SwQos {
                             .connection_added_from_unstaked_peer
                             .fetch_add(1, Ordering::Relaxed);
                         conn_context.in_staked_table = false;
-                        return Some((last_update, cancel_connection, stream_counter));
+                        conn_context.last_update = last_update;
+                        return Some((cancel_connection, stream_counter));
                     } else {
                         self.stats
                             .connection_add_failed_unstaked_node
@@ -454,9 +458,12 @@ impl QosController<SwQosConnectionContext> for SwQos {
         self.staked_nodes.read().map_or(0, |sn| sn.total_stake())
     }
 
-    fn max_streams_per_throttling_interval(&self, params: &SwQosConnectionContext) -> u64 {
+    fn max_streams_per_throttling_interval(&self, conn_context: &SwQosConnectionContext) -> u64 {
         self.staked_stream_load_ema
-            .available_load_capacity_in_throttling_duration(params.peer_type, params.total_stake)
+            .available_load_capacity_in_throttling_duration(
+                conn_context.peer_type,
+                conn_context.total_stake,
+            )
     }
 
     #[allow(clippy::manual_async_fn)]
@@ -487,6 +494,12 @@ impl QosController<SwQosConnectionContext> for SwQos {
 
     fn wait_for_chunk_timeout(&self) -> std::time::Duration {
         self.wait_for_chunk_timeout
+    }
+
+    fn on_stream_finished(&self, context: &SwQosConnectionContext) {
+        context
+            .last_update
+            .store(timing::timestamp(), Ordering::Relaxed);
     }
 }
 

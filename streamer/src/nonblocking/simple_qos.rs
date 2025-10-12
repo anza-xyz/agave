@@ -56,16 +56,16 @@ impl SimpleQos {
         }
     }
 
-    fn handle_and_cache_new_connection(
+    fn cache_new_connection(
         &self,
         client_connection_tracker: ClientConnectionTracker,
         connection: &Connection,
         mut connection_table_l: MutexGuard<ConnectionTable>,
-        params: &SimpleQosConnectionContext,
+        conn_context: &SimpleQosConnectionContext,
     ) -> Result<
         (
             Arc<AtomicU64>,
-            tokio_util::sync::CancellationToken,
+            CancellationToken,
             Arc<ConnectionStreamCounter>,
         ),
         ConnectionHandlerError,
@@ -74,18 +74,18 @@ impl SimpleQos {
 
         debug!(
             "Peer type {:?}, from peer {}",
-            params.peer_type(),
+            conn_context.peer_type(),
             remote_addr,
         );
 
         if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
             .try_add_connection(
-                ConnectionTableKey::new(remote_addr.ip(), params.remote_pubkey),
+                ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey),
                 remote_addr.port(),
                 client_connection_tracker,
                 Some(connection.clone()),
-                params.peer_type(),
-                timing::timestamp(),
+                conn_context.peer_type(),
+                conn_context.last_update.clone(),
                 self.max_connections_per_peer,
             )
         {
@@ -106,6 +106,7 @@ impl SimpleQos {
 struct SimpleQosConnectionContext {
     peer_type: ConnectionPeerType,
     remote_pubkey: Option<solana_pubkey::Pubkey>,
+    last_update: Arc<AtomicU64>,
 }
 
 impl ConnectionContext for SimpleQosConnectionContext {
@@ -133,6 +134,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
         SimpleQosConnectionContext {
             peer_type,
             remote_pubkey,
+            last_update: Arc::new(AtomicU64::new(timing::timestamp())),
         }
     }
 
@@ -142,13 +144,8 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
         client_connection_tracker: ClientConnectionTracker,
         connection: &quinn::Connection,
         conn_context: &mut SimpleQosConnectionContext,
-    ) -> impl std::future::Future<
-        Output = Option<(
-            Arc<AtomicU64>,
-            CancellationToken,
-            Arc<ConnectionStreamCounter>,
-        )>,
-    > + Send {
+    ) -> impl std::future::Future<Output = Option<(CancellationToken, Arc<ConnectionStreamCounter>)>>
+           + Send {
         async move {
             const PRUNE_RANDOM_SAMPLE_SIZE: usize = 2;
             match conn_context.peer_type() {
@@ -166,7 +163,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
 
                     if connection_table_l.total_size < self.max_staked_connections {
                         if let Ok((last_update, cancel_connection, stream_counter)) = self
-                            .handle_and_cache_new_connection(
+                            .cache_new_connection(
                                 client_connection_tracker,
                                 connection,
                                 connection_table_l,
@@ -176,7 +173,8 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
                             self.stats
                                 .connection_added_from_staked_peer
                                 .fetch_add(1, Ordering::Relaxed);
-                            return Some((last_update, cancel_connection, stream_counter));
+                            conn_context.last_update = last_update;
+                            return Some((cancel_connection, stream_counter));
                         }
                     }
                     None
@@ -224,5 +222,11 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
 
     fn total_stake(&self) -> u64 {
         self.staked_nodes.read().map_or(0, |sn| sn.total_stake())
+    }
+
+    fn on_stream_finished(&self, context: &SimpleQosConnectionContext) {
+        context
+            .last_update
+            .store(timing::timestamp(), Ordering::Relaxed);
     }
 }

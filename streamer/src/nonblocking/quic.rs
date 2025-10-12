@@ -22,7 +22,6 @@ use {
     solana_perf::packet::{BytesPacket, BytesPacketBatch, PacketBatch, PACKETS_PER_BATCH},
     solana_pubkey::Pubkey,
     solana_signature::Signature,
-    solana_time_utils as timing,
     solana_tls_utils::get_pubkey_from_tls_certificate,
     solana_transaction_metrics_tracker::signature_if_should_track_packet,
     std::{
@@ -534,7 +533,7 @@ async fn setup_connection<Q, C>(
                 }
 
                 let mut conn_context = qos.derive_connection_context(&new_connection);
-                if let Some((last_update, cancel_connection, stream_counter)) = qos
+                if let Some((cancel_connection, stream_counter)) = qos
                     .try_cache_connection(
                         client_connection_tracker,
                         &new_connection,
@@ -546,7 +545,6 @@ async fn setup_connection<Q, C>(
                         packet_sender.clone(),
                         new_connection,
                         stats,
-                        last_update,
                         conn_context.clone(),
                         qos,
                         stream_counter,
@@ -759,7 +757,6 @@ async fn handle_connection<Q, C>(
     packet_sender: Sender<PacketAccumulator>,
     connection: Connection,
     stats: Arc<StreamerStats>,
-    last_update: Arc<AtomicU64>,
     context: C,
     qos: Arc<Q>,
     stream_counter: Arc<ConnectionStreamCounter>,
@@ -888,7 +885,7 @@ async fn handle_connection<Q, C>(
             ) {
                 // The stream is finished, break out of the loop and close the stream.
                 Ok(StreamState::Finished) => {
-                    last_update.store(timing::timestamp(), Ordering::Relaxed);
+                    qos.on_stream_finished(&context);
                     break;
                 }
                 // The stream is still active, continue reading.
@@ -1184,7 +1181,7 @@ impl ConnectionTable {
         client_connection_tracker: ClientConnectionTracker,
         connection: Option<Connection>,
         peer_type: ConnectionPeerType,
-        last_update: u64,
+        last_update: Arc<AtomicU64>,
         max_connections_per_peer: usize,
     ) -> Option<(
         Arc<AtomicU64>,
@@ -1199,7 +1196,6 @@ impl ConnectionTable {
             .unwrap_or(false);
         if has_connection_capacity {
             let cancel = self.cancel.child_token();
-            let last_update = Arc::new(AtomicU64::new(last_update));
             let stream_counter = connection_entry
                 .first()
                 .map(|entry| entry.stream_counter.clone())
@@ -1811,7 +1807,7 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Unstaked,
-                    i as u64,
+                    Arc::new(AtomicU64::new(i as u64)),
                     max_connections_per_peer,
                 )
                 .unwrap();
@@ -1824,7 +1820,7 @@ pub mod test {
                 ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                 None,
                 ConnectionPeerType::Unstaked,
-                5,
+                Arc::new(AtomicU64::new(5)),
                 max_connections_per_peer,
             )
             .unwrap();
@@ -1867,7 +1863,7 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Unstaked,
-                    i as u64,
+                    Arc::new(AtomicU64::new(i as u64)),
                     max_connections_per_peer,
                 )
                 .unwrap();
@@ -1903,7 +1899,7 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Unstaked,
-                    i as u64,
+                    Arc::new(AtomicU64::new(i as u64)),
                     max_connections_per_peer,
                 )
                 .unwrap();
@@ -1918,7 +1914,7 @@ pub mod test {
                 ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                 None,
                 ConnectionPeerType::Unstaked,
-                10,
+                Arc::new(AtomicU64::new(10)),
                 max_connections_per_peer,
             )
             .is_none());
@@ -1933,7 +1929,7 @@ pub mod test {
                 ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                 None,
                 ConnectionPeerType::Unstaked,
-                10,
+                Arc::new(AtomicU64::new(10)),
                 max_connections_per_peer,
             )
             .is_some());
@@ -1973,7 +1969,7 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Staked((i + 1) as u64),
-                    i as u64,
+                    Arc::new(AtomicU64::new(i as u64)),
                     max_connections_per_peer,
                 )
                 .unwrap();
@@ -2017,7 +2013,7 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Unstaked,
-                    (i * 2) as u64,
+                    Arc::new(AtomicU64::new((i * 2) as u64)),
                     max_connections_per_peer,
                 )
                 .unwrap();
@@ -2029,7 +2025,7 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Unstaked,
-                    (i * 2 + 1) as u64,
+                    Arc::new(AtomicU64::new((i * 2 + 1) as u64)),
                     max_connections_per_peer,
                 )
                 .unwrap();
@@ -2044,7 +2040,7 @@ pub mod test {
                 ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                 None,
                 ConnectionPeerType::Unstaked,
-                (num_ips * 2) as u64,
+                Arc::new(AtomicU64::new((num_ips * 2) as u64)),
                 max_connections_per_peer,
             )
             .unwrap();

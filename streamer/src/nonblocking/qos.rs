@@ -4,10 +4,7 @@ use {
         stream_throttle::ConnectionStreamCounter,
     },
     quinn::Connection,
-    std::{
-        sync::{atomic::AtomicU64, Arc},
-        time::Duration,
-    },
+    std::{sync::Arc, time::Duration},
     tokio_util::sync::CancellationToken,
 };
 
@@ -34,13 +31,8 @@ pub(crate) trait QosController<C: ConnectionContext> {
         client_connection_tracker: ClientConnectionTracker,
         connection: &quinn::Connection,
         context: &mut C,
-    ) -> impl std::future::Future<
-        Output = Option<(
-            Arc<AtomicU64>,
-            CancellationToken,
-            Arc<ConnectionStreamCounter>,
-        )>,
-    > + Send;
+    ) -> impl std::future::Future<Output = Option<(CancellationToken, Arc<ConnectionStreamCounter>)>>
+           + Send;
 
     /// The maximum number of streams that can be opened per throttling interval
     /// on this connection.
@@ -50,6 +42,9 @@ pub(crate) trait QosController<C: ConnectionContext> {
 
     /// Called when a stream is accepted on a connection
     fn on_stream_accepted(&self, context: &C);
+
+    /// Called when a stream is finished successfully
+    fn on_stream_finished(&self, context: &C);
 
     /// Called when a stream has an error
     fn on_stream_error(&self, context: &C);
