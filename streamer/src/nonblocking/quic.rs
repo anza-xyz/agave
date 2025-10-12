@@ -682,7 +682,7 @@ async fn prune_unstaked_connections_and_add_new_connection(
 
 /// Calculate the ratio for per connection receive window from a staked peer
 fn compute_receive_window_ratio_for_staked_node(max_stake: u64, min_stake: u64, stake: u64) -> u64 {
-    // Testing shows the maximum througput from a connection is achieved at receive_window =
+    // Testing shows the maximum throughput from a connection is achieved at receive_window =
     // PACKET_DATA_SIZE * 10. Beyond that, there is not much gain. We linearly map the
     // stake to the ratio range from QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO to
     // QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO. Where the linear algebra of finding the ratio 'r'
@@ -785,7 +785,7 @@ async fn setup_connection(
                         quic_server_params.max_unstaked_connections,
                     ),
                     |(pubkey, stake, total_stake, max_stake, min_stake)| {
-                        // The heuristic is that the stake should be large engouh to have 1 stream pass throuh within one throttle
+                        // The heuristic is that the stake should be large enough to have 1 stream pass through within one throttle
                         // interval during which we allow max (MAX_STREAMS_PER_MS * STREAM_THROTTLING_INTERVAL_MS) streams.
                         let min_stake_ratio = 1_f64
                             / (quic_server_params.max_streams_per_ms
