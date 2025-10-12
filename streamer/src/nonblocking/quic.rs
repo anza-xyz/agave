@@ -3,14 +3,10 @@ use {
         nonblocking::{
             connection_rate_limiter::{ConnectionRateLimiter, TotalConnectionRateLimiter},
             qos::{ConnectionContext, QosController},
-            simple_qos::SimpleQos,
             stream_throttle::{ConnectionStreamCounter, STREAM_THROTTLING_INTERVAL},
             swqos::SwQos,
         },
-        quic::{
-            configure_server, QuicServerError, QuicServerParams, SimpleQosQuicServerParams,
-            StreamerStats,
-        },
+        quic::{configure_server, QuicServerError, QuicServerParams, StreamerStats},
         streamer::StakedNodes,
     },
     bytes::{BufMut, Bytes, BytesMut},
@@ -217,6 +213,7 @@ where
 
     spawn_server_with_cancel_and_qos(
         name,
+        stats,
         sockets,
         keypair,
         packet_sender,
@@ -227,48 +224,9 @@ where
 }
 
 /// Spawn a streamer instance in the current tokio runtime.
-pub fn spawn_simple_qos_server_with_cancel(
-    name: &'static str,
-    sockets: impl IntoIterator<Item = UdpSocket>,
-    keypair: &Keypair,
-    packet_sender: Sender<PacketBatch>,
-    staked_nodes: Arc<RwLock<StakedNodes>>,
-    quic_server_params: SimpleQosQuicServerParams,
-    cancel: CancellationToken,
-) -> Result<SpawnNonBlockingServerResult, QuicServerError>
-where
-{
-    let stats = Arc::<StreamerStats>::default();
-
-    let SimpleQosQuicServerParams {
-        quic_server_params,
-        max_streams_per_second,
-    } = quic_server_params;
-
-    let simple_qos = Arc::new(SimpleQos::new(
-        max_streams_per_second,
-        quic_server_params.max_connections_per_peer,
-        quic_server_params.max_staked_connections,
-        quic_server_params.wait_for_chunk_timeout,
-        stats.clone(),
-        staked_nodes,
-        cancel.clone(),
-    ));
-
-    spawn_server_with_cancel_and_qos(
-        name,
-        sockets,
-        keypair,
-        packet_sender,
-        quic_server_params,
-        cancel,
-        simple_qos,
-    )
-}
-
-/// Spawn a streamer instance in the current tokio runtime.
 pub(crate) fn spawn_server_with_cancel_and_qos<Q, C>(
     name: &'static str,
+    stats: Arc<StreamerStats>,
     sockets: impl IntoIterator<Item = UdpSocket>,
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
@@ -280,8 +238,6 @@ where
     Q: QosController<C> + Send + Sync + 'static,
     C: ConnectionContext + Send + Sync + 'static,
 {
-    let stats = Arc::<StreamerStats>::default();
-
     let sockets: Vec<_> = sockets.into_iter().collect();
     info!("Start {name} quic server on {sockets:?}");
     let (config, _) = configure_server(keypair)?;
