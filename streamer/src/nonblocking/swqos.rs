@@ -337,7 +337,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
     }
 
     #[allow(clippy::manual_async_fn)]
-    fn try_add_connection(
+    fn try_cache_connection(
         &self,
         client_connection_tracker: ClientConnectionTracker,
         connection: &quinn::Connection,

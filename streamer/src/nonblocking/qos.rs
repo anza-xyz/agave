@@ -26,10 +26,10 @@ pub(crate) trait QosController<C: ConnectionContext> {
     /// Derive the ConnectionContext for a connection
     fn derive_connection_context(&self, connection: &Connection) -> C;
 
-    /// Try to add a new connection. If successful, return a CancellationToken and
+    /// Try to add a new connection to cache. If successful, return a CancellationToken and
     /// a ConnectionStreamCounter to track the streams created on this connection.
     /// Otherwise return None.
-    fn try_add_connection(
+    fn try_cache_connection(
         &self,
         client_connection_tracker: ClientConnectionTracker,
         connection: &quinn::Connection,

@@ -535,7 +535,7 @@ async fn setup_connection<Q, C>(
 
                 let mut conn_context = qos.derive_connection_context(&new_connection);
                 if let Some((last_update, cancel_connection, stream_counter)) = qos
-                    .try_add_connection(
+                    .try_cache_connection(
                         client_connection_tracker,
                         &new_connection,
                         &mut conn_context,
