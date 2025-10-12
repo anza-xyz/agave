@@ -896,6 +896,38 @@ mod test {
         (t, receiver, server_address, cancel)
     }
 
+    fn setup_simple_qos_quic_server_with_params(
+        server_params: SimpleQosQuicServerParams,
+        staked_nodes: Arc<RwLock<StakedNodes>>,
+    ) -> (
+        std::thread::JoinHandle<()>,
+        crossbeam_channel::Receiver<PacketBatch>,
+        SocketAddr,
+        CancellationToken,
+    ) {
+        let s = bind_to_localhost_unique().expect("should bind");
+        let (sender, receiver) = unbounded();
+        let keypair = Keypair::new();
+        let server_address = s.local_addr().unwrap();
+        let cancel = CancellationToken::new();
+        let SpawnServerResult {
+            endpoints: _,
+            thread: t,
+            key_updater: _,
+        } = spawn_simple_qos_server_with_cancel(
+            "solQuicTest",
+            "quic_streamer_test",
+            [s],
+            &keypair,
+            sender,
+            staked_nodes,
+            server_params,
+            cancel.clone(),
+        )
+        .unwrap();
+        (t, receiver, server_address, cancel)
+    }
+
     fn setup_quic_server() -> (
         std::thread::JoinHandle<()>,
         crossbeam_channel::Receiver<PacketBatch>,
@@ -997,15 +1029,17 @@ mod test {
             HashMap::<Pubkey, u64>::default(), // overrides
         );
 
-        let server_params = QuicServerParams {
-            max_unstaked_connections: 0,
-            qos_mode: QosMode::SimpleStreamsPerSecond {
-                max_streams_per_second: 50,
+        let server_params = SimpleQosQuicServerParams {
+            quic_server_params: QuicServerParams {
+                max_unstaked_connections: 0,
+                ..QuicServerParams::default_for_tests()
             },
-            ..QuicServerParams::default_for_tests()
+            max_streams_per_second: 50,
         };
-        let (t, receiver, server_address, cancel) =
-            setup_quic_server_with_params(server_params, Arc::new(RwLock::new(staked_nodes)));
+        let (t, receiver, server_address, cancel) = setup_simple_qos_quic_server_with_params(
+            server_params,
+            Arc::new(RwLock::new(staked_nodes)),
+        );
 
         let runtime = rt_for_test();
         let num_expected_packets = 50;
