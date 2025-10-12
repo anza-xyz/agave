@@ -46,7 +46,9 @@ pub mod waitable_condvar;
 
 pub use {
     buffered_reader::large_file_buf_reader,
-    file_io::{file_creator, validate_memlock_limit_for_disk_io, FileCreator},
+    file_io::{
+        file_creator, set_path_permissions, validate_memlock_limit_for_disk_io, FileCreator,
+    },
     obsolete_accounts::ObsoleteAccounts,
 };
 
