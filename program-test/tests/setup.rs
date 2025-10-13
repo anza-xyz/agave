@@ -45,6 +45,9 @@ pub async fn setup_stake(
 }
 
 pub async fn setup_vote(context: &mut ProgramTestContext) -> Pubkey {
+    // TODO: Update this test to use `VoteStateV4` after vote program
+    // migration is complete. Currently using `VoteStateV3` because this
+    // test invokes the vote program which hasn't been migrated to v4 yet.
     let mut instructions = vec![];
     let validator_keypair = Keypair::new();
     instructions.push(system_instruction::create_account(

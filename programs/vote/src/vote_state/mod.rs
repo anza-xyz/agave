@@ -3,6 +3,8 @@
 
 mod handler;
 
+#[cfg(feature = "dev-context-only-utils")]
+pub use handler::increment_credits;
 pub use {
     handler::VoteStateTargetVersion,
     solana_vote_interface::state::{vote_state_versions::*, *},

@@ -119,7 +119,7 @@ use {
         vote_instruction,
         vote_state::{
             self, create_account_with_authorized, BlockTimestamp, VoteAuthorize, VoteInit,
-            VoteStateV3, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            VoteStateV3, VoteStateV4, VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
     },
     spl_generic_token::token,
@@ -630,7 +630,7 @@ impl Bank {
             // in practice.
             let account = self.get_account_with_fixed_root(vote_pubkey)?;
             if account.owner() == &solana_vote_program
-                && VoteStateV3::deserialize(account.data()).is_ok()
+                && VoteStateV4::deserialize(account.data(), vote_pubkey).is_ok()
             {
                 vote_accounts_cache_miss_count.fetch_add(1, Relaxed);
             }
@@ -3187,6 +3187,9 @@ fn test_bank_vote_accounts() {
     assert_eq!(vote_accounts.len(), 1); // bootstrap validator has
                                         // to have a vote account
 
+    // TODO: Update this test to use `VoteStateV4` after vote program
+    // migration is complete. Currently using `VoteStateV3` because this
+    // test invokes the vote program which hasn't been migrated to v4 yet.
     let vote_keypair = Keypair::new();
     let instructions = vote_instruction::create_account_with_config(
         &mint_keypair.pubkey(),
@@ -3255,6 +3258,9 @@ fn test_bank_cloned_stake_delegations() {
     assert_eq!(stake_delegations.len(), 1); // bootstrap validator has
                                             // to have a stake delegation
 
+    // TODO: Update this test to use `VoteStateV4` after vote program
+    // migration is complete. Currently using `VoteStateV3` because this
+    // test invokes the vote program which hasn't been migrated to v4 yet.
     let (vote_balance, stake_balance) = {
         let rent = &bank.rent_collector().rent;
         let vote_rent_exempt_reserve = rent.minimum_balance(VoteStateV3::size_of());
@@ -3576,6 +3582,9 @@ fn test_add_builtin() {
     assert!(bank.get_account(&mock_vote_program_id()).is_some());
 
     let mock_account = Keypair::new();
+    // TODO: Update this test to use `VoteStateV4` after vote program
+    // migration is complete. Currently using `VoteStateV3` because this
+    // test invokes the vote program which hasn't been migrated to v4 yet.
     let mock_validator_identity = Keypair::new();
     let mut instructions = vote_instruction::create_account_with_config(
         &mint_keypair.pubkey(),
@@ -3622,6 +3631,9 @@ fn test_add_duplicate_static_program() {
         Err(InstructionError::Custom(42))
     });
 
+    // TODO: Update this test to use `VoteStateV4` after vote program
+    // migration is complete. Currently using `VoteStateV3` because this
+    // test invokes the vote program which hasn't been migrated to v4 yet.
     let mock_account = Keypair::new();
     let mock_validator_identity = Keypair::new();
     let instructions = vote_instruction::create_account_with_config(
@@ -8330,6 +8342,9 @@ fn test_vote_epoch_panic() {
 
     let vote_keypair = keypair_from_seed(&[1u8; 32]).unwrap();
 
+    // TODO: This test invokes the actual vote program via vote_instruction::create_account_with_config,
+    // which still creates VoteStateV3 accounts by default. Keep using VoteStateV3 until the vote
+    // program is updated to create V4 accounts.
     let mut setup_ixs = Vec::new();
     setup_ixs.extend(vote_instruction::create_account_with_config(
         &mint_keypair.pubkey(),

@@ -125,6 +125,9 @@ fn do_create_account(
         let vote_state_v4 = VoteStateV4::deserialize(vote_account.data(), voter_pubkey).unwrap();
         vote_state_v4.epoch_credits.last().map_or(0, |(_, c, _)| *c)
     } else {
+        // TODO: Update this function to use `VoteStateV4` depending on the
+        // feature gate after vote program migration is complete. Also will
+        // need to handle the `is_alpenglow` case.
         let vote_state = VoteStateV3::deserialize(vote_account.data()).expect("vote_state");
         vote_state.credits()
     };

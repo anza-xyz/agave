@@ -209,14 +209,15 @@ pub(crate) fn calculate_stake_points_and_credits(
 #[cfg(test)]
 mod tests {
     use {
-        super::*, solana_native_token::LAMPORTS_PER_SOL,
-        solana_vote_program::vote_state::VoteStateV3,
+        super::*,
+        solana_native_token::LAMPORTS_PER_SOL,
+        solana_vote_program::vote_state::{increment_credits, VoteStateV4},
     };
 
     fn new_stake(
         stake: u64,
         voter_pubkey: &Pubkey,
-        vote_state: &VoteStateV3,
+        vote_state: &VoteStateV4,
         activation_epoch: Epoch,
     ) -> Stake {
         Stake {
@@ -227,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_stake_state_calculate_points_with_typical_values() {
-        let mut vote_state = VoteStateV3::default();
+        let mut vote_state = VoteStateV4::default();
 
         // bootstrap means fully-vested stake at epoch 0 with
         //  10_000_000 SOL is a big but not unreasonable stake
@@ -242,7 +243,7 @@ mod tests {
         // put 193,536,000 credits in at epoch 0, typical for a 14-day epoch
         //  this loop takes a few seconds...
         for _ in 0..epoch_slots {
-            vote_state.increment_credits(0, 1);
+            increment_credits(&mut vote_state, 0, 1);
         }
 
         // no overflow on points

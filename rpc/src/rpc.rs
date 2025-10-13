@@ -7697,6 +7697,9 @@ pub mod tests {
         assert_eq!(bank.vote_accounts().len(), 1);
 
         // Create a vote account with no stake.
+        // TODO: Update this test to use `VoteStateV4` after vote program
+        // migration is complete. Currently using `VoteStateV3` because this
+        // test invokes the vote program which hasn't been migrated to v4 yet.
         let alice_vote_keypair = Keypair::new();
         let alice_vote_state = VoteStateV3::new(
             &VoteInit {

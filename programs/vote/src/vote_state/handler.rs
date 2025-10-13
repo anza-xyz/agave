@@ -10,6 +10,8 @@
 //! getter and setter API around vote state, for all operations required by the
 //! vote program.
 
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     solana_clock::{Clock, Epoch, Slot, UnixTimestamp},
     solana_instruction::error::InstructionError,
@@ -125,35 +127,7 @@ pub trait VoteStateHandle {
     }
 
     fn increment_credits(&mut self, epoch: Epoch, credits: u64) {
-        // increment credits, record by epoch
-
-        // never seen a credit
-        if self.epoch_credits().is_empty() {
-            self.epoch_credits_mut().push((epoch, 0, 0));
-        } else if epoch != self.epoch_credits().last().unwrap().0 {
-            let (_, credits, prev_credits) = *self.epoch_credits().last().unwrap();
-
-            if credits != prev_credits {
-                // if credits were earned previous epoch
-                // append entry at end of list for the new epoch
-                self.epoch_credits_mut().push((epoch, credits, credits));
-            } else {
-                // else just move the current epoch
-                self.epoch_credits_mut().last_mut().unwrap().0 = epoch;
-            }
-
-            // Remove too old epoch_credits
-            if self.epoch_credits().len() > MAX_EPOCH_CREDITS_HISTORY {
-                self.epoch_credits_mut().remove(0);
-            }
-        }
-
-        self.epoch_credits_mut().last_mut().unwrap().1 = self
-            .epoch_credits()
-            .last()
-            .unwrap()
-            .1
-            .saturating_add(credits);
+        increment_credits(self, epoch, credits);
     }
 
     fn process_timestamp(&mut self, slot: Slot, timestamp: UnixTimestamp) -> Result<(), VoteError> {
@@ -245,6 +219,41 @@ pub trait VoteStateHandle {
             None
         }
     }
+}
+
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+fn increment_credits<T: VoteStateHandle + ?Sized>(vote_state: &mut T, epoch: Epoch, credits: u64) {
+    // increment credits, record by epoch
+
+    // never seen a credit
+    if vote_state.epoch_credits().is_empty() {
+        vote_state.epoch_credits_mut().push((epoch, 0, 0));
+    } else if epoch != vote_state.epoch_credits().last().unwrap().0 {
+        let (_, credits, prev_credits) = *vote_state.epoch_credits().last().unwrap();
+
+        if credits != prev_credits {
+            // if credits were earned previous epoch
+            // append entry at end of list for the new epoch
+            vote_state
+                .epoch_credits_mut()
+                .push((epoch, credits, credits));
+        } else {
+            // else just move the current epoch
+            vote_state.epoch_credits_mut().last_mut().unwrap().0 = epoch;
+        }
+
+        // Remove too old epoch_credits
+        if vote_state.epoch_credits().len() > MAX_EPOCH_CREDITS_HISTORY {
+            vote_state.epoch_credits_mut().remove(0);
+        }
+    }
+
+    vote_state.epoch_credits_mut().last_mut().unwrap().1 = vote_state
+        .epoch_credits()
+        .last()
+        .unwrap()
+        .1
+        .saturating_add(credits);
 }
 
 impl VoteStateHandle for VoteStateV3 {
