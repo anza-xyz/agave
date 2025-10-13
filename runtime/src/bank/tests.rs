@@ -727,19 +727,19 @@ where
     bank0.store_account_and_update_capitalization(&stake_id, &stake_account);
 
     // generate some rewards
-    let mut vote_state = Some(vote_state::from(&vote_account).unwrap());
+    let mut vote_state = Some(VoteStateV4::deserialize(vote_account.data(), &vote_id).unwrap());
     for i in 0..MAX_LOCKOUT_HISTORY + 42 {
         if let Some(v) = vote_state.as_mut() {
             vote_state::process_slot_vote_unchecked(v, i as u64)
         }
-        let versioned = VoteStateVersions::V3(Box::new(vote_state.take().unwrap()));
-        vote_state::to(&versioned, &mut vote_account).unwrap();
+        let versioned = VoteStateVersions::V4(Box::new(vote_state.take().unwrap()));
+        vote_account.set_state(&versioned).unwrap();
         bank0.store_account_and_update_capitalization(&vote_id, &vote_account);
         match versioned {
-            VoteStateVersions::V3(v) => {
+            VoteStateVersions::V4(v) => {
                 vote_state = Some(*v);
             }
-            _ => panic!("Has to be of type Current"),
+            _ => panic!("Has to be of type V4"),
         };
     }
     bank0.store_account_and_update_capitalization(&vote_id, &vote_account);
@@ -877,19 +877,19 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
     bank.store_account_and_update_capitalization(&stake_id2, &stake_account2);
 
     // generate some rewards
-    let mut vote_state = Some(vote_state::from(&vote_account).unwrap());
+    let mut vote_state = Some(VoteStateV4::deserialize(vote_account.data(), &vote_id).unwrap());
     for i in 0..MAX_LOCKOUT_HISTORY + 42 {
         if let Some(v) = vote_state.as_mut() {
             vote_state::process_slot_vote_unchecked(v, i as u64)
         }
-        let versioned = VoteStateVersions::V3(Box::new(vote_state.take().unwrap()));
-        vote_state::to(&versioned, &mut vote_account).unwrap();
+        let versioned = VoteStateVersions::V4(Box::new(vote_state.take().unwrap()));
+        vote_account.set_state(&versioned).unwrap();
         bank.store_account_and_update_capitalization(&vote_id, &vote_account);
         match versioned {
-            VoteStateVersions::V3(v) => {
+            VoteStateVersions::V4(v) => {
                 vote_state = Some(*v);
             }
-            _ => panic!("Has to be of type Current"),
+            _ => panic!("Has to be of type V4"),
         };
     }
     bank.store_account_and_update_capitalization(&vote_id, &vote_account);
