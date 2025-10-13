@@ -230,7 +230,7 @@ impl AtomicRouter {
         Ok(())
     }
 
-    pub fn publish_snapshot(&self, working: &Working) {
+    pub fn publish_snapshot(&self, working: &WorkingRouter) {
         let router = Router {
             arp_table: Arc::new(ArpTable {
                 neighbors: working.neigh.clone(),
@@ -242,14 +242,14 @@ impl AtomicRouter {
 }
 
 // Working Router used for lock-free updates
-pub struct Working {
+pub struct WorkingRouter {
     routes: Vec<RouteEntry>,
     neigh: Vec<NeighborEntry>,
     dirty_routes: bool,
     dirty_neigh: bool,
 }
 
-impl Working {
+impl WorkingRouter {
     // create a working router from the atomic router
     // only called on startup and when the atomic router is resynced due to a netlink error
     pub fn from_atomic_router(router: &AtomicRouter) -> Self {
@@ -430,7 +430,7 @@ mod tests {
         let router_before = atomic_router.load();
         let before_routes = router_before.clone_routes();
 
-        let mut working = Working::from_atomic_router(&atomic_router);
+        let mut working = WorkingRouter::from_atomic_router(&atomic_router);
 
         // Create a unique, private IPv4 /32 route to avoid collisions
         let test_dst = Ipv4Addr::new(10, 255, 255, 123);
@@ -480,7 +480,7 @@ mod tests {
         let router_before = atomic_router.load();
         let before_neigh = router_before.clone_neighbors();
 
-        let mut working = Working::from_atomic_router(&atomic_router);
+        let mut working = WorkingRouter::from_atomic_router(&atomic_router);
 
         // Create a unique, private neighbor entry on a dummy ifindex
         let neigh_ip = Ipv4Addr::new(10, 255, 255, 77);
