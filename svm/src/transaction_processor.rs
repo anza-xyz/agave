@@ -365,31 +365,22 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // Create the batch-local program cache.
         let program_runtime_environments_for_execution =
             self.get_environments_for_epoch(self.epoch).unwrap();
-        let mut program_cache_for_tx_batch = {
-            let global_program_cache = self.global_program_cache.read().unwrap();
-            let mut program_cache_for_tx_batch =
-                ProgramCacheForTxBatch::new_from_cache(self.slot, &global_program_cache);
-            drop(global_program_cache);
-
-            let builtins = self.builtin_program_ids.read().unwrap().clone();
-
-            let ((), program_cache_us) = measure_us!({
-                self.replenish_program_cache(
-                    &account_loader,
-                    &builtins,
-                    &program_runtime_environments_for_execution,
-                    &mut program_cache_for_tx_batch,
-                    &mut execute_timings,
-                    config.check_program_modification_slot,
-                    config.limit_to_load_programs,
-                    false, // increment_usage_counter
-                );
-            });
-            execute_timings
-                .saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
-
-            program_cache_for_tx_batch
-        };
+        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
+        let builtins = self.builtin_program_ids.read().unwrap().clone();
+        let ((), program_cache_us) = measure_us!({
+            self.replenish_program_cache(
+                &account_loader,
+                &builtins,
+                &program_runtime_environments_for_execution,
+                &mut program_cache_for_tx_batch,
+                &mut execute_timings,
+                config.check_program_modification_slot,
+                config.limit_to_load_programs,
+                false, // increment_usage_counter
+            );
+        });
+        execute_timings
+            .saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
 
         if program_cache_for_tx_batch.hit_max_limit {
             return LoadAndExecuteSanitizedTransactionsOutput {
@@ -808,8 +799,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     // This branch is taken when there is an error in assigning a program to a
                     // cache slot. It is not possible to mock this error for SVM unit
                     // tests purposes.
-                    *program_cache_for_tx_batch =
-                        ProgramCacheForTxBatch::new_from_cache(self.slot, &global_program_cache);
+                    *program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
                     program_cache_for_tx_batch.hit_max_limit = true;
                     return;
                 }
@@ -1474,10 +1464,7 @@ mod tests {
         let mut account_set = HashSet::new();
         account_set.insert(key);
 
-        let mut program_cache_for_tx_batch = {
-            let global_program_cache = batch_processor.global_program_cache.read().unwrap();
-            ProgramCacheForTxBatch::new_from_cache(batch_processor.slot, &global_program_cache)
-        };
+        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(batch_processor.slot);
 
         batch_processor.replenish_program_cache(
             &account_loader,
@@ -1515,10 +1502,7 @@ mod tests {
         let mut loaded_missing = 0;
 
         for limit_to_load_programs in [false, true] {
-            let mut program_cache_for_tx_batch = {
-                let global_program_cache = batch_processor.global_program_cache.read().unwrap();
-                ProgramCacheForTxBatch::new_from_cache(batch_processor.slot, &global_program_cache)
-            };
+            let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(batch_processor.slot);
 
             batch_processor.replenish_program_cache(
                 &account_loader,
@@ -1887,10 +1871,7 @@ mod tests {
 
         batch_processor.add_builtin(key, program);
 
-        let mut loaded_programs_for_tx_batch = ProgramCacheForTxBatch::new_from_cache(
-            0,
-            &batch_processor.global_program_cache.read().unwrap(),
-        );
+        let mut loaded_programs_for_tx_batch = ProgramCacheForTxBatch::new(0);
         let program_runtime_environments = batch_processor
             .get_environments_for_epoch(batch_processor.epoch)
             .unwrap();

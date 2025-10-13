@@ -730,10 +730,6 @@ impl ProgramCacheForTxBatch {
         }
     }
 
-    pub fn new_from_cache<FG: ForkGraph>(slot: Slot, _cache: &ProgramCache<FG>) -> Self {
-        Self::new(slot)
-    }
-
     /// Refill the cache with a single entry. It's typically called during transaction loading, and
     /// transaction processing (for program management instructions).
     /// It replaces the existing entry (if any) with the provided entry. The return value contains

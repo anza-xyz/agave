@@ -188,7 +188,7 @@ use {
     },
     solana_nonce as nonce,
     solana_nonce_account::{get_system_account_kind, SystemAccountKind},
-    solana_program_runtime::{loaded_programs::ProgramCacheForTxBatch, sysvar_cache::SysvarCache},
+    solana_program_runtime::sysvar_cache::SysvarCache,
 };
 pub use {partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_reward_info::RewardType};
 
@@ -5905,17 +5905,6 @@ impl Bank {
             .accounts
             .accounts_db
             .calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors, self.slot)
-    }
-
-    pub fn new_program_cache_for_tx_batch_for_slot(&self, slot: Slot) -> ProgramCacheForTxBatch {
-        ProgramCacheForTxBatch::new_from_cache(
-            slot,
-            &self
-                .transaction_processor
-                .global_program_cache
-                .read()
-                .unwrap(),
-        )
     }
 
     pub fn get_transaction_processor(&self) -> &TransactionBatchProcessor<BankForks> {
