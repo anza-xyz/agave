@@ -938,8 +938,7 @@ where
     Ok((account_infos, account_info_keys))
 }
 
-// Finish translating accounts, build CallerAccount values and update callee
-// accounts in preparation of executing the callee.
+// Finish translating accounts and build TranslatedAccount from CallerAccount.
 fn translate_accounts_common<'a, T, F>(
     account_info_keys: &[&Pubkey],
     account_infos: &[T],
