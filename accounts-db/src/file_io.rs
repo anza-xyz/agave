@@ -171,7 +171,7 @@ impl<'a> SyncIoFileCreator<'a> {
 /// Update permissions mode of an existing directory or file path
 ///
 /// Note: on-non Unix platforms, this functions only updates readonly mode.
-pub fn set_path_permissions(dst: &Path, mode: u32) -> io::Result<()> {
+pub fn set_path_permissions(path: &Path, mode: u32) -> io::Result<()> {
     let perm;
     #[cfg(unix)]
     {
@@ -184,7 +184,7 @@ pub fn set_path_permissions(dst: &Path, mode: u32) -> io::Result<()> {
         current_perm.set_readonly(mode & 0o200 == 0);
         perm = current_perm;
     }
-    fs::set_permissions(dst, perm)
+    fs::set_permissions(path, perm)
 }
 
 impl FileCreator for SyncIoFileCreator<'_> {
