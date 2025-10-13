@@ -277,7 +277,10 @@ impl<T: Copy> SlotListWriteGuard<'_, T> {
                 ManuallyDrop::new(Some(SlotListMultiple::new(vec![single, item])))
         } else {
             match unsafe { self.repr_guard.multiple.as_mut() } {
-                None => self.repr_guard.single = item,
+                None => {
+                    self.meta.is_single.store(true, Ordering::Relaxed);
+                    self.repr_guard.single = item
+                }
                 Some(slot_list) => slot_list.0.push(item),
             }
         }
