@@ -5904,13 +5904,13 @@ impl Bank {
     }
 
     pub fn new_program_cache_for_tx_batch_for_slot(&self, slot: Slot) -> ProgramCacheForTxBatch {
-        ProgramCacheForTxBatch::new_from_cache(
+        ProgramCacheForTxBatch::new(
             slot,
-            &self
-                .transaction_processor
+            self.transaction_processor
                 .global_program_cache
                 .read()
-                .unwrap(),
+                .unwrap()
+                .latest_root_epoch,
         )
     }
 

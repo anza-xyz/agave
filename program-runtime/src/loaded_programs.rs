@@ -691,10 +691,6 @@ impl ProgramCacheForTxBatch {
         }
     }
 
-    pub fn new_from_cache<FG: ForkGraph>(slot: Slot, cache: &ProgramCache<FG>) -> Self {
-        Self::new(slot, cache.latest_root_epoch)
-    }
-
     /// Refill the cache with a single entry. It's typically called during transaction loading, and
     /// transaction processing (for program management instructions).
     /// It replaces the existing entry (if any) with the provided entry. The return value contains
@@ -1019,7 +1015,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         &self,
         search_for: &mut Vec<(Pubkey, ProgramCacheMatchCriteria)>,
         loaded_programs_for_tx_batch: &mut ProgramCacheForTxBatch,
-        program_runtime_environments: &ProgramRuntimeEnvironments,
+        program_runtime_environments_for_execution: &ProgramRuntimeEnvironments,
         increment_usage_counter: bool,
         count_hits_and_misses: bool,
     ) -> Option<Pubkey> {
@@ -1048,7 +1044,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                     >= entry.effective_slot
                                     && Self::matches_environment(
                                         entry,
-                                        program_runtime_environments,
+                                        program_runtime_environments_for_execution,
                                     ) {
                                     if !Self::matches_criteria(entry, match_criteria) {
                                         break;
