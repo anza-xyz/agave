@@ -11698,10 +11698,12 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "wincode"
-version = "0.1.0"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c0b5bd8dce8a24aa92e1b16407ae2a60b35a103150e24e12bb63466e3786397"
+checksum = "d5067322fecd19471f7980888bff95cedf08b19829c83418f51410ff9ccc4193"
 dependencies = [
+ "proc-macro2",
+ "quote",
  "solana-short-vec",
  "thiserror 2.0.17",
  "wincode-derive",
@@ -11709,9 +11711,9 @@ dependencies = [
 
 [[package]]
 name = "wincode-derive"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b565e235fa7bbb5f898fc2d55639e41fde3ed66dc02ad7d570d075f41e1cfc1"
+checksum = "a144d1576a6d65f9c80df1d531e12b197057c6f69a6e9d4a183fe61e9f135568"
 dependencies = [
  "darling",
  "proc-macro2",
