@@ -215,9 +215,9 @@ impl From<SlotMetaV2> for SlotMetaV1 {
 // pub type CompletedDataIndexes = CompletedDataIndexesV1;
 // pub type SlotMetaFallback = SlotMetaV2;
 // ```
-pub type SlotMeta = SlotMetaV1;
-pub type CompletedDataIndexes = CompletedDataIndexesV1;
-pub type SlotMetaFallback = SlotMetaV2;
+pub type SlotMeta = SlotMetaV2;
+pub type CompletedDataIndexes = CompletedDataIndexesV2;
+pub type SlotMetaFallback = SlotMetaV1;
 
 // Serde implementation of serialize and deserialize for Option<u64>
 // where None is represented as u64::MAX; for backward compatibility.
