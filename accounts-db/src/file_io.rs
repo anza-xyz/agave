@@ -1,6 +1,4 @@
 //! File i/o helper functions.
-#[cfg(unix)]
-use std::path::Path;
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufWriter, Write},
