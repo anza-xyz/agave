@@ -10019,9 +10019,9 @@ dependencies = [
 
 [[package]]
 name = "solana-vote-interface"
-version = "4.0.2"
+version = "4.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c33f1a30b1e61944e52afef0992a2be93720c5770eaf1f6d8e6e34f87d90e754"
+checksum = "d6970d0b048a7b2c80203fe54e10e0cc6d52a88ef7115bb7214908415e33b930"
 dependencies = [
  "bincode",
  "cfg_eval",
