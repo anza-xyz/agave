@@ -35,6 +35,7 @@ pub struct TransmitShredsStats {
 
 impl BroadcastStats for TransmitShredsStats {
     fn update(&mut self, new_stats: &TransmitShredsStats) {
+        self.is_xdp = new_stats.is_xdp;
         self.transmit_elapsed += new_stats.transmit_elapsed;
         self.send_mmsg_elapsed += new_stats.send_mmsg_elapsed;
         self.send_quic_elapsed += new_stats.send_quic_elapsed;
