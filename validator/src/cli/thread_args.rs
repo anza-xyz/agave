@@ -200,7 +200,7 @@ impl ThreadArg for AccountsDbBackgroundThreadsArg {
     }
 }
 
-pub struct AccountsDbForegroundThreadsArg;
+pub(crate) struct AccountsDbForegroundThreadsArg;
 impl ThreadArg for AccountsDbForegroundThreadsArg {
     const NAME: &'static str = "accounts_db_foreground_threads";
     const LONG_NAME: &'static str = "accounts-db-foreground-threads";
@@ -212,7 +212,7 @@ impl ThreadArg for AccountsDbForegroundThreadsArg {
     }
 }
 
-pub struct AccountsIndexFlushThreadsArg;
+pub(crate) struct AccountsIndexFlushThreadsArg;
 impl ThreadArg for AccountsIndexFlushThreadsArg {
     const NAME: &'static str = "accounts_index_flush_threads";
     const LONG_NAME: &'static str = "accounts-index-flush-threads";
