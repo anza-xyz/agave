@@ -15,7 +15,9 @@ use {
         },
     },
     solana_clock::Slot,
-    solana_core::banking_trace::BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
+    solana_core::{
+        banking_trace::BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT, validator::TransactionStructure,
+    },
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_faucet::faucet::{self, FAUCET_PORT},
     solana_hash::Hash,
@@ -212,6 +214,17 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .takes_value(false)
             .help("Enable UDP for receiving/sending transactions."),
         usage_warning: "UDP support will be dropped"
+    );
+    add_arg!(
+        // deprecated in v3.1.0
+        Arg::with_name("transaction_struct")
+            .long("transaction-structure")
+            .value_name("STRUCT")
+            .takes_value(true)
+            .possible_values(TransactionStructure::cli_names())
+            .default_value(TransactionStructure::default().into())
+            .help(TransactionStructure::cli_message()),
+        usage_warning: "Transaction structure is no longer configurable"
     );
     res
 }

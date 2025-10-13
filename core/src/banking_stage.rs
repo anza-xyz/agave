@@ -13,7 +13,6 @@ use {
     crate::{
         banking_stage::{
             consume_worker::ConsumeWorker,
-            packet_deserializer::PacketDeserializer,
             transaction_scheduler::{
                 prio_graph_scheduler::PrioGraphScheduler,
                 scheduler_controller::{
@@ -22,7 +21,7 @@ use {
                 scheduler_error::SchedulerError,
             },
         },
-        validator::{BlockProductionMethod, TransactionStructure},
+        validator::BlockProductionMethod,
     },
     agave_banking_stage_ingress_types::BankingPacketReceiver,
     conditional_mod::conditional_vis_mod,
@@ -54,10 +53,7 @@ use {
     transaction_scheduler::{
         greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
         prio_graph_scheduler::PrioGraphSchedulerConfig,
-        receive_and_buffer::{
-            ReceiveAndBuffer, SanitizedTransactionReceiveAndBuffer, TransactionViewReceiveAndBuffer,
-        },
-        transaction_state_container::TransactionStateContainer,
+        receive_and_buffer::{ReceiveAndBuffer, TransactionViewReceiveAndBuffer},
     },
     vote_worker::VoteWorker,
 };
@@ -75,7 +71,6 @@ conditional_vis_mod!(decision_maker, feature = "dev-context-only-utils", pub);
 mod immutable_deserialized_packet;
 mod latest_validator_vote_packet;
 mod leader_slot_timing_metrics;
-conditional_vis_mod!(packet_deserializer, feature = "dev-context-only-utils", pub);
 mod read_write_account_set;
 mod vote_packet_receiver;
 conditional_vis_mod!(scheduler_messages, feature = "dev-context-only-utils", pub);
@@ -367,7 +362,6 @@ impl BankingStage {
     #[allow(clippy::too_many_arguments)]
     pub fn new_num_threads(
         block_production_method: BlockProductionMethod,
-        transaction_struct: TransactionStructure,
         poh_recorder: Arc<RwLock<PohRecorder>>,
         transaction_recorder: TransactionRecorder,
         non_vote_receiver: BankingPacketReceiver,
@@ -403,15 +397,17 @@ impl BankingStage {
         let mut thread_hdls = Vec::with_capacity(num_workers.get() + 2);
         thread_hdls.push(Self::spawn_vote_worker(&context));
 
-        let use_greedy_scheduler = matches!(
-            block_production_method,
-            BlockProductionMethod::CentralSchedulerGreedy
-        );
-
-        Self::new_central_scheduler(
+        let receive_and_buffer = TransactionViewReceiveAndBuffer {
+            receiver: context.non_vote_receiver.clone(),
+            bank_forks: context.bank_forks.clone(),
+        };
+        Self::spawn_scheduler_and_workers(
             &mut thread_hdls,
-            transaction_struct,
-            use_greedy_scheduler,
+            receive_and_buffer,
+            matches!(
+                block_production_method,
+                BlockProductionMethod::CentralSchedulerGreedy
+            ),
             num_workers,
             scheduler_config,
             &context,
@@ -425,7 +421,6 @@ impl BankingStage {
 
     pub fn spawn_threads(
         &mut self,
-        transaction_struct: TransactionStructure,
         block_production_method: BlockProductionMethod,
         num_workers: NonZeroUsize,
         scheduler_config: SchedulerConfig,
@@ -439,14 +434,18 @@ impl BankingStage {
 
             info!(
                 "Spawning new banking stage threads with block-production-method: \
-                 {block_production_method:?} transaction-structure: {transaction_struct:?} \
-                 num-workers: {num_workers}"
+                 {block_production_method:?} num-workers: {num_workers}"
             );
             context.exit_signal.store(false, Ordering::Relaxed);
             self.thread_hdls.push(Self::spawn_vote_worker(context));
-            Self::new_central_scheduler(
+
+            let receive_and_buffer = TransactionViewReceiveAndBuffer {
+                receiver: context.non_vote_receiver.clone(),
+                bank_forks: context.bank_forks.clone(),
+            };
+            Self::spawn_scheduler_and_workers(
                 &mut self.thread_hdls,
-                transaction_struct,
+                receive_and_buffer,
                 matches!(
                     block_production_method,
                     BlockProductionMethod::CentralSchedulerGreedy
@@ -454,50 +453,10 @@ impl BankingStage {
                 num_workers,
                 scheduler_config,
                 context,
-            )
+            );
         }
 
         Ok(())
-    }
-
-    fn new_central_scheduler(
-        non_vote_thread_hdls: &mut Vec<JoinHandle<()>>,
-        transaction_struct: TransactionStructure,
-        use_greedy_scheduler: bool,
-        num_workers: NonZeroUsize,
-        scheduler_config: SchedulerConfig,
-        context: &BankingStageContext,
-    ) {
-        match transaction_struct {
-            TransactionStructure::Sdk => {
-                let receive_and_buffer = SanitizedTransactionReceiveAndBuffer::new(
-                    PacketDeserializer::new(context.non_vote_receiver.clone()),
-                    context.bank_forks.clone(),
-                );
-                Self::spawn_scheduler_and_workers(
-                    non_vote_thread_hdls,
-                    receive_and_buffer,
-                    use_greedy_scheduler,
-                    num_workers,
-                    scheduler_config,
-                    context,
-                )
-            }
-            TransactionStructure::View => {
-                let receive_and_buffer = TransactionViewReceiveAndBuffer {
-                    receiver: context.non_vote_receiver.clone(),
-                    bank_forks: context.bank_forks.clone(),
-                };
-                Self::spawn_scheduler_and_workers(
-                    non_vote_thread_hdls,
-                    receive_and_buffer,
-                    use_greedy_scheduler,
-                    num_workers,
-                    scheduler_config,
-                    context,
-                )
-            }
-        }
     }
 
     fn spawn_scheduler_and_workers<R: ReceiveAndBuffer + Send + Sync + 'static>(
@@ -719,7 +678,6 @@ mod tests {
         solana_vote::vote_transaction::new_tower_sync_transaction,
         solana_vote_program::vote_state::TowerSync,
         std::{sync::atomic::Ordering, thread::sleep, time::Instant},
-        test_case::test_case,
     };
 
     pub(crate) fn sanitize_transactions(
@@ -730,9 +688,8 @@ mod tests {
             .collect()
     }
 
-    #[test_case(TransactionStructure::Sdk)]
-    #[test_case(TransactionStructure::View)]
-    fn test_banking_stage_shutdown1(transaction_struct: TransactionStructure) {
+    #[test]
+    fn test_banking_stage_shutdown1() {
         let genesis_config = create_genesis_config(2).genesis_config;
         let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let banking_tracer = BankingTracer::new_disabled();
@@ -761,7 +718,6 @@ mod tests {
 
         let banking_stage = BankingStage::new_num_threads(
             BlockProductionMethod::CentralScheduler,
-            transaction_struct,
             poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,
@@ -785,9 +741,8 @@ mod tests {
         poh_service.join().unwrap();
     }
 
-    #[test_case(TransactionStructure::Sdk)]
-    #[test_case(TransactionStructure::View)]
-    fn test_banking_stage_tick(transaction_struct: TransactionStructure) {
+    #[test]
+    fn test_banking_stage_tick() {
         solana_logger::setup();
         let GenesisConfigInfo {
             mut genesis_config, ..
@@ -826,7 +781,6 @@ mod tests {
 
         let banking_stage = BankingStage::new_num_threads(
             BlockProductionMethod::CentralScheduler,
-            transaction_struct,
             poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,
@@ -862,10 +816,8 @@ mod tests {
         assert_eq!(entries[entries.len() - 1].hash, bank.last_blockhash());
     }
 
-    fn test_banking_stage_entries_only(
-        block_production_method: BlockProductionMethod,
-        transaction_struct: TransactionStructure,
-    ) {
+    #[test]
+    fn test_banking_stage_entries_only_central_scheduler() {
         solana_logger::setup();
         let GenesisConfigInfo {
             genesis_config,
@@ -899,8 +851,7 @@ mod tests {
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
         let banking_stage = BankingStage::new_num_threads(
-            block_production_method,
-            transaction_struct,
+            BlockProductionMethod::CentralScheduler,
             poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,
@@ -991,18 +942,8 @@ mod tests {
         drop(entry_receiver);
     }
 
-    #[test_case(TransactionStructure::Sdk)]
-    #[test_case(TransactionStructure::View)]
-    fn test_banking_stage_entries_only_central_scheduler(transaction_struct: TransactionStructure) {
-        test_banking_stage_entries_only(
-            BlockProductionMethod::CentralScheduler,
-            transaction_struct,
-        );
-    }
-
-    #[test_case(TransactionStructure::Sdk)]
-    #[test_case(TransactionStructure::View)]
-    fn test_banking_stage_entryfication(transaction_struct: TransactionStructure) {
+    #[test]
+    fn test_banking_stage_entryfication() {
         solana_logger::setup();
         // In this attack we'll demonstrate that a verifier can interpret the ledger
         // differently if either the server doesn't signal the ledger to add an
@@ -1060,7 +1001,6 @@ mod tests {
             ) = create_test_recorder(bank.clone(), blockstore, None, None);
             let _banking_stage = BankingStage::new_num_threads(
                 BlockProductionMethod::CentralScheduler,
-                transaction_struct,
                 poh_recorder.clone(),
                 transaction_recorder,
                 non_vote_receiver,
@@ -1175,9 +1115,8 @@ mod tests {
         config_info
     }
 
-    #[test_case(TransactionStructure::Sdk)]
-    #[test_case(TransactionStructure::View)]
-    fn test_vote_storage_full_send(transaction_struct: TransactionStructure) {
+    #[test]
+    fn test_vote_storage_full_send() {
         solana_logger::setup();
         let GenesisConfigInfo {
             genesis_config,
@@ -1212,7 +1151,6 @@ mod tests {
 
         let banking_stage = BankingStage::new_num_threads(
             BlockProductionMethod::CentralScheduler,
-            transaction_struct,
             poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,

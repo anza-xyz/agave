@@ -20,7 +20,7 @@ use {
     },
     solana_core::{
         banking_trace::DirByteLimit,
-        validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
+        validator::{BlockProductionMethod, BlockVerificationMethod},
     },
     solana_keypair::Keypair,
     solana_ledger::{blockstore_options::BlockstoreOptions, use_snapshot_archives_at_startup},
@@ -1566,15 +1566,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .possible_values(BlockProductionMethod::cli_names())
             .default_value(BlockProductionMethod::default().into())
             .help(BlockProductionMethod::cli_message()),
-    )
-    .arg(
-        Arg::with_name("transaction_struct")
-            .long("transaction-structure")
-            .value_name("STRUCT")
-            .takes_value(true)
-            .possible_values(TransactionStructure::cli_names())
-            .default_value(TransactionStructure::default().into())
-            .help(TransactionStructure::cli_message()),
     )
     .arg(
         Arg::with_name("block_production_pacing_fill_time_millis")

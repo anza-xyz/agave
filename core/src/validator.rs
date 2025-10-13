@@ -251,7 +251,7 @@ impl TransactionStructure {
     }
 
     pub fn cli_message() -> &'static str {
-        "Switch internal transaction structure/representation"
+        "DEPRECATED: has no impact on banking stage; will be removed in a future version"
     }
 }
 
@@ -358,7 +358,6 @@ pub struct ValidatorConfig {
     pub block_production_method: BlockProductionMethod,
     pub block_production_num_workers: NonZeroUsize,
     pub block_production_scheduler_config: SchedulerConfig,
-    pub transaction_struct: TransactionStructure,
     pub enable_block_production_forwarding: bool,
     pub generator_config: Option<GeneratorConfig>,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
@@ -438,7 +437,6 @@ impl ValidatorConfig {
             block_production_method: BlockProductionMethod::default(),
             block_production_num_workers: BankingStage::default_num_workers(),
             block_production_scheduler_config: SchedulerConfig::default(),
-            transaction_struct: TransactionStructure::default(),
             // enable forwarding by default for tests
             enable_block_production_forwarding: true,
             generator_config: None,
@@ -976,11 +974,8 @@ impl Validator {
             },
         );
         info!(
-            "Using: block-verification-method: {}, block-production-method: {}, \
-             transaction-structure: {}",
-            config.block_verification_method,
-            config.block_production_method,
-            config.transaction_struct
+            "Using: block-verification-method: {}, block-production-method: {}",
+            config.block_verification_method, config.block_production_method,
         );
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
@@ -1733,7 +1728,6 @@ impl Validator {
             config.block_production_method.clone(),
             config.block_production_num_workers,
             config.block_production_scheduler_config.clone(),
-            config.transaction_struct.clone(),
             config.enable_block_production_forwarding,
             config.generator_config.clone(),
             key_notifiers.clone(),

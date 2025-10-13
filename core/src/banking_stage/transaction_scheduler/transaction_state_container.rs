@@ -2,7 +2,7 @@
 use qualifier_attr::qualifiers;
 use {
     super::{transaction_priority_id::TransactionPriorityId, transaction_state::TransactionState},
-    crate::banking_stage::scheduler_messages::{MaxAge, TransactionId},
+    crate::banking_stage::scheduler_messages::TransactionId,
     agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
     itertools::MinMaxResult,
     min_max_heap::MinMaxHeap,
@@ -218,11 +218,11 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
 impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
     /// Insert a new transaction into the container's queues and maps.
     /// Returns `true` if a packet was dropped due to capacity limits.
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    #[cfg(test)]
     pub(crate) fn insert_new_transaction(
         &mut self,
         transaction: Tx,
-        max_age: MaxAge,
+        max_age: crate::banking_stage::scheduler_messages::MaxAge,
         priority: u64,
         cost: u64,
     ) -> bool {

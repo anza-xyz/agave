@@ -2584,20 +2584,14 @@ fn main() {
                         "block_production_method",
                         BlockProductionMethod
                     );
-                    let transaction_struct =
-                        value_t_or_exit!(arg_matches, "transaction_struct", TransactionStructure);
 
-                    info!(
-                        "Using: block-production-method: {block_production_method} \
-                         transaction-structure: {transaction_struct}"
-                    );
+                    info!("Using: block-production-method: {block_production_method}");
 
                     match simulator.start(
                         genesis_config,
                         bank_forks,
                         blockstore,
                         block_production_method,
-                        transaction_struct,
                     ) {
                         Ok(()) => println!("Ok"),
                         Err(error) => {

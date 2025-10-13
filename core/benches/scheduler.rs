@@ -10,10 +10,7 @@ use {
         transaction_scheduler::{
             greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
             prio_graph_scheduler::{PrioGraphScheduler, PrioGraphSchedulerConfig},
-            receive_and_buffer::{
-                ReceiveAndBuffer, SanitizedTransactionReceiveAndBuffer,
-                TransactionViewReceiveAndBuffer,
-            },
+            receive_and_buffer::{ReceiveAndBuffer, TransactionViewReceiveAndBuffer},
             scheduler::{PreLockFilterAction, Scheduler},
             transaction_state::TransactionState,
             transaction_state_container::StateContainer,
@@ -233,7 +230,6 @@ fn timing_scheduler<T: ReceiveAndBuffer, S: Scheduler<T::Transaction>>(
 }
 
 fn bench_scheduler(c: &mut Criterion) {
-    bench_scheduler_impl::<SanitizedTransactionReceiveAndBuffer>(c, "sdk_transaction");
     bench_scheduler_impl::<TransactionViewReceiveAndBuffer>(c, "transaction_view");
 }
 

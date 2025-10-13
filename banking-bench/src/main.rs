@@ -327,9 +327,6 @@ fn main() {
     let block_production_num_workers = matches
         .value_of_t::<NonZeroUsize>("block_production_num_workers")
         .unwrap_or_else(|_| BankingStage::default_num_workers());
-    let transaction_struct = matches
-        .value_of_t::<TransactionStructure>("transaction_struct")
-        .unwrap_or_default();
     //   a multiple of packet chunk duplicates to avoid races
     let num_chunks = matches.value_of_t::<usize>("num_chunks").unwrap_or(16);
     let packets_per_batch = matches
@@ -464,7 +461,6 @@ fn main() {
     } = banking_tracer.create_channels(false);
     let banking_stage = BankingStage::new_num_threads(
         block_production_method,
-        transaction_struct,
         poh_recorder.clone(),
         transaction_recorder,
         non_vote_receiver,

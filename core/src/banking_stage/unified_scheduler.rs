@@ -31,10 +31,12 @@ use qualifier_attr::qualifiers;
 use {
     super::{
         decision_maker::{BufferedPacketsDecision, DecisionMaker, DecisionMakerWrapper},
-        packet_deserializer::PacketDeserializer,
         transaction_scheduler::receive_and_buffer::calculate_priority_and_cost,
     },
-    crate::banking_trace::Channels,
+    crate::{
+        banking_stage::immutable_deserialized_packet::ImmutableDeserializedPacket,
+        banking_trace::Channels,
+    },
     agave_banking_stage_ingress_types::BankingPacketBatch,
     solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
     solana_runtime::bank_forks::BankForks,
@@ -83,7 +85,15 @@ pub(crate) fn ensure_banking_stage_setup(
             for batch in batches.iter() {
                 // over-provision nevertheless some of packets could be invalid.
                 let task_id_base = helper.generate_task_ids(batch.len());
-                let packets = PacketDeserializer::deserialize_packets_for_unified_scheduler(batch);
+                let packets = batch.iter().enumerate().filter_map(|(index, pkt)| {
+                    if !pkt.meta().discard() {
+                        let pkt_size = pkt.meta().size;
+                        let pkt = ImmutableDeserializedPacket::new(pkt).ok()?;
+                        Some((pkt, index, pkt_size))
+                    } else {
+                        None
+                    }
+                });
 
                 for (packet, packet_index, packet_size) in packets {
                     let Some((transaction, _deactivation_slot)) = packet
@@ -108,7 +118,8 @@ pub(crate) fn ensure_banking_stage_setup(
                         &compute_budget_limits.into(),
                         &bank,
                     );
-                    let task_id = BankingStageHelper::new_task_id(task_id_base + packet_index, priority);
+                    let task_id =
+                        BankingStageHelper::new_task_id(task_id_base + packet_index, priority);
 
                     let task = helper.create_new_task(transaction, task_id, packet_size);
                     helper.send_new_task(task);

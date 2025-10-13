@@ -3,9 +3,7 @@ mod utils;
 use {
     criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput},
     solana_core::banking_stage::transaction_scheduler::{
-        receive_and_buffer::{
-            ReceiveAndBuffer, SanitizedTransactionReceiveAndBuffer, TransactionViewReceiveAndBuffer,
-        },
+        receive_and_buffer::{ReceiveAndBuffer, TransactionViewReceiveAndBuffer},
         transaction_state_container::StateContainer,
     },
     std::time::{Duration, Instant},
@@ -64,23 +62,6 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + utils::ReceiveAndBufferCreator
     group.finish();
 }
 
-fn bench_sanitized_transaction_receive_and_buffer(c: &mut Criterion) {
-    bench_receive_and_buffer::<SanitizedTransactionReceiveAndBuffer>(
-        c,
-        "sanitized_transaction_max_instructions",
-        utils::MAX_INSTRUCTIONS_PER_TRANSACTION,
-        0.0,
-        true,
-    );
-    bench_receive_and_buffer::<SanitizedTransactionReceiveAndBuffer>(
-        c,
-        "sanitized_transaction_min_instructions",
-        1,
-        0.0,
-        true,
-    );
-}
-
 fn bench_transaction_view_receive_and_buffer(c: &mut Criterion) {
     bench_receive_and_buffer::<TransactionViewReceiveAndBuffer>(
         c,
@@ -98,9 +79,5 @@ fn bench_transaction_view_receive_and_buffer(c: &mut Criterion) {
     );
 }
 
-criterion_group!(
-    benches,
-    bench_sanitized_transaction_receive_and_buffer,
-    bench_transaction_view_receive_and_buffer
-);
+criterion_group!(benches, bench_transaction_view_receive_and_buffer);
 criterion_main!(benches);
