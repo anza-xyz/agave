@@ -189,7 +189,7 @@ pub trait ThreadArg {
     }
 }
 
-pub struct AccountsDbBackgroundThreadsArg;
+pub(crate) struct AccountsDbBackgroundThreadsArg;
 impl ThreadArg for AccountsDbBackgroundThreadsArg {
     const NAME: &'static str = "accounts_db_background_threads";
     const LONG_NAME: &'static str = "accounts-db-background-threads";
