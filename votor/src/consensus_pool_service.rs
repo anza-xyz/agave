@@ -3,7 +3,6 @@
 use {
     crate::{
         commitment::{update_commitment_cache, CommitmentAggregationData, CommitmentType},
-        common::DELTA_STANDSTILL,
         consensus_pool::{
             parent_ready_tracker::BlockProductionParent, AddVoteError, ConsensusPool,
         },
@@ -29,6 +28,7 @@ use {
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
+    thiserror::Error,
 };
 
 /// Inputs for the certificate pool thread
@@ -51,20 +51,34 @@ pub(crate) struct ConsensusPoolContext {
     pub(crate) bls_sender: Sender<BLSOp>,
     pub(crate) event_sender: VotorEventSender,
     pub(crate) commitment_sender: Sender<CommitmentAggregationData>,
+
+    delta_standstill: Duration,
 }
 
 pub(crate) struct ConsensusPoolService {
     t_ingest: JoinHandle<()>,
 }
 
+#[derive(Error, Debug)]
+enum ConsensusPoolServiceError {
+    #[error("Channel {0} disconnected")]
+    ChannelDisconnected(String),
+    #[error("Failed to add block event: {0}")]
+    FailedToAddBlockEvent(String),
+}
+
 impl ConsensusPoolService {
-    pub(crate) fn new(ctx: ConsensusPoolContext) -> Self {
+    pub(crate) fn new(mut ctx: ConsensusPoolContext) -> Self {
         let t_ingest = Builder::new()
             .name("solCnsPoolIngst".to_string())
             .spawn(move || {
                 info!("ConsensusPoolService has started");
-                if let Err(e) = Self::consensus_pool_ingest_loop(ctx) {
-                    info!("Consensus pool service exited: {e:?}. Shutting down");
+                match Self::consensus_pool_ingest_loop(&mut ctx) {
+                    Err(e) => {
+                        ctx.exit.store(true, Ordering::Relaxed);
+                        error!("ConsensusPoolService exited with error: {e}");
+                    }
+                    Ok(_) => info!("Consensus pool service exited due to planned shutdown."),
                 }
             })
             .unwrap();
@@ -110,7 +124,7 @@ impl ConsensusPoolService {
                     ));
                 }
                 Err(TrySendError::Full(_)) => {
-                    return Err(AddVoteError::VotingServiceQueueFull);
+                    return Err(AddVoteError::VotingServiceChannelFull);
                 }
             }
         }
@@ -146,34 +160,20 @@ impl ConsensusPoolService {
         )
     }
 
-    fn handle_channel_disconnected(
-        ctx: &mut ConsensusPoolContext,
-        channel_name: &str,
-    ) -> Result<(), ()> {
-        info!(
-            "{}: {} disconnected. Exiting",
-            ctx.cluster_info.id(),
-            channel_name
-        );
-        ctx.exit.store(true, Ordering::Relaxed);
-        Err(())
-    }
-
     // Main loop for the consensus pool service. Only exits when signalled or if
     // any channel is disconnected.
-    fn consensus_pool_ingest_loop(mut ctx: ConsensusPoolContext) -> Result<(), ()> {
+    fn consensus_pool_ingest_loop(
+        ctx: &mut ConsensusPoolContext,
+    ) -> Result<(), ConsensusPoolServiceError> {
         let mut events = vec![];
         let mut my_pubkey = ctx.cluster_info.id();
         let root_bank = ctx.sharable_banks.root();
         let mut consensus_pool = ConsensusPool::new_from_root_bank(my_pubkey, &root_bank);
 
         // Wait until migration has completed
-        info!(
-            "{}: Consensus pool loop initialized, waiting for Alpenglow migration",
-            &my_pubkey
-        );
+        info!("{my_pubkey}: Consensus pool loop initialized, waiting for Alpenglow migration");
         Votor::wait_for_migration_or_exit(&ctx.exit, &ctx.start);
-        info!("{}: Consensus pool loop starting", &my_pubkey);
+        info!("{my_pubkey}: Consensus pool loop starting");
 
         // Standstill tracking
         let mut standstill_timer = Instant::now();
@@ -196,19 +196,15 @@ impl ConsensusPoolService {
                 info!("Consensus pool pubkey updated to {my_pubkey}");
             }
 
-            if let Err(e) = Self::add_produce_block_event(
+            Self::add_produce_block_event(
                 &mut highest_parent_ready,
                 &consensus_pool,
                 &my_pubkey,
-                &mut ctx,
+                ctx,
                 &mut events,
-            ) {
-                error!("Error adding block event: {e}");
-                ctx.exit.store(true, Ordering::Relaxed);
-                return Err(());
-            }
+            )?;
 
-            if standstill_timer.elapsed() > DELTA_STANDSTILL {
+            if standstill_timer.elapsed() > ctx.delta_standstill {
                 events.push(VotorEvent::Standstill(
                     consensus_pool.highest_finalized_slot(),
                 ));
@@ -219,7 +215,7 @@ impl ConsensusPoolService {
                 ) {
                     Ok(()) => (),
                     Err(AddVoteError::ChannelDisconnected(channel_name)) => {
-                        return Self::handle_channel_disconnected(&mut ctx, channel_name.as_str());
+                        return Err(ConsensusPoolServiceError::ChannelDisconnected(channel_name));
                     }
                     Err(e) => {
                         trace!("{my_pubkey}: unable to push standstill certificates into pool {e}");
@@ -232,7 +228,9 @@ impl ConsensusPoolService {
                 .try_for_each(|event| ctx.event_sender.send(event))
                 .is_err()
             {
-                return Self::handle_channel_disconnected(&mut ctx, "Votor event receiver");
+                return Err(ConsensusPoolServiceError::ChannelDisconnected(
+                    "Votor event receiver".to_string(),
+                ));
             }
 
             let consensus_message_receiver = ctx.consensus_message_receiver.clone();
@@ -242,13 +240,15 @@ impl ConsensusPoolService {
                 }
                 Err(RecvTimeoutError::Timeout) => continue,
                 Err(RecvTimeoutError::Disconnected) => {
-                    return Self::handle_channel_disconnected(&mut ctx, "BLS receiver");
+                    return Err(ConsensusPoolServiceError::ChannelDisconnected(
+                        "BLS receiver".to_string(),
+                    ));
                 }
             };
 
             for message in messages {
                 match Self::process_consensus_message(
-                    &mut ctx,
+                    ctx,
                     &my_pubkey,
                     &message,
                     &mut consensus_pool,
@@ -257,11 +257,11 @@ impl ConsensusPoolService {
                 ) {
                     Ok(()) => {}
                     Err(AddVoteError::ChannelDisconnected(channel_name)) => {
-                        return Self::handle_channel_disconnected(&mut ctx, channel_name.as_str())
+                        return Err(ConsensusPoolServiceError::ChannelDisconnected(channel_name));
                     }
                     Err(e) => {
                         // This is a non critical error, a duplicate vote for example
-                        trace!("{}: unable to push vote into pool {}", &my_pubkey, e);
+                        trace!("{my_pubkey}: unable to push vote into pool {e}");
                     }
                 }
             }
@@ -309,7 +309,7 @@ impl ConsensusPoolService {
         my_pubkey: &Pubkey,
         ctx: &mut ConsensusPoolContext,
         events: &mut Vec<VotorEvent>,
-    ) -> Result<(), String> {
+    ) -> Result<(), ConsensusPoolServiceError> {
         let Some(new_highest_parent_ready) = events
             .iter()
             .filter_map(|event| match event {
@@ -332,10 +332,10 @@ impl ConsensusPoolService {
             .leader_schedule_cache
             .slot_leader_at(*highest_parent_ready, Some(&root_bank))
         else {
-            return Err(format!(
+            return Err(ConsensusPoolServiceError::FailedToAddBlockEvent(format!(
                 "Unable to compute the leader at slot {highest_parent_ready}. Something is wrong, \
                  exiting"
-            ));
+            )));
         };
 
         if &leader_pubkey != my_pubkey {
@@ -365,17 +365,16 @@ impl ConsensusPoolService {
             }
             BlockProductionParent::ParentNotReady => {
                 // This can't happen, place holder depending on how we hook up optimistic
-                return Err(format!(
+                return Err(ConsensusPoolServiceError::FailedToAddBlockEvent(format!(
                     "Must have a block production parent: {:#?}",
                     consensus_pool.parent_ready_tracker
-                ));
+                )));
             }
             BlockProductionParent::Parent(parent_block) => {
                 events.push(VotorEvent::ProduceWindow(LeaderWindowInfo {
                     start_slot,
                     end_slot,
                     parent_block,
-                    // TODO: we can just remove this
                     skip_timer: Instant::now(),
                 }));
             }
@@ -393,6 +392,7 @@ impl ConsensusPoolService {
 mod tests {
     use {
         super::*,
+        crate::common::DELTA_STANDSTILL,
         crossbeam_channel::Sender,
         solana_bls_signatures::{
             keypair::Keypair as BLSKeypair, signature::Signature as BLSSignature,
@@ -430,7 +430,7 @@ mod tests {
         sharable_banks: SharableBanks,
     }
 
-    fn setup() -> ConsensusPoolServiceTestComponents {
+    fn setup(delta_standstill: Option<Duration>) -> ConsensusPoolServiceTestComponents {
         let (consensus_message_sender, consensus_message_receiver) = crossbeam_channel::unbounded();
         let (bls_sender, bls_receiver) = crossbeam_channel::unbounded();
         let (event_sender, event_receiver) = crossbeam_channel::unbounded();
@@ -477,6 +477,7 @@ mod tests {
             bls_sender,
             event_sender,
             commitment_sender,
+            delta_standstill: delta_standstill.unwrap_or(DELTA_STANDSTILL),
         };
         ConsensusPoolServiceTestComponents {
             consensus_pool_service: ConsensusPoolService::new(ctx),
@@ -520,7 +521,7 @@ mod tests {
     #[test]
     fn test_receive_and_send_consensus_message() {
         solana_logger::setup();
-        let setup_result = setup();
+        let setup_result = setup(None);
 
         // validator 0 to 7 send Notarize on slot 2
         let block_id = Hash::new_unique();
@@ -609,7 +610,7 @@ mod tests {
 
     #[test]
     fn test_send_produce_block_event() {
-        let setup_result = setup();
+        let setup_result = setup(None);
         // Find when is the next leader slot for me (validator 0)
         let my_pubkey = setup_result.validator_keypairs[0].node_keypair.pubkey();
         let next_leader_slot = setup_result
@@ -652,9 +653,9 @@ mod tests {
 
     #[test]
     fn test_send_standstill() {
-        let setup_result = setup();
-        // Do nothing for a little more than DELTA_STANDSTILL
-        thread::sleep(DELTA_STANDSTILL + Duration::from_millis(100));
+        let delta_standstill_for_test = Duration::from_millis(100);
+        let setup_result = setup(Some(delta_standstill_for_test));
+        thread::sleep(delta_standstill_for_test);
         // Verify that we received a standstill event
         wait_for_event(
             &setup_result.event_receiver,
@@ -669,7 +670,7 @@ mod tests {
     #[test_case("votor_event_receiver")]
     #[test_case("commitment_receiver")]
     fn test_channel_disconnection(channel_name: &str) {
-        let setup_result = setup();
+        let setup_result = setup(None);
         // A lot of the receiver needs a finalize certificate to trigger an exit
         if channel_name != "consensus_message_receiver" {
             let finalize_certificate = CertificateMessage {

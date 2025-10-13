@@ -149,8 +149,10 @@ impl Votor {
             if exit.load(Ordering::Relaxed) {
                 return;
             }
-            // Add timeout to check for exit flag
-            (started, _) = cvar.wait_timeout(started, Duration::from_secs(5)).unwrap();
+            // Add timeout to check for exit flag. Check infrequent enough to
+            // not hit performance while frequent enough that validator exit
+            // isn't delayed a lot.
+            (started, _) = cvar.wait_timeout(started, Duration::from_secs(1)).unwrap();
         }
     }
 }

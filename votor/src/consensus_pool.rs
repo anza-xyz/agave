@@ -64,7 +64,7 @@ pub enum AddVoteError {
     ChannelDisconnected(String),
 
     #[error("Voting Service queue full")]
-    VotingServiceQueueFull,
+    VotingServiceChannelFull,
 
     #[error("Invalid rank: {0}")]
     InvalidRank(u16),
