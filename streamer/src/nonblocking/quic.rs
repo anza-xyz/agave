@@ -1602,13 +1602,11 @@ impl Future for EndpointAccept<'_> {
 pub mod test {
     use {
         super::*,
-        crate::{
-            nonblocking::{
-                quic::compute_max_allowed_uni_streams,
-                testing_utilities::{
-                    check_multiple_streams, get_client_config, make_client_endpoint,
-                    setup_quic_server, SpawnTestServerResult,
-                },
+        crate::nonblocking::{
+            quic::compute_max_allowed_uni_streams,
+            testing_utilities::{
+                check_multiple_streams, get_client_config, make_client_endpoint, setup_quic_server,
+                SpawnTestServerResult,
             },
         },
         assert_matches::assert_matches,
