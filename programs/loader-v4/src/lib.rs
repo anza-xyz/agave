@@ -1637,13 +1637,6 @@ mod tests {
                     "sbpfv0_verifier_err",
                 ),
             ),
-            (
-                clock::id(),
-                create_account_shared_data_for_test(&clock::Clock {
-                    slot: 1,
-                    ..clock::Clock::default()
-                }),
-            ),
         ];
 
         // Execute program

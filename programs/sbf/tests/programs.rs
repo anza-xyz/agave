@@ -12,12 +12,9 @@ use {
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccountKeys,
     borsh::{from_slice, to_vec, BorshDeserialize, BorshSerialize},
-    solana_account::{
-        create_account_shared_data_for_test, AccountSharedData, ReadableAccount, WritableAccount,
-    },
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_client_traits::SyncClient,
-    solana_clock::Clock,
     solana_clock::{UnixTimestamp, MAX_PROCESSING_AGE},
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
@@ -1469,10 +1466,6 @@ fn assert_instruction_count() {
             ("solana_sbf_rust_sha", 22175),
         ]);
     }
-    let clock_account = create_account_shared_data_for_test(&Clock {
-        slot: 1,
-        ..Clock::default()
-    });
 
     println!("\n  {:36} expected actual  diff", "SBF program");
     for (program_name, expected_consumption) in programs.iter() {
@@ -1484,7 +1477,6 @@ fn assert_instruction_count() {
                 Pubkey::new_unique(),
                 AccountSharedData::new(0, 0, &program_key),
             ),
-            (clock::id(), clock_account.clone()),
         ];
         let instruction_accounts = vec![AccountMeta {
             pubkey: transaction_accounts[1].0,

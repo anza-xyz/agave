@@ -917,9 +917,6 @@ pub fn mock_process_instruction_with_feature_set<
         *loader_id,
         Arc::new(ProgramCacheEntry::new_builtin(0, 0, builtin_function)),
     );
-    if let Ok(clock) = invoke_context.get_sysvar_cache().get_clock() {
-        program_cache_for_tx_batch.set_slot_for_tests(clock.slot);
-    }
     invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
     pre_adjustments(&mut invoke_context);
     invoke_context
