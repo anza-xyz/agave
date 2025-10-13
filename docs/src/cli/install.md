@@ -20,7 +20,7 @@ on your preferred workflow:
 - Open your favorite Terminal application
 
 - Install the Agave release
-  [LATEST_AGAVE_RELEASE_VERSION](https://github.com/anza-xyz/agave/releases/latest)
+  [latest](https://github.com/anza-xyz/agave/releases/latest)
   on your machine by running:
 
 ```bash
