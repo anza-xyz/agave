@@ -4,12 +4,12 @@ use {
     crate::{
         poh_controller::{PohServiceMessage, PohServiceMessageGuard, PohServiceMessageReceiver},
         poh_recorder::{PohRecorder, Record},
+        record_channels::RecordReceiver,
     },
-    crossbeam_channel::Receiver,
     log::*,
     solana_clock::DEFAULT_HASHES_PER_SECOND,
     solana_entry::poh::Poh,
-    solana_measure::{measure::Measure, measure_us},
+    solana_measure::measure::Measure,
     solana_poh_config::PohConfig,
     std::{
         sync::{
@@ -49,7 +49,6 @@ struct PohTiming {
     total_tick_time_ns: u64,
     last_metric: Instant,
     total_record_time_us: u64,
-    total_send_record_result_us: u64,
 }
 
 impl PohTiming {
@@ -63,7 +62,6 @@ impl PohTiming {
             total_tick_time_ns: 0,
             last_metric: Instant::now(),
             total_record_time_us: 0,
-            total_send_record_result_us: 0,
         }
     }
     fn report(&mut self, ticks_per_slot: u64) {
@@ -80,11 +78,6 @@ impl PohTiming {
                 ("total_lock_time_us", self.total_lock_time_ns / 1000, i64),
                 ("total_hash_time_us", self.total_hash_time_ns / 1000, i64),
                 ("total_record_time_us", self.total_record_time_us, i64),
-                (
-                    "total_send_record_result_us",
-                    self.total_send_record_result_us,
-                    i64
-                ),
             );
             self.total_sleep_us = 0;
             self.num_ticks = 0;
@@ -94,7 +87,6 @@ impl PohTiming {
             self.total_hash_time_ns = 0;
             self.last_metric = Instant::now();
             self.total_record_time_us = 0;
-            self.total_send_record_result_us = 0;
         }
     }
 }
@@ -107,7 +99,7 @@ impl PohService {
         ticks_per_slot: u64,
         pinned_cpu_core: usize,
         hashes_per_batch: u64,
-        record_receiver: Receiver<Record>,
+        record_receiver: RecordReceiver,
         poh_service_receiver: PohServiceMessageReceiver,
     ) -> Self {
         let poh_config = poh_config.clone();
@@ -122,6 +114,7 @@ impl PohService {
                             &poh_exit,
                             record_receiver,
                             poh_service_receiver,
+                            ticks_per_slot,
                         );
                     } else {
                         Self::short_lived_low_power_tick_producer(
@@ -130,6 +123,7 @@ impl PohService {
                             &poh_exit,
                             record_receiver,
                             poh_service_receiver,
+                            ticks_per_slot,
                         );
                     }
                 } else {
@@ -174,51 +168,109 @@ impl PohService {
         poh_recorder: Arc<RwLock<PohRecorder>>,
         poh_config: &PohConfig,
         poh_exit: &AtomicBool,
-        record_receiver: Receiver<Record>,
+        mut record_receiver: RecordReceiver,
         poh_service_receiver: PohServiceMessageReceiver,
+        ticks_per_slot: u64,
     ) {
+        let poh = poh_recorder.read().unwrap().poh.clone();
         let mut last_tick = Instant::now();
+        let mut should_shutdown_for_test_producers =
+            Self::should_shutdown_for_test_producers(&poh_recorder);
+        if should_shutdown_for_test_producers {
+            record_receiver.shutdown();
+        }
         while !poh_exit.load(Ordering::Relaxed) {
-            let service_message = poh_service_receiver.try_recv();
+            let service_message =
+                Self::check_for_service_message(&poh_service_receiver, &mut record_receiver);
+            loop {
+                let remaining_tick_time = poh_config
+                    .target_tick_duration
+                    .saturating_sub(last_tick.elapsed());
+                Self::read_record_receiver_and_process(
+                    &poh_recorder,
+                    &mut record_receiver,
+                    remaining_tick_time,
+                    ticks_per_slot,
+                );
 
-            let remaining_tick_time = poh_config
-                .target_tick_duration
-                .saturating_sub(last_tick.elapsed());
+                // Only perform the last tick of the slot if there are no records.
+                // This ensures we don't tick, ending the slot, and cause recording
+                // to fail, unless all records have been processed.
+                // If we are on the last tick, the channel is shutdown so no more
+                // records can be received - we will just process the ones that
+                // have already been received.
+                debug_assert!(
+                    !should_shutdown_for_test_producers || record_receiver.is_shutdown(),
+                    "channel should be shutdown if last tick of slot"
+                );
+                if remaining_tick_time.is_zero()
+                    && (!should_shutdown_for_test_producers || record_receiver.is_safe_to_restart())
+                {
+                    last_tick = Instant::now();
+                    poh_recorder.write().unwrap().tick();
+
+                    should_shutdown_for_test_producers =
+                        Self::should_shutdown_for_test_producers(&poh_recorder);
+                    if should_shutdown_for_test_producers
+                        || record_receiver.should_shutdown(
+                            poh.lock().unwrap().remaining_hashes_in_slot(ticks_per_slot),
+                            ticks_per_slot,
+                        )
+                    {
+                        record_receiver.shutdown();
+                    }
+
+                    // Check if we can break the inner loop to handle a service message.
+                    if Self::can_process_service_message(&service_message, &record_receiver) {
+                        break;
+                    }
+                }
+            }
+
+            if let Some(service_message) = service_message {
+                Self::handle_service_message(&poh_recorder, service_message, &mut record_receiver);
+                should_shutdown_for_test_producers =
+                    Self::should_shutdown_for_test_producers(&poh_recorder);
+                if should_shutdown_for_test_producers {
+                    record_receiver.shutdown();
+                }
+            }
+        }
+
+        record_receiver.shutdown();
+        while !record_receiver.is_safe_to_restart() {
             Self::read_record_receiver_and_process(
                 &poh_recorder,
-                &record_receiver,
-                remaining_tick_time,
+                &mut record_receiver,
+                Duration::ZERO,
+                ticks_per_slot,
             );
-            if remaining_tick_time.is_zero() {
-                last_tick = Instant::now();
-                poh_recorder.write().unwrap().tick();
-            }
-
-            if let Ok(service_message) = service_message {
-                Self::handle_service_message(&poh_recorder, service_message);
-            }
         }
     }
 
     pub fn read_record_receiver_and_process(
         poh_recorder: &Arc<RwLock<PohRecorder>>,
-        record_receiver: &Receiver<Record>,
+        record_receiver: &mut RecordReceiver,
         timeout: Duration,
+        ticks_per_slot: u64,
     ) {
         let record = record_receiver.recv_timeout(timeout);
         if let Ok(record) = record {
-            if record
-                .sender
-                .send(
-                    poh_recorder
-                        .write()
-                        .unwrap()
-                        .record(record.slot, record.mixins, record.transaction_batches)
-                        .map(|summary| summary.starting_transaction_index),
-                )
-                .is_err()
-            {
-                panic!("Error returning mixin hash");
+            match poh_recorder.write().unwrap().record(
+                record.slot,
+                record.mixins,
+                record.transaction_batches,
+            ) {
+                Ok(record_summary) => {
+                    if record_receiver
+                        .should_shutdown(record_summary.remaining_hashes_in_slot, ticks_per_slot)
+                    {
+                        record_receiver.shutdown();
+                    }
+                }
+                Err(err) => {
+                    panic!("PohRecorder::record failed: {err:?}");
+                }
             }
         }
     }
@@ -227,38 +279,103 @@ impl PohService {
         poh_recorder: Arc<RwLock<PohRecorder>>,
         poh_config: &PohConfig,
         poh_exit: &AtomicBool,
-        record_receiver: Receiver<Record>,
+        mut record_receiver: RecordReceiver,
         poh_service_receiver: PohServiceMessageReceiver,
+        ticks_per_slot: u64,
     ) {
         let mut warned = false;
         let mut elapsed_ticks = 0;
         let mut last_tick = Instant::now();
         let num_ticks = poh_config.target_tick_count.unwrap();
-        while elapsed_ticks < num_ticks {
-            let service_message = poh_service_receiver.try_recv();
+        let poh = poh_recorder.read().unwrap().poh.clone();
+        let mut should_shutdown_for_test_producers =
+            Self::should_shutdown_for_test_producers(&poh_recorder);
+        if should_shutdown_for_test_producers {
+            record_receiver.shutdown();
+        }
 
-            let remaining_tick_time = poh_config
-                .target_tick_duration
-                .saturating_sub(last_tick.elapsed());
-            Self::read_record_receiver_and_process(
-                &poh_recorder,
-                &record_receiver,
-                Duration::from_millis(0),
-            );
-            if remaining_tick_time.is_zero() {
-                last_tick = Instant::now();
-                poh_recorder.write().unwrap().tick();
-                elapsed_ticks += 1;
+        while elapsed_ticks < num_ticks {
+            let service_message =
+                Self::check_for_service_message(&poh_service_receiver, &mut record_receiver);
+
+            loop {
+                let remaining_tick_time = poh_config
+                    .target_tick_duration
+                    .saturating_sub(last_tick.elapsed());
+                Self::read_record_receiver_and_process(
+                    &poh_recorder,
+                    &mut record_receiver,
+                    Duration::from_millis(0),
+                    ticks_per_slot,
+                );
+
+                // Only perform the last tick of the slot if there are no records.
+                // This ensures we don't tick, ending the slot, and cause recording
+                // to fail, unless all records have been processed.
+                // If we are on the last tick, the channel is shutdown so no more
+                // records can be received - we will just process the ones that
+                // have already been received.
+                debug_assert!(
+                    !should_shutdown_for_test_producers || record_receiver.is_shutdown(),
+                    "channel should be shutdown if last tick of slot"
+                );
+                if remaining_tick_time.is_zero()
+                    && (!should_shutdown_for_test_producers || record_receiver.is_safe_to_restart())
+                {
+                    last_tick = Instant::now();
+                    poh_recorder.write().unwrap().tick();
+                    elapsed_ticks += 1;
+
+                    should_shutdown_for_test_producers =
+                        Self::should_shutdown_for_test_producers(&poh_recorder);
+                    if should_shutdown_for_test_producers
+                        || record_receiver.should_shutdown(
+                            poh.lock().unwrap().remaining_hashes_in_slot(ticks_per_slot),
+                            ticks_per_slot,
+                        )
+                    {
+                        record_receiver.shutdown();
+                    }
+                }
+
+                // Check if we can break the inner loop to handle a service message.
+                if Self::can_process_service_message(&service_message, &record_receiver) {
+                    break;
+                }
             }
+
             if poh_exit.load(Ordering::Relaxed) && !warned {
                 warned = true;
                 warn!("exit signal is ignored because PohService is scheduled to exit soon");
             }
-
-            if let Ok(service_message) = service_message {
-                Self::handle_service_message(&poh_recorder, service_message);
+            if let Some(service_message) = service_message {
+                Self::handle_service_message(&poh_recorder, service_message, &mut record_receiver);
+                should_shutdown_for_test_producers =
+                    Self::should_shutdown_for_test_producers(&poh_recorder);
+                if should_shutdown_for_test_producers {
+                    record_receiver.shutdown();
+                }
             }
         }
+
+        record_receiver.shutdown();
+        while !record_receiver.is_safe_to_restart() {
+            Self::read_record_receiver_and_process(
+                &poh_recorder,
+                &mut record_receiver,
+                Duration::ZERO,
+                ticks_per_slot,
+            );
+        }
+    }
+
+    /// Returns true if the receiver should be shutdown. This is for test variants of the poh service.
+    fn should_shutdown_for_test_producers(poh_recorder: &RwLock<PohRecorder>) -> bool {
+        let poh_recorder = poh_recorder.read().unwrap();
+        poh_recorder
+            .bank()
+            .map(|bank| bank.max_tick_height().wrapping_sub(1) <= poh_recorder.tick_height())
+            .unwrap_or(false)
     }
 
     // returns true if we need to tick
@@ -266,10 +383,11 @@ impl PohService {
         next_record: &mut Option<Record>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         timing: &mut PohTiming,
-        record_receiver: &Receiver<Record>,
+        record_receiver: &mut RecordReceiver,
         hashes_per_batch: u64,
         poh: &Arc<Mutex<Poh>>,
         target_ns_per_tick: u64,
+        ticks_per_slot: u64,
     ) -> bool {
         match next_record.take() {
             Some(mut record) => {
@@ -281,17 +399,24 @@ impl PohService {
                 timing.total_lock_time_ns += lock_time.as_ns();
                 let mut record_time = Measure::start("record");
                 loop {
-                    let res = poh_recorder_l.record(
+                    match poh_recorder_l.record(
                         record.slot,
                         record.mixins,
                         std::mem::take(&mut record.transaction_batches),
-                    );
-                    let (send_res, send_record_result_us) = measure_us!(record
-                        .sender
-                        .send(res.map(|summary| summary.starting_transaction_index)));
-                    debug_assert!(send_res.is_ok(), "Record wasn't sent.");
+                    ) {
+                        Ok(record_summary) => {
+                            if record_receiver.should_shutdown(
+                                record_summary.remaining_hashes_in_slot,
+                                ticks_per_slot,
+                            ) {
+                                record_receiver.shutdown();
+                            }
+                        }
+                        Err(err) => {
+                            panic!("PohRecorder::record failed: {err:?}");
+                        }
+                    }
 
-                    timing.total_send_record_result_us += send_record_result_us;
                     timing.num_hashes += 1; // note: may have also ticked inside record
                     if let Ok(new_record) = record_receiver.try_recv() {
                         // we already have second request to record, so record again while we still have the mutex
@@ -316,6 +441,17 @@ impl PohService {
                     let should_tick = poh_l.hash(hashes_per_batch);
                     let ideal_time = poh_l.target_poh_time(target_ns_per_tick);
                     hash_time.stop();
+
+                    // shutdown if another batch would push us over the shutdown threshold.
+                    let remaining_hashes_in_slot = poh_l.remaining_hashes_in_slot(ticks_per_slot);
+                    let remaining_hashes_after_next_batch =
+                        remaining_hashes_in_slot.saturating_sub(hashes_per_batch);
+                    if record_receiver
+                        .should_shutdown(remaining_hashes_after_next_batch, ticks_per_slot)
+                    {
+                        record_receiver.shutdown();
+                    }
+
                     timing.total_hash_time_ns += hash_time.as_ns();
                     if should_tick {
                         // nothing else can be done. tick required.
@@ -357,54 +493,96 @@ impl PohService {
         poh_exit: &AtomicBool,
         ticks_per_slot: u64,
         hashes_per_batch: u64,
-        record_receiver: Receiver<Record>,
+        mut record_receiver: RecordReceiver,
         poh_service_receiver: PohServiceMessageReceiver,
         target_ns_per_tick: u64,
     ) {
         let poh = poh_recorder.read().unwrap().poh.clone();
         let mut timing = PohTiming::new();
         let mut next_record = None;
+        let mut should_exit = poh_exit.load(Ordering::Relaxed);
 
         loop {
-            let service_message = poh_service_receiver.try_recv();
-            let should_tick = Self::record_or_hash(
-                &mut next_record,
-                &poh_recorder,
-                &mut timing,
-                &record_receiver,
-                hashes_per_batch,
-                &poh,
-                target_ns_per_tick,
-            );
-            if should_tick {
-                // Lock PohRecorder only for the final hash. record_or_hash will lock PohRecorder for record calls but not for hashing.
-                {
-                    let mut lock_time = Measure::start("lock");
-                    let mut poh_recorder_l = poh_recorder.write().unwrap();
-                    lock_time.stop();
-                    timing.total_lock_time_ns += lock_time.as_ns();
-                    let mut tick_time = Measure::start("tick");
-                    poh_recorder_l.tick();
-                    tick_time.stop();
-                    timing.total_tick_time_ns += tick_time.as_ns();
-                }
-                timing.num_ticks += 1;
+            // If we should exit, close the channel so no more records are accepted,
+            // but we still want to process any pending records.
+            // We should **not** however process any service messages once we have detected
+            // the exit signal.
+            should_exit |= poh_exit.load(Ordering::Relaxed); // once set, stay set.
+            if should_exit {
+                record_receiver.shutdown();
+            }
 
-                timing.report(ticks_per_slot);
-                if poh_exit.load(Ordering::Relaxed) {
+            let service_message =
+                Self::check_for_service_message(&poh_service_receiver, &mut record_receiver);
+            loop {
+                let should_tick = Self::record_or_hash(
+                    &mut next_record,
+                    &poh_recorder,
+                    &mut timing,
+                    &mut record_receiver,
+                    hashes_per_batch,
+                    &poh,
+                    target_ns_per_tick,
+                    ticks_per_slot,
+                );
+                if should_tick {
+                    // Lock PohRecorder only for the final hash. record_or_hash will lock PohRecorder for record calls but not for hashing.
+                    {
+                        let mut lock_time = Measure::start("lock");
+                        let mut poh_recorder_l = poh_recorder.write().unwrap();
+                        lock_time.stop();
+                        timing.total_lock_time_ns += lock_time.as_ns();
+                        let mut tick_time = Measure::start("tick");
+                        poh_recorder_l.tick();
+                        tick_time.stop();
+                        timing.total_tick_time_ns += tick_time.as_ns();
+                    }
+                    timing.num_ticks += 1;
+
+                    timing.report(ticks_per_slot);
+                }
+
+                // Check if we can break the inner loop to handle a service message.
+                if Self::can_process_service_message(&service_message, &record_receiver) {
                     break;
                 }
             }
 
-            if let Ok(service_message) = service_message {
-                Self::handle_service_message(&poh_recorder, service_message);
+            if let Some(service_message) = service_message {
+                if !should_exit {
+                    Self::handle_service_message(
+                        &poh_recorder,
+                        service_message,
+                        &mut record_receiver,
+                    );
+                }
             }
+
+            // If exit signal is set and there are no more records to process, exit.
+            if should_exit && record_receiver.is_safe_to_restart() {
+                break;
+            }
+        }
+    }
+
+    /// Check for a service message and shutdown the channel if there is one.
+    fn check_for_service_message<'a>(
+        service_message_receiver: &'a PohServiceMessageReceiver,
+        record_receiver: &mut RecordReceiver,
+    ) -> Option<PohServiceMessageGuard<'a>> {
+        match service_message_receiver.try_recv() {
+            Ok(bank_message) => {
+                record_receiver.shutdown();
+                Some(bank_message)
+            }
+            Err(_) => None,
         }
     }
 
     fn handle_service_message(
         poh_recorder: &RwLock<PohRecorder>,
         mut service_message: PohServiceMessageGuard,
+        record_receiver: &mut RecordReceiver,
     ) {
         {
             let mut recorder = poh_recorder.write().unwrap();
@@ -416,10 +594,29 @@ impl PohService {
                     recorder.reset(reset_bank, next_leader_slot);
                 }
                 PohServiceMessage::SetBank { bank } => {
+                    let slot = bank.slot();
+                    let bank_max_tick_height = bank.max_tick_height();
                     recorder.set_bank(bank);
+                    let should_restart =
+                        recorder.tick_height() < bank_max_tick_height.saturating_sub(1);
+                    if should_restart {
+                        record_receiver.restart(slot);
+                    }
                 }
             }
         }
+    }
+
+    /// If we have a service message and there are no more records to process,
+    /// we can break inner recording loops and handle the service message.
+    /// However, if there are still records to process, we must continue processing
+    /// records before handling the service message, to ensure we do not lose
+    /// any records.
+    fn can_process_service_message(
+        service_message: &Option<PohServiceMessageGuard>,
+        record_receiver: &RecordReceiver,
+    ) -> bool {
+        service_message.is_none() || record_receiver.is_safe_to_restart()
     }
 
     pub fn join(self) -> thread::Result<()> {
@@ -431,8 +628,10 @@ impl PohService {
 mod tests {
     use {
         super::*,
-        crate::{poh_controller::PohController, poh_recorder::PohRecorderError::MaxHeightReached},
-        crossbeam_channel::unbounded,
+        crate::{
+            poh_controller::PohController, poh_recorder::PohRecorderError::MaxHeightReached,
+            record_channels::record_channels,
+        },
         rand::{thread_rng, Rng},
         solana_clock::{DEFAULT_HASHES_PER_TICK, DEFAULT_MS_PER_SLOT},
         solana_ledger::{
@@ -561,7 +760,7 @@ mod tests {
         let hashes_per_batch = std::env::var("HASHES_PER_BATCH")
             .map(|x| x.parse().unwrap())
             .unwrap_or(DEFAULT_HASHES_PER_BATCH);
-        let (_record_sender, record_receiver) = unbounded();
+        let (_record_sender, record_receiver) = record_channels(false);
         let (_poh_controller, poh_service_message_receiver) = PohController::new();
         let poh_service = PohService::new(
             poh_recorder.clone(),

@@ -3,6 +3,7 @@ use {
         tower1_14_11::Tower1_14_11, tower1_7_14::SavedTower1_7_14, Result, Tower, TowerError,
         TowerVersions,
     },
+    serde::{Deserialize, Serialize},
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_signer::Signer,

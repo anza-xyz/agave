@@ -3,7 +3,7 @@ use {
     agave_syscalls::create_program_runtime_environment_v1,
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
-    serde_derive::{Deserialize, Serialize},
+    serde::{Deserialize, Serialize},
     serde_json::Result,
     solana_account::{
         create_account_shared_data_for_test, state_traits::StateMut, AccountSharedData,

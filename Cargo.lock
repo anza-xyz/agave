@@ -93,7 +93,6 @@ dependencies = [
  "hyper 0.14.32",
  "log",
  "serde",
- "serde_derive",
  "serde_json",
  "sha2 0.10.9",
  "solana-clap-utils",
@@ -161,7 +160,6 @@ dependencies = [
  "scopeguard",
  "semver 1.0.27",
  "serde",
- "serde_derive",
  "serde_yaml 0.8.26",
  "serde_yaml 0.9.34+deprecated",
  "solana-clap-utils",
@@ -201,6 +199,7 @@ version = "3.1.0"
 dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
+ "agave-snapshots",
  "agave-syscalls",
  "assert_cmd",
  "bs58",
@@ -219,7 +218,6 @@ dependencies = [
  "regex",
  "serde",
  "serde_bytes",
- "serde_derive",
  "serde_json",
  "signal-hook",
  "solana-account",
@@ -280,10 +278,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agave-low-pass-filter"
-version = "3.1.0"
-
-[[package]]
 name = "agave-precompiles"
 version = "3.1.0"
 dependencies = [
@@ -330,8 +324,20 @@ version = "3.1.0"
 name = "agave-scheduling-utils"
 version = "3.1.0"
 dependencies = [
+ "agave-scheduler-bindings",
+ "agave-transaction-view",
  "ahash 0.8.11",
+ "rts-alloc",
  "solana-pubkey",
+]
+
+[[package]]
+name = "agave-snapshots"
+version = "3.1.0"
+dependencies = [
+ "lz4",
+ "strum",
+ "zstd",
 ]
 
 [[package]]
@@ -458,6 +464,7 @@ name = "agave-validator"
 version = "3.1.0"
 dependencies = [
  "agave-geyser-plugin-interface",
+ "agave-snapshots",
  "assert_cmd",
  "chrono",
  "clap 2.33.3",
@@ -575,7 +582,6 @@ dependencies = [
  "rayon",
  "serde",
  "serde_bytes",
- "serde_derive",
  "solana-account",
  "solana-accounts-db",
  "solana-bloom",
@@ -2825,7 +2831,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4356,9 +4362,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.176"
+version = "0.2.177"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58f929b4d672ea937a23a1ab494143d968337a5f47e56d0815df1e0890ddf174"
+checksum = "2874a2af47a2325c2001a6e6fad9b16a53b802102b528163885171cf92b15976"
 
 [[package]]
 name = "libloading"
@@ -5497,9 +5503,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.95"
+version = "1.0.101"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02b3e5e68a3a1a02aad3ec490a98007cbc13c37cbe84a3cd7b8e406d76e7f778"
+checksum = "89ae43fd86e4158d6db51ad8e2b80f313af9cc74f5c0e03ccb87de09998732de"
 dependencies = [
  "unicode-ident",
 ]
@@ -6243,7 +6249,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.9.2",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6321,7 +6327,7 @@ dependencies = [
  "security-framework 3.2.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6957,7 +6963,6 @@ dependencies = [
  "bs58",
  "bv",
  "serde",
- "serde_derive",
  "serde_json",
  "solana-account",
  "solana-account-decoder-client-types",
@@ -6997,7 +7002,6 @@ dependencies = [
  "base64 0.22.1",
  "bs58",
  "serde",
- "serde_derive",
  "serde_json",
  "solana-account",
  "solana-pubkey",
@@ -7099,7 +7103,6 @@ dependencies = [
  "seqlock",
  "serde",
  "serde_bytes",
- "serde_derive",
  "slab",
  "smallvec",
  "solana-account",
@@ -7276,7 +7279,6 @@ name = "solana-banks-interface"
 version = "3.1.0"
 dependencies = [
  "serde",
- "serde_derive",
  "solana-account",
  "solana-clock",
  "solana-commitment-config",
@@ -7465,7 +7467,6 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "serde",
- "serde_derive",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-hash",
@@ -7765,7 +7766,6 @@ dependencies = [
  "reqwest 0.12.23",
  "semver 1.0.27",
  "serde",
- "serde_derive",
  "serde_json",
  "solana-account",
  "solana-account-decoder",
@@ -7844,7 +7844,6 @@ dependencies = [
  "anyhow",
  "dirs-next",
  "serde",
- "serde_derive",
  "serde_yaml 0.9.34+deprecated",
  "solana-clap-utils",
  "solana-commitment-config",
@@ -8157,6 +8156,7 @@ dependencies = [
  "agave-reserved-account-keys",
  "agave-scheduler-bindings",
  "agave-scheduling-utils",
+ "agave-snapshots",
  "agave-transaction-view",
  "agave-verified-packet-receiver",
  "agave-votor",
@@ -8197,7 +8197,6 @@ dependencies = [
  "rustls 0.23.32",
  "serde",
  "serde_bytes",
- "serde_derive",
  "serde_json",
  "serial_test",
  "shaq",
@@ -8463,6 +8462,7 @@ dependencies = [
 name = "solana-download-utils"
 version = "3.1.0"
 dependencies = [
+ "agave-snapshots",
  "log",
  "solana-clock",
  "solana-file-download",
@@ -8509,9 +8509,11 @@ dependencies = [
  "dlopen2",
  "log",
  "num_cpus",
+ "proptest",
  "rand 0.8.5",
  "rayon",
  "serde",
+ "solana-address",
  "solana-entry",
  "solana-hash",
  "solana-keypair",
@@ -8525,11 +8527,13 @@ dependencies = [
  "solana-pubkey",
  "solana-runtime-transaction",
  "solana-sha256-hasher",
+ "solana-short-vec",
  "solana-signature",
  "solana-signer",
  "solana-system-transaction",
  "solana-transaction",
  "solana-transaction-error",
+ "wincode",
 ]
 
 [[package]]
@@ -8622,7 +8626,6 @@ dependencies = [
  "crossbeam-channel",
  "log",
  "serde",
- "serde_derive",
  "solana-clap-utils",
  "solana-cli-config",
  "solana-cli-output",
@@ -8866,7 +8869,6 @@ name = "solana-gossip"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
- "agave-low-pass-filter",
  "anyhow",
  "arrayvec",
  "assert_matches",
@@ -8891,10 +8893,8 @@ dependencies = [
  "serde",
  "serde-big-array",
  "serde_bytes",
- "serde_derive",
  "serial_test",
  "siphasher 1.0.1",
- "solana-account",
  "solana-bloom",
  "solana-clap-utils",
  "solana-client",
@@ -9051,6 +9051,7 @@ dependencies = [
  "dirs-next",
  "num_cpus",
  "serde_json",
+ "solana-bls-signatures",
  "solana-clap-v3-utils",
  "solana-cli-config",
  "solana-derivation-path",
@@ -9062,6 +9063,7 @@ dependencies = [
  "solana-seed-derivable",
  "solana-signer",
  "solana-version",
+ "solana-votor-messages",
  "tempfile",
  "tiny-bip39",
 ]
@@ -9218,6 +9220,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "trees",
+ "wincode",
 ]
 
 [[package]]
@@ -9294,6 +9297,7 @@ dependencies = [
 name = "solana-local-cluster"
 version = "3.1.0"
 dependencies = [
+ "agave-snapshots",
  "assert_matches",
  "crossbeam-channel",
  "fs_extra",
@@ -9458,7 +9462,6 @@ dependencies = [
  "pcap-file",
  "rand 0.8.5",
  "serde",
- "serde_derive",
  "shuttle",
  "socket2 0.6.0",
  "solana-logger",
@@ -9603,6 +9606,7 @@ dependencies = [
  "log",
  "qualifier_attr",
  "rand 0.8.5",
+ "shuttle",
  "solana-clock",
  "solana-entry",
  "solana-hash",
@@ -9929,7 +9933,6 @@ dependencies = [
  "log",
  "semver 1.0.27",
  "serde",
- "serde_derive",
  "serde_json",
  "solana-account-decoder-client-types",
  "solana-clock",
@@ -10049,6 +10052,7 @@ version = "3.1.0"
 dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
+ "agave-snapshots",
  "base64 0.22.1",
  "bincode",
  "bs58",
@@ -10065,7 +10069,6 @@ dependencies = [
  "rayon",
  "regex",
  "serde",
- "serde_derive",
  "serde_json",
  "serial_test",
  "soketto",
@@ -10170,7 +10173,6 @@ dependencies = [
  "reqwest-middleware",
  "semver 1.0.27",
  "serde",
- "serde_derive",
  "serde_json",
  "solana-account",
  "solana-account-decoder",
@@ -10208,7 +10210,6 @@ dependencies = [
  "reqwest 0.12.23",
  "reqwest-middleware",
  "serde",
- "serde_derive",
  "serde_json",
  "solana-account-decoder-client-types",
  "solana-clock",
@@ -10258,7 +10259,6 @@ dependencies = [
  "const_format",
  "semver 1.0.27",
  "serde",
- "serde_derive",
  "serde_json",
  "solana-account",
  "solana-account-decoder-client-types",
@@ -10322,6 +10322,7 @@ dependencies = [
  "agave-feature-set",
  "agave-precompiles",
  "agave-reserved-account-keys",
+ "agave-snapshots",
  "agave-syscalls",
  "agave-transaction-view",
  "ahash 0.8.11",
@@ -10362,7 +10363,6 @@ dependencies = [
  "regex",
  "semver 1.0.27",
  "serde",
- "serde_derive",
  "serde_json",
  "serde_with",
  "shuttle",
@@ -10873,7 +10873,6 @@ dependencies = [
  "prost",
  "prost-types",
  "serde",
- "serde_derive",
  "smpl_jwt",
  "solana-clock",
  "solana-hash",
@@ -10988,7 +10987,6 @@ dependencies = [
  "qualifier_attr",
  "rand 0.7.3",
  "serde",
- "serde_derive",
  "shuttle",
  "solana-account",
  "solana-bpf-loader-program",
@@ -11064,42 +11062,6 @@ name = "solana-svm-feature-set"
 version = "3.1.0"
 
 [[package]]
-name = "solana-svm-fuzz-harness"
-version = "3.1.0"
-dependencies = [
- "agave-feature-set",
- "agave-precompiles",
- "agave-syscalls",
- "bincode",
- "clap 4.5.31",
- "prost",
- "prost-build",
- "solana-account",
- "solana-builtins",
- "solana-clock",
- "solana-compute-budget",
- "solana-epoch-schedule",
- "solana-hash",
- "solana-instruction",
- "solana-instruction-error",
- "solana-last-restart-slot",
- "solana-logger",
- "solana-precompile-error",
- "solana-program-runtime",
- "solana-pubkey",
- "solana-rent",
- "solana-sdk-ids",
- "solana-stable-layout",
- "solana-svm",
- "solana-svm-callback",
- "solana-svm-log-collector",
- "solana-svm-timings",
- "solana-sysvar-id",
- "solana-transaction-context",
- "thiserror 2.0.17",
-]
-
-[[package]]
 name = "solana-svm-log-collector"
 version = "3.1.0"
 dependencies = [
@@ -11169,7 +11131,6 @@ dependencies = [
  "criterion",
  "log",
  "serde",
- "serde_derive",
  "solana-account",
  "solana-bincode",
  "solana-compute-budget",
@@ -11259,11 +11220,11 @@ name = "solana-test-validator"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-snapshots",
  "base64 0.22.1",
  "bincode",
  "crossbeam-channel",
  "log",
- "serde_derive",
  "serde_json",
  "solana-account",
  "solana-accounts-db",
@@ -11336,7 +11297,6 @@ dependencies = [
  "indicatif 0.18.0",
  "pickledb",
  "serde",
- "serde_derive",
  "solana-account-decoder",
  "solana-clap-utils",
  "solana-cli-config",
@@ -11498,7 +11458,6 @@ dependencies = [
  "bincode",
  "qualifier_attr",
  "serde",
- "serde_derive",
  "solana-account",
  "solana-account-info",
  "solana-instruction",
@@ -11597,7 +11556,6 @@ dependencies = [
  "bytemuck",
  "log",
  "serde",
- "serde_derive",
  "serde_json",
  "solana-account-decoder",
  "solana-address-lookup-table-interface",
@@ -11636,7 +11594,6 @@ dependencies = [
  "bincode",
  "bs58",
  "serde",
- "serde_derive",
  "serde_json",
  "solana-account-decoder-client-types",
  "solana-commitment-config",
@@ -11711,6 +11668,7 @@ dependencies = [
  "test-case",
  "thiserror 2.0.17",
  "tokio",
+ "wincode",
 ]
 
 [[package]]
@@ -11797,7 +11755,6 @@ dependencies = [
  "rand 0.8.5",
  "semver 1.0.27",
  "serde",
- "serde_derive",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-sanitize",
@@ -11869,7 +11826,6 @@ dependencies = [
  "log",
  "rand 0.8.5",
  "serde",
- "serde_derive",
  "solana-account",
  "solana-bincode",
  "solana-clock",
@@ -11896,9 +11852,9 @@ dependencies = [
 
 [[package]]
 name = "solana-vote-interface"
-version = "4.0.2"
+version = "4.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c33f1a30b1e61944e52afef0992a2be93720c5770eaf1f6d8e6e34f87d90e754"
+checksum = "d6970d0b048a7b2c80203fe54e10e0cc6d52a88ef7115bb7214908415e33b930"
 dependencies = [
  "arbitrary",
  "bincode",
@@ -11935,7 +11891,6 @@ dependencies = [
  "num-derive",
  "num-traits",
  "serde",
- "serde_derive",
  "solana-account",
  "solana-bincode",
  "solana-clock",
@@ -12118,7 +12073,6 @@ dependencies = [
  "num-traits",
  "rand 0.8.5",
  "serde",
- "serde_derive",
  "serde_json",
  "sha3",
  "solana-curve25519 3.1.0",
@@ -13730,6 +13684,29 @@ name = "winapi-x86_64-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
+
+[[package]]
+name = "wincode"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c0b5bd8dce8a24aa92e1b16407ae2a60b35a103150e24e12bb63466e3786397"
+dependencies = [
+ "solana-short-vec",
+ "thiserror 2.0.17",
+ "wincode-derive",
+]
+
+[[package]]
+name = "wincode-derive"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b565e235fa7bbb5f898fc2d55639e41fde3ed66dc02ad7d570d075f41e1cfc1"
+dependencies = [
+ "darling",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+]
 
 [[package]]
 name = "windows"

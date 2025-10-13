@@ -50,11 +50,9 @@ static FEATURE_SET: std::sync::LazyLock<FeatureSet> =
 #[cfg_attr(test, derive(Clone))]
 pub struct ImmutableDeserializedPacket {
     transaction: SanitizedVersionedTransaction,
-    forwarded: bool,
     message_hash: Hash,
     is_simple_vote: bool,
     compute_unit_price: u64,
-    compute_unit_limit: u32,
 }
 
 impl ImmutableDeserializedPacket {
@@ -64,12 +62,10 @@ impl ImmutableDeserializedPacket {
         let message_bytes = packet_message(packet)?;
         let message_hash = Message::hash_raw_message(message_bytes);
         let is_simple_vote = packet.meta().is_simple_vote_tx();
-        let forwarded = packet.meta().forwarded();
 
         // drop transaction if prioritization fails.
         let ComputeBudgetLimits {
             mut compute_unit_price,
-            compute_unit_limit,
             ..
         } = process_compute_budget_instructions(
             sanitized_transaction
@@ -87,24 +83,14 @@ impl ImmutableDeserializedPacket {
 
         Ok(Self {
             transaction: sanitized_transaction,
-            forwarded,
             message_hash,
             is_simple_vote,
             compute_unit_price,
-            compute_unit_limit,
         })
-    }
-
-    pub fn forwarded(&self) -> bool {
-        self.forwarded
     }
 
     pub fn transaction(&self) -> &SanitizedVersionedTransaction {
         &self.transaction
-    }
-
-    pub fn message_hash(&self) -> &Hash {
-        &self.message_hash
     }
 
     pub fn is_simple_vote(&self) -> bool {
@@ -113,10 +99,6 @@ impl ImmutableDeserializedPacket {
 
     pub fn compute_unit_price(&self) -> u64 {
         self.compute_unit_price
-    }
-
-    pub fn compute_unit_limit(&self) -> u64 {
-        u64::from(self.compute_unit_limit)
     }
 
     // This function deserializes packets into transactions, computes the blake3 hash of transaction

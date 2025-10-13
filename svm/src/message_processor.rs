@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn test_process_message_readonly_handling() {
-        #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+        #[derive(serde::Serialize, serde::Deserialize)]
         enum MockSystemInstruction {
             Correct,
             TransferLamports { lamports: u64 },
@@ -350,7 +350,7 @@ mod tests {
 
     #[test]
     fn test_process_message_duplicate_accounts() {
-        #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+        #[derive(serde::Serialize, serde::Deserialize)]
         enum MockSystemInstruction {
             BorrowFail,
             MultiBorrowMut,

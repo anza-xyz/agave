@@ -26,7 +26,6 @@ itertools = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true, optional = true }
 serde = { workspace = true, features = ["rc"] }
-serde_derive = { workspace = true }
 solana-account = { workspace = true, features = ["bincode"] }
 solana-bincode = { workspace = true }
 solana-clock = { workspace = true }

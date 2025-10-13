@@ -4,6 +4,7 @@ use {
         validator_info,
     },
     bincode::deserialize,
+    serde::{Deserialize, Serialize},
     serde_json::Value,
     solana_config_interface::state::{get_config_data, ConfigKeys},
     solana_pubkey::Pubkey,

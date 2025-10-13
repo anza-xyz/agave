@@ -5,6 +5,7 @@ use {
         builder::ValueParser, crate_description, crate_name, value_parser, Arg, ArgAction,
         ArgMatches, Command,
     },
+    solana_bls_signatures::{keypair::Keypair as BLSKeypair, Pubkey as BLSPubkey},
     solana_clap_v3_utils::{
         input_parsers::{
             signer::{SignerSource, SignerSourceParserBuilder},
@@ -35,6 +36,7 @@ use {
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_signer::Signer,
+    solana_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     std::{
         collections::HashSet,
         error,
@@ -391,6 +393,39 @@ fn app<'a>(num_threads: &'a str, crate_version: &'a str) -> Command<'a> {
                 ),
         )
         .subcommand(
+            Command::new("bls_pubkey")
+                .about("Display the BLS pubkey derived from given ed25519 keypair file")
+                .disable_version_flag(true)
+                .arg(
+                    Arg::new("keypair")
+                        .index(1)
+                        .value_name("KEYPAIR")
+                        .takes_value(true)
+                        .required(true)
+                        .value_parser(SignerSourceParserBuilder::default().allow_all().build())
+                        .help("Filepath or URL to a keypair"),
+                )
+                .arg(
+                    Arg::new(SKIP_SEED_PHRASE_VALIDATION_ARG.name)
+                        .long(SKIP_SEED_PHRASE_VALIDATION_ARG.long)
+                        .help(SKIP_SEED_PHRASE_VALIDATION_ARG.help),
+                )
+                .arg(
+                    Arg::new("outfile")
+                        .short('o')
+                        .long("outfile")
+                        .value_name("FILEPATH")
+                        .takes_value(true)
+                        .help("Path to generated file"),
+                )
+                .arg(
+                    Arg::new("force")
+                        .short('f')
+                        .long("force")
+                        .help("Overwrite the output file if it exists"),
+                ),
+        )
+        .subcommand(
             Command::new("recover")
                 .about("Recover keypair from seed phrase and optional BIP39 passphrase")
                 .disable_version_flag(true)
@@ -444,6 +479,24 @@ fn write_pubkey_file(outfile: &str, pubkey: Pubkey) -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+fn write_bls_pubkey_file(
+    outfile: &str,
+    bls_pubkey: BLSPubkey,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::Write;
+
+    let printable = format!("{bls_pubkey}");
+    let serialized = serde_json::to_string(&printable)?;
+
+    if let Some(outdir) = std::path::Path::new(&outfile).parent() {
+        std::fs::create_dir_all(outdir)?;
+    }
+    let mut f = std::fs::File::create(outfile)?;
+    f.write_all(&serialized.into_bytes())?;
+
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn error::Error>> {
     let default_num_threads = num_cpus::get().to_string();
     let matches = app(&default_num_threads, solana_version::version!())
@@ -474,6 +527,19 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
                 write_pubkey_file(outfile, pubkey)?;
             } else {
                 println!("{pubkey}");
+            }
+        }
+        ("bls_pubkey", matches) => {
+            let keypair = get_keypair_from_matches(matches, config, &mut wallet_manager)?;
+            let bls_keypair = BLSKeypair::derive_from_signer(&keypair, BLS_KEYPAIR_DERIVE_SEED)?;
+            let bls_pubkey: BLSPubkey = bls_keypair.public;
+
+            if matches.try_contains_id("outfile")? {
+                let outfile = matches.get_one::<String>("outfile").unwrap();
+                check_for_overwrite(outfile, matches)?;
+                write_bls_pubkey_file(outfile, bls_pubkey)?;
+            } else {
+                println!("{bls_pubkey}");
             }
         }
         ("new", matches) => {
@@ -806,6 +872,7 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
 mod tests {
     use {
         super::*,
+        solana_keypair::read_keypair_file,
         tempfile::{tempdir, TempDir},
     };
 
@@ -815,6 +882,14 @@ mod tests {
 
         use std::str::FromStr;
         Ok(Pubkey::from_str(&printable)?)
+    }
+
+    fn read_bls_pubkey_file(infile: &str) -> Result<BLSPubkey, Box<dyn std::error::Error>> {
+        let f = std::fs::File::open(infile)?;
+        let printable: String = serde_json::from_reader(f)?;
+
+        use std::str::FromStr;
+        Ok(BLSPubkey::from_str(&printable)?)
     }
 
     fn process_test_command(args: &[&str]) -> Result<(), Box<dyn error::Error>> {
@@ -1188,5 +1263,43 @@ mod tests {
         assert_eq!(read, pubkey);
         std::fs::remove_file(filename)?;
         Ok(())
+    }
+
+    #[test]
+    fn test_read_write_bls_pubkey() -> Result<(), std::boxed::Box<dyn std::error::Error>> {
+        let filename = "test_bls_pubkey.json";
+        let bls_keypair = BLSKeypair::new();
+        let bls_pubkey = bls_keypair.public;
+        write_bls_pubkey_file(filename, bls_pubkey)?;
+        let read = read_bls_pubkey_file(filename)?;
+        assert_eq!(read, bls_pubkey);
+        std::fs::remove_file(filename)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_bls_pubkey_from_existing_keypair() {
+        let keypair_out_dir = tempdir().unwrap();
+        let config_out_dir = tempdir().unwrap();
+        let (expected_pubkey, keypair_file, _) =
+            create_tmp_keypair_and_config_file(&keypair_out_dir, &config_out_dir);
+        let my_keypair = read_keypair_file(&keypair_file).unwrap();
+
+        let outfile_dir = tempdir().unwrap();
+        let outfile_path = tmp_outfile_path(&outfile_dir, &expected_pubkey.to_string());
+
+        process_test_command(&[
+            "solana-keygen",
+            "bls_pubkey",
+            "--outfile",
+            &outfile_path,
+            &keypair_file,
+        ])
+        .unwrap();
+
+        let bls_keypair =
+            BLSKeypair::derive_from_signer(&my_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
+        let read_bls_pubkey = read_bls_pubkey_file(&outfile_path).unwrap();
+        assert_eq!(read_bls_pubkey, bls_keypair.public);
     }
 }

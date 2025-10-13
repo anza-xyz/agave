@@ -1,9 +1,9 @@
 //! File i/o helper functions.
 use std::{
-    fs::{File, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::{self, BufWriter, Write},
     ops::Range,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -168,11 +168,23 @@ impl<'a> SyncIoFileCreator<'a> {
     }
 }
 
-#[cfg(not(unix))]
-pub(super) fn set_file_readonly(path: &std::path::Path, readonly: bool) -> io::Result<()> {
-    let mut perm = std::fs::metadata(path)?.permissions();
-    perm.set_readonly(readonly);
-    std::fs::set_permissions(path, perm)
+/// Update permissions mode of an existing directory or file path
+///
+/// Note: on-non Unix platforms, this functions only updates readonly mode.
+pub fn set_path_permissions(path: &Path, mode: u32) -> io::Result<()> {
+    let perm;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        perm = fs::Permissions::from_mode(mode);
+    }
+    #[cfg(not(unix))]
+    {
+        let mut current_perm = fs::metadata(path)?.permissions();
+        current_perm.set_readonly(mode & 0o200 == 0);
+        perm = current_perm;
+    }
+    fs::set_permissions(path, perm)
 }
 
 impl FileCreator for SyncIoFileCreator<'_> {
@@ -194,8 +206,9 @@ impl FileCreator for SyncIoFileCreator<'_> {
         io::copy(contents, &mut file_buf)?;
         file_buf.flush()?;
 
+        // On unix the file was opened with proper permissions, only update the mode on non-unix
         #[cfg(not(unix))]
-        set_file_readonly(&path, mode & 0o200 == 0)?;
+        set_path_permissions(&path, mode)?;
 
         self.file_complete(path);
         Ok(())

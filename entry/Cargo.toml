@@ -28,20 +28,26 @@ num_cpus = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
+solana-address = { workspace = true }
 solana-hash = { workspace = true }
 solana-measure = { workspace = true }
 solana-merkle-tree = { workspace = true }
+solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sha256-hasher = { workspace = true }
+solana-short-vec = { workspace = true }
+solana-signature = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
+wincode = { workspace = true }
 
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
 assert_matches = { workspace = true }
+proptest = { workspace = true }
 solana-entry = { path = ".", features = ["dev-context-only-utils"] }
 solana-keypair = { workspace = true }
 solana-logger = { workspace = true }

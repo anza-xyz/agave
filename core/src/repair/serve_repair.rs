@@ -24,6 +24,7 @@ use {
         distributions::{Distribution, WeightedError, WeightedIndex},
         Rng,
     },
+    serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_cluster_type::ClusterType,
     solana_gossip::{

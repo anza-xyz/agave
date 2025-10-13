@@ -339,6 +339,7 @@ mod tests {
     use {
         super::*,
         arbitrary::{Arbitrary, Unstructured},
+        serde::{Deserialize, Serialize},
         solana_clock::Clock,
         solana_vote_interface::{
             authorized_voters::AuthorizedVoters,

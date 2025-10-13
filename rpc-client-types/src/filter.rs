@@ -1,6 +1,6 @@
 use {
     base64::{prelude::BASE64_STANDARD, Engine},
-    serde::Deserialize,
+    serde::{Deserialize, Serialize},
     std::borrow::Cow,
     thiserror::Error,
 };

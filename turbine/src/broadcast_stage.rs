@@ -82,7 +82,7 @@ pub enum Error {
     #[error("Send")]
     Send,
     #[error(transparent)]
-    Serialize(#[from] std::boxed::Box<bincode::ErrorKind>),
+    Serialize(#[from] wincode::WriteError),
     #[error("Shred not found, slot: {slot}, index: {index}")]
     ShredNotFound { slot: Slot, index: u64 },
     #[error(transparent)]

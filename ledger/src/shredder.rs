@@ -76,7 +76,7 @@ impl Shredder {
         stats: &mut ProcessShredsStats,
     ) -> impl Iterator<Item = Shred> {
         let now = Instant::now();
-        let entries = bincode::serialize(entries).unwrap();
+        let entries = wincode::serialize(entries).unwrap();
         stats.serialize_elapsed += now.elapsed().as_micros() as u64;
         Self::make_shreds_from_data_slice(
             self,
@@ -108,7 +108,7 @@ impl Shredder {
         let shreds = shred::merkle::make_shreds_from_data(
             thread_pool,
             keypair,
-            Some(chained_merkle_root),
+            chained_merkle_root,
             data,
             self.slot,
             self.parent_slot,
@@ -188,7 +188,8 @@ impl Shredder {
             // For backward compatibility. This is needed when the data shred
             // payload is None, so that deserializing to Vec<Entry> results in
             // an empty vector.
-            let data_buffer_size = ShredData::capacity(/*merkle_proof_size:*/ None).unwrap();
+            let data_buffer_size =
+                ShredData::capacity(/*proof_size:*/ 0, /*resigned:*/ false).unwrap();
             Ok(vec![0u8; data_buffer_size])
         } else {
             Ok(data)
@@ -361,7 +362,7 @@ mod tests {
             let shreds = data_shreds.iter().map(Shred::payload);
             Shredder::deshred(shreds).unwrap()
         };
-        let deshred_entries: Vec<Entry> = bincode::deserialize(&deshred_payload).unwrap();
+        let deshred_entries: Vec<Entry> = wincode::deserialize(&deshred_payload).unwrap();
         assert_eq!(entries, deshred_entries);
     }
 
@@ -494,7 +495,7 @@ mod tests {
         let shredder = Shredder::new(slot, slot - 5, 0, 0).unwrap();
         // Create enough entries to make > 1 shred
         let data_buffer_size =
-            ShredData::capacity(/*merkle_proof_size:*/ Some((6, true, false))).unwrap();
+            ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ false).unwrap();
         let num_entries = max_ticks_per_n_shreds(1, Some(data_buffer_size)) + 1;
         let entries: Vec<_> = (0..num_entries)
             .map(|_| {

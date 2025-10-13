@@ -36,7 +36,6 @@ openssl = { workspace = true, features = ["vendored"] }
 prost = { workspace = true }
 prost-types = { workspace = true }
 serde = { workspace = true }
-serde_derive = { workspace = true }
 smpl_jwt = { workspace = true }
 solana-clock = { workspace = true }
 solana-message = { workspace = true }

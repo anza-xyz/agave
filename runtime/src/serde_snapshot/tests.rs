@@ -27,7 +27,6 @@ mod serde_snapshot_tests {
         },
         solana_clock::Slot,
         solana_epoch_schedule::EpochSchedule,
-        solana_nohash_hasher::BuildNoHashHasher,
         solana_pubkey::Pubkey,
         std::{
             fs::File,
@@ -125,10 +124,7 @@ mod serde_snapshot_tests {
         storage_access: StorageAccess,
     ) -> Result<StorageAndNextAccountsFileId, AccountsFileError> {
         let storage_entries = accounts_db.get_storages(RangeFull).0;
-        let storage: AccountStorageMap = AccountStorageMap::with_capacity_and_hasher(
-            storage_entries.len(),
-            BuildNoHashHasher::default(),
-        );
+        let storage: AccountStorageMap = AccountStorageMap::with_capacity(storage_entries.len());
         let mut next_append_vec_id = 0;
         for storage_entry in storage_entries.into_iter() {
             // Copy file to new directory

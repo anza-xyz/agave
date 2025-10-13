@@ -35,6 +35,7 @@ use {
         thread::{self, JoinHandle},
         time::Instant,
     },
+    wincode::{containers::Pod, SchemaRead, SchemaWrite},
 };
 
 pub type EntrySender = Sender<Vec<Entry>>;
@@ -117,17 +118,19 @@ pub struct Api<'a> {
 /// transaction, or read by one or more transactions, but not both.
 /// This enforcement is done via a call to `solana_runtime::accounts::Accounts::lock_accounts()`
 /// with the `txs` argument holding all the `transactions` in the `Entry`.
-#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Eq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Eq, Clone, SchemaWrite, SchemaRead)]
 pub struct Entry {
     /// The number of hashes since the previous Entry ID.
     pub num_hashes: u64,
 
     /// The SHA-256 hash `num_hashes` after the previous Entry ID.
+    #[wincode(with = "Pod<Hash>")]
     pub hash: Hash,
 
     /// An unordered list of transactions that were observed before the Entry ID was
     /// generated. They may have been observed before a previous Entry ID but were
     /// pushed back into this list to ensure deterministic interpretation of the ledger.
+    #[wincode(with = "Vec<crate::wincode::VersionedTransaction>")]
     pub transactions: Vec<VersionedTransaction>,
 }
 

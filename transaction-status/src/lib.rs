@@ -24,6 +24,7 @@ use {
     },
     agave_reserved_account_keys::ReservedAccountKeys,
     base64::{prelude::BASE64_STANDARD, Engine},
+    serde::{Deserialize, Serialize},
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
@@ -42,9 +43,6 @@ use {
     std::collections::HashSet,
     thiserror::Error,
 };
-
-#[macro_use]
-extern crate serde_derive;
 
 pub mod extract_memos;
 pub mod parse_accounts;

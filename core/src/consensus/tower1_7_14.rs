@@ -1,5 +1,6 @@
 use {
     crate::consensus::{BlockhashStatus, Result, SwitchForkDecision, TowerError},
+    serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_signature::Signature,

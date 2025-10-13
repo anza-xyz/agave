@@ -24,6 +24,7 @@ dev-context-only-utils = [
 
 [dependencies]
 agave-feature-set = { workspace = true }
+agave-snapshots = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }
@@ -40,7 +41,6 @@ log = { workspace = true }
 rayon = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
-serde_derive = { workspace = true }
 serde_json = { workspace = true }
 soketto = { workspace = true }
 solana-account = { workspace = true }

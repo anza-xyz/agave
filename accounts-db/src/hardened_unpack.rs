@@ -1,5 +1,5 @@
 use {
-    crate::file_io::{file_creator, FileCreator},
+    crate::file_io::{file_creator, set_path_permissions, FileCreator},
     bzip2::bufread::BzDecoder,
     crossbeam_channel::Sender,
     log::*,
@@ -214,7 +214,7 @@ fn unpack_entry<'a, R: Read>(
     if should_fallback_to_tar_unpack(&entry) {
         entry.unpack(&dst)?;
         // Sanitize permissions.
-        set_perms(&dst, mode)?;
+        set_path_permissions(&dst, mode)?;
 
         if !entry.header().entry_type().is_dir() {
             // Process file after setting permissions
@@ -224,20 +224,7 @@ fn unpack_entry<'a, R: Read>(
     }
     files_creator.schedule_create_at_dir(dst, mode, dst_open_dir, &mut entry)?;
 
-    return Ok(());
-
-    #[cfg(unix)]
-    fn set_perms(dst: &Path, mode: u32) -> io::Result<()> {
-        use std::os::unix::fs::PermissionsExt;
-
-        let perm = fs::Permissions::from_mode(mode as _);
-        fs::set_permissions(dst, perm)
-    }
-
-    #[cfg(windows)]
-    fn set_perms(dst: &Path, _mode: u32) -> io::Result<()> {
-        super::file_io::set_file_readonly(dst, false)
-    }
+    Ok(())
 }
 
 fn should_fallback_to_tar_unpack<R: io::Read>(entry: &tar::Entry<'_, R>) -> bool {

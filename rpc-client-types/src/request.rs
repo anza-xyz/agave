@@ -1,6 +1,7 @@
 pub use solana_address::Address;
 use {
     crate::response::RpcSimulateTransactionResult,
+    serde::{Deserialize, Serialize},
     serde_json::{json, Value},
     solana_clock::Slot,
     std::fmt,

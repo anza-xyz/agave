@@ -30,7 +30,6 @@ reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip
 reqwest-middleware = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
-serde_derive = { workspace = true }
 serde_json = { workspace = true }
 solana-account = { workspace = true }
 solana-account-decoder = { workspace = true }

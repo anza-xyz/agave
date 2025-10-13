@@ -1,5 +1,6 @@
 use {
     crate::consensus::{BlockhashStatus, SwitchForkDecision},
+    serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_vote::vote_transaction::VoteTransaction,

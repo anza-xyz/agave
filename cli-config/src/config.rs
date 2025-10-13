@@ -1,7 +1,7 @@
 use std::sync::LazyLock;
 // Wallet settings that can be configured for long-term use
 use {
-    serde_derive::{Deserialize, Serialize},
+    serde::{Deserialize, Serialize},
     std::{collections::HashMap, io, path::Path},
     url::Url,
 };

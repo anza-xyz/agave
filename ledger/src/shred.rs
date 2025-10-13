@@ -129,13 +129,12 @@ pub const MAX_CODE_SHREDS_PER_SLOT: usize = MAX_DATA_SHREDS_PER_SLOT;
 // 2. Merkles are chained
 // 3. No retransmit signature (only included for last batch)
 pub const fn get_data_shred_bytes_per_batch_typical() -> u64 {
-    let capacity =
-        match merkle::ShredData::const_capacity(PROOF_ENTRIES_FOR_32_32_BATCH, true, false) {
-            Ok(v) => v,
-            Err(_proof_size) => {
-                panic!("this is unreachable");
-            }
-        };
+    let capacity = match merkle::ShredData::const_capacity(PROOF_ENTRIES_FOR_32_32_BATCH, false) {
+        Ok(v) => v,
+        Err(_proof_size) => {
+            panic!("this is unreachable");
+        }
+    };
     (DATA_SHREDS_PER_FEC_BLOCK * capacity) as u64
 }
 
@@ -226,22 +225,12 @@ enum ShredVariant {
     // proof_size is the number of Merkle proof entries, and is encoded in the
     // lowest 4 bits of the binary representation. The first 4 bits identify
     // the shred variant:
-    //   0b0100_????  MerkleCode
     //   0b0110_????  MerkleCode chained
     //   0b0111_????  MerkleCode chained resigned
-    //   0b1000_????  MerkleData
     //   0b1001_????  MerkleData chained
     //   0b1011_????  MerkleData chained resigned
-    MerkleCode {
-        proof_size: u8,
-        chained: bool,
-        resigned: bool,
-    }, // 0b01??_????
-    MerkleData {
-        proof_size: u8,
-        chained: bool,
-        resigned: bool,
-    }, // 0b10??_????
+    MerkleCode { proof_size: u8, resigned: bool }, // 0b01??_????
+    MerkleData { proof_size: u8, resigned: bool }, // 0b10??_????
 }
 
 /// A common header that is present in data and code shred headers
@@ -622,44 +611,20 @@ impl From<ShredVariant> for u8 {
         match shred_variant {
             ShredVariant::MerkleCode {
                 proof_size,
-                chained: false,
-                resigned: false,
-            } => proof_size | 0x40,
-            ShredVariant::MerkleCode {
-                proof_size,
-                chained: true,
                 resigned: false,
             } => proof_size | 0x60,
             ShredVariant::MerkleCode {
                 proof_size,
-                chained: true,
                 resigned: true,
             } => proof_size | 0x70,
             ShredVariant::MerkleData {
                 proof_size,
-                chained: false,
-                resigned: false,
-            } => proof_size | 0x80,
-            ShredVariant::MerkleData {
-                proof_size,
-                chained: true,
                 resigned: false,
             } => proof_size | 0x90,
             ShredVariant::MerkleData {
                 proof_size,
-                chained: true,
                 resigned: true,
             } => proof_size | 0xb0,
-            ShredVariant::MerkleCode {
-                proof_size: _,
-                chained: false,
-                resigned: true,
-            }
-            | ShredVariant::MerkleData {
-                proof_size: _,
-                chained: false,
-                resigned: true,
-            } => panic!("Invalid shred variant: {shred_variant:?}"),
         }
     }
 }
@@ -674,34 +639,20 @@ impl TryFrom<u8> for ShredVariant {
         } else {
             let proof_size = shred_variant & 0x0F;
             match shred_variant & 0xF0 {
-                0x40 => Ok(ShredVariant::MerkleCode {
-                    proof_size,
-                    chained: false,
-                    resigned: false,
-                }),
                 0x60 => Ok(ShredVariant::MerkleCode {
                     proof_size,
-                    chained: true,
                     resigned: false,
                 }),
                 0x70 => Ok(ShredVariant::MerkleCode {
                     proof_size,
-                    chained: true,
                     resigned: true,
-                }),
-                0x80 => Ok(ShredVariant::MerkleData {
-                    proof_size,
-                    chained: false,
-                    resigned: false,
                 }),
                 0x90 => Ok(ShredVariant::MerkleData {
                     proof_size,
-                    chained: true,
                     resigned: false,
                 }),
                 0xb0 => Ok(ShredVariant::MerkleData {
                     proof_size,
-                    chained: true,
                     resigned: true,
                 }),
                 _ => Err(Error::InvalidShredVariant),
@@ -870,15 +821,11 @@ where
     }
 
     match shred_variant {
-        ShredVariant::MerkleCode { chained: false, .. }
-        | ShredVariant::MerkleData { chained: false, .. } => {
-            return true;
-        }
-        ShredVariant::MerkleCode { chained: true, .. } => {
+        ShredVariant::MerkleCode { .. } => {
             stats.num_shreds_merkle_code_chained =
                 stats.num_shreds_merkle_code_chained.saturating_add(1);
         }
-        ShredVariant::MerkleData { chained: true, .. } => {
+        ShredVariant::MerkleData { .. } => {
             stats.num_shreds_merkle_data_chained =
                 stats.num_shreds_merkle_data_chained.saturating_add(1);
         }
@@ -919,26 +866,22 @@ pub fn max_entries_per_n_shred_last_or_not(
     num_shreds: u64,
     is_last_in_slot: bool,
 ) -> u64 {
-    // Default 32:32 erasure batches yields 64 shreds; log2(64) = 6.
-    let merkle_variant_unsigned = Some((
-        /*proof_size:*/ 6, /*chained:*/ true, /*resigned:*/ false,
-    ));
-    let merkle_variant_signed = Some((
-        /*proof_size:*/ 6, /*chained:*/ true, /*resigned:*/ true,
-    ));
-
-    let vec_size = bincode::serialized_size(&vec![entry]).unwrap();
-    let entry_size = bincode::serialized_size(entry).unwrap();
+    let vec_size = wincode::serialized_size(&vec![entry]).unwrap();
+    let entry_size = wincode::serialized_size(entry).unwrap();
     let count_size = vec_size - entry_size;
 
+    // Default 32:32 erasure batches yields 64 shreds; log2(64) = 6.
     if !is_last_in_slot {
         // all shreds are unsigned
-        let shred_data_size = ShredData::capacity(merkle_variant_unsigned).unwrap() as u64;
+        let shred_data_size =
+            ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ false).unwrap() as u64;
         (shred_data_size * num_shreds - count_size) / entry_size
     } else {
         // last FEC SET is signed, all others are unsigned
-        let shred_data_size_unsigned = ShredData::capacity(merkle_variant_unsigned).unwrap() as u64;
-        let shred_data_size_signed = ShredData::capacity(merkle_variant_signed).unwrap() as u64;
+        let shred_data_size_unsigned =
+            ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ false).unwrap() as u64;
+        let shred_data_size_signed =
+            ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ true).unwrap() as u64;
         let shreds_per_fec_block = SHREDS_PER_FEC_BLOCK as u64;
         (shred_data_size_unsigned * (num_shreds - shreds_per_fec_block)
             + shred_data_size_signed * shreds_per_fec_block
@@ -953,13 +896,10 @@ pub fn max_entries_per_n_shred(
     shred_data_size: Option<usize>,
 ) -> u64 {
     // Default 32:32 erasure batches yields 64 shreds; log2(64) = 6.
-    let merkle_variant = Some((
-        /*proof_size:*/ 6, /*chained:*/ true, /*resigned:*/ true,
-    ));
-    let data_buffer_size = ShredData::capacity(merkle_variant).unwrap();
+    let data_buffer_size = ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ true).unwrap();
     let shred_data_size = shred_data_size.unwrap_or(data_buffer_size) as u64;
-    let vec_size = bincode::serialized_size(&vec![entry]).unwrap();
-    let entry_size = bincode::serialized_size(entry).unwrap();
+    let vec_size = wincode::serialized_size(&vec![entry]).unwrap();
+    let entry_size = wincode::serialized_size(entry).unwrap();
     let count_size = vec_size - entry_size;
 
     (shred_data_size * num_shreds - count_size) / entry_size
@@ -1042,7 +982,7 @@ mod tests {
         merkle::make_shreds_from_data(
             &thread_pool,
             &Keypair::new(),
-            Some(chained_merkle_root),
+            chained_merkle_root,
             &data[..],
             slot,
             parent_slot,
@@ -1062,7 +1002,6 @@ mod tests {
             signature: Signature::default(),
             shred_variant: ShredVariant::MerkleCode {
                 proof_size: 0,
-                chained: true,
                 resigned: false,
             },
             slot: Slot::MAX,
@@ -1108,7 +1047,6 @@ mod tests {
             SIZE_OF_SHRED_VARIANT,
             bincode::serialized_size(&ShredVariant::MerkleCode {
                 proof_size: 15,
-                chained: true,
                 resigned: true
             })
             .unwrap() as usize
@@ -1653,7 +1591,6 @@ mod tests {
             assert_eq!(
                 u8::from(ShredVariant::MerkleCode {
                     proof_size,
-                    chained: true,
                     resigned,
                 }),
                 byte
@@ -1661,7 +1598,6 @@ mod tests {
             assert_eq!(
                 ShredType::from(ShredVariant::MerkleCode {
                     proof_size,
-                    chained: true,
                     resigned,
                 }),
                 ShredType::Code
@@ -1670,13 +1606,11 @@ mod tests {
                 ShredVariant::try_from(byte).unwrap(),
                 ShredVariant::MerkleCode {
                     proof_size,
-                    chained: true,
                     resigned,
                 },
             );
             let buf = bincode::serialize(&ShredVariant::MerkleCode {
                 proof_size,
-                chained: true,
                 resigned,
             })
             .unwrap();
@@ -1685,7 +1619,6 @@ mod tests {
                 bincode::deserialize::<ShredVariant>(&[byte]).unwrap(),
                 ShredVariant::MerkleCode {
                     proof_size,
-                    chained: true,
                     resigned,
                 }
             );
@@ -1700,7 +1633,6 @@ mod tests {
             assert_eq!(
                 u8::from(ShredVariant::MerkleData {
                     proof_size,
-                    chained: true,
                     resigned,
                 }),
                 byte
@@ -1708,7 +1640,6 @@ mod tests {
             assert_eq!(
                 ShredType::from(ShredVariant::MerkleData {
                     proof_size,
-                    chained: true,
                     resigned,
                 }),
                 ShredType::Data
@@ -1717,13 +1648,11 @@ mod tests {
                 ShredVariant::try_from(byte).unwrap(),
                 ShredVariant::MerkleData {
                     proof_size,
-                    chained: true,
                     resigned
                 }
             );
             let buf = bincode::serialize(&ShredVariant::MerkleData {
                 proof_size,
-                chained: true,
                 resigned,
             })
             .unwrap();
@@ -1732,7 +1661,6 @@ mod tests {
                 bincode::deserialize::<ShredVariant>(&[byte]).unwrap(),
                 ShredVariant::MerkleData {
                     proof_size,
-                    chained: true,
                     resigned
                 }
             );
