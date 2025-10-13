@@ -51,6 +51,7 @@ Release channels have their own copy of this changelog:
   * `--no-check-vote-account`
   * `--no-rocksdb-compaction`, `--rocksdb-compaction-interval-slots`, `--rocksdb-max-compaction-jitter-slots`
   * `--replay-slots-concurrently`
+    * Use `--replay-forks-threads` with a value of `4` to match preexisting behavior
   * `--rpc-pubsub-max-connections`, `--rpc-pubsub-max-fragment-size`, `--rpc-pubsub-max-in-buffer-capacity`, `--rpc-pubsub-max-out-buffer-capacity`, `--enable-cpi-and-log-storage`, `--minimal-rpc-api`
   * `--skip-poh-verify`
 * Deprecated snapshot archive formats have been removed and are no longer loadable.
