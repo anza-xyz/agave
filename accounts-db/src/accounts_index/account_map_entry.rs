@@ -119,7 +119,7 @@ impl<T: IndexValue> AccountMapEntry<T> {
     pub fn slot_list_lock_read_len(&self) -> usize {
         if !self.meta.is_single.load(Ordering::Acquire) {
             let slot_list_repr = self.slot_list.read().unwrap();
-            if !self.meta.is_single.load(Ordering::Acquire) {
+            if !self.meta.is_single.load(Ordering::Relaxed) {
                 // Safety: `is_single` confirmed to be false while holding the lock
                 return unsafe {
                     slot_list_repr
@@ -141,7 +141,7 @@ impl<T: IndexValue> AccountMapEntry<T> {
         let repr_guard = self.slot_list.read().unwrap();
         SlotListReadGuard {
             repr_guard,
-            is_single: self.meta.is_single.load(Ordering::Acquire),
+            is_single: self.meta.is_single.load(Ordering::Relaxed),
         }
     }
 
@@ -271,14 +271,14 @@ pub struct SlotListWriteGuard<'a, T: Copy> {
 impl<T: Copy> SlotListWriteGuard<'_, T> {
     /// Append element to the end of slot list
     pub fn push(&mut self, item: (Slot, T)) {
-        if self.meta.is_single.swap(false, Ordering::AcqRel) {
-            let single = unsafe { self.repr_guard.single };
+        if self.swap_is_single(false) {
+            let existing_item = unsafe { self.repr_guard.single };
             self.repr_guard.multiple =
-                ManuallyDrop::new(Some(SlotListMultiple::new(vec![single, item])))
+                ManuallyDrop::new(Some(SlotListMultiple::new(vec![existing_item, item])))
         } else {
             match unsafe { self.repr_guard.multiple.as_mut() } {
                 None => {
-                    self.meta.is_single.store(true, Ordering::Relaxed);
+                    self.store_is_single(true);
                     self.repr_guard.single = item
                 }
                 Some(slot_list) => slot_list.0.push(item),
@@ -293,10 +293,10 @@ impl<T: Copy> SlotListWriteGuard<'_, T> {
     where
         F: FnMut(&mut (Slot, T)) -> bool,
     {
-        if self.meta.is_single.load(Ordering::Acquire) {
+        if self.is_single() {
             let single_mut = unsafe { &mut self.repr_guard.single };
             if !f(single_mut) {
-                self.meta.is_single.store(false, Ordering::Release);
+                self.store_is_single(false);
                 // representation wasn't multiple before, so no need to handle dropping existing value
                 self.repr_guard.multiple = ManuallyDrop::new(None);
                 0
@@ -312,22 +312,40 @@ impl<T: Copy> SlotListWriteGuard<'_, T> {
     }
 
     fn try_change_to_single(&mut self) {
-        if !self.meta.is_single.load(Ordering::Acquire) {
+        if !self.is_single() {
             if let Some(slot_list_multiple) = unsafe { self.repr_guard.multiple.as_mut() } {
                 if slot_list_multiple.0.len() == 1 {
                     let item = slot_list_multiple.0.pop().unwrap();
                     unsafe { ManuallyDrop::drop(&mut self.repr_guard.multiple) };
                     self.repr_guard.single = item;
-                    self.meta.is_single.store(true, Ordering::Release);
+                    self.store_is_single(true);
                 }
             }
         }
     }
 
+    #[inline]
+    fn is_single(&self) -> bool {
+        // atomic access under write lock critical section doesn't require ordering
+        self.meta.is_single.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    fn swap_is_single(&self, new_val: bool) -> bool {
+        // atomic access under write lock critical section doesn't require ordering
+        self.meta.is_single.swap(new_val, Ordering::Relaxed)
+    }
+
+    #[inline]
+    fn store_is_single(&self, new_val: bool) {
+        // atomic access under write lock critical section doesn't require ordering
+        self.meta.is_single.store(new_val, Ordering::Relaxed)
+    }
+
     #[cfg(test)]
     pub fn clear(&mut self) {
-        if !self.meta.is_single.swap(false, Ordering::Relaxed) {
-            // This will drop slot list multiple if value is `Some`
+        if !self.swap_is_single(false) {
+            // This will deallocate box/vec in slot list multiple if value is `Some`
             unsafe { ManuallyDrop::drop(&mut self.repr_guard.multiple) };
         }
         self.repr_guard.multiple = ManuallyDrop::new(None);
@@ -336,8 +354,12 @@ impl<T: Copy> SlotListWriteGuard<'_, T> {
     #[cfg(test)]
     pub fn assign(&mut self, value: impl IntoIterator<Item = (Slot, T)>) {
         let (is_single, repr) = SlotListRepr::from_list(value.into_iter().collect());
+        // Representation is going to be replaced, so drop any existing multiple value
+        if !self.swap_is_single(is_single) {
+            // This will deallocate box/vec in slot list multiple if value is `Some`
+            unsafe { ManuallyDrop::drop(&mut self.repr_guard.multiple) };
+        }
         *self.repr_guard = repr;
-        self.meta.is_single.store(is_single, Ordering::Relaxed);
     }
 
     #[cfg(test)]
