@@ -121,7 +121,13 @@ impl<T: IndexValue> AccountMapEntry<T> {
             let slot_list_repr = self.slot_list.read().unwrap();
             if !self.meta.is_single.load(Ordering::Acquire) {
                 // Safety: `is_single` confirmed to be false while holding the lock
-                return unsafe { slot_list_repr.multiple.len() };
+                return unsafe {
+                    slot_list_repr
+                        .multiple
+                        .as_ref()
+                        .map(|slot_list| slot_list.0.len())
+                        .unwrap_or(0)
+                };
             }
         }
         1 // single list
@@ -172,30 +178,40 @@ impl<T: Copy> Drop for AccountMapEntry<T> {
     }
 }
 
+// Vec holds data on heap, however its inline size is impacted by len and capacity fields, so it needs to
+// be wrapped in a Box to minimize the size of the union.
+#[allow(clippy::box_collection)]
+struct SlotListMultiple<T: Copy>(Box<Vec<(Slot, T)>>);
+
+impl<T: Copy> SlotListMultiple<T> {
+    fn new(slot_list: Vec<(Slot, T)>) -> Self {
+        Self(Box::new(slot_list))
+    }
+}
+
 /// Dynamic representation of a slot list with denominator stored in entry metadata to minimize memory usage
 union SlotListRepr<T: Copy> {
     /// This variant is used when entry's metadata `is_single` loads as `true` while holding the lock
     single: (Slot, T),
     /// Slot list with potentially different number of elements than 1, used when `is_single` loads as `false`
-    // Vec holds data on heap, however its inline size is impacted by len and capacity fields, so it needs to
-    // be wrapped in a Box to minimize the size of the union.
-    #[allow(clippy::box_collection)]
-    multiple: ManuallyDrop<Box<Vec<(Slot, T)>>>,
+    multiple: ManuallyDrop<Option<SlotListMultiple<T>>>,
 }
 
 impl<T: Copy> SlotListRepr<T> {
     fn from_list(slot_list: SlotList<T>) -> (bool, Self) {
-        let is_single = slot_list.len() == 1;
-        let this = if is_single {
-            Self {
-                single: slot_list[0],
+        let multiple = match slot_list.len() {
+            1 => {
+                return (
+                    true,
+                    Self {
+                        single: slot_list[0],
+                    },
+                )
             }
-        } else {
-            Self {
-                multiple: ManuallyDrop::new(Box::new(slot_list.to_vec())),
-            }
+            0 => ManuallyDrop::new(None),
+            _ => ManuallyDrop::new(Some(SlotListMultiple::new(slot_list.into_vec()))),
         };
-        (is_single, this)
+        (false, Self { multiple })
     }
 
     // Safety: `is_single` needs to match current representation mode, thus this function is unsafe
@@ -204,7 +220,10 @@ impl<T: Copy> SlotListRepr<T> {
             if is_single {
                 std::slice::from_ref(&self.single)
             } else {
-                &self.multiple
+                match self.multiple.as_ref() {
+                    Some(slot_list_multiple) => slot_list_multiple.0.as_slice(),
+                    None => &[],
+                }
             }
         }
     }
@@ -252,7 +271,16 @@ pub struct SlotListWriteGuard<'a, T: Copy> {
 impl<T: Copy> SlotListWriteGuard<'_, T> {
     /// Append element to the end of slot list
     pub fn push(&mut self, item: (Slot, T)) {
-        self.change_to_multiple().push(item);
+        if self.meta.is_single.swap(false, Ordering::AcqRel) {
+            let single = unsafe { self.repr_guard.single };
+            self.repr_guard.multiple =
+                ManuallyDrop::new(Some(SlotListMultiple::new(vec![single, item])))
+        } else {
+            match unsafe { self.repr_guard.multiple.as_mut() } {
+                None => self.repr_guard.single = item,
+                Some(slot_list) => slot_list.0.push(item),
+            }
+        }
     }
 
     /// Retains only the elements specified by the predicate.
@@ -266,47 +294,47 @@ impl<T: Copy> SlotListWriteGuard<'_, T> {
             let single_mut = unsafe { &mut self.repr_guard.single };
             if !f(single_mut) {
                 self.meta.is_single.store(false, Ordering::Release);
-                self.repr_guard.multiple = ManuallyDrop::new(Box::new(vec![]));
+                // representation wasn't multiple before, so no need to handle dropping existing value
+                self.repr_guard.multiple = ManuallyDrop::new(None);
                 0
             } else {
                 1
             }
+        } else if let Some(slot_list) = unsafe { self.repr_guard.multiple.as_mut() } {
+            slot_list.0.retain_mut(f);
+            slot_list.0.len()
         } else {
-            let slot_list = unsafe { self.repr_guard.multiple.as_mut() };
-            slot_list.retain_mut(f);
-            slot_list.len()
+            0
         }
-    }
-
-    fn change_to_multiple(&mut self) -> &mut Vec<(Slot, T)> {
-        if self.meta.is_single.swap(false, Ordering::AcqRel) {
-            let single = unsafe { self.repr_guard.single };
-            self.repr_guard.multiple = ManuallyDrop::new(Box::new(vec![single]));
-        }
-        unsafe { self.repr_guard.multiple.as_mut() }
     }
 
     fn try_change_to_single(&mut self) {
         if !self.meta.is_single.load(Ordering::Acquire) {
-            let list = unsafe { &mut self.repr_guard.multiple };
-            if list.len() == 1 {
-                assert_eq!(list.len(), 1);
-                let item = list.pop().unwrap();
-                unsafe { ManuallyDrop::drop(list) };
-                self.repr_guard.single = item;
-                self.meta.is_single.store(true, Ordering::Release);
+            if let Some(slot_list_multiple) = unsafe { self.repr_guard.multiple.as_mut() } {
+                if slot_list_multiple.0.len() == 1 {
+                    let item = slot_list_multiple.0.pop().unwrap();
+                    unsafe { ManuallyDrop::drop(&mut self.repr_guard.multiple) };
+                    self.repr_guard.single = item;
+                    self.meta.is_single.store(true, Ordering::Release);
+                }
             }
         }
     }
 
     #[cfg(test)]
     pub fn clear(&mut self) {
-        self.change_to_multiple().clear();
+        if !self.meta.is_single.swap(false, Ordering::Relaxed) {
+            // This will drop slot list multiple if value is `Some`
+            unsafe { ManuallyDrop::drop(&mut self.repr_guard.multiple) };
+        }
+        self.repr_guard.multiple = ManuallyDrop::new(None);
     }
 
     #[cfg(test)]
     pub fn assign(&mut self, value: impl IntoIterator<Item = (Slot, T)>) {
-        *self.change_to_multiple() = value.into_iter().collect();
+        let (is_single, repr) = SlotListRepr::from_list(value.into_iter().collect());
+        *self.repr_guard = repr;
+        self.meta.is_single.store(is_single, Ordering::Relaxed);
     }
 
     #[cfg(test)]
