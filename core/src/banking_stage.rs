@@ -68,7 +68,6 @@ pub mod vote_storage;
 mod consume_worker;
 mod vote_worker;
 conditional_vis_mod!(decision_maker, feature = "dev-context-only-utils", pub);
-mod immutable_deserialized_packet;
 mod latest_validator_vote_packet;
 mod leader_slot_timing_metrics;
 mod read_write_account_set;
