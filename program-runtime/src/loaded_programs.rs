@@ -1930,6 +1930,61 @@ mod tests {
     }
 
     #[test]
+    fn test_assign_program_removes_entries_in_same_slot() {
+        let mut cache = new_mock_cache::<TestForkGraph>();
+        let program_id = Pubkey::new_unique();
+        let closed_other_slot = Arc::new(ProgramCacheEntry {
+            program: ProgramCacheEntryType::Closed,
+            account_owner: ProgramCacheEntryOwner::LoaderV2,
+            account_size: 0,
+            deployment_slot: 9,
+            effective_slot: 9,
+            tx_usage_counter: Arc::default(),
+            latest_access_slot: AtomicU64::default(),
+        });
+        let closed_current_slot = Arc::new(ProgramCacheEntry {
+            program: ProgramCacheEntryType::Closed,
+            account_owner: ProgramCacheEntryOwner::LoaderV2,
+            account_size: 0,
+            deployment_slot: 10,
+            effective_slot: 10,
+            tx_usage_counter: Arc::default(),
+            latest_access_slot: AtomicU64::default(),
+        });
+        let loaded_entry_current_env = Arc::new(ProgramCacheEntry {
+            program: ProgramCacheEntryType::Unloaded(get_mock_env()),
+            account_owner: ProgramCacheEntryOwner::LoaderV2,
+            account_size: 0,
+            deployment_slot: 10,
+            effective_slot: 11,
+            tx_usage_counter: Arc::default(),
+            latest_access_slot: AtomicU64::default(),
+        });
+        let loaded_entry_upcoming_env = Arc::new(ProgramCacheEntry {
+            program: ProgramCacheEntryType::Unloaded(Arc::new(BuiltinProgram::new_mock())),
+            account_owner: ProgramCacheEntryOwner::LoaderV2,
+            account_size: 0,
+            deployment_slot: 10,
+            effective_slot: 11,
+            tx_usage_counter: Arc::default(),
+            latest_access_slot: AtomicU64::default(),
+        });
+        assert!(!cache.assign_program(program_id, closed_other_slot.clone()));
+        assert!(!cache.assign_program(program_id, closed_current_slot));
+        assert!(!cache.assign_program(program_id, loaded_entry_upcoming_env.clone()));
+        assert!(!cache.assign_program(program_id, loaded_entry_current_env.clone()));
+        // Only the conflicting entry in the same slot which does not have a different environment is removed
+        assert_eq!(
+            cache.get_slot_versions_for_tests(&program_id),
+            &[
+                closed_other_slot,
+                loaded_entry_current_env,
+                loaded_entry_upcoming_env
+            ]
+        );
+    }
+
+    #[test]
     fn test_tombstone() {
         let env = Arc::new(BuiltinProgram::new_mock());
         let tombstone = ProgramCacheEntry::new_tombstone(
