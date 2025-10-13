@@ -383,7 +383,7 @@ impl Consumer {
 
         let (record_transactions_summary, record_us) = measure_us!(self
             .transaction_recorder
-            .record_transactions(bank.slot(), processed_transactions));
+            .record_transactions(bank.bank_id(), processed_transactions));
         execute_and_commit_timings.record_us = record_us;
 
         let RecordTransactionsSummary {
@@ -578,7 +578,7 @@ mod tests {
 
         let (record_sender, mut record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(
@@ -658,7 +658,7 @@ mod tests {
 
         let (record_sender, mut record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(
@@ -777,7 +777,7 @@ mod tests {
         let (record_sender, mut record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
 
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         while bank.tick_height() != bank.max_tick_height() - 1 {
             bank.register_default_tick_for_test();
@@ -840,7 +840,7 @@ mod tests {
 
         let (record_sender, mut record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(
@@ -901,7 +901,7 @@ mod tests {
 
         let (record_sender, mut record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(
@@ -1070,7 +1070,7 @@ mod tests {
 
         let (record_sender, mut record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(
@@ -1397,7 +1397,7 @@ mod tests {
         let blockstore = Arc::new(blockstore);
         let (record_sender, mut record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let shreds = entries_to_test_shreds(
             &entries,
@@ -1521,7 +1521,7 @@ mod tests {
 
         let (record_sender, mut record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let shreds = entries_to_test_shreds(
             &entries,
