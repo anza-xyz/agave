@@ -155,7 +155,6 @@ dependencies = [
 name = "agave-snapshots"
 version = "3.1.0"
 dependencies = [
- "assert_matches",
  "bzip2",
  "crossbeam-channel",
  "log",
@@ -163,10 +162,8 @@ dependencies = [
  "rand 0.8.5",
  "solana-accounts-db",
  "solana-genesis-config",
- "solana-logger",
  "strum",
  "tar",
- "tempfile",
  "thiserror 2.0.17",
  "zstd",
 ]
