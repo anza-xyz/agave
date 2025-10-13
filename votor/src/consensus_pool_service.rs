@@ -73,13 +73,11 @@ impl ConsensusPoolService {
             .name("solCnsPoolIngst".to_string())
             .spawn(move || {
                 info!("ConsensusPoolService has started");
-                match Self::consensus_pool_ingest_loop(&mut ctx) {
-                    Err(e) => {
-                        ctx.exit.store(true, Ordering::Relaxed);
-                        error!("ConsensusPoolService exited with error: {e}");
-                    }
-                    Ok(_) => info!("Consensus pool service exited due to planned shutdown."),
+                if let Err(e) = Self::consensus_pool_ingest_loop(&mut ctx) {
+                    ctx.exit.store(true, Ordering::Relaxed);
+                    error!("ConsensusPoolService exited with error: {e}");
                 }
+                info!("ConsensusPoolService has stopped");
             })
             .unwrap();
 
@@ -223,15 +221,14 @@ impl ConsensusPoolService {
                 }
             }
 
-            if events
+            events
                 .drain(..)
                 .try_for_each(|event| ctx.event_sender.send(event))
-                .is_err()
-            {
-                return Err(ConsensusPoolServiceError::ChannelDisconnected(
-                    "Votor event receiver".to_string(),
-                ));
-            }
+                .map_err(|_| {
+                    ConsensusPoolServiceError::ChannelDisconnected(
+                        "Votor event receiver".to_string(),
+                    )
+                })?;
 
             let consensus_message_receiver = ctx.consensus_message_receiver.clone();
             let messages = match consensus_message_receiver.recv_timeout(Duration::from_secs(1)) {
