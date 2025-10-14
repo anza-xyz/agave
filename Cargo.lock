@@ -11889,7 +11889,6 @@ dependencies = [
  "log",
  "num-derive",
  "num-traits",
- "qualifier_attr",
  "serde",
  "solana-account",
  "solana-bincode",

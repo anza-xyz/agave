@@ -263,7 +263,7 @@ mod tests {
         solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey,
         solana_stake_interface::state::Delegation,
-        solana_vote_program::vote_state::{increment_credits, VoteStateV4},
+        solana_vote_program::vote_state::{handler::VoteStateHandle, VoteStateV4},
         test_case::test_case,
     };
 
@@ -305,8 +305,8 @@ mod tests {
         );
 
         // put 2 credits in at epoch 0
-        increment_credits(&mut vote_state, 0, 1);
-        increment_credits(&mut vote_state, 0, 1);
+        vote_state.increment_credits(0, 1);
+        vote_state.increment_credits(0, 1);
 
         // this one should be able to collect exactly 2
         assert_eq!(
@@ -357,8 +357,8 @@ mod tests {
         );
 
         // put 2 credits in at epoch 0
-        increment_credits(&mut vote_state, 0, 1);
-        increment_credits(&mut vote_state, 0, 1);
+        vote_state.increment_credits(0, 1);
+        vote_state.increment_credits(0, 1);
 
         // this one should be able to collect exactly 2
         assert_eq!(
@@ -404,7 +404,7 @@ mod tests {
         );
 
         // put 1 credit in epoch 1
-        increment_credits(&mut vote_state, 1, 1);
+        vote_state.increment_credits(1, 1);
 
         stake.credits_observed = 2;
         // this one should be able to collect the one just added
@@ -429,7 +429,7 @@ mod tests {
         );
 
         // put 1 credit in epoch 2
-        increment_credits(&mut vote_state, 2, 1);
+        vote_state.increment_credits(2, 1);
         // this one should be able to collect 2 now
         assert_eq!(
             Some(CalculatedStakeRewards {
@@ -663,7 +663,7 @@ mod tests {
 
         let stake = new_stake(stake, &Pubkey::default(), &vote_state, u64::MAX);
 
-        increment_credits(&mut vote_state, 0, credits);
+        vote_state.increment_credits(0, credits);
 
         calculate_stake_rewards(
             0,

@@ -211,7 +211,7 @@ mod tests {
     use {
         super::*,
         solana_native_token::LAMPORTS_PER_SOL,
-        solana_vote_program::vote_state::{increment_credits, VoteStateV4},
+        solana_vote_program::vote_state::{handler::VoteStateHandle, VoteStateV4},
     };
 
     fn new_stake(
@@ -243,7 +243,7 @@ mod tests {
         // put 193,536,000 credits in at epoch 0, typical for a 14-day epoch
         //  this loop takes a few seconds...
         for _ in 0..epoch_slots {
-            increment_credits(&mut vote_state, 0, 1);
+            vote_state.increment_credits(0, 1);
         }
 
         // no overflow on points

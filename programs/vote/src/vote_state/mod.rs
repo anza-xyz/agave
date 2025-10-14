@@ -1,10 +1,11 @@
 //! Vote state, vote program
 //! Receive and processes votes from validators
 
+#[cfg(feature = "dev-context-only-utils")]
+pub mod handler;
+#[cfg(not(feature = "dev-context-only-utils"))]
 mod handler;
 
-#[cfg(feature = "dev-context-only-utils")]
-pub use handler::increment_credits;
 pub use {
     handler::VoteStateTargetVersion,
     solana_vote_interface::state::{vote_state_versions::*, *},
