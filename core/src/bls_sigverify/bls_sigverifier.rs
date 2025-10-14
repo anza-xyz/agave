@@ -9,6 +9,12 @@ use {
         cluster_info_vote_listener::VerifiedVoteSender,
     },
     agave_votor::consensus_metrics::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
+    agave_votor_messages::{
+        consensus_message::{
+            Certificate, CertificateMessage, CertificateType, ConsensusMessage, VoteMessage,
+        },
+        vote::Vote,
+    },
     bitvec::prelude::{BitVec, Lsb0},
     crossbeam_channel::{Sender, TrySendError},
     rayon::iter::{
@@ -25,12 +31,6 @@ use {
     solana_runtime::{bank::Bank, bank_forks::SharableBanks, epoch_stakes::BLSPubkeyToRankMap},
     solana_signer_store::{decode, DecodeError},
     solana_streamer::packet::PacketBatch,
-    solana_votor_messages::{
-        consensus_message::{
-            Certificate, CertificateMessage, CertificateType, ConsensusMessage, VoteMessage,
-        },
-        vote::Vote,
-    },
     std::{
         collections::{HashMap, HashSet},
         sync::{atomic::Ordering, Arc, RwLock},
@@ -635,6 +635,12 @@ mod tests {
         super::*,
         crate::{bls_sigverify::stats::STATS_INTERVAL_DURATION, consensus},
         agave_votor::consensus_pool::vote_certificate_builder::VoteCertificateBuilder,
+        agave_votor_messages::{
+            consensus_message::{
+                Certificate, CertificateMessage, CertificateType, ConsensusMessage, VoteMessage,
+            },
+            vote::Vote,
+        },
         bincode::de,
         crossbeam_channel::Receiver,
         solana_bls_signatures::{Signature, Signature as BLSSignature},
@@ -650,12 +656,6 @@ mod tests {
         },
         solana_signer::Signer,
         solana_signer_store::encode_base2,
-        solana_votor_messages::{
-            consensus_message::{
-                Certificate, CertificateMessage, CertificateType, ConsensusMessage, VoteMessage,
-            },
-            vote::Vote,
-        },
         std::time::{Duration, Instant},
     };
 

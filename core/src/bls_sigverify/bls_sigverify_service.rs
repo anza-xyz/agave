@@ -1,5 +1,6 @@
 use {
     crate::bls_sigverify::{bls_sigverifier::BLSSigVerifier, stats::BLSPacketStats},
+    agave_votor_messages::consensus_message::ConsensusMessage,
     core::time::Duration,
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, TrySendError},
     solana_measure::measure::Measure,
@@ -9,7 +10,6 @@ use {
     },
     solana_streamer::streamer::{self, StreamerError},
     solana_time_utils as timing,
-    solana_votor_messages::consensus_message::ConsensusMessage,
     std::{
         thread::{self, Builder, JoinHandle},
         time::Instant,
