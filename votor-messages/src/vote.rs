@@ -12,7 +12,7 @@ use {
     derive(AbiExample, AbiEnumVisitor),
     frozen_abi(digest = "FRn4f3PTtbvw3uv2r3qF8K49a5UF4QqDuVdyeshtipTW")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Vote {
     /// A notarization vote
     Notarize(NotarizationVote),
@@ -139,7 +139,7 @@ impl From<SkipFallbackVote> for Vote {
     derive(AbiExample),
     frozen_abi(digest = "5AdwChAjsj5QUXLdpDnGGK2L2nA8y8EajVXi6jsmTv1m")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct NotarizationVote {
     slot: Slot,
     block_id: Hash,
@@ -168,7 +168,7 @@ impl NotarizationVote {
     derive(AbiExample),
     frozen_abi(digest = "2XQ5N6YLJjF28w7cMFFUQ9SDgKuf9JpJNtAiXSPA8vR2")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct FinalizationVote {
     slot: Slot,
 }
@@ -193,7 +193,7 @@ impl FinalizationVote {
     derive(AbiExample),
     frozen_abi(digest = "G8Nrx3sMYdnLpHsCNark3BGA58BmW2sqNnqjkYhQHtN")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct SkipVote {
     pub(crate) slot: Slot,
 }
@@ -216,7 +216,7 @@ impl SkipVote {
     derive(AbiExample),
     frozen_abi(digest = "7j5ZPwwyz1FaG3fpyQv5PVnQXicdSmqSk8NvqzkG1Eqz")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct NotarizationFallbackVote {
     slot: Slot,
     block_id: Hash,
@@ -245,7 +245,7 @@ impl NotarizationFallbackVote {
     derive(AbiExample),
     frozen_abi(digest = "WsUNum8V62gjRU1yAnPuBMAQui4YvMwD1RwrzHeYkeF")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct SkipFallbackVote {
     pub(crate) slot: Slot,
 }

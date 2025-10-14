@@ -1,15 +1,12 @@
-#![allow(dead_code)]
-
 use {
     crate::{
         commitment::{CommitmentAggregationData, CommitmentError},
-        consensus_metrics::ConsensusMetrics,
+        consensus_metrics::ConsensusMetricsEventSender,
         vote_history::{VoteHistory, VoteHistoryError},
         vote_history_storage::{SavedVoteHistory, SavedVoteHistoryVersions},
         voting_service::BLSOp,
     },
     crossbeam_channel::{SendError, Sender},
-    parking_lot::RwLock as PlRwLock,
     solana_bls_signatures::{
         keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed, BlsError,
         Pubkey as BLSPubkey,
@@ -126,7 +123,7 @@ pub struct VotingContext {
     pub commitment_sender: Sender<CommitmentAggregationData>,
     pub wait_to_vote_slot: Option<u64>,
     pub sharable_banks: SharableBanks,
-    pub consensus_metrics: Arc<PlRwLock<ConsensusMetrics>>,
+    pub consensus_metrics_sender: ConsensusMetricsEventSender,
 }
 
 fn get_bls_keypair(
@@ -286,18 +283,6 @@ fn insert_vote_and_create_bls_message(
     let saved_vote_history =
         SavedVoteHistory::new(&context.vote_history, &context.identity_keypair)?;
 
-    match context
-        .consensus_metrics
-        .write()
-        .record_vote(context.vote_account_pubkey, &vote)
-    {
-        Ok(()) => (),
-        Err(err) => {
-            let slot = vote.slot();
-            error!("recording vote on slot {slot} failed with {err:?}");
-        }
-    }
-
     // Return vote for sending
     Ok(BLSOp::PushVote {
         message: Arc::new(message),
@@ -390,7 +375,7 @@ mod tests {
             commitment_sender: unbounded().0,
             wait_to_vote_slot: None,
             sharable_banks,
-            consensus_metrics: Arc::new(PlRwLock::new(ConsensusMetrics::new(0))),
+            consensus_metrics_sender: unbounded().0,
         }
     }
 

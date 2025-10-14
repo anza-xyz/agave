@@ -123,6 +123,10 @@ pub fn create_genesis_config_with_alpenglow_vote_accounts(
     )
 }
 
+pub fn derive_bls_keypair_from_signer_with_default_seed(signer: &impl Signer) -> BLSKeypair {
+    BLSKeypair::derive_from_signer(signer, BLS_KEYPAIR_DERIVE_SEED).unwrap()
+}
+
 pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
     mint_lamports: u64,
     voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
@@ -177,11 +181,9 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         // Create accounts
         let node_account = Account::new(VALIDATOR_LAMPORTS, 0, &system_program::id());
         let vote_account = if is_alpenglow {
-            let bls_keypair = BLSKeypair::derive_from_signer(
+            let bls_keypair = derive_bls_keypair_from_signer_with_default_seed(
                 &validator_voting_keypairs.borrow().vote_keypair,
-                BLS_KEYPAIR_DERIVE_SEED,
-            )
-            .unwrap();
+            );
             let bls_pubkey_compressed = bls_pubkey_to_compressed_bytes(&bls_keypair.public);
             vote_state::create_v4_account_with_authorized(
                 &node_pubkey,
