@@ -44,6 +44,14 @@ pub fn parse_vote(data: &[u8], vote_pubkey: &Pubkey) -> Result<VoteAccountType, 
         prior_voters: Vec::new(), // <-- No `prior_voters` in v4
         epoch_credits,
         last_timestamp: vote_state.last_timestamp,
+        inflation_rewards_commission_bps: vote_state.inflation_rewards_commission_bps,
+        inflation_rewards_collector: vote_state.inflation_rewards_collector.to_string(),
+        block_revenue_collector: vote_state.block_revenue_collector.to_string(),
+        block_revenue_commission_bps: vote_state.block_revenue_commission_bps,
+        pending_delegator_rewards: vote_state.pending_delegator_rewards.to_string(),
+        bls_pubkey_compressed: vote_state
+            .bls_pubkey_compressed
+            .map(|bytes| bs58::encode(bytes).into_string()),
     }))
 }
 
@@ -67,6 +75,14 @@ pub struct UiVoteState {
     prior_voters: Vec<UiPriorVoters>,
     epoch_credits: Vec<UiEpochCredits>,
     last_timestamp: BlockTimestamp,
+    // Fields added with vote state v4 via SIMD-0185:
+    inflation_rewards_commission_bps: u16,
+    inflation_rewards_collector: String,
+    block_revenue_collector: String,
+    block_revenue_commission_bps: u16,
+    pending_delegator_rewards: StringAmount,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bls_pubkey_compressed: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -117,12 +133,24 @@ mod test {
         let vote_pubkey = Pubkey::new_unique();
         let vote_state = VoteStateV4::default();
         let mut vote_account_data: Vec<u8> = vec![0; VoteStateV4::size_of()];
-        let versioned = VoteStateVersions::new_v4(vote_state);
+        let versioned = VoteStateVersions::new_v4(vote_state.clone());
         VoteStateV4::serialize(&versioned, &mut vote_account_data).unwrap();
         let expected_vote_state = UiVoteState {
             node_pubkey: Pubkey::default().to_string(),
             authorized_withdrawer: Pubkey::default().to_string(),
-            ..UiVoteState::default()
+            commission: 0,
+            votes: vec![],
+            root_slot: None,
+            authorized_voters: vec![],
+            prior_voters: vec![],
+            epoch_credits: vec![],
+            last_timestamp: BlockTimestamp::default(),
+            inflation_rewards_commission_bps: vote_state.inflation_rewards_commission_bps,
+            inflation_rewards_collector: vote_state.inflation_rewards_collector.to_string(),
+            block_revenue_collector: vote_state.block_revenue_collector.to_string(),
+            block_revenue_commission_bps: vote_state.block_revenue_commission_bps,
+            pending_delegator_rewards: vote_state.pending_delegator_rewards.to_string(),
+            bls_pubkey_compressed: None,
         };
         assert_eq!(
             parse_vote(&vote_account_data, &vote_pubkey).unwrap(),
