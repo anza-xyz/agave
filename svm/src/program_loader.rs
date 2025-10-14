@@ -807,13 +807,12 @@ mod tests {
         let mut account_data = AccountSharedData::default();
         account_data.set_owner(bpf_loader::id());
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-
         let upcoming_environments = ProgramRuntimeEnvironments::default();
-        let current_environments = {
-            let mut global_program_cache = batch_processor.global_program_cache.write().unwrap();
-            global_program_cache.upcoming_environments = Some(upcoming_environments.clone());
-            global_program_cache.environments.clone()
-        };
+        batch_processor
+            .global_program_cache
+            .write()
+            .unwrap()
+            .upcoming_environments = Some(upcoming_environments.clone());
         mock_bank
             .account_shared_data
             .borrow_mut()
@@ -835,7 +834,7 @@ mod tests {
                 is_upcoming_env,
                 Arc::ptr_eq(
                     result.program.get_environment().unwrap(),
-                    &current_environments.program_runtime_v1,
+                    &batch_processor.environments.program_runtime_v1,
                 )
             );
             assert_eq!(

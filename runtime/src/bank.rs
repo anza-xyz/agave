@@ -1508,10 +1508,8 @@ impl Bank {
                 drop(program_cache);
                 let environments_for_epoch = self
                     .transaction_processor
-                    .global_program_cache
-                    .read()
-                    .unwrap()
-                    .get_environments_for_epoch(effective_epoch);
+                    .get_environments_for_epoch(effective_epoch)
+                    .unwrap();
                 if let Some(recompiled) = load_program_with_pubkey(
                     self,
                     &environments_for_epoch,
@@ -1531,7 +1529,7 @@ impl Bank {
                         .global_program_cache
                         .write()
                         .unwrap();
-                    program_cache.assign_program(key, recompiled);
+                    program_cache.assign_program(&environments_for_epoch, key, recompiled);
                 }
             }
         } else if self.epoch != program_cache.latest_root_epoch
@@ -1547,7 +1545,7 @@ impl Bank {
                 .unwrap();
             let (program_runtime_environment_v1, program_runtime_environment_v2) =
                 self.create_program_runtime_environments(&upcoming_feature_set);
-            let mut upcoming_environments = program_cache.environments.clone();
+            let mut upcoming_environments = self.transaction_processor.environments.clone();
             let changed_program_runtime_v1 =
                 *upcoming_environments.program_runtime_v1 != *program_runtime_environment_v1;
             let changed_program_runtime_v2 =
@@ -3616,7 +3614,10 @@ impl Bank {
                                     .write()
                                     .unwrap()
                             })
-                            .merge(programs_modified_by_tx);
+                            .merge(
+                                &self.transaction_processor.environments,
+                                programs_modified_by_tx,
+                            );
                     }
                 }
             }
@@ -4083,8 +4084,8 @@ impl Bank {
             self.create_program_runtime_environments(&self.feature_set);
         self.transaction_processor
             .configure_program_runtime_environments(
-                Some(program_runtime_environment_v1),
-                Some(program_runtime_environment_v2),
+                program_runtime_environment_v1,
+                program_runtime_environment_v2,
             );
     }
 
