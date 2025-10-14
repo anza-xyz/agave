@@ -18,7 +18,6 @@ name = "agave_snapshots"
 
 [features]
 agave-unstable-api = []
-default = ["agave-unstable-api"]
 
 [dependencies]
 bzip2 = { workspace = true }
