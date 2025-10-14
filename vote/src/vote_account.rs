@@ -136,6 +136,23 @@ impl VoteAccountsCopyStats {
     }
 }
 
+#[cfg(feature = "frozen-abi")]
+impl solana_frozen_abi::abi_example::AbiExample for VoteAccountsCopyStats {
+    fn example() -> Self {
+        Self {
+            insert_copies: AtomicU64::new(0),
+            remove_copies: AtomicU64::new(0),
+            add_stake_copies: AtomicU64::new(0),
+            sub_stake_copies: AtomicU64::new(0),
+            add_node_stake_copies: AtomicU64::new(0),
+            sub_node_stake_copies: AtomicU64::new(0),
+            vote_accounts_make_mut_us: AtomicU64::new(0),
+            staked_nodes_make_mut_us: AtomicU64::new(0),
+            last_report: AtomicInterval::default(),
+        }
+    }
+}
+
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VoteAccounts {
