@@ -25,21 +25,16 @@ struct SVMAccount {
 }
 
 #[derive(Debug, PartialEq)]
-struct SVMAccountDeprecated {
+struct PrivateAccountFields {
     rent_epoch: u64,
     executable: bool,
-}
-
-struct PrivateAccountFields {
-    deprecated_fields: SVMAccountDeprecated,
     payload: Arc<Vec<u8>>,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct TransactionAccountView<'a> {
     svm_account: &'a SVMAccount,
-    deprecated_fields: &'a SVMAccountDeprecated,
-    payload: &'a [u8],
+    private_fields: &'a PrivateAccountFields,
 }
 
 impl ReadableAccount for TransactionAccountView<'_> {
@@ -48,7 +43,7 @@ impl ReadableAccount for TransactionAccountView<'_> {
     }
 
     fn data(&self) -> &[u8] {
-        self.payload
+        self.private_fields.payload.as_slice()
     }
 
     fn owner(&self) -> &Pubkey {
@@ -56,11 +51,11 @@ impl ReadableAccount for TransactionAccountView<'_> {
     }
 
     fn executable(&self) -> bool {
-        self.deprecated_fields.executable
+        self.private_fields.executable
     }
 
     fn rent_epoch(&self) -> u64 {
-        self.deprecated_fields.rent_epoch
+        self.private_fields.rent_epoch
     }
 
     fn to_account_shared_data(&self) -> AccountSharedData {
@@ -97,13 +92,12 @@ impl TransactionAccountView<'_> {
 #[derive(Debug)]
 pub struct TransactionAccountMutView<'a> {
     svm_account: &'a mut SVMAccount,
-    deprecated_fields: &'a mut SVMAccountDeprecated,
-    payload: &'a mut Arc<Vec<u8>>,
+    private_fields: &'a mut PrivateAccountFields,
 }
 
 impl TransactionAccountMutView<'_> {
     fn data_mut(&mut self) -> &mut Vec<u8> {
-        Arc::make_mut(self.payload)
+        Arc::make_mut(&mut self.private_fields.payload)
     }
 
     pub(crate) fn resize(&mut self, new_len: usize, value: u8) {
@@ -113,10 +107,10 @@ impl TransactionAccountMutView<'_> {
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn set_data_from_slice(&mut self, new_data: &[u8]) {
         // If the buffer isn't shared, we're going to memcpy in place.
-        let Some(data) = Arc::get_mut(self.payload) else {
+        let Some(data) = Arc::get_mut(&mut self.private_fields.payload) else {
             // If the buffer is shared, the cheapest thing to do is to clone the
             // incoming slice and replace the buffer.
-            *self.payload = Arc::new(new_data.to_vec());
+            self.private_fields.payload = Arc::new(new_data.to_vec());
             return;
         };
 
@@ -156,18 +150,19 @@ impl TransactionAccountMutView<'_> {
     }
 
     pub(crate) fn reserve(&mut self, additional: usize) {
-        if let Some(data) = Arc::get_mut(self.payload) {
+        if let Some(data) = Arc::get_mut(&mut self.private_fields.payload) {
             data.reserve(additional)
         } else {
-            let mut data = Vec::with_capacity(self.payload.len().saturating_add(additional));
-            data.extend_from_slice(self.payload);
-            *self.payload = Arc::new(data);
+            let mut data =
+                Vec::with_capacity(self.private_fields.payload.len().saturating_add(additional));
+            data.extend_from_slice(self.private_fields.payload.as_slice());
+            self.private_fields.payload = Arc::new(data);
         }
     }
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn is_shared(&self) -> bool {
-        Arc::strong_count(self.payload) > 1
+        Arc::strong_count(&self.private_fields.payload) > 1
     }
 }
 
@@ -177,7 +172,7 @@ impl ReadableAccount for TransactionAccountMutView<'_> {
     }
 
     fn data(&self) -> &[u8] {
-        self.payload.as_slice()
+        self.private_fields.payload.as_slice()
     }
 
     fn owner(&self) -> &Pubkey {
@@ -185,11 +180,11 @@ impl ReadableAccount for TransactionAccountMutView<'_> {
     }
 
     fn executable(&self) -> bool {
-        self.deprecated_fields.executable
+        self.private_fields.executable
     }
 
     fn rent_epoch(&self) -> u64 {
-        self.deprecated_fields.rent_epoch
+        self.private_fields.rent_epoch
     }
 
     fn to_account_shared_data(&self) -> AccountSharedData {
@@ -206,7 +201,7 @@ impl WritableAccount for TransactionAccountMutView<'_> {
     }
 
     fn data_as_mut_slice(&mut self) -> &mut [u8] {
-        Arc::make_mut(self.payload).as_mut_slice()
+        Arc::make_mut(&mut self.private_fields.payload).as_mut_slice()
     }
 
     fn set_owner(&mut self, owner: Pubkey) {
@@ -218,11 +213,11 @@ impl WritableAccount for TransactionAccountMutView<'_> {
     }
 
     fn set_executable(&mut self, executable: bool) {
-        self.deprecated_fields.executable = executable;
+        self.private_fields.executable = executable;
     }
 
     fn set_rent_epoch(&mut self, epoch: u64) {
-        self.deprecated_fields.rent_epoch = epoch;
+        self.private_fields.rent_epoch = epoch;
     }
 
     fn create(
@@ -266,10 +261,8 @@ impl TransactionAccounts {
                         lamports: item.1.lamports(),
                     },
                     PrivateAccountFields {
-                        deprecated_fields: SVMAccountDeprecated {
-                            rent_epoch: item.1.rent_epoch(),
-                            executable: item.1.executable(),
-                        },
+                        rent_epoch: item.1.rent_epoch(),
+                        executable: item.1.executable(),
                         payload: item.1.data_clone(),
                     },
                 )
@@ -358,8 +351,7 @@ impl TransactionAccounts {
 
         let account = TransactionAccountMutView {
             svm_account,
-            deprecated_fields: &mut private_fields.deprecated_fields,
-            payload: &mut private_fields.payload,
+            private_fields,
         };
 
         Ok(AccountRefMut {
@@ -391,8 +383,7 @@ impl TransactionAccounts {
 
         let account = TransactionAccountView {
             svm_account,
-            deprecated_fields: &private_fields.deprecated_fields,
-            payload: &private_fields.payload,
+            private_fields,
         };
 
         Ok(AccountRef {
@@ -427,8 +418,8 @@ impl TransactionAccounts {
                         shared_fields.lamports,
                         private_fields.payload.clone(),
                         shared_fields.owner,
-                        private_fields.deprecated_fields.executable,
-                        private_fields.deprecated_fields.rent_epoch,
+                        private_fields.executable,
+                        private_fields.rent_epoch,
                     ),
                 )
             })
@@ -445,8 +436,8 @@ impl TransactionAccounts {
                     shared_fields.lamports,
                     private_fields.payload.clone(),
                     shared_fields.owner,
-                    private_fields.deprecated_fields.executable,
-                    private_fields.deprecated_fields.rent_epoch,
+                    private_fields.executable,
+                    private_fields.rent_epoch,
                 )
             })
             .collect()
