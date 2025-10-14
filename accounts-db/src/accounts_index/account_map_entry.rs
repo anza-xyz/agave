@@ -500,3 +500,114 @@ impl<T: IndexValue> PreAllocatedAccountMapEntry<T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        ahash::HashSet,
+        std::{
+            sync::{Arc, Barrier},
+            thread,
+        },
+    };
+
+    #[test]
+    fn test_slot_list_write_guard_push() {
+        let entry = AccountMapEntry::empty_for_tests();
+
+        // Empty
+        assert!(!entry.meta.is_single.load(Ordering::Acquire));
+        assert_eq!(entry.slot_list_lock_read_len(), 0);
+
+        // Push first element - should become single
+        {
+            let mut write_guard = entry.slot_list_write_lock();
+            write_guard.push((10, 100));
+            assert_eq!(write_guard.len(), 1);
+            assert_eq!(write_guard[0], (10, 100));
+        }
+        assert!(entry.meta.is_single.load(Ordering::Acquire));
+        assert_eq!(entry.slot_list_lock_read_len(), 1);
+
+        // Push second element - should become multiple
+        {
+            let mut write_guard = entry.slot_list_write_lock();
+            write_guard.push((20, 200));
+            assert_eq!(write_guard.len(), 2);
+            assert_eq!(write_guard[0], (10, 100));
+            assert_eq!(write_guard[1], (20, 200));
+        }
+        assert!(!entry.meta.is_single.load(Ordering::Acquire));
+        assert_eq!(entry.slot_list_lock_read_len(), 2);
+    }
+
+    #[test]
+    fn test_slot_list_write_guard_retain_and_count() {
+        const FULL_LIST: [(Slot, u64); 4] = [(10, 1), (20, 2), (30, 3), (40, 4)];
+
+        for i in 0..FULL_LIST.len() {
+            let entry = AccountMapEntry::empty_for_tests();
+            for item in &FULL_LIST[..i] {
+                entry.slot_list_write_lock().push(*item);
+            }
+            assert_eq!(entry.slot_list_lock_read_len(), i);
+
+            // Retain only even values
+            let mut write_guard = entry.slot_list_write_lock();
+            let count = write_guard.retain_and_count(|(_slot, info)| *info % 2 == 0);
+
+            assert_eq!(count, i / 2);
+            assert_eq!(write_guard.len(), i / 2);
+        }
+    }
+
+    #[test]
+    fn test_writer_serialization() {
+        let entry = Arc::new(AccountMapEntry::empty_for_tests());
+        let num_writers = 5;
+        let barrier = Arc::new(Barrier::new(num_writers));
+
+        let handles: Vec<_> = (0u64..num_writers as u64)
+            .map(|i| {
+                let entry = Arc::clone(&entry);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+
+                    // Each writer will add multiple elements
+                    for j in 0u64..3 {
+                        let mut write_guard = entry.slot_list_write_lock();
+                        let slot = (i * 10) + j;
+                        let info = (i * 100) + j;
+                        write_guard.push((slot, info));
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().expect("Thread should not panic");
+        }
+
+        // Verify all elements were added correctly
+        let read_guard = entry.slot_list_read_lock();
+        assert_eq!(read_guard.len(), num_writers * 3);
+
+        // Since writers are serialized, elements should be added in some order
+        // We can't guarantee the exact order due to thread scheduling, but we can
+        // verify that all expected elements are present
+        let mut found_elements = HashSet::default();
+        for &(slot, info) in read_guard.iter() {
+            found_elements.insert((slot, info));
+        }
+
+        for i in 0u64..num_writers as u64 {
+            for j in 0u64..3 {
+                let expected_slot = (i * 10) + j;
+                let expected_info = (i * 100) + j;
+                assert!(found_elements.contains(&(expected_slot, expected_info)));
+            }
+        }
+    }
+}
