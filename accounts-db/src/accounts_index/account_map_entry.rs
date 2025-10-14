@@ -179,9 +179,8 @@ impl<T: Copy> Drop for AccountMapEntry<T> {
     }
 }
 
-// Vec holds data on heap, however its inline size is impacted by len and capacity fields, so it needs to
-// be wrapped in a Box to minimize the size of the union.
-#[allow(clippy::box_collection)]
+/// Slot list with dynamic number of elements
+// The choice of SmallVec size follows typical usage where 80% of lists with >1 elements stay <=4 elements
 struct SlotListMultiple<T: Copy>(Box<SmallVec<[(Slot, T); 4]>>);
 
 impl<T: Copy> SlotListMultiple<T> {
@@ -195,6 +194,8 @@ union SlotListRepr<T: Copy> {
     /// This variant is used when entry's metadata `is_single` loads as `true` while holding the lock
     single: (Slot, T),
     /// Slot list with potentially different number of elements than 1, used when `is_single` loads as `false`
+    ///
+    /// `None` indicates empty list such that no allocation is performed until >1 elements are added
     multiple: ManuallyDrop<Option<SlotListMultiple<T>>>,
 }
 
