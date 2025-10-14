@@ -98,10 +98,7 @@ impl SnapshotStorageRebuilder {
         storage_access: StorageAccess,
         obsolete_accounts: Option<DashMap<Slot, SerdeObsoleteAccounts>>,
     ) -> Self {
-        let storage = AccountStorageMap::with_capacity_and_hasher(
-            snapshot_storage_lengths.len(),
-            ahash::RandomState::new(),
-        );
+        let storage = AccountStorageMap::with_capacity(snapshot_storage_lengths.len());
         let storage_paths: DashMap<_, _> = snapshot_storage_lengths
             .iter()
             .map(|(slot, storage_lengths)| {
@@ -160,14 +157,7 @@ impl SnapshotStorageRebuilder {
 
         // wait for asynchronous threads to complete
         rebuilder.wait_for_completion(exit_receiver)?;
-
-        // Convert from RandomState (good for parallel inserts) to BuildNoHashHasher (good for sequential access)
-        let temp_storage = Arc::try_unwrap(rebuilder).unwrap().storage;
-        let mut final_storage =
-            DashMap::with_capacity_and_hasher(temp_storage.len(), BuildNoHashHasher::default());
-        final_storage.extend(temp_storage);
-
-        Ok(final_storage)
+        Ok(Arc::try_unwrap(rebuilder).unwrap().storage)
     }
 
     /// Processes buffered append_vec_files

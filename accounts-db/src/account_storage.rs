@@ -2,7 +2,6 @@
 
 use {
     crate::accounts_db::{AccountStorageEntry, AccountsFileId},
-    ahash::RandomState,
     dashmap::DashMap,
     rand::seq::SliceRandom,
     rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},

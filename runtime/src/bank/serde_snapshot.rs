@@ -46,10 +46,7 @@ mod tests {
         storage_access: StorageAccess,
     ) -> Result<StorageAndNextAccountsFileId, AccountsFileError> {
         let storage_entries = accounts_db.get_storages(RangeFull).0;
-        let storage: AccountStorageMap = AccountStorageMap::with_capacity_and_hasher(
-            storage_entries.len(),
-            ahash::RandomState::new(),
-        );
+        let storage: AccountStorageMap = AccountStorageMap::with_capacity(storage_entries.len());
         let mut next_append_vec_id = 0;
         for storage_entry in storage_entries.into_iter() {
             // Copy file to new directory
