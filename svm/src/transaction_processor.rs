@@ -37,7 +37,7 @@ use {
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
             ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheForTxBatch,
-            ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
+            ProgramCacheMatchCriteria, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
         },
         solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
         sysvar_cache::SysvarCache,
@@ -293,16 +293,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     }
 
     /// Returns the current environments depending on the given epoch
-    /// Returns None if the call could result in a deadlock
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn get_environments_for_epoch(
-        &self,
-        epoch: Epoch,
-    ) -> Option<solana_program_runtime::loaded_programs::ProgramRuntimeEnvironments> {
+    pub fn get_environments_for_epoch(&self, epoch: Epoch) -> ProgramRuntimeEnvironments {
         self.global_program_cache
             .try_read()
-            .ok()
-            .map(|cache| cache.get_environments_for_epoch(epoch))
+            .unwrap()
+            .get_environments_for_epoch(epoch)
     }
 
     pub fn sysvar_cache(&self) -> RwLockReadGuard<SysvarCache> {

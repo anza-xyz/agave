@@ -507,7 +507,7 @@ mod tests {
 
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(50).unwrap(),
+            &batch_processor.get_environments_for_epoch(50),
             &key,
             500,
             &mut ExecuteTimings::default(),
@@ -530,7 +530,7 @@ mod tests {
 
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(20).unwrap(),
+            &batch_processor.get_environments_for_epoch(20),
             &key,
             0, // Slot 0
             &mut ExecuteTimings::default(),
@@ -543,7 +543,6 @@ mod tests {
             ProgramCacheEntryType::FailedVerification(
                 batch_processor
                     .get_environments_for_epoch(20)
-                    .unwrap()
                     .program_runtime_v1,
             ),
         );
@@ -565,7 +564,7 @@ mod tests {
         // This should return an error
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(20).unwrap(),
+            &batch_processor.get_environments_for_epoch(20),
             &key,
             200,
             &mut ExecuteTimings::default(),
@@ -577,7 +576,6 @@ mod tests {
             ProgramCacheEntryType::FailedVerification(
                 batch_processor
                     .get_environments_for_epoch(20)
-                    .unwrap()
                     .program_runtime_v1,
             ),
         );
@@ -593,7 +591,7 @@ mod tests {
 
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(20).unwrap(),
+            &batch_processor.get_environments_for_epoch(20),
             &key,
             200,
             &mut ExecuteTimings::default(),
@@ -647,7 +645,7 @@ mod tests {
         // This should return an error
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(0).unwrap(),
+            &batch_processor.get_environments_for_epoch(0),
             &key1,
             0,
             &mut ExecuteTimings::default(),
@@ -659,7 +657,6 @@ mod tests {
             ProgramCacheEntryType::FailedVerification(
                 batch_processor
                     .get_environments_for_epoch(0)
-                    .unwrap()
                     .program_runtime_v1,
             ),
         );
@@ -685,7 +682,7 @@ mod tests {
 
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(20).unwrap(),
+            &batch_processor.get_environments_for_epoch(20),
             &key1,
             200,
             &mut ExecuteTimings::default(),
@@ -735,7 +732,7 @@ mod tests {
 
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(0).unwrap(),
+            &batch_processor.get_environments_for_epoch(0),
             &key,
             0,
             &mut ExecuteTimings::default(),
@@ -747,7 +744,6 @@ mod tests {
             ProgramCacheEntryType::FailedVerification(
                 batch_processor
                     .get_environments_for_epoch(0)
-                    .unwrap()
                     .program_runtime_v1,
             ),
         );
@@ -769,7 +765,7 @@ mod tests {
 
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(20).unwrap(),
+            &batch_processor.get_environments_for_epoch(20),
             &key,
             200,
             &mut ExecuteTimings::default(),
@@ -818,9 +814,7 @@ mod tests {
         for is_upcoming_env in [false, true] {
             let result = load_program_with_pubkey(
                 &mock_bank,
-                &batch_processor
-                    .get_environments_for_epoch(is_upcoming_env as u64)
-                    .unwrap(),
+                &batch_processor.get_environments_for_epoch(is_upcoming_env as u64),
                 &key,
                 200,
                 &mut ExecuteTimings::default(),
