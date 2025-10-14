@@ -1083,26 +1083,30 @@ mod test {
             rent,
             transaction_context
         );
-        push_instruction_context!(invoke_context, instruction_context, instruction_accounts);
-        let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
-            .unwrap();
-        let mut signers = HashSet::new();
-        signers.insert(nonce_account.get_key());
-        let versions: Versions = nonce_account.get_state().unwrap();
-        // New is in Uninitialzed state
-        assert_eq!(versions.state(), &State::Uninitialized);
-        set_invoke_context_blockhash!(invoke_context, 0);
-        let authorized = *nonce_account.get_key();
-        initialize_nonce_account(&mut nonce_account, &authorized, &rent, &invoke_context).unwrap();
-        drop(nonce_account);
-        let blockhash = invoke_context.environment_config.blockhash;
+
+        let blockhash = {
+            push_instruction_context!(invoke_context, instruction_context, instruction_accounts);
+            let mut nonce_account = instruction_context
+                .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
+                .unwrap();
+            let mut signers = HashSet::new();
+            signers.insert(nonce_account.get_key());
+            let versions: Versions = nonce_account.get_state().unwrap();
+            // New is in Uninitialzed state
+            assert_eq!(versions.state(), &State::Uninitialized);
+            set_invoke_context_blockhash!(invoke_context, 0);
+            let authorized = *nonce_account.get_key();
+            initialize_nonce_account(&mut nonce_account, &authorized, &rent, &invoke_context)
+                .unwrap();
+            drop(nonce_account);
+            invoke_context.environment_config.blockhash
+        };
+
+        transaction_context.pop().unwrap();
+        let post_accounts = transaction_context.deconstruct_without_keys().unwrap();
         assert_matches!(
             verify_nonce_account(
-                &transaction_context
-                    .accounts()
-                    .try_borrow(NONCE_ACCOUNT_INDEX)
-                    .unwrap(),
+                post_accounts.get(NONCE_ACCOUNT_INDEX as usize).unwrap(),
                 DurableNonce::from_blockhash(&blockhash).as_hash(),
             ),
             Some(_)
@@ -1117,13 +1121,16 @@ mod test {
             rent,
             transaction_context
         );
-        push_instruction_context!(invoke_context, _instruction_context, instruction_accounts);
+
+        {
+            push_instruction_context!(invoke_context, _instruction_context, instruction_accounts);
+        }
+
+        transaction_context.pop().unwrap();
+        let post_accounts = transaction_context.deconstruct_without_keys().unwrap();
         assert_eq!(
             verify_nonce_account(
-                &transaction_context
-                    .accounts()
-                    .try_borrow(NONCE_ACCOUNT_INDEX)
-                    .unwrap(),
+                post_accounts.get(NONCE_ACCOUNT_INDEX as usize).unwrap(),
                 &Hash::default(),
             ),
             None
@@ -1138,33 +1145,37 @@ mod test {
             rent,
             transaction_context
         );
-        push_instruction_context!(invoke_context, instruction_context, instruction_accounts);
-        let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
+
+        let blockhash = {
+            push_instruction_context!(invoke_context, instruction_context, instruction_accounts);
+            let mut nonce_account = instruction_context
+                .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
+                .unwrap();
+            let mut signers = HashSet::new();
+            signers.insert(nonce_account.get_key());
+            let versions: Versions = nonce_account.get_state().unwrap();
+            // New is in Uninitialzed state
+            assert_eq!(versions.state(), &State::Uninitialized);
+            set_invoke_context_blockhash!(invoke_context, 0);
+            let authorized = *nonce_account.get_key();
+            initialize_nonce_account(
+                &mut nonce_account,
+                &authorized,
+                &Rent::free(),
+                &invoke_context,
+            )
             .unwrap();
-        let mut signers = HashSet::new();
-        signers.insert(nonce_account.get_key());
-        let versions: Versions = nonce_account.get_state().unwrap();
-        // New is in Uninitialzed state
-        assert_eq!(versions.state(), &State::Uninitialized);
-        set_invoke_context_blockhash!(invoke_context, 0);
-        let authorized = *nonce_account.get_key();
-        initialize_nonce_account(
-            &mut nonce_account,
-            &authorized,
-            &Rent::free(),
-            &invoke_context,
-        )
-        .unwrap();
-        set_invoke_context_blockhash!(invoke_context, 1);
-        drop(nonce_account);
-        let blockhash = invoke_context.environment_config.blockhash;
+            set_invoke_context_blockhash!(invoke_context, 1);
+            drop(nonce_account);
+            invoke_context.environment_config.blockhash
+        };
+
+        transaction_context.pop().unwrap();
+        let post_accounts = transaction_context.deconstruct_without_keys().unwrap();
+
         assert_eq!(
             verify_nonce_account(
-                &transaction_context
-                    .accounts()
-                    .try_borrow(NONCE_ACCOUNT_INDEX)
-                    .unwrap(),
+                post_accounts.get(NONCE_ACCOUNT_INDEX as usize).unwrap(),
                 DurableNonce::from_blockhash(&blockhash).as_hash(),
             ),
             None
