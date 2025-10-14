@@ -891,7 +891,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         slot_versions.insert(index, Arc::clone(&entry));
                     }
                 }
-                // Remove existing entires in the same deployment slot unless they are for a different environment.
+                // Remove existing entries in the same deployment slot unless they are for a different environment.
                 // This overwrites the current status of a program in program management instructions.
                 slot_versions.retain(|existing| {
                     existing.deployment_slot != entry.deployment_slot
