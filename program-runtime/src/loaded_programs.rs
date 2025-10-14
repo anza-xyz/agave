@@ -1931,7 +1931,8 @@ mod tests {
 
     #[test]
     fn test_assign_program_removes_entries_in_same_slot() {
-        let mut cache = new_mock_cache::<TestForkGraph>();
+        let mut cache = ProgramCache::<TestForkGraph>::new(0, 0);
+        cache.environments.program_runtime_v1 = get_mock_env();
         let program_id = Pubkey::new_unique();
         let closed_other_slot = Arc::new(ProgramCacheEntry {
             program: ProgramCacheEntryType::Closed,
