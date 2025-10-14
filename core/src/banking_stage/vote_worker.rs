@@ -311,9 +311,7 @@ impl VoteWorker {
             ..
         } = process_transactions_summary;
 
-        if reached_max_poh_height || !bank.is_complete() {
-            *reached_end_of_slot = true;
-        }
+        *reached_end_of_slot = has_reached_end_of_slot(reached_max_poh_height, bank);
 
         // The difference between all transactions passed to execution and the ones that
         // are retryable were the ones that were either:
@@ -553,13 +551,23 @@ fn consume_scan_should_process_packet(
     Some(view)
 }
 
+fn has_reached_end_of_slot(reached_max_poh_height: bool, bank: &Bank) -> bool {
+    reached_max_poh_height || bank.is_complete()
+}
+
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::banking_stage::vote_storage::tests::packet_from_slots,
-        solana_perf::packet::BytesPacket, solana_runtime::genesis_utils::ValidatorVoteKeypairs,
+        super::*,
+        crate::banking_stage::{
+            tests::create_slow_genesis_config, vote_storage::tests::packet_from_slots,
+        },
+        solana_ledger::genesis_utils::GenesisConfigInfo,
+        solana_perf::packet::BytesPacket,
+        solana_runtime::genesis_utils::ValidatorVoteKeypairs,
         solana_runtime_transaction::transaction_meta::StaticMeta,
-        solana_svm::account_loader::CheckedTransactionDetails, std::collections::HashSet,
+        solana_svm::account_loader::CheckedTransactionDetails,
+        std::collections::HashSet,
     };
 
     fn to_runtime_transaction_view(packet: BytesPacket) -> RuntimeTransactionView {
@@ -704,5 +712,20 @@ mod tests {
         assert_eq!(extracted.next().unwrap().message_hash(), &expected0);
         assert_eq!(extracted.next().unwrap().message_hash(), &expected1);
         assert!(extracted.next().is_none());
+    }
+
+    #[test]
+    fn test_has_reached_end_of_slot() {
+        let GenesisConfigInfo { genesis_config, .. } = create_slow_genesis_config(10_000);
+        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+
+        assert!(!has_reached_end_of_slot(false, &bank));
+        assert!(has_reached_end_of_slot(true, &bank));
+
+        bank.fill_bank_with_ticks_for_tests();
+        assert!(bank.is_complete());
+
+        assert!(has_reached_end_of_slot(false, &bank));
+        assert!(has_reached_end_of_slot(true, &bank));
     }
 }
