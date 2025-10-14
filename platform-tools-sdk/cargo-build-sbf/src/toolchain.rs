@@ -231,7 +231,7 @@ fn download_platform_tools(
         .map_err(|err| {
             format!(
                 "{err}\n It looks like the download has failed. If this is a persistent issue, \
-                 try `cargo-build-sbf --install-only` to download form an alternative source."
+                 try `cargo-build-sbf --install-only` to download from an alternative source."
             )
         })
     }
