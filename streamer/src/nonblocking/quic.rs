@@ -1890,7 +1890,7 @@ pub mod test {
 
         let SpawnTestServerResult {
             join_handle,
-            receiver: _,
+            receiver,
             server_address,
             stats,
             cancel,
@@ -1957,6 +1957,11 @@ pub mod test {
         assert!(start.elapsed().as_secs() < 1);
 
         cancel.cancel();
+        // Explicitly drop receiver here so that it doesn't get implicitly
+        // dropped earlier. This is necessary to ensure the server stays alive
+        // and doesn't issue a cancel to kill the connection earlier than
+        // expected.
+        drop(receiver);
         join_handle.await.unwrap();
     }
 

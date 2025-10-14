@@ -189,25 +189,15 @@ impl Default for Crds {
 // Both values should have the same key/label.
 fn overrides(value: &CrdsValue, other: &VersionedCrdsValue) -> bool {
     assert_eq!(value.label(), other.value.label(), "labels mismatch!");
-    // Contact-infos and node instances are special cased so that if there are
+    // Contact-infos are special cased so that if there are
     // two running instances of the same node, the more recent start is
     // propagated through gossip regardless of wallclocks.
-    match value.data() {
-        CrdsData::ContactInfo(value) => {
-            if let CrdsData::ContactInfo(other) = other.value.data() {
-                if let Some(out) = value.overrides(other) {
-                    return out;
-                }
+    if let CrdsData::ContactInfo(value) = value.data() {
+        if let CrdsData::ContactInfo(other) = other.value.data() {
+            if let Some(out) = value.overrides(other) {
+                return out;
             }
         }
-        CrdsData::NodeInstance(value) => {
-            if let CrdsData::NodeInstance(other) = other.value.data() {
-                if let Some(out) = value.overrides(other) {
-                    return out;
-                }
-            }
-        }
-        _ => (),
     }
     match value.wallclock().cmp(&other.value.wallclock()) {
         Ordering::Less => false,
@@ -788,9 +778,8 @@ impl CrdsStats {
 mod tests {
     use {
         super::*,
-        crate::crds_data::{new_rand_timestamp, AccountsHashes, NodeInstance},
-        rand::{thread_rng, Rng, SeedableRng},
-        rand_chacha::ChaChaRng,
+        crate::crds_data::{new_rand_timestamp, AccountsHashes},
+        rand::{thread_rng, Rng},
         rayon::ThreadPoolBuilder,
         solana_keypair::Keypair,
         solana_signer::Signer,
@@ -882,61 +871,6 @@ mod tests {
         crds.update_record_timestamp(&val2.label().pubkey(), 1);
         assert_eq!(crds.table[&val2.label()].local_timestamp, 2);
         assert_eq!(crds.table[&val2.label()].ordinal, 1);
-    }
-
-    #[test]
-    fn test_upsert_node_instance() {
-        const SEED: [u8; 32] = [0x42; 32];
-        let mut rng = ChaChaRng::from_seed(SEED);
-        fn make_crds_value(node: NodeInstance) -> CrdsValue {
-            CrdsValue::new_unsigned(CrdsData::NodeInstance(node))
-        }
-        let now = 1_620_838_767_000;
-        let mut crds = Crds::default();
-        let pubkey = Pubkey::new_unique();
-        let node = NodeInstance::new(&mut rng, pubkey, now);
-        let node = make_crds_value(node);
-        assert_eq!(crds.insert(node, now, GossipRoute::LocalMessage), Ok(()));
-        // A node-instance with a different key should insert fine even with
-        // older timestamps.
-        let other = NodeInstance::new(&mut rng, Pubkey::new_unique(), now - 1);
-        let other = make_crds_value(other);
-        assert_eq!(crds.insert(other, now, GossipRoute::LocalMessage), Ok(()));
-        // A node-instance with older timestamp should fail to insert, even if
-        // the wallclock is more recent.
-        let other = NodeInstance::new(&mut rng, pubkey, now - 1);
-        let other = other.with_wallclock(now + 1);
-        let other = make_crds_value(other);
-        let value_hash = *other.hash();
-        assert_eq!(
-            crds.insert(other, now, GossipRoute::LocalMessage),
-            Err(CrdsError::InsertFailed)
-        );
-        assert_eq!(*crds.purged.back().unwrap(), (value_hash, now));
-        // A node instance with the same timestamp should insert only if the
-        // random token is larger.
-        let mut num_overrides = 0;
-        for _ in 0..100 {
-            let other = NodeInstance::new(&mut rng, pubkey, now);
-            let other = make_crds_value(other);
-            let value_hash = *other.hash();
-            match crds.insert(other, now, GossipRoute::LocalMessage) {
-                Ok(()) => num_overrides += 1,
-                Err(CrdsError::InsertFailed) => {
-                    assert_eq!(*crds.purged.back().unwrap(), (value_hash, now))
-                }
-                _ => panic!(),
-            }
-        }
-        assert_eq!(num_overrides, 5);
-        // A node instance with larger timestamp should insert regardless of
-        // its token value.
-        for k in 1..10 {
-            let other = NodeInstance::new(&mut rng, pubkey, now + k);
-            let other = other.with_wallclock(now - 1);
-            let other = make_crds_value(other);
-            assert_matches!(crds.insert(other, now, GossipRoute::LocalMessage), Ok(()));
-        }
     }
 
     #[test]

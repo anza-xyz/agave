@@ -248,7 +248,6 @@ impl VoteSimulator {
             &drop_bank_sender,
             &mut self.tbft_structs,
         )
-        .unwrap()
     }
 
     pub fn create_and_vote_new_branch(

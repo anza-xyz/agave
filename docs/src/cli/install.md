@@ -246,7 +246,7 @@ your MacOS or Linux machine.
 
 - Follow instructions at: https://formulae.brew.sh/formula/solana
 
-[Homebrew formulae](https://github.com/Homebrew/homebrew-core/blob/HEAD/Formula/solana.rb)
+[Homebrew formulae](https://github.com/Homebrew/homebrew-core/blob/HEAD/Formula/s/solana.rb)
 is updated after each `solana` release, however it is possible that the Homebrew
 version is outdated.
 

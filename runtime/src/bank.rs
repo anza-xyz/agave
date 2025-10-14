@@ -3251,23 +3251,11 @@ impl Bank {
 
         let (blockhash, blockhash_lamports_per_signature) =
             self.last_blockhash_and_lamports_per_signature();
-        let effective_epoch_of_deployments =
-            self.epoch_schedule().get_epoch(self.slot.saturating_add(
-                solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
-            ));
         let processing_environment = TransactionProcessingEnvironment {
             blockhash,
             blockhash_lamports_per_signature,
             epoch_total_stake: self.get_current_epoch_total_stake(),
             feature_set: self.feature_set.runtime_features(),
-            program_runtime_environments_for_execution: self
-                .transaction_processor
-                .get_environments_for_epoch(self.epoch)
-                .unwrap(),
-            program_runtime_environments_for_deployment: self
-                .transaction_processor
-                .get_environments_for_epoch(effective_epoch_of_deployments)
-                .unwrap(),
             rent: self.rent_collector.rent.clone(),
         };
 
@@ -5904,13 +5892,14 @@ impl Bank {
     }
 
     pub fn new_program_cache_for_tx_batch_for_slot(&self, slot: Slot) -> ProgramCacheForTxBatch {
-        ProgramCacheForTxBatch::new(
+        ProgramCacheForTxBatch::new_from_cache(
             slot,
-            self.transaction_processor
+            self.epoch_schedule.get_epoch(slot),
+            &self
+                .transaction_processor
                 .global_program_cache
                 .read()
-                .unwrap()
-                .latest_root_epoch,
+                .unwrap(),
         )
     }
 

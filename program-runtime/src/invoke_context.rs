@@ -9,6 +9,7 @@ use {
         sysvar_cache::SysvarCache,
     },
     solana_account::{create_account_shared_data_for_test, AccountSharedData},
+    solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta, Instruction},
@@ -139,8 +140,6 @@ pub struct EnvironmentConfig<'a> {
     pub blockhash_lamports_per_signature: u64,
     epoch_stake_callback: &'a dyn InvokeContextCallback,
     feature_set: &'a SVMFeatureSet,
-    pub program_runtime_environments_for_execution: &'a ProgramRuntimeEnvironments,
-    pub program_runtime_environments_for_deployment: &'a ProgramRuntimeEnvironments,
     sysvar_cache: &'a SysvarCache,
 }
 impl<'a> EnvironmentConfig<'a> {
@@ -149,8 +148,6 @@ impl<'a> EnvironmentConfig<'a> {
         blockhash_lamports_per_signature: u64,
         epoch_stake_callback: &'a dyn InvokeContextCallback,
         feature_set: &'a SVMFeatureSet,
-        program_runtime_environments_for_execution: &'a ProgramRuntimeEnvironments,
-        program_runtime_environments_for_deployment: &'a ProgramRuntimeEnvironments,
         sysvar_cache: &'a SysvarCache,
     ) -> Self {
         Self {
@@ -158,8 +155,6 @@ impl<'a> EnvironmentConfig<'a> {
             blockhash_lamports_per_signature,
             epoch_stake_callback,
             feature_set,
-            program_runtime_environments_for_execution,
-            program_runtime_environments_for_deployment,
             sysvar_cache,
         }
     }
@@ -226,6 +221,17 @@ impl<'a> InvokeContext<'a> {
             syscall_context: Vec::new(),
             register_traces: Vec::new(),
         }
+    }
+
+    pub fn get_environments_for_slot(
+        &self,
+        effective_slot: Slot,
+    ) -> Result<&ProgramRuntimeEnvironments, InstructionError> {
+        let epoch_schedule = self.environment_config.sysvar_cache.get_epoch_schedule()?;
+        let epoch = epoch_schedule.get_epoch(effective_slot);
+        Ok(self
+            .program_cache_for_tx_batch
+            .get_environments_for_epoch(epoch))
     }
 
     /// Push a stack frame onto the invocation stack
@@ -560,8 +566,8 @@ impl<'a> InvokeContext<'a> {
         let empty_memory_mapping =
             MemoryMapping::new(Vec::new(), &mock_config, SBPFVersion::V0).unwrap();
         let mut vm = EbpfVm::new(
-            self.environment_config
-                .program_runtime_environments_for_execution
+            self.program_cache_for_tx_batch
+                .environments
                 .program_runtime_v2
                 .clone(),
             SBPFVersion::V0,
@@ -642,11 +648,6 @@ impl<'a> InvokeContext<'a> {
     /// Get the current feature set.
     pub fn get_feature_set(&self) -> &SVMFeatureSet {
         self.environment_config.feature_set
-    }
-
-    pub fn get_program_runtime_environments_for_deployment(&self) -> &ProgramRuntimeEnvironments {
-        self.environment_config
-            .program_runtime_environments_for_deployment
     }
 
     pub fn is_stake_raise_minimum_delegation_to_1_sol_active(&self) -> bool {
@@ -781,7 +782,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
                 __private::{Hash, ReadableAccount, Rent, TransactionContext},
                 execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
                 invoke_context::{EnvironmentConfig, InvokeContext},
-                loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
+                loaded_programs::ProgramCacheForTxBatch,
                 sysvar_cache::SysvarCache,
             },
         };
@@ -816,14 +817,11 @@ macro_rules! with_mock_invoke_context_with_feature_set {
                 }
             }
         });
-        let program_runtime_environments = ProgramRuntimeEnvironments::default();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockInvokeContextCallback {},
             $feature_set,
-            &program_runtime_environments,
-            &program_runtime_environments,
             &sysvar_cache,
         );
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
@@ -916,13 +914,6 @@ pub fn mock_process_instruction_with_feature_set<
     program_cache_for_tx_batch.replenish(
         *loader_id,
         Arc::new(ProgramCacheEntry::new_builtin(0, 0, builtin_function)),
-    );
-    program_cache_for_tx_batch.set_slot_for_tests(
-        invoke_context
-            .get_sysvar_cache()
-            .get_clock()
-            .map(|clock| clock.slot)
-            .unwrap_or(1),
     );
     invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
     pre_adjustments(&mut invoke_context);

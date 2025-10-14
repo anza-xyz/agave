@@ -200,8 +200,7 @@ where
             bank_forks
                 .write()
                 .unwrap()
-                .set_root(bank.slot(), Some(&snapshot_controller), None)
-                .unwrap();
+                .set_root(bank.slot(), Some(&snapshot_controller), None);
             snapshot_request_handler.handle_snapshot_requests(0);
         }
     }
@@ -296,11 +295,11 @@ fn test_slots_to_snapshot() {
                 .read()
                 .unwrap()
                 .prune_program_cache(current_bank.slot());
-            bank_forks
-                .write()
-                .unwrap()
-                .set_root(current_bank.slot(), Some(&snapshot_controller), None)
-                .unwrap();
+            bank_forks.write().unwrap().set_root(
+                current_bank.slot(),
+                Some(&snapshot_controller),
+                None,
+            );
         }
 
         let num_old_slots = num_set_roots * *add_root_interval - MAX_CACHE_ENTRIES + 1;
@@ -440,8 +439,7 @@ fn test_bank_forks_incremental_snapshot() {
             bank_forks
                 .write()
                 .unwrap()
-                .set_root(bank.slot(), Some(&snapshot_controller), None)
-                .unwrap();
+                .set_root(bank.slot(), Some(&snapshot_controller), None);
             snapshot_request_handler.handle_snapshot_requests(0);
         }
 
@@ -678,8 +676,7 @@ fn test_snapshots_with_background_services() {
             bank_forks
                 .write()
                 .unwrap()
-                .set_root(slot, Some(&snapshot_controller), None)
-                .unwrap();
+                .set_root(slot, Some(&snapshot_controller), None);
         }
 
         // If a snapshot should be taken this slot, wait for it to complete

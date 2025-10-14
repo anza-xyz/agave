@@ -67,7 +67,7 @@ use {
     solana_rpc_client_api::response::SlotUpdate,
     solana_runtime::{
         bank::{bank_hash_details, Bank, NewBankOptions},
-        bank_forks::{BankForks, SetRootError, MAX_ROOT_DISTANCE_FOR_VOTE_ONLY},
+        bank_forks::{BankForks, MAX_ROOT_DISTANCE_FOR_VOTE_ONLY},
         commitment::BlockCommitmentCache,
         installed_scheduler_pool::BankWithScheduler,
         prioritization_fee_cache::PrioritizationFeeCache,
@@ -1036,7 +1036,7 @@ impl ReplayStage {
                             );
                         }
 
-                        if let Err(e) = Self::handle_votable_bank(
+                        Self::handle_votable_bank(
                             vote_bank,
                             switch_fork_decision,
                             &bank_forks,
@@ -1060,10 +1060,7 @@ impl ReplayStage {
                             wait_to_vote_slot,
                             &mut first_alpenglow_slot,
                             &mut tbft_structs,
-                        ) {
-                            error!("Unable to set root: {e}");
-                            return;
-                        }
+                        );
                     }
                     voting_time.stop();
 
@@ -2471,7 +2468,7 @@ impl ReplayStage {
         wait_to_vote_slot: Option<Slot>,
         first_alpenglow_slot: &mut Option<Slot>,
         tbft_structs: &mut TowerBFTStructures,
-    ) -> Result<(), SetRootError> {
+    ) {
         if bank.is_empty() {
             datapoint_info!("replay_stage-voted_empty_bank", ("slot", bank.slot(), i64));
         }
@@ -2515,7 +2512,7 @@ impl ReplayStage {
                 tracked_vote_transactions,
                 drop_bank_sender,
                 tbft_structs,
-            )?;
+            );
         }
 
         let mut update_commitment_cache_time = Measure::start("update_commitment_cache");
@@ -2559,7 +2556,6 @@ impl ReplayStage {
             voting_sender,
             wait_to_vote_slot,
         );
-        Ok(())
     }
 
     fn generate_vote_tx(
@@ -4122,7 +4118,7 @@ impl ReplayStage {
         tracked_vote_transactions: &mut Vec<TrackedVoteTransaction>,
         drop_bank_sender: &Sender<Vec<BankWithScheduler>>,
         tbft_structs: &mut TowerBFTStructures,
-    ) -> Result<(), SetRootError> {
+    ) {
         root_utils::check_and_handle_new_root(
             parent_slot,
             new_root,
@@ -4210,7 +4206,7 @@ impl ReplayStage {
         tracked_vote_transactions: &mut Vec<TrackedVoteTransaction>,
         drop_bank_sender: &Sender<Vec<BankWithScheduler>>,
         tbft_structs: &mut TowerBFTStructures,
-    ) -> Result<(), SetRootError> {
+    ) {
         root_utils::set_bank_forks_root(
             new_root,
             bank_forks,
@@ -4227,8 +4223,7 @@ impl ReplayStage {
                     tbft_structs,
                 )
             },
-        )?;
-        Ok(())
+        );
     }
 
     fn generate_new_bank_forks(
@@ -4795,8 +4790,7 @@ pub(crate) mod tests {
             &mut Vec::new(),
             &drop_bank_sender,
             &mut tbft_structs,
-        )
-        .unwrap();
+        );
         assert_eq!(bank_forks.read().unwrap().root(), root);
         assert_eq!(progress.len(), 1);
         assert!(progress.get(&root).is_some());
@@ -4884,8 +4878,7 @@ pub(crate) mod tests {
                 unfrozen_gossip_verified_vote_hashes: UnfrozenGossipVerifiedVoteHashes::default(),
                 epoch_slots_frozen_slots: EpochSlotsFrozenSlots::default(),
             },
-        )
-        .unwrap();
+        );
         assert_eq!(bank_forks.read().unwrap().root(), root);
         assert!(bank_forks.read().unwrap().get(confirmed_root).is_some());
         assert!(bank_forks.read().unwrap().get(fork).is_none());
@@ -5935,7 +5928,7 @@ pub(crate) mod tests {
         bank_forks.insert(Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 9));
         let bank9 = bank_forks.get(9).unwrap();
         bank_forks.insert(Bank::new_from_parent(bank9, &Pubkey::default(), 10));
-        bank_forks.set_root(9, None, None).unwrap();
+        bank_forks.set_root(9, None, None);
         let total_epoch_stake = bank0.total_epoch_stake();
 
         // Insert new ForkProgress for slot 10 and its
@@ -6029,7 +6022,7 @@ pub(crate) mod tests {
             .get_propagated_stats_mut(0)
             .unwrap()
             .is_leader_slot = true;
-        bank_forks.set_root(0, None, None).unwrap();
+        bank_forks.set_root(0, None, None);
         let total_epoch_stake = bank_forks.root_bank().total_epoch_stake();
 
         // Insert new ForkProgress representing a slot for all slots 1..=num_banks. Only
@@ -6112,7 +6105,7 @@ pub(crate) mod tests {
             .get_propagated_stats_mut(0)
             .unwrap()
             .is_leader_slot = true;
-        bank_forks.set_root(0, None, None).unwrap();
+        bank_forks.set_root(0, None, None);
 
         let total_epoch_stake = num_validators as u64 * stake_per_validator;
 
@@ -6735,7 +6728,7 @@ pub(crate) mod tests {
         ));
 
         // Try to purge the root
-        bank_forks.write().unwrap().set_root(3, None, None).unwrap();
+        bank_forks.write().unwrap().set_root(3, None, None);
         let mut descendants = bank_forks.read().unwrap().descendants();
         let mut ancestors = bank_forks.read().unwrap().ancestors();
         let slot_3_descendants = descendants.get(&3).unwrap().clone();
@@ -9330,7 +9323,7 @@ pub(crate) mod tests {
         )
         .unwrap();
 
-        bank_forks.write().unwrap().set_root(1, None, None).unwrap();
+        bank_forks.write().unwrap().set_root(1, None, None);
 
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank1);
 
@@ -9522,7 +9515,7 @@ pub(crate) mod tests {
         let (ancestor_hashes_replay_update_sender, _) = unbounded();
         let mut duplicate_confirmed_slots = DuplicateConfirmedSlots::default();
         let bank_hash_0 = bank_forks.read().unwrap().bank_hash(0).unwrap();
-        bank_forks.write().unwrap().set_root(1, None, None).unwrap();
+        bank_forks.write().unwrap().set_root(1, None, None);
 
         // Mark 0 as duplicate confirmed, should fail as it is 0 < root
         let confirmed_slots = [(0, bank_hash_0)];
@@ -9636,7 +9629,7 @@ pub(crate) mod tests {
         let (sender, receiver) = unbounded();
         let mut duplicate_confirmed_slots = DuplicateConfirmedSlots::default();
         let bank_hash_0 = bank_forks.read().unwrap().bank_hash(0).unwrap();
-        bank_forks.write().unwrap().set_root(1, None, None).unwrap();
+        bank_forks.write().unwrap().set_root(1, None, None);
 
         // Mark 0 as duplicate confirmed, should fail as it is 0 < root
         sender.send(vec![(0, bank_hash_0)]).unwrap();

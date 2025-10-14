@@ -14,7 +14,6 @@ use {
     parking_lot::RwLock,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
-    solana_runtime::bank_forks::SetRootError,
     std::{
         collections::{BTreeMap, BTreeSet},
         sync::{atomic::AtomicBool, Arc, Condvar, Mutex},
@@ -51,9 +50,6 @@ enum EventLoopError {
 
     #[error("Error generating and inserting vote")]
     VotingError(#[from] VoteError),
-
-    #[error("Unable to set root")]
-    SetRootError(#[from] SetRootError),
 
     #[error("Set identity error")]
     SetIdentityError(#[from] VoteHistoryError),

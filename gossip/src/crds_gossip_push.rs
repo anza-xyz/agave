@@ -194,12 +194,7 @@ impl CrdsGossipPush {
         'outer: for value in entries {
             let origin = value.pubkey();
             let mut nodes = active_set
-                .get_nodes(
-                    pubkey,
-                    &origin,
-                    |node| value.should_force_push(node),
-                    stakes,
-                )
+                .get_nodes(pubkey, &origin, stakes)
                 .take(self.push_fanout)
                 .peekable();
             let index = values.len();
