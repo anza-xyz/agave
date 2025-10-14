@@ -190,6 +190,7 @@ agave-thread-manager = { path = "thread-manager", version = "=3.1.0" }
 agave-transaction-view = { path = "transaction-view", version = "=3.1.0" }
 agave-verified-packet-receiver = { path = "verified-packet-receiver", version = "=3.1.0" }
 agave-votor = { path = "votor", version = "=3.1.0" }
+agave-votor-messages = { path = "votor-messages", version = "=3.1.0" }
 agave-xdp = { path = "xdp", version = "=3.1.0" }
 ahash = "0.8.11"
 anyhow = "1.0.100"
@@ -561,7 +562,6 @@ solana-version = { path = "version", version = "=3.1.0" }
 solana-vote = { path = "vote", version = "=3.1.0" }
 solana-vote-interface = "4.0.3"
 solana-vote-program = { path = "programs/vote", version = "=3.1.0", default-features = false }
-solana-votor-messages = { path = "votor-messages", version = "=3.1.0" }
 solana-wen-restart = { path = "wen-restart", version = "=3.1.0" }
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=3.1.0" }
 solana-zk-sdk = "4.0.0"

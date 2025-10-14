@@ -566,6 +566,7 @@ dependencies = [
 name = "agave-votor"
 version = "3.1.0"
 dependencies = [
+ "agave-votor-messages",
  "anyhow",
  "bincode",
  "bitvec",
@@ -616,11 +617,23 @@ dependencies = [
  "solana-transaction-error",
  "solana-vote",
  "solana-vote-program",
- "solana-votor-messages",
  "tempfile",
  "test-case",
  "thiserror 2.0.17",
  "tokio-util 0.7.16",
+]
+
+[[package]]
+name = "agave-votor-messages"
+version = "3.1.0"
+dependencies = [
+ "serde",
+ "solana-bls-signatures",
+ "solana-clock",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+ "solana-hash",
+ "solana-logger",
 ]
 
 [[package]]
@@ -9046,6 +9059,7 @@ dependencies = [
 name = "solana-keygen"
 version = "3.1.0"
 dependencies = [
+ "agave-votor-messages",
  "bs58",
  "clap 3.2.23",
  "dirs-next",
@@ -9063,7 +9077,6 @@ dependencies = [
  "solana-seed-derivable",
  "solana-signer",
  "solana-version",
- "solana-votor-messages",
  "tempfile",
  "tiny-bip39",
 ]
@@ -10325,6 +10338,7 @@ dependencies = [
  "agave-snapshots",
  "agave-syscalls",
  "agave-transaction-view",
+ "agave-votor-messages",
  "ahash 0.8.11",
  "aquamarine",
  "arc-swap",
@@ -10453,7 +10467,6 @@ dependencies = [
  "solana-vote",
  "solana-vote-interface",
  "solana-vote-program",
- "solana-votor-messages",
  "spl-generic-token",
  "static_assertions",
  "strum",
@@ -11915,19 +11928,6 @@ dependencies = [
  "solana-vote-interface",
  "test-case",
  "thiserror 2.0.17",
-]
-
-[[package]]
-name = "solana-votor-messages"
-version = "3.1.0"
-dependencies = [
- "serde",
- "solana-bls-signatures",
- "solana-clock",
- "solana-frozen-abi",
- "solana-frozen-abi-macro",
- "solana-hash",
- "solana-logger",
 ]
 
 [[package]]

@@ -173,7 +173,7 @@ impl VoteHistoryStorage for FileVoteHistoryStorage {
 
 #[cfg(test)]
 mod test {
-    use {super::*, solana_keypair::Keypair, solana_votor_messages::vote::Vote, tempfile::TempDir};
+    use {super::*, agave_votor_messages::vote::Vote, solana_keypair::Keypair, tempfile::TempDir};
 
     #[test]
     fn test_file_vote_history_storage() {

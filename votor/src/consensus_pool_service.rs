@@ -10,6 +10,7 @@ use {
         voting_service::BLSOp,
         votor::Votor,
     },
+    agave_votor_messages::consensus_message::{CertificateMessage, ConsensusMessage},
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -19,7 +20,6 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
-    solana_votor_messages::consensus_message::{CertificateMessage, ConsensusMessage},
     std::{
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -390,6 +390,12 @@ mod tests {
     use {
         super::*,
         crate::common::DELTA_STANDSTILL,
+        agave_votor_messages::{
+            consensus_message::{
+                Certificate, CertificateType, VoteMessage, BLS_KEYPAIR_DERIVE_SEED,
+            },
+            vote::Vote,
+        },
         crossbeam_channel::Sender,
         solana_bls_signatures::{
             keypair::Keypair as BLSKeypair, signature::Signature as BLSSignature,
@@ -405,12 +411,6 @@ mod tests {
         },
         solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
-        solana_votor_messages::{
-            consensus_message::{
-                Certificate, CertificateType, VoteMessage, BLS_KEYPAIR_DERIVE_SEED,
-            },
-            vote::Vote,
-        },
         std::sync::{Arc, Mutex},
         test_case::test_case,
     };

@@ -3,8 +3,8 @@
 
 use {
     crate::common::VoteType,
+    agave_votor_messages::consensus_message::CertificateType,
     solana_metrics::datapoint_info,
-    solana_votor_messages::consensus_message::CertificateType,
     std::time::{Duration, Instant},
 };
 

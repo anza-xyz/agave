@@ -72,7 +72,7 @@ solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
-solana-votor-messages = { workspace = true }
+agave-votor-messages = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

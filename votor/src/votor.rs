@@ -52,6 +52,7 @@ use {
         vote_history_storage::VoteHistoryStorage,
         voting_service::BLSOp,
     },
+    agave_votor_messages::consensus_message::ConsensusMessage,
     crossbeam_channel::{Receiver, Sender},
     parking_lot::RwLock as PlRwLock,
     solana_clock::Slot,
@@ -68,7 +69,6 @@ use {
         bank_forks::BankForks, installed_scheduler_pool::BankWithScheduler,
         snapshot_controller::SnapshotController,
     },
-    solana_votor_messages::consensus_message::ConsensusMessage,
     std::{
         sync::{
             atomic::{AtomicBool, Ordering},

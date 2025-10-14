@@ -1,5 +1,6 @@
 use {
     agave_feature_set::{FeatureSet, FEATURE_NAMES},
+    agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     log::*,
     solana_account::{Account, AccountSharedData},
     solana_bls_signatures::{
@@ -21,7 +22,6 @@ use {
     solana_system_interface::program as system_program,
     solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
     solana_vote_program::vote_state,
-    solana_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     std::borrow::Borrow,
 };
 

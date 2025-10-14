@@ -39,7 +39,7 @@ solana-remote-wallet = { workspace = true }
 solana-seed-derivable = "=3.0.0"
 solana-signer = "=3.0.0"
 solana-version = { workspace = true }
-solana-votor-messages = { workspace = true }
+agave-votor-messages = { workspace = true }
 tiny-bip39 = { workspace = true }
 
 [dev-dependencies]

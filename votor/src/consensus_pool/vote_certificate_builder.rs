@@ -1,9 +1,9 @@
 use {
     crate::common::{certificate_limits_and_vote_types, VoteType},
+    agave_votor_messages::consensus_message::{Certificate, CertificateMessage, VoteMessage},
     bitvec::prelude::*,
     solana_bls_signatures::{BlsError, SignatureProjective},
     solana_signer_store::{decode, encode_base2, encode_base3, DecodeError, Decoded, EncodeError},
-    solana_votor_messages::consensus_message::{Certificate, CertificateMessage, VoteMessage},
     thiserror::Error,
 };
 
@@ -151,15 +151,15 @@ impl VoteCertificateBuilder {
 mod tests {
     use {
         super::*,
+        agave_votor_messages::{
+            consensus_message::{Certificate, CertificateType, VoteMessage},
+            vote::Vote,
+        },
         solana_bls_signatures::{
             Keypair as BLSKeypair, PubkeyProjective as BLSPubkeyProjective,
             Signature as BLSSignature, SignatureProjective, VerifiablePubkey,
         },
         solana_hash::Hash,
-        solana_votor_messages::{
-            consensus_message::{Certificate, CertificateType, VoteMessage},
-            vote::Vote,
-        },
     };
 
     #[test]
