@@ -371,7 +371,7 @@ impl<T> SnapshotAccountsDbFields<T> {
     }
 }
 
-pub fn deserialize_from<R, T>(reader: R) -> bincode::Result<T>
+pub(crate) fn deserialize_from<R, T>(reader: R) -> bincode::Result<T>
 where
     R: Read,
     T: DeserializeOwned,
@@ -383,13 +383,14 @@ where
         .deserialize_from::<R, T>(reader)
 }
 
-pub fn serialize_into<W, T>(writer: W, value: &T) -> bincode::Result<()>
+pub(crate) fn serialize_into<W, T>(writer: W, value: &T) -> bincode::Result<()>
 where
     W: Write,
     T: Serialize,
 {
     bincode::options()
         .with_fixint_encoding()
+        .with_limit(MAX_STREAM_SIZE)
         .serialize_into(writer, value)
 }
 
