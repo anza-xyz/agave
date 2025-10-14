@@ -4,7 +4,6 @@ use {
             SnapshotRequest, SnapshotRequestKind, SnapshotRequestSender,
         },
         bank::{Bank, SquashTiming},
-        bank_forks::SetRootError,
         snapshot_config::SnapshotConfig,
     },
     agave_snapshots::SnapshotInterval,
@@ -60,11 +59,7 @@ impl SnapshotController {
         self.latest_abs_request_slot.store(slot, Ordering::Relaxed);
     }
 
-    pub fn handle_new_roots(
-        &self,
-        root: Slot,
-        banks: &[&Arc<Bank>],
-    ) -> Result<(bool, SquashTiming, u64), SetRootError> {
+    pub fn handle_new_roots(&self, root: Slot, banks: &[&Arc<Bank>]) -> (bool, SquashTiming, u64) {
         let mut is_root_bank_squashed = false;
         let mut squash_timing = SquashTiming::default();
         let mut total_snapshot_ms = 0;
@@ -123,7 +118,7 @@ impl SnapshotController {
             }
         }
 
-        Ok((is_root_bank_squashed, squash_timing, total_snapshot_ms))
+        (is_root_bank_squashed, squash_timing, total_snapshot_ms)
     }
 
     /// Returns the intervals, in slots, for sending snapshot requests

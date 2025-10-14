@@ -5008,8 +5008,7 @@ pub mod tests {
                 self.bank_forks
                     .write()
                     .unwrap()
-                    .set_root(*root, None, Some(0))
-                    .unwrap();
+                    .set_root(*root, None, Some(0));
                 let block_time = self
                     .bank_forks
                     .read()

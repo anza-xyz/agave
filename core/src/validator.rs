@@ -2412,9 +2412,7 @@ fn maybe_warp_slot(
             &Pubkey::default(),
             warp_slot,
         ));
-        bank_forks
-            .set_root(warp_slot, Some(snapshot_controller), Some(warp_slot))
-            .map_err(|err| err.to_string())?;
+        bank_forks.set_root(warp_slot, Some(snapshot_controller), Some(warp_slot));
         leader_schedule_cache.set_root(&bank_forks.root_bank());
 
         let full_snapshot_archive_info = match snapshot_bank_utils::bank_to_full_snapshot_archive(
