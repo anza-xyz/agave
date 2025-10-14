@@ -30,6 +30,7 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 solana-account = "=3.1.0"
 solana-accounts-db = { workspace = true }
+solana-bls-signatures = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-clock = "=3.0.0"
