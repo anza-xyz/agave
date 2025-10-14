@@ -4091,8 +4091,8 @@ impl Bank {
             self.create_program_runtime_environments(&self.feature_set);
         self.transaction_processor
             .configure_program_runtime_environments(
-                Some(program_runtime_environment_v1),
-                Some(program_runtime_environment_v2),
+                program_runtime_environment_v1,
+                program_runtime_environment_v2,
             );
     }
 
