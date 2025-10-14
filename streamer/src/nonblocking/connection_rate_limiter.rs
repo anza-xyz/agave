@@ -16,7 +16,9 @@ const CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD: usize = 100_000;
 impl ConnectionRateLimiter {
     /// Create a new rate limiter per IpAddr. The rate is specified as the count per minute to allow for
     /// less frequent connections. Higher limit also allows higher bursts.
-    pub fn new(limit_per_minute: u64) -> Self {
+    /// num_shards controls how many shards are used in the underlying dashmap,
+    /// should be set >= number of contending threads.
+    pub fn new(limit_per_minute: u64, num_shards: usize) -> Self {
         Self {
             limiter: KeyedRateLimiter::new(
                 CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD,
@@ -25,7 +27,7 @@ impl ConnectionRateLimiter {
                     limit_per_minute,
                     limit_per_minute as f64 / 60.0,
                 ),
-                8,
+                num_shards,
             ),
         }
     }
@@ -58,7 +60,7 @@ pub mod test {
 
     #[tokio::test]
     async fn test_connection_rate_limiter() {
-        let limiter = ConnectionRateLimiter::new(3);
+        let limiter = ConnectionRateLimiter::new(3, 4);
         let ip1 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
         assert!(limiter.is_allowed(&ip1));
         assert!(limiter.register_connection(&ip1));

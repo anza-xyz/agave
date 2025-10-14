@@ -261,6 +261,7 @@ async fn run_server(
 ) {
     let rate_limiter = Arc::new(ConnectionRateLimiter::new(
         quic_server_params.max_connections_per_ipaddr_per_min,
+        quic_server_params.num_threads.get() * 2,
     ));
     let overall_connection_rate_limiter = Arc::new(TokenBucket::new(
         MAX_CONNECTION_BURST,
