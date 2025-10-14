@@ -391,7 +391,7 @@ solana-big-mod-exp = "3.0.0"
 solana-bincode = "3.0.0"
 solana-blake3-hasher = "3.0.0"
 solana-bloom = { path = "bloom", version = "=3.1.0" }
-solana-bls-signatures = { version = "0.3.0", features = ["serde"] }
+solana-bls-signatures = { version = "1.0.0", features = ["serde"] }
 solana-bn254 = "3.0.0"
 solana-borsh = "3.0.0"
 solana-bpf-loader-program = { path = "programs/bpf_loader", version = "=3.1.0" }

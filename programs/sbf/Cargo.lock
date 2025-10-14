@@ -6040,9 +6040,9 @@ dependencies = [
 
 [[package]]
 name = "solana-bls-signatures"
-version = "0.3.0"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a40ce56d14f58c3ebe9275c3739c4052748ec5c4922854c12dc823dbf450ebd1"
+checksum = "61c75573697bbb148afa8209aa3ce228ca0754584c9a8a91e818db0f706ae4fb"
 dependencies = [
  "base64 0.22.1",
  "blst",
