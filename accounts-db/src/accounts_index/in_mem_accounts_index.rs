@@ -1630,7 +1630,7 @@ mod tests {
                         &mut reclaims,
                         reclaim,
                     );
-                    let mut slot_list = entry.slot_list_write_lock().clone_list();
+                    let mut slot_list = entry.slot_list_read_lock().clone_list();
 
                     // calculate expected reclaims
                     let mut expected_reclaims = ReclaimsSlotList::new();
@@ -2008,7 +2008,7 @@ mod tests {
                         &mut reclaims,
                         reclaim,
                     );
-                    let mut slot_list = entry.slot_list_write_lock().clone_list();
+                    let mut slot_list = entry.slot_list_read_lock().clone_list();
 
                     // calculate expected reclaims
                     let mut expected_reclaims = ReclaimsSlotList::new();
