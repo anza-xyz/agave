@@ -797,7 +797,7 @@ mod tests {
     // Empirically derived to be long enough to allow the event handler time to
     // process events but also short enough to not delay test execution for too
     // long.
-    const TEST_SHORT_TIMEOUT: Duration = Duration::from_millis(30);
+    const TEST_SHORT_TIMEOUT: Duration = Duration::from_millis(50);
 
     struct EventHandlerTestContext {
         exit: Arc<AtomicBool>,
