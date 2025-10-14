@@ -30,7 +30,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{Bank, PreCommitResult, TransactionBalancesSet},
-        bank_forks::{BankForks, SetRootError},
+        bank_forks::BankForks,
         bank_utils,
         commitment::VOTE_THRESHOLD_SIZE,
         dependency_tracker::DependencyTracker,
@@ -817,9 +817,6 @@ pub enum BlockstoreProcessorError {
 
     #[error("root bank with mismatched capitalization at {0}")]
     RootBankWithMismatchedCapitalization(Slot),
-
-    #[error("set root error {0}")]
-    SetRootError(#[from] SetRootError),
 
     #[error("incomplete final fec set")]
     IncompleteFinalFecSet,
@@ -2074,7 +2071,7 @@ fn load_frozen_forks(
                 let _ = bank_forks
                     .write()
                     .unwrap()
-                    .set_root(root, snapshot_controller, None)?;
+                    .set_root(root, snapshot_controller, None);
                 m.stop();
                 set_root_us += m.as_us();
 
@@ -4284,7 +4281,7 @@ pub mod tests {
             &mut ExecuteTimings::default(),
         )
         .unwrap();
-        bank_forks.write().unwrap().set_root(1, None, None).unwrap();
+        bank_forks.write().unwrap().set_root(1, None, None);
 
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank1);
 

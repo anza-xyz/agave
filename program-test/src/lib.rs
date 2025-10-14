@@ -1162,13 +1162,11 @@ impl ProgramTestContext {
                 .clone_without_scheduler()
         };
 
-        bank_forks
-            .set_root(
-                pre_warp_slot,
-                None, // snapshots are disabled
-                Some(pre_warp_slot),
-            )
-            .unwrap();
+        bank_forks.set_root(
+            pre_warp_slot,
+            None, // snapshots are disabled
+            Some(pre_warp_slot),
+        );
 
         // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
         bank_forks.insert(Bank::new_from_parent(
@@ -1209,13 +1207,11 @@ impl ProgramTestContext {
         bank.fill_bank_with_ticks_for_tests();
         let pre_warp_slot = bank.slot();
 
-        bank_forks
-            .set_root(
-                pre_warp_slot,
-                None, // snapshot_controller
-                Some(pre_warp_slot),
-            )
-            .unwrap();
+        bank_forks.set_root(
+            pre_warp_slot,
+            None, // snapshot_controller
+            Some(pre_warp_slot),
+        );
 
         // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
         let warp_slot = pre_warp_slot + 1;
