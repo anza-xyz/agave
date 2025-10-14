@@ -917,6 +917,13 @@ pub fn mock_process_instruction_with_feature_set<
         *loader_id,
         Arc::new(ProgramCacheEntry::new_builtin(0, 0, builtin_function)),
     );
+    program_cache_for_tx_batch.set_slot_for_tests(
+        invoke_context
+            .get_sysvar_cache()
+            .get_clock()
+            .map(|clock| clock.slot)
+            .unwrap_or(1),
+    );
     invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
     pre_adjustments(&mut invoke_context);
     invoke_context

@@ -1687,7 +1687,6 @@ mod test_utils {
     use {
         super::*, agave_syscalls::create_program_runtime_environment_v1,
         solana_account::ReadableAccount, solana_loader_v4_interface::state::LoaderV4State,
-        solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
         solana_sdk_ids::loader_v4,
     };
 
@@ -1743,9 +1742,6 @@ mod test_utils {
                     program_runtime_environment.clone(),
                     false,
                 ) {
-                    invoke_context
-                        .program_cache_for_tx_batch
-                        .set_slot_for_tests(DELAY_VISIBILITY_SLOT_OFFSET);
                     invoke_context
                         .program_cache_for_tx_batch
                         .store_modified_entry(*pubkey, Arc::new(loaded_program));
@@ -3984,6 +3980,9 @@ mod tests {
         invoke_context
             .program_cache_for_tx_batch
             .replenish(program_id, Arc::new(program));
+        invoke_context
+            .program_cache_for_tx_batch
+            .set_slot_for_tests(2);
 
         assert_matches!(
             deploy_test_program(&mut invoke_context, program_id,),
@@ -4023,6 +4022,9 @@ mod tests {
         invoke_context
             .program_cache_for_tx_batch
             .replenish(program_id, Arc::new(program));
+        invoke_context
+            .program_cache_for_tx_batch
+            .set_slot_for_tests(2);
 
         let program_id2 = Pubkey::new_unique();
         assert_matches!(
