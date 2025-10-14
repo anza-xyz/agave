@@ -29,10 +29,12 @@ async fn test_vended_core_bpf_programs() {
     assert_bpf_program(&context, &solana_sdk_ids::stake::id()).await;
 }
 
+// Note this test has to use an entry from `solana_builtins::BUILTINS` with a
+// `core_bpf_migration_config` set.
 #[tokio::test]
 async fn test_add_core_bpf_program_manually() {
-    // Core BPF program: Vote.
-    let program_id = solana_sdk_ids::vote::id();
+    // Core BPF program: Slashing.
+    let program_id = Pubkey::from_str_const("S1ashing11111111111111111111111111111111111");
 
     let mut program_test = ProgramTest::default();
     program_test.add_upgradeable_program_to_genesis("noop_program", &program_id);
