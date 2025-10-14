@@ -113,7 +113,7 @@ async fn setup_connection_worker_scheduler(
     let cancel = CancellationToken::new();
     let updater_config = LeaderTpuCacheServiceConfig {
         lookahead_leaders: config.leaders_fanout.connect,
-        refresh_every: Duration::from_millis(DEFAULT_MS_PER_SLOT),
+        refresh_nodes_info_every: Duration::from_millis(DEFAULT_MS_PER_SLOT),
         max_consecutive_failures: 1,
     };
     let leader_updater = create_leader_updater(
