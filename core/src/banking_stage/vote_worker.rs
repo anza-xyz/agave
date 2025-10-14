@@ -531,36 +531,11 @@ fn has_reached_end_of_slot(reached_max_poh_height: bool, bank: &Bank) -> bool {
 
 #[cfg(test)]
 mod tests {
-<<<<<<< HEAD
-    use {super::*, solana_svm::account_loader::CheckedTransactionDetails};
-=======
     use {
-        super::*,
-        crate::banking_stage::{
-            tests::create_slow_genesis_config, vote_storage::tests::packet_from_slots,
-        },
+        super::*, crate::banking_stage::tests::create_slow_genesis_config,
         solana_ledger::genesis_utils::GenesisConfigInfo,
-        solana_perf::packet::BytesPacket,
-        solana_runtime::genesis_utils::ValidatorVoteKeypairs,
-        solana_runtime_transaction::transaction_meta::StaticMeta,
         solana_svm::account_loader::CheckedTransactionDetails,
-        std::collections::HashSet,
     };
-
-    fn to_runtime_transaction_view(packet: BytesPacket) -> RuntimeTransactionView {
-        let tx =
-            SanitizedTransactionView::try_new_sanitized(Arc::new(packet.buffer().to_vec()), false)
-                .unwrap();
-        let tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
-            tx,
-            MessageHash::Compute,
-            None,
-        )
-        .unwrap();
-
-        RuntimeTransactionView::try_from(tx, None, &HashSet::default()).unwrap()
-    }
->>>>>>> 904be9f96 (bugfix: vote worker reached_end_of_slot set by is_complete (#8474))
 
     #[test]
     fn test_bank_prepare_filter_for_pending_transaction() {
@@ -615,84 +590,6 @@ mod tests {
             [0, 3, 4, 5]
         );
     }
-<<<<<<< HEAD
-=======
-
-    #[test]
-    fn extract_retryable_one_all_retryable() {
-        let keypair_a = ValidatorVoteKeypairs::new_rand();
-        let mut packets = ArrayVec::from_iter([to_runtime_transaction_view(packet_from_slots(
-            vec![(1, 1)],
-            &keypair_a,
-            None,
-        ))]);
-        let retryable_indices = vec![0];
-
-        // Assert - Able to extract exactly one packet.
-        let expected = *packets[0].message_hash();
-        let mut extracted = VoteWorker::extract_retryable(&mut packets, retryable_indices);
-        assert_eq!(extracted.next().unwrap().message_hash(), &expected);
-        assert!(extracted.next().is_none());
-    }
-
-    #[test]
-    fn extract_retryable_one_none_retryable() {
-        let keypair_a = ValidatorVoteKeypairs::new_rand();
-        let mut packets = ArrayVec::from_iter([to_runtime_transaction_view(packet_from_slots(
-            vec![(1, 1)],
-            &keypair_a,
-            None,
-        ))]);
-        let retryable_indices = vec![];
-
-        // Assert - Able to extract exactly zero packets.
-        let mut extracted = VoteWorker::extract_retryable(&mut packets, retryable_indices);
-        assert!(extracted.next().is_none());
-    }
-
-    #[test]
-    fn extract_retryable_three_last_retryable() {
-        let keypair_a = ValidatorVoteKeypairs::new_rand();
-        let mut packets = ArrayVec::from_iter(
-            [
-                packet_from_slots(vec![(5, 3)], &keypair_a, None),
-                packet_from_slots(vec![(6, 2)], &keypair_a, None),
-                packet_from_slots(vec![(7, 1)], &keypair_a, None),
-            ]
-            .into_iter()
-            .map(to_runtime_transaction_view),
-        );
-        let retryable_indices = vec![2];
-
-        // Assert - Able to extract exactly one packet.
-        let expected = *packets[2].message_hash();
-        let mut extracted = VoteWorker::extract_retryable(&mut packets, retryable_indices);
-        assert_eq!(extracted.next().unwrap().message_hash(), &expected);
-        assert!(extracted.next().is_none());
-    }
-
-    #[test]
-    fn extract_retryable_three_first_last_retryable() {
-        let keypair_a = ValidatorVoteKeypairs::new_rand();
-        let mut packets = ArrayVec::from_iter(
-            [
-                packet_from_slots(vec![(5, 3)], &keypair_a, None),
-                packet_from_slots(vec![(6, 2)], &keypair_a, None),
-                packet_from_slots(vec![(7, 1)], &keypair_a, None),
-            ]
-            .into_iter()
-            .map(to_runtime_transaction_view),
-        );
-        let retryable_indices = vec![0, 2];
-
-        // Assert - Able to extract exactly one packet.
-        let expected0 = *packets[0].message_hash();
-        let expected1 = *packets[2].message_hash();
-        let mut extracted = VoteWorker::extract_retryable(&mut packets, retryable_indices);
-        assert_eq!(extracted.next().unwrap().message_hash(), &expected0);
-        assert_eq!(extracted.next().unwrap().message_hash(), &expected1);
-        assert!(extracted.next().is_none());
-    }
 
     #[test]
     fn test_has_reached_end_of_slot() {
@@ -708,5 +605,4 @@ mod tests {
         assert!(has_reached_end_of_slot(false, &bank));
         assert!(has_reached_end_of_slot(true, &bank));
     }
->>>>>>> 904be9f96 (bugfix: vote worker reached_end_of_slot set by is_complete (#8474))
 }
