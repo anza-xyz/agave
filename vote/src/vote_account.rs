@@ -98,8 +98,12 @@ impl VoteAccountsCopyStats {
         let sub_stake_copies = self.sub_stake_copies.swap(0, AtomicOrdering::Relaxed);
         let add_node_stake_copies = self.add_node_stake_copies.swap(0, AtomicOrdering::Relaxed);
         let sub_node_stake_copies = self.sub_node_stake_copies.swap(0, AtomicOrdering::Relaxed);
-        let vote_accounts_make_mut_us = self.vote_accounts_make_mut_us.swap(0, AtomicOrdering::Relaxed);
-        let staked_nodes_make_mut_us = self.staked_nodes_make_mut_us.swap(0, AtomicOrdering::Relaxed);
+        let vote_accounts_make_mut_us = self
+            .vote_accounts_make_mut_us
+            .swap(0, AtomicOrdering::Relaxed);
+        let staked_nodes_make_mut_us = self
+            .staked_nodes_make_mut_us
+            .swap(0, AtomicOrdering::Relaxed);
 
         let total_vote_accounts_copies =
             insert_copies + remove_copies + add_stake_copies + sub_stake_copies;
@@ -114,9 +118,14 @@ impl VoteAccountsCopyStats {
                 ("sub_stake_copies", sub_stake_copies, i64),
                 ("add_node_stake_copies", add_node_stake_copies, i64),
                 ("sub_node_stake_copies", sub_node_stake_copies, i64),
-                ("total_vote_accounts_copies", total_vote_accounts_copies, i64),
+                (
+                    "total_vote_accounts_copies",
+                    total_vote_accounts_copies,
+                    i64
+                ),
                 ("total_staked_nodes_copies", total_staked_nodes_copies, i64),
-                ("total_copies",
+                (
+                    "total_copies",
                     total_vote_accounts_copies + total_staked_nodes_copies,
                     i64
                 ),
@@ -281,7 +290,9 @@ impl VoteAccounts {
         calculate_stake: impl FnOnce() -> u64,
     ) -> Option<VoteAccount> {
         if Arc::strong_count(&self.vote_accounts) > 1 {
-            self.copy_stats.insert_copies.fetch_add(1, AtomicOrdering::Relaxed);
+            self.copy_stats
+                .insert_copies
+                .fetch_add(1, AtomicOrdering::Relaxed);
         }
         let (vote_accounts, make_mut_us) = measure_us!(Arc::make_mut(&mut self.vote_accounts));
         self.copy_stats
@@ -298,8 +309,18 @@ impl VoteAccounts {
                     if new_node_pubkey != old_node_pubkey {
                         // The node keys have changed, we move the stake from the old node to the
                         // new one
-                        Self::do_sub_node_stake(staked_nodes, *stake, old_node_pubkey, &self.copy_stats);
-                        Self::do_add_node_stake(staked_nodes, *stake, *new_node_pubkey, &self.copy_stats);
+                        Self::do_sub_node_stake(
+                            staked_nodes,
+                            *stake,
+                            old_node_pubkey,
+                            &self.copy_stats,
+                        );
+                        Self::do_add_node_stake(
+                            staked_nodes,
+                            *stake,
+                            *new_node_pubkey,
+                            &self.copy_stats,
+                        );
                     }
                 }
 
@@ -310,7 +331,12 @@ impl VoteAccounts {
                 // This is a new vote account. We don't know the stake yet, so we need to compute it.
                 let (stake, vote_account) = entry.insert((calculate_stake(), new_vote_account));
                 if let Some(staked_nodes) = self.staked_nodes.get_mut() {
-                    Self::do_add_node_stake(staked_nodes, *stake, *vote_account.node_pubkey(), &self.copy_stats);
+                    Self::do_add_node_stake(
+                        staked_nodes,
+                        *stake,
+                        *vote_account.node_pubkey(),
+                        &self.copy_stats,
+                    );
                 }
                 None
             }
@@ -319,7 +345,9 @@ impl VoteAccounts {
 
     pub fn remove(&mut self, pubkey: &Pubkey) -> Option<(u64, VoteAccount)> {
         if Arc::strong_count(&self.vote_accounts) > 1 {
-            self.copy_stats.remove_copies.fetch_add(1, AtomicOrdering::Relaxed);
+            self.copy_stats
+                .remove_copies
+                .fetch_add(1, AtomicOrdering::Relaxed);
         }
         let (vote_accounts, make_mut_us) = measure_us!(Arc::make_mut(&mut self.vote_accounts));
         self.copy_stats
@@ -334,7 +362,9 @@ impl VoteAccounts {
 
     pub fn add_stake(&mut self, pubkey: &Pubkey, delta: u64) {
         if Arc::strong_count(&self.vote_accounts) > 1 {
-            self.copy_stats.add_stake_copies.fetch_add(1, AtomicOrdering::Relaxed);
+            self.copy_stats
+                .add_stake_copies
+                .fetch_add(1, AtomicOrdering::Relaxed);
         }
         let (vote_accounts, make_mut_us) = measure_us!(Arc::make_mut(&mut self.vote_accounts));
         self.copy_stats
@@ -349,7 +379,9 @@ impl VoteAccounts {
 
     pub fn sub_stake(&mut self, pubkey: &Pubkey, delta: u64) {
         if Arc::strong_count(&self.vote_accounts) > 1 {
-            self.copy_stats.sub_stake_copies.fetch_add(1, AtomicOrdering::Relaxed);
+            self.copy_stats
+                .sub_stake_copies
+                .fetch_add(1, AtomicOrdering::Relaxed);
         }
         let (vote_accounts, make_mut_us) = measure_us!(Arc::make_mut(&mut self.vote_accounts));
         self.copy_stats
@@ -1051,32 +1083,20 @@ mod tests {
         let stats = VoteAccountsCopyStats::default();
 
         // Initially, no copies
-        assert_eq!(
-            stats.add_node_stake_copies.load(AtomicOrdering::Relaxed),
-            0
-        );
-        assert_eq!(
-            stats.sub_node_stake_copies.load(AtomicOrdering::Relaxed),
-            0
-        );
+        assert_eq!(stats.add_node_stake_copies.load(AtomicOrdering::Relaxed), 0);
+        assert_eq!(stats.sub_node_stake_copies.load(AtomicOrdering::Relaxed), 0);
 
         // Simulate a copy on add
         stats
             .add_node_stake_copies
             .fetch_add(1, AtomicOrdering::Relaxed);
-        assert_eq!(
-            stats.add_node_stake_copies.load(AtomicOrdering::Relaxed),
-            1
-        );
+        assert_eq!(stats.add_node_stake_copies.load(AtomicOrdering::Relaxed), 1);
 
         // Simulate a copy on sub
         stats
             .sub_node_stake_copies
             .fetch_add(1, AtomicOrdering::Relaxed);
-        assert_eq!(
-            stats.sub_node_stake_copies.load(AtomicOrdering::Relaxed),
-            1
-        );
+        assert_eq!(stats.sub_node_stake_copies.load(AtomicOrdering::Relaxed), 1);
 
         // Verify that stats are shared across VoteAccounts instances through Arc
         let vote_accounts1 = VoteAccounts::default();
