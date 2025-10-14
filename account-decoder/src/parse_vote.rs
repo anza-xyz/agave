@@ -2,155 +2,49 @@ use {
     crate::{parse_account_data::ParseAccountError, StringAmount},
     serde::{Deserialize, Serialize},
     solana_clock::{Epoch, Slot},
-    solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
-    solana_vote_interface::{
-        authorized_voters::AuthorizedVoters,
-        state::{BlockTimestamp, CircBuf, LandedVote, Lockout, VoteStateVersions},
-    },
-    std::collections::VecDeque,
+    solana_vote_interface::state::{BlockTimestamp, Lockout, VoteStateV4},
 };
 
-fn convert_epoch_credits(epoch_credits: &[(Epoch, u64, u64)]) -> Vec<UiEpochCredits> {
-    epoch_credits
+pub fn parse_vote(data: &[u8], vote_pubkey: &Pubkey) -> Result<VoteAccountType, ParseAccountError> {
+    let vote_state =
+        VoteStateV4::deserialize(data, vote_pubkey).map_err(ParseAccountError::from)?;
+    let epoch_credits = vote_state
+        .epoch_credits
         .iter()
         .map(|(epoch, credits, previous_credits)| UiEpochCredits {
             epoch: *epoch,
             credits: credits.to_string(),
             previous_credits: previous_credits.to_string(),
         })
-        .collect()
-}
-
-fn convert_votes<T>(votes: &VecDeque<T>) -> Vec<UiLockout>
-where
-    for<'a> &'a T: Into<UiLockout>,
-{
-    votes.iter().map(Into::into).collect()
-}
-
-fn convert_authorized_voters(authorized_voters: &AuthorizedVoters) -> Vec<UiAuthorizedVoters> {
-    authorized_voters
+        .collect();
+    let votes = vote_state
+        .votes
+        .iter()
+        .map(|landed_vote| UiLockout {
+            slot: landed_vote.slot(),
+            confirmation_count: landed_vote.confirmation_count(),
+        })
+        .collect();
+    let authorized_voters = vote_state
+        .authorized_voters
         .iter()
         .map(|(epoch, authorized_voter)| UiAuthorizedVoters {
             epoch: *epoch,
             authorized_voter: authorized_voter.to_string(),
         })
-        .collect()
-}
-
-fn convert_prior_voters(prior_voters: &CircBuf<(Pubkey, Epoch, Epoch)>) -> Vec<UiPriorVoters> {
-    prior_voters
-        .buf()
-        .iter()
-        .filter(|(pubkey, _, _)| pubkey != &Pubkey::default())
-        .map(
-            |(authorized_pubkey, epoch_of_last_authorized_switch, target_epoch)| UiPriorVoters {
-                authorized_pubkey: authorized_pubkey.to_string(),
-                epoch_of_last_authorized_switch: *epoch_of_last_authorized_switch,
-                target_epoch: *target_epoch,
-            },
-        )
-        .collect()
-}
-
-pub fn parse_vote(
-    data: &[u8],
-    _vote_pubkey: &Pubkey,
-) -> Result<VoteAccountType, ParseAccountError> {
-    let versioned: VoteStateVersions = bincode::deserialize(data)
-        .map_err(|_| ParseAccountError::from(InstructionError::InvalidAccountData))?;
-
-    let state = match versioned {
-        VoteStateVersions::V0_23_5(vote_state) => {
-            let epoch_credits = convert_epoch_credits(&vote_state.epoch_credits);
-            let votes = convert_votes(&vote_state.votes);
-            let authorized_voters = vec![UiAuthorizedVoters {
-                epoch: vote_state.authorized_voter_epoch,
-                authorized_voter: vote_state.authorized_voter.to_string(),
-            }];
-            let prior_voters = vote_state
-                .prior_voters
-                .buf
-                .iter()
-                .filter(|(pubkey, _, _, _)| pubkey != &Pubkey::default())
-                .map(
-                    |(authorized_pubkey, epoch_of_last_authorized_switch, target_epoch, _)| {
-                        UiPriorVoters {
-                            authorized_pubkey: authorized_pubkey.to_string(),
-                            epoch_of_last_authorized_switch: *epoch_of_last_authorized_switch,
-                            target_epoch: *target_epoch,
-                        }
-                    },
-                )
-                .collect();
-            UiVoteState {
-                node_pubkey: vote_state.node_pubkey.to_string(),
-                authorized_withdrawer: vote_state.authorized_withdrawer.to_string(),
-                commission: vote_state.commission,
-                votes,
-                root_slot: vote_state.root_slot,
-                authorized_voters,
-                prior_voters,
-                epoch_credits,
-                last_timestamp: vote_state.last_timestamp,
-            }
-        }
-        VoteStateVersions::V1_14_11(vote_state) => {
-            let epoch_credits = convert_epoch_credits(&vote_state.epoch_credits);
-            let votes = convert_votes(&vote_state.votes);
-            let authorized_voters = convert_authorized_voters(&vote_state.authorized_voters);
-            let prior_voters = convert_prior_voters(&vote_state.prior_voters);
-            UiVoteState {
-                node_pubkey: vote_state.node_pubkey.to_string(),
-                authorized_withdrawer: vote_state.authorized_withdrawer.to_string(),
-                commission: vote_state.commission,
-                votes,
-                root_slot: vote_state.root_slot,
-                authorized_voters,
-                prior_voters,
-                epoch_credits,
-                last_timestamp: vote_state.last_timestamp,
-            }
-        }
-        VoteStateVersions::V3(vote_state) => {
-            let epoch_credits = convert_epoch_credits(&vote_state.epoch_credits);
-            let votes = convert_votes(&vote_state.votes);
-            let authorized_voters = convert_authorized_voters(&vote_state.authorized_voters);
-            let prior_voters = convert_prior_voters(&vote_state.prior_voters);
-            UiVoteState {
-                node_pubkey: vote_state.node_pubkey.to_string(),
-                authorized_withdrawer: vote_state.authorized_withdrawer.to_string(),
-                commission: vote_state.commission,
-                votes,
-                root_slot: vote_state.root_slot,
-                authorized_voters,
-                prior_voters,
-                epoch_credits,
-                last_timestamp: vote_state.last_timestamp,
-            }
-        }
-        VoteStateVersions::V4(vote_state) => {
-            let epoch_credits = convert_epoch_credits(&vote_state.epoch_credits);
-            let votes = convert_votes(&vote_state.votes);
-            let authorized_voters = convert_authorized_voters(&vote_state.authorized_voters);
-            // Convert basis points to percentage.
-            let commission = (vote_state.inflation_rewards_commission_bps / 100) as u8;
-            UiVoteState {
-                node_pubkey: vote_state.node_pubkey.to_string(),
-                authorized_withdrawer: vote_state.authorized_withdrawer.to_string(),
-                commission,
-                votes,
-                root_slot: vote_state.root_slot,
-                authorized_voters,
-                prior_voters: Vec::new(), // <-- V4 doesn't have prior_voters
-                epoch_credits,
-                last_timestamp: vote_state.last_timestamp,
-            }
-        }
-    };
-
-    Ok(VoteAccountType::Vote(state))
+        .collect();
+    Ok(VoteAccountType::Vote(UiVoteState {
+        node_pubkey: vote_state.node_pubkey.to_string(),
+        authorized_withdrawer: vote_state.authorized_withdrawer.to_string(),
+        commission: (vote_state.inflation_rewards_commission_bps / 100) as u8,
+        votes,
+        root_slot: vote_state.root_slot,
+        authorized_voters,
+        prior_voters: Vec::new(), // <-- No `prior_voters` in v4
+        epoch_credits,
+        last_timestamp: vote_state.last_timestamp,
+    }))
 }
 
 /// A wrapper enum for consistency across programs
@@ -191,15 +85,6 @@ impl From<&Lockout> for UiLockout {
     }
 }
 
-impl From<&LandedVote> for UiLockout {
-    fn from(landed_vote: &LandedVote) -> Self {
-        Self {
-            slot: landed_vote.slot(),
-            confirmation_count: landed_vote.confirmation_count(),
-        }
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct UiAuthorizedVoters {
@@ -230,57 +115,18 @@ mod test {
     #[test]
     fn test_parse_vote() {
         let vote_pubkey = Pubkey::new_unique();
-
-        let versioned_0_23_5 = VoteStateVersions::V0_23_5(Box::default());
-        let vote_account_data_0_23_5 = bincode::serialize(&versioned_0_23_5).unwrap();
-        let expected_0_23_5 = UiVoteState {
-            node_pubkey: Pubkey::default().to_string(),
-            authorized_withdrawer: Pubkey::default().to_string(),
-            authorized_voters: vec![UiAuthorizedVoters {
-                epoch: 0,
-                authorized_voter: Pubkey::default().to_string(),
-            }],
-            ..UiVoteState::default()
-        };
-        assert_eq!(
-            parse_vote(&vote_account_data_0_23_5, &vote_pubkey).unwrap(),
-            VoteAccountType::Vote(expected_0_23_5)
-        );
-
-        let versioned_1_14_11 = VoteStateVersions::V1_14_11(Box::default());
-        let vote_account_data_1_14_11 = bincode::serialize(&versioned_1_14_11).unwrap();
-        let expected_1_14_11 = UiVoteState {
+        let vote_state = VoteStateV4::default();
+        let mut vote_account_data: Vec<u8> = vec![0; VoteStateV4::size_of()];
+        let versioned = VoteStateVersions::new_v4(vote_state);
+        VoteStateV4::serialize(&versioned, &mut vote_account_data).unwrap();
+        let expected_vote_state = UiVoteState {
             node_pubkey: Pubkey::default().to_string(),
             authorized_withdrawer: Pubkey::default().to_string(),
             ..UiVoteState::default()
         };
         assert_eq!(
-            parse_vote(&vote_account_data_1_14_11, &vote_pubkey).unwrap(),
-            VoteAccountType::Vote(expected_1_14_11)
-        );
-
-        let versioned_v3 = VoteStateVersions::V3(Box::default());
-        let vote_account_data_v3 = bincode::serialize(&versioned_v3).unwrap();
-        let expected_v3 = UiVoteState {
-            node_pubkey: Pubkey::default().to_string(),
-            authorized_withdrawer: Pubkey::default().to_string(),
-            ..UiVoteState::default()
-        };
-        assert_eq!(
-            parse_vote(&vote_account_data_v3, &vote_pubkey).unwrap(),
-            VoteAccountType::Vote(expected_v3)
-        );
-
-        let versioned_v4 = VoteStateVersions::V4(Box::default());
-        let vote_account_data_v4 = bincode::serialize(&versioned_v4).unwrap();
-        let expected_v4 = UiVoteState {
-            node_pubkey: Pubkey::default().to_string(),
-            authorized_withdrawer: Pubkey::default().to_string(),
-            ..UiVoteState::default()
-        };
-        assert_eq!(
-            parse_vote(&vote_account_data_v4, &vote_pubkey).unwrap(),
-            VoteAccountType::Vote(expected_v4)
+            parse_vote(&vote_account_data, &vote_pubkey).unwrap(),
+            VoteAccountType::Vote(expected_vote_state)
         );
 
         let bad_data = vec![0; 4];
