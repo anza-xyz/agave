@@ -237,18 +237,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ) -> Self {
         let mut processor = Self::new_uninitialized(slot, epoch);
         {
-            {
-                let mut global_program_cache = processor.global_program_cache.write().unwrap();
-                global_program_cache.set_fork_graph(fork_graph);
-                global_program_cache.latest_root_slot = processor.slot;
-                global_program_cache.latest_root_epoch = processor.epoch;
-            }
-            let empty_loader = || Arc::new(BuiltinProgram::new_loader(VmConfig::default()));
-            processor.environments.program_runtime_v1 =
-                program_runtime_environment_v1.unwrap_or(empty_loader());
-            processor.environments.program_runtime_v2 =
-                program_runtime_environment_v2.unwrap_or(empty_loader());
+            let mut global_program_cache = processor.global_program_cache.write().unwrap();
+            global_program_cache.set_fork_graph(fork_graph);
         }
+        let empty_loader = || Arc::new(BuiltinProgram::new_loader(VmConfig::default()));
+        processor.configure_program_runtime_environments(
+            program_runtime_environment_v1.unwrap_or(empty_loader()),
+            program_runtime_environment_v2.unwrap_or(empty_loader()),
+        );
         processor
     }
 
@@ -276,23 +272,19 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.execution_cost = cost;
     }
 
-    /// Configures the program runtime environments (loaders) in the
-    /// transaction processor's program cache.
+    /// Configures the program runtime environments (loaders).
     pub fn configure_program_runtime_environments(
         &mut self,
-        program_runtime_environment_v1: Option<ProgramRuntimeEnvironment>,
-        program_runtime_environment_v2: Option<ProgramRuntimeEnvironment>,
+        program_runtime_environment_v1: ProgramRuntimeEnvironment,
+        program_runtime_environment_v2: ProgramRuntimeEnvironment,
     ) {
         {
             let mut global_program_cache = self.global_program_cache.write().unwrap();
             global_program_cache.latest_root_slot = self.slot;
             global_program_cache.latest_root_epoch = self.epoch;
         }
-        let empty_loader = || Arc::new(BuiltinProgram::new_loader(VmConfig::default()));
-        self.environments.program_runtime_v1 =
-            program_runtime_environment_v1.unwrap_or(empty_loader());
-        self.environments.program_runtime_v2 =
-            program_runtime_environment_v2.unwrap_or(empty_loader());
+        self.environments.program_runtime_v1 = program_runtime_environment_v1;
+        self.environments.program_runtime_v2 = program_runtime_environment_v2;
     }
 
     /// Returns the current environments depending on the given epoch
