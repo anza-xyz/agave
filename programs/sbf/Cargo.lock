@@ -310,6 +310,7 @@ dependencies = [
 name = "agave-votor"
 version = "3.1.0"
 dependencies = [
+ "agave-votor-messages",
  "anyhow",
  "bincode",
  "bitvec",
@@ -353,8 +354,18 @@ dependencies = [
  "solana-transaction-error",
  "solana-vote",
  "solana-vote-program",
- "solana-votor-messages",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "agave-votor-messages"
+version = "3.1.0"
+dependencies = [
+ "serde",
+ "solana-bls-signatures",
+ "solana-clock",
+ "solana-hash",
+ "solana-logger",
 ]
 
 [[package]]
@@ -8098,6 +8109,7 @@ dependencies = [
  "agave-reserved-account-keys",
  "agave-snapshots",
  "agave-syscalls",
+ "agave-votor-messages",
  "ahash 0.8.11",
  "aquamarine",
  "arc-swap",
@@ -8214,7 +8226,6 @@ dependencies = [
  "solana-vote",
  "solana-vote-interface",
  "solana-vote-program",
- "solana-votor-messages",
  "spl-generic-token",
  "static_assertions",
  "strum",
@@ -10072,17 +10083,6 @@ dependencies = [
  "solana-transaction-context",
  "solana-vote-interface",
  "thiserror 2.0.17",
-]
-
-[[package]]
-name = "solana-votor-messages"
-version = "3.1.0"
-dependencies = [
- "serde",
- "solana-bls-signatures",
- "solana-clock",
- "solana-hash",
- "solana-logger",
 ]
 
 [[package]]
