@@ -3,7 +3,7 @@ use {
     serde::{Deserialize, Serialize},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
-    solana_vote_interface::state::{BlockTimestamp, Lockout, VoteStateV4},
+    solana_vote_interface::state::{BlockTimestamp, LandedVote, Lockout, VoteStateV4},
 };
 
 pub fn parse_vote(data: &[u8], vote_pubkey: &Pubkey) -> Result<VoteAccountType, ParseAccountError> {
@@ -18,14 +18,7 @@ pub fn parse_vote(data: &[u8], vote_pubkey: &Pubkey) -> Result<VoteAccountType, 
             previous_credits: previous_credits.to_string(),
         })
         .collect();
-    let votes = vote_state
-        .votes
-        .iter()
-        .map(|landed_vote| UiLockout {
-            slot: landed_vote.slot(),
-            confirmation_count: landed_vote.confirmation_count(),
-        })
-        .collect();
+    let votes = vote_state.votes.iter().map(UiLandedVote::from).collect();
     let authorized_voters = vote_state
         .authorized_voters
         .iter()
@@ -69,7 +62,7 @@ pub struct UiVoteState {
     node_pubkey: String,
     authorized_withdrawer: String,
     commission: u8,
-    votes: Vec<UiLockout>,
+    votes: Vec<UiLandedVote>,
     root_slot: Option<Slot>,
     authorized_voters: Vec<UiAuthorizedVoters>,
     prior_voters: Vec<UiPriorVoters>,
@@ -97,6 +90,26 @@ impl From<&Lockout> for UiLockout {
         Self {
             slot: lockout.slot(),
             confirmation_count: lockout.confirmation_count(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct UiLandedVote {
+    latency: u8,
+    // Previously, the `votes` field on `UiVoteState` was a vector of
+    // `UiLockout`. If we changed the element type to `UiLandedVote` without
+    // flattening, the serialized JSON would have an extra nesting level.
+    #[serde(flatten)]
+    lockout: UiLockout,
+}
+
+impl From<&LandedVote> for UiLandedVote {
+    fn from(landed_vote: &LandedVote) -> Self {
+        Self {
+            latency: landed_vote.latency,
+            lockout: UiLockout::from(&landed_vote.lockout),
         }
     }
 }
@@ -159,5 +172,31 @@ mod test {
 
         let bad_data = vec![0; 4];
         assert!(parse_vote(&bad_data, &vote_pubkey).is_err());
+    }
+
+    #[test]
+    fn test_ui_landed_vote_flatten() {
+        let ui_landed_vote = UiLandedVote {
+            latency: 5,
+            lockout: UiLockout {
+                slot: 12345,
+                confirmation_count: 10,
+            },
+        };
+
+        let json = serde_json::to_value(&ui_landed_vote).unwrap();
+
+        // Verify that the lockout fields are flattened at the top level.
+        assert_eq!(json["latency"], 5);
+        assert_eq!(json["slot"], 12345);
+        assert_eq!(json["confirmationCount"], 10);
+
+        // Verify that there is no nested "lockout" field.
+        assert!(json.get("lockout").is_none());
+
+        // Now test the reverse.
+        let json_str = r#"{"latency": 5, "slot": 12345, "confirmationCount": 10}"#;
+        let deserialized: UiLandedVote = serde_json::from_str(json_str).unwrap();
+        assert_eq!(deserialized, ui_landed_vote);
     }
 }
