@@ -793,22 +793,12 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         self.fork_graph = Some(fork_graph);
     }
 
-    /// Returns the current environments depending on the given epoch
-    pub fn get_environments_for_epoch(&self, epoch: Epoch) -> ProgramRuntimeEnvironments {
-        if epoch != self.latest_root_epoch {
-            if let Some(upcoming_environments) = self.upcoming_environments.as_ref() {
-                return upcoming_environments.clone();
-            }
-        }
-        self.environments.clone()
-    }
-
     /// Returns the upcoming environments depending on the given epoch
     pub fn get_upcoming_environments_for_epoch(
         &self,
         epoch: Epoch,
     ) -> Option<ProgramRuntimeEnvironments> {
-        if epoch == self.latest_root_epoch {
+        if epoch != self.latest_root_epoch {
             return self.upcoming_environments.clone();
         }
         None

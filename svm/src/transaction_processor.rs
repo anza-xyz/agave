@@ -300,10 +300,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     /// Returns the current environments depending on the given epoch
     /// Returns None if the call could result in a deadlock
     pub fn get_environments_for_epoch(&self, epoch: Epoch) -> Option<ProgramRuntimeEnvironments> {
-        self.global_program_cache
-            .try_read()
-            .ok()
-            .map(|cache| cache.get_environments_for_epoch(epoch))
+        self.global_program_cache.try_read().ok().map(|cache| {
+            cache
+                .get_upcoming_environments_for_epoch(epoch)
+                .unwrap_or_else(|| cache.environments.clone())
+        })
     }
 
     pub fn sysvar_cache(&self) -> RwLockReadGuard<SysvarCache> {
@@ -756,8 +757,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 // Lock the global cache.
                 let global_program_cache = self.global_program_cache.read().unwrap();
                 // Figure out which program needs to be loaded next.
-                let program_runtime_environments =
-                    global_program_cache.get_environments_for_epoch(self.epoch);
+                let program_runtime_environments = global_program_cache
+                    .get_upcoming_environments_for_epoch(self.epoch)
+                    .unwrap_or_else(|| global_program_cache.environments.clone());
                 let program_to_load = global_program_cache.extract(
                     &mut missing_programs,
                     program_cache_for_tx_batch,

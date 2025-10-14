@@ -1508,10 +1508,8 @@ impl Bank {
                 drop(program_cache);
                 let environments_for_epoch = self
                     .transaction_processor
-                    .global_program_cache
-                    .read()
-                    .unwrap()
-                    .get_environments_for_epoch(effective_epoch);
+                    .get_environments_for_epoch(effective_epoch)
+                    .unwrap();
                 if let Some(recompiled) = load_program_with_pubkey(
                     self,
                     &environments_for_epoch,
