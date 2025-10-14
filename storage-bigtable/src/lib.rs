@@ -38,9 +38,6 @@ use {
 #[macro_use]
 extern crate solana_metrics;
 
-#[macro_use]
-extern crate serde_derive;
-
 mod access_token;
 mod bigtable;
 mod compression;

@@ -6,13 +6,44 @@ use {
     std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr},
     thiserror::Error,
 };
+// we re-export types that are part of the public API,
+// and recursively re-export types that are part of those types' public APIs
 pub use {
-    solana_account_decoder_client_types::{token::UiTokenAmount, UiAccount},
+    serde_json::Value, // used in ParsedInstruction
+    solana_account_decoder_client_types::{
+        token::UiTokenAmount,
+        ParsedAccount, // used in UiAccountData
+        UiAccount,
+        UiAccountData,     // used in UiAccount
+        UiAccountEncoding, // used in UiAccountData
+    },
     solana_fee_calculator::{FeeCalculator, FeeRateGovernor},
-    solana_transaction_error::TransactionResult,
+    solana_reward_info::RewardType,    // used in Reward
+    solana_transaction as transaction, // used in EncodedTransaction (may as well re-export the whole crate)
+    solana_transaction_error::{TransactionError, TransactionResult},
     solana_transaction_status_client_types::{
-        TransactionConfirmationStatus, UiConfirmedBlock, UiInnerInstructions, UiLoadedAddresses,
-        UiTransactionError, UiTransactionReturnData, UiTransactionTokenBalance,
+        option_serializer::OptionSerializer, // used in UiTransactionStatusMeta
+        EncodedTransaction,                  // used in EncodedTransactionWithStatusMeta
+        EncodedTransactionWithStatusMeta,    // used in UiConfirmedBlock
+        ParsedAccount as TransactionParsedAccount, // used in UiAccountsList
+        ParsedInstruction,                   // used in UiParsedInstruction
+        Reward,                              // used in Rewards
+        Rewards,                             // used in UiConfirmedBlock
+        TransactionBinaryEncoding,           // used in EncodedTransaction
+        TransactionConfirmationStatus,
+        UiAccountsList,        // used in EncodedTransaction
+        UiCompiledInstruction, // used in UiInstruction
+        UiConfirmedBlock,
+        UiInnerInstructions,
+        UiInstruction, // used in UiInnerInstructions
+        UiLoadedAddresses,
+        UiParsedInstruction,           // used in UiInstruction
+        UiPartiallyDecodedInstruction, // used in UiParsedInstruction
+        UiReturnDataEncoding,          // used in UiTransactionReturnData
+        UiTransactionError,
+        UiTransactionReturnData,
+        UiTransactionStatusMeta, // used in EncodedTransactionWithStatusMeta
+        UiTransactionTokenBalance,
     },
 };
 

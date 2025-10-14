@@ -1,14 +1,11 @@
 pub use solana_file_download::DownloadProgressRecord;
 use {
+    agave_snapshots::{ArchiveFormat, ZstdConfig},
     log::*,
     solana_clock::Slot,
     solana_file_download::{download_file, DownloadProgressCallbackOption},
     solana_genesis_config::DEFAULT_GENESIS_ARCHIVE,
-    solana_runtime::{
-        snapshot_hash::SnapshotHash,
-        snapshot_package::SnapshotKind,
-        snapshot_utils::{self, ArchiveFormat, ZstdConfig},
-    },
+    solana_runtime::{snapshot_hash::SnapshotHash, snapshot_package::SnapshotKind, snapshot_utils},
     std::{
         fs,
         net::SocketAddr,
@@ -106,7 +103,7 @@ pub fn download_snapshot_archive(
             progress_notify_callback,
         ) {
             Ok(()) => return Ok(()),
-            Err(err) => info!("{}", err),
+            Err(err) => info!("{err}"),
         }
     }
     Err(format!(

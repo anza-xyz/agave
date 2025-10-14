@@ -80,37 +80,41 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
         );
     }
 
-    if bpf_loader_deprecated::check_id(program_account.owner()) {
-        return Some(ProgramAccountLoadResult::ProgramOfLoaderV1(program_account));
+    if bpf_loader_upgradeable::check_id(program_account.owner()) {
+        if let Ok(UpgradeableLoaderState::Program {
+            programdata_address,
+        }) = program_account.state()
+        {
+            if let Some((programdata_account, _slot)) =
+                callbacks.get_account_shared_data(&programdata_address)
+            {
+                if let Ok(UpgradeableLoaderState::ProgramData {
+                    slot,
+                    upgrade_authority_address: _,
+                }) = programdata_account.state()
+                {
+                    return Some(ProgramAccountLoadResult::ProgramOfLoaderV3(
+                        program_account,
+                        programdata_account,
+                        slot,
+                    ));
+                }
+            }
+        }
+        return Some(ProgramAccountLoadResult::InvalidAccountData(
+            ProgramCacheEntryOwner::LoaderV3,
+        ));
     }
 
     if bpf_loader::check_id(program_account.owner()) {
         return Some(ProgramAccountLoadResult::ProgramOfLoaderV2(program_account));
     }
 
-    if let Ok(UpgradeableLoaderState::Program {
-        programdata_address,
-    }) = program_account.state()
-    {
-        if let Some((programdata_account, _slot)) =
-            callbacks.get_account_shared_data(&programdata_address)
-        {
-            if let Ok(UpgradeableLoaderState::ProgramData {
-                slot,
-                upgrade_authority_address: _,
-            }) = programdata_account.state()
-            {
-                return Some(ProgramAccountLoadResult::ProgramOfLoaderV3(
-                    program_account,
-                    programdata_account,
-                    slot,
-                ));
-            }
-        }
+    if bpf_loader_deprecated::check_id(program_account.owner()) {
+        return Some(ProgramAccountLoadResult::ProgramOfLoaderV1(program_account));
     }
-    Some(ProgramAccountLoadResult::InvalidAccountData(
-        ProgramCacheEntryOwner::LoaderV3,
-    ))
+
+    None
 }
 
 /// Loads the program with the given pubkey.
@@ -290,14 +294,6 @@ mod tests {
                 .borrow()
                 .get(pubkey)
                 .map(|account| (account.clone(), 0))
-        }
-
-        fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
-            let mut account_data = AccountSharedData::default();
-            account_data.set_data(name.as_bytes().to_vec());
-            self.account_shared_data
-                .borrow_mut()
-                .insert(*program_id, account_data);
         }
     }
 

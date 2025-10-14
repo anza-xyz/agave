@@ -1,9 +1,9 @@
 [package]
 name = "solana-gossip"
-description = "Blockchain, Rebuilt for Scale"
 documentation = "https://docs.rs/solana-gossip"
 version = { workspace = true }
 authors = { workspace = true }
+description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
@@ -33,11 +33,10 @@ frozen-abi = [
     "solana-vote/frozen-abi",
     "solana-vote-program/frozen-abi",
 ]
-agave-unstable-api = ["agave-low-pass-filter/agave-unstable-api"]
+agave-unstable-api = []
 
 [dependencies]
 agave-feature-set = { workspace = true }
-agave-low-pass-filter = { workspace = true, features = ["agave-unstable-api"] }
 arrayvec = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
@@ -56,9 +55,7 @@ rayon = { workspace = true }
 serde = { workspace = true }
 serde-big-array = { workspace = true }
 serde_bytes = { workspace = true }
-serde_derive = { workspace = true }
 siphasher = { workspace = true }
-solana-account = { workspace = true }
 solana-bloom = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-client = { workspace = true }

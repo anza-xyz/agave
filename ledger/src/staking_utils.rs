@@ -54,7 +54,7 @@ pub(crate) mod tests {
                 },
                 amount,
                 vote_instruction::CreateVoteAccountConfig {
-                    space: VoteStateVersions::vote_state_size_of(true) as u64,
+                    space: VoteStateV3::size_of() as u64,
                     ..vote_instruction::CreateVoteAccountConfig::default()
                 },
             ),

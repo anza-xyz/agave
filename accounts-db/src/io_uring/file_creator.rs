@@ -9,17 +9,17 @@ use {
     agave_io_uring::{Completion, FixedSlab, Ring, RingOp},
     core::slice,
     io_uring::{opcode, squeue, types, IoUring},
-    libc::{O_CREAT, O_NOATIME, O_NOFOLLOW, O_NONBLOCK, O_TRUNC, O_WRONLY},
+    libc::{O_CREAT, O_NOATIME, O_NOFOLLOW, O_TRUNC, O_WRONLY},
     smallvec::SmallVec,
     std::{
         collections::VecDeque,
+        ffi::CString,
         fs::File,
         io::{self, Read},
         mem,
-        os::{fd::AsRawFd, unix::ffi::OsStrExt as _},
+        os::fd::AsRawFd,
         path::PathBuf,
         pin::Pin,
-        ptr,
         sync::Arc,
         time::Duration,
     },
@@ -138,7 +138,7 @@ impl<B> FileCreator for IoUringFileCreator<'_, B> {
         parent_dir_handle: Arc<File>,
         contents: &mut dyn Read,
     ) -> io::Result<()> {
-        let file_key = self.open(path, mode, Some(parent_dir_handle))?;
+        let file_key = self.open(path, mode, parent_dir_handle)?;
         self.write_and_close(contents, file_key)
     }
 
@@ -157,20 +157,15 @@ impl<B> IoUringFileCreator<'_, B> {
     /// Schedule opening file at `path` with `mode` permissions.
     ///
     /// Returns key that can be used for scheduling writes for it.
-    fn open(
-        &mut self,
-        path: PathBuf,
-        mode: u32,
-        dir_handle: Option<Arc<File>>,
-    ) -> io::Result<usize> {
+    fn open(&mut self, path: PathBuf, mode: u32, dir_handle: Arc<File>) -> io::Result<usize> {
         let file = PendingFile::from_path(path);
-        let path_bytes = Pin::new(file.zero_terminated_path_bytes(dir_handle.is_some()));
+        let path_cstring = Pin::new(file.path_cstring());
 
         let file_key = self.wait_add_file(file)?;
 
         let op = FileCreatorOp::Open(OpenOp {
             dir_handle,
-            path_bytes,
+            path_cstring,
             mode,
             file_key,
         });
@@ -224,6 +219,7 @@ impl<B> IoUringFileCreator<'_, B> {
                     file_key,
                     offset,
                     buf,
+                    buf_offset: 0,
                     write_len: len,
                 };
                 state.submitted_writes_size += len;
@@ -346,22 +342,17 @@ impl FileCreatorStats {
 
 #[derive(Debug)]
 struct OpenOp {
-    dir_handle: Option<Arc<File>>,
-    path_bytes: Pin<Vec<u8>>,
+    dir_handle: Arc<File>,
+    path_cstring: Pin<CString>,
     mode: libc::mode_t,
     file_key: usize,
 }
 
 impl OpenOp {
     fn entry(&mut self) -> squeue::Entry {
-        let at_dir_fd = types::Fd(
-            self.dir_handle
-                .as_ref()
-                .map(AsRawFd::as_raw_fd)
-                .unwrap_or(libc::AT_FDCWD),
-        );
-        opcode::OpenAt::new(at_dir_fd, self.path_bytes.as_ptr() as _)
-            .flags(O_CREAT | O_TRUNC | O_NOFOLLOW | O_WRONLY | O_NOATIME | O_NONBLOCK)
+        let at_dir_fd = types::Fd(self.dir_handle.as_raw_fd());
+        opcode::OpenAt::new(at_dir_fd, self.path_cstring.as_ptr() as _)
+            .flags(O_CREAT | O_TRUNC | O_NOFOLLOW | O_WRONLY | O_NOATIME)
             .mode(self.mode)
             .file_index(Some(
                 types::DestinationSlot::try_from_slot_target(self.file_key as u32).unwrap(),
@@ -385,6 +376,7 @@ impl OpenOp {
                 file_key: self.file_key,
                 offset,
                 buf,
+                buf_offset: 0,
                 write_len: len,
             };
             ring.context_mut().submitted_writes_size += len;
@@ -428,6 +420,7 @@ struct WriteOp {
     file_key: usize,
     offset: usize,
     buf: FixedIoBuffer,
+    buf_offset: usize,
     write_len: usize,
 }
 
@@ -437,6 +430,7 @@ impl<'a> WriteOp {
             file_key,
             offset,
             buf,
+            buf_offset,
             write_len,
         } = self;
 
@@ -444,7 +438,7 @@ impl<'a> WriteOp {
         // reclaimed after completion passed in a call to `mark_write_completed`.
         opcode::WriteFixed::new(
             types::Fixed(*file_key as u32),
-            unsafe { buf.as_mut_ptr() },
+            unsafe { buf.as_mut_ptr().byte_add(*buf_offset) },
             *write_len as u32,
             buf.io_buf_index()
                 .expect("should have a valid fixed buffer"),
@@ -462,22 +456,40 @@ impl<'a> WriteOp {
     where
         Self: Sized,
     {
-        let written = res? as usize;
+        let written = match res {
+            // Fail fast if no progress. FS should report an error (e.g. `StorageFull`) if the
+            // condition isn't transient, but it's hard to verify without extra tracking.
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(res) => res as usize,
+            Err(err) => return Err(err),
+        };
 
         let WriteOp {
             file_key,
-            offset: _,
+            offset,
             ref mut buf,
+            buf_offset,
             write_len,
         } = self;
 
-        // unless specified otherwise, the io uring worker will retry automatically on EAGAIN
-        assert_eq!(written, *write_len, "short write");
-
         let buf = mem::replace(buf, FixedIoBuffer::empty());
+        let total_written = *buf_offset + written;
+
+        if written < *write_len {
+            log::warn!("short write ({written}/{}), file={}", *write_len, *file_key);
+            ring.push(FileCreatorOp::Write(WriteOp {
+                file_key: *file_key,
+                offset: *offset + written,
+                buf,
+                buf_offset: total_written,
+                write_len: *write_len - written,
+            }));
+            return Ok(());
+        }
+
         if ring
             .context_mut()
-            .mark_write_completed(*file_key, *write_len, buf)
+            .mark_write_completed(*file_key, total_written, buf)
         {
             ring.push(FileCreatorOp::Close(CloseOp::new(*file_key)));
         }
@@ -542,24 +554,9 @@ impl PendingFile {
         }
     }
 
-    fn zero_terminated_path_bytes(&self, only_filename: bool) -> Vec<u8> {
-        let mut path_bytes = Vec::with_capacity(libc::PATH_MAX as usize);
-        let buf_ptr = path_bytes.as_mut_ptr();
-        let bytes = if only_filename {
-            self.path.file_name().unwrap_or_default().as_bytes()
-        } else {
-            self.path.as_os_str().as_bytes()
-        };
-        assert!(bytes.len() < path_bytes.capacity());
-        // Safety:
-        // We know that the buffer is large enough to hold the copy and the
-        // pointers don't overlap.
-        unsafe {
-            ptr::copy_nonoverlapping(bytes.as_ptr(), buf_ptr, bytes.len());
-            buf_ptr.add(bytes.len()).write(0);
-            path_bytes.set_len(bytes.len() + 1);
-        }
-        path_bytes
+    fn path_cstring(&self) -> CString {
+        let os_str = self.path.file_name().expect("path must contain filename");
+        CString::new(os_str.as_encoded_bytes()).expect("path mustn't contain interior NULs")
     }
 
     fn is_completed(&self) -> bool {

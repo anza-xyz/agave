@@ -164,4 +164,41 @@ mod tests {
         assert_eq!(leaders1, leaders1_expected);
         assert_eq!(leaders2, leaders2_expected);
     }
+
+    #[test]
+    fn test_invert_slot_leaders() {
+        let alice_pubkey = solana_pubkey::new_rand();
+        let bob_pubkey = solana_pubkey::new_rand();
+        let victor_pubkey = solana_pubkey::new_rand();
+        let peggy_pubkey = solana_pubkey::new_rand();
+
+        let leaders = &[
+            alice_pubkey,
+            victor_pubkey,
+            alice_pubkey,
+            bob_pubkey,
+            peggy_pubkey,
+            alice_pubkey,
+            peggy_pubkey,
+            victor_pubkey,
+        ];
+
+        let grouped_slot_leaders = LeaderSchedule::invert_slot_leaders(leaders);
+        assert_eq!(
+            grouped_slot_leaders.get(&alice_pubkey).unwrap().as_slice(),
+            &[0, 2, 5],
+        );
+        assert_eq!(
+            grouped_slot_leaders.get(&bob_pubkey).unwrap().as_slice(),
+            &[3],
+        );
+        assert_eq!(
+            grouped_slot_leaders.get(&victor_pubkey).unwrap().as_slice(),
+            &[1, 7],
+        );
+        assert_eq!(
+            grouped_slot_leaders.get(&peggy_pubkey).unwrap().as_slice(),
+            &[4, 6],
+        );
+    }
 }

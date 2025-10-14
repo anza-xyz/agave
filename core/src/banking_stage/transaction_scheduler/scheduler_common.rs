@@ -2,16 +2,14 @@
 use qualifier_attr::qualifiers;
 use {
     super::{
-        in_flight_tracker::InFlightTracker,
-        scheduler_error::SchedulerError,
-        thread_aware_account_locks::{ThreadAwareAccountLocks, ThreadId, ThreadSet},
+        in_flight_tracker::InFlightTracker, scheduler_error::SchedulerError,
         transaction_state_container::StateContainer,
     },
-    crate::banking_stage::{
-        scheduler_messages::{
-            ConsumeWork, FinishedConsumeWork, MaxAge, TransactionBatchId, TransactionId,
-        },
-        transaction_scheduler::thread_aware_account_locks::MAX_THREADS,
+    crate::banking_stage::scheduler_messages::{
+        ConsumeWork, FinishedConsumeWork, MaxAge, TransactionBatchId, TransactionId,
+    },
+    agave_scheduling_utils::thread_aware_account_locks::{
+        ThreadAwareAccountLocks, ThreadId, ThreadSet, MAX_THREADS,
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     itertools::izip,
@@ -242,9 +240,13 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
                 // Assumption - retryable indexes are in order (sorted by workers).
                 let mut retryable_iter = retryable_indexes.iter().peekable();
                 for (index, (id, transaction)) in izip!(ids, transactions).enumerate() {
-                    if let Some(&&retryable_index) = retryable_iter.peek() {
-                        if retryable_index == index {
-                            container.retry_transaction(id, transaction);
+                    if let Some(&retryable_index) = retryable_iter.peek() {
+                        if retryable_index.index == index {
+                            container.retry_transaction(
+                                id,
+                                transaction,
+                                retryable_index.immediately_retryable,
+                            );
                             retryable_iter.next();
                             continue;
                         }
@@ -254,7 +256,11 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
 
                 debug_assert!(
                     retryable_iter.peek().is_none(),
-                    "retryable indexes were not in order: {retryable_indexes:?}"
+                    "retryable indexes were not in order: {:?}",
+                    retryable_indexes
+                        .iter()
+                        .map(|index| index.index)
+                        .collect::<Vec<_>>(),
                 );
 
                 Ok((num_transactions, num_retryable))
@@ -290,11 +296,18 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
 mod tests {
     use {
         super::*,
-        crate::banking_stage::transaction_scheduler::transaction_state_container::TransactionStateContainer,
-        crossbeam_channel::unbounded, solana_hash::Hash, solana_keypair::Keypair,
-        solana_pubkey::Pubkey, solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        crate::banking_stage::{
+            consumer::RetryableIndex,
+            transaction_scheduler::transaction_state_container::TransactionStateContainer,
+        },
+        crossbeam_channel::unbounded,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_pubkey::Pubkey,
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_system_transaction as system_transaction,
-        solana_transaction::sanitized::SanitizedTransaction, test_case::test_case,
+        solana_transaction::sanitized::SanitizedTransaction,
+        test_case::test_case,
     };
 
     const NUM_WORKERS: usize = 4;
@@ -521,17 +534,22 @@ mod tests {
         let num_scheduled = common.send_batch(0).unwrap();
         let work = work_receivers[0].try_recv().unwrap();
         assert_eq!(work.ids.len(), num_scheduled);
-        let retryable_indexes = vec![0, 1];
+        let retryable_indexes = vec![
+            RetryableIndex::new(0, true),
+            RetryableIndex::new(1, false), // should be held by container.
+        ];
+        let expected_num_retryable = retryable_indexes.len();
         let finished_work = FinishedConsumeWork {
             work,
-            retryable_indexes: retryable_indexes.clone(),
+            retryable_indexes,
         };
         finished_work_sender.send(finished_work).unwrap();
         let (num_transactions, num_retryable) =
             common.try_receive_completed(&mut container).unwrap();
         assert_eq!(num_transactions, num_scheduled);
-        assert_eq!(num_retryable, retryable_indexes.len());
-        assert_eq!(container.buffer_size(), retryable_indexes.len());
+        assert_eq!(num_retryable, expected_num_retryable);
+        assert_eq!(container.buffer_size(), expected_num_retryable);
+        assert_eq!(container.queue_size(), expected_num_retryable - 1); // held transaction not in queue.
     }
 
     #[test]
@@ -550,10 +568,10 @@ mod tests {
         let num_scheduled = common.send_batch(0).unwrap();
         let work = work_receivers[0].try_recv().unwrap();
         assert_eq!(work.ids.len(), num_scheduled);
-        let retryable_indexes = vec![1, 0];
+        let retryable_indexes = vec![RetryableIndex::new(1, true), RetryableIndex::new(0, true)];
         let finished_work = FinishedConsumeWork {
             work,
-            retryable_indexes: retryable_indexes.clone(),
+            retryable_indexes,
         };
         finished_work_sender.send(finished_work).unwrap();
 

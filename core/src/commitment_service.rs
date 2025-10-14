@@ -587,7 +587,7 @@ mod tests {
             .root_slot
             .unwrap();
         for x in 0..root {
-            bank_forks.write().unwrap().set_root(x, None, None).unwrap();
+            bank_forks.write().unwrap().set_root(x, None, None);
         }
 
         // Add an additional bank/vote that will root slot 2
@@ -630,8 +630,7 @@ mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(root, None, Some(highest_super_majority_root))
-            .unwrap();
+            .set_root(root, None, Some(highest_super_majority_root));
         let highest_super_majority_root_bank =
             bank_forks.read().unwrap().get(highest_super_majority_root);
         assert!(highest_super_majority_root_bank.is_some());
@@ -714,8 +713,7 @@ mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(root, None, Some(highest_super_majority_root))
-            .unwrap();
+            .set_root(root, None, Some(highest_super_majority_root));
         let highest_super_majority_root_bank =
             bank_forks.read().unwrap().get(highest_super_majority_root);
         assert!(highest_super_majority_root_bank.is_some());

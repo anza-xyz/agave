@@ -1,9 +1,9 @@
 [package]
 name = "solana-genesis"
-description = "Blockchain, Rebuilt for Scale"
 documentation = "https://docs.rs/solana-genesis"
 version = { workspace = true }
 authors = { workspace = true }
+description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
@@ -28,7 +28,7 @@ itertools = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-solana-account = "=3.0.0"
+solana-account = "=3.1.0"
 solana-accounts-db = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
@@ -54,7 +54,7 @@ solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sdk-ids = "=3.0.0"
 solana-signer = "=3.0.0"
-solana-stake-interface = { version = "=2.0.0", features = ["borsh"] }
+solana-stake-interface = { version = "=2.0.1", features = ["borsh"] }
 solana-stake-program = { workspace = true }
 solana-time-utils = "3.0.0"
 solana-version = { workspace = true }

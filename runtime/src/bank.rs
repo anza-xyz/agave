@@ -63,12 +63,12 @@ use {
     agave_syscalls::{
         create_program_runtime_environment_v1, create_program_runtime_environment_v2,
     },
-    ahash::{AHashSet, RandomState},
+    ahash::AHashSet,
     dashmap::DashMap,
     log::*,
     partitioned_epoch_rewards::PartitionedRewardsCalculation,
-    rayon::ThreadPoolBuilder,
-    serde::Serialize,
+    rayon::{ThreadPool, ThreadPoolBuilder},
+    serde::{Deserialize, Serialize},
     solana_account::{
         create_account_shared_data_with_fields as create_account, from_account, Account,
         AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
@@ -111,9 +111,10 @@ use {
     solana_packet::PACKET_DATA_SIZE,
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
-        invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
+        invoke_context::BuiltinFunctionWithContext,
+        loaded_programs::{ProgramCacheEntry, ProgramRuntimeEnvironment},
     },
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_reward_info::RewardInfo,
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
@@ -157,7 +158,9 @@ use {
         versioned::VersionedTransaction,
         Transaction, TransactionVerificationMode,
     },
-    solana_transaction_context::{TransactionAccount, TransactionReturnData},
+    solana_transaction_context::{
+        transaction_accounts::KeyedAccountSharedData, TransactionReturnData,
+    },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_vote::vote_account::{VoteAccount, VoteAccountsHashMap},
     std::{
@@ -214,7 +217,7 @@ pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
 pub type BankStatusCache = StatusCache<Result<()>>;
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "2mR2EKFguLhheKtDzbFxoQonSmUtM9svd8kkgeKpe2vu")
+    frozen_abi(digest = "FUttxQbsCnX5VMRuj8c2sUxZKNARUTaomdgsbg8wM3D6")
 )]
 pub type BankSlotDelta = SlotDelta<Result<()>>;
 
@@ -223,8 +226,6 @@ pub struct SquashTiming {
     pub squash_accounts_ms: u64,
     pub squash_accounts_cache_ms: u64,
     pub squash_accounts_index_ms: u64,
-    pub squash_accounts_store_ms: u64,
-
     pub squash_cache_ms: u64,
 }
 
@@ -233,7 +234,6 @@ impl AddAssign for SquashTiming {
         self.squash_accounts_ms += rhs.squash_accounts_ms;
         self.squash_accounts_cache_ms += rhs.squash_accounts_cache_ms;
         self.squash_accounts_index_ms += rhs.squash_accounts_index_ms;
-        self.squash_accounts_store_ms += rhs.squash_accounts_store_ms;
         self.squash_cache_ms += rhs.squash_cache_ms;
     }
 }
@@ -309,7 +309,7 @@ pub struct LoadAndExecuteTransactionsOutput {
 pub struct TransactionSimulationResult {
     pub result: Result<()>,
     pub logs: TransactionLogMessages,
-    pub post_simulation_accounts: Vec<TransactionAccount>,
+    pub post_simulation_accounts: Vec<KeyedAccountSharedData>,
     pub units_consumed: u64,
     pub loaded_accounts_data_size: u32,
     pub return_data: Option<TransactionReturnData>,
@@ -319,6 +319,25 @@ pub struct TransactionSimulationResult {
     pub post_balances: Option<Vec<u64>>,
     pub pre_token_balances: Option<Vec<SvmTokenInfo>>,
     pub post_token_balances: Option<Vec<SvmTokenInfo>>,
+}
+
+impl TransactionSimulationResult {
+    pub fn new_error(err: TransactionError) -> Self {
+        Self {
+            fee: None,
+            inner_instructions: None,
+            loaded_accounts_data_size: 0,
+            logs: vec![],
+            post_balances: None,
+            post_simulation_accounts: vec![],
+            post_token_balances: None,
+            pre_balances: None,
+            pre_token_balances: None,
+            result: Err(err),
+            return_data: None,
+            units_consumed: 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -532,7 +551,6 @@ impl PartialEq for Bank {
             // TODO: Confirm if all these fields are intentionally ignored!
             rewards: _,
             cluster_type: _,
-            rewards_pool_pubkeys: _,
             transaction_debug_keys: _,
             transaction_log_collector_config: _,
             transaction_log_collector: _,
@@ -822,9 +840,6 @@ pub struct Bank {
 
     pub cluster_type: Option<ClusterType>,
 
-    // this is temporary field only to remove rewards_pool entirely
-    pub rewards_pool_pubkeys: Arc<HashSet<Pubkey>>,
-
     transaction_debug_keys: Option<Arc<HashSet<Pubkey>>>,
 
     // Global configuration for how transaction logs should be collected across all banks
@@ -916,7 +931,7 @@ struct VoteReward {
     vote_rewards: u64,
 }
 
-type VoteRewards = DashMap<Pubkey, VoteReward, RandomState>;
+type VoteRewards = HashMap<Pubkey, VoteReward, PubkeyHasherBuilder>;
 
 #[derive(Debug, Default)]
 pub struct NewBankOptions {
@@ -1075,7 +1090,6 @@ impl Bank {
             is_delta: AtomicBool::default(),
             rewards: RwLock::<Vec<(Pubkey, RewardInfo)>>::default(),
             cluster_type: Option::<ClusterType>::default(),
-            rewards_pool_pubkeys: Arc::<HashSet<Pubkey>>::default(),
             transaction_debug_keys: Option::<Arc<HashSet<Pubkey>>>::default(),
             transaction_log_collector_config: Arc::<RwLock<TransactionLogCollectorConfig>>::default(
             ),
@@ -1115,13 +1129,12 @@ impl Bank {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn new_with_paths(
+    pub fn new_from_genesis(
         genesis_config: &GenesisConfig,
         runtime_config: Arc<RuntimeConfig>,
         paths: Vec<PathBuf>,
         debug_keys: Option<Arc<HashSet<Pubkey>>>,
-        debug_do_not_add_builtins: bool,
-        accounts_db_config: Option<AccountsDbConfig>,
+        accounts_db_config: AccountsDbConfig,
         accounts_update_notifier: Option<AccountsUpdateNotifier>,
         #[allow(unused)] collector_id_for_tests: Option<Pubkey>,
         exit: Arc<AtomicBool>,
@@ -1134,6 +1147,10 @@ impl Bank {
         let mut bank = Self::default_with_accounts(accounts);
         bank.ancestors = Ancestors::from(vec![bank.slot()]);
         bank.compute_budget = runtime_config.compute_budget;
+        if let Some(compute_budget) = &bank.compute_budget {
+            bank.transaction_processor
+                .set_execution_cost(compute_budget.to_cost());
+        }
         bank.transaction_account_lock_limit = runtime_config.transaction_account_lock_limit;
         bank.transaction_debug_keys = debug_keys;
         bank.cluster_type = Some(genesis_config.cluster_type);
@@ -1148,7 +1165,7 @@ impl Bank {
         #[cfg(feature = "dev-context-only-utils")]
         bank.process_genesis_config(genesis_config, collector_id_for_tests, genesis_hash);
 
-        bank.finish_init(genesis_config, debug_do_not_add_builtins);
+        bank.compute_and_apply_genesis_features();
 
         // genesis needs stakes for all epochs up to the epoch implied by
         //  slot = 0 and genesis configuration
@@ -1254,9 +1271,6 @@ impl Bank {
             TransactionBatchProcessor::new_from(&parent.transaction_processor, slot, epoch)
         );
 
-        let (rewards_pool_pubkeys, rewards_pool_pubkeys_time_us) =
-            measure_us!(parent.rewards_pool_pubkeys.clone());
-
         let (transaction_debug_keys, transaction_debug_keys_time_us) =
             measure_us!(parent.transaction_debug_keys.clone());
 
@@ -1317,7 +1331,6 @@ impl Bank {
             hard_forks: parent.hard_forks.clone(),
             rewards: RwLock::new(vec![]),
             cluster_type: parent.cluster_type,
-            rewards_pool_pubkeys,
             transaction_debug_keys,
             transaction_log_collector_config,
             transaction_log_collector: Arc::new(RwLock::new(TransactionLogCollector::default())),
@@ -1430,7 +1443,6 @@ impl Bank {
                 stakes_cache_time_us,
                 epoch_stakes_time_us,
                 builtin_program_ids_time_us,
-                rewards_pool_pubkeys_time_us,
                 executor_cache_time_us: 0,
                 transaction_debug_keys_time_us,
                 transaction_log_collector_config_time_us,
@@ -1476,12 +1488,6 @@ impl Bank {
         let (_epoch, slot_index) = self.epoch_schedule.get_epoch_and_slot_index(self.slot);
         let slots_in_epoch = self.epoch_schedule.get_slots_in_epoch(self.epoch);
         let (upcoming_feature_set, _newly_activated) = self.compute_active_feature_set(true);
-        let compute_budget = self
-            .compute_budget
-            .unwrap_or(ComputeBudget::new_with_defaults(
-                upcoming_feature_set.is_active(&raise_cpi_nesting_limit_to_8::id()),
-            ))
-            .to_budget();
 
         // Recompile loaded programs one at a time before the next epoch hits
         let slots_in_recompilation_phase =
@@ -1539,27 +1545,18 @@ impl Bank {
                 .global_program_cache
                 .write()
                 .unwrap();
-            let program_runtime_environment_v1 = create_program_runtime_environment_v1(
-                &upcoming_feature_set.runtime_features(),
-                &compute_budget,
-                false, /* deployment */
-                false, /* debugging_features */
-            )
-            .unwrap();
-            let program_runtime_environment_v2 = create_program_runtime_environment_v2(
-                &compute_budget,
-                false, /* debugging_features */
-            );
+            let (program_runtime_environment_v1, program_runtime_environment_v2) =
+                self.create_program_runtime_environments(&upcoming_feature_set);
             let mut upcoming_environments = program_cache.environments.clone();
             let changed_program_runtime_v1 =
-                *upcoming_environments.program_runtime_v1 != program_runtime_environment_v1;
+                *upcoming_environments.program_runtime_v1 != *program_runtime_environment_v1;
             let changed_program_runtime_v2 =
-                *upcoming_environments.program_runtime_v2 != program_runtime_environment_v2;
+                *upcoming_environments.program_runtime_v2 != *program_runtime_environment_v2;
             if changed_program_runtime_v1 {
-                upcoming_environments.program_runtime_v1 = Arc::new(program_runtime_environment_v1);
+                upcoming_environments.program_runtime_v1 = program_runtime_environment_v1;
             }
             if changed_program_runtime_v2 {
-                upcoming_environments.program_runtime_v2 = Arc::new(program_runtime_environment_v2);
+                upcoming_environments.program_runtime_v2 = program_runtime_environment_v2;
             }
             program_cache.upcoming_environments = Some(upcoming_environments);
             program_cache.programs_to_recompile = program_cache
@@ -1607,9 +1604,9 @@ impl Bank {
             .build()
             .expect("new rayon threadpool"));
 
-        let (_, apply_feature_activations_time_us) = measure_us!(thread_pool.install(|| {
-            self.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, false)
-        }));
+        let (_, apply_feature_activations_time_us) = measure_us!(
+            thread_pool.install(|| { self.compute_and_apply_new_feature_activations() })
+        );
 
         // Add new entry to stakes.stake_history, set appropriate epoch and
         // update vote accounts with warmed up stakes before saving a
@@ -1689,7 +1686,6 @@ impl Bank {
         parent.freeze();
         let parent_timestamp = parent.clock().unix_timestamp;
         let mut new = Bank::new_from_parent(parent, collector_id, slot);
-        new.apply_feature_activations(ApplyFeatureActivationsCaller::WarpFromParent, false);
         new.update_epoch_stakes(new.epoch_schedule().get_epoch(slot));
         new.tick_height.store(new.max_tick_height(), Relaxed);
 
@@ -1709,13 +1705,12 @@ impl Bank {
     }
 
     /// Create a bank from explicit arguments and deserialized fields from snapshot
-    pub(crate) fn new_from_fields(
+    pub(crate) fn new_from_snapshot(
         bank_rc: BankRc,
         genesis_config: &GenesisConfig,
         runtime_config: Arc<RuntimeConfig>,
         fields: BankFieldsToDeserialize,
         debug_keys: Option<Arc<HashSet<Pubkey>>>,
-        debug_do_not_add_builtins: bool,
         accounts_data_size_initial: u64,
     ) -> Self {
         let now = Instant::now();
@@ -1781,7 +1776,6 @@ impl Bank {
             is_delta: AtomicBool::new(fields.is_delta),
             rewards: RwLock::new(vec![]),
             cluster_type: Some(genesis_config.cluster_type),
-            rewards_pool_pubkeys: Arc::<HashSet<Pubkey>>::default(),
             transaction_debug_keys: debug_keys,
             transaction_log_collector_config: Arc::<RwLock<TransactionLogCollectorConfig>>::default(
             ),
@@ -1813,30 +1807,10 @@ impl Bank {
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
         };
 
-        bank.transaction_processor =
-            TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
-
-        // TODO: Only create the thread pool if we need to recalculate rewards,
-        // i.e. epoch_reward_status is active. Currently, this thread pool is
-        // always created and used for recalculate_partitioned_rewards and
-        // lt_hash calculation. Once lt_hash feature is active, lt_hash won't
-        // need the thread pool. Thereby, after lt_hash feature activation, we
-        // can change to create the thread pool only when we need to recalculate
-        // rewards.
-        let thread_pool = ThreadPoolBuilder::new()
-            .thread_name(|i| format!("solBnkNewFlds{i:02}"))
-            .build()
-            .expect("new rayon threadpool");
-        bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
-
-        bank.finish_init(genesis_config, debug_do_not_add_builtins);
-        bank.transaction_processor
-            .fill_missing_sysvar_cache_entries(&bank);
-
         // Sanity assertions between bank snapshot and genesis config
         // Consider removing from serializable bank state
         // (BankFieldsToSerialize/BankFieldsToDeserialize) and initializing
-        // from the passed in genesis_config instead (as new()/new_with_paths() already do)
+        // from the passed in genesis_config instead (as new()/new_from_genesis() already do)
         assert_eq!(
             bank.genesis_creation_time, genesis_config.creation_time,
             "Bank snapshot genesis creation time does not match genesis.bin creation time. The \
@@ -1859,6 +1833,13 @@ impl Bank {
         );
         assert_eq!(bank.epoch_schedule, genesis_config.epoch_schedule);
         assert_eq!(bank.epoch, bank.epoch_schedule.get_epoch(bank.slot));
+
+        bank.initialize_after_snapshot_restore(|| {
+            ThreadPoolBuilder::new()
+                .thread_name(|i| format!("solBnkClcRwds{i:02}"))
+                .build()
+                .expect("new rayon threadpool")
+        });
 
         datapoint_info!(
             "bank-new-from-fields",
@@ -2526,7 +2507,6 @@ impl Bank {
 
         let mut total_index_us = 0;
         let mut total_cache_us = 0;
-        let mut total_store_us = 0;
 
         let mut squash_accounts_time = Measure::start("squash_accounts_time");
         for slot in roots.iter().rev() {
@@ -2534,7 +2514,6 @@ impl Bank {
             let add_root_timing = self.rc.accounts.add_root(*slot);
             total_index_us += add_root_timing.index_us;
             total_cache_us += add_root_timing.cache_us;
-            total_store_us += add_root_timing.store_us;
         }
         squash_accounts_time.stop();
 
@@ -2550,8 +2529,6 @@ impl Bank {
             squash_accounts_ms: squash_accounts_time.as_ms(),
             squash_accounts_index_ms: total_index_us / 1000,
             squash_accounts_cache_ms: total_cache_us / 1000,
-            squash_accounts_store_ms: total_store_us / 1000,
-
             squash_cache_ms: squash_cache_time.as_ms(),
         }
     }
@@ -2634,11 +2611,6 @@ impl Bank {
             self.slots_per_year,
             genesis_config.rent.clone(),
         );
-
-        // Add additional builtin programs specified in the genesis config
-        for (name, program_id) in &genesis_config.native_instruction_processors {
-            self.add_builtin_account(name, program_id);
-        }
     }
 
     fn burn_and_purge_account(&self, program_id: &Pubkey, mut account: AccountSharedData) {
@@ -2743,16 +2715,6 @@ impl Bank {
         Some(self.get_fee_for_message_with_lamports_per_signature(message, lamports_per_signature))
     }
 
-    /// Returns true when startup accounts hash verification has completed or never had to run in background.
-    pub fn get_startup_verification_complete(&self) -> &Arc<AtomicBool> {
-        &self
-            .rc
-            .accounts
-            .accounts_db
-            .verify_accounts_hash_in_bg
-            .verified
-    }
-
     pub fn get_fee_for_message_with_lamports_per_signature(
         &self,
         message: &impl SVMMessage,
@@ -2796,6 +2758,7 @@ impl Bank {
     }
 
     /// Forget all signatures. Useful for benchmarking.
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn clear_signatures(&self) {
         self.status_cache.write().unwrap().clear();
     }
@@ -2960,6 +2923,9 @@ impl Bank {
         &self,
         txs: Vec<VersionedTransaction>,
     ) -> Result<TransactionBatch<RuntimeTransaction<SanitizedTransaction>>> {
+        let enable_static_instruction_limit = self
+            .feature_set
+            .is_active(&agave_feature_set::static_instruction_limit::id());
         let sanitized_txs = txs
             .into_iter()
             .map(|tx| {
@@ -2969,6 +2935,7 @@ impl Bank {
                     None,
                     self,
                     self.get_reserved_account_keys(),
+                    enable_static_instruction_limit,
                 )
             })
             .collect::<Result<Vec<_>>>()?;
@@ -4066,19 +4033,17 @@ impl Bank {
         cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
     }
 
-    fn finish_init(&mut self, genesis_config: &GenesisConfig, debug_do_not_add_builtins: bool) {
-        if let Some(compute_budget) = self.compute_budget {
-            self.transaction_processor
-                .set_execution_cost(compute_budget.to_cost());
-        }
+    /// This is called from genesis and snapshot restore
+    fn apply_activated_features(&mut self) {
+        // Update active set of reserved account keys which are not allowed to be write locked
+        self.reserved_account_keys = {
+            let mut reserved_keys = ReservedAccountKeys::clone(&self.reserved_account_keys);
+            reserved_keys.update_active_set(&self.feature_set);
+            Arc::new(reserved_keys)
+        };
 
-        self.rewards_pool_pubkeys =
-            Arc::new(genesis_config.rewards_pools.keys().cloned().collect());
-
-        self.apply_feature_activations(
-            ApplyFeatureActivationsCaller::FinishInit,
-            debug_do_not_add_builtins,
-        );
+        // Update the transaction processor with all active built-in programs
+        self.add_active_builtin_programs();
 
         // Cost-Tracker is not serialized in snapshot or any configs.
         // We must apply previously activated features related to limits here
@@ -4102,60 +4067,40 @@ impl Bank {
             self.apply_simd_0306_cost_tracker_changes();
         }
 
-        if !debug_do_not_add_builtins {
-            for builtin in BUILTINS {
-                // The builtin should be added if it has no enable feature ID
-                // and it has not been migrated to Core BPF.
-                //
-                // If a program was previously migrated to Core BPF, accountsDB
-                // from snapshot should contain the BPF program accounts.
-                let builtin_is_bpf = |program_id: &Pubkey| {
-                    self.get_account(program_id)
-                        .map(|a| a.owner() == &bpf_loader_upgradeable::id())
-                        .unwrap_or(false)
-                };
-                if builtin.enable_feature_id.is_none() && !builtin_is_bpf(&builtin.program_id) {
-                    self.transaction_processor.add_builtin(
-                        self,
-                        builtin.program_id,
-                        builtin.name,
-                        ProgramCacheEntry::new_builtin(0, builtin.name.len(), builtin.entrypoint),
-                    );
-                }
-            }
-            for precompile in get_precompiles() {
-                if precompile.feature.is_none() {
-                    self.add_precompile(&precompile.program_id);
-                }
-            }
-        }
-
-        let simd_0296_active = self
-            .feature_set
-            .is_active(&raise_cpi_nesting_limit_to_8::id());
-
+        let (program_runtime_environment_v1, program_runtime_environment_v2) =
+            self.create_program_runtime_environments(&self.feature_set);
         self.transaction_processor
             .configure_program_runtime_environments(
-                Some(Arc::new(
-                    create_program_runtime_environment_v1(
-                        &self.feature_set.runtime_features(),
-                        &self
-                            .compute_budget()
-                            .unwrap_or(ComputeBudget::new_with_defaults(simd_0296_active))
-                            .to_budget(),
-                        false, /* deployment */
-                        false, /* debugging_features */
-                    )
-                    .unwrap(),
-                )),
-                Some(Arc::new(create_program_runtime_environment_v2(
-                    &self
-                        .compute_budget()
-                        .unwrap_or(ComputeBudget::new_with_defaults(simd_0296_active))
-                        .to_budget(),
-                    false, /* debugging_features */
-                ))),
+                Some(program_runtime_environment_v1),
+                Some(program_runtime_environment_v2),
             );
+    }
+
+    fn create_program_runtime_environments(
+        &self,
+        feature_set: &FeatureSet,
+    ) -> (ProgramRuntimeEnvironment, ProgramRuntimeEnvironment) {
+        let simd_0268_active = feature_set.is_active(&raise_cpi_nesting_limit_to_8::id());
+        let compute_budget = self
+            .compute_budget()
+            .as_ref()
+            .unwrap_or(&ComputeBudget::new_with_defaults(simd_0268_active))
+            .to_budget();
+        (
+            Arc::new(
+                create_program_runtime_environment_v1(
+                    &feature_set.runtime_features(),
+                    &compute_budget,
+                    false, /* deployment */
+                    false, /* debugging_features */
+                )
+                .unwrap(),
+            ),
+            Arc::new(create_program_runtime_environment_v2(
+                &compute_budget,
+                false, /* debugging_features */
+            )),
+        )
     }
 
     pub fn set_tick_height(&self, tick_height: u64) {
@@ -4269,7 +4214,7 @@ impl Bank {
         &self,
         program_id: &Pubkey,
         config: &ScanConfig,
-    ) -> ScanResult<Vec<TransactionAccount>> {
+    ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         self.rc
             .accounts
             .load_by_program(&self.ancestors, self.bank_id, program_id, config)
@@ -4280,7 +4225,7 @@ impl Bank {
         program_id: &Pubkey,
         filter: F,
         config: &ScanConfig,
-    ) -> ScanResult<Vec<TransactionAccount>> {
+    ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         self.rc.accounts.load_by_program_with_filter(
             &self.ancestors,
             self.bank_id,
@@ -4296,7 +4241,7 @@ impl Bank {
         filter: F,
         config: &ScanConfig,
         byte_limit_for_scan: Option<usize>,
-    ) -> ScanResult<Vec<TransactionAccount>> {
+    ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         self.rc.accounts.load_by_index_key_with_filter(
             &self.ancestors,
             self.bank_id,
@@ -4331,7 +4276,7 @@ impl Bank {
     pub fn get_program_accounts_modified_since_parent(
         &self,
         program_id: &Pubkey,
-    ) -> Vec<TransactionAccount> {
+    ) -> Vec<KeyedAccountSharedData> {
         self.rc
             .accounts
             .load_by_program_slot(self.slot(), Some(program_id))
@@ -4348,7 +4293,7 @@ impl Bank {
     }
 
     /// Returns all the accounts stored in this slot
-    pub fn get_all_accounts_modified_since_parent(&self) -> Vec<TransactionAccount> {
+    pub fn get_all_accounts_modified_since_parent(&self) -> Vec<KeyedAccountSharedData> {
         self.rc.accounts.load_by_program_slot(self.slot(), None)
     }
 
@@ -4587,11 +4532,6 @@ impl Bank {
         calculated_accounts_lt_hash: Option<&AccountsLtHash>,
     ) -> bool {
         let accounts_db = &self.rc.accounts.accounts_db;
-        // Wait until initial hash calc is complete before starting a new hash calc.
-        // This should only occur when we halt at a slot in ledger-tool.
-        accounts_db
-            .verify_accounts_hash_in_bg
-            .join_background_thread();
 
         let slot = self.slot();
 
@@ -4637,31 +4577,8 @@ impl Bank {
                 accounts_db.calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors, slot);
             check_lt_hash(&expected_accounts_lt_hash, &calculated_accounts_lt_hash)
         };
-        self.set_initial_accounts_hash_verification_completed();
         info!("Verifying accounts... Done in {:?}", start.elapsed());
         is_ok
-    }
-
-    /// Specify that initial verification has completed.
-    /// Called internally when verification runs in the foreground thread.
-    /// Also has to be called by some tests which don't do verification on startup.
-    pub fn set_initial_accounts_hash_verification_completed(&self) {
-        self.rc
-            .accounts
-            .accounts_db
-            .verify_accounts_hash_in_bg
-            .verification_complete();
-    }
-
-    /// return true if bg hash verification is complete
-    /// return false if bg hash verification has not completed yet
-    /// if hash verification failed, a panic will occur
-    pub fn has_initial_accounts_hash_verification_completed(&self) -> bool {
-        self.rc
-            .accounts
-            .accounts_db
-            .verify_accounts_hash_in_bg
-            .check_complete()
     }
 
     /// Get this bank's storages to use for snapshots.
@@ -4700,6 +4617,9 @@ impl Bank {
         tx: VersionedTransaction,
         verification_mode: TransactionVerificationMode,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
+        let enable_static_instruction_limit = self
+            .feature_set
+            .is_active(&agave_feature_set::static_instruction_limit::id());
         let sanitized_tx = {
             let size =
                 bincode::serialized_size(&tx).map_err(|_| TransactionError::SanitizeFailure)?;
@@ -4708,6 +4628,13 @@ impl Bank {
             }
             let message_hash = if verification_mode == TransactionVerificationMode::FullVerification
             {
+                // SIMD-0160, check instruction limit before signature verificaton
+                if enable_static_instruction_limit
+                    && tx.message.instructions().len()
+                        > solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH
+                {
+                    return Err(solana_transaction_error::TransactionError::SanitizeFailure);
+                }
                 tx.verify_and_hash_message()?
             } else {
                 tx.message.hash()
@@ -4719,6 +4646,7 @@ impl Bank {
                 None,
                 self,
                 self.get_reserved_account_keys(),
+                enable_static_instruction_limit,
             )
         }?;
 
@@ -4758,11 +4686,6 @@ impl Bank {
     /// Only intended to be called at startup by ledger-tool or tests.
     /// (cannot be made DCOU due to solana-program-test)
     pub fn calculate_capitalization_for_tests(&self) -> u64 {
-        self.rc
-            .accounts
-            .accounts_db
-            .verify_accounts_hash_in_bg
-            .join_background_thread();
         self.rc
             .accounts
             .accounts_db
@@ -4811,7 +4734,6 @@ impl Bank {
                 )
             } else {
                 info!("Verifying accounts... Skipped.");
-                self.set_initial_accounts_hash_verification_completed();
                 true
             }
         });
@@ -5143,8 +5065,7 @@ impl Bank {
         program_id: Pubkey,
         builtin_function: BuiltinFunctionWithContext,
     ) {
-        self.transaction_processor.add_builtin(
-            self,
+        self.add_builtin(
             program_id,
             "mockup",
             ProgramCacheEntry::new_builtin(self.slot, 0, builtin_function),
@@ -5248,21 +5169,55 @@ impl Bank {
         &self.reserved_account_keys.active
     }
 
-    // This is called from snapshot restore AND for each epoch boundary
-    // The entire code path herein must be idempotent
-    fn apply_feature_activations(
-        &mut self,
-        caller: ApplyFeatureActivationsCaller,
-        debug_do_not_add_builtins: bool,
-    ) {
-        use ApplyFeatureActivationsCaller as Caller;
-        let allow_new_activations = match caller {
-            Caller::FinishInit => false,
-            Caller::NewFromParent => true,
-            Caller::WarpFromParent => false,
-        };
+    /// Compute and apply all activated features, initialize the transaction
+    /// processor, and recalculate partitioned rewards if needed
+    fn initialize_after_snapshot_restore<F, TP>(&mut self, rewards_thread_pool_builder: F)
+    where
+        F: FnOnce() -> TP,
+        TP: std::borrow::Borrow<ThreadPool>,
+    {
+        self.transaction_processor =
+            TransactionBatchProcessor::new_uninitialized(self.slot, self.epoch);
+        if let Some(compute_budget) = &self.compute_budget {
+            self.transaction_processor
+                .set_execution_cost(compute_budget.to_cost());
+        }
+
+        self.compute_and_apply_features_after_snapshot_restore();
+
+        self.recalculate_partitioned_rewards_if_active(rewards_thread_pool_builder);
+
+        self.transaction_processor
+            .fill_missing_sysvar_cache_entries(self);
+    }
+
+    /// Compute and apply all activated features and also add accounts for builtins
+    fn compute_and_apply_genesis_features(&mut self) {
+        // Update the feature set to include all features active at this slot
+        let feature_set = self.compute_active_feature_set(false).0;
+        self.feature_set = Arc::new(feature_set);
+
+        // Add built-in program accounts to the bank if they don't already exist
+        self.add_builtin_program_accounts();
+
+        self.apply_activated_features();
+    }
+
+    /// Compute and apply all activated features but do not add built-in
+    /// accounts because we shouldn't modify accounts db for a completed bank
+    fn compute_and_apply_features_after_snapshot_restore(&mut self) {
+        // Update the feature set to include all features active at this slot
+        let feature_set = self.compute_active_feature_set(false).0;
+        self.feature_set = Arc::new(feature_set);
+
+        self.apply_activated_features();
+    }
+
+    /// This is called from each epoch boundary
+    fn compute_and_apply_new_feature_activations(&mut self) {
+        let include_pending = true;
         let (feature_set, new_feature_activations) =
-            self.compute_active_feature_set(allow_new_activations);
+            self.compute_active_feature_set(include_pending);
         self.feature_set = Arc::new(feature_set);
 
         // Update activation slot of features in `new_feature_activations`
@@ -5298,12 +5253,7 @@ impl Bank {
             self.rent_collector.rent.burn_percent = 50; // 50% rent burn
         }
 
-        if !debug_do_not_add_builtins {
-            self.apply_builtin_program_feature_transitions(
-                allow_new_activations,
-                &new_feature_activations,
-            );
-        }
+        self.apply_new_builtin_program_feature_transitions(&new_feature_activations);
 
         if new_feature_activations.contains(&feature_set::raise_block_limits_to_100m::id()) {
             let block_cost_limit = simd_0286_block_limits();
@@ -5323,6 +5273,70 @@ impl Bank {
 
         if new_feature_activations.contains(&feature_set::raise_account_cu_limit::id()) {
             self.apply_simd_0306_cost_tracker_changes();
+        }
+    }
+
+    fn apply_new_builtin_program_feature_transitions(
+        &mut self,
+        new_feature_activations: &AHashSet<Pubkey>,
+    ) {
+        for builtin in BUILTINS.iter() {
+            if let Some(feature_id) = builtin.enable_feature_id {
+                if new_feature_activations.contains(&feature_id) {
+                    self.add_builtin(
+                        builtin.program_id,
+                        builtin.name,
+                        ProgramCacheEntry::new_builtin(
+                            self.feature_set.activated_slot(&feature_id).unwrap_or(0),
+                            builtin.name.len(),
+                            builtin.entrypoint,
+                        ),
+                    );
+                }
+            }
+
+            if let Some(core_bpf_migration_config) = &builtin.core_bpf_migration_config {
+                // If the builtin is set to be migrated to Core BPF on feature
+                // activation, perform the migration which will remove it from
+                // the builtins list and the cache.
+                if new_feature_activations.contains(&core_bpf_migration_config.feature_id) {
+                    if let Err(e) = self
+                        .migrate_builtin_to_core_bpf(&builtin.program_id, core_bpf_migration_config)
+                    {
+                        warn!(
+                            "Failed to migrate builtin {} to Core BPF: {}",
+                            builtin.name, e
+                        );
+                    }
+                }
+            };
+        }
+
+        // Migrate any necessary stateless builtins to core BPF.
+        // Stateless builtins do not have an `enable_feature_id` since they
+        // do not exist on-chain.
+        for stateless_builtin in STATELESS_BUILTINS.iter() {
+            if let Some(core_bpf_migration_config) = &stateless_builtin.core_bpf_migration_config {
+                if new_feature_activations.contains(&core_bpf_migration_config.feature_id) {
+                    if let Err(e) = self.migrate_builtin_to_core_bpf(
+                        &stateless_builtin.program_id,
+                        core_bpf_migration_config,
+                    ) {
+                        warn!(
+                            "Failed to migrate stateless builtin {} to Core BPF: {}",
+                            stateless_builtin.name, e
+                        );
+                    }
+                }
+            }
+        }
+
+        for precompile in get_precompiles() {
+            if let Some(feature_id) = &precompile.feature {
+                if new_feature_activations.contains(feature_id) {
+                    self.add_precompile(&precompile.program_id);
+                }
+            }
         }
     }
 
@@ -5369,11 +5383,21 @@ impl Bank {
         (FeatureSet::new(active, inactive), pending)
     }
 
-    fn apply_builtin_program_feature_transitions(
-        &mut self,
-        only_apply_transitions_for_new_features: bool,
-        new_feature_activations: &AHashSet<Pubkey>,
-    ) {
+    /// If `feature_id` is pending to be activated at the next epoch boundary, return
+    /// the first slot at which it will be active (the epoch boundary).
+    pub fn compute_pending_activation_slot(&self, feature_id: &Pubkey) -> Option<Slot> {
+        let account = self.get_account_with_fixed_root(feature_id)?;
+        let feature = feature::from_account(&account)?;
+        if feature.activated_at.is_some() {
+            // Feature is already active
+            return None;
+        }
+        // Feature will be active at the next epoch boundary
+        let active_epoch = self.epoch + 1;
+        Some(self.epoch_schedule.get_first_slot_in_epoch(active_epoch))
+    }
+
+    fn add_active_builtin_programs(&mut self) {
         for builtin in BUILTINS.iter() {
             // The `builtin_is_bpf` flag is used to handle the case where a
             // builtin is scheduled to be enabled by one feature gate and
@@ -5391,82 +5415,88 @@ impl Bank {
             //
             // Using the same feature gate for both enabling and migrating a
             // builtin to Core BPF should be strictly avoided.
-            let mut builtin_is_bpf = false;
-            if let Some(core_bpf_migration_config) = &builtin.core_bpf_migration_config {
-                // If the builtin is set to be migrated to Core BPF on feature
-                // activation, perform the migration and do not add the program
-                // to the bank's builtins. The migration will remove it from
-                // the builtins list and the cache.
-                if new_feature_activations.contains(&core_bpf_migration_config.feature_id) {
-                    if let Err(e) = self
-                        .migrate_builtin_to_core_bpf(&builtin.program_id, core_bpf_migration_config)
-                    {
-                        warn!(
-                            "Failed to migrate builtin {} to Core BPF: {}",
-                            builtin.name, e
-                        );
-                    } else {
-                        builtin_is_bpf = true;
-                    }
-                } else {
-                    // If the builtin has already been migrated to Core BPF, do not
-                    // add it to the bank's builtins.
-                    builtin_is_bpf = self
-                        .get_account(&builtin.program_id)
-                        .map(|a| a.owner() == &bpf_loader_upgradeable::id())
-                        .unwrap_or(false);
-                }
+            let builtin_is_bpf = builtin.core_bpf_migration_config.is_some() && {
+                self.get_account(&builtin.program_id)
+                    .map(|a| a.owner() == &bpf_loader_upgradeable::id())
+                    .unwrap_or(false)
             };
 
-            if let Some(feature_id) = builtin.enable_feature_id {
-                let should_enable_builtin_on_feature_transition = !builtin_is_bpf
-                    && if only_apply_transitions_for_new_features {
-                        new_feature_activations.contains(&feature_id)
-                    } else {
-                        self.feature_set.is_active(&feature_id)
-                    };
+            // If the builtin has already been migrated to Core BPF, do not
+            // add it to the bank's builtins.
+            if builtin_is_bpf {
+                continue;
+            }
 
-                if should_enable_builtin_on_feature_transition {
-                    self.transaction_processor.add_builtin(
-                        self,
-                        builtin.program_id,
-                        builtin.name,
-                        ProgramCacheEntry::new_builtin(
-                            self.feature_set.activated_slot(&feature_id).unwrap_or(0),
-                            builtin.name.len(),
-                            builtin.entrypoint,
-                        ),
-                    );
-                }
+            let builtin_is_active = builtin
+                .enable_feature_id
+                .map(|feature_id| self.feature_set.is_active(&feature_id))
+                .unwrap_or(true);
+
+            if builtin_is_active {
+                let activation_slot = builtin
+                    .enable_feature_id
+                    .and_then(|feature_id| self.feature_set.activated_slot(&feature_id))
+                    .unwrap_or(0);
+                self.transaction_processor.add_builtin(
+                    builtin.program_id,
+                    ProgramCacheEntry::new_builtin(
+                        activation_slot,
+                        builtin.name.len(),
+                        builtin.entrypoint,
+                    ),
+                );
             }
         }
+    }
 
-        // Migrate any necessary stateless builtins to core BPF.
-        // Stateless builtins do not have an `enable_feature_id` since they
-        // do not exist on-chain.
-        for stateless_builtin in STATELESS_BUILTINS.iter() {
-            if let Some(core_bpf_migration_config) = &stateless_builtin.core_bpf_migration_config {
-                if new_feature_activations.contains(&core_bpf_migration_config.feature_id) {
-                    if let Err(e) = self.migrate_builtin_to_core_bpf(
-                        &stateless_builtin.program_id,
-                        core_bpf_migration_config,
-                    ) {
-                        warn!(
-                            "Failed to migrate stateless builtin {} to Core BPF: {}",
-                            stateless_builtin.name, e
-                        );
-                    }
-                }
+    fn add_builtin_program_accounts(&mut self) {
+        for builtin in BUILTINS.iter() {
+            // The `builtin_is_bpf` flag is used to handle the case where a
+            // builtin is scheduled to be enabled by one feature gate and
+            // later migrated to Core BPF by another.
+            //
+            // There should never be a case where a builtin is set to be
+            // migrated to Core BPF and is also set to be enabled on feature
+            // activation on the same feature gate. However, the
+            // `builtin_is_bpf` flag will handle this case as well, electing
+            // to first attempt the migration to Core BPF.
+            //
+            // The migration to Core BPF will fail gracefully because the
+            // program account will not exist. The builtin will subsequently
+            // be enabled, but it will never be migrated to Core BPF.
+            //
+            // Using the same feature gate for both enabling and migrating a
+            // builtin to Core BPF should be strictly avoided.
+            let builtin_is_bpf = builtin.core_bpf_migration_config.is_some() && {
+                self.get_account(&builtin.program_id)
+                    .map(|a| a.owner() == &bpf_loader_upgradeable::id())
+                    .unwrap_or(false)
+            };
+
+            // If the builtin has already been migrated to Core BPF, do not
+            // add it to the bank's builtins.
+            if builtin_is_bpf {
+                continue;
+            }
+
+            let builtin_is_active = builtin
+                .enable_feature_id
+                .map(|feature_id| self.feature_set.is_active(&feature_id))
+                .unwrap_or(true);
+
+            if builtin_is_active {
+                self.add_builtin_account(builtin.name, &builtin.program_id);
             }
         }
 
         for precompile in get_precompiles() {
-            let should_add_precompile = precompile
+            let precompile_is_active = precompile
                 .feature
                 .as_ref()
                 .map(|feature_id| self.feature_set.is_active(feature_id))
-                .unwrap_or(false);
-            if should_add_precompile {
+                .unwrap_or(true);
+
+            if precompile_is_active {
                 self.add_precompile(&precompile.program_id);
             }
         }
@@ -5548,6 +5578,10 @@ impl Bank {
         &self.fee_structure
     }
 
+    pub fn parent_block_id(&self) -> Option<Hash> {
+        self.parent().and_then(|p| p.block_id())
+    }
+
     pub fn block_id(&self) -> Option<Hash> {
         *self.block_id.read().unwrap()
     }
@@ -5561,8 +5595,54 @@ impl Bank {
     }
 
     pub fn add_builtin(&self, program_id: Pubkey, name: &str, builtin: ProgramCacheEntry) {
-        self.transaction_processor
-            .add_builtin(self, program_id, name, builtin)
+        debug!("Adding program {name} under {program_id:?}");
+        self.add_builtin_account(name, &program_id);
+        self.transaction_processor.add_builtin(program_id, builtin);
+        debug!("Added program {name} under {program_id:?}");
+    }
+
+    // NOTE: must hold idempotent for the same set of arguments
+    /// Add a builtin program account
+    fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
+        let existing_genuine_program =
+            self.get_account_with_fixed_root(program_id)
+                .and_then(|account| {
+                    // it's very unlikely to be squatted at program_id as non-system account because of burden to
+                    // find victim's pubkey/hash. So, when account.owner is indeed native_loader's, it's
+                    // safe to assume it's a genuine program.
+                    if native_loader::check_id(account.owner()) {
+                        Some(account)
+                    } else {
+                        // malicious account is pre-occupying at program_id
+                        self.burn_and_purge_account(program_id, account);
+                        None
+                    }
+                });
+
+        // introducing builtin program
+        if existing_genuine_program.is_some() {
+            // The existing account is sufficient
+            return;
+        }
+
+        assert!(
+            !self.freeze_started(),
+            "Can't change frozen bank by adding not-existing new builtin program ({name}, \
+             {program_id}). Maybe, inconsistent program activation is detected on snapshot \
+             restore?"
+        );
+
+        // Add a bogus executable builtin account, which will be loaded and ignored.
+        let (lamports, rent_epoch) =
+            self.inherit_specially_retained_account_fields(&existing_genuine_program);
+        let account: AccountSharedData = AccountSharedData::from(Account {
+            lamports,
+            data: name.as_bytes().to_vec(),
+            owner: solana_sdk_ids::native_loader::id(),
+            executable: true,
+            rent_epoch,
+        });
+        self.store_account_and_update_capitalization(program_id, &account);
     }
 
     pub fn get_bank_hash_stats(&self) -> BankHashStats {
@@ -5624,50 +5704,6 @@ impl TransactionProcessingCallback for Bank {
             .accounts
             .accounts_db
             .load_with_fixed_root(&self.ancestors, pubkey)
-    }
-
-    // NOTE: must hold idempotent for the same set of arguments
-    /// Add a builtin program account
-    fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
-        let existing_genuine_program =
-            self.get_account_with_fixed_root(program_id)
-                .and_then(|account| {
-                    // it's very unlikely to be squatted at program_id as non-system account because of burden to
-                    // find victim's pubkey/hash. So, when account.owner is indeed native_loader's, it's
-                    // safe to assume it's a genuine program.
-                    if native_loader::check_id(account.owner()) {
-                        Some(account)
-                    } else {
-                        // malicious account is pre-occupying at program_id
-                        self.burn_and_purge_account(program_id, account);
-                        None
-                    }
-                });
-
-        // introducing builtin program
-        if existing_genuine_program.is_some() {
-            // The existing account is sufficient
-            return;
-        }
-
-        assert!(
-            !self.freeze_started(),
-            "Can't change frozen bank by adding not-existing new builtin program ({name}, \
-             {program_id}). Maybe, inconsistent program activation is detected on snapshot \
-             restore?"
-        );
-
-        // Add a bogus executable builtin account, which will be loaded and ignored.
-        let (lamports, rent_epoch) =
-            self.inherit_specially_retained_account_fields(&existing_genuine_program);
-        let account: AccountSharedData = AccountSharedData::from(Account {
-            lamports,
-            data: name.as_bytes().to_vec(),
-            owner: solana_sdk_ids::native_loader::id(),
-            executable: true,
-            rent_epoch,
-        });
-        self.store_account_and_update_capitalization(program_id, &account);
     }
 
     fn inspect_account(&self, address: &Pubkey, account_state: AccountState, is_writable: bool) {
@@ -5749,13 +5785,12 @@ impl Bank {
         test_config: BankTestConfig,
         paths: Vec<PathBuf>,
     ) -> Self {
-        Self::new_with_paths(
+        Self::new_from_genesis(
             genesis_config,
             runtime_config,
             paths,
             None,
-            false,
-            Some(test_config.accounts_db_config),
+            test_config.accounts_db_config,
             None,
             Some(Pubkey::new_unique()),
             Arc::default(),
@@ -5771,13 +5806,12 @@ impl Bank {
     /// Intended for use by benches only.
     /// create new bank with the given config and paths.
     pub fn new_with_paths_for_benches(genesis_config: &GenesisConfig, paths: Vec<PathBuf>) -> Self {
-        Self::new_with_paths(
+        Self::new_from_genesis(
             genesis_config,
             Arc::<RuntimeConfig>::default(),
             paths,
             None,
-            false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS),
+            ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS,
             None,
             Some(Pubkey::new_unique()),
             Arc::default(),
@@ -5844,16 +5878,6 @@ impl Bank {
             .accounts
             .accounts_db
             .flush_accounts_cache_slot_for_tests(self.slot())
-    }
-
-    /// This is only valid to call from tests.
-    /// block until initial accounts hash verification has completed
-    pub fn wait_for_initial_accounts_hash_verification_completed_for_tests(&self) {
-        self.rc
-            .accounts
-            .accounts_db
-            .verify_accounts_hash_in_bg
-            .join_background_thread()
     }
 
     pub fn get_sysvar_cache_for_tests(&self) -> SysvarCache {
@@ -5965,15 +5989,6 @@ fn calculate_data_size_delta(old_data_size: usize, new_data_size: usize) -> i64 
     let new_data_size = new_data_size as i64;
 
     new_data_size.saturating_sub(old_data_size)
-}
-
-/// Since `apply_feature_activations()` has different behavior depending on its caller, enumerate
-/// those callers explicitly.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum ApplyFeatureActivationsCaller {
-    FinishInit,
-    NewFromParent,
-    WarpFromParent,
 }
 
 impl Drop for Bank {

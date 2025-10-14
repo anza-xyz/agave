@@ -4,10 +4,13 @@ use crate::{
     transaction_view::UnsanitizedTransactionView,
 };
 
-pub(crate) fn sanitize(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
+pub(crate) fn sanitize(
+    view: &UnsanitizedTransactionView<impl TransactionData>,
+    enable_static_instruction_limit: bool,
+) -> Result<()> {
     sanitize_signatures(view)?;
     sanitize_account_access(view)?;
-    sanitize_instructions(view)?;
+    sanitize_instructions(view, enable_static_instruction_limit)?;
     sanitize_address_table_lookups(view)
 }
 
@@ -51,7 +54,18 @@ fn sanitize_account_access(view: &UnsanitizedTransactionView<impl TransactionDat
     Ok(())
 }
 
-fn sanitize_instructions(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
+fn sanitize_instructions(
+    view: &UnsanitizedTransactionView<impl TransactionData>,
+    enable_static_instruction_limit: bool,
+) -> Result<()> {
+    // SIMD-160: transaction can not have more than 64 top level instructions
+    if enable_static_instruction_limit
+        && usize::from(view.num_instructions())
+            > solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH
+    {
+        return Err(TransactionViewError::SanitizeError);
+    }
+
     // already verified there is at least one static account.
     let max_program_id_index = view.num_static_account_keys().wrapping_sub(1);
     // verified that there are no more than 256 accounts in `sanitize_account_access`
@@ -172,7 +186,7 @@ mod tests {
         let transaction = multiple_transfers();
         let data = bincode::serialize(&transaction).unwrap();
         let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
-        assert!(view.sanitize().is_ok());
+        assert!(view.sanitize(true).is_ok());
     }
 
     #[test]
@@ -379,7 +393,7 @@ mod tests {
             );
             let data = bincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
-            assert!(sanitize_instructions(&view).is_ok());
+            assert!(sanitize_instructions(&view, true).is_ok());
 
             let transaction = create_v0_transaction(
                 num_signatures,
@@ -390,7 +404,7 @@ mod tests {
             );
             let data = bincode::serialize(&transaction).unwrap();
             let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
-            assert!(sanitize_instructions(&view).is_ok());
+            assert!(sanitize_instructions(&view, true).is_ok());
         }
 
         for instruction_index in 0..valid_instructions.len() {
@@ -407,7 +421,7 @@ mod tests {
                 let data = bincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
-                    sanitize_instructions(&view),
+                    sanitize_instructions(&view, true),
                     Err(TransactionViewError::SanitizeError)
                 );
             }
@@ -426,7 +440,7 @@ mod tests {
                 let data = bincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
-                    sanitize_instructions(&view),
+                    sanitize_instructions(&view, true),
                     Err(TransactionViewError::SanitizeError)
                 );
             }
@@ -444,7 +458,7 @@ mod tests {
                 let data = bincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
-                    sanitize_instructions(&view),
+                    sanitize_instructions(&view, true),
                     Err(TransactionViewError::SanitizeError)
                 );
             }
@@ -464,7 +478,7 @@ mod tests {
                 let data = bincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
-                    sanitize_instructions(&view),
+                    sanitize_instructions(&view, true),
                     Err(TransactionViewError::SanitizeError)
                 );
             }
@@ -488,10 +502,48 @@ mod tests {
                 let data = bincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
-                    sanitize_instructions(&view),
+                    sanitize_instructions(&view, true),
                     Err(TransactionViewError::SanitizeError)
                 );
             }
+        }
+
+        // SIMD-0160, too many instructions are invalid
+        {
+            let too_many_instructions: Vec<_> = valid_instructions
+                .iter()
+                .cycle()
+                .take(65)
+                .cloned()
+                .collect();
+            let transaction = create_legacy_transaction(
+                num_signatures,
+                header,
+                account_keys.clone(),
+                too_many_instructions.clone(),
+            );
+            let data = bincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+            assert_eq!(
+                sanitize_instructions(&view, true),
+                Err(TransactionViewError::SanitizeError)
+            );
+            assert!(sanitize_instructions(&view, false).is_ok());
+
+            let transaction = create_v0_transaction(
+                num_signatures,
+                header,
+                account_keys.clone(),
+                too_many_instructions.clone(),
+                atls.clone(),
+            );
+            let data = bincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+            assert_eq!(
+                sanitize_instructions(&view, true),
+                Err(TransactionViewError::SanitizeError)
+            );
+            assert!(sanitize_instructions(&view, false).is_ok());
         }
     }
 

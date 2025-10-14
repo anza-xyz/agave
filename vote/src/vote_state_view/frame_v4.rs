@@ -123,6 +123,7 @@ impl VoteStateFrameV4 {
 mod tests {
     use {
         super::*,
+        serde::{Deserialize, Serialize},
         solana_vote_interface::{
             authorized_voters::AuthorizedVoters,
             state::{LandedVote, Lockout, VoteStateV4, BLS_PUBLIC_KEY_COMPRESSED_SIZE},

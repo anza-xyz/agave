@@ -1,1 +1,1 @@
-../docs/src/contributing/testnet.md
+../docs/src/clusters/testnet.md

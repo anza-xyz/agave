@@ -2,6 +2,7 @@
 pub struct SVMFeatureSet {
     pub move_precompile_verification_to_svm: bool,
     pub stricter_abi_and_runtime_constraints: bool,
+    pub account_data_direct_mapping: bool,
     pub enable_bpf_loader_set_authority_checked_ix: bool,
     pub enable_loader_v4: bool,
     pub deplete_cu_meter_on_vm_failure: bool,
@@ -36,6 +37,7 @@ pub struct SVMFeatureSet {
     pub disable_zk_elgamal_proof_program: bool,
     pub reenable_zk_elgamal_proof_program: bool,
     pub raise_cpi_nesting_limit_to_8: bool,
+    pub provide_instruction_data_offset_in_vm_r2: bool,
 }
 
 impl SVMFeatureSet {
@@ -43,6 +45,7 @@ impl SVMFeatureSet {
         Self {
             move_precompile_verification_to_svm: true,
             stricter_abi_and_runtime_constraints: true,
+            account_data_direct_mapping: true,
             enable_bpf_loader_set_authority_checked_ix: true,
             enable_loader_v4: true,
             deplete_cu_meter_on_vm_failure: true,
@@ -77,6 +80,7 @@ impl SVMFeatureSet {
             disable_zk_elgamal_proof_program: true,
             reenable_zk_elgamal_proof_program: true,
             raise_cpi_nesting_limit_to_8: true,
+            provide_instruction_data_offset_in_vm_r2: true,
         }
     }
 }

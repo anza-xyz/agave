@@ -97,8 +97,8 @@ impl BindIpAddrs {
             for ip in &addrs {
                 if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
                     return Err(format!(
-                        "Invalid configuration: {:?} is not allowed with multiple --bind-address values (loopback, unspecified, or multicast)",
-                        ip
+                        "Invalid configuration: {ip:?} is not allowed with multiple \
+                         --bind-address values (loopback, unspecified, or multicast)"
                     ));
                 }
             }
@@ -151,37 +151,5 @@ impl Deref for BindIpAddrs {
 impl AsRef<[IpAddr]> for BindIpAddrs {
     fn as_ref(&self) -> &[IpAddr] {
         &self.addrs
-    }
-}
-
-#[cfg(feature = "agave-unstable-api")]
-#[derive(Default)]
-pub struct EgressSocketSelect {
-    tvu_retransmit_active_offset: AtomicUsize,
-    num_tvu_retransmit_sockets: usize,
-}
-
-#[cfg(feature = "agave-unstable-api")]
-impl EgressSocketSelect {
-    pub fn new(num_sockets: usize) -> Self {
-        Self {
-            tvu_retransmit_active_offset: AtomicUsize::new(0),
-            num_tvu_retransmit_sockets: num_sockets,
-        }
-    }
-
-    pub fn select_interface(&self, interface_index: usize) {
-        self.tvu_retransmit_active_offset.store(
-            interface_index.saturating_mul(self.num_tvu_retransmit_sockets),
-            Ordering::Release,
-        );
-    }
-
-    pub fn active_offset(&self) -> usize {
-        self.tvu_retransmit_active_offset.load(Ordering::Acquire)
-    }
-
-    pub fn num_retransmit_sockets_per_interface(&self) -> usize {
-        self.num_tvu_retransmit_sockets
     }
 }

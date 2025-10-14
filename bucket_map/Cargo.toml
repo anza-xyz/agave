@@ -2,7 +2,6 @@
 name = "solana-bucket-map"
 description = "solana-bucket-map"
 documentation = "https://docs.rs/solana-bucket-map"
-readme = "../README.md"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }

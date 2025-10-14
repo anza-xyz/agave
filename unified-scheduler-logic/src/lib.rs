@@ -102,7 +102,12 @@ use {
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_transaction::sanitized::SanitizedTransaction,
     static_assertions::const_assert_eq,
-    std::{collections::VecDeque, mem, sync::Arc},
+    std::{
+        cmp::Ordering,
+        collections::{BTreeMap, VecDeque},
+        mem,
+        sync::Arc,
+    },
     unwrap_none::UnwrapNone,
 };
 
@@ -112,6 +117,17 @@ pub enum SchedulingMode {
     BlockProduction,
 }
 
+#[derive(Debug)]
+pub enum Capability {
+    /// Basic capability of simple fifo queueing. This is intended for block verification.
+    FifoQueueing,
+    /// Strictly superset capability of priority queueing with reordering of tasks by task_id.
+    /// This is intended for block production
+    /// In other words, any use of FifoQueueing can safely replaced with PriorityQueueing, just
+    /// being slower due to use of more expensive collections.
+    PriorityQueueing,
+}
+
 /// This type alias is intentionally not exposed to public API with `pub`. The choice of explicit
 /// `u32`, rather than more neutral `usize`, is an implementation detail to squeeze out CPU-cache
 /// footprint as much as possible.
@@ -119,6 +135,8 @@ pub enum SchedulingMode {
 /// `reinitialize()`-d rather quickly after short period: 1 slot for block verification, 4 (or up to
 /// 8) consecutive slots for block production.
 type CounterInner = u32;
+
+pub type OrderedTaskId = u128;
 
 /// Internal utilities. Namely this contains [`ShortCounter`] and [`TokenCell`].
 mod utils {
@@ -437,18 +455,31 @@ const_assert_eq!(mem::size_of::<BlockedUsageCountToken>(), 0);
 #[derive(Debug)]
 pub struct TaskInner {
     transaction: RuntimeTransaction<SanitizedTransaction>,
-    /// The index of a transaction in ledger entries; not used by SchedulingStateMachine by itself.
-    /// Carrying this along with the transaction is needed to properly record the execution result
-    /// of it.
-    index: usize,
+    /// For block verification, the index of a transaction in ledger entries. Carrying this along
+    /// with the transaction is needed to properly record the execution result of it.
+    /// For block production, the priority of a transaction for reordering with
+    /// Capability::PriorityQueueing. Note that the index of a transaction in ledger entries is
+    /// dynamically generated from the poh in the case of block production.
+    task_id: OrderedTaskId,
     lock_contexts: Vec<LockContext>,
+    /// The number of remaining usages which are currently occupied by other tasks. In other words,
+    /// the task is said to be _blocked_ and needs to be _unblocked_ exactly this number of times
+    /// before running.
     blocked_usage_count: TokenCell<ShortCounter>,
     consumed_block_size: BlockSize,
 }
 
 impl TaskInner {
-    pub fn task_index(&self) -> usize {
-        self.index
+    pub fn task_id(&self) -> OrderedTaskId {
+        self.task_id
+    }
+
+    pub fn is_higher_priority(&self, other: &Self) -> bool {
+        match self.task_id().cmp(&other.task_id()) {
+            Ordering::Less => true,
+            Ordering::Greater => false,
+            Ordering::Equal => panic!("self-compariton"),
+        }
     }
 
     pub fn consumed_block_size(&self) -> BlockSize {
@@ -470,12 +501,43 @@ impl TaskInner {
             })
     }
 
+    /// Try to change the counter's state of this task towards the runnable state (called
+    /// _unblocking_), returning itself if finished completely.
+    ///
+    /// This should be called exactly once each time one of blocked usages of this task is newly
+    /// unlocked for proper book-keeping. Eventually, when this particular unblocking is determined
+    /// to be the last (i.e. [`Self::blocked_usage_count`] reaches to 0), this task should be run
+    /// by consuming the returned task itself properly.
     #[must_use]
     fn try_unblock(self: Task, token: &mut BlockedUsageCountToken) -> Option<Task> {
         let did_unblock = self
             .blocked_usage_count
             .with_borrow_mut(token, |usage_count| usage_count.decrement_self().is_zero());
         did_unblock.then_some(self)
+    }
+
+    /// Try to change the counter's state of this task against the runnable state (called
+    /// _reblocking_), returning `true` if succeeded.
+    ///
+    /// This should be called with care to be consistent with usage queue's
+    /// [`blocked_usages_from_tasks`](UsageQueueInner::Priority::blocked_usages_from_tasks).
+    /// Blocked usage count of tasks are usually expected only to decrement over time by
+    /// [unblocking](Self::try_unblock). However, sometimes it's needed to do the opposite (
+    /// [`Capability::PriorityQueueing`]). In other words, previously successfully acquired usage
+    /// must be taken from a task to assign the usage to a even more higher-priority task. Note
+    /// that this can't be done if usage_count has already reached to 0, meaning it's possible for
+    /// it to be running already. In that case, this method returns `false` with no state change.
+    /// Otherwise, returns `true` after incrementing [`Self::blocked_usage_count`].
+    fn try_reblock(&self, token: &mut BlockedUsageCountToken) -> bool {
+        self.blocked_usage_count
+            .with_borrow_mut(token, |usage_count| {
+                if usage_count.is_zero() {
+                    false
+                } else {
+                    usage_count.increment_self();
+                    true
+                }
+            })
     }
 
     pub fn into_transaction(self: Task) -> RuntimeTransaction<SanitizedTransaction> {
@@ -511,18 +573,66 @@ impl LockContext {
 
 /// Status about how the [`UsageQueue`] is used currently.
 #[derive(Copy, Clone, Debug)]
-enum Usage {
-    Readonly(ShortCounter),
-    Writable,
+enum Usage<R, W> {
+    Readonly(R),
+    Writable(W),
 }
-const_assert_eq!(mem::size_of::<Usage>(), 8);
 
-impl From<RequestedUsage> for Usage {
+impl<R, W> Usage<R, W> {
+    fn requested_usage(&self) -> RequestedUsage {
+        match self {
+            Self::Readonly(_) => RequestedUsage::Readonly,
+            Self::Writable(_) => RequestedUsage::Writable,
+        }
+    }
+}
+
+type FifoUsage = Usage<ShortCounter, ()>;
+const_assert_eq!(mem::size_of::<FifoUsage>(), 8);
+
+// PriorityUsage will temporarily contain current tasks, unlike its very light-weight cousin (i.e.
+// FifoUsage). This arrangement is needed for reblocking (see the prepare_lock() method).
+//
+// Considering it may reside at usage_queue.current_usage, practically this means each addresses
+// (`Pubkey`s) may instantiate its own ones independently, exactly in the same manner as
+// usage_queue.blocked_usages_from_tasks.
+//
+// The reblocking algorithm involves the removal keyed by task_id on arbitrary-ordered unlocking
+// and the ranged query to handle reblocking of current readonly usages (if any). Currently,
+// BTreeMap is chosen mainly for its implementation simplicity and acceptable efficiency. This
+// might be replaced with more efficient implementation in the future.
+type PriorityUsage = Usage<BTreeMap<OrderedTaskId, Task>, Task>;
+const_assert_eq!(mem::size_of::<PriorityUsage>(), 32);
+
+impl From<RequestedUsage> for FifoUsage {
     fn from(requested_usage: RequestedUsage) -> Self {
         match requested_usage {
-            RequestedUsage::Readonly => Usage::Readonly(ShortCounter::one()),
-            RequestedUsage::Writable => Usage::Writable,
+            RequestedUsage::Readonly => Self::Readonly(ShortCounter::one()),
+            RequestedUsage::Writable => Self::Writable(()),
         }
+    }
+}
+
+impl PriorityUsage {
+    fn from(task: Task, requested_usage: RequestedUsage) -> Self {
+        match requested_usage {
+            RequestedUsage::Readonly => Self::Readonly(BTreeMap::from([(task.task_id(), task)])),
+            RequestedUsage::Writable => Self::Writable(task),
+        }
+    }
+
+    fn take_readable(maybe_usage: &mut Option<Self>) {
+        let Some(Self::Readonly(tasks)) = maybe_usage.take() else {
+            panic!();
+        };
+        assert!(tasks.is_empty());
+    }
+
+    fn take_writable(maybe_usage: &mut Option<Self>) -> Task {
+        let Some(Self::Writable(task)) = maybe_usage.take() else {
+            panic!();
+        };
+        task
     }
 }
 
@@ -533,22 +643,52 @@ enum RequestedUsage {
     Writable,
 }
 
+// BTreeMap is needed for now for efficient manipulation...
+type PriorityUsageQueue = BTreeMap<OrderedTaskId, UsageFromTask>;
+
+trait PriorityUsageQueueExt: Sized {
+    fn insert_usage_from_task(&mut self, usage_from_task: UsageFromTask);
+    fn pop_first_usage_from_task(&mut self) -> Option<UsageFromTask>;
+    fn first_usage_from_task(&self) -> Option<&UsageFromTask>;
+}
+
+impl PriorityUsageQueueExt for PriorityUsageQueue {
+    fn insert_usage_from_task(&mut self, usage_from_task: UsageFromTask) {
+        self.insert(usage_from_task.1.task_id(), usage_from_task)
+            .unwrap_none();
+    }
+
+    fn pop_first_usage_from_task(&mut self) -> Option<UsageFromTask> {
+        self.pop_first().map(|(_index, usage)| usage)
+    }
+
+    fn first_usage_from_task(&self) -> Option<&UsageFromTask> {
+        self.first_key_value().map(|(_index, usage)| usage)
+    }
+}
+
 /// Internal scheduling data about a particular address.
 ///
 /// Specifically, it holds the current [`Usage`] (or no usage with [`Usage::Unused`]) and which
 /// [`Task`]s are blocked to be executed after the current task is notified to be finished via
 /// [`::deschedule_task`](`SchedulingStateMachine::deschedule_task`)
 #[derive(Debug)]
-struct UsageQueueInner {
-    current_usage: Option<Usage>,
-    blocked_usages_from_tasks: VecDeque<UsageFromTask>,
+enum UsageQueueInner {
+    Fifo {
+        current_usage: Option<FifoUsage>,
+        blocked_usages_from_tasks: VecDeque<UsageFromTask>,
+    },
+    Priority {
+        current_usage: Option<PriorityUsage>,
+        blocked_usages_from_tasks: PriorityUsageQueue,
+    },
 }
 
 type UsageFromTask = (RequestedUsage, Task);
 
-impl Default for UsageQueueInner {
-    fn default() -> Self {
-        Self {
+impl UsageQueueInner {
+    fn with_fifo() -> Self {
+        Self::Fifo {
             current_usage: None,
             // Capacity should be configurable to create with large capacity like 1024 inside the
             // (multi-threaded) closures passed to create_task(). In this way, reallocs can be
@@ -562,80 +702,306 @@ impl Default for UsageQueueInner {
             blocked_usages_from_tasks: VecDeque::with_capacity(128),
         }
     }
+
+    fn with_priority() -> Self {
+        Self::Priority {
+            current_usage: None,
+            // PriorityUsageQueue (i.e. BTreeMap) doesn't support capacity provisioning unlike
+            // VecDeque above. For efficient key-based lookup, BTreeMap can't usually be backed by
+            // some continuous provisioning-friendly collection (i.e. Vec). And, due to the need of
+            // those lookups by the current implementation, we can't use BinaryHeap and its family
+            // _for now_.
+            blocked_usages_from_tasks: PriorityUsageQueue::new(),
+        }
+    }
+
+    fn new(capability: &Capability) -> Self {
+        match capability {
+            Capability::FifoQueueing => Self::with_fifo(),
+            Capability::PriorityQueueing => Self::with_priority(),
+        }
+    }
 }
 
 impl UsageQueueInner {
-    fn try_lock(&mut self, requested_usage: RequestedUsage) -> LockResult {
-        match self.current_usage {
-            None => Some(Usage::from(requested_usage)),
-            Some(Usage::Readonly(count)) => match requested_usage {
-                RequestedUsage::Readonly => Some(Usage::Readonly(count.increment())),
-                RequestedUsage::Writable => None,
+    fn try_lock(&mut self, new_task: &Task, requested_usage: RequestedUsage) -> LockResult {
+        match self {
+            Self::Fifo { current_usage, .. } => match current_usage {
+                None => Ok(FifoUsage::from(requested_usage)),
+                Some(FifoUsage::Readonly(count)) => match requested_usage {
+                    RequestedUsage::Readonly => Ok(FifoUsage::Readonly(count.increment())),
+                    RequestedUsage::Writable => Err(()),
+                },
+                Some(FifoUsage::Writable(())) => Err(()),
+            }
+            .map(|new_usage| {
+                *current_usage = Some(new_usage);
+            }),
+            Self::Priority { current_usage, .. } => match current_usage {
+                Some(PriorityUsage::Readonly(tasks)) => match requested_usage {
+                    RequestedUsage::Readonly => {
+                        tasks
+                            .insert(new_task.task_id(), new_task.clone())
+                            .unwrap_none();
+                        Ok(())
+                    }
+                    RequestedUsage::Writable => Err(()),
+                },
+                Some(PriorityUsage::Writable(_task)) => Err(()),
+                None => {
+                    *current_usage = Some(PriorityUsage::from(new_task.clone(), requested_usage));
+
+                    Ok(())
+                }
             },
-            Some(Usage::Writable) => None,
         }
-        .inspect(|&new_usage| {
-            self.current_usage = Some(new_usage);
-        })
-        .map(|_| ())
-        .ok_or(())
     }
 
     #[must_use]
-    fn unlock(&mut self, requested_usage: RequestedUsage) -> Option<UsageFromTask> {
-        let mut is_unused_now = false;
-        match &mut self.current_usage {
-            Some(Usage::Readonly(ref mut count)) => match requested_usage {
-                RequestedUsage::Readonly => {
-                    if count.is_one() {
-                        is_unused_now = true;
-                    } else {
-                        count.decrement_self();
+    fn unlock(&mut self, task: &Task, requested_usage: RequestedUsage) -> Option<UsageFromTask> {
+        let mut is_newly_lockable = false;
+        match self {
+            Self::Fifo { current_usage, .. } => {
+                match current_usage {
+                    Some(FifoUsage::Readonly(ref mut count)) => match requested_usage {
+                        RequestedUsage::Readonly => {
+                            if count.is_one() {
+                                is_newly_lockable = true;
+                            } else {
+                                count.decrement_self();
+                            }
+                        }
+                        RequestedUsage::Writable => unreachable!(),
+                    },
+                    Some(FifoUsage::Writable(())) => {
+                        assert_matches!(requested_usage, RequestedUsage::Writable);
+                        is_newly_lockable = true;
+                    }
+                    None => unreachable!(),
+                }
+                if is_newly_lockable {
+                    *current_usage = None;
+                }
+            }
+            Self::Priority { current_usage, .. } => {
+                match current_usage {
+                    Some(PriorityUsage::Readonly(tasks)) => match requested_usage {
+                        RequestedUsage::Readonly => {
+                            // Don't skip remove()-ing to assert the existence of the last task.
+                            tasks.remove(&task.task_id()).unwrap();
+                            if tasks.is_empty() {
+                                is_newly_lockable = true;
+                            }
+                        }
+                        RequestedUsage::Writable => unreachable!(),
+                    },
+                    Some(PriorityUsage::Writable(_task)) => {
+                        assert_matches!(requested_usage, RequestedUsage::Writable);
+                        is_newly_lockable = true;
+                    }
+                    None => unreachable!(),
+                }
+                if is_newly_lockable {
+                    *current_usage = None;
+                }
+            }
+        }
+
+        if is_newly_lockable {
+            self.pop()
+        } else {
+            None
+        }
+    }
+
+    fn push_blocked(&mut self, usage_from_task: UsageFromTask) {
+        assert_matches!(self.current_usage(), Some(_));
+        self.push(usage_from_task);
+    }
+
+    #[must_use]
+    fn pop_lockable_readonly(&mut self) -> Option<UsageFromTask> {
+        if matches!(self.peek_blocked(), Some((RequestedUsage::Readonly, _))) {
+            assert_matches!(self.current_usage(), Some(RequestedUsage::Readonly));
+            self.pop()
+        } else {
+            None
+        }
+    }
+
+    fn current_usage(&self) -> Option<RequestedUsage> {
+        match self {
+            Self::Fifo { current_usage, .. } => {
+                current_usage.as_ref().map(|usage| usage.requested_usage())
+            }
+            Self::Priority { current_usage, .. } => {
+                current_usage.as_ref().map(|usage| usage.requested_usage())
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn update_current_usage(&mut self, requested_usage: RequestedUsage, task: &Task) {
+        match self {
+            Self::Fifo { current_usage, .. } => {
+                *current_usage = Some(FifoUsage::from(requested_usage));
+            }
+            Self::Priority { current_usage, .. } => {
+                *current_usage = Some(PriorityUsage::from(task.clone(), requested_usage));
+            }
+        }
+    }
+
+    fn pop(&mut self) -> Option<UsageFromTask> {
+        match self {
+            Self::Fifo {
+                blocked_usages_from_tasks,
+                ..
+            } => blocked_usages_from_tasks.pop_front(),
+            Self::Priority {
+                blocked_usages_from_tasks,
+                ..
+            } => blocked_usages_from_tasks.pop_first_usage_from_task(),
+        }
+    }
+
+    fn push(&mut self, usage_from_task: UsageFromTask) {
+        match self {
+            Self::Fifo {
+                blocked_usages_from_tasks,
+                ..
+            } => blocked_usages_from_tasks.push_back(usage_from_task),
+            Self::Priority {
+                blocked_usages_from_tasks,
+                ..
+            } => blocked_usages_from_tasks.insert_usage_from_task(usage_from_task),
+        }
+    }
+
+    fn peek_blocked(&self) -> Option<&UsageFromTask> {
+        match self {
+            Self::Fifo {
+                blocked_usages_from_tasks,
+                ..
+            } => blocked_usages_from_tasks.front(),
+            Self::Priority {
+                blocked_usages_from_tasks,
+                ..
+            } => blocked_usages_from_tasks.first_usage_from_task(),
+        }
+    }
+
+    fn prepare_lock(
+        &mut self,
+        token: &mut BlockedUsageCountToken,
+        new_task: &Task,
+        requested_usage: RequestedUsage,
+    ) -> LockResult {
+        match self {
+            Self::Fifo {
+                blocked_usages_from_tasks,
+                ..
+            } => {
+                if blocked_usages_from_tasks.is_empty() {
+                    Ok(())
+                } else {
+                    Err(())
+                }
+            }
+            // This is the heart of our priority queue mechanism, called reblocking. Understanding
+            // it needs a bit of twist of thinking.
+            //
+            // First, recall that the entire logic of SchedulingStateMachine is about fifo
+            // queueing, whose state is ensured for completion with nice property of _bounded_
+            // computation of each ticks of state transition.
+            //
+            // This priority reordering want to exploit it. Namely, following code mangles the
+            // queue upon arrival of new higher-prioritized tasks and immediately before the actual
+            // locking (thus this fn is called `prepare_lock()`), _as if those tasks should have
+            // arrived earlier in the precise order of their task_ids. Then, all other code work
+            // nicely with priority ordering enabled.
+            //
+            // Note that reblocking must be consistently applied across all usage queues.
+            // otherwise, deadlock would happen.
+            Self::Priority {
+                current_usage,
+                blocked_usages_from_tasks,
+            } => {
+                // This artificial var is needed to pacify rust borrow checker...
+                let mut current_and_requested_usage = (current_usage, requested_usage);
+
+                match &mut current_and_requested_usage {
+                    (None, _) => {
+                        assert!(blocked_usages_from_tasks.is_empty());
+                        Ok(())
+                    }
+                    (Some(PriorityUsage::Writable(current_task)), _requested_usage) => {
+                        if !new_task.is_higher_priority(current_task)
+                            || !current_task.try_reblock(token)
+                        {
+                            return Err(());
+                        }
+                        let reblocked_task = Usage::take_writable(current_and_requested_usage.0);
+                        blocked_usages_from_tasks
+                            .insert_usage_from_task((RequestedUsage::Writable, reblocked_task));
+                        Ok(())
+                    }
+                    (Some(PriorityUsage::Readonly(_current_tasks)), RequestedUsage::Readonly) => {
+                        let Some((peeked_usage, peeked_task)) = self.peek_blocked() else {
+                            return Ok(());
+                        };
+
+                        // Current usage is Readonly. This means that the highest-priority
+                        // blocked task must be Writable. So, we assert this here as a
+                        // precaution. Note that peeked_usage must be Writable regardless requested
+                        // usage is Readonly or Writable.
+                        assert_matches!(peeked_usage, RequestedUsage::Writable);
+                        if !new_task.is_higher_priority(peeked_task) {
+                            return Err(());
+                        }
+                        Ok(())
+                    }
+                    (Some(PriorityUsage::Readonly(current_tasks)), RequestedUsage::Writable) => {
+                        // First, we need to determine whether the write-requesting new_task could
+                        // reblock current read-only tasks _very efficiently while bounded under
+                        // the worst case_, to prevent large number of low priority tasks from
+                        // consuming undue amount of cpu cycles for nothing.
+
+                        // Use extract_if once stablized to remove Vec creation and the repeating
+                        // remove()s...
+                        let task_indexes = current_tasks
+                            .range(new_task.task_id()..)
+                            .filter_map(|(&task_id, task)| {
+                                task.try_reblock(token).then_some(task_id)
+                            })
+                            .collect::<Vec<OrderedTaskId>>();
+                        for task_id in task_indexes.into_iter() {
+                            let reblocked_task = current_tasks.remove(&task_id).unwrap();
+                            blocked_usages_from_tasks
+                                .insert_usage_from_task((RequestedUsage::Readonly, reblocked_task));
+                        }
+
+                        if current_tasks.is_empty() {
+                            Usage::take_readable(current_and_requested_usage.0);
+                            Ok(())
+                        } else {
+                            // In this case, new_task will still be inserted as the
+                            // highest-priority blocked writable task, nevertheless any of readonly
+                            // tasks are reblocked above. That's because all of such tasks should
+                            // be of lower-priority than new_task by the very `range()` lookup
+                            // above. So, the write-always-follows-read critical invariant is still
+                            // intact. So is the assertion in current-and-requested-readonly
+                            // match arm.
+                            Err(())
+                        }
                     }
                 }
-                RequestedUsage::Writable => unreachable!(),
-            },
-            Some(Usage::Writable) => match requested_usage {
-                RequestedUsage::Writable => {
-                    is_unused_now = true;
-                }
-                RequestedUsage::Readonly => unreachable!(),
-            },
-            None => unreachable!(),
+            }
         }
-
-        if is_unused_now {
-            self.current_usage = None;
-            self.blocked_usages_from_tasks.pop_front()
-        } else {
-            None
-        }
-    }
-
-    fn push_blocked_usage_from_task(&mut self, usage_from_task: UsageFromTask) {
-        assert_matches!(self.current_usage, Some(_));
-        self.blocked_usages_from_tasks.push_back(usage_from_task);
-    }
-
-    #[must_use]
-    fn pop_unblocked_readonly_usage_from_task(&mut self) -> Option<UsageFromTask> {
-        if matches!(
-            self.blocked_usages_from_tasks.front(),
-            Some((RequestedUsage::Readonly, _))
-        ) {
-            assert_matches!(self.current_usage, Some(Usage::Readonly(_)));
-            self.blocked_usages_from_tasks.pop_front()
-        } else {
-            None
-        }
-    }
-
-    fn has_no_blocked_usage(&self) -> bool {
-        self.blocked_usages_from_tasks.is_empty()
     }
 }
 
-const_assert_eq!(mem::size_of::<TokenCell<UsageQueueInner>>(), 40);
+const_assert_eq!(mem::size_of::<TokenCell<UsageQueueInner>>(), 56);
 
 /// Scheduler's internal data for each address ([`Pubkey`](`solana_pubkey::Pubkey`)). Very
 /// opaque wrapper type; no methods just with [`::clone()`](Clone::clone) and
@@ -643,9 +1009,15 @@ const_assert_eq!(mem::size_of::<TokenCell<UsageQueueInner>>(), 40);
 ///
 /// It's the higher layer's responsibility to ensure to associate the same instance of UsageQueue
 /// for given Pubkey at the time of [task](Task) creation.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct UsageQueue(Arc<TokenCell<UsageQueueInner>>);
 const_assert_eq!(mem::size_of::<UsageQueue>(), 8);
+
+impl UsageQueue {
+    pub fn new(capability: &Capability) -> Self {
+        Self(Arc::new(TokenCell::new(UsageQueueInner::new(capability))))
+    }
+}
 
 /// A high-level `struct`, managing the overall scheduling of [tasks](Task), to be used by
 /// `solana-unified-scheduler-pool`.
@@ -803,15 +1175,13 @@ impl SchedulingStateMachine {
 
         for context in task.lock_contexts() {
             context.with_usage_queue_mut(&mut self.usage_queue_token, |usage_queue| {
-                let lock_result = if usage_queue.has_no_blocked_usage() {
-                    usage_queue.try_lock(context.requested_usage)
-                } else {
-                    LockResult::Err(())
-                };
+                let lock_result = usage_queue
+                    .prepare_lock(&mut self.count_token, &task, context.requested_usage)
+                    .and_then(|()| usage_queue.try_lock(&task, context.requested_usage));
                 if let Err(()) = lock_result {
                     blocked_usage_count.increment_self();
                     let usage_from_task = (context.requested_usage, task.clone());
-                    usage_queue.push_blocked_usage_from_task(usage_from_task);
+                    usage_queue.push_blocked(usage_from_task);
                 }
             });
         }
@@ -828,34 +1198,26 @@ impl SchedulingStateMachine {
     fn unlock_usage_queues(&mut self, task: &Task) {
         for context in task.lock_contexts() {
             context.with_usage_queue_mut(&mut self.usage_queue_token, |usage_queue| {
-                let mut unblocked_task_from_queue = usage_queue.unlock(context.requested_usage);
+                let mut newly_lockable = usage_queue.unlock(task, context.requested_usage);
+                while let Some((lockable_usage, lockable_task)) = newly_lockable {
+                    usage_queue
+                        .try_lock(&lockable_task, lockable_usage)
+                        .unwrap();
 
-                while let Some((requested_usage, task_with_unblocked_queue)) =
-                    unblocked_task_from_queue
-                {
                     // When `try_unblock()` returns `None` as a failure of unblocking this time,
                     // this means the task is still blocked by other active task's usages. So,
                     // don't push task into unblocked_task_queue yet. It can be assumed that every
                     // task will eventually succeed to be unblocked, and enter in this condition
                     // clause as long as `SchedulingStateMachine` is used correctly.
-                    if let Some(task) = task_with_unblocked_queue.try_unblock(&mut self.count_token)
-                    {
-                        self.unblocked_task_queue.push_back(task);
+                    if let Some(unblocked_task) = lockable_task.try_unblock(&mut self.count_token) {
+                        self.unblocked_task_queue.push_back(unblocked_task);
                     }
 
-                    match usage_queue.try_lock(requested_usage) {
-                        LockResult::Ok(()) => {
-                            // Try to further schedule blocked task for parallelism in the case of
-                            // readonly usages
-                            unblocked_task_from_queue =
-                                if matches!(requested_usage, RequestedUsage::Readonly) {
-                                    usage_queue.pop_unblocked_readonly_usage_from_task()
-                                } else {
-                                    None
-                                };
-                        }
-                        LockResult::Err(()) => panic!("should never fail in this context"),
-                    }
+                    // Try to further schedule blocked task for parallelism in the case of readonly
+                    // usages
+                    newly_lockable = matches!(lockable_usage, RequestedUsage::Readonly)
+                        .then(|| usage_queue.pop_lockable_readonly())
+                        .flatten();
                 }
             });
         }
@@ -876,12 +1238,12 @@ impl SchedulingStateMachine {
     /// separation of concern.
     pub fn create_task(
         transaction: RuntimeTransaction<SanitizedTransaction>,
-        index: usize,
+        task_id: OrderedTaskId,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
         Self::do_create_task(
             transaction,
-            index,
+            task_id,
             NO_CONSUMED_BLOCK_SIZE,
             usage_queue_loader,
         )
@@ -889,16 +1251,21 @@ impl SchedulingStateMachine {
 
     pub fn create_block_production_task(
         transaction: RuntimeTransaction<SanitizedTransaction>,
-        index: usize,
+        task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
-        Self::do_create_task(transaction, index, consumed_block_size, usage_queue_loader)
+        Self::do_create_task(
+            transaction,
+            task_id,
+            consumed_block_size,
+            usage_queue_loader,
+        )
     }
 
     fn do_create_task(
         transaction: RuntimeTransaction<SanitizedTransaction>,
-        index: usize,
+        task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
@@ -938,10 +1305,10 @@ impl SchedulingStateMachine {
             .account_keys()
             .iter()
             .enumerate()
-            .map(|(index, address)| {
+            .map(|(task_id, address)| {
                 LockContext::new(
                     usage_queue_loader(*address),
-                    if transaction.message().is_writable(index) {
+                    if transaction.message().is_writable(task_id) {
                         RequestedUsage::Writable
                     } else {
                         RequestedUsage::Readonly
@@ -952,7 +1319,7 @@ impl SchedulingStateMachine {
 
         Task::new(TaskInner {
             transaction,
-            index,
+            task_id,
             lock_contexts,
             blocked_usage_count: TokenCell::new(ShortCounter::zero()),
             consumed_block_size,
@@ -1073,7 +1440,13 @@ mod tests {
         solana_message::Message,
         solana_pubkey::Pubkey,
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},
-        std::{cell::RefCell, collections::HashMap, rc::Rc},
+        std::{
+            cell::RefCell,
+            collections::HashMap,
+            panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
+            rc::Rc,
+        },
+        test_case::test_matrix,
     };
 
     fn simplest_transaction() -> RuntimeTransaction<SanitizedTransaction> {
@@ -1085,12 +1458,19 @@ mod tests {
     fn transaction_with_readonly_address(
         address: Pubkey,
     ) -> RuntimeTransaction<SanitizedTransaction> {
+        transaction_with_readonly_address_with_payer(address, &Pubkey::new_unique())
+    }
+
+    fn transaction_with_readonly_address_with_payer(
+        address: Pubkey,
+        payer: &Pubkey,
+    ) -> RuntimeTransaction<SanitizedTransaction> {
         let instruction = Instruction {
             program_id: Pubkey::default(),
             accounts: vec![AccountMeta::new_readonly(address, false)],
             data: vec![],
         };
-        let message = Message::new(&[instruction], Some(&Pubkey::new_unique()));
+        let message = Message::new(&[instruction], Some(payer));
         let unsigned = Transaction::new_unsigned(message);
         RuntimeTransaction::from_transaction_for_tests(unsigned)
     }
@@ -1098,25 +1478,33 @@ mod tests {
     fn transaction_with_writable_address(
         address: Pubkey,
     ) -> RuntimeTransaction<SanitizedTransaction> {
+        transaction_with_writable_address_with_payer(address, &Pubkey::new_unique())
+    }
+
+    fn transaction_with_writable_address_with_payer(
+        address: Pubkey,
+        payer: &Pubkey,
+    ) -> RuntimeTransaction<SanitizedTransaction> {
         let instruction = Instruction {
             program_id: Pubkey::default(),
             accounts: vec![AccountMeta::new(address, false)],
             data: vec![],
         };
-        let message = Message::new(&[instruction], Some(&Pubkey::new_unique()));
+        let message = Message::new(&[instruction], Some(payer));
         let unsigned = Transaction::new_unsigned(message);
         RuntimeTransaction::from_transaction_for_tests(unsigned)
     }
 
     fn create_address_loader(
         usage_queues: Option<Rc<RefCell<HashMap<Pubkey, UsageQueue>>>>,
-    ) -> impl FnMut(Pubkey) -> UsageQueue {
+        capability: &Capability,
+    ) -> impl FnMut(Pubkey) -> UsageQueue + use<'_> {
         let usage_queues = usage_queues.unwrap_or_default();
         move |address| {
             usage_queues
                 .borrow_mut()
                 .entry(address)
-                .or_default()
+                .or_insert_with(|| UsageQueue::new(capability))
                 .clone()
         }
     }
@@ -1142,32 +1530,43 @@ mod tests {
         assert_eq!(state_machine.total_task_count(), 0);
     }
 
-    #[test]
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
     #[should_panic(expected = "assertion failed: self.has_no_active_task()")]
-    fn test_scheduling_state_machine_bad_reinitialization() {
+    fn test_scheduling_state_machine_bad_reinitialization(capability: Capability) {
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
-        let address_loader = &mut create_address_loader(None);
+        let address_loader = &mut create_address_loader(None, &capability);
         let task = SchedulingStateMachine::create_task(simplest_transaction(), 3, address_loader);
-        state_machine.schedule_task(task).unwrap();
-        state_machine.reinitialize();
+        state_machine.schedule_task(task.clone()).unwrap();
+        let bad_reinitialize = catch_unwind(AssertUnwindSafe(|| state_machine.reinitialize()));
+
+        // Avoid leaks as dutifully detected by Miri; Namely, tasks could be leaked due to
+        // transient circular references of active tasks by PriorityUsage at stack unwinding, which
+        // only happens under known panic conditions.
+        // To avoid that deschedule the task after the panic. Doing this beforehand won't cause the
+        // panic, which we'd like to test here....
+        state_machine.deschedule_task(&task);
+        if let Err(some_panic) = bad_reinitialize {
+            resume_unwind(some_panic);
+        }
     }
 
-    #[test]
-    fn test_create_task() {
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_create_task(capability: Capability) {
         let sanitized = simplest_transaction();
         let signature = *sanitized.signature();
-        let task =
-            SchedulingStateMachine::create_task(sanitized, 3, &mut |_| UsageQueue::default());
-        assert_eq!(task.task_index(), 3);
+        let task = SchedulingStateMachine::create_task(sanitized, 3, &mut |_| {
+            UsageQueue::new(&capability)
+        });
+        assert_eq!(task.task_id(), 3);
         assert_eq!(task.transaction().signature(), &signature);
     }
 
-    #[test]
-    fn test_non_conflicting_task_related_counts() {
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_non_conflicting_task_related_counts(capability: Capability) {
         let sanitized = simplest_transaction();
-        let address_loader = &mut create_address_loader(None);
+        let address_loader = &mut create_address_loader(None, &capability);
         let task = SchedulingStateMachine::create_task(sanitized, 3, address_loader);
 
         let mut state_machine = unsafe {
@@ -1182,10 +1581,10 @@ mod tests {
         assert!(state_machine.has_no_active_task());
     }
 
-    #[test]
-    fn test_conflicting_task_related_counts() {
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_conflicting_task_related_counts(capability: Capability) {
         let sanitized = simplest_transaction();
-        let address_loader = &mut create_address_loader(None);
+        let address_loader = &mut create_address_loader(None, &capability);
         let task1 = SchedulingStateMachine::create_task(sanitized.clone(), 101, address_loader);
         let task2 = SchedulingStateMachine::create_task(sanitized.clone(), 102, address_loader);
         let task3 = SchedulingStateMachine::create_task(sanitized.clone(), 103, address_loader);
@@ -1196,7 +1595,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_task(task1.clone())
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(101)
         );
         assert_matches!(state_machine.schedule_task(task2.clone()), None);
@@ -1210,7 +1609,7 @@ mod tests {
         assert_eq!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(102)
         );
         assert_eq!(state_machine.unblocked_task_count(), 1);
@@ -1227,17 +1626,17 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_task(task3.clone())
-                .map(|task| task.task_index()),
+                .map(|task| task.task_id()),
             Some(103)
         );
         state_machine.deschedule_task(&task3);
         assert!(state_machine.has_no_active_task());
     }
 
-    #[test]
-    fn test_existing_blocking_task_then_newly_scheduled_task() {
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_existing_blocking_task_then_newly_scheduled_task(capability: Capability) {
         let sanitized = simplest_transaction();
-        let address_loader = &mut create_address_loader(None);
+        let address_loader = &mut create_address_loader(None, &capability);
         let task1 = SchedulingStateMachine::create_task(sanitized.clone(), 101, address_loader);
         let task2 = SchedulingStateMachine::create_task(sanitized.clone(), 102, address_loader);
         let task3 = SchedulingStateMachine::create_task(sanitized.clone(), 103, address_loader);
@@ -1248,7 +1647,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_task(task1.clone())
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(101)
         );
         assert_matches!(state_machine.schedule_task(task2.clone()), None);
@@ -1264,7 +1663,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(102)
         );
         assert_eq!(state_machine.unblocked_task_count(), 1);
@@ -1274,7 +1673,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(103)
         );
         assert_eq!(state_machine.unblocked_task_count(), 2);
@@ -1283,12 +1682,12 @@ mod tests {
         assert!(state_machine.has_no_active_task());
     }
 
-    #[test]
-    fn test_multiple_readonly_task_and_counts() {
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_multiple_readonly_task_and_counts(capability: Capability) {
         let conflicting_address = Pubkey::new_unique();
         let sanitized1 = transaction_with_readonly_address(conflicting_address);
         let sanitized2 = transaction_with_readonly_address(conflicting_address);
-        let address_loader = &mut create_address_loader(None);
+        let address_loader = &mut create_address_loader(None, &capability);
         let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
         let task2 = SchedulingStateMachine::create_task(sanitized2, 102, address_loader);
 
@@ -1299,13 +1698,13 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_task(task1.clone())
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(101)
         );
         assert_matches!(
             state_machine
                 .schedule_task(task2.clone())
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(102)
         );
 
@@ -1322,13 +1721,13 @@ mod tests {
         assert!(state_machine.has_no_active_task());
     }
 
-    #[test]
-    fn test_all_blocking_readable_tasks_block_writable_task() {
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_all_blocking_readable_tasks_block_writable_task(capability: Capability) {
         let conflicting_address = Pubkey::new_unique();
         let sanitized1 = transaction_with_readonly_address(conflicting_address);
         let sanitized2 = transaction_with_readonly_address(conflicting_address);
         let sanitized3 = transaction_with_writable_address(conflicting_address);
-        let address_loader = &mut create_address_loader(None);
+        let address_loader = &mut create_address_loader(None, &capability);
         let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
         let task2 = SchedulingStateMachine::create_task(sanitized2, 102, address_loader);
         let task3 = SchedulingStateMachine::create_task(sanitized3, 103, address_loader);
@@ -1339,13 +1738,13 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_task(task1.clone())
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(101)
         );
         assert_matches!(
             state_machine
                 .schedule_task(task2.clone())
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(102)
         );
         assert_matches!(state_machine.schedule_task(task3.clone()), None);
@@ -1366,20 +1765,20 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(103)
         );
         state_machine.deschedule_task(&task3);
         assert!(state_machine.has_no_active_task());
     }
 
-    #[test]
-    fn test_readonly_then_writable_then_readonly_linearized() {
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_readonly_then_writable_then_readonly_linearized(capability: Capability) {
         let conflicting_address = Pubkey::new_unique();
         let sanitized1 = transaction_with_readonly_address(conflicting_address);
         let sanitized2 = transaction_with_writable_address(conflicting_address);
         let sanitized3 = transaction_with_readonly_address(conflicting_address);
-        let address_loader = &mut create_address_loader(None);
+        let address_loader = &mut create_address_loader(None, &capability);
         let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
         let task2 = SchedulingStateMachine::create_task(sanitized2, 102, address_loader);
         let task3 = SchedulingStateMachine::create_task(sanitized3, 103, address_loader);
@@ -1390,7 +1789,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_task(task1.clone())
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(101)
         );
         assert_matches!(state_machine.schedule_task(task2.clone()), None);
@@ -1401,7 +1800,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(102)
         );
         assert_matches!(state_machine.schedule_next_unblocked_task(), None);
@@ -1409,7 +1808,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(103)
         );
         assert_matches!(state_machine.schedule_next_unblocked_task(), None);
@@ -1417,12 +1816,12 @@ mod tests {
         assert!(state_machine.has_no_active_task());
     }
 
-    #[test]
-    fn test_readonly_then_writable() {
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_readonly_then_writable(capability: Capability) {
         let conflicting_address = Pubkey::new_unique();
         let sanitized1 = transaction_with_readonly_address(conflicting_address);
         let sanitized2 = transaction_with_writable_address(conflicting_address);
-        let address_loader = &mut create_address_loader(None);
+        let address_loader = &mut create_address_loader(None, &capability);
         let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
         let task2 = SchedulingStateMachine::create_task(sanitized2, 102, address_loader);
 
@@ -1432,7 +1831,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_task(task1.clone())
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(101)
         );
         assert_matches!(state_machine.schedule_task(task2.clone()), None);
@@ -1442,21 +1841,21 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(102)
         );
         state_machine.deschedule_task(&task2);
         assert!(state_machine.has_no_active_task());
     }
 
-    #[test]
-    fn test_blocked_tasks_writable_2_readonly_then_writable() {
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_blocked_tasks_writable_2_readonly_then_writable(capability: Capability) {
         let conflicting_address = Pubkey::new_unique();
         let sanitized1 = transaction_with_writable_address(conflicting_address);
         let sanitized2 = transaction_with_readonly_address(conflicting_address);
         let sanitized3 = transaction_with_readonly_address(conflicting_address);
         let sanitized4 = transaction_with_writable_address(conflicting_address);
-        let address_loader = &mut create_address_loader(None);
+        let address_loader = &mut create_address_loader(None, &capability);
         let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
         let task2 = SchedulingStateMachine::create_task(sanitized2, 102, address_loader);
         let task3 = SchedulingStateMachine::create_task(sanitized3, 103, address_loader);
@@ -1468,7 +1867,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_task(task1.clone())
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(101)
         );
         assert_matches!(state_machine.schedule_task(task2.clone()), None);
@@ -1479,13 +1878,13 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(102)
         );
         assert_matches!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(103)
         );
         // the above deschedule_task(task1) call should only unblock task2 and task3 because these
@@ -1501,20 +1900,20 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(104)
         );
         state_machine.deschedule_task(&task4);
         assert!(state_machine.has_no_active_task());
     }
 
-    #[test]
-    fn test_gradual_locking() {
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    fn test_gradual_locking(capability: Capability) {
         let conflicting_address = Pubkey::new_unique();
         let sanitized1 = transaction_with_writable_address(conflicting_address);
         let sanitized2 = transaction_with_writable_address(conflicting_address);
         let usage_queues = Rc::new(RefCell::new(HashMap::new()));
-        let address_loader = &mut create_address_loader(Some(usage_queues.clone()));
+        let address_loader = &mut create_address_loader(Some(usage_queues.clone()), &capability);
         let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
         let task2 = SchedulingStateMachine::create_task(sanitized2, 102, address_loader);
 
@@ -1524,7 +1923,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_task(task1.clone())
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(101)
         );
         assert_matches!(state_machine.schedule_task(task2.clone()), None);
@@ -1533,7 +1932,7 @@ mod tests {
         usage_queue
             .0
             .with_borrow_mut(&mut state_machine.usage_queue_token, |usage_queue| {
-                assert_matches!(usage_queue.current_usage, Some(Usage::Writable));
+                assert_matches!(usage_queue.current_usage(), Some(RequestedUsage::Writable));
             });
         // task2's fee payer should have been locked already even if task2 is blocked still via the
         // above the schedule_task(task2) call
@@ -1542,60 +1941,203 @@ mod tests {
         usage_queue
             .0
             .with_borrow_mut(&mut state_machine.usage_queue_token, |usage_queue| {
-                assert_matches!(usage_queue.current_usage, Some(Usage::Writable));
+                assert_matches!(usage_queue.current_usage(), Some(RequestedUsage::Writable));
             });
         state_machine.deschedule_task(&task1);
         assert_matches!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(102)
         );
         state_machine.deschedule_task(&task2);
         assert!(state_machine.has_no_active_task());
     }
 
-    #[test]
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
     #[should_panic(expected = "internal error: entered unreachable code")]
-    fn test_unreachable_unlock_conditions1() {
+    fn test_unreachable_unlock_conditions1(capability: Capability) {
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
-        let usage_queue = UsageQueue::default();
+        let usage_queue = UsageQueue::new(&capability);
+        let sanitized = simplest_transaction();
+        let task = &SchedulingStateMachine::create_task(sanitized, 3, &mut |_| {
+            UsageQueue::new(&capability)
+        });
         usage_queue
             .0
             .with_borrow_mut(&mut state_machine.usage_queue_token, |usage_queue| {
-                let _ = usage_queue.unlock(RequestedUsage::Writable);
+                let _ = usage_queue.unlock(task, RequestedUsage::Writable);
             });
     }
 
-    #[test]
-    #[should_panic(expected = "internal error: entered unreachable code")]
-    fn test_unreachable_unlock_conditions2() {
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
+    #[should_panic(
+        expected = "assertion failed: `Readonly` does not match `RequestedUsage::Writable`"
+    )]
+    fn test_unreachable_unlock_conditions2(capability: Capability) {
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
-        let usage_queue = UsageQueue::default();
+        let usage_queue = UsageQueue::new(&capability);
+        let sanitized = simplest_transaction();
+        let task = &SchedulingStateMachine::create_task(sanitized, 3, &mut |_| {
+            UsageQueue::new(&capability)
+        });
         usage_queue
             .0
             .with_borrow_mut(&mut state_machine.usage_queue_token, |usage_queue| {
-                usage_queue.current_usage = Some(Usage::Writable);
-                let _ = usage_queue.unlock(RequestedUsage::Readonly);
+                usage_queue.update_current_usage(RequestedUsage::Writable, task);
+                let _ = usage_queue.unlock(task, RequestedUsage::Readonly);
             });
     }
 
-    #[test]
+    #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
     #[should_panic(expected = "internal error: entered unreachable code")]
-    fn test_unreachable_unlock_conditions3() {
+    fn test_unreachable_unlock_conditions3(capability: Capability) {
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
-        let usage_queue = UsageQueue::default();
+        let usage_queue = UsageQueue::new(&capability);
+        let sanitized = simplest_transaction();
+        let task = &SchedulingStateMachine::create_task(sanitized, 3, &mut |_| {
+            UsageQueue::new(&capability)
+        });
         usage_queue
             .0
             .with_borrow_mut(&mut state_machine.usage_queue_token, |usage_queue| {
-                usage_queue.current_usage = Some(Usage::Readonly(ShortCounter::one()));
-                let _ = usage_queue.unlock(RequestedUsage::Writable);
+                usage_queue.update_current_usage(RequestedUsage::Readonly, task);
+                let _ = usage_queue.unlock(task, RequestedUsage::Writable);
             });
+    }
+
+    mod reblocking {
+        use super::{RequestedUsage::*, *};
+
+        #[track_caller]
+        fn assert_task_index(actual: Option<Task>, expected: Option<OrderedTaskId>) {
+            assert_eq!(actual.map(|task| task.task_id()), expected);
+        }
+
+        macro_rules! assert_task_index {
+            ($left:expr, $right:expr) => {
+                assert_task_index($left, $right);
+            };
+        }
+
+        fn setup() -> (
+            SchedulingStateMachine,
+            impl FnMut((RequestedUsage, Pubkey), OrderedTaskId) -> Task,
+            Task,
+        ) {
+            let mut state_machine = unsafe {
+                SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
+            };
+
+            let payer = Pubkey::new_unique();
+            let mut address_loader = create_address_loader(None, &Capability::PriorityQueueing);
+
+            let mut create_task = move |(requested_usage, address), task_id| match requested_usage {
+                RequestedUsage::Readonly => SchedulingStateMachine::create_task(
+                    transaction_with_readonly_address_with_payer(address, &payer),
+                    task_id,
+                    &mut address_loader,
+                ),
+                RequestedUsage::Writable => SchedulingStateMachine::create_task(
+                    transaction_with_writable_address_with_payer(address, &payer),
+                    task_id,
+                    &mut address_loader,
+                ),
+            };
+
+            let t0_block_others = create_task((Writable, Pubkey::new_unique()), 100);
+            assert_task_index!(
+                state_machine.schedule_task(t0_block_others.clone()),
+                Some(100)
+            );
+
+            (state_machine, create_task, t0_block_others)
+        }
+
+        #[test]
+        fn test_reblocked_tasks_lower_write_then_higher_write() {
+            let (mut s, mut create_task, t0_block_others) = setup();
+
+            let reblocked_address = Pubkey::new_unique();
+            let t1_reblocked = create_task((Writable, reblocked_address), 102);
+            let t2_force_locked = create_task((Writable, reblocked_address), 10);
+
+            assert_task_index!(s.schedule_task(t1_reblocked.clone()), None);
+            assert_task_index!(s.schedule_task(t2_force_locked.clone()), None);
+
+            s.deschedule_task(&t0_block_others);
+            assert_task_index!(s.schedule_next_unblocked_task(), Some(10));
+            s.deschedule_task(&t2_force_locked);
+            assert_task_index!(s.schedule_next_unblocked_task(), Some(102));
+            s.deschedule_task(&t1_reblocked);
+            assert!(s.has_no_active_task());
+        }
+
+        #[test]
+        fn test_reblocked_tasks_lower_write_then_higher_read() {
+            let (mut s, mut create_task, t0_block_others) = setup();
+
+            let reblocked_address = Pubkey::new_unique();
+            let t1_reblocked = create_task((Writable, reblocked_address), 102);
+            let t2_force_locked = create_task((Readonly, reblocked_address), 10);
+
+            assert_task_index!(s.schedule_task(t1_reblocked.clone()), None);
+            assert_task_index!(s.schedule_task(t2_force_locked.clone()), None);
+
+            s.deschedule_task(&t0_block_others);
+            assert_task_index!(s.schedule_next_unblocked_task(), Some(10));
+            s.deschedule_task(&t2_force_locked);
+            assert_task_index!(s.schedule_next_unblocked_task(), Some(102));
+            s.deschedule_task(&t1_reblocked);
+            assert!(s.has_no_active_task());
+        }
+
+        #[test]
+        fn test_reblocked_tasks_lower_read_then_higher_read() {
+            let (mut s, mut create_task, t0_block_others) = setup();
+
+            let reblocked_address = Pubkey::new_unique();
+            let t1_not_reblocked = create_task((Readonly, reblocked_address), 102);
+            let t2_skipped = create_task((Writable, reblocked_address), 103);
+            let t3_force_locked = create_task((Readonly, reblocked_address), 10);
+
+            assert_task_index!(s.schedule_task(t1_not_reblocked.clone()), None);
+            assert_task_index!(s.schedule_task(t2_skipped.clone()), None);
+            assert_task_index!(s.schedule_task(t3_force_locked.clone()), None);
+
+            s.deschedule_task(&t0_block_others);
+            assert_task_index!(s.schedule_next_unblocked_task(), Some(10));
+            s.deschedule_task(&t3_force_locked);
+            assert_task_index!(s.schedule_next_unblocked_task(), Some(102));
+            s.deschedule_task(&t1_not_reblocked);
+            assert_task_index!(s.schedule_next_unblocked_task(), Some(103));
+            s.deschedule_task(&t2_skipped);
+            assert!(s.has_no_active_task());
+        }
+
+        #[test]
+        fn test_reblocked_tasks_lower_read_then_higher_write_full() {
+            let (mut s, mut create_task, t0_block_others) = setup();
+
+            let reblocked_address = Pubkey::new_unique();
+            let t1_reblocked = create_task((Readonly, reblocked_address), 102);
+            let t2_force_locked = create_task((Writable, reblocked_address), 10);
+
+            assert_task_index!(s.schedule_task(t1_reblocked.clone()), None);
+            assert_task_index!(s.schedule_task(t2_force_locked.clone()), None);
+
+            s.deschedule_task(&t0_block_others);
+            assert_task_index!(s.schedule_next_unblocked_task(), Some(10));
+            s.deschedule_task(&t2_force_locked);
+            assert_task_index!(s.schedule_next_unblocked_task(), Some(102));
+            s.deschedule_task(&t1_reblocked);
+            assert!(s.has_no_active_task());
+        }
     }
 }

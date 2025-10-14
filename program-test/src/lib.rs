@@ -11,6 +11,7 @@ use {
     log::*,
     solana_account::{create_account_shared_data_for_test, Account, AccountSharedData},
     solana_account_info::AccountInfo,
+    solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
     solana_banks_client::start_client,
     solana_banks_server::banks_server::start_local_server,
     solana_clock::{Epoch, Slot},
@@ -130,12 +131,13 @@ pub fn invoke_builtin_function(
     let mask_out_rent_epoch_in_vm_serialization = invoke_context
         .get_feature_set()
         .mask_out_rent_epoch_in_vm_serialization;
-    let (mut parameter_bytes, _regions, _account_lengths) = serialize_parameters(
-        &instruction_context,
-        false, // There is no VM so stricter_abi_and_runtime_constraints can not be implemented here
-        false, // There is no VM so account_data_direct_mapping can not be implemented here
-        mask_out_rent_epoch_in_vm_serialization,
-    )?;
+    let (mut parameter_bytes, _regions, _account_lengths, _instruction_data_offset) =
+        serialize_parameters(
+            &instruction_context,
+            false, // There is no VM so stricter_abi_and_runtime_constraints can not be implemented here
+            false, // There is no VM so account_data_direct_mapping can not be implemented here
+            mask_out_rent_epoch_in_vm_serialization,
+        )?;
 
     // Deserialize data back into instruction params
     let (program_id, account_infos, input) =
@@ -268,7 +270,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
             .collect::<Vec<_>>();
 
         invoke_context
-            .prepare_next_instruction(instruction, &signers)
+            .prepare_next_instruction(instruction.clone(), &signers)
             .unwrap();
 
         // Copy caller's account_info modifications into invoke_context accounts
@@ -625,8 +627,9 @@ impl ProgramTest {
         program_name: &'static str,
         program_id: &Pubkey,
     ) {
-        let program_file = find_file(&format!("{program_name}.so"))
-            .expect("Program file data not available for {program_name} ({program_id})");
+        let program_file = find_file(&format!("{program_name}.so")).unwrap_or_else(|| {
+            panic!("Program file data not available for {program_name} ({program_id})")
+        });
         let elf = read_file(program_file);
         let program_accounts =
             programs::bpf_loader_upgradeable_program_accounts(program_id, &elf, &Rent::default());
@@ -803,6 +806,7 @@ impl ProgramTest {
             &bootstrap_validator_pubkey,
             &voting_keypair.pubkey(),
             &Pubkey::new_unique(),
+            None,
             bootstrap_validator_stake_lamports,
             42,
             fee_rate_governor,
@@ -834,7 +838,7 @@ impl ProgramTest {
         debug!("Payer address: {}", mint_keypair.pubkey());
         debug!("Genesis config: {genesis_config}");
 
-        let bank = Bank::new_with_paths(
+        let bank = Bank::new_from_genesis(
             &genesis_config,
             Arc::new(RuntimeConfig {
                 compute_budget: self.compute_max_units.map(|max_units| ComputeBudget {
@@ -850,8 +854,7 @@ impl ProgramTest {
             }),
             Vec::default(),
             None,
-            false,
-            None,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             None,
             Arc::default(),
@@ -1159,13 +1162,11 @@ impl ProgramTestContext {
                 .clone_without_scheduler()
         };
 
-        bank_forks
-            .set_root(
-                pre_warp_slot,
-                None, // snapshots are disabled
-                Some(pre_warp_slot),
-            )
-            .unwrap();
+        bank_forks.set_root(
+            pre_warp_slot,
+            None, // snapshots are disabled
+            Some(pre_warp_slot),
+        );
 
         // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
         bank_forks.insert(Bank::new_from_parent(
@@ -1206,13 +1207,11 @@ impl ProgramTestContext {
         bank.fill_bank_with_ticks_for_tests();
         let pre_warp_slot = bank.slot();
 
-        bank_forks
-            .set_root(
-                pre_warp_slot,
-                None, // snapshot_controller
-                Some(pre_warp_slot),
-            )
-            .unwrap();
+        bank_forks.set_root(
+            pre_warp_slot,
+            None, // snapshot_controller
+            Some(pre_warp_slot),
+        );
 
         // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
         let warp_slot = pre_warp_slot + 1;

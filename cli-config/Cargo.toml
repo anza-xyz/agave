@@ -1,9 +1,9 @@
 [package]
 name = "solana-cli-config"
-description = "Blockchain, Rebuilt for Scale"
 documentation = "https://docs.rs/solana-cli-config"
 version = { workspace = true }
 authors = { workspace = true }
+description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
@@ -15,7 +15,6 @@ targets = ["x86_64-unknown-linux-gnu"]
 [dependencies]
 dirs-next = { workspace = true }
 serde = { workspace = true }
-serde_derive = { workspace = true }
 serde_yaml = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-commitment-config = { workspace = true }

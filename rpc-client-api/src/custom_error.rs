@@ -2,6 +2,7 @@
 use {
     crate::response::RpcSimulateTransactionResult,
     jsonrpc_core::{Error, ErrorCode},
+    serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_transaction_status_client_types::EncodeError,
     thiserror::Error,

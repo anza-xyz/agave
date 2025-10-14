@@ -18,6 +18,7 @@ pub struct AccountsStats {
     pub stakes_cache_check_and_store_us: AtomicU64,
     pub store_num_accounts: AtomicU64,
     pub store_total_data: AtomicU64,
+    pub num_reclaims: AtomicU64,
     pub create_store_count: AtomicU64,
     pub dropped_stores: AtomicU64,
     pub handle_dead_keys_us: AtomicU64,

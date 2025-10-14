@@ -74,7 +74,7 @@ struct RootEpoch {
     number: Epoch,
     schedule: EpochSchedule,
 }
-#[derive(Default)]
+
 pub struct ClusterSlots {
     // ring buffer storing, per slot, which stakes were committed to a certain slot.
     cluster_slots: RwLock<VecDeque<RowContent>>,
@@ -95,6 +95,31 @@ struct RowContent {
 }
 
 impl ClusterSlots {
+    pub fn new(root_bank: &Bank, cluster_info: &ClusterInfo) -> Self {
+        let cluster_slots = Self::default();
+        cluster_slots.update(root_bank, cluster_info);
+        cluster_slots
+    }
+
+    // Intentionally private default function to disallow uninitialized construction
+    fn default() -> Self {
+        Self {
+            cluster_slots: RwLock::new(VecDeque::new()),
+            epoch_metadata: RwLock::new(HashMap::new()),
+            current_slot: AtomicU64::default(),
+            root_epoch: RwLock::new(None),
+            cursor: Mutex::new(Cursor::default()),
+            metrics_last_report: AtomicInterval::default(),
+            metric_allocations: AtomicU64::default(),
+            metric_write_locks: AtomicU64::default(),
+        }
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn default_for_tests() -> Self {
+        Self::default()
+    }
+
     #[inline]
     pub(crate) fn lookup(&self, slot: Slot) -> Option<Arc<SlotSupporters>> {
         let cluster_slots = self.cluster_slots.read().unwrap();

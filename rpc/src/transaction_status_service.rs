@@ -141,7 +141,11 @@ impl TransactionStatusService {
                 },
                 work_id,
             )) => {
-                let mut status_and_memos_batch = blockstore.get_write_batch()?;
+                let mut status_and_memos_batch = if enable_rpc_transaction_history {
+                    Some(blockstore.get_write_batch()?)
+                } else {
+                    None
+                };
 
                 for (
                     transaction,
@@ -223,13 +227,13 @@ impl TransactionStatusService {
                         transaction_status_meta.return_data.take();
                     }
 
-                    if enable_rpc_transaction_history {
+                    if let Some(batch) = status_and_memos_batch.as_mut() {
                         if let Some(memos) = extract_and_fmt_memos(transaction.message()) {
                             blockstore.add_transaction_memos_to_batch(
                                 transaction.signature(),
                                 slot,
                                 memos,
-                                &mut status_and_memos_batch,
+                                batch,
                             )?;
                         }
 
@@ -246,13 +250,13 @@ impl TransactionStatusService {
                             keys_with_writable,
                             transaction_status_meta,
                             transaction_index,
-                            &mut status_and_memos_batch,
+                            batch,
                         )?;
                     }
                 }
 
-                if enable_rpc_transaction_history {
-                    blockstore.write_batch(status_and_memos_batch)?;
+                if let Some(batch) = status_and_memos_batch {
+                    blockstore.write_batch(batch)?;
                 }
 
                 if let Some(dependency_tracker) = dependency_tracker.as_ref() {

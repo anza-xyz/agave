@@ -8,7 +8,7 @@ use {
     arrayvec::ArrayVec,
     bincode::serialize,
     rand::Rng,
-    serde::de::{Deserialize, Deserializer},
+    serde::{de::Deserializer, Deserialize, Serialize},
     solana_hash::Hash,
     solana_keypair::{signable::Signable, Keypair},
     solana_packet::PACKET_DATA_SIZE,
@@ -208,12 +208,6 @@ impl CrdsValue {
             .unwrap()
             .unwrap()
     }
-
-    /// Returns true if, regardless of prunes, this crds-value
-    /// should be pushed to the receiving node.
-    pub(crate) fn should_force_push(&self, peer: &Pubkey) -> bool {
-        matches!(self.data, CrdsData::NodeInstance(_)) && &self.pubkey() == peer
-    }
 }
 
 // Manual implementation of Deserialize for CrdsValue in order to populate
@@ -247,7 +241,7 @@ impl<'de> Deserialize<'de> for CrdsValue {
 mod test {
     use {
         super::*,
-        crate::crds_data::{LowestSlot, NodeInstance, Vote},
+        crate::crds_data::{LowestSlot, Vote},
         bincode::deserialize,
         rand0_7::{Rng, SeedableRng},
         rand_chacha0_2::ChaChaRng,
@@ -338,26 +332,6 @@ mod test {
         value.sign(wrong_keypair);
         assert!(!value.verify());
         serialize_deserialize_value(value, correct_keypair);
-    }
-
-    #[test]
-    fn test_should_force_push() {
-        let mut rng = rand::thread_rng();
-        let pubkey = Pubkey::new_unique();
-        assert!(
-            !CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_rand(
-                &mut rng,
-                Some(pubkey)
-            )))
-            .should_force_push(&pubkey)
-        );
-        let node = CrdsValue::new_unsigned(CrdsData::NodeInstance(NodeInstance::new(
-            &mut rng,
-            pubkey,
-            timestamp(),
-        )));
-        assert!(node.should_force_push(&pubkey));
-        assert!(!node.should_force_push(&Pubkey::new_unique()));
     }
 
     #[test]

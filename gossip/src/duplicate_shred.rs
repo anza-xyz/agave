@@ -1,6 +1,7 @@
 use {
     crate::crds_data::sanitize_wallclock,
     itertools::Itertools,
+    serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_ledger::{
         blockstore::BlockstoreError,
@@ -457,7 +458,7 @@ pub(crate) mod tests {
             &entries,
             is_last_in_slot,
             // chained_merkle_root
-            Some(Hash::new_from_array(rng.gen())),
+            Hash::new_from_array(rng.gen()),
             next_shred_index,
             next_code_index, // next_code_index
             &ReedSolomonCache::default(),

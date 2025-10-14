@@ -9,12 +9,21 @@ use {
         rpc_subscriptions::RpcSubscriptions,
     },
     solana_runtime::{
-        bank_forks::{BankForks, SetRootError},
-        installed_scheduler_pool::BankWithScheduler,
+        bank_forks::BankForks, installed_scheduler_pool::BankWithScheduler,
         snapshot_controller::SnapshotController,
     },
     std::sync::{Arc, RwLock},
 };
+
+#[allow(dead_code)]
+/// Structures that are not used in the event loop, but need to be updated
+/// or notified when setting root
+pub(crate) struct RootContext {
+    pub(crate) leader_schedule_cache: Arc<LeaderScheduleCache>,
+    pub(crate) snapshot_controller: Option<Arc<SnapshotController>>,
+    pub(crate) bank_notification_sender: Option<BankNotificationSenderConfig>,
+    pub(crate) drop_bank_sender: Sender<Vec<BankWithScheduler>>,
+}
 
 /// Sets the new root, additionally performs the callback after setting the bank forks root
 /// During this transition period where both replay stage and votor can root depending on the feature flag we
@@ -40,8 +49,7 @@ pub fn check_and_handle_new_root<CB>(
     rpc_subscriptions: Option<&RpcSubscriptions>,
     my_pubkey: &Pubkey,
     callback: CB,
-) -> Result<(), SetRootError>
-where
+) where
     CB: FnOnce(&BankForks),
 {
     // get the root bank before squash
@@ -79,7 +87,7 @@ where
         highest_super_majority_root,
         drop_bank_sender,
         callback,
-    )?;
+    );
     blockstore.slots_stats.mark_rooted(new_root);
     if let Some(rpc_subscriptions) = rpc_subscriptions {
         rpc_subscriptions.notify_roots(rooted_slots);
@@ -106,7 +114,6 @@ where
         }
     }
     info!("{my_pubkey}: new root {new_root}");
-    Ok(())
 }
 
 /// Sets the bank forks root:
@@ -120,8 +127,7 @@ pub fn set_bank_forks_root<CB>(
     highest_super_majority_root: Option<Slot>,
     drop_bank_sender: &Sender<Vec<BankWithScheduler>>,
     callback: CB,
-) -> Result<(), SetRootError>
-where
+) where
     CB: FnOnce(&BankForks),
 {
     bank_forks.read().unwrap().prune_program_cache(new_root);
@@ -129,7 +135,7 @@ where
         new_root,
         snapshot_controller,
         highest_super_majority_root,
-    )?;
+    );
 
     drop_bank_sender
         .send(removed_banks)
@@ -137,5 +143,4 @@ where
 
     let r_bank_forks = bank_forks.read().unwrap();
     callback(&r_bank_forks);
-    Ok(())
 }

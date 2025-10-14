@@ -12,7 +12,7 @@ pub struct Poh {
     pub hash: Hash,
     num_hashes: u64,
     hashes_per_tick: u64,
-    remaining_hashes: u64,
+    remaining_hashes_until_tick: u64,
     tick_number: u64,
     slot_start_time: Instant,
 }
@@ -36,7 +36,7 @@ impl Poh {
             hash,
             num_hashes: 0,
             hashes_per_tick,
-            remaining_hashes: hashes_per_tick,
+            remaining_hashes_until_tick: hashes_per_tick,
             tick_number,
             slot_start_time: now,
         }
@@ -62,27 +62,27 @@ impl Poh {
     /// Return `true` if the caller needs to `tick()` next, i.e. if the
     /// remaining_hashes is 1.
     pub fn hash(&mut self, max_num_hashes: u64) -> bool {
-        let num_hashes = std::cmp::min(self.remaining_hashes - 1, max_num_hashes);
+        let num_hashes = std::cmp::min(self.remaining_hashes_until_tick - 1, max_num_hashes);
 
         for _ in 0..num_hashes {
             self.hash = hash(self.hash.as_ref());
         }
         self.num_hashes += num_hashes;
-        self.remaining_hashes -= num_hashes;
+        self.remaining_hashes_until_tick -= num_hashes;
 
-        assert!(self.remaining_hashes > 0);
-        self.remaining_hashes == 1
+        assert!(self.remaining_hashes_until_tick > 0);
+        self.remaining_hashes_until_tick == 1
     }
 
     pub fn record(&mut self, mixin: Hash) -> Option<PohEntry> {
-        if self.remaining_hashes == 1 {
+        if self.remaining_hashes_until_tick == 1 {
             return None; // Caller needs to `tick()` first
         }
 
         self.hash = hashv(&[self.hash.as_ref(), mixin.as_ref()]);
         let num_hashes = self.num_hashes + 1;
         self.num_hashes = 0;
-        self.remaining_hashes -= 1;
+        self.remaining_hashes_until_tick -= 1;
 
         Some(PohEntry {
             num_hashes,
@@ -98,7 +98,7 @@ impl Poh {
         let num_mixins = mixins.len() as u64;
         debug_assert_ne!(num_mixins, 0, "mixins.len() == 0");
 
-        if self.remaining_hashes < num_mixins + 1 {
+        if self.remaining_hashes_until_tick < num_mixins + 1 {
             return false; // Not enough hashes remaining to record all mixins
         }
 
@@ -120,7 +120,7 @@ impl Poh {
         }));
 
         self.num_hashes = 0;
-        self.remaining_hashes -= num_mixins;
+        self.remaining_hashes_until_tick -= num_mixins;
 
         true
     }
@@ -128,16 +128,16 @@ impl Poh {
     pub fn tick(&mut self) -> Option<PohEntry> {
         self.hash = hash(self.hash.as_ref());
         self.num_hashes += 1;
-        self.remaining_hashes -= 1;
+        self.remaining_hashes_until_tick -= 1;
 
         // If we are in low power mode then always generate a tick.
         // Otherwise only tick if there are no remaining hashes
-        if self.hashes_per_tick != LOW_POWER_MODE && self.remaining_hashes != 0 {
+        if self.hashes_per_tick != LOW_POWER_MODE && self.remaining_hashes_until_tick != 0 {
             return None;
         }
 
         let num_hashes = self.num_hashes;
-        self.remaining_hashes = self.hashes_per_tick;
+        self.remaining_hashes_until_tick = self.hashes_per_tick;
         self.num_hashes = 0;
         self.tick_number += 1;
         Some(PohEntry {
@@ -145,10 +145,19 @@ impl Poh {
             hash: self.hash,
         })
     }
+
+    pub fn remaining_hashes_in_slot(&self, ticks_per_slot: u64) -> u64 {
+        // ticks_per_slot must be a power of two so we can use a bitmask
+        debug_assert!(ticks_per_slot.is_power_of_two() && ticks_per_slot > 0);
+        ticks_per_slot
+            .saturating_sub((self.tick_number & (ticks_per_slot.wrapping_sub(1))).wrapping_add(1))
+            .wrapping_mul(self.hashes_per_tick)
+            .wrapping_add(self.remaining_hashes_until_tick)
+    }
 }
 
 pub fn compute_hash_time(hashes_sample_size: u64) -> Duration {
-    info!("Running {} hashes...", hashes_sample_size);
+    info!("Running {hashes_sample_size} hashes...");
     let mut v = Hash::default();
     let start = Instant::now();
     for _ in 0..hashes_sample_size {
@@ -328,29 +337,32 @@ mod tests {
     #[test]
     fn test_poh_tick() {
         let mut poh = Poh::new(Hash::default(), Some(2));
-        assert_eq!(poh.remaining_hashes, 2);
+        assert_eq!(poh.remaining_hashes_until_tick, 2);
         assert!(poh.tick().is_none());
-        assert_eq!(poh.remaining_hashes, 1);
+        assert_eq!(poh.remaining_hashes_until_tick, 1);
         assert_matches!(poh.tick(), Some(PohEntry { num_hashes: 2, .. }));
-        assert_eq!(poh.remaining_hashes, 2); // Ready for the next tick
+        assert_eq!(poh.remaining_hashes_until_tick, 2); // Ready for the next tick
     }
 
     #[test]
     fn test_poh_tick_large_batch() {
         let mut poh = Poh::new(Hash::default(), Some(2));
-        assert_eq!(poh.remaining_hashes, 2);
+        assert_eq!(poh.remaining_hashes_until_tick, 2);
         assert!(poh.hash(1_000_000)); // Stop hashing before the next tick
-        assert_eq!(poh.remaining_hashes, 1);
+        assert_eq!(poh.remaining_hashes_until_tick, 1);
         assert!(poh.hash(1_000_000)); // Does nothing...
-        assert_eq!(poh.remaining_hashes, 1);
+        assert_eq!(poh.remaining_hashes_until_tick, 1);
+        assert_eq!(poh.remaining_hashes_in_slot(2), 3);
         poh.tick();
-        assert_eq!(poh.remaining_hashes, 2); // Ready for the next tick
+        assert_eq!(poh.remaining_hashes_until_tick, 2); // Ready for the next tick
+        assert_eq!(poh.remaining_hashes_in_slot(2), 2);
     }
 
     #[test]
     fn test_poh_tick_too_soon() {
         let mut poh = Poh::new(Hash::default(), Some(2));
-        assert_eq!(poh.remaining_hashes, 2);
+        assert_eq!(poh.remaining_hashes_until_tick, 2);
+        assert_eq!(poh.remaining_hashes_in_slot(2), 4);
         assert!(poh.tick().is_none());
     }
 
@@ -358,14 +370,16 @@ mod tests {
     fn test_poh_record_not_permitted_at_final_hash() {
         let mut poh = Poh::new(Hash::default(), Some(10));
         assert!(poh.hash(9));
-        assert_eq!(poh.remaining_hashes, 1);
+        assert_eq!(poh.remaining_hashes_until_tick, 1);
+        assert_eq!(poh.remaining_hashes_in_slot(2), 11);
         assert!(poh.record(Hash::default()).is_none()); // <-- record() rejected to avoid exceeding hashes_per_tick
         assert_matches!(poh.tick(), Some(PohEntry { num_hashes: 10, .. }));
         assert_matches!(
             poh.record(Hash::default()),
             Some(PohEntry { num_hashes: 1, .. }) // <-- record() ok
         );
-        assert_eq!(poh.remaining_hashes, 9);
+        assert_eq!(poh.remaining_hashes_until_tick, 9);
+        assert_eq!(poh.remaining_hashes_in_slot(2), 9);
     }
 
     #[test]
@@ -380,7 +394,8 @@ mod tests {
         assert_eq!(entries[0].num_hashes, 5);
         assert_eq!(entries[1].num_hashes, 1);
         assert_eq!(entries[2].num_hashes, 1);
-        assert!(poh.remaining_hashes == 3);
+        assert_eq!(poh.remaining_hashes_until_tick, 3);
+        assert_eq!(poh.remaining_hashes_in_slot(2), 13);
 
         // Cannot record more than number of remaining hashes
         assert!(!poh.record_batches(&dummy_hashes[..4], &mut entries,));
@@ -393,6 +408,7 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].num_hashes, 1);
         assert_eq!(entries[1].num_hashes, 1);
-        assert!(poh.remaining_hashes == 1);
+        assert_eq!(poh.remaining_hashes_until_tick, 1);
+        assert_eq!(poh.remaining_hashes_in_slot(2), 11);
     }
 }

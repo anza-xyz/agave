@@ -268,25 +268,12 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                 self.buffer_packet_batches(packet_batches, tpu_vote_batch, bank);
 
                 // Drain the channel up to timeout
-                let timed_out = loop {
-                    if now.elapsed() >= TIMEOUT {
-                        break true;
-                    }
+                while now.elapsed() < TIMEOUT {
                     match self.receiver.try_recv() {
                         Ok((packet_batches, tpu_vote_batch)) => {
                             self.buffer_packet_batches(packet_batches, tpu_vote_batch, bank)
                         }
-                        Err(_) => break false,
-                    }
-                };
-
-                // If timeout was reached, prevent backup by draining all
-                // packets in the channel.
-                if timed_out {
-                    warn!("ForwardingStage is backed up, dropping packets");
-                    while let Ok((packet_batch, _)) = self.receiver.try_recv() {
-                        self.metrics.dropped_on_timeout +=
-                            packet_batch.iter().map(|b| b.len()).sum::<usize>();
+                        Err(_) => break,
                     }
                 }
 
@@ -304,6 +291,9 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
         is_tpu_vote_batch: bool,
         bank: &Bank,
     ) {
+        let enable_static_instruction_limit = bank
+            .feature_set
+            .is_active(&agave_feature_set::static_instruction_limit::id());
         for batch in packet_batches.iter() {
             for packet in batch
                 .iter()
@@ -324,19 +314,21 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
 
                 // Perform basic sanitization checks and calculate priority.
                 // If any steps fail, drop the packet.
-                let Some(priority) = SanitizedTransactionView::try_new_sanitized(packet_data)
+                let Some(priority) = SanitizedTransactionView::try_new_sanitized(
+                    packet_data,
+                    enable_static_instruction_limit,
+                )
+                .map_err(|_| ())
+                .and_then(|transaction| {
+                    RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+                        transaction,
+                        MessageHash::Compute,
+                        Some(packet.meta().is_simple_vote_tx()),
+                    )
                     .map_err(|_| ())
-                    .and_then(|transaction| {
-                        RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
-                            transaction,
-                            MessageHash::Compute,
-                            Some(packet.meta().is_simple_vote_tx()),
-                        )
-                        .map_err(|_| ())
-                    })
-                    .ok()
-                    .and_then(|transaction| calculate_priority(&transaction, bank))
-                else {
+                })
+                .ok()
+                .and_then(|transaction| calculate_priority(&transaction, bank)) else {
                     self.metrics.votes_dropped_on_receive += vote_count;
                     self.metrics.non_votes_dropped_on_receive += non_vote_count;
                     continue;
@@ -763,8 +755,6 @@ struct ForwardingStageMetrics {
     non_votes_dropped_on_data_budget: usize,
     non_votes_forwarded: usize,
     non_votes_dropped_on_send: usize,
-
-    dropped_on_timeout: usize,
 }
 
 impl ForwardingStageMetrics {
@@ -844,7 +834,6 @@ impl Default for ForwardingStageMetrics {
             non_votes_dropped_on_data_budget: 0,
             non_votes_forwarded: 0,
             non_votes_dropped_on_send: 0,
-            dropped_on_timeout: 0,
         }
     }
 }

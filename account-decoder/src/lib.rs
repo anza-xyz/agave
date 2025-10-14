@@ -1,8 +1,5 @@
 #![allow(clippy::arithmetic_side_effects)]
 
-#[macro_use]
-extern crate serde_derive;
-
 pub mod parse_account_data;
 pub mod parse_address_lookup_table;
 pub mod parse_bpf_loader;
@@ -22,6 +19,7 @@ pub use solana_account_decoder_client_types::{
 use {
     crate::parse_account_data::{parse_account_data_v3, AccountAdditionalDataV3},
     base64::{prelude::BASE64_STANDARD, Engine},
+    serde::{Deserialize, Serialize},
     solana_account::ReadableAccount,
     solana_fee_calculator::FeeCalculator,
     solana_pubkey::Pubkey,

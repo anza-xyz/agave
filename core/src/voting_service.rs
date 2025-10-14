@@ -71,7 +71,7 @@ fn send_vote_transaction(
     let client = connection_cache.get_connection(&tpu);
 
     client.send_data_async(buf).map_err(|err| {
-        trace!("Ran into an error when sending vote: {err:?} to {tpu:?}");
+        error!("Ran into an error when sending vote: {err:?} to {tpu:?}");
         SendVoteError::from(err)
     })
 }

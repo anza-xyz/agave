@@ -227,7 +227,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn validate_affinity(expect_cores: &[usize], error_msg: &str) {
         let affinity = affinity::get_thread_affinity().unwrap();
-        assert_eq!(affinity, expect_cores, "{}", error_msg);
+        assert_eq!(affinity, expect_cores, "{error_msg}");
     }
     #[test]
     #[cfg(target_os = "linux")]

@@ -176,8 +176,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
             &mut Vec::new(),
             &drop_bank_sender1,
             &mut tbft_structs,
-        )
-        .unwrap();
+        );
     }
 
     // Receive pruned banks from the above handle_new_root
@@ -224,13 +223,19 @@ fn test_scheduler_producing_blocks() {
     let genesis_bank = bank_forks.read().unwrap().working_bank_with_scheduler();
     genesis_bank.set_fork_graph_in_program_cache(Arc::downgrade(&bank_forks));
     let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&genesis_bank));
-    let (exit, poh_recorder, transaction_recorder, poh_service, signal_receiver) =
-        create_test_recorder(
-            genesis_bank.clone(),
-            blockstore.clone(),
-            None,
-            Some(leader_schedule_cache),
-        );
+    let (
+        exit,
+        poh_recorder,
+        mut poh_controller,
+        transaction_recorder,
+        poh_service,
+        signal_receiver,
+    ) = create_test_recorder(
+        genesis_bank.clone(),
+        blockstore.clone(),
+        None,
+        Some(leader_schedule_cache),
+    );
     let pool = DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
     let channels = {
         let banking_tracer = BankingTracer::new_disabled();
@@ -267,10 +272,9 @@ fn test_scheduler_producing_blocks() {
         .write()
         .unwrap()
         .insert_with_scheduling_mode(SchedulingMode::BlockProduction, tpu_bank);
-    poh_recorder
-        .write()
-        .unwrap()
-        .set_bank(tpu_bank.clone_with_scheduler());
+    poh_controller
+        .set_bank_sync(tpu_bank.clone_with_scheduler())
+        .unwrap();
     tpu_bank.unpause_new_block_production_scheduler();
     let tpu_bank = bank_forks.read().unwrap().working_bank_with_scheduler();
     assert_eq!(tpu_bank.transaction_count(), 0);

@@ -68,11 +68,11 @@ impl<T: Clone + Copy + PartialEq + std::fmt::Debug> BucketApi<T> {
     }
 
     /// Get the values for Pubkey `key`
-    pub fn read_value(&self, key: &Pubkey) -> Option<(Vec<T>, RefCount)> {
+    pub fn read_value<C: for<'a> From<&'a [T]>>(&self, key: &Pubkey) -> Option<(C, RefCount)> {
         self.bucket.read().unwrap().as_ref().and_then(|bucket| {
             bucket
                 .read_value(key)
-                .map(|(value, ref_count)| (value.to_vec(), ref_count))
+                .map(|(value, ref_count)| (C::from(value), ref_count))
         })
     }
 

@@ -3,7 +3,7 @@ use {
     agave_syscalls::create_program_runtime_environment_v1,
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
-    serde_derive::{Deserialize, Serialize},
+    serde::{Deserialize, Serialize},
     serde_json::Result,
     solana_account::{
         create_account_shared_data_for_test, state_traits::StateMut, AccountSharedData,
@@ -28,7 +28,7 @@ use {
         verifier::RequisiteVerifier,
     },
     solana_sdk_ids::{bpf_loader_upgradeable, sysvar},
-    solana_transaction_context::{IndexOfAccount, InstructionAccount},
+    solana_transaction_context::{IndexOfAccount, InstructionAccount, InstructionContext},
     std::{
         collections::HashMap,
         fmt::{self, Debug, Formatter},
@@ -260,29 +260,6 @@ impl<'a, 'b> LazyAnalysis<'a, 'b> {
     }
 }
 
-fn output_trace(
-    matches: &ArgMatches<'_>,
-    trace: &[[u64; 12]],
-    frame: usize,
-    analysis: &mut LazyAnalysis,
-) {
-    if matches.value_of("trace").unwrap() == "stdout" {
-        writeln!(&mut std::io::stdout(), "Frame {frame}").unwrap();
-        analysis
-            .analyze()
-            .disassemble_trace_log(&mut std::io::stdout(), trace)
-            .unwrap();
-    } else {
-        let filename = format!("{}.{}", matches.value_of("trace").unwrap(), frame);
-        let mut fd = File::create(filename).unwrap();
-        writeln!(&fd, "Frame {frame}").unwrap();
-        analysis
-            .analyze()
-            .disassemble_trace_log(&mut fd, trace)
-            .unwrap();
-    }
-}
-
 fn load_program<'a>(
     filename: &Path,
     program_id: Pubkey,
@@ -505,6 +482,10 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     let interpreted = matches.value_of("mode").unwrap() != "jit";
     with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
+    let provide_instruction_data_offset_in_vm_r2 = invoke_context
+        .get_feature_set()
+        .provide_instruction_data_offset_in_vm_r2;
+
     // Adding `DELAY_VISIBILITY_SLOT_OFFSET` to slots to accommodate for delay visibility of the program
     let mut program_cache_for_tx_batch =
         bank.new_program_cache_for_tx_batch_for_slot(bank.slot() + DELAY_VISIBILITY_SLOT_OFFSET);
@@ -523,24 +504,24 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         .configure_next_instruction_for_tests(
             program_index.saturating_add(1),
             instruction_accounts,
-            &instruction_data,
+            instruction_data,
         )
         .unwrap();
     invoke_context.push().unwrap();
-    let (_parameter_bytes, regions, account_lengths) = serialize_parameters(
-        &invoke_context
-            .transaction_context
-            .get_current_instruction_context()
-            .unwrap(),
-        false, // stricter_abi_and_runtime_constraints
-        false, // account_data_direct_mapping
-        true,  // for mask_out_rent_epoch_in_vm_serialization
-    )
-    .unwrap();
+    let (_parameter_bytes, regions, account_lengths, instruction_data_offset) =
+        serialize_parameters(
+            &invoke_context
+                .transaction_context
+                .get_current_instruction_context()
+                .unwrap(),
+            false, // stricter_abi_and_runtime_constraints
+            false, // account_data_direct_mapping
+            true,  // for mask_out_rent_epoch_in_vm_serialization
+        )
+        .unwrap();
 
     let program = matches.value_of("PROGRAM").unwrap();
     let verified_executable = load_program(Path::new(program), program_id, &invoke_context);
-    let mut analysis = LazyAnalysis::new(&verified_executable);
     create_vm!(
         vm,
         &verified_executable,
@@ -554,20 +535,50 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         vm.debug_port = Some(matches.value_of("port").unwrap().parse::<u16>().unwrap());
     }
     vm.registers[1] = MM_INPUT_START;
+
+    // SIMD-0321: Provide offset to instruction data in VM register 2.
+    if provide_instruction_data_offset_in_vm_r2 {
+        vm.registers[2] = instruction_data_offset as u64;
+    }
     let (instruction_count, result) = vm.execute_program(&verified_executable, interpreted);
     let duration = Instant::now() - start_time;
-    if matches.occurrences_of("trace") > 0 {
-        // top level trace is stored in syscall_context
-        if let Some(Some(syscall_context)) = vm.context_object_pointer.syscall_context.last() {
-            let trace = syscall_context.trace_log.as_slice();
-            output_trace(matches, trace, 0, &mut analysis);
-        }
-        // the remaining traces are saved in InvokeContext when
-        // corresponding syscall_contexts are popped
-        let traces = vm.context_object_pointer.get_traces();
-        for (frame, trace) in traces.iter().filter(|t| !t.is_empty()).enumerate() {
-            output_trace(matches, trace, frame + 1, &mut analysis);
-        }
+    if let Some(trace_option) = matches.value_of("trace") {
+        vm.context_object_pointer.iterate_vm_traces(
+            &|instruction_context: InstructionContext, executable, register_trace| {
+                let mut analysis = LazyAnalysis::new(executable);
+                if trace_option == "stdout" {
+                    writeln!(
+                        &mut std::io::stdout(),
+                        "TX Instruction {} Program {:?}",
+                        instruction_context.get_index_in_trace(),
+                        instruction_context.get_program_key(),
+                    )
+                    .unwrap();
+                    analysis
+                        .analyze()
+                        .disassemble_register_trace(&mut std::io::stdout(), register_trace)
+                        .unwrap();
+                } else {
+                    let filename = format!(
+                        "{}.{}",
+                        trace_option,
+                        instruction_context.get_index_in_trace()
+                    );
+                    let mut fd = File::create(filename).unwrap();
+                    writeln!(
+                        &fd,
+                        "TX Instruction {} Program {:?}",
+                        instruction_context.get_index_in_trace(),
+                        instruction_context.get_program_key(),
+                    )
+                    .unwrap();
+                    analysis
+                        .analyze()
+                        .disassemble_register_trace(&mut fd, register_trace)
+                        .unwrap();
+                }
+            },
+        );
     }
     drop(vm);
 

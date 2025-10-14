@@ -5,7 +5,7 @@ use {
         test_utils::check_ready,
     },
     solana_commitment_config::CommitmentConfig,
-    solana_faucet::faucet::run_local_faucet,
+    solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
     solana_fee_structure::FeeStructure,
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
@@ -24,7 +24,7 @@ fn test_ping(compute_unit_price: Option<u64>) {
     let fee = FeeStructure::default().get_max_fee(1, 0);
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
-    let faucet_addr = run_local_faucet(mint_keypair, None);
+    let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair);
     let test_validator = TestValidator::with_custom_fees(
         mint_pubkey,
         fee,

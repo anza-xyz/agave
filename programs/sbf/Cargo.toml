@@ -1,12 +1,11 @@
-
 [package]
 name = "solana-sbf-programs"
-description = "Blockchain, Rebuilt for Scale"
 documentation = "https://docs.rs/solana"
 readme = "README.md"
 publish = false
 version = { workspace = true }
 authors = { workspace = true }
+description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
@@ -53,6 +52,7 @@ members = [
     "rust/param_passing",
     "rust/param_passing_dep",
     "rust/poseidon",
+    "rust/r2_instruction_data_pointer",
     "rust/rand",
     "rust/realloc",
     "rust/realloc_invoke",
@@ -109,8 +109,7 @@ net2 = "0.2.37"
 num-derive = "0.4.2"
 num-traits = "0.2"
 rand = "0.8"
-serde = "1.0.112"                                                                             # must match the serde_derive version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
-serde_derive = "1.0.112"                                                                      # must match the serde version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
+serde = { version = "1.0.112", features = ["derive"] }
 serde_json = "1.0.56"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
@@ -125,6 +124,7 @@ solana-cli-output = { path = "../../cli-output", version = "=3.1.0" }
 solana-clock = { version = "=3.0.0", features = ["serde", "sysvar"] }
 solana-compute-budget = { path = "../../compute-budget", version = "=3.1.0" }
 solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=3.1.0" }
+solana-cpi = "=3.0.0"
 solana-curve25519 = { path = "../../curves/curve25519", version = "=3.1.0" }
 solana-define-syscall = "=3.0.0"
 solana-fee = { path = "../../fee", version = "=3.1.0" }
@@ -151,13 +151,14 @@ solana-sbf-rust-invoked-dep = { path = "rust/invoked_dep", version = "=3.1.0" }
 solana-sbf-rust-many-args-dep = { path = "rust/many_args_dep", version = "=3.1.0" }
 solana-sbf-rust-mem-dep = { path = "rust/mem_dep", version = "=3.1.0" }
 solana-sbf-rust-param-passing-dep = { path = "rust/param_passing_dep", version = "=3.1.0" }
+solana-sbf-rust-r2-instruction-data-pointer = { path = "rust/r2_instruction_data_pointer", version = "=3.1.0" }
 solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=3.1.0" }
 solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=3.1.0" }
-solana-sbpf = "=0.12.2"
+solana-sbpf = "=0.13.0"
 solana-sdk-ids = "=3.0.0"
 solana-secp256k1-recover = "=3.0.0"
 solana-sha256-hasher = { version = "=3.0.0", features = ["sha2"] }
-solana-stake-interface = { version = "=2.0.0", features = ["bincode"] }
+solana-stake-interface = { version = "=2.0.1", features = ["bincode"] }
 solana-svm = { path = "../../svm", version = "=3.1.0" }
 solana-svm-callback = { path = "../../svm-callback", version = "=3.1.0" }
 solana-svm-feature-set = { path = "../../svm-feature-set", version = "=3.1.0" }
@@ -171,6 +172,7 @@ solana-transaction-context = { path = "../../transaction-context", version = "=3
 solana-transaction-status = { path = "../../transaction-status", version = "=3.1.0" }
 solana-vote = { path = "../../vote", version = "=3.1.0" }
 solana-vote-program = { path = "../../programs/vote", version = "=3.1.0" }
+test-case = "3.3.1"
 thiserror = "1.0"
 
 [features]
@@ -236,7 +238,7 @@ solana-sbf-rust-realloc-invoke-dep = { workspace = true }
 solana-sbpf = { workspace = true, features = ["jit"] }
 solana-sdk-ids = "3.0.0"
 solana-signer = "3.0.0"
-solana-stake-interface = "2.0.0"
+solana-stake-interface = "2.0.1"
 solana-svm = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
@@ -252,6 +254,7 @@ solana-transaction-error = "3.0.0"
 solana-transaction-status = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
+test-case = { workspace = true }
 
 [profile.release]
 # The test programs are build in release mode

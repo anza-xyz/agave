@@ -233,9 +233,7 @@ impl<'a> SnapshotMinimizer<'a> {
                 .get_and_then(&pubkey, |entry| {
                     if let Some(entry) = entry {
                         let max_slot = entry
-                            .slot_list
-                            .read()
-                            .unwrap()
+                            .slot_list_read_lock()
                             .iter()
                             .map(|(slot, _)| *slot)
                             .max();
@@ -318,11 +316,8 @@ impl<'a> SnapshotMinimizer<'a> {
         let remove_pubkeys = purge_pubkeys_collect.into_inner().unwrap();
         let total_bytes = total_bytes_collect.load(Ordering::Relaxed);
 
-        let purge_pubkeys: Vec<_> = remove_pubkeys
-            .into_iter()
-            .map(|pubkey| (*pubkey, slot))
-            .collect();
-        let _ = self.accounts_db().purge_keys_exact(purge_pubkeys.iter());
+        let purge_pubkeys = remove_pubkeys.into_iter().map(|pubkey| (*pubkey, slot));
+        let _ = self.accounts_db().purge_keys_exact(purge_pubkeys);
 
         let mut shrink_in_progress = None;
         if total_bytes > 0 {
@@ -670,14 +665,12 @@ mod tests {
             false,
             false,
             false,
-            Some(accounts_db_config),
+            accounts_db_config,
             None,
             Arc::default(),
         )
         .unwrap();
 
-        // Wait for the startup verification to complete.  If we don't panic, then we're good!
-        roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
         assert_eq!(roundtrip_bank, *bank);
     }
 }

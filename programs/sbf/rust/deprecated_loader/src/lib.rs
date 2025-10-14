@@ -136,7 +136,10 @@ fn process_instruction(
             }
         }
         Some(&TEST_CPI_ACCOUNT_UPDATE_CALLEE_SHRINKS_SMALLER_THAN_ORIGINAL_LEN) => {
-            msg!("DEPRECATED LOADER TEST_CPI_ACCOUNT_UPDATE_CALLEE_SHRINKS_SMALLER_THAN_ORIGINAL_LEN");
+            msg!(
+                "DEPRECATED LOADER \
+                 TEST_CPI_ACCOUNT_UPDATE_CALLEE_SHRINKS_SMALLER_THAN_ORIGINAL_LEN"
+            );
             const ARGUMENT_INDEX: usize = 1;
             const REALLOC_PROGRAM_INDEX: usize = 2;
             const INVOKE_PROGRAM_INDEX: usize = 3;

@@ -17,12 +17,11 @@ rustdoc-args = ["--cfg=docsrs"]
 [features]
 bincode = ["dep:bincode", "serde", "solana-account/bincode"]
 dev-context-only-utils = ["bincode", "solana-account/dev-context-only-utils", "dep:qualifier_attr"]
-serde = ["dep:serde", "dep:serde_derive"]
+serde = ["serde/derive"]
 
 [dependencies]
 qualifier_attr = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
-serde_derive = { workspace = true, optional = true }
 solana-account = { workspace = true }
 solana-instruction = { workspace = true, features = ["std"] }
 solana-instructions-sysvar = { workspace = true }

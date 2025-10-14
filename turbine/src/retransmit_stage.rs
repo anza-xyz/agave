@@ -120,6 +120,7 @@ impl RetransmitStats {
         working_bank: &Bank,
         cluster_info: &ClusterInfo,
         cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
+        is_xdp: bool,
     ) {
         const SUBMIT_CADENCE: Duration = Duration::from_secs(2);
         if self.since.elapsed() < SUBMIT_CADENCE {
@@ -130,6 +131,7 @@ impl RetransmitStats {
             .submit_metrics("cluster_nodes_retransmit", timestamp());
         datapoint_info!(
             "retransmit-stage",
+            "is_xdp" => is_xdp.to_string(),
             ("total_time", self.total_time, i64),
             ("epoch_fetch", self.epoch_fetch, i64),
             ("epoch_cache_update", self.epoch_cache_update, i64),
@@ -163,7 +165,7 @@ impl RetransmitStats {
                 i64
             ),
         );
-        // slot_stats are submited at a different cadence.
+        // slot_stats are submitted at a different cadence.
         let old = std::mem::replace(self, Self::new(Instant::now()));
         self.slot_stats = old.slot_stats;
     }
@@ -235,10 +237,10 @@ impl<'a> RetransmitSocket<'a> {
         if let Some(xdp_sender) = xdp_sender {
             RetransmitSocket::Xdp(xdp_sender)
         } else if cluster_info.bind_ip_addrs().multihoming_enabled() {
-            let interface_offset = cluster_info.egress_socket_select().active_offset();
-            let sockets_per_interface = cluster_info
-                .egress_socket_select()
-                .num_retransmit_sockets_per_interface();
+            let sockets_per_interface =
+                retransmit_sockets.len() / cluster_info.bind_ip_addrs().len();
+            let active_index = cluster_info.bind_ip_addrs().active_index();
+            let interface_offset = sockets_per_interface.saturating_mul(active_index);
 
             RetransmitSocket::Multihomed {
                 sockets: retransmit_sockets,
@@ -431,7 +433,13 @@ fn retransmit(
     );
     timer_start.stop();
     stats.total_time += timer_start.as_us();
-    stats.maybe_submit(&root_bank, &working_bank, cluster_info, cluster_nodes_cache);
+    stats.maybe_submit(
+        &root_bank,
+        &working_bank,
+        cluster_info,
+        cluster_nodes_cache,
+        xdp_sender.is_some(),
+    );
     Ok(())
 }
 
@@ -917,7 +925,7 @@ mod tests {
                 &entries,
                 true,
                 // chained_merkle_root
-                Some(Hash::new_from_array(rand::thread_rng().gen())),
+                Hash::new_from_array(rand::thread_rng().gen()),
                 0,
                 code_index,
                 &rsc,
@@ -953,7 +961,7 @@ mod tests {
         // first shred passed through
         assert!(
             !shred_deduper.dedup(shred_dup.id(), shred_dup.payload(), MAX_DUPLICATE_COUNT),
-            "First time seeing shred X with differnt parent slot (3 instead of 4) => Not dup \
+            "First time seeing shred X with different parent slot (3 instead of 4) => Not dup \
              because common header is unique & shred ID only seen once"
         );
         // then blocked

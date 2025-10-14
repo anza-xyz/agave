@@ -46,6 +46,12 @@ impl<'storage> StoredAccountInfo<'storage> {
     }
 }
 
+impl IsZeroLamport for StoredAccountInfo<'_> {
+    fn is_zero_lamport(&self) -> bool {
+        self.lamports == 0
+    }
+}
+
 impl ReadableAccount for StoredAccountInfo<'_> {
     fn lamports(&self) -> u64 {
         self.lamports

@@ -6,6 +6,7 @@ use {
     bincode::serialized_size,
     bv::BitVec,
     flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress},
+    serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},

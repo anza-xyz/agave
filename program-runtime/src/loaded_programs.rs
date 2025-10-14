@@ -110,6 +110,11 @@ impl From<ProgramCacheEntryOwner> for Pubkey {
     - Loaded / FailedVerification => Loaded in UpgradeableLoaderInstruction::Upgrade
     - Loaded / FailedVerification => Closed in UpgradeableLoaderInstruction::Close
 
+    Loader migration:
+    - Closed => Closed (in the same slot)
+    - FailedVerification => FailedVerification (with different account_owner)
+    - Loaded => Loaded (with different account_owner)
+
     Eviction and unloading (in the same slot):
     - Unloaded => Loaded in ProgramCache::assign_program
     - Loaded => Unloaded in ProgramCache::unload_program_entry
@@ -291,14 +296,6 @@ impl LoadProgramMetrics {
         timings.create_executor_load_elf_us += self.load_elf_us;
         timings.create_executor_verify_code_us += self.verify_code_us;
         timings.create_executor_jit_compile_us += self.jit_compile_us;
-        datapoint_trace!(
-            "create_executor_trace",
-            ("program_id", self.program_id, String),
-            ("register_syscalls_us", self.register_syscalls_us, i64),
-            ("load_elf_us", self.load_elf_us, i64),
-            ("verify_code_us", self.verify_code_us, i64),
-            ("jit_compile_us", self.jit_compile_us, i64),
-        );
     }
 }
 
@@ -912,6 +909,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 ProgramCacheEntryType::Unloaded(_),
                                 ProgramCacheEntryType::Loaded(_),
                             ) => {}
+                            (ProgramCacheEntryType::Closed, ProgramCacheEntryType::Closed)
+                                if existing.account_owner != entry.account_owner => {}
                             _ => {
                                 // Something is wrong, I can feel it ...
                                 error!(

@@ -27,7 +27,6 @@ solana-bench-tps = { workspace = true }
 solana-client = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-core = { workspace = true }
-solana-faucet = { workspace = true }
 solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
@@ -54,5 +53,6 @@ solana-version = { workspace = true }
 
 [dev-dependencies]
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }
+solana-faucet = { workspace = true, features = ["dev-context-only-utils"] }
 solana-local-cluster = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }

@@ -192,7 +192,7 @@ impl VoteSimulator {
             tower,
             &mut self.progress,
             &VoteTracker::default(),
-            &ClusterSlots::default(),
+            &ClusterSlots::default_for_tests(),
             &self.bank_forks,
             &mut self.tbft_structs.heaviest_subtree_fork_choice,
             &mut self.latest_validator_votes_for_frozen_banks,
@@ -248,7 +248,6 @@ impl VoteSimulator {
             &drop_bank_sender,
             &mut self.tbft_structs,
         )
-        .unwrap()
     }
 
     pub fn create_and_vote_new_branch(

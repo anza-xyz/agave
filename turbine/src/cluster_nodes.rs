@@ -916,7 +916,7 @@ mod tests {
             5, // root
             34, 52, 8, // 1st layer
             // 2nd layar
-            44, 18, 2, // 1st neigborhood
+            44, 18, 2, // 1st neighborhood
             42, 47, 46, // 2nd
             11, 26, 28, // 3rd
             // 3rd layer

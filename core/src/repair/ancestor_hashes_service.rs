@@ -1174,7 +1174,7 @@ mod test {
     #[test]
     fn test_ancestor_hashes_service_find_epoch_slots_frozen_dead_slots() {
         let vote_simulator = VoteSimulator::new(3);
-        let cluster_slots = ClusterSlots::default();
+        let cluster_slots = ClusterSlots::default_for_tests();
         let mut dead_slot_pool = HashSet::new();
         let mut repairable_dead_slot_pool = HashSet::new();
         let root_bank = vote_simulator.bank_forks.read().unwrap().root_bank();
@@ -1387,7 +1387,7 @@ mod test {
             let repair_info = RepairInfo {
                 bank_forks,
                 cluster_info: requester_cluster_info,
-                cluster_slots: Arc::new(ClusterSlots::default()),
+                cluster_slots: Arc::new(ClusterSlots::default_for_tests()),
                 epoch_schedule,
                 ancestor_duplicate_slots_sender,
                 repair_validators: None,
@@ -1914,7 +1914,7 @@ mod test {
         {
             let mut w_bank_forks = bank_forks.write().unwrap();
             w_bank_forks.insert(new_root_bank);
-            w_bank_forks.set_root(new_root_slot, None, None).unwrap();
+            w_bank_forks.set_root(new_root_slot, None, None);
         }
         popular_pruned_slot_pool.insert(dead_duplicate_confirmed_slot);
         assert!(!dead_slot_pool.is_empty());

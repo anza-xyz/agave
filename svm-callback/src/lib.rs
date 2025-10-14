@@ -35,8 +35,6 @@ pub trait InvokeContextCallback {
 pub trait TransactionProcessingCallback: InvokeContextCallback {
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)>;
 
-    fn add_builtin_account(&self, _name: &str, _program_id: &Pubkey) {}
-
     fn inspect_account(&self, _address: &Pubkey, _account_state: AccountState, _is_writable: bool) {
     }
 }

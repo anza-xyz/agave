@@ -3,7 +3,8 @@ use {
     itertools::Itertools,
     serde::{
         de::{MapAccess, Visitor},
-        ser::{Serialize, Serializer},
+        ser::Serializer,
+        Deserialize, Serialize,
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,

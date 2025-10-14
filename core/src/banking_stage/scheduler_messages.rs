@@ -1,4 +1,5 @@
 use {
+    crate::banking_stage::consumer::RetryableIndex,
     solana_clock::{Epoch, Slot},
     std::fmt::Display,
 };
@@ -47,5 +48,5 @@ pub struct ConsumeWork<Tx> {
 /// Processed transactions.
 pub struct FinishedConsumeWork<Tx> {
     pub work: ConsumeWork<Tx>,
-    pub retryable_indexes: Vec<usize>,
+    pub retryable_indexes: Vec<RetryableIndex>,
 }

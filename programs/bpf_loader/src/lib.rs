@@ -268,12 +268,11 @@ fn create_vm<'a, 'b>(
         invoke_context
             .get_feature_set()
             .stricter_abi_and_runtime_constraints,
-        invoke_context.account_data_direct_mapping,
+        invoke_context.get_feature_set().account_data_direct_mapping,
     )?;
     invoke_context.set_syscall_context(SyscallContext {
         allocator: BpfAllocator::new(heap_size as u64),
         accounts_metadata,
-        trace_log: Vec::new(),
     })?;
     Ok(EbpfVm::new(
         program.get_loader().clone(),
@@ -1463,17 +1462,22 @@ fn execute<'a, 'b: 'a>(
     let stricter_abi_and_runtime_constraints = invoke_context
         .get_feature_set()
         .stricter_abi_and_runtime_constraints;
+    let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
     let mask_out_rent_epoch_in_vm_serialization = invoke_context
         .get_feature_set()
         .mask_out_rent_epoch_in_vm_serialization;
+    let provide_instruction_data_offset_in_vm_r2 = invoke_context
+        .get_feature_set()
+        .provide_instruction_data_offset_in_vm_r2;
 
     let mut serialize_time = Measure::start("serialize");
-    let (parameter_bytes, regions, accounts_metadata) = serialization::serialize_parameters(
-        &instruction_context,
-        stricter_abi_and_runtime_constraints,
-        invoke_context.account_data_direct_mapping,
-        mask_out_rent_epoch_in_vm_serialization,
-    )?;
+    let (parameter_bytes, regions, accounts_metadata, instruction_data_offset) =
+        serialization::serialize_parameters(
+            &instruction_context,
+            stricter_abi_and_runtime_constraints,
+            account_data_direct_mapping,
+            mask_out_rent_epoch_in_vm_serialization,
+        )?;
     serialize_time.stop();
 
     // save the account addresses so in case we hit an AccessViolation error we
@@ -1508,7 +1512,13 @@ fn execute<'a, 'b: 'a>(
 
         vm.context_object_pointer.execute_time = Some(Measure::start("execute"));
         vm.registers[1] = ebpf::MM_INPUT_START;
+
+        // SIMD-0321: Provide offset to instruction data in VM register 2.
+        if provide_instruction_data_offset_in_vm_r2 {
+            vm.registers[2] = instruction_data_offset as u64;
+        }
         let (compute_units_consumed, result) = vm.execute_program(executable, !use_jit);
+        let register_trace = std::mem::take(&mut vm.register_trace);
         MEMORY_POOL.with_borrow_mut(|memory_pool| {
             memory_pool.put_stack(stack);
             memory_pool.put_heap(heap);
@@ -1516,6 +1526,7 @@ fn execute<'a, 'b: 'a>(
             debug_assert!(memory_pool.heap_len() <= MAX_INSTRUCTION_STACK_DEPTH);
         });
         drop(vm);
+        invoke_context.insert_register_trace(register_trace);
         if let Some(execute_time) = invoke_context.execute_time.as_mut() {
             execute_time.stop();
             invoke_context.timings.execute_us += execute_time.as_us();
@@ -1631,13 +1642,14 @@ fn execute<'a, 'b: 'a>(
         invoke_context: &mut InvokeContext,
         parameter_bytes: &[u8],
         stricter_abi_and_runtime_constraints: bool,
+        account_data_direct_mapping: bool,
     ) -> Result<(), InstructionError> {
         serialization::deserialize_parameters(
             &invoke_context
                 .transaction_context
                 .get_current_instruction_context()?,
             stricter_abi_and_runtime_constraints,
-            invoke_context.account_data_direct_mapping,
+            account_data_direct_mapping,
             parameter_bytes,
             &invoke_context.get_syscall_context()?.accounts_metadata,
         )
@@ -1649,6 +1661,7 @@ fn execute<'a, 'b: 'a>(
             invoke_context,
             parameter_bytes.as_slice(),
             stricter_abi_and_runtime_constraints,
+            account_data_direct_mapping,
         )
         .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
     });
@@ -3070,7 +3083,7 @@ mod tests {
                 ),
             ],
             vec![programdata_meta.clone(), new_upgrade_authority_meta.clone()],
-            Err(InstructionError::NotEnoughAccountKeys),
+            Err(InstructionError::MissingAccount),
         );
 
         // Case: new authority not in instruction
@@ -3087,7 +3100,7 @@ mod tests {
                 ),
             ],
             vec![programdata_meta.clone(), upgrade_authority_meta.clone()],
-            Err(InstructionError::NotEnoughAccountKeys),
+            Err(InstructionError::MissingAccount),
         );
 
         // Case: present authority did not sign
@@ -3470,7 +3483,7 @@ mod tests {
             &instruction,
             transaction_accounts.clone(),
             vec![buffer_meta.clone(), new_authority_meta.clone()],
-            Err(InstructionError::NotEnoughAccountKeys),
+            Err(InstructionError::MissingAccount),
         );
 
         // Case: Missing new authority
@@ -3480,7 +3493,7 @@ mod tests {
             &instruction,
             transaction_accounts.clone(),
             vec![buffer_meta.clone(), authority_meta.clone()],
-            Err(InstructionError::NotEnoughAccountKeys),
+            Err(InstructionError::MissingAccount),
         );
 
         // Case: wrong present authority

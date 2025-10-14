@@ -3,14 +3,14 @@ use {
     clap::{value_t, value_t_or_exit, values_t, values_t_or_exit, Arg, ArgMatches},
     solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_accounts_db::{
-        accounts_db::AccountsDbConfig,
+        accounts_db::{AccountsDbConfig, DEFAULT_MEMLOCK_BUDGET_SIZE},
         accounts_file::StorageAccess,
         accounts_index::{AccountsIndexConfig, IndexLimitMb, ScanFilter},
     },
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::pubkeys_of,
-        input_validators::{is_parsable, is_pow2, is_within_range},
+        input_validators::{is_parsable, is_pow2},
     },
     solana_cli_output::CliAccountNewConfig,
     solana_clock::Slot,
@@ -21,7 +21,6 @@ use {
     solana_runtime::runtime_config::RuntimeConfig,
     std::{
         collections::HashSet,
-        num::NonZeroUsize,
         path::{Path, PathBuf},
         sync::Arc,
     },
@@ -43,6 +42,7 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .value_name("PATH")
             .takes_value(true)
             .multiple(true)
+            .requires("enable_accounts_disk_index")
             .help(
                 "Persistent accounts-index location. May be specified multiple times. [default: \
                  <LEDGER>/accounts_index]",
@@ -53,11 +53,12 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .validator(is_pow2)
             .takes_value(true)
             .help("Number of bins to divide the accounts index into"),
-        Arg::with_name("disable_accounts_disk_index")
-            .long("disable-accounts-disk-index")
-            .help(
-                "Disable the disk-based accounts index. It is enabled by default. The entire \
-                 accounts index will be kept in memory.",
+        Arg::with_name("enable_accounts_disk_index")
+            .long("enable-accounts-disk-index")
+            .help("Enables the disk-based accounts index")
+            .long_help(
+                "Enables the disk-based accounts index. Reduce the memory footprint of the \
+                 accounts index at the cost of index performance.",
             ),
         Arg::with_name("accounts_db_skip_shrink")
             .long("accounts-db-skip-shrink")
@@ -107,13 +108,6 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .takes_value(true)
             .possible_values(&["mmap", "file"])
             .help("Access account storages using this method"),
-        Arg::with_name("accounts_db_hash_threads")
-            .long("accounts-db-hash-threads")
-            .value_name("NUM_THREADS")
-            .takes_value(true)
-            .validator(|s| is_within_range(s, 1..=num_cpus::get()))
-            .help("Number of threads to use for background accounts hashing")
-            .hidden(hidden_unless_forced()),
         Arg::with_name("accounts_db_ancient_storage_ideal_size")
             .long("accounts-db-ancient-storage-ideal-size")
             .value_name("BYTES")
@@ -163,7 +157,6 @@ pub fn snapshot_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .help("Use DIR for snapshot location [default: --ledger value]"),
         Arg::with_name("full_snapshot_archive_path")
             .long("full-snapshot-archive-path")
-            .alias("snapshot-archive-path")
             .value_name("DIR")
             .takes_value(true)
             .global(true)
@@ -190,7 +183,7 @@ pub fn snapshot_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
 /// use this function may not support all flags.
 pub fn parse_process_options(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -> ProcessOptions {
     let new_hard_forks = hardforks_of(arg_matches, "hard_forks");
-    let accounts_db_config = Some(get_accounts_db_config(ledger_path, arg_matches));
+    let accounts_db_config = get_accounts_db_config(ledger_path, arg_matches);
     let log_messages_bytes_limit = value_t!(arg_matches, "log_messages_bytes_limit", usize).ok();
     let runtime_config = RuntimeConfig {
         log_messages_bytes_limit,
@@ -249,7 +242,7 @@ pub fn get_accounts_db_config(
     let ledger_tool_ledger_path = ledger_path.join(LEDGER_TOOL_DIRECTORY);
 
     let accounts_index_bins = value_t!(arg_matches, "accounts_index_bins", usize).ok();
-    let accounts_index_index_limit_mb = if arg_matches.is_present("disable_accounts_disk_index") {
+    let accounts_index_index_limit_mb = if !arg_matches.is_present("enable_accounts_disk_index") {
         IndexLimitMb::InMemOnly
     } else {
         IndexLimitMb::Minimal
@@ -290,10 +283,6 @@ pub fn get_accounts_db_config(
         })
         .unwrap_or_default();
 
-    let num_hash_threads = arg_matches
-        .is_present("accounts_db_hash_threads")
-        .then(|| value_t_or_exit!(arg_matches, "accounts_db_hash_threads", NonZeroUsize));
-
     AccountsDbConfig {
         index: Some(accounts_index_config),
         base_working_path: Some(ledger_tool_ledger_path),
@@ -310,7 +299,7 @@ pub fn get_accounts_db_config(
         skip_initial_hash_calc: arg_matches.is_present("accounts_db_skip_initial_hash_calculation"),
         storage_access,
         scan_filter_for_shrinking,
-        num_hash_threads,
+        memlock_budget_size: DEFAULT_MEMLOCK_BUDGET_SIZE,
         ..AccountsDbConfig::default()
     }
 }

@@ -7,6 +7,7 @@ use {
         parse_token::parse_token_v3, parse_vote::parse_vote,
     },
     inflector::Inflector,
+    serde::{Deserialize, Serialize},
     solana_clock::UnixTimestamp,
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,

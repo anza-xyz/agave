@@ -30,10 +30,12 @@ pub struct TransmitShredsStats {
     pub(crate) dropped_packets_udp: usize,
     pub(crate) dropped_packets_quic: usize,
     pub(crate) dropped_packets_xdp: usize,
+    pub(crate) is_xdp: bool,
 }
 
 impl BroadcastStats for TransmitShredsStats {
     fn update(&mut self, new_stats: &TransmitShredsStats) {
+        self.is_xdp = new_stats.is_xdp;
         self.transmit_elapsed += new_stats.transmit_elapsed;
         self.send_mmsg_elapsed += new_stats.send_mmsg_elapsed;
         self.send_quic_elapsed += new_stats.send_quic_elapsed;
@@ -49,6 +51,7 @@ impl BroadcastStats for TransmitShredsStats {
         if was_interrupted {
             datapoint_info!(
                 "broadcast-transmit-shreds-interrupted-stats",
+                "is_xdp" => self.is_xdp.to_string(),
                 ("slot", slot as i64, i64),
                 ("transmit_elapsed", self.transmit_elapsed as i64, i64),
                 ("send_mmsg_elapsed", self.send_mmsg_elapsed as i64, i64),
@@ -68,6 +71,7 @@ impl BroadcastStats for TransmitShredsStats {
         } else {
             datapoint_info!(
                 "broadcast-transmit-shreds-stats",
+                "is_xdp" => self.is_xdp.to_string(),
                 ("slot", slot as i64, i64),
                 (
                     "end_to_end_elapsed",
@@ -239,6 +243,7 @@ mod test {
                 dropped_packets_udp: 8,
                 dropped_packets_quic: 9,
                 dropped_packets_xdp: 10,
+                is_xdp: false,
             },
             &Some(BroadcastShredBatchInfo {
                 slot: 0,
@@ -275,6 +280,7 @@ mod test {
                 dropped_packets_udp: 18,
                 dropped_packets_quic: 19,
                 dropped_packets_xdp: 20,
+                is_xdp: false,
             },
             &None,
         );
@@ -308,6 +314,7 @@ mod test {
                 dropped_packets_udp: 1,
                 dropped_packets_quic: 1,
                 dropped_packets_xdp: 1,
+                is_xdp: false,
             },
             &Some(BroadcastShredBatchInfo {
                 slot: 0,

@@ -122,7 +122,7 @@ fn main() -> anyhow::Result<()> {
                 };
                 jh.join().expect("Some of the threads crashed!")
             })?;
-            info!("Results are: {:?}", measurement);
+            info!("Results are: {measurement:?}");
             results.latencies_s.push(measurement.latency_s);
             results
                 .requests_per_second

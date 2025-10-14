@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 
+if [[ -n "${NO_RUSTUP_OVERRIDE}" ]]; then
+  set -x
+  exec cargo "${@}"
+fi
+
 # shellcheck source=ci/rust-version.sh
 here=$(dirname "$0")
 

@@ -18,6 +18,7 @@ pub mod loader_utils;
 pub mod non_circulating_supply;
 pub mod prioritization_fee;
 pub mod prioritization_fee_cache;
+mod read_optimized_dashmap;
 pub mod rent_collector;
 pub mod runtime_config;
 pub mod serde_snapshot;
@@ -40,8 +41,6 @@ pub mod vote_sender_types;
 
 #[macro_use]
 extern crate solana_metrics;
-#[macro_use]
-extern crate serde_derive;
 
 #[cfg_attr(feature = "frozen-abi", macro_use)]
 #[cfg(feature = "frozen-abi")]

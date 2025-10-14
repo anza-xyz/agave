@@ -69,6 +69,7 @@ use {
         sync::{Arc, RwLock},
         time::Duration,
     },
+    test_case::test_matrix,
 };
 
 #[cfg(feature = "sbf_rust")]
@@ -300,9 +301,8 @@ fn test_program_sbf_loader_deprecated() {
 
 #[test]
 #[cfg(feature = "sbf_rust")]
-#[should_panic(
-    expected = "called `Result::unwrap()` on an `Err` value: TransactionError(InstructionError(0, InvalidAccountData))"
-)]
+#[should_panic(expected = "called `Result::unwrap()` on an `Err` value: \
+                           TransactionError(InstructionError(0, InvalidAccountData))")]
 fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
     solana_logger::setup();
 
@@ -847,7 +847,7 @@ fn test_program_sbf_invoke_sanity() {
             &bank,
         );
 
-        // With SIMD-0296 enabled, eight nested invokes should pass.
+        // With SIMD-0268 enabled, eight nested invokes should pass.
         let bank = bank_with_feature_activated(
             &bank_forks,
             bank,
@@ -865,7 +865,7 @@ fn test_program_sbf_invoke_sanity() {
             bank.store_account(&invoked_argument_keypair.pubkey(), &account);
         }
         do_invoke_success(
-            TEST_NESTED_INVOKE_SIMD_0296_OK,
+            TEST_NESTED_INVOKE_SIMD_0268_OK,
             &[],
             &[invoked_program_id.clone(); 16], // 16, 8 for each invoke
             &bank,
@@ -997,7 +997,10 @@ fn test_program_sbf_invoke_sanity() {
                 format!("Program log: invoke {program_lang} program"),
                 "Program log: Test max instruction data len exceeded".into(),
                 "skip".into(), // don't compare compute consumption logs
-                format!("Program {invoke_program_id} failed: Invoked an instruction with data that is too large (10241 > 10240)"),
+                format!(
+                    "Program {invoke_program_id} failed: Invoked an instruction with data that is \
+                     too large (10241 > 10240)"
+                ),
             ]),
             &bank,
         );
@@ -1011,7 +1014,10 @@ fn test_program_sbf_invoke_sanity() {
                 format!("Program log: invoke {program_lang} program"),
                 "Program log: Test max instruction accounts exceeded".into(),
                 "skip".into(), // don't compare compute consumption logs
-                format!("Program {invoke_program_id} failed: Invoked an instruction with too many accounts (256 > 255)"),
+                format!(
+                    "Program {invoke_program_id} failed: Invoked an instruction with too many \
+                     accounts (256 > 255)"
+                ),
             ]),
             &bank,
         );
@@ -1025,7 +1031,10 @@ fn test_program_sbf_invoke_sanity() {
                 format!("Program log: invoke {program_lang} program"),
                 "Program log: Test max account infos exceeded".into(),
                 "skip".into(), // don't compare compute consumption logs
-                format!("Program {invoke_program_id} failed: Invoked an instruction with too many account info's (129 > 128)"),
+                format!(
+                    "Program {invoke_program_id} failed: Invoked an instruction with too many \
+                     account info's (129 > 128)"
+                ),
             ]),
             &bank,
         );
@@ -1063,7 +1072,7 @@ fn test_program_sbf_invoke_sanity() {
             &bank,
         );
 
-        // With SIMD-0296 disabled, five nested invokes is too deep.
+        // With SIMD-0268 disabled, five nested invokes is too deep.
         let bank = bank_with_feature_deactivated(
             &bank_forks,
             bank,
@@ -1086,7 +1095,7 @@ fn test_program_sbf_invoke_sanity() {
             &bank,
         );
 
-        // With SIMD-0296 enabled, nine nested invokes is too deep.
+        // With SIMD-0268 enabled, nine nested invokes is too deep.
         let bank = bank_with_feature_activated(
             &bank_forks,
             bank,
@@ -1096,7 +1105,7 @@ fn test_program_sbf_invoke_sanity() {
             .feature_set
             .is_active(&feature_set::raise_cpi_nesting_limit_to_8::id()));
         do_invoke_failure_test_local(
-            TEST_NESTED_INVOKE_SIMD_0296_TOO_DEEP,
+            TEST_NESTED_INVOKE_SIMD_0268_TOO_DEEP,
             TransactionError::InstructionError(0, InstructionError::CallDepth),
             &[
                 invoked_program_id.clone(),
@@ -1570,6 +1579,71 @@ fn test_program_sbf_instruction_introspection() {
     assert!(bank.get_account(&sysvar::instructions::id()).is_none());
 }
 
+#[test_matrix(
+    [0, 1, 2, 5, 10, 15, 20],
+    [1, 10, 50, 100, 255, 500, 1000, 1024]  // MAX_RETURN_DATA = 1024
+)]
+#[allow(clippy::arithmetic_side_effects)]
+#[cfg(feature = "sbf_rust")]
+fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_len: usize) {
+    solana_logger::setup();
+
+    let GenesisConfigInfo {
+        genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config(50);
+
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank_client = BankClient::new_shared(bank.clone());
+    let authority_keypair = Keypair::new();
+
+    let (bank, program_id) = load_program_of_loader_v4(
+        &mut bank_client,
+        &bank_forks,
+        &mint_keypair,
+        &authority_keypair,
+        "solana_sbf_rust_r2_instruction_data_pointer",
+    );
+
+    let mut account_metas = Vec::new();
+
+    for i in 0..num_accounts {
+        let pubkey = Pubkey::new_unique();
+
+        // Mixed account sizes.
+        bank.store_account(
+            &pubkey,
+            &AccountSharedData::new(0, 100 + (i * 50), &program_id),
+        );
+
+        // Mixed account roles.
+        if i % 2 == 0 {
+            account_metas.push(AccountMeta::new(pubkey, false));
+        } else {
+            account_metas.push(AccountMeta::new_readonly(pubkey, false));
+        }
+    }
+
+    bank.freeze();
+
+    // The provided instruction data will be set to the return data.
+    let input_data: Vec<u8> = (0..input_data_len).map(|i| (i % 256) as u8).collect();
+
+    let instruction = Instruction::new_with_bytes(program_id, &input_data, account_metas);
+
+    let blockhash = bank.last_blockhash();
+    let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
+    let transaction = Transaction::new(&[&mint_keypair], message, blockhash);
+    let sanitized_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
+
+    let result = bank.simulate_transaction(&sanitized_tx, false);
+    assert!(result.result.is_ok());
+
+    let return_data = result.return_data.unwrap().data;
+    assert_eq!(input_data, return_data);
+}
+
 fn get_stable_genesis_config() -> GenesisConfigInfo {
     let validator_pubkey =
         Pubkey::from_str("GLh546CXmtZdvpEzL8sxzqhhUf7KPvmGaRpFHB5W1sjV").unwrap();
@@ -1587,6 +1661,7 @@ fn get_stable_genesis_config() -> GenesisConfigInfo {
         &validator_pubkey,
         &voting_keypair.pubkey(),
         &stake_pubkey,
+        None,
         bootstrap_validator_stake_lamports(),
         42,
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees
@@ -4987,7 +5062,10 @@ fn test_clone_account_data() {
     let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
     let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
     assert!(result.is_err(), "{result:?}");
-    let error = format!("Program {invoke_program_id} failed: instruction modified data of an account it does not own");
+    let error = format!(
+        "Program {invoke_program_id} failed: instruction modified data of an account it does not \
+         own"
+    );
     assert!(logs.iter().any(|log| log.contains(&error)), "{logs:?}");
 
     // II. clone data, modify and then CPI
@@ -5017,7 +5095,10 @@ fn test_clone_account_data() {
     let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
     let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
     assert!(result.is_err(), "{result:?}");
-    let error = format!("Program {invoke_program_id} failed: instruction modified data of an account it does not own");
+    let error = format!(
+        "Program {invoke_program_id} failed: instruction modified data of an account it does not \
+         own"
+    );
     assert!(logs.iter().any(|log| log.contains(&error)), "{logs:?}");
 
     // II. Clone data, call, modifiy in callee and then make the same change in the caller - transaction succeeds
@@ -5314,7 +5395,11 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
             bank.store_account(&account_keypair.pubkey(), &account);
 
             for instr in 0..=15 {
-                println!("Testing deprecated:{deprecated} stricter_abi_and_runtime_constraints:{stricter_abi_and_runtime_constraints} instruction:{instr}");
+                println!(
+                    "Testing deprecated:{deprecated} \
+                     stricter_abi_and_runtime_constraints:{stricter_abi_and_runtime_constraints} \
+                     instruction:{instr}"
+                );
                 let instruction =
                     Instruction::new_with_bytes(program_id, &[instr], account_metas.clone());
 
@@ -5334,7 +5419,11 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
             bank.store_account(&account_keypair.pubkey(), &account);
 
             for instr in 0..=15 {
-                println!("Testing deprecated:{deprecated} stricter_abi_and_runtime_constraints:{stricter_abi_and_runtime_constraints} instruction:{instr} zero-length account");
+                println!(
+                    "Testing deprecated:{deprecated} \
+                     stricter_abi_and_runtime_constraints:{stricter_abi_and_runtime_constraints} \
+                     instruction:{instr} zero-length account"
+                );
                 let instruction =
                     Instruction::new_with_bytes(program_id, &[instr, 0], account_metas.clone());
 

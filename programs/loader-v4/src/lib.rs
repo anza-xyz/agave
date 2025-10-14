@@ -20,7 +20,7 @@ use {
     solana_svm_log_collector::{ic_logger_msg, LogCollector},
     solana_svm_measure::measure::Measure,
     solana_svm_type_overrides::sync::Arc,
-    solana_transaction_context::{BorrowedAccount, InstructionContext},
+    solana_transaction_context::{BorrowedInstructionAccount, InstructionContext},
     std::{cell::RefCell, rc::Rc},
 };
 
@@ -58,7 +58,7 @@ fn get_state_mut(data: &mut [u8]) -> Result<&mut LoaderV4State, InstructionError
 fn check_program_account(
     log_collector: &Option<Rc<RefCell<LogCollector>>>,
     instruction_context: &InstructionContext,
-    program: &BorrowedAccount,
+    program: &BorrowedInstructionAccount,
     authority_address: &Pubkey,
 ) -> Result<LoaderV4State, InstructionError> {
     if !loader_v4::check_id(program.get_owner()) {
@@ -618,7 +618,7 @@ mod tests {
             &instruction,
             transaction_accounts.clone(),
             &[],
-            Err(InstructionError::NotEnoughAccountKeys),
+            Err(InstructionError::MissingAccount),
         );
 
         // Error: Missing authority account
@@ -627,7 +627,7 @@ mod tests {
             &instruction,
             transaction_accounts.clone(),
             &[(0, false, true)],
-            Err(InstructionError::NotEnoughAccountKeys),
+            Err(InstructionError::MissingAccount),
         );
 
         // Error: Program not owned by loader
@@ -1428,7 +1428,7 @@ mod tests {
             &bincode::serialize(&LoaderV4Instruction::TransferAuthority).unwrap(),
             transaction_accounts.clone(),
             &[(0, false, true), (3, true, false)],
-            Err(InstructionError::NotEnoughAccountKeys),
+            Err(InstructionError::MissingAccount),
         );
 
         // Error: Program is uninitialized

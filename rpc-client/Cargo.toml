@@ -30,9 +30,9 @@ reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip
 reqwest-middleware = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
-serde_derive = { workspace = true }
 serde_json = { workspace = true }
 solana-account = { workspace = true }
+solana-account-decoder = { workspace = true }
 solana-account-decoder-client-types = { workspace = true, features = ["zstd"] }
 solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true }
@@ -64,3 +64,4 @@ solana-pubkey = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 static_assertions = { workspace = true }
+test-case = { workspace = true }

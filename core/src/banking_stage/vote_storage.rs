@@ -1,9 +1,8 @@
 use {
-    super::{
-        immutable_deserialized_packet::ImmutableDeserializedPacket,
-        latest_validator_vote_packet::{LatestValidatorVotePacket, VoteSource},
-    },
+    super::latest_validator_vote_packet::{LatestValidatorVote, VoteSource},
+    crate::banking_stage::transaction_scheduler::transaction_state_container::SharedBytes,
     agave_feature_set as feature_set,
+    agave_transaction_view::transaction_view::SanitizedTransactionView,
     ahash::HashMap,
     itertools::Itertools,
     rand::{thread_rng, Rng},
@@ -12,7 +11,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, epoch_stakes::VersionedEpochStakes},
     solana_sysvar::{self as sysvar, slot_hashes::SlotHashes},
-    std::{cmp, sync::Arc},
+    std::cmp,
 };
 
 /// Maximum number of votes a single receive call will accept
@@ -40,7 +39,7 @@ impl VoteBatchInsertionMetrics {
 
 #[derive(Debug)]
 pub struct VoteStorage {
-    latest_vote_per_vote_pubkey: HashMap<Pubkey, LatestValidatorVotePacket>,
+    latest_vote_per_vote_pubkey: HashMap<Pubkey, LatestValidatorVote>,
     num_unprocessed_votes: usize,
     cached_epoch_stakes: VersionedEpochStakes,
     deprecate_legacy_vote_ixs: bool,
@@ -94,13 +93,13 @@ impl VoteStorage {
     pub(crate) fn insert_batch(
         &mut self,
         vote_source: VoteSource,
-        deserialized_packets: impl Iterator<Item = ImmutableDeserializedPacket>,
+        votes: impl Iterator<Item = SanitizedTransactionView<SharedBytes>>,
     ) -> VoteBatchInsertionMetrics {
         let should_deprecate_legacy_vote_ixs = self.deprecate_legacy_vote_ixs;
         self.insert_batch_with_replenish(
-            deserialized_packets.filter_map(|deserialized_packet| {
-                LatestValidatorVotePacket::new_from_immutable(
-                    Arc::new(deserialized_packet),
+            votes.filter_map(|vote| {
+                LatestValidatorVote::new_from_view(
+                    vote,
                     vote_source,
                     should_deprecate_legacy_vote_ixs,
                 )
@@ -113,12 +112,12 @@ impl VoteStorage {
     // Re-insert re-tryable packets.
     pub(crate) fn reinsert_packets(
         &mut self,
-        packets: impl Iterator<Item = Arc<ImmutableDeserializedPacket>>,
+        packets: impl Iterator<Item = SanitizedTransactionView<SharedBytes>>,
     ) {
         let should_deprecate_legacy_vote_ixs = self.deprecate_legacy_vote_ixs;
         self.insert_batch_with_replenish(
             packets.filter_map(|packet| {
-                LatestValidatorVotePacket::new_from_immutable(
+                LatestValidatorVote::new_from_view(
                     packet,
                     VoteSource::Tpu, // incorrect, but this bug has been here w/o issue for a long time.
                     should_deprecate_legacy_vote_ixs,
@@ -129,7 +128,7 @@ impl VoteStorage {
         );
     }
 
-    pub fn drain_unprocessed(&mut self, bank: &Bank) -> Vec<Arc<ImmutableDeserializedPacket>> {
+    pub fn drain_unprocessed(&mut self, bank: &Bank) -> Vec<SanitizedTransactionView<SharedBytes>> {
         let slot_hashes = bank
             .get_account(&sysvar::slot_hashes::id())
             .and_then(|account| from_account::<SlotHashes, _>(&account));
@@ -200,7 +199,7 @@ impl VoteStorage {
 
     fn insert_batch_with_replenish(
         &mut self,
-        votes: impl Iterator<Item = LatestValidatorVotePacket>,
+        votes: impl Iterator<Item = LatestValidatorVote>,
         should_replenish_taken_votes: bool,
     ) -> VoteBatchInsertionMetrics {
         let mut num_dropped_gossip = 0;
@@ -233,9 +232,9 @@ impl VoteStorage {
     /// Otherwise returns None
     fn update_latest_vote(
         &mut self,
-        vote: LatestValidatorVotePacket,
+        vote: LatestValidatorVote,
         should_replenish_taken_votes: bool,
-    ) -> Option<LatestValidatorVotePacket> {
+    ) -> Option<LatestValidatorVote> {
         let vote_pubkey = vote.vote_pubkey();
         // Grab write-lock to insert new vote.
         match self.latest_vote_per_vote_pubkey.entry(vote_pubkey) {
@@ -264,8 +263,8 @@ impl VoteStorage {
     /// We directly compare as options to prioritize votes for same slot with timestamp as
     /// Some > None
     fn allow_update(
-        vote: &LatestValidatorVotePacket,
-        latest_vote: &LatestValidatorVotePacket,
+        vote: &LatestValidatorVote,
+        latest_vote: &LatestValidatorVote,
         should_replenish_taken_votes: bool,
     ) -> bool {
         let slot = vote.slot();
@@ -307,10 +306,7 @@ impl VoteStorage {
     }
 
     /// Check if `vote` can land in our fork based on `slot_hashes`
-    fn is_valid_for_our_fork(
-        vote: &LatestValidatorVotePacket,
-        slot_hashes: &Option<SlotHashes>,
-    ) -> bool {
+    fn is_valid_for_our_fork(vote: &LatestValidatorVote, slot_hashes: &Option<SlotHashes>) -> bool {
         let Some(slot_hashes) = slot_hashes else {
             // When slot hashes is not present we do not filter
             return true;
@@ -337,7 +333,7 @@ impl VoteStorage {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use {
         super::*,
         solana_clock::UnixTimestamp,
@@ -350,10 +346,10 @@ mod tests {
         solana_signer::Signer,
         solana_vote::vote_transaction::new_tower_sync_transaction,
         solana_vote_program::vote_state::TowerSync,
-        std::error::Error,
+        std::{error::Error, sync::Arc},
     };
 
-    fn packet_from_slots(
+    pub(crate) fn packet_from_slots(
         slots: Vec<(u64, u32)>,
         keypairs: &ValidatorVoteKeypairs,
         timestamp: Option<UnixTimestamp>,
@@ -382,9 +378,14 @@ mod tests {
         vote_source: VoteSource,
         keypairs: &ValidatorVoteKeypairs,
         timestamp: Option<UnixTimestamp>,
-    ) -> LatestValidatorVotePacket {
+    ) -> LatestValidatorVote {
         let packet = packet_from_slots(slots, keypairs, timestamp);
-        LatestValidatorVotePacket::new(packet.as_ref(), vote_source, true).unwrap()
+        LatestValidatorVote::new(packet.as_ref(), vote_source, true).unwrap()
+    }
+
+    fn to_sanitized_view(packet: BytesPacket) -> SanitizedTransactionView<SharedBytes> {
+        SanitizedTransactionView::try_new_sanitized(Arc::new(packet.buffer().to_vec()), false)
+            .unwrap()
     }
 
     #[test]
@@ -409,10 +410,7 @@ mod tests {
         vote.meta_mut().flags.set(PacketFlags::SIMPLE_VOTE_TX, true);
 
         let mut vote_storage = VoteStorage::new_for_tests(&[vote_keypair.pubkey()]);
-        vote_storage.insert_batch(
-            VoteSource::Tpu,
-            std::iter::once(ImmutableDeserializedPacket::new(vote.as_ref())?),
-        );
+        vote_storage.insert_batch(VoteSource::Tpu, std::iter::once(to_sanitized_view(vote)));
         assert_eq!(1, vote_storage.len());
 
         // Drain all packets, then re-insert.
@@ -573,20 +571,24 @@ mod tests {
         );
 
         // Same votes with smaller timestamps should not override
-        let vote_a = from_slots(
-            vec![(0, 5), (1, 4), (3, 3), (10, 1)],
-            VoteSource::Gossip,
-            &keypair_a,
-            Some(2),
-        );
-        let vote_b = from_slots(
-            vec![(0, 5), (4, 2), (9, 1)],
-            VoteSource::Gossip,
-            &keypair_b,
-            Some(3),
-        );
-        vote_storage.update_latest_vote(vote_a.clone(), false /* should replenish */);
-        vote_storage.update_latest_vote(vote_b.clone(), false /* should replenish */);
+        let vote_a = || {
+            from_slots(
+                vec![(0, 5), (1, 4), (3, 3), (10, 1)],
+                VoteSource::Gossip,
+                &keypair_a,
+                Some(2),
+            )
+        };
+        let vote_b = || {
+            from_slots(
+                vec![(0, 5), (4, 2), (9, 1)],
+                VoteSource::Gossip,
+                &keypair_b,
+                Some(3),
+            )
+        };
+        vote_storage.update_latest_vote(vote_a(), false /* should replenish */);
+        vote_storage.update_latest_vote(vote_b(), false /* should replenish */);
 
         assert_eq!(2, vote_storage.len());
         assert_eq!(
@@ -607,13 +609,13 @@ mod tests {
         assert_eq!(0, vote_storage.len());
 
         // Same votes with same timestamps should not replenish without flag
-        vote_storage.update_latest_vote(vote_a.clone(), false /* should replenish */);
-        vote_storage.update_latest_vote(vote_b.clone(), false /* should replenish */);
+        vote_storage.update_latest_vote(vote_a(), false /* should replenish */);
+        vote_storage.update_latest_vote(vote_b(), false /* should replenish */);
         assert_eq!(0, vote_storage.len());
 
         // Same votes with same timestamps should replenish with the flag
-        vote_storage.update_latest_vote(vote_a, true /* should replenish */);
-        vote_storage.update_latest_vote(vote_b, true /* should replenish */);
+        vote_storage.update_latest_vote(vote_a(), true /* should replenish */);
+        vote_storage.update_latest_vote(vote_b(), true /* should replenish */);
         assert_eq!(0, vote_storage.len());
     }
 
@@ -675,18 +677,20 @@ mod tests {
         let vote_b = packet_from_slots(vec![(vote_b_slot, 1)], &keypair_b, None);
         let vote_c = packet_from_slots(vec![(vote_c_slot, 1)], &keypair_c, None);
         let vote_d = packet_from_slots(vec![(4, 1)], &keypair_d, None);
-        let votes = vec![
-            ImmutableDeserializedPacket::new(vote_a.as_ref()).unwrap(),
-            ImmutableDeserializedPacket::new(vote_b.as_ref()).unwrap(),
-            ImmutableDeserializedPacket::new(vote_c.as_ref()).unwrap(),
-            ImmutableDeserializedPacket::new(vote_d.as_ref()).unwrap(),
-        ];
+        let votes = || {
+            vec![
+                to_sanitized_view(vote_a.clone()),
+                to_sanitized_view(vote_b.clone()),
+                to_sanitized_view(vote_c.clone()),
+                to_sanitized_view(vote_d.clone()),
+            ]
+        };
 
         let bank_0 = Bank::new_for_tests(&GenesisConfig::default());
         let mut vote_storage = VoteStorage::new(&bank_0);
 
         // Insert batch should filter out all votes as they are unstaked
-        vote_storage.insert_batch(VoteSource::Tpu, votes.clone().into_iter());
+        vote_storage.insert_batch(VoteSource::Tpu, votes().into_iter());
         assert!(vote_storage.is_empty());
 
         // Bank in same epoch should not update stakes
@@ -701,7 +705,7 @@ mod tests {
         );
         assert_eq!(bank.epoch(), 0);
         vote_storage.cache_epoch_boundary_info(&bank);
-        vote_storage.insert_batch(VoteSource::Tpu, votes.clone().into_iter());
+        vote_storage.insert_batch(VoteSource::Tpu, votes().into_iter());
         assert!(vote_storage.is_empty());
 
         // Bank in next epoch should update stakes
@@ -716,7 +720,7 @@ mod tests {
         );
         assert_eq!(bank.epoch(), 1);
         vote_storage.cache_epoch_boundary_info(&bank);
-        vote_storage.insert_batch(VoteSource::Gossip, votes.clone().into_iter());
+        vote_storage.insert_batch(VoteSource::Gossip, votes().into_iter());
         assert_eq!(vote_storage.len(), 1);
         assert_eq!(
             vote_storage.get_latest_vote_slot(keypair_b.vote_keypair.pubkey()),
@@ -736,7 +740,7 @@ mod tests {
         assert_eq!(bank.epoch(), 2);
         vote_storage.cache_epoch_boundary_info(&bank);
         assert_eq!(vote_storage.len(), 0);
-        vote_storage.insert_batch(VoteSource::Tpu, votes.into_iter());
+        vote_storage.insert_batch(VoteSource::Tpu, votes().into_iter());
         assert_eq!(vote_storage.len(), 1);
         assert_eq!(
             vote_storage.get_latest_vote_slot(keypair_c.vote_keypair.pubkey()),

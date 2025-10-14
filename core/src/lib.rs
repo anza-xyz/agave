@@ -51,9 +51,6 @@ pub mod window_service;
 extern crate log;
 
 #[macro_use]
-extern crate serde_derive;
-
-#[macro_use]
 extern crate solana_metrics;
 
 #[cfg_attr(feature = "frozen-abi", macro_use)]

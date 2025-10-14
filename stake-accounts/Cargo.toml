@@ -1,9 +1,9 @@
 [package]
 name = "solana-stake-accounts"
-description = "Blockchain, Rebuilt for Scale"
 documentation = "https://docs.rs/solana-stake-accounts"
 version = { workspace = true }
 authors = { workspace = true }
+description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
@@ -11,6 +11,11 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+default = ["remote-wallet-hidraw"]
+remote-wallet-hidraw = ["solana-remote-wallet/linux-static-hidraw"]
+remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 
 [dependencies]
 clap = { workspace = true }
@@ -27,7 +32,7 @@ solana-keypair = { workspace = true }
 solana-message = { workspace = true }
 solana-native-token = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-remote-wallet = { workspace = true, features = ["default"] }
+solana-remote-wallet = { workspace = true }
 solana-rpc-client = { workspace = true, features = ["default"] }
 solana-rpc-client-api = { workspace = true }
 solana-signature = { workspace = true }

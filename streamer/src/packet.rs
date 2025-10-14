@@ -61,14 +61,14 @@ pub(crate) fn recv_from(
                 }
             }
             Err(e) => {
-                trace!("recv_from err {:?}", e);
+                trace!("recv_from err {e:?}");
                 return Err(e);
             }
             Ok(npkts) => {
                 if i == 0 {
                     socket.set_nonblocking(true)?;
                 }
-                trace!("got {} packets", npkts);
+                trace!("got {npkts} packets");
                 i += npkts;
                 // Try to batch into big enough buffers
                 // will cause less re-shuffling later on.

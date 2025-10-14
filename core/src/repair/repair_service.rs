@@ -1641,7 +1641,7 @@ mod test {
         let bank_forks = BankForks::new_rw_arc(bank);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let cluster_slots = ClusterSlots::default();
+        let cluster_slots = ClusterSlots::default_for_tests();
         let cluster_info = Arc::new(new_test_cluster_info());
         let identity_keypair = cluster_info.keypair().clone();
         let serve_repair = {
@@ -1759,7 +1759,7 @@ mod test {
         // Signal that this peer has confirmed the dead slot, and is thus
         // a valid target for repair
         let dead_slot = 9;
-        let cluster_slots = ClusterSlots::default();
+        let cluster_slots = ClusterSlots::default_for_tests();
         cluster_slots.fake_epoch_info_for_tests(HashMap::from([(*valid_repair_peer.pubkey(), 42)]));
         cluster_slots.insert_node_id(dead_slot, *valid_repair_peer.pubkey());
         cluster_info.insert_info(valid_repair_peer);

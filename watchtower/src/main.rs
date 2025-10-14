@@ -44,7 +44,8 @@ fn get_config() -> Config {
     let matches = App::new(crate_name!())
         .about(crate_description!())
         .version(solana_version::version!())
-        .after_help("ADDITIONAL HELP:
+        .after_help(
+            "ADDITIONAL HELP:
         To receive a Slack, Discord, PagerDuty and/or Telegram notification on sanity failure,
         define environment variables before running `agave-watchtower`:
 
@@ -56,7 +57,8 @@ fn get_config() -> Config {
         export TELEGRAM_BOT_TOKEN=...
         export TELEGRAM_CHAT_ID=...
 
-        PagerDuty requires an Integration Key from the Events API v2 (Add this integration to your PagerDuty service to get this)
+        PagerDuty requires an Integration Key from the Events API v2 (Add this integration to your \
+             PagerDuty service to get this)
 
         export PAGERDUTY_INTEGRATION_KEY=...
 
@@ -64,7 +66,10 @@ fn get_config() -> Config {
         and a sending number owned by that account,
         define environment variable before running `agave-watchtower`:
 
-        export TWILIO_CONFIG='ACCOUNT=<account>,TOKEN=<securityToken>,TO=<receivingNumber>,FROM=<sendingNumber>'")
+        export \
+             TWILIO_CONFIG='ACCOUNT=<account>,TOKEN=<securityToken>,TO=<receivingNumber>,\
+             FROM=<sendingNumber>'",
+        )
         .arg({
             let arg = Arg::with_name("config_file")
                 .short("C")
@@ -96,7 +101,9 @@ fn get_config() -> Config {
                 .multiple(true)
                 .number_of_values(3)
                 .conflicts_with("json_rpc_url")
-                .help("JSON RPC URLs for the cluster (takes exactly 3 values, conflicts with --url)"),
+                .help(
+                    "JSON RPC URLs for the cluster (takes exactly 3 values, conflicts with --url)",
+                ),
         )
         .arg(
             Arg::with_name("rpc_timeout")
@@ -120,7 +127,7 @@ fn get_config() -> Config {
                 .value_name("COUNT")
                 .takes_value(true)
                 .default_value("1")
-                .help("How many consecutive failures must occur to trigger a notification")
+                .help("How many consecutive failures must occur to trigger a notification"),
         )
         .arg(
             Arg::with_name("validator_identities")
@@ -129,7 +136,7 @@ fn get_config() -> Config {
                 .takes_value(true)
                 .validator(is_pubkey_or_keypair)
                 .multiple(true)
-                .help("Validator identities to monitor for delinquency")
+                .help("Validator identities to monitor for delinquency"),
         )
         .arg(
             Arg::with_name("minimum_validator_identity_balance")
@@ -138,19 +145,22 @@ fn get_config() -> Config {
                 .takes_value(true)
                 .default_value("10")
                 .validator(is_parsable::<f64>)
-                .help("Alert when the validator identity balance is less than this amount of SOL")
+                .help("Alert when the validator identity balance is less than this amount of SOL"),
         )
         .arg(
             // Deprecated parameter, now always enabled
             Arg::with_name("no_duplicate_notifications")
                 .long("no-duplicate-notifications")
-                .hidden(hidden_unless_forced())
+                .hidden(hidden_unless_forced()),
         )
         .arg(
             Arg::with_name("monitor_active_stake")
                 .long("monitor-active-stake")
                 .takes_value(false)
-                .help("Alert when the current stake for the cluster drops below the amount specified by --active-stake-alert-threshold"),
+                .help(
+                    "Alert when the current stake for the cluster drops below the amount \
+                     specified by --active-stake-alert-threshold",
+                ),
         )
         .arg(
             Arg::with_name("active_stake_alert_threshold")
@@ -165,10 +175,11 @@ fn get_config() -> Config {
             Arg::with_name("ignore_http_bad_gateway")
                 .long("ignore-http-bad-gateway")
                 .takes_value(false)
-                .help("Ignore HTTP 502 Bad Gateway errors from the JSON RPC URL. \
-                    This flag can help reduce false positives, at the expense of \
-                    no alerting should a Bad Gateway error be a side effect of \
-                    the real problem")
+                .help(
+                    "Ignore HTTP 502 Bad Gateway errors from the JSON RPC URL. This flag can help \
+                     reduce false positives, at the expense of no alerting should a Bad Gateway \
+                     error be a side effect of the real problem",
+                ),
         )
         .arg(
             Arg::with_name("name_suffix")
@@ -176,7 +187,7 @@ fn get_config() -> Config {
                 .value_name("SUFFIX")
                 .takes_value(true)
                 .default_value("")
-                .help("Add this string into all notification messages after \"agave-watchtower\"")
+                .help("Add this string into all notification messages after \"agave-watchtower\""),
         )
         .arg(
             Arg::with_name("acceptable_slot_range")
@@ -185,7 +196,7 @@ fn get_config() -> Config {
                 .takes_value(true)
                 .default_value("50")
                 .validator(is_parsable::<u64>)
-                .help("Acceptable range of slots for endpoints, checked at watchtower startup")
+                .help("Acceptable range of slots for endpoints, checked at watchtower startup"),
         )
         .get_matches();
 
@@ -281,8 +292,8 @@ fn query_endpoint(
 
     match get_cluster_info(config, &endpoint.rpc_client) {
         Ok((transaction_count, recent_blockhash, vote_accounts, validator_balances)) => {
-            info!("Current transaction count: {}", transaction_count);
-            info!("Recent blockhash: {}", recent_blockhash);
+            info!("Current transaction count: {transaction_count}");
+            info!("Recent blockhash: {recent_blockhash}");
             info!("Current validator count: {}", vote_accounts.current.len());
             info!(
                 "Delinquent validator count: {}",
@@ -384,12 +395,12 @@ fn query_endpoint(
             if let client_error::ErrorKind::Reqwest(reqwest_err) = err.kind() {
                 if let Some(client_error::reqwest::StatusCode::BAD_GATEWAY) = reqwest_err.status() {
                     if config.ignore_http_bad_gateway {
-                        warn!("Error suppressed: {}", err);
+                        warn!("Error suppressed: {err}");
                         return Ok(None);
                     }
                 }
             }
-            warn!("rpc-error: {}", err);
+            warn!("rpc-error: {err}");
             Err(err)
         }
     }
@@ -412,8 +423,8 @@ fn validate_endpoints(
         let slot = endpoint.rpc_client.get_slot()?;
         let genesis_hash = endpoint.rpc_client.get_genesis_hash()?;
 
-        info!("Genesis hash: {}", genesis_hash);
-        info!("Current slot: {}", slot);
+        info!("Genesis hash: {genesis_hash}");
+        info!("Current slot: {slot}");
 
         max_slot = max_slot.max(slot);
         min_slot = min_slot.min(slot);
@@ -457,7 +468,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .collect();
 
     if let Err(err) = validate_endpoints(&config, &endpoints) {
-        error!("Endpoint validation failed: {}", err);
+        error!("Endpoint validation failed: {err}");
         std::process::exit(1);
     }
 
@@ -509,9 +520,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             if failures.len() > 1 {
                 failures.clear(); // Ignoring other failures when watchtower is unreliable
 
-                let watchtower_unreliable_msg =
-                    "Watchtower is unreliable, RPC endpoints provide inconsistent information"
-                        .into();
+                let watchtower_unreliable_msg = "Watchtower is unreliable, RPC endpoints provide \
+                                                 inconsistent information"
+                    .into();
                 failures.insert("watchtower-reliability", watchtower_unreliable_msg);
             }
 
@@ -549,7 +560,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     "All clear after {}",
                     humantime::format_duration(alarm_duration)
                 );
-                info!("{}", all_clear_msg);
+                info!("{all_clear_msg}");
                 notifier.send(
                     &format!("agave-watchtower{}: {}", config.name_suffix, all_clear_msg),
                     &NotificationType::Resolve { incident },

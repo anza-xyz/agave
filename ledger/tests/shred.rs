@@ -5,8 +5,9 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{
-        self, max_entries_per_n_shred, recover, verify_test_data_shred, ProcessShredsStats,
-        ReedSolomonCache, Shred, ShredData, Shredder, DATA_SHREDS_PER_FEC_BLOCK,
+        self, max_entries_per_n_shred, max_entries_per_n_shred_last_or_not, recover,
+        verify_test_data_shred, ProcessShredsStats, ReedSolomonCache, Shred, ShredData, Shredder,
+        DATA_SHREDS_PER_FEC_BLOCK,
     },
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
@@ -32,10 +33,8 @@ fn test_multi_fec_block_coding(is_last_in_slot: bool) {
     let keypair1 = Keypair::new();
     let tx0 = system_transaction::transfer(&keypair0, &keypair1.pubkey(), 1, Hash::default());
     let entry = Entry::new(&Hash::default(), 1, vec![tx0]);
-    let chained_merkle_root = Some(Hash::default());
-    let merkle_capacity = ShredData::capacity(Some((6, true, is_last_in_slot))).unwrap();
     let num_entries =
-        max_entries_per_n_shred(&entry, num_data_shreds as u64, Some(merkle_capacity));
+        max_entries_per_n_shred_last_or_not(&entry, num_data_shreds as u64, is_last_in_slot);
 
     let entries: Vec<_> = (0..num_entries)
         .map(|_| {
@@ -54,9 +53,9 @@ fn test_multi_fec_block_coding(is_last_in_slot: bool) {
         &keypair,
         &entries,
         is_last_in_slot,
-        chained_merkle_root,
-        0, // next_shred_index
-        0, // next_code_index
+        Hash::default(), // chained_merkle_root
+        0,               // next_shred_index
+        0,               // next_code_index
         &reed_solomon_cache,
         &mut ProcessShredsStats::default(),
     );
@@ -145,7 +144,7 @@ fn test_multi_fec_block_different_size_coding() {
         // Necessary in order to ensure the last shred in the slot
         // is part of the recovered set, and that the below `index`
         // calculation in the loop is correct
-        assert!(fec_data_shreds.len() % 2 == 0);
+        assert_eq!(fec_data_shreds.len() % 2, 0);
         for (i, recovered_shred) in recovered_data.into_iter().enumerate() {
             let index = first_data_index + (i * 2) + 1;
             verify_test_data_shred(
@@ -201,8 +200,8 @@ fn setup_different_sized_fec_blocks(
     let keypair1 = Keypair::new();
     let tx0 = system_transaction::transfer(&keypair0, &keypair1.pubkey(), 1, Hash::default());
     let entry = Entry::new(&Hash::default(), 1, vec![tx0]);
-    let merkle_capacity = ShredData::capacity(Some((6, true, true))).unwrap();
-    let chained_merkle_root = Some(Hash::default());
+    let merkle_capacity = ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ true).unwrap();
+    let chained_merkle_root = Hash::default();
 
     assert!(DATA_SHREDS_PER_FEC_BLOCK > 2);
     let num_shreds_per_iter = DATA_SHREDS_PER_FEC_BLOCK;

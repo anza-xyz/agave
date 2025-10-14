@@ -1,7 +1,7 @@
 use {
     crate::{
         bit_vec::BitVec,
-        shred::{self, Shred, ShredType, MAX_DATA_SHREDS_PER_SLOT},
+        shred::{self, Shred, ShredType, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT},
     },
     bitflags::bitflags,
     serde::{Deserialize, Deserializer, Serialize, Serializer},
@@ -39,7 +39,6 @@ bitflags! {
         // CONNECTED is explicitly the first bit to ensure backwards compatibility
         // with the boolean field that ConnectedFlags replaced in SlotMeta.
         const CONNECTED        = 0b0000_0001;
-        // PARENT_CONNECTED IS INTENTIONALLY UNUSED FOR NOW
         const PARENT_CONNECTED = 0b1000_0000;
     }
 }
@@ -215,9 +214,9 @@ impl From<SlotMetaV2> for SlotMetaV1 {
 // pub type CompletedDataIndexes = CompletedDataIndexesV1;
 // pub type SlotMetaFallback = SlotMetaV2;
 // ```
-pub type SlotMeta = SlotMetaV1;
-pub type CompletedDataIndexes = CompletedDataIndexesV1;
-pub type SlotMetaFallback = SlotMetaV2;
+pub type SlotMeta = SlotMetaV2;
+pub type CompletedDataIndexes = CompletedDataIndexesV2;
+pub type SlotMetaFallback = SlotMetaV1;
 
 // Serde implementation of serialize and deserialize for Option<u64>
 // where None is represented as u64::MAX; for backward compatibility.
@@ -341,8 +340,14 @@ mod serde_compat_cast {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct ErasureConfig {
-    num_data: usize,
-    num_coding: usize,
+    pub(crate) num_data: usize,
+    pub(crate) num_coding: usize,
+}
+
+impl ErasureConfig {
+    pub(crate) fn is_fixed(&self) -> bool {
+        self.num_data == DATA_SHREDS_PER_FEC_BLOCK && self.num_coding == DATA_SHREDS_PER_FEC_BLOCK
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

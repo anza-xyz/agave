@@ -7,7 +7,9 @@ pub use {
 use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
-        banking_stage::BankingStage,
+        banking_stage::{
+            transaction_scheduler::scheduler_controller::SchedulerConfig, BankingStage,
+        },
         banking_trace::{Channels, TracerThread},
         cluster_info_vote_listener::{
             ClusterInfoVoteListener, DuplicateConfirmedSlotsSender, GossipVerifiedVoteHashSender,
@@ -21,7 +23,7 @@ use {
         sigverify_stage::SigVerifyStage,
         staked_nodes_updater_service::StakedNodesUpdaterService,
         tpu_entry_notifier::TpuEntryNotifier,
-        validator::{BlockProductionMethod, GeneratorConfig, TransactionStructure},
+        validator::{BlockProductionMethod, GeneratorConfig},
         vortexor_receiver_adapter::VortexorReceiverAdapter,
     },
     bytes::Bytes,
@@ -49,7 +51,7 @@ use {
         vote_sender_types::{ReplayVoteReceiver, ReplayVoteSender},
     },
     solana_streamer::{
-        quic::{spawn_server, QuicServerParams, SpawnServerResult},
+        quic::{spawn_server_with_cancel, QuicServerParams, SpawnServerResult},
         streamer::StakedNodes,
     },
     solana_turbine::{
@@ -65,6 +67,7 @@ use {
         time::Duration,
     },
     tokio::sync::mpsc::Sender as AsyncSender,
+    tokio_util::sync::CancellationToken,
 };
 
 pub struct TpuSockets {
@@ -152,10 +155,11 @@ impl Tpu {
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         block_production_method: BlockProductionMethod,
         block_production_num_workers: NonZeroUsize,
-        transaction_struct: TransactionStructure,
+        block_production_scheduler_config: SchedulerConfig,
         enable_block_production_forwarding: bool,
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
         key_notifiers: Arc<RwLock<KeyUpdaters>>,
+        cancel: CancellationToken,
     ) -> Self {
         let TpuSockets {
             transactions: transactions_sockets,
@@ -208,15 +212,15 @@ impl Tpu {
             endpoints: _,
             thread: tpu_vote_quic_t,
             key_updater: vote_streamer_key_updater,
-        } = spawn_server(
+        } = spawn_server_with_cancel(
             "solQuicTVo",
             "quic_streamer_tpu_vote",
             tpu_vote_quic_sockets,
             keypair,
             vote_packet_sender.clone(),
-            exit.clone(),
             staked_nodes.clone(),
             vote_quic_server_config,
+            cancel.clone(),
         )
         .unwrap();
 
@@ -226,15 +230,15 @@ impl Tpu {
                 endpoints: _,
                 thread: tpu_quic_t,
                 key_updater,
-            } = spawn_server(
+            } = spawn_server_with_cancel(
                 "solQuicTpu",
                 "quic_streamer_tpu",
                 transactions_quic_sockets,
                 keypair,
                 packet_sender,
-                exit.clone(),
                 staked_nodes.clone(),
                 tpu_quic_server_config,
+                cancel.clone(),
             )
             .unwrap();
             (Some(tpu_quic_t), Some(key_updater))
@@ -248,15 +252,15 @@ impl Tpu {
                 endpoints: _,
                 thread: tpu_forwards_quic_t,
                 key_updater: forwards_key_updater,
-            } = spawn_server(
+            } = spawn_server_with_cancel(
                 "solQuicTpuFwd",
                 "quic_streamer_tpu_forwards",
                 transactions_forwards_quic_sockets,
                 keypair,
                 forwarded_packet_sender,
-                exit.clone(),
                 staked_nodes.clone(),
                 tpu_fwd_quic_server_config,
+                cancel,
             )
             .unwrap();
             (Some(tpu_forwards_quic_t), Some(forwards_key_updater))
@@ -321,13 +325,13 @@ impl Tpu {
 
         let banking_stage = BankingStage::new_num_threads(
             block_production_method,
-            transaction_struct,
             poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
             block_production_num_workers,
+            block_production_scheduler_config,
             transaction_status_sender,
             replay_vote_sender,
             log_messages_bytes_limit,

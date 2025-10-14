@@ -3,19 +3,6 @@ set -e
 
 cd "$(dirname "$0")/.."
 
-if [[ -n $APPVEYOR ]]; then
-  # Bootstrap rust build environment
-  source ci/env.sh
-  source ci/rust-version.sh
-
-  appveyor DownloadFile https://win.rustup.rs/ -FileName rustup-init.exe
-  export USERPROFILE="D:\\"
-  ./rustup-init -yv --default-toolchain "$rust_stable" --default-host x86_64-pc-windows-msvc
-  export PATH="$PATH:/d/.cargo/bin"
-  rustc -vV
-  cargo -vV
-fi
-
 DRYRUN=
 if [[ -z $CI_BRANCH ]]; then
   DRYRUN="echo"
@@ -37,21 +24,11 @@ if [[ -z $CHANNEL_OR_TAG ]]; then
   exit 0
 fi
 
-case "$CI_OS_NAME" in
-osx)
-  _cputype="$(uname -m)"
-  if [[ $_cputype = arm64 ]]; then
-    _cputype=aarch64
-  fi
-  TARGET=${_cputype}-apple-darwin
-  ;;
-linux)
-  TARGET=x86_64-unknown-linux-gnu
-  ;;
-windows)
-  TARGET=x86_64-pc-windows-msvc
-  # Enable symlinks used by some build.rs files
-  # source: https://stackoverflow.com/a/52097145/10242004
+source scripts/generate-target-triple.sh
+
+TARGET="$BUILD_TARGET_TRIPLE"
+
+if [[ $TARGET == *windows* ]]; then
   (
     set -x
     git --version
@@ -61,45 +38,20 @@ windows)
     # patched crossbeam doesn't build on windows
     sed -i 's/^crossbeam-epoch/#crossbeam-epoch/' Cargo.toml
   )
-  ;;
-*)
-  echo CI_OS_NAME unset
-  exit 1
-  ;;
-esac
+fi
 
 RELEASE_BASENAME="${RELEASE_BASENAME:=solana-release}"
 TARBALL_BASENAME="${TARBALL_BASENAME:="$RELEASE_BASENAME"}"
 
 echo --- Creating release tarball
-(
-  set -x
-  rm -rf "${RELEASE_BASENAME:?}"/
-  mkdir "${RELEASE_BASENAME}"/
-
-  COMMIT="$(git rev-parse HEAD)"
-
-  (
-    echo "channel: $CHANNEL_OR_TAG"
-    echo "commit: $COMMIT"
-    echo "target: $TARGET"
-  ) > "${RELEASE_BASENAME}"/version.yml
-
-  # Make CHANNEL available to include in the software version information
-  export CHANNEL
-
-  source ci/rust-version.sh stable
-  scripts/cargo-install-all.sh --public-release stable "${RELEASE_BASENAME}"
-
-  tar cvf "${TARBALL_BASENAME}"-$TARGET.tar "${RELEASE_BASENAME}"
-  bzip2 "${TARBALL_BASENAME}"-$TARGET.tar
-  cp "${RELEASE_BASENAME}"/bin/agave-install-init agave-install-init-$TARGET
-  cp "${RELEASE_BASENAME}"/version.yml "${TARBALL_BASENAME}"-$TARGET.yml
-)
+scripts/create-release-tarball.sh --build-dir "$RELEASE_BASENAME" \
+                                  --channel-or-tag "$TAG" \
+                                  --target "$TARGET" \
+                                  --tarball-basename "$TARBALL_BASENAME"
 
 # Maybe tarballs are platform agnostic, only publish them from the Linux build
 MAYBE_TARBALLS=
-if [[ "$CI_OS_NAME" = linux ]]; then
+if [[ $TARGET == *linux* ]]; then
   (
     set -x
     platform-tools-sdk/sbf/scripts/package.sh
@@ -135,9 +87,6 @@ for file in "${TARBALL_BASENAME}"-$TARGET.tar.bz2 "${TARBALL_BASENAME}"-$TARGET.
       mkdir -p github-action-release-upload/
       cp -v "$file" github-action-release-upload/
     fi
-  elif [[ -n $APPVEYOR ]]; then
-    # Add artifacts for .appveyor.yml to upload
-    appveyor PushArtifact "$file" -FileName "$CHANNEL_OR_TAG"/"$file"
   fi
 done
 

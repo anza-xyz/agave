@@ -2,9 +2,9 @@ use {
     super::{
         consumer::LeaderProcessedTransactionCounts,
         leader_slot_timing_metrics::{LeaderExecuteAndCommitTimings, LeaderSlotTimingMetrics},
-        packet_deserializer::PacketReceiverStats,
         vote_storage::VoteBatchInsertionMetrics,
     },
+    crate::banking_stage::vote_packet_receiver::PacketReceiverStats,
     solana_clock::Slot,
     solana_runtime::bank::Bank,
     solana_svm::transaction_error_metrics::*,
@@ -747,16 +747,6 @@ impl LeaderSlotMetricsTracker {
                 .timing_metrics
                 .consume_buffered_packets_timings
                 .process_packets_transactions_us += us
-        }
-    }
-
-    // Processing packets timing metrics
-    pub(crate) fn increment_transactions_from_packets_us(&mut self, us: u64) {
-        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            leader_slot_metrics
-                .timing_metrics
-                .process_packets_timings
-                .transactions_from_packets_us += us;
         }
     }
 

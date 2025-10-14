@@ -935,20 +935,17 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     .ok()
             });
 
-        let inner_instructions = if config.recording_config.enable_cpi_recording {
-            Some(Self::inner_instructions_list_from_instruction_trace(
-                &transaction_context,
-            ))
-        } else {
-            None
-        };
+        let (execution_record, inner_instructions) = Self::deconstruct_transaction(
+            transaction_context,
+            config.recording_config.enable_cpi_recording,
+        );
 
         let ExecutionRecord {
             accounts,
             return_data,
             touched_account_count,
             accounts_resize_delta: accounts_data_len_delta,
-        } = transaction_context.into();
+        } = execution_record;
 
         if status.is_ok()
             && transaction_accounts_lamports_sum(&accounts)
@@ -985,52 +982,51 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         }
     }
 
-    /// Extract the InnerInstructionsList from a TransactionContext
-    fn inner_instructions_list_from_instruction_trace(
-        transaction_context: &TransactionContext,
-    ) -> InnerInstructionsList {
-        debug_assert!(transaction_context
-            .get_instruction_context_at_index_in_trace(0)
-            .map(|instruction_context| instruction_context.get_stack_height()
-                == TRANSACTION_LEVEL_STACK_HEIGHT)
-            .unwrap_or(true));
-        let mut outer_instructions = Vec::new();
-        for index_in_trace in 0..transaction_context.get_instruction_trace_length() {
-            if let Ok(instruction_context) =
-                transaction_context.get_instruction_context_at_index_in_trace(index_in_trace)
-            {
-                let stack_height = instruction_context.get_stack_height();
+    /// Extract an ExecutionRecord and an InnerInstructionsList from a TransactionContext
+    fn deconstruct_transaction(
+        mut transaction_context: TransactionContext,
+        record_inner_instructions: bool,
+    ) -> (ExecutionRecord, Option<InnerInstructionsList>) {
+        let inner_ix = if record_inner_instructions {
+            debug_assert!(transaction_context
+                .get_instruction_context_at_index_in_trace(0)
+                .map(|instruction_context| instruction_context.get_stack_height()
+                    == TRANSACTION_LEVEL_STACK_HEIGHT)
+                .unwrap_or(true));
+
+            let ix_trace = transaction_context.take_instruction_trace();
+            let mut outer_instructions = Vec::new();
+            for ix_in_trace in ix_trace.into_iter() {
+                let stack_height = ix_in_trace.nesting_level.saturating_add(1);
                 if stack_height == TRANSACTION_LEVEL_STACK_HEIGHT {
                     outer_instructions.push(Vec::new());
                 } else if let Some(inner_instructions) = outer_instructions.last_mut() {
                     let stack_height = u8::try_from(stack_height).unwrap_or(u8::MAX);
-                    let instruction = CompiledInstruction::new_from_raw_parts(
-                        instruction_context
-                            .get_index_of_program_account_in_transaction()
-                            .unwrap_or_default() as u8,
-                        instruction_context.get_instruction_data().to_vec(),
-                        (0..instruction_context.get_number_of_instruction_accounts())
-                            .map(|instruction_account_index| {
-                                instruction_context
-                                    .get_index_of_instruction_account_in_transaction(
-                                        instruction_account_index,
-                                    )
-                                    .unwrap_or_default() as u8
-                            })
-                            .collect(),
-                    );
                     inner_instructions.push(InnerInstruction {
-                        instruction,
+                        instruction: CompiledInstruction::new_from_raw_parts(
+                            ix_in_trace.program_account_index_in_tx as u8,
+                            ix_in_trace.instruction_data,
+                            ix_in_trace
+                                .instruction_accounts
+                                .iter()
+                                .map(|acc| acc.index_in_transaction as u8)
+                                .collect(),
+                        ),
                         stack_height,
                     });
                 } else {
                     debug_assert!(false);
                 }
-            } else {
-                debug_assert!(false);
             }
-        }
-        outer_instructions
+
+            Some(outer_instructions)
+        } else {
+            None
+        };
+
+        let record: ExecutionRecord = transaction_context.into();
+
+        (record, inner_ix)
     }
 
     pub fn fill_missing_sysvar_cache_entries<CB: TransactionProcessingCallback>(
@@ -1055,21 +1051,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     }
 
     /// Add a built-in program
-    pub fn add_builtin<CB: TransactionProcessingCallback>(
-        &self,
-        callbacks: &CB,
-        program_id: Pubkey,
-        name: &str,
-        builtin: ProgramCacheEntry,
-    ) {
-        debug!("Adding program {name} under {program_id:?}");
-        callbacks.add_builtin_account(name, &program_id);
+    pub fn add_builtin(&self, program_id: Pubkey, builtin: ProgramCacheEntry) {
         self.builtin_program_ids.write().unwrap().insert(program_id);
         self.global_program_cache
             .write()
             .unwrap()
             .assign_program(program_id, Arc::new(builtin));
-        debug!("Added program {name} under {program_id:?}");
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -1161,15 +1148,6 @@ mod tests {
                 .unwrap()
                 .get(pubkey)
                 .map(|account| (account.clone(), 0))
-        }
-
-        fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
-            let mut account_data = AccountSharedData::default();
-            account_data.set_data(name.as_bytes().to_vec());
-            self.account_shared_data
-                .write()
-                .unwrap()
-                .insert(*program_id, account_data);
         }
 
         fn inspect_account(
@@ -1281,15 +1259,18 @@ mod tests {
             }
             if stack_height > transaction_context.get_instruction_stack_height() {
                 transaction_context
-                    .configure_next_instruction_for_tests(0, vec![], &[index_in_trace as u8])
+                    .configure_next_instruction_for_tests(0, vec![], vec![index_in_trace as u8])
                     .unwrap();
                 transaction_context.push().unwrap();
             }
         }
         let inner_instructions =
-            TransactionBatchProcessor::<TestForkGraph>::inner_instructions_list_from_instruction_trace(
-                &transaction_context,
-            );
+            TransactionBatchProcessor::<TestForkGraph>::deconstruct_transaction(
+                transaction_context,
+                true,
+            )
+            .1
+            .unwrap();
 
         assert_eq!(
             inner_instructions,
@@ -1884,7 +1865,6 @@ mod tests {
 
     #[test]
     fn test_add_builtin() {
-        let mock_bank = MockBankCallback::default();
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
         let batch_processor =
             TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None, None);
@@ -1897,12 +1877,7 @@ mod tests {
             |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
         );
 
-        batch_processor.add_builtin(&mock_bank, key, name, program);
-
-        assert_eq!(
-            mock_bank.account_shared_data.read().unwrap()[&key].data(),
-            name.as_bytes()
-        );
+        batch_processor.add_builtin(key, program);
 
         let mut loaded_programs_for_tx_batch = ProgramCacheForTxBatch::new_from_cache(
             0,

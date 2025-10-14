@@ -18,13 +18,11 @@ mod tests {
         solana_tls_utils::{new_dummy_x509_certificate, QuicClientCertificate},
         std::{
             net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
-            sync::{
-                atomic::{AtomicBool, Ordering},
-                Arc, RwLock,
-            },
+            sync::{Arc, RwLock},
             time::{Duration, Instant},
         },
         tokio::time::sleep,
+        tokio_util::sync::CancellationToken,
     };
 
     fn check_packets(
@@ -52,11 +50,11 @@ mod tests {
         assert!(total_packets > 0);
     }
 
-    fn server_args() -> (UdpSocket, Arc<AtomicBool>, Keypair) {
+    fn server_args() -> (UdpSocket, CancellationToken, Keypair) {
         let port_range = localhost_port_range_for_tests();
         (
             bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.0).expect("should bind"),
-            Arc::new(AtomicBool::new(false)),
+            CancellationToken::new(),
             Keypair::new(),
         )
     }
@@ -70,20 +68,20 @@ mod tests {
         solana_logger::setup();
         let (sender, receiver) = unbounded();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
-        let (s, exit, keypair) = server_args();
+        let (s, cancel, keypair) = server_args();
         let SpawnServerResult {
             endpoints: _,
             thread: t,
             key_updater: _,
-        } = solana_streamer::quic::spawn_server(
+        } = solana_streamer::quic::spawn_server_with_cancel(
             "solQuicTest",
             "quic_streamer_test",
             vec![s.try_clone().unwrap()],
             &keypair,
             sender,
-            exit.clone(),
             staked_nodes,
             QuicServerParams::default_for_tests(),
+            cancel.clone(),
         )
         .unwrap();
 
@@ -105,7 +103,7 @@ mod tests {
         assert!(client.send_data_batch_async(packets).is_ok());
 
         check_packets(receiver, num_bytes, num_expected_packets);
-        exit.store(true, Ordering::Relaxed);
+        cancel.cancel();
         t.join().unwrap();
     }
 
@@ -150,20 +148,20 @@ mod tests {
         solana_logger::setup();
         let (sender, receiver) = unbounded();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
-        let (s, exit, keypair) = server_args();
+        let (s, cancel, keypair) = server_args();
         let solana_streamer::nonblocking::quic::SpawnNonBlockingServerResult {
             endpoints: _,
             stats: _,
             thread: t,
             max_concurrent_connections: _,
-        } = solana_streamer::nonblocking::quic::spawn_server(
+        } = solana_streamer::nonblocking::quic::spawn_server_with_cancel(
             "quic_streamer_test",
             vec![s.try_clone().unwrap()],
             &keypair,
             sender,
-            exit.clone(),
             staked_nodes,
             QuicServerParams::default_for_tests(),
+            cancel.clone(),
         )
         .unwrap();
 
@@ -186,7 +184,7 @@ mod tests {
         }
 
         nonblocking_check_packets(receiver, num_bytes, num_expected_packets).await;
-        exit.store(true, Ordering::Relaxed);
+        cancel.cancel();
         t.await.unwrap();
     }
 
@@ -208,26 +206,26 @@ mod tests {
         // Request Receiver
         let (sender, receiver) = unbounded();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
-        let (request_recv_socket, request_recv_exit, keypair) = server_args();
+        let (request_recv_socket, request_recv_cancel, keypair) = server_args();
         let SpawnServerResult {
             endpoints: request_recv_endpoints,
             thread: request_recv_thread,
             key_updater: _,
-        } = solana_streamer::quic::spawn_server(
+        } = solana_streamer::quic::spawn_server_with_cancel(
             "solQuicTest",
             "quic_streamer_test",
             [request_recv_socket.try_clone().unwrap()],
             &keypair,
             sender,
-            request_recv_exit.clone(),
             staked_nodes.clone(),
             QuicServerParams::default_for_tests(),
+            request_recv_cancel.clone(),
         )
         .unwrap();
 
         drop(request_recv_endpoints);
         // Response Receiver:
-        let (response_recv_socket, response_recv_exit, keypair2) = server_args();
+        let (response_recv_socket, response_recv_cancel, keypair2) = server_args();
         let (sender2, receiver2) = unbounded();
 
         let addr = response_recv_socket.local_addr().unwrap().ip();
@@ -237,15 +235,15 @@ mod tests {
             endpoints: mut response_recv_endpoints,
             thread: response_recv_thread,
             key_updater: _,
-        } = solana_streamer::quic::spawn_server(
+        } = solana_streamer::quic::spawn_server_with_cancel(
             "solQuicTest",
             "quic_streamer_test",
             [response_recv_socket],
             &keypair2,
             sender2,
-            response_recv_exit.clone(),
             staked_nodes,
             QuicServerParams::default_for_tests(),
+            response_recv_cancel.clone(),
         )
         .unwrap();
 
@@ -304,11 +302,11 @@ mod tests {
         drop(request_sender);
         drop(response_sender);
 
-        request_recv_exit.store(true, Ordering::Relaxed);
+        request_recv_cancel.cancel();
         request_recv_thread.join().unwrap();
         info!("Request receiver exited!");
 
-        response_recv_exit.store(true, Ordering::Relaxed);
+        response_recv_cancel.cancel();
         response_recv_thread.join().unwrap();
         info!("Response receiver exited!");
     }
@@ -318,20 +316,20 @@ mod tests {
         solana_logger::setup();
         let (sender, receiver) = unbounded();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
-        let (s, exit, keypair) = server_args();
+        let (s, cancel, keypair) = server_args();
         let solana_streamer::nonblocking::quic::SpawnNonBlockingServerResult {
             endpoints: _,
             stats: _,
             thread: t,
             max_concurrent_connections: _,
-        } = solana_streamer::nonblocking::quic::spawn_server(
+        } = solana_streamer::nonblocking::quic::spawn_server_with_cancel(
             "quic_streamer_test",
             vec![s.try_clone().unwrap()],
             &keypair,
             sender,
-            exit.clone(),
             staked_nodes,
             QuicServerParams::default_for_tests(),
+            cancel.clone(),
         )
         .unwrap();
 
@@ -353,7 +351,7 @@ mod tests {
         }
 
         nonblocking_check_packets(receiver, num_bytes, num_expected_packets).await;
-        exit.store(true, Ordering::Relaxed);
+        cancel.cancel();
 
         t.await.unwrap();
         // We close the connection after the server is down, this should not block

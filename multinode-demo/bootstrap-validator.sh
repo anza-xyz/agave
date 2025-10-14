@@ -52,9 +52,6 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --rpc-pubsub-enable-block-subscription ]]; then
       args+=("$1")
       shift
-    elif [[ $1 = --enable-cpi-and-log-storage ]]; then
-      args+=("$1")
-      shift
     elif [[ $1 = --enable-extended-tx-metadata-storage ]]; then
       args+=("$1")
       shift

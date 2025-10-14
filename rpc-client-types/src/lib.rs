@@ -5,6 +5,3 @@ pub mod error_object;
 pub mod filter;
 pub mod request;
 pub mod response;
-
-#[macro_use]
-extern crate serde_derive;

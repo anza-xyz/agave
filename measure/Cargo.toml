@@ -1,10 +1,9 @@
 [package]
 name = "solana-measure"
-description = "Blockchain, Rebuilt for Scale"
 documentation = "https://docs.rs/solana-measure"
-readme = "../README.md"
 version = { workspace = true }
 authors = { workspace = true }
+description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }

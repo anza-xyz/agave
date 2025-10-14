@@ -7,6 +7,7 @@ use {
     },
     bincode::deserialize,
     bv::BitVec,
+    serde::{Deserialize, Serialize},
     solana_clock::{Clock, Epoch, Slot, UnixTimestamp},
     solana_epoch_schedule::EpochSchedule,
     solana_pubkey::Pubkey,

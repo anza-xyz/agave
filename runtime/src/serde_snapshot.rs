@@ -24,6 +24,7 @@ use {
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::AncestorsForSerialization,
         blockhash_queue::BlockhashQueue,
+        ObsoleteAccounts,
     },
     solana_clock::{Epoch, Slot, UnixTimestamp},
     solana_epoch_schedule::EpochSchedule,
@@ -47,7 +48,6 @@ use {
             atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc,
         },
-        thread::Builder,
         time::Instant,
     },
     storage::SerializableStorage,
@@ -62,7 +62,7 @@ mod utils;
 
 pub(crate) use {
     status_cache::{deserialize_status_cache, serialize_status_cache},
-    storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
+    storage::{SerdeObsoleteAccounts, SerializableAccountStorageEntry, SerializedAccountsFileId},
 };
 
 const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
@@ -552,7 +552,7 @@ pub(crate) fn bank_from_streams<R>(
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: Option<AccountsDbConfig>,
+    accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> std::result::Result<(Bank, BankFromStreamsInfo), Error>
@@ -808,7 +808,7 @@ pub(crate) fn reconstruct_bank_from_fields<E>(
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: Option<AccountsDbConfig>,
+    accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> Result<(Bank, ReconstructedBankInfo), Error>
@@ -831,15 +831,12 @@ where
     let bank_rc = BankRc::new(Accounts::new(Arc::new(accounts_db)));
     let runtime_config = Arc::new(runtime_config.clone());
 
-    // if limit_load_slot_count_from_snapshot is set, then we need to side-step some correctness checks beneath this call
-    let debug_do_not_add_builtins = limit_load_slot_count_from_snapshot.is_some();
-    let bank = Bank::new_from_fields(
+    let bank = Bank::new_from_snapshot(
         bank_rc,
         genesis_config,
         runtime_config,
         bank_fields,
         debug_keys,
-        debug_do_not_add_builtins,
         reconstructed_accounts_db_info.accounts_data_len,
     );
 
@@ -856,15 +853,35 @@ pub(crate) fn reconstruct_single_storage(
     slot: &Slot,
     append_vec_path: &Path,
     current_len: usize,
-    append_vec_id: AccountsFileId,
+    id: AccountsFileId,
     storage_access: StorageAccess,
+    obsolete_accounts: Option<SerdeObsoleteAccounts>,
 ) -> Result<Arc<AccountStorageEntry>, SnapshotError> {
+    // When restoring from an archive, obsolete accounts will always be `None`
+    // When restoring from fastboot, obsolete accounts will be 'Some' if the storage contained
+    // accounts marked obsolete at the time the snapshot was taken.
+    let (current_len, obsolete_accounts) = if let Some(obsolete_accounts) = obsolete_accounts {
+        let updated_len = current_len + obsolete_accounts.bytes as usize;
+        let id = id as SerializedAccountsFileId;
+        if obsolete_accounts.id != id {
+            return Err(SnapshotError::MismatchedAccountsFileId(
+                id,
+                obsolete_accounts.id,
+            ));
+        }
+
+        (updated_len, obsolete_accounts.accounts)
+    } else {
+        (current_len, ObsoleteAccounts::default())
+    };
+
     let accounts_file =
         AccountsFile::new_for_startup(append_vec_path, current_len, storage_access)?;
     Ok(Arc::new(AccountStorageEntry::new_existing(
         *slot,
-        append_vec_id,
+        id,
         accounts_file,
+        obsolete_accounts,
     )))
 }
 
@@ -963,6 +980,7 @@ pub(crate) fn remap_and_reconstruct_single_storage(
         current_len,
         remapped_append_vec_id,
         storage_access,
+        None,
     )?;
     Ok(storage)
 }
@@ -984,7 +1002,7 @@ fn reconstruct_accountsdb_from_fields<E>(
     storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: Option<AccountsDbConfig>,
+    accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> Result<(AccountsDb, ReconstructedAccountsDbInfo), Error>
@@ -1039,17 +1057,6 @@ where
         .write_version
         .fetch_add(snapshot_version, Ordering::Release);
 
-    let mut measure_notify = Measure::start("accounts_notify");
-
-    let accounts_db = Arc::new(accounts_db);
-    let accounts_db_clone = accounts_db.clone();
-    let handle = Builder::new()
-        .name("solNfyAccRestor".to_string())
-        .spawn(move || {
-            accounts_db_clone.notify_account_restore_from_snapshot();
-        })
-        .unwrap();
-
     info!("Building accounts index...");
     let start = Instant::now();
     let IndexGenerationInfo {
@@ -1058,16 +1065,8 @@ where
     } = accounts_db.generate_index(limit_load_slot_count_from_snapshot, verify_index);
     info!("Building accounts index... Done in {:?}", start.elapsed());
 
-    handle.join().unwrap();
-    measure_notify.stop();
-
-    datapoint_info!(
-        "reconstruct_accountsdb_from_fields()",
-        ("accountsdb-notify-at-start-us", measure_notify.as_us(), i64),
-    );
-
     Ok((
-        Arc::try_unwrap(accounts_db).unwrap(),
+        accounts_db,
         ReconstructedAccountsDbInfo {
             accounts_data_len,
             calculated_accounts_lt_hash,

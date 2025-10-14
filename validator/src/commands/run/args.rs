@@ -4,7 +4,9 @@ use {
         cli::{hash_validator, port_range_validator, port_validator, DefaultArgs},
         commands::{FromClapArgMatches, Result},
     },
+    agave_snapshots::SUPPORTED_ARCHIVE_COMPRESSION,
     clap::{values_t, App, Arg, ArgMatches},
+    solana_accounts_db::utils::create_and_canonicalize_directory,
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::keypair_of,
@@ -18,20 +20,20 @@ use {
     },
     solana_core::{
         banking_trace::DirByteLimit,
-        validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
+        validator::{BlockProductionMethod, BlockVerificationMethod},
     },
     solana_keypair::Keypair,
     solana_ledger::{blockstore_options::BlockstoreOptions, use_snapshot_archives_at_startup},
     solana_pubkey::Pubkey,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
-    solana_runtime::snapshot_utils::{SnapshotVersion, SUPPORTED_ARCHIVE_COMPRESSION},
+    solana_runtime::snapshot_utils::SnapshotVersion,
     solana_send_transaction_service::send_transaction_service::{
-        MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
+        Config as SendTransactionServiceConfig, MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
     },
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
-    std::{collections::HashSet, net::SocketAddr, str::FromStr},
+    std::{collections::HashSet, net::SocketAddr, path::PathBuf, str::FromStr},
 };
 
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
@@ -62,10 +64,12 @@ pub mod json_rpc_config;
 pub mod pub_sub_config;
 pub mod rpc_bigtable_config;
 pub mod rpc_bootstrap_config;
+pub mod send_transaction_config;
 
 #[derive(Debug, PartialEq)]
 pub struct RunArgs {
     pub identity_keypair: Keypair,
+    pub ledger_path: PathBuf,
     pub logfile: String,
     pub entrypoints: Vec<SocketAddr>,
     pub known_validators: Option<HashSet<Pubkey>>,
@@ -74,6 +78,7 @@ pub struct RunArgs {
     pub blockstore_options: BlockstoreOptions,
     pub json_rpc_config: JsonRpcConfig,
     pub pub_sub_config: PubSubConfig,
+    pub send_transaction_service_config: SendTransactionServiceConfig,
 }
 
 impl FromClapArgMatches for RunArgs {
@@ -83,6 +88,21 @@ impl FromClapArgMatches for RunArgs {
                 "The --identity <KEYPAIR> argument is required",
                 clap::ErrorKind::ArgumentNotFound,
             ))?;
+
+        let ledger_path = PathBuf::from(matches.value_of("ledger_path").ok_or(
+            clap::Error::with_description(
+                "The --ledger <DIR> argument is required",
+                clap::ErrorKind::ArgumentNotFound,
+            ),
+        )?);
+        // Canonicalize ledger path to avoid issues with symlink creation
+        let ledger_path =
+            create_and_canonicalize_directory(ledger_path.as_path()).map_err(|err| {
+                crate::commands::Error::Dynamic(Box::<dyn std::error::Error>::from(format!(
+                    "failed to create and canonicalize ledger path '{}': {err}",
+                    ledger_path.display(),
+                )))
+            })?;
 
         let logfile = matches
             .value_of("logfile")
@@ -115,6 +135,7 @@ impl FromClapArgMatches for RunArgs {
 
         Ok(RunArgs {
             identity_keypair,
+            ledger_path,
             logfile,
             entrypoints,
             known_validators,
@@ -123,6 +144,9 @@ impl FromClapArgMatches for RunArgs {
             blockstore_options: BlockstoreOptions::from_clap_arg_match(matches)?,
             json_rpc_config: JsonRpcConfig::from_clap_arg_match(matches)?,
             pub_sub_config: PubSubConfig::from_clap_arg_match(matches)?,
+            send_transaction_service_config: SendTransactionServiceConfig::from_clap_arg_match(
+                matches,
+            )?,
         })
     }
 }
@@ -1065,81 +1089,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Max encoding and decoding message size used in Bigtable Grpc client"),
     )
     .arg(
-        Arg::with_name("rpc_pubsub_worker_threads")
-            .long("rpc-pubsub-worker-threads")
-            .takes_value(true)
-            .value_name("NUMBER")
-            .validator(is_parsable::<usize>)
-            .default_value(&default_args.rpc_pubsub_worker_threads)
-            .help("PubSub worker threads"),
-    )
-    .arg(
-        Arg::with_name("rpc_pubsub_enable_block_subscription")
-            .long("rpc-pubsub-enable-block-subscription")
-            .requires("enable_rpc_transaction_history")
-            .takes_value(false)
-            .help("Enable the unstable RPC PubSub `blockSubscribe` subscription"),
-    )
-    .arg(
-        Arg::with_name("rpc_pubsub_enable_vote_subscription")
-            .long("rpc-pubsub-enable-vote-subscription")
-            .takes_value(false)
-            .help("Enable the unstable RPC PubSub `voteSubscribe` subscription"),
-    )
-    .arg(
-        Arg::with_name("rpc_pubsub_max_active_subscriptions")
-            .long("rpc-pubsub-max-active-subscriptions")
-            .takes_value(true)
-            .value_name("NUMBER")
-            .validator(is_parsable::<usize>)
-            .default_value(&default_args.rpc_pubsub_max_active_subscriptions)
-            .help(
-                "The maximum number of active subscriptions that RPC PubSub will accept across \
-                 all connections.",
-            ),
-    )
-    .arg(
-        Arg::with_name("rpc_pubsub_queue_capacity_items")
-            .long("rpc-pubsub-queue-capacity-items")
-            .takes_value(true)
-            .value_name("NUMBER")
-            .validator(is_parsable::<usize>)
-            .default_value(&default_args.rpc_pubsub_queue_capacity_items)
-            .help(
-                "The maximum number of notifications that RPC PubSub will store across all \
-                 connections.",
-            ),
-    )
-    .arg(
-        Arg::with_name("rpc_pubsub_queue_capacity_bytes")
-            .long("rpc-pubsub-queue-capacity-bytes")
-            .takes_value(true)
-            .value_name("BYTES")
-            .validator(is_parsable::<usize>)
-            .default_value(&default_args.rpc_pubsub_queue_capacity_bytes)
-            .help(
-                "The maximum total size of notifications that RPC PubSub will store across all \
-                 connections.",
-            ),
-    )
-    .arg(
-        Arg::with_name("rpc_pubsub_notification_threads")
-            .long("rpc-pubsub-notification-threads")
-            .requires("full_rpc_api")
-            .takes_value(true)
-            .value_name("NUM_THREADS")
-            .validator(is_parsable::<usize>)
-            .default_value_if(
-                "full_rpc_api",
-                None,
-                &default_args.rpc_pubsub_notification_threads,
-            )
-            .help(
-                "The maximum number of threads that RPC PubSub will use for generating \
-                 notifications. 0 will disable RPC PubSub notifications",
-            ),
-    )
-    .arg(
         Arg::with_name("rpc_send_transaction_retry_ms")
             .long("rpc-send-retry-ms")
             .value_name("MILLISECS")
@@ -1472,11 +1421,10 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("accounts-db-mark-obsolete-accounts")
             .help("Enables experimental obsolete account tracking")
             .long_help(
-                "Enables experimental obsolete account tracking. \
-                 This feature tracks obsolete accounts in the account storage entry allowing \
-                 for earlier cleaning of obsolete accounts in the storages and index. \
-                 At this time this feature is not compatible with booting from local \
-                 snapshot state and must unpack from archives.",
+                "Enables experimental obsolete account tracking. This feature tracks obsolete \
+                 accounts in the account storage entry allowing for earlier cleaning of obsolete \
+                 accounts in the storages and index. At this time this feature is not compatible \
+                 with booting from local snapshot state and must unpack from archives.",
             )
             .hidden(hidden_unless_forced()),
     )
@@ -1505,9 +1453,19 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("PATH")
             .takes_value(true)
             .multiple(true)
+            .requires("enable_accounts_disk_index")
             .help(
                 "Persistent accounts-index location. May be specified multiple times. [default: \
                  <LEDGER>/accounts_index]",
+            ),
+    )
+    .arg(
+        Arg::with_name("enable_accounts_disk_index")
+            .long("enable-accounts-disk-index")
+            .help("Enables the disk-based accounts index")
+            .long_help(
+                "Enables the disk-based accounts index. Reduce the memory footprint of the \
+                 accounts index at the cost of index performance.",
             ),
     )
     .arg(
@@ -1610,13 +1568,15 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(BlockProductionMethod::cli_message()),
     )
     .arg(
-        Arg::with_name("transaction_struct")
-            .long("transaction-structure")
-            .value_name("STRUCT")
+        Arg::with_name("block_production_pacing_fill_time_millis")
+            .long("block-production-pacing-fill-time-millis")
+            .value_name("MILLIS")
             .takes_value(true)
-            .possible_values(TransactionStructure::cli_names())
-            .default_value(TransactionStructure::default().into())
-            .help(TransactionStructure::cli_message()),
+            .default_value(&default_args.block_production_pacing_fill_time_millis)
+            .help(
+                "Pacing fill time in milliseconds for the central-scheduler block production \
+                 method",
+            ),
     )
     .arg(
         Arg::with_name("unified_scheduler_handler_threads")
@@ -1687,6 +1647,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                  set,tpu-client-next is used by default.",
             ),
     )
+    .args(&pub_sub_config::args())
 }
 
 fn validators_set(
@@ -1719,19 +1680,26 @@ mod tests {
     use {
         super::*,
         crate::cli::thread_args::thread_args,
+        scopeguard::defer,
         solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,
-        std::net::{IpAddr, Ipv4Addr},
+        std::{
+            fs,
+            net::{IpAddr, Ipv4Addr},
+            path::{absolute, PathBuf},
+        },
     };
 
     impl Default for RunArgs {
         fn default() -> Self {
             let identity_keypair = Keypair::new();
+            let ledger_path = absolute(PathBuf::from("ledger")).unwrap();
             let logfile = format!("agave-validator-{}.log", identity_keypair.pubkey());
             let entrypoints = vec![];
             let known_validators = None;
 
             RunArgs {
                 identity_keypair,
+                ledger_path,
                 logfile,
                 entrypoints,
                 known_validators,
@@ -1753,6 +1721,7 @@ mod tests {
                         solana_rpc::rpc_pubsub_service::DEFAULT_QUEUE_CAPACITY_ITEMS,
                     ..PubSubConfig::default_for_tests()
                 },
+                send_transaction_service_config: SendTransactionServiceConfig::default(),
             }
         }
     }
@@ -1765,10 +1734,12 @@ mod tests {
                 entrypoints: self.entrypoints.clone(),
                 known_validators: self.known_validators.clone(),
                 socket_addr_space: self.socket_addr_space,
+                ledger_path: self.ledger_path.clone(),
                 rpc_bootstrap_config: self.rpc_bootstrap_config.clone(),
                 blockstore_options: self.blockstore_options.clone(),
                 json_rpc_config: self.json_rpc_config.clone(),
                 pub_sub_config: self.pub_sub_config.clone(),
+                send_transaction_service_config: self.send_transaction_service_config.clone(),
             }
         }
     }
@@ -1864,6 +1835,92 @@ mod tests {
             ]
             .concat(),
         );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_ledger_path() {
+        // nonexistent absolute ledger path
+        {
+            let default_run_args = RunArgs::default();
+            let tmp_dir = fs::canonicalize(tempfile::tempdir().unwrap()).unwrap();
+            let ledger_path = tmp_dir.join("nonexistent_ledger_path");
+            assert!(!fs::exists(&ledger_path).unwrap());
+
+            let expected_args = RunArgs {
+                ledger_path: ledger_path.clone(),
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec!["--ledger", ledger_path.to_str().unwrap()],
+                expected_args,
+            );
+            assert!(fs::exists(&ledger_path).unwrap());
+        }
+
+        // existing absolute ledger path
+        {
+            let default_run_args = RunArgs::default();
+            let tmp_dir = tempfile::tempdir().unwrap();
+            let ledger_path = tmp_dir.path().join("existing_ledger_path");
+            fs::create_dir_all(&ledger_path).unwrap();
+            let ledger_path = fs::canonicalize(ledger_path).unwrap();
+            assert!(fs::exists(ledger_path.as_path()).unwrap());
+
+            let expected_args = RunArgs {
+                ledger_path: ledger_path.clone(),
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec!["--ledger", ledger_path.to_str().unwrap()],
+                expected_args,
+            );
+            assert!(fs::exists(&ledger_path).unwrap());
+        }
+
+        // nonexistent relative ledger path
+        {
+            let default_run_args = RunArgs::default();
+            let ledger_path = PathBuf::from("nonexistent_ledger_path");
+            assert!(!fs::exists(&ledger_path).unwrap());
+            defer! {
+                fs::remove_dir_all(&ledger_path).unwrap()
+            };
+
+            let expected_args = RunArgs {
+                ledger_path: absolute(&ledger_path).unwrap(),
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec!["--ledger", ledger_path.to_str().unwrap()],
+                expected_args,
+            );
+            assert!(fs::exists(&ledger_path).unwrap());
+        }
+
+        // existing relative ledger path
+        {
+            let default_run_args = RunArgs::default();
+            let ledger_path = PathBuf::from("existing_ledger_path");
+            fs::create_dir_all(&ledger_path).unwrap();
+            assert!(fs::exists(&ledger_path).unwrap());
+            defer! {
+                fs::remove_dir_all(&ledger_path).unwrap()
+            };
+
+            let expected_args = RunArgs {
+                ledger_path: absolute(&ledger_path).unwrap(),
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec!["--ledger", ledger_path.to_str().unwrap()],
+                expected_args,
+            );
+            assert!(fs::exists(&ledger_path).unwrap());
+        }
     }
 
     #[test]

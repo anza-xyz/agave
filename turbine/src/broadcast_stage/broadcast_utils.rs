@@ -1,6 +1,5 @@
 use {
     super::{Error, Result},
-    bincode::serialized_size,
     crossbeam_channel::Receiver,
     solana_clock::Slot,
     solana_entry::entry::Entry,
@@ -15,9 +14,10 @@ use {
         sync::Arc,
         time::{Duration, Instant},
     },
+    wincode::serialized_size,
 };
 
-const ENTRY_COALESCE_DURATION: Duration = Duration::from_millis(200);
+const ENTRY_COALESCE_DURATION: Duration = Duration::from_millis(50);
 
 pub(super) struct ReceiveResults {
     pub entries: Vec<Entry>,
@@ -28,7 +28,7 @@ pub(super) struct ReceiveResults {
 const fn get_target_batch_bytes_default() -> u64 {
     // Empirically discovered to be a good balance between avoiding padding and
     // not delaying broadcast.
-    3 * get_data_shred_bytes_per_batch_typical()
+    2 * get_data_shred_bytes_per_batch_typical()
 }
 
 const fn get_target_batch_pad_bytes() -> u64 {
@@ -60,18 +60,6 @@ fn keep_coalescing_entries(
         return false;
     }
     true
-}
-
-// Dynamically determine the coalesce time based on the amount of entry data
-// that has been built up. If we only have a small amount, we can afford to wait
-// longer and avoid unnecessary padding. If we have a lot, we shouldn't wait as
-// long so we avoid delaying downstream validator replay.
-fn max_coalesce_time(serialized_batch_byte_count: u64, max_batch_byte_count: u64) -> Duration {
-    assert!(max_batch_byte_count > 0);
-    // Compute the fraction of the target batch that has been filled.
-    // Constrain to 75% to ensure we allow some time for coalescing.
-    let ratio = (serialized_batch_byte_count as f32 / max_batch_byte_count as f32).min(0.75);
-    ENTRY_COALESCE_DURATION.mul_f32(1.0 - ratio)
 }
 
 pub(super) fn recv_slot_entries(
@@ -107,6 +95,12 @@ pub(super) fn recv_slot_entries(
     }
 
     let mut serialized_batch_byte_count = serialized_size(&entries)?;
+
+    // Determine the maximum batch size we will allow for coalescing. Normally
+    // this would just be the default target batch size, but if we happened to
+    // pull out a large number of entries from the channel, we might have
+    // already exceeded the default target, and we should try to build towards the
+    // next batch boundary to avoid excessive padding.
     let next_full_batch_byte_count = serialized_batch_byte_count
         .div_ceil(get_data_shred_bytes_per_batch_typical())
         .saturating_mul(get_data_shred_bytes_per_batch_typical());
@@ -116,6 +110,7 @@ pub(super) fn recv_slot_entries(
     // 1. We ticked through the entire slot.
     // 2. We hit the timeout.
     // 3. We're over the max data target.
+    // 4. We're "close enough" to tightly packing erasure batches.
     let mut coalesce_start = Instant::now();
     while keep_coalescing_entries(
         last_tick_height,
@@ -124,9 +119,9 @@ pub(super) fn recv_slot_entries(
         max_batch_byte_count,
         process_stats,
     ) {
-        let Ok((try_bank, (entry, tick_height))) = receiver.recv_deadline(
-            coalesce_start + max_coalesce_time(serialized_batch_byte_count, max_batch_byte_count),
-        ) else {
+        let Ok((try_bank, (entry, tick_height))) =
+            receiver.recv_deadline(coalesce_start + ENTRY_COALESCE_DURATION)
+        else {
             process_stats.coalesce_exited_rcv_timeout += 1;
             break;
         };

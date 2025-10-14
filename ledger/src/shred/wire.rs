@@ -2,9 +2,12 @@
 // deserializing the entire payload.
 #![deny(clippy::indexing_slicing)]
 use {
-    crate::shred::{
-        self, merkle_tree::SIZE_OF_MERKLE_ROOT, traits::Shred, Error, Nonce, ShredFlags, ShredId,
-        ShredType, ShredVariant, SIZE_OF_COMMON_SHRED_HEADER,
+    crate::{
+        blockstore_meta::ErasureConfig,
+        shred::{
+            self, merkle_tree::SIZE_OF_MERKLE_ROOT, traits::Shred, Error, Nonce, ShredFlags,
+            ShredId, ShredType, ShredVariant, SIZE_OF_COMMON_SHRED_HEADER,
+        },
     },
     solana_clock::Slot,
     solana_hash::Hash,
@@ -102,6 +105,12 @@ pub(super) fn get_version(shred: &[u8]) -> Option<u16> {
     Some(u16::from_le_bytes(bytes))
 }
 
+#[inline]
+pub fn get_fec_set_index(shred: &[u8]) -> Option<u32> {
+    let bytes = <[u8; 4]>::try_from(shred.get(79..79 + 4)?).unwrap();
+    Some(u32::from_le_bytes(bytes))
+}
+
 // The caller should verify first that the shred is data and not code!
 #[inline]
 pub(super) fn get_parent_offset(shred: &[u8]) -> Option<u16> {
@@ -151,16 +160,37 @@ pub(crate) fn get_data(shred: &[u8]) -> Result<&[u8], Error> {
         ShredVariant::MerkleCode { .. } => Err(Error::InvalidShredType),
         ShredVariant::MerkleData {
             proof_size,
-            chained,
             resigned,
-        } => shred::merkle::ShredData::get_data(
-            shred,
-            proof_size,
-            chained,
-            resigned,
-            get_data_size(shred)?,
-        ),
+        } => shred::merkle::ShredData::get_data(shred, proof_size, resigned, get_data_size(shred)?),
     }
+}
+
+/// Returns the ErasureConfig specified by the coding shred, or an Error if
+/// the shred is a data shred
+#[inline]
+pub(crate) fn get_erasure_config(shred: &[u8]) -> Result<ErasureConfig, Error> {
+    if !matches!(get_shred_type(shred).unwrap(), ShredType::Code) {
+        return Err(Error::InvalidShredType);
+    }
+    let Some(num_data_bytes) = shred.get(83..83 + 2) else {
+        return Err(Error::InvalidPayloadSize(shred.len()));
+    };
+    let Some(num_coding_bytes) = shred.get(85..85 + 2) else {
+        return Err(Error::InvalidPayloadSize(shred.len()));
+    };
+    let num_data = <[u8; 2]>::try_from(num_data_bytes)
+        .map(u16::from_le_bytes)
+        .map(usize::from)
+        .map_err(|_| Error::InvalidErasureConfig)?;
+    let num_coding = <[u8; 2]>::try_from(num_coding_bytes)
+        .map(u16::from_le_bytes)
+        .map(usize::from)
+        .map_err(|_| Error::InvalidErasureConfig)?;
+
+    Ok(ErasureConfig {
+        num_data,
+        num_coding,
+    })
 }
 
 #[inline]
@@ -176,14 +206,12 @@ pub(crate) fn get_signed_data(shred: &[u8]) -> Option<Hash> {
     let data = match get_shred_variant(shred).ok()? {
         ShredVariant::MerkleCode {
             proof_size,
-            chained,
             resigned,
-        } => shred::merkle::ShredCode::get_merkle_root(shred, proof_size, chained, resigned)?,
+        } => shred::merkle::ShredCode::get_merkle_root(shred, proof_size, resigned)?,
         ShredVariant::MerkleData {
             proof_size,
-            chained,
             resigned,
-        } => shred::merkle::ShredData::get_merkle_root(shred, proof_size, chained, resigned)?,
+        } => shred::merkle::ShredData::get_merkle_root(shred, proof_size, resigned)?,
     };
     Some(data)
 }
@@ -202,14 +230,12 @@ pub fn get_merkle_root(shred: &[u8]) -> Option<Hash> {
     match get_shred_variant(shred).ok()? {
         ShredVariant::MerkleCode {
             proof_size,
-            chained,
             resigned,
-        } => shred::merkle::ShredCode::get_merkle_root(shred, proof_size, chained, resigned),
+        } => shred::merkle::ShredCode::get_merkle_root(shred, proof_size, resigned),
         ShredVariant::MerkleData {
             proof_size,
-            chained,
             resigned,
-        } => shred::merkle::ShredData::get_merkle_root(shred, proof_size, chained, resigned),
+        } => shred::merkle::ShredData::get_merkle_root(shred, proof_size, resigned),
     }
 }
 
@@ -217,18 +243,12 @@ pub(crate) fn get_chained_merkle_root(shred: &[u8]) -> Option<Hash> {
     let offset = match get_shred_variant(shred).ok()? {
         ShredVariant::MerkleCode {
             proof_size,
-            chained,
             resigned,
-        } => {
-            shred::merkle::ShredCode::get_chained_merkle_root_offset(proof_size, chained, resigned)
-        }
+        } => shred::merkle::ShredCode::get_chained_merkle_root_offset(proof_size, resigned),
         ShredVariant::MerkleData {
             proof_size,
-            chained,
             resigned,
-        } => {
-            shred::merkle::ShredData::get_chained_merkle_root_offset(proof_size, chained, resigned)
-        }
+        } => shred::merkle::ShredData::get_chained_merkle_root_offset(proof_size, resigned),
     }
     .ok()?;
     let merkle_root = shred.get(offset..offset + SIZE_OF_MERKLE_ROOT)?;
@@ -241,18 +261,12 @@ fn get_retransmitter_signature_offset(shred: &[u8]) -> Result<usize, Error> {
     match get_shred_variant(shred)? {
         ShredVariant::MerkleCode {
             proof_size,
-            chained,
             resigned,
-        } => shred::merkle::ShredCode::get_retransmitter_signature_offset(
-            proof_size, chained, resigned,
-        ),
+        } => shred::merkle::ShredCode::get_retransmitter_signature_offset(proof_size, resigned),
         ShredVariant::MerkleData {
             proof_size,
-            chained,
             resigned,
-        } => shred::merkle::ShredData::get_retransmitter_signature_offset(
-            proof_size, chained, resigned,
-        ),
+        } => shred::merkle::ShredData::get_retransmitter_signature_offset(proof_size, resigned),
     }
 }
 
@@ -268,12 +282,10 @@ pub fn is_retransmitter_signed_variant(shred: &[u8]) -> Result<bool, Error> {
     match get_shred_variant(shred)? {
         ShredVariant::MerkleCode {
             proof_size: _,
-            chained: _,
             resigned,
         } => Ok(resigned),
         ShredVariant::MerkleData {
             proof_size: _,
-            chained: _,
             resigned,
         } => Ok(resigned),
     }
@@ -323,24 +335,18 @@ pub fn resign_shred(shred: &mut [u8], keypair: &Keypair) -> Result<(), Error> {
     let (offset, merkle_root) = match get_shred_variant(shred)? {
         ShredVariant::MerkleCode {
             proof_size,
-            chained,
             resigned,
         } => (
-            shred::merkle::ShredCode::get_retransmitter_signature_offset(
-                proof_size, chained, resigned,
-            )?,
-            shred::merkle::ShredCode::get_merkle_root(shred, proof_size, chained, resigned)
+            shred::merkle::ShredCode::get_retransmitter_signature_offset(proof_size, resigned)?,
+            shred::merkle::ShredCode::get_merkle_root(shred, proof_size, resigned)
                 .ok_or(Error::InvalidMerkleRoot)?,
         ),
         ShredVariant::MerkleData {
             proof_size,
-            chained,
             resigned,
         } => (
-            shred::merkle::ShredData::get_retransmitter_signature_offset(
-                proof_size, chained, resigned,
-            )?,
-            shred::merkle::ShredData::get_merkle_root(shred, proof_size, chained, resigned)
+            shred::merkle::ShredData::get_retransmitter_signature_offset(proof_size, resigned)?,
+            shred::merkle::ShredData::get_merkle_root(shred, proof_size, resigned)
                 .ok_or(Error::InvalidMerkleRoot)?,
         ),
     };
@@ -418,7 +424,9 @@ pub(crate) fn corrupt_packet<R: Rng>(
 mod tests {
     use {
         super::*,
-        crate::shred::{tests::make_merkle_shreds_for_tests, traits::ShredData},
+        crate::shred::{
+            tests::make_merkle_shreds_for_tests, traits::ShredData, SHREDS_PER_FEC_BLOCK,
+        },
         assert_matches::assert_matches,
         rand::Rng,
         solana_perf::packet::PacketFlags,
@@ -433,21 +441,22 @@ mod tests {
 
     #[test_matrix(
         [true, false],
-        [true, false],
         [true, false]
     )]
-    fn test_resign_packet(repaired: bool, chained: bool, is_last_in_slot: bool) {
+    fn test_resign_packet(repaired: bool, is_last_in_slot: bool) {
         let mut rng = rand::thread_rng();
         let slot = 318_230_963 + rng.gen_range(0..318_230_963);
         let data_size = 1200 * rng.gen_range(32..64);
         let mut shreds =
-            make_merkle_shreds_for_tests(&mut rng, slot, data_size, chained, is_last_in_slot)
-                .unwrap();
-        for shred in shreds.iter_mut() {
+            make_merkle_shreds_for_tests(&mut rng, slot, data_size, is_last_in_slot).unwrap();
+        // enumerate the shreds so that I have index of each shred
+        let shreds_len = shreds.len();
+        for (index, shred) in shreds.iter_mut().enumerate() {
             let keypair = Keypair::new();
             let signature = make_dummy_signature(&mut rng);
             let nonce = repaired.then(|| rng.gen::<Nonce>());
-            if chained && is_last_in_slot {
+            let is_last_batch = index >= shreds_len - SHREDS_PER_FEC_BLOCK;
+            if is_last_in_slot && is_last_batch {
                 shred.set_retransmitter_signature(&signature).unwrap();
 
                 let packet = &mut shred.payload().to_packet(nonce);
@@ -490,19 +499,19 @@ mod tests {
 
     #[test_matrix(
         [true, false],
-        [true, false],
         [true, false]
     )]
-    fn test_merkle_shred_wire_layout(repaired: bool, chained: bool, is_last_in_slot: bool) {
+    fn test_merkle_shred_wire_layout(repaired: bool, is_last_in_slot: bool) {
         let mut rng = rand::thread_rng();
         let slot = 318_230_963 + rng.gen_range(0..318_230_963);
         let data_size = 1200 * rng.gen_range(32..64);
         let mut shreds =
-            make_merkle_shreds_for_tests(&mut rng, slot, data_size, chained, is_last_in_slot)
-                .unwrap();
-        for shred in &mut shreds {
+            make_merkle_shreds_for_tests(&mut rng, slot, data_size, is_last_in_slot).unwrap();
+        let shreds_len = shreds.len();
+        for (index, shred) in shreds.iter_mut().enumerate() {
             let signature = make_dummy_signature(&mut rng);
-            if chained && is_last_in_slot {
+            let is_last_batch = index >= shreds_len - SHREDS_PER_FEC_BLOCK;
+            if is_last_in_slot && is_last_batch {
                 shred.set_retransmitter_signature(&signature).unwrap();
             } else {
                 assert_matches!(
@@ -511,8 +520,10 @@ mod tests {
                 );
             }
         }
-        for shred in &shreds {
+
+        for (index, shred) in shreds.iter().enumerate() {
             let nonce = repaired.then(|| rng.gen::<Nonce>());
+            let is_last_batch = index >= shreds_len - SHREDS_PER_FEC_BLOCK;
             let mut packet = shred.payload().to_packet(nonce);
             if repaired {
                 packet.meta_mut().flags |= PacketFlags::REPAIR;
@@ -561,19 +572,15 @@ mod tests {
                 get_merkle_root(bytes).unwrap(),
                 shred.merkle_root().unwrap(),
             );
-            if chained {
-                assert_eq!(
-                    get_chained_merkle_root(bytes).unwrap(),
-                    shred.chained_merkle_root().unwrap(),
-                );
-            } else {
-                assert_matches!(get_chained_merkle_root(bytes), None);
-            }
+            assert_eq!(
+                get_chained_merkle_root(bytes).unwrap(),
+                shred.chained_merkle_root().unwrap(),
+            );
             assert_eq!(
                 is_retransmitter_signed_variant(bytes).unwrap(),
-                chained && is_last_in_slot
+                is_last_in_slot && is_last_batch,
             );
-            if chained && is_last_in_slot {
+            if is_last_in_slot && is_last_batch {
                 assert_eq!(
                     get_retransmitter_signature_offset(bytes).unwrap(),
                     shred.retransmitter_signature_offset().unwrap(),

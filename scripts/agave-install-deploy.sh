@@ -29,20 +29,8 @@ if [[ ! -f update_manifest_keypair.json ]]; then
   "$SOLANA_ROOT"/scripts/agave-install-update-manifest-keypair.sh "$OS"
 fi
 
-case "$OS" in
-osx)
-  TARGET=x86_64-apple-darwin
-  ;;
-linux)
-  TARGET=x86_64-unknown-linux-gnu
-  ;;
-windows)
-  TARGET=x86_64-pc-windows-msvc
-  ;;
-*)
-  TARGET=unknown-unknown-unknown
-  ;;
-esac
+source "$SOLANA_ROOT"/scripts/generate-target-triple.sh
+TARGET="$BUILD_TARGET_TRIPLE"
 
 case $URL in
 stable)

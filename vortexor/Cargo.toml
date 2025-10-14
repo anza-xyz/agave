@@ -23,7 +23,6 @@ dev-context-only-utils = []
 
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
-async-channel = { workspace = true }
 bytes = { workspace = true }
 clap = { version = "4.5.31", features = ["cargo", "derive", "error-context"] }
 crossbeam-channel = { workspace = true }
@@ -65,6 +64,7 @@ solana-transaction-metrics-tracker = { workspace = true }
 solana-version = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true }
 url = { workspace = true }
 x509-parser = { workspace = true }
 

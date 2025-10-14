@@ -4,8 +4,8 @@ use {
     super::{SnapshotError, SnapshotFrom},
     crate::serde_snapshot::{
         reconstruct_single_storage, remap_and_reconstruct_single_storage,
-        snapshot_storage_lengths_from_fields, AccountsDbFields, SerializableAccountStorageEntry,
-        SerializedAccountsFileId,
+        snapshot_storage_lengths_from_fields, AccountsDbFields, SerdeObsoleteAccounts,
+        SerializableAccountStorageEntry, SerializedAccountsFileId,
     },
     crossbeam_channel::{select, unbounded, Receiver, Sender},
     dashmap::DashMap,
@@ -20,7 +20,6 @@ use {
         accounts_file::StorageAccess,
     },
     solana_clock::Slot,
-    solana_nohash_hasher::BuildNoHashHasher,
     std::{
         collections::HashMap,
         path::PathBuf,
@@ -56,6 +55,8 @@ pub(crate) struct SnapshotStorageRebuilder {
     snapshot_from: SnapshotFrom,
     /// specify how storages are accessed
     storage_access: StorageAccess,
+    /// obsolete accounts for all storages
+    obsolete_accounts: Option<DashMap<Slot, SerdeObsoleteAccounts>>,
 }
 
 impl SnapshotStorageRebuilder {
@@ -68,6 +69,7 @@ impl SnapshotStorageRebuilder {
         next_append_vec_id: Arc<AtomicAccountsFileId>,
         snapshot_from: SnapshotFrom,
         storage_access: StorageAccess,
+        obsolete_accounts: Option<DashMap<Slot, SerdeObsoleteAccounts>>,
     ) -> Result<AccountStorageMap, SnapshotError> {
         let snapshot_storage_lengths = snapshot_storage_lengths_from_fields(accounts_db_fields);
 
@@ -79,6 +81,7 @@ impl SnapshotStorageRebuilder {
             append_vec_files,
             snapshot_from,
             storage_access,
+            obsolete_accounts,
         )?;
 
         Ok(account_storage_map)
@@ -93,11 +96,9 @@ impl SnapshotStorageRebuilder {
         snapshot_storage_lengths: HashMap<Slot, HashMap<usize, usize>>,
         snapshot_from: SnapshotFrom,
         storage_access: StorageAccess,
+        obsolete_accounts: Option<DashMap<Slot, SerdeObsoleteAccounts>>,
     ) -> Self {
-        let storage = DashMap::with_capacity_and_hasher(
-            snapshot_storage_lengths.len(),
-            BuildNoHashHasher::default(),
-        );
+        let storage = AccountStorageMap::with_capacity(snapshot_storage_lengths.len());
         let storage_paths: DashMap<_, _> = snapshot_storage_lengths
             .iter()
             .map(|(slot, storage_lengths)| {
@@ -115,6 +116,7 @@ impl SnapshotStorageRebuilder {
             num_collisions: AtomicUsize::new(0),
             snapshot_from,
             storage_access,
+            obsolete_accounts,
         }
     }
 
@@ -127,6 +129,7 @@ impl SnapshotStorageRebuilder {
         append_vec_files: Vec<PathBuf>,
         snapshot_from: SnapshotFrom,
         storage_access: StorageAccess,
+        obsolete_accounts: Option<DashMap<Slot, SerdeObsoleteAccounts>>,
     ) -> Result<AccountStorageMap, SnapshotError> {
         let rebuilder = Arc::new(SnapshotStorageRebuilder::new(
             file_receiver,
@@ -135,6 +138,7 @@ impl SnapshotStorageRebuilder {
             snapshot_storage_lengths,
             snapshot_from,
             storage_access,
+            obsolete_accounts,
         ));
 
         let thread_pool = rebuilder.build_thread_pool();
@@ -252,6 +256,9 @@ impl SnapshotStorageRebuilder {
                         current_len,
                         old_append_vec_id as AccountsFileId,
                         self.storage_access,
+                        self.obsolete_accounts.as_ref().and_then(|accounts| {
+                            accounts.remove(&slot).map(|(_slot, accounts)| accounts)
+                        }),
                     )?,
                 };
 

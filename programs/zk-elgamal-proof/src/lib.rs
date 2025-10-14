@@ -91,7 +91,11 @@ where
     };
 
     // create context state if additional accounts are provided with the instruction
-    if instruction_context.get_number_of_instruction_accounts() > accessed_accounts {
+    if instruction_context.get_number_of_instruction_accounts()
+        >= accessed_accounts
+            .checked_add(2)
+            .ok_or(InstructionError::ArithmeticOverflow)?
+    {
         let context_state_authority = *instruction_context
             .try_borrow_instruction_account(accessed_accounts.checked_add(1).unwrap())?
             .get_key();
@@ -142,8 +146,15 @@ fn process_close_proof_context(invoke_context: &mut InvokeContext) -> Result<(),
     }
 
     let mut proof_context_account = instruction_context.try_borrow_instruction_account(0)?;
+    if *proof_context_account.get_owner() != id() {
+        return Err(InstructionError::InvalidAccountOwner);
+    }
     let proof_context_state_meta =
         ProofContextStateMeta::try_from_bytes(proof_context_account.get_data())?;
+    if proof_context_state_meta.proof_type == ProofType::Uninitialized.into() {
+        return Err(InstructionError::UninitializedAccount);
+    }
+
     let expected_owner_pubkey = proof_context_state_meta.context_state_authority;
 
     if owner_pubkey != expected_owner_pubkey {

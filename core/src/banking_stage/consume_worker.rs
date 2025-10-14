@@ -4,8 +4,8 @@ use {
         leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
-    crossbeam_channel::{Receiver, RecvError, SendError, Sender},
-    solana_measure::measure_us,
+    crate::banking_stage::consumer::RetryableIndex,
+    crossbeam_channel::{Receiver, SendError, Sender, TryRecvError},
     solana_poh::poh_recorder::SharedWorkingBank,
     solana_runtime::bank::Bank,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -24,9 +24,15 @@ use {
 #[derive(Debug, Error)]
 pub enum ConsumeWorkerError<Tx> {
     #[error("Failed to receive work from scheduler: {0}")]
-    Recv(#[from] RecvError),
+    Recv(#[from] TryRecvError),
     #[error("Failed to send finalized consume work to scheduler: {0}")]
     Send(#[from] SendError<FinishedConsumeWork<Tx>>),
+}
+
+enum ProcessingStatus<Tx> {
+    Processed,
+    /// Work could not be processed due to lack of bank.
+    CouldNotProcess(ConsumeWork<Tx>),
 }
 
 pub(crate) struct ConsumeWorker<Tx> {
@@ -63,68 +69,65 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     }
 
     pub fn run(self) -> Result<(), ConsumeWorkerError<Tx>> {
+        const STARTING_SLEEP_DURATION: Duration = Duration::from_micros(250);
+
+        let mut did_work = false;
+        let mut last_empty_time = Instant::now();
+        let mut sleep_duration = STARTING_SLEEP_DURATION;
+
         while !self.exit.load(Ordering::Relaxed) {
-            let work = self.consume_receiver.recv()?;
-            self.consume_loop(work)?;
+            match self.consume_receiver.try_recv() {
+                Ok(work) => {
+                    did_work = true;
+                    match self.consume(work)? {
+                        ProcessingStatus::Processed => {}
+                        ProcessingStatus::CouldNotProcess(work) => {
+                            self.retry_drain(work)?;
+                        }
+                    }
+                }
+                Err(TryRecvError::Empty) => {
+                    let now = Instant::now();
+
+                    if did_work {
+                        last_empty_time = now;
+                    }
+                    did_work = false;
+                    let idle_duration = now.duration_since(last_empty_time);
+                    backoff(idle_duration, &mut sleep_duration);
+                }
+                Err(TryRecvError::Disconnected) => {
+                    return Err(ConsumeWorkerError::Recv(TryRecvError::Disconnected))
+                }
+            }
         }
+
         Ok(())
     }
 
-    fn consume_loop(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
-        let (maybe_consume_bank, get_bank_us) = measure_us!(self.working_bank_with_timeout());
-        let Some(mut bank) = maybe_consume_bank else {
-            self.metrics
-                .timing_metrics
-                .wait_for_bank_failure_us
-                .fetch_add(get_bank_us, Ordering::Relaxed);
-            return self.retry_drain(work);
+    fn consume(
+        &self,
+        work: ConsumeWork<Tx>,
+    ) -> Result<ProcessingStatus<Tx>, ConsumeWorkerError<Tx>> {
+        let Some(bank) = self.active_working_bank_with_timeout() else {
+            return Ok(ProcessingStatus::CouldNotProcess(work));
         };
+
         self.metrics
-            .timing_metrics
-            .wait_for_bank_success_us
-            .fetch_add(get_bank_us, Ordering::Relaxed);
+            .count_metrics
+            .num_messages_processed
+            .fetch_add(1, Ordering::Relaxed);
 
-        for work in try_drain_iter(work, &self.consume_receiver) {
-            self.metrics
-                .count_metrics
-                .max_queue_len
-                .fetch_max(self.consume_receiver.len() as u64, Ordering::Relaxed);
-            if self.exit.load(Ordering::Relaxed) {
-                return Ok(());
-            }
-            if bank.is_complete() || {
-                // if working bank has changed, then try to get a new bank.
-                self.working_bank()
-                    .map(|working_bank| Arc::ptr_eq(&working_bank, &bank))
-                    .unwrap_or(true)
-            } {
-                let (maybe_new_bank, get_bank_us) = measure_us!(self.working_bank_with_timeout());
-                if let Some(new_bank) = maybe_new_bank {
-                    self.metrics
-                        .timing_metrics
-                        .wait_for_bank_success_us
-                        .fetch_add(get_bank_us, Ordering::Relaxed);
-                    bank = new_bank;
-                } else {
-                    self.metrics
-                        .timing_metrics
-                        .wait_for_bank_failure_us
-                        .fetch_add(get_bank_us, Ordering::Relaxed);
-                    return self.retry_drain(work);
-                }
-            }
-            self.metrics
-                .count_metrics
-                .num_messages_processed
-                .fetch_add(1, Ordering::Relaxed);
-            self.consume(&bank, work)?;
-        }
-
-        Ok(())
+        self.consume_with_bank(
+            bank.as_ref()
+                .expect("active_working_bank_with_timeout only returns if the bank is Some"),
+            work,
+        )?;
+        Ok(ProcessingStatus::Processed)
     }
 
     /// Consume a single batch.
-    fn consume(
+    fn consume_with_bank(
         &self,
         bank: &Arc<Bank>,
         work: ConsumeWork<Tx>,
@@ -147,23 +150,42 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         Ok(())
     }
 
-    /// Get the current poh working bank with a timeout - if the Bank is
-    /// not available within the timeout, return None.
-    fn working_bank_with_timeout(&self) -> Option<Arc<Bank>> {
+    /// Get active bank with timeout.
+    fn active_working_bank_with_timeout(&self) -> Option<arc_swap::Guard<Option<Arc<Bank>>>> {
+        // Do an initial bank load without sampling time. If we're in a hot loop
+        // of work this saves us from checking the time at all and we'd only end up
+        // checking between or after our leader slots.
+        if let Some(guard) = self.active_working_bank() {
+            return Some(guard);
+        }
+
+        // If the initial check above didn't find a bank, we will
+        // spin up to some timeout to wait for a bank to execute on.
+        // This is conservatively long because transitions between slots
+        // can occassionally be slow.
         const TIMEOUT: Duration = Duration::from_millis(50);
         let now = Instant::now();
         while now.elapsed() < TIMEOUT {
-            if let Some(bank) = self.working_bank() {
-                return Some(bank);
+            if let Some(guard) = self.active_working_bank() {
+                return Some(guard);
             }
+            core::hint::spin_loop();
         }
 
         None
     }
 
-    /// Get the current poh working bank without a timeout.
-    fn working_bank(&self) -> Option<Arc<Bank>> {
-        self.shared_working_bank.load()
+    fn active_working_bank(&self) -> Option<arc_swap::Guard<Option<Arc<Bank>>>> {
+        let guard = self.shared_working_bank.load_ref();
+        if guard
+            .as_ref()
+            .map(|bank| bank.is_complete())
+            .unwrap_or(true)
+        {
+            None
+        } else {
+            Some(guard)
+        }
     }
 
     /// Retry current batch and all outstanding batches.
@@ -179,7 +201,12 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
 
     /// Send transactions back to scheduler as retryable.
     fn retry(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
-        let retryable_indexes: Vec<_> = (0..work.transactions.len()).collect();
+        let retryable_indexes: Vec<_> = (0..work.transactions.len())
+            .map(|index| RetryableIndex {
+                index,
+                immediately_retryable: true,
+            })
+            .collect();
         let num_retryable = retryable_indexes.len();
         self.metrics
             .count_metrics
@@ -202,6 +229,18 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
 /// starting with the given work item.
 fn try_drain_iter<T>(work: T, receiver: &Receiver<T>) -> impl Iterator<Item = T> + '_ {
     std::iter::once(work).chain(receiver.try_iter())
+}
+
+fn backoff(idle_duration: Duration, sleep_duration: &mut Duration) {
+    const MAX_SLEEP_DURATION: Duration = Duration::from_millis(1);
+    const IDLE_SLEEP_THRESHOLD: Duration = Duration::from_millis(1);
+
+    if idle_duration < IDLE_SLEEP_THRESHOLD {
+        core::hint::spin_loop();
+    } else {
+        std::thread::sleep(*sleep_duration);
+        *sleep_duration = sleep_duration.saturating_mul(2).min(MAX_SLEEP_DURATION);
+    }
 }
 
 /// Metrics tracking number of packets processed by the consume worker.
@@ -552,8 +591,6 @@ struct ConsumeWorkerTimingMetrics {
     record_us: AtomicU64,
     commit_us: AtomicU64,
     find_and_send_votes_us: AtomicU64,
-    wait_for_bank_success_us: AtomicU64,
-    wait_for_bank_failure_us: AtomicU64,
     num_batches_processed: AtomicU64,
 }
 
@@ -597,16 +634,6 @@ impl ConsumeWorkerTimingMetrics {
             (
                 "find_and_send_votes_us",
                 self.find_and_send_votes_us.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "wait_for_bank_success_us",
-                self.wait_for_bank_success_us.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "wait_for_bank_failure_us",
-                self.wait_for_bank_failure_us.swap(0, Ordering::Relaxed),
                 i64
             ),
         );
@@ -765,25 +792,21 @@ mod tests {
             committer::Committer,
             qos_service::QosService,
             scheduler_messages::{MaxAge, TransactionBatchId},
-            tests::{create_slow_genesis_config, sanitize_transactions, simulate_poh},
+            tests::{create_slow_genesis_config, sanitize_transactions},
         },
         crossbeam_channel::unbounded,
         solana_clock::{Slot, MAX_PROCESSING_AGE},
         solana_genesis_config::GenesisConfig,
         solana_keypair::Keypair,
-        solana_ledger::{
-            blockstore::Blockstore, genesis_utils::GenesisConfigInfo,
-            get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
-        },
+        solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::{
             v0::{self, LoadedAddresses},
             AddressLookupTableAccount, SimpleAddressLoader, VersionedMessage,
         },
         solana_poh::{
-            poh_recorder::{PohRecorder, WorkingBankEntry},
+            record_channels::{record_channels, RecordReceiver},
             transaction_recorder::TransactionRecorder,
         },
-        solana_poh_config::PohConfig,
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
@@ -802,9 +825,7 @@ mod tests {
         std::{
             collections::HashSet,
             sync::{atomic::AtomicBool, RwLock},
-            thread::JoinHandle,
         },
-        tempfile::TempDir,
         test_case::test_case,
     };
 
@@ -815,11 +836,9 @@ mod tests {
         genesis_config: GenesisConfig,
         bank: Arc<Bank>,
         _bank_forks: Arc<RwLock<BankForks>>,
-        _ledger_path: TempDir,
-        _entry_receiver: Receiver<WorkingBankEntry>,
-        poh_recorder: Arc<RwLock<PohRecorder>>,
-        _poh_simulator: JoinHandle<()>,
         _replay_vote_receiver: ReplayVoteReceiver,
+        record_receiver: RecordReceiver,
+        shared_working_bank: SharedWorkingBank,
 
         consume_sender: Sender<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
         consumed_receiver: Receiver<FinishedConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
@@ -848,24 +867,8 @@ mod tests {
         }
         let bank = Arc::new(bank);
 
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path())
-            .expect("Expected to be able to open database ledger");
-        let (poh_recorder, entry_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
-        let (record_sender, record_receiver) = unbounded();
-        let recorder = TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
-        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
-        let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
+        let (record_sender, record_receiver) = record_channels(false);
+        let recorder = TransactionRecorder::new(record_sender);
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
         let committer = Committer::new(
@@ -874,6 +877,7 @@ mod tests {
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let shared_working_bank = SharedWorkingBank::empty();
 
         let (consume_sender, consume_receiver) = unbounded();
         let (consumed_sender, consumed_receiver) = unbounded();
@@ -883,7 +887,7 @@ mod tests {
             consume_receiver,
             consumer,
             consumed_sender,
-            poh_recorder.read().unwrap().shared_working_bank(),
+            shared_working_bank.clone(),
         );
 
         (
@@ -892,11 +896,9 @@ mod tests {
                 genesis_config,
                 bank,
                 _bank_forks: bank_forks,
-                _ledger_path: ledger_path,
-                _entry_receiver: entry_receiver,
-                poh_recorder,
-                _poh_simulator: poh_simulator,
                 _replay_vote_receiver: replay_vote_receiver,
+                record_receiver,
+                shared_working_bank,
                 consume_sender,
                 consumed_receiver,
             },
@@ -942,7 +944,10 @@ mod tests {
         assert_eq!(consumed.work.batch_id, bid);
         assert_eq!(consumed.work.ids, vec![id]);
         assert_eq!(consumed.work.max_ages, vec![max_age]);
-        assert_eq!(consumed.retryable_indexes, vec![0]);
+        assert_eq!(
+            consumed.retryable_indexes,
+            vec![RetryableIndex::new(0, true)]
+        );
 
         drop(test_frame);
         let _ = worker_thread.join().unwrap();
@@ -950,21 +955,20 @@ mod tests {
 
     #[test]
     fn test_worker_consume_simple() {
-        let (test_frame, worker) = setup_test_frame(true);
+        let (mut test_frame, worker) = setup_test_frame(true);
         let TestFrame {
             mint_keypair,
             genesis_config,
             bank,
-            poh_recorder,
+            ref mut record_receiver,
+            ref mut shared_working_bank,
             consume_sender,
             consumed_receiver,
             ..
-        } = &test_frame;
+        } = &mut test_frame;
         let worker_thread = std::thread::spawn(move || worker.run());
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank_for_test(bank.clone());
+        shared_working_bank.store(bank.clone());
+        record_receiver.restart(bank.slot());
 
         let pubkey1 = Pubkey::new_unique();
 
@@ -991,7 +995,7 @@ mod tests {
         assert_eq!(consumed.work.batch_id, bid);
         assert_eq!(consumed.work.ids, vec![id]);
         assert_eq!(consumed.work.max_ages, vec![max_age]);
-        assert_eq!(consumed.retryable_indexes, Vec::<usize>::new());
+        assert_eq!(consumed.retryable_indexes, Vec::new());
 
         drop(test_frame);
         let _ = worker_thread.join().unwrap();
@@ -1000,21 +1004,20 @@ mod tests {
     #[test_case(false; "old")]
     #[test_case(true; "simd83")]
     fn test_worker_consume_self_conflicting(relax_intrabatch_account_locks: bool) {
-        let (test_frame, worker) = setup_test_frame(relax_intrabatch_account_locks);
+        let (mut test_frame, worker) = setup_test_frame(relax_intrabatch_account_locks);
         let TestFrame {
             mint_keypair,
             genesis_config,
             bank,
-            poh_recorder,
+            ref mut record_receiver,
+            ref mut shared_working_bank,
             consume_sender,
             consumed_receiver,
             ..
-        } = &test_frame;
+        } = &mut test_frame;
         let worker_thread = std::thread::spawn(move || worker.run());
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank_for_test(bank.clone());
+        shared_working_bank.store(bank.clone());
+        record_receiver.restart(bank.slot());
 
         let pubkey1 = Pubkey::new_unique();
         let pubkey2 = Pubkey::new_unique();
@@ -1051,7 +1054,7 @@ mod tests {
             if relax_intrabatch_account_locks {
                 vec![]
             } else {
-                vec![1]
+                vec![RetryableIndex::new(1, true)]
             }
         );
 
@@ -1061,21 +1064,20 @@ mod tests {
 
     #[test]
     fn test_worker_consume_multiple_messages() {
-        let (test_frame, worker) = setup_test_frame(true);
+        let (mut test_frame, worker) = setup_test_frame(true);
         let TestFrame {
             mint_keypair,
             genesis_config,
             bank,
-            poh_recorder,
+            ref mut record_receiver,
+            ref mut shared_working_bank,
             consume_sender,
             consumed_receiver,
             ..
-        } = &test_frame;
+        } = &mut test_frame;
         let worker_thread = std::thread::spawn(move || worker.run());
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank_for_test(bank.clone());
+        shared_working_bank.store(bank.clone());
+        record_receiver.restart(bank.slot());
 
         let pubkey1 = Pubkey::new_unique();
         let pubkey2 = Pubkey::new_unique();
@@ -1122,13 +1124,13 @@ mod tests {
         assert_eq!(consumed.work.batch_id, bid1);
         assert_eq!(consumed.work.ids, vec![id1]);
         assert_eq!(consumed.work.max_ages, vec![max_age]);
-        assert_eq!(consumed.retryable_indexes, Vec::<usize>::new());
+        assert_eq!(consumed.retryable_indexes, Vec::new());
 
         let consumed = consumed_receiver.recv().unwrap();
         assert_eq!(consumed.work.batch_id, bid2);
         assert_eq!(consumed.work.ids, vec![id2]);
         assert_eq!(consumed.work.max_ages, vec![max_age]);
-        assert_eq!(consumed.retryable_indexes, Vec::<usize>::new());
+        assert_eq!(consumed.retryable_indexes, Vec::new());
 
         drop(test_frame);
         let _ = worker_thread.join().unwrap();
@@ -1136,21 +1138,20 @@ mod tests {
 
     #[test]
     fn test_worker_ttl() {
-        let (test_frame, worker) = setup_test_frame(true);
+        let (mut test_frame, worker) = setup_test_frame(true);
         let TestFrame {
             mint_keypair,
             genesis_config,
             bank,
-            poh_recorder,
+            ref mut record_receiver,
+            ref mut shared_working_bank,
             consume_sender,
             consumed_receiver,
             ..
-        } = &test_frame;
+        } = &mut test_frame;
         let worker_thread = std::thread::spawn(move || worker.run());
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank_for_test(bank.clone());
+        shared_working_bank.store(bank.clone());
+        record_receiver.restart(bank.slot());
         assert!(bank.slot() > 0);
         assert!(bank.epoch() > 0);
 
@@ -1198,6 +1199,8 @@ mod tests {
                 None,
                 loader,
                 &HashSet::default(),
+                bank.feature_set
+                    .is_active(&agave_feature_set::static_instruction_limit::id()),
             )
             .unwrap()
         };
@@ -1258,7 +1261,7 @@ mod tests {
             .unwrap();
 
         let consumed = consumed_receiver.recv().unwrap();
-        assert_eq!(consumed.retryable_indexes, Vec::<usize>::new());
+        assert_eq!(consumed.retryable_indexes, Vec::new());
         // all but one succeed. 6 for initial funding
         assert_eq!(bank.transaction_count(), 6 + 5);
 

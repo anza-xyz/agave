@@ -30,7 +30,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{Bank, PreCommitResult, TransactionBalancesSet},
-        bank_forks::{BankForks, SetRootError},
+        bank_forks::BankForks,
         bank_utils,
         commitment::VOTE_THRESHOLD_SIZE,
         dependency_tracker::DependencyTracker,
@@ -525,8 +525,10 @@ fn schedule_batches_for_execution(
         // to unlock.
         // scheduling is skipped if we have already detected an error in this loop
         let indexes = starting_index..starting_index + transactions.len();
+        // Widening usize index to OrderedTaskId (= u128) won't ever fail.
+        let task_ids = indexes.map(|i| i.try_into().unwrap());
         first_err = first_err.and_then(|()| {
-            bank.schedule_transaction_executions(transactions.into_iter().zip_eq(indexes))
+            bank.schedule_transaction_executions(transactions.into_iter().zip_eq(task_ids))
         });
     }
     first_err
@@ -816,9 +818,6 @@ pub enum BlockstoreProcessorError {
     #[error("root bank with mismatched capitalization at {0}")]
     RootBankWithMismatchedCapitalization(Slot),
 
-    #[error("set root error {0}")]
-    SetRootError(#[from] SetRootError),
-
     #[error("incomplete final fec set")]
     IncompleteFinalFecSet,
 
@@ -843,7 +842,7 @@ pub struct ProcessOptions {
     pub allow_dead_slots: bool,
     pub accounts_db_skip_shrink: bool,
     pub accounts_db_force_initial_clean: bool,
-    pub accounts_db_config: Option<AccountsDbConfig>,
+    pub accounts_db_config: AccountsDbConfig,
     pub verify_index: bool,
     pub runtime_config: RuntimeConfig,
     /// true if after processing the contents of the blockstore at startup, we should run an accounts hash calc
@@ -900,12 +899,11 @@ pub(crate) fn process_blockstore_for_bank_0(
     exit: Arc<AtomicBool>,
 ) -> result::Result<Arc<RwLock<BankForks>>, BlockstoreProcessorError> {
     // Setup bank for slot 0
-    let bank0 = Bank::new_with_paths(
+    let bank0 = Bank::new_from_genesis(
         genesis_config,
         Arc::new(opts.runtime_config.clone()),
         account_paths,
         opts.debug_keys.clone(),
-        false,
         opts.accounts_db_config.clone(),
         accounts_update_notifier,
         None,
@@ -2073,7 +2071,7 @@ fn load_frozen_forks(
                 let _ = bank_forks
                     .write()
                     .unwrap()
-                    .set_root(root, snapshot_controller, None)?;
+                    .set_root(root, snapshot_controller, None);
                 m.stop();
                 set_root_us += m.as_us();
 
@@ -4283,7 +4281,7 @@ pub mod tests {
             &mut ExecuteTimings::default(),
         )
         .unwrap();
-        bank_forks.write().unwrap().set_root(1, None, None).unwrap();
+        bank_forks.write().unwrap().set_root(1, None, None);
 
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank1);
 
