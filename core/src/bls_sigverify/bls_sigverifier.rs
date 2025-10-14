@@ -1479,7 +1479,7 @@ mod tests {
         let bank5 = Bank::new_from_parent(Arc::new(bank0), &Pubkey::default(), 5);
         let bank_forks = BankForks::new_rw_arc(bank5);
 
-        bank_forks.write().unwrap().set_root(5, None, None).unwrap();
+        bank_forks.write().unwrap().set_root(5, None, None);
 
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let mut sig_verifier = BLSSigVerifier::new(
