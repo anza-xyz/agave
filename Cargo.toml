@@ -347,7 +347,7 @@ rand_chacha = "0.3.1"
 rand_chacha0-2 = { package = "rand_chacha", version = "0.2.2" }
 rayon = "1.11.0"
 reed-solomon-erasure = "6.0.0"
-regex = "1.11.3"
+regex = "1.12.2"
 reqwest = { version = "0.12.23", default-features = false }
 reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
