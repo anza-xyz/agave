@@ -295,7 +295,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     /// Returns the current environments depending on the given epoch
     pub fn get_environments_for_epoch(&self, epoch: Epoch) -> ProgramRuntimeEnvironments {
         self.global_program_cache
-            .try_read()
+            .read()
             .unwrap()
             .get_environments_for_epoch(epoch)
     }
