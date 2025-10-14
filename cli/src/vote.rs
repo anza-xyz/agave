@@ -1355,6 +1355,14 @@ pub fn process_show_vote_account(
         use_lamports_unit,
         use_csv,
         epoch_rewards,
+        inflation_rewards_commission_bps: vote_state.inflation_rewards_commission_bps,
+        inflation_rewards_collector: vote_state.inflation_rewards_collector.to_string(),
+        block_revenue_collector: vote_state.block_revenue_collector.to_string(),
+        block_revenue_commission_bps: vote_state.block_revenue_commission_bps,
+        pending_delegator_rewards: vote_state.pending_delegator_rewards,
+        bls_pubkey_compressed: vote_state
+            .bls_pubkey_compressed
+            .map(|bytes| bs58::encode(bytes).into_string()),
     };
 
     Ok(config.output_format.formatted_string(&vote_account_data))
