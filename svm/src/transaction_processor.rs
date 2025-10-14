@@ -1,5 +1,3 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     crate::{
         account_loader::{
@@ -39,7 +37,6 @@ use {
             ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheForTxBatch,
             ProgramCacheMatchCriteria, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
         },
-        solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -58,8 +55,13 @@ use {
         collections::HashSet,
         fmt::{Debug, Formatter},
         rc::Rc,
-        sync::Weak,
     },
+};
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    qualifier_attr::{field_qualifiers, qualifiers},
+    solana_program_runtime::solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
+    std::sync::Weak,
 };
 
 /// A list of log messages emitted during a transaction
@@ -228,6 +230,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ///
     /// The cache will still not contain any builtin programs. It's advisable to
     /// call `add_builtin` to add the required builtins before using the processor.
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn new(
         slot: Slot,
         epoch: Epoch,
