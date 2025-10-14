@@ -5,6 +5,7 @@ use {
         staked_validators_cache::StakedValidatorsCache,
         vote_history_storage::{SavedVoteHistoryVersions, VoteHistoryStorage},
     },
+    agave_votor_messages::consensus_message::{CertificateMessage, ConsensusMessage},
     bincode::serialize,
     crossbeam_channel::Receiver,
     solana_client::connection_cache::ConnectionCache,
@@ -15,7 +16,6 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::BankForks,
     solana_transaction_error::TransportError,
-    solana_votor_messages::consensus_message::{CertificateMessage, ConsensusMessage},
     std::{
         collections::HashMap,
         net::SocketAddr,
@@ -260,6 +260,12 @@ mod tests {
         crate::vote_history_storage::{
             NullVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
         },
+        agave_votor_messages::{
+            consensus_message::{
+                Certificate, CertificateMessage, CertificateType, ConsensusMessage, VoteMessage,
+            },
+            vote::Vote,
+        },
         solana_bls_signatures::Signature as BLSSignature,
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_keypair::Keypair,
@@ -276,12 +282,6 @@ mod tests {
             quic::{spawn_server_with_cancel, QuicServerParams, SpawnServerResult},
             socket::SocketAddrSpace,
             streamer::StakedNodes,
-        },
-        solana_votor_messages::{
-            consensus_message::{
-                Certificate, CertificateMessage, CertificateType, ConsensusMessage, VoteMessage,
-            },
-            vote::Vote,
         },
         std::{net::SocketAddr, sync::Arc},
         test_case::test_case,

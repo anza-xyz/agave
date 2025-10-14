@@ -55,6 +55,7 @@ agave-precompiles = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-syscalls = { workspace = true }
+agave-votor-messages = { workspace = true }
 ahash = { workspace = true }
 aquamarine = { workspace = true }
 arc-swap = { workspace = true }
@@ -178,7 +179,6 @@ solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-interface = { workspace = true }
 solana-vote-program = { workspace = true }
-solana-votor-messages = { workspace = true }
 spl-generic-token = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }

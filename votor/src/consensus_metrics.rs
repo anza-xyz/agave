@@ -1,10 +1,10 @@
 use {
+    agave_votor_messages::vote::Vote,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     histogram::Histogram,
     solana_clock::{Epoch, Slot},
     solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
-    solana_votor_messages::vote::Vote,
     std::{
         collections::BTreeMap,
         sync::{

@@ -1,8 +1,8 @@
 use {
     crate::{common::Stake, consensus_pool::vote_certificate_builder::VoteCertificateBuilder},
+    agave_votor_messages::consensus_message::VoteMessage,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_votor_messages::consensus_message::VoteMessage,
     std::collections::{HashMap, HashSet},
 };
 
@@ -182,8 +182,8 @@ impl VotePool for DuplicateBlockVotePool {
 mod test {
     use {
         super::*,
+        agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
         solana_bls_signatures::Signature as BLSSignature,
-        solana_votor_messages::{consensus_message::VoteMessage, vote::Vote},
     };
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
-name = "solana-votor-messages"
-documentation = "https://docs.rs/solana-votor-messages"
+name = "agave-votor-messages"
+documentation = "https://docs.rs/agave-votor-messages"
 version = { workspace = true }
 authors = { workspace = true }
 description = { workspace = true }

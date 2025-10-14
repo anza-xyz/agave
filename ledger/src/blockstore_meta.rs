@@ -39,7 +39,6 @@ bitflags! {
         // CONNECTED is explicitly the first bit to ensure backwards compatibility
         // with the boolean field that ConnectedFlags replaced in SlotMeta.
         const CONNECTED        = 0b0000_0001;
-        // PARENT_CONNECTED IS INTENTIONALLY UNUSED FOR NOW
         const PARENT_CONNECTED = 0b1000_0000;
     }
 }

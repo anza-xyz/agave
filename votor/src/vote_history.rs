@@ -2,12 +2,12 @@ use {
     super::vote_history_storage::{
         Result, SavedVoteHistory, SavedVoteHistoryVersions, VoteHistoryStorage,
     },
+    agave_votor_messages::{consensus_message::Block, vote::Vote},
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
-    solana_votor_messages::{consensus_message::Block, vote::Vote},
     std::collections::{hash_map::Entry, HashMap, HashSet},
     thiserror::Error,
 };
@@ -45,7 +45,7 @@ impl VoteHistoryVersions {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "H9oKKcWpebSTPtnXG6Aetwb7434CrW21pxnrrusYVEPy")
+    frozen_abi(digest = "5sT71PEL9bNaZhoQGjLwiMESWDRMMVmW1wMvtQpvZs5F")
 )]
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
 pub struct VoteHistory {
@@ -312,8 +312,8 @@ impl VoteHistoryError {
 #[cfg(test)]
 mod test {
     use {
-        super::*, crate::vote_history_storage::FileVoteHistoryStorage, solana_signer::Signer,
-        solana_votor_messages::vote::Vote, tempfile::TempDir,
+        super::*, crate::vote_history_storage::FileVoteHistoryStorage,
+        agave_votor_messages::vote::Vote, solana_signer::Signer, tempfile::TempDir,
     };
 
     // Votes cast since is kept in HashMap, so order is not guaranteed.

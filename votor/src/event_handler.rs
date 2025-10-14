@@ -9,11 +9,11 @@ use {
         voting_utils::{VoteError, VotingContext},
         votor::SharedContext,
     },
+    agave_votor_messages::consensus_message::Block,
     crossbeam_channel::{RecvError, SendError},
     parking_lot::RwLock,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
-    solana_votor_messages::consensus_message::Block,
     std::{
         collections::{BTreeMap, BTreeSet},
         sync::{atomic::AtomicBool, Arc, Condvar, Mutex},

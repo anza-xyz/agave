@@ -1,5 +1,5 @@
 use {
-    solana_votor_messages::{consensus_message::Certificate, vote::Vote},
+    agave_votor_messages::{consensus_message::Certificate, vote::Vote},
     std::time::Duration,
 };
 

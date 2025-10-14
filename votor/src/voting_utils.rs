@@ -6,6 +6,10 @@ use {
         vote_history_storage::{SavedVoteHistory, SavedVoteHistoryVersions},
         voting_service::BLSOp,
     },
+    agave_votor_messages::{
+        consensus_message::{ConsensusMessage, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
+        vote::Vote,
+    },
     crossbeam_channel::{SendError, Sender},
     solana_bls_signatures::{
         keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed, BlsError,
@@ -17,10 +21,6 @@ use {
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
     solana_signer::Signer,
     solana_transaction::Transaction,
-    solana_votor_messages::{
-        consensus_message::{ConsensusMessage, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
-        vote::Vote,
-    },
     std::{collections::HashMap, sync::Arc},
     thiserror::Error,
 };

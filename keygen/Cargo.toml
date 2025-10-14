@@ -22,6 +22,7 @@ remote-wallet-hidraw = ["solana-remote-wallet/linux-static-hidraw"]
 remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 
 [dependencies]
+agave-votor-messages = { workspace = true }
 bs58 = { workspace = true, features = ["std"] }
 clap = { version = "3.1.5", features = ["cargo"] }
 dirs-next = { workspace = true }
@@ -39,7 +40,6 @@ solana-remote-wallet = { workspace = true }
 solana-seed-derivable = "=3.0.0"
 solana-signer = "=3.0.0"
 solana-version = { workspace = true }
-solana-votor-messages = { workspace = true }
 tiny-bip39 = { workspace = true }
 
 [dev-dependencies]
