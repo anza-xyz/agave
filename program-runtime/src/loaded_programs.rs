@@ -847,7 +847,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         &self,
         epoch: Epoch,
     ) -> Option<ProgramRuntimeEnvironments> {
-        if epoch == self.latest_root_epoch {
+        if epoch != self.latest_root_epoch {
             return self.upcoming_environments.clone();
         }
         None
