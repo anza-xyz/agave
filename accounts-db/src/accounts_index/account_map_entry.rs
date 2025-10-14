@@ -4,6 +4,7 @@ use {
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         is_zero_lamport::IsZeroLamport,
     },
+    smallvec::SmallVec,
     solana_clock::Slot,
     std::{
         fmt::Debug,
@@ -181,11 +182,11 @@ impl<T: Copy> Drop for AccountMapEntry<T> {
 // Vec holds data on heap, however its inline size is impacted by len and capacity fields, so it needs to
 // be wrapped in a Box to minimize the size of the union.
 #[allow(clippy::box_collection)]
-struct SlotListMultiple<T: Copy>(Box<Vec<(Slot, T)>>);
+struct SlotListMultiple<T: Copy>(Box<SmallVec<[(Slot, T); 4]>>);
 
 impl<T: Copy> SlotListMultiple<T> {
-    fn new(slot_list: Vec<(Slot, T)>) -> Self {
-        Self(Box::new(slot_list))
+    fn new(slot_list: impl IntoIterator<Item = (Slot, T)>) -> Self {
+        Self(Box::new(slot_list.into_iter().collect()))
     }
 }
 
@@ -209,7 +210,7 @@ impl<T: Copy> SlotListRepr<T> {
                 )
             }
             0 => ManuallyDrop::new(None),
-            _ => ManuallyDrop::new(Some(SlotListMultiple::new(slot_list.into_vec()))),
+            _ => ManuallyDrop::new(Some(SlotListMultiple::new(slot_list))),
         };
         (false, Self { multiple })
     }
@@ -274,7 +275,7 @@ impl<T: Copy> SlotListWriteGuard<'_, T> {
         if self.swap_is_single(false) {
             let existing_item = unsafe { self.repr_guard.single };
             self.repr_guard.multiple =
-                ManuallyDrop::new(Some(SlotListMultiple::new(vec![existing_item, item])))
+                ManuallyDrop::new(Some(SlotListMultiple::new([existing_item, item])))
         } else {
             match unsafe { self.repr_guard.multiple.as_mut() } {
                 None => {
