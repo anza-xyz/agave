@@ -118,6 +118,12 @@ impl RecentLeaderSlots {
     }
 }
 
+impl Default for RecentLeaderSlots {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SlotEstimator for RecentLeaderSlots {
     fn record_slot(&mut self, current_slot: Slot) {
         self.0.push_back(current_slot);
@@ -134,7 +140,7 @@ impl SlotEstimator for RecentLeaderSlots {
         let mut recent_slots: Vec<Slot> = self.0.iter().cloned().collect();
         assert!(!recent_slots.is_empty());
         recent_slots.sort_unstable();
-        debug!("Recent slots: {:?}", recent_slots);
+        trace!("Recent slots: {recent_slots:?}");
 
         // Validators can broadcast invalid blocks that are far in the future
         // so check if the current slot is in line with the recent progression.
@@ -146,17 +152,17 @@ impl SlotEstimator for RecentLeaderSlots {
 
         // Return the highest slot that doesn't exceed what we believe is a
         // reasonable slot.
-        let res = recent_slots
+        let estimated_slot = recent_slots
             .into_iter()
             .rev()
             .find(|slot| *slot <= max_reasonable_current_slot)
             .unwrap();
         debug!(
-            "expected_current_slot: {}, max reasonable current slot: {}, found: {}",
-            expected_current_slot, max_reasonable_current_slot, res
+            "expected_current_slot: {expected_current_slot}, max reasonable current slot: \
+             {max_reasonable_current_slot}, found: {estimated_slot}",
         );
 
-        res
+        estimated_slot
     }
 }
 
