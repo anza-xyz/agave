@@ -25,7 +25,7 @@ use {
     solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,
     solana_rpc_client_api::request::{DELINQUENT_VALIDATOR_SLOT_DISTANCE, MAX_MULTIPLE_ACCOUNTS},
-    solana_runtime::snapshot_utils::{
+    solana_runtime::snapshot_config::{
         DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
         DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
         DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
