@@ -122,15 +122,20 @@ impl LeaderScheduleCache {
             );
             return None;
         }
-        // Slots after current_slot where pubkey is the leader.
-        let mut schedule = (epoch..=max_epoch)
+        // Collect leader schedules first so they stay alive for the iterator chain
+        let schedules: Vec<_> = (epoch..=max_epoch)
             .map(|epoch| self.get_epoch_schedule_else_compute(epoch, bank))
             .while_some()
             .zip(epoch..)
+            .collect();
+
+        // Slots after current_slot where pubkey is the leader.
+        let mut schedule = schedules
+            .iter()
             .flat_map(|(leader_schedule, k)| {
-                let offset = if k == epoch { start_index as usize } else { 0 };
-                let num_slots = bank.get_slots_in_epoch(k) as usize;
-                let first_slot = bank.epoch_schedule().get_first_slot_in_epoch(k);
+                let offset = if *k == epoch { start_index as usize } else { 0 };
+                let num_slots = bank.get_slots_in_epoch(*k) as usize;
+                let first_slot = bank.epoch_schedule().get_first_slot_in_epoch(*k);
                 leader_schedule
                     .get_leader_upcoming_slots(pubkey, offset)
                     .take_while(move |i| *i < num_slots)
