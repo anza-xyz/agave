@@ -19,7 +19,10 @@ use {
     solana_measure::measure::Measure,
     solana_net_utils::token_bucket::TokenBucket,
     solana_packet::{Meta, PACKET_DATA_SIZE},
-    solana_perf::packet::{BytesPacket, PacketBatch},
+    solana_perf::packet::{
+        BytesPacket, BytesPacketBatchWithClientId, BytesPacketWithClientId,
+        PacketBatch,
+    },
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_tls_utils::get_pubkey_from_tls_certificate,
@@ -94,6 +97,7 @@ struct PacketAccumulator {
     pub meta: Meta,
     pub chunks: SmallVec<[Bytes; 2]>,
     pub start_time: Instant,
+    pub remote_pubkey: Option<Pubkey>, // Add this field
 }
 
 impl PacketAccumulator {
@@ -102,6 +106,16 @@ impl PacketAccumulator {
             meta,
             chunks: SmallVec::default(),
             start_time: Instant::now(),
+            remote_pubkey: None, // Initialize as None
+        }
+    }
+
+    fn with_remote_pubkey(meta: Meta, remote_pubkey: Option<Pubkey>) -> Self {
+        Self {
+            meta,
+            chunks: SmallVec::default(),
+            start_time: Instant::now(),
+            remote_pubkey,
         }
     }
 }
@@ -363,6 +377,7 @@ where
                         quic_server_params.clone(),
                         qos.clone(),
                         tasks.clone(),
+                        quic_server_params.send_client_id,
                     ));
                 }
                 Err(err) => {
@@ -444,6 +459,7 @@ async fn setup_connection<Q, C>(
     server_params: Arc<QuicStreamerConfig>,
     qos: Arc<Q>,
     tasks: TaskTracker,
+    send_client_id: bool,
 ) where
     Q: QosController<C> + Send + Sync + 'static,
     C: ConnectionContext + Send + Sync + 'static,
@@ -506,6 +522,7 @@ async fn setup_connection<Q, C>(
                         conn_context.clone(),
                         qos,
                         cancel_connection,
+                        send_client_id,
                     ));
                 }
             }
@@ -595,6 +612,7 @@ async fn handle_connection<Q, C>(
     context: C,
     qos: Arc<Q>,
     cancel: CancellationToken,
+    send_client_id: bool,
 ) where
     Q: QosController<C> + Send + Sync + 'static,
     C: ConnectionContext + Send + Sync + 'static,
@@ -631,7 +649,11 @@ async fn handle_connection<Q, C>(
         let mut meta = Meta::default();
         meta.set_socket_addr(&remote_addr);
         meta.set_from_staked_node(matches!(peer_type, ConnectionPeerType::Staked(_)));
-        let mut accum = PacketAccumulator::new(meta);
+        let mut accum = if send_client_id {
+            PacketAccumulator::with_remote_pubkey(meta, context.remote_pubkey())
+        } else {
+            PacketAccumulator::new(meta)
+        };
 
         // Virtually all small transactions will fit in 1 chunk. Larger transactions will fit in 1
         // or 2 chunks if the first chunk starts towards the end of a datagram. A small number of

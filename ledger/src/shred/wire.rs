@@ -325,6 +325,15 @@ pub fn resign_packet(packet: &mut PacketRefMut, keypair: &Keypair) -> Result<(),
 
             Ok(())
         }
+        PacketRefMut::WithClientId(packet) => {
+            let mut buffer = packet.buffer().to_vec();
+            let shred = get_shred_mut(&mut buffer).ok_or(Error::InvalidPacketSize)?;
+
+            resign_shred(shred, keypair)?;
+            packet.set_buffer(buffer);
+
+            Ok(())
+        }
     }
 }
 

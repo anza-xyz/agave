@@ -567,6 +567,8 @@ pub struct QuicStreamerConfig {
     pub max_connections_per_ipaddr_per_min: u64,
     pub wait_for_chunk_timeout: Duration,
     pub num_threads: NonZeroUsize,
+    /// Controls if to send the client Id (client's public key) along with packet batches.
+    pub send_client_id: bool,
 }
 
 #[derive(Clone)]
@@ -591,6 +593,7 @@ impl Default for QuicStreamerConfig {
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
+            send_client_id: false, // Default to false for backward compatibility
         }
     }
 }
@@ -612,6 +615,12 @@ impl QuicStreamerConfig {
     pub(crate) fn max_concurrent_connections(&self) -> usize {
         let conns = self.max_staked_connections + self.max_unstaked_connections;
         conns + conns / 4
+    }
+
+    // Add convenience method
+    pub fn with_client_id(mut self, include_client_id: bool) -> Self {
+        self.send_client_id = include_client_id;
+        self
     }
 }
 

@@ -314,6 +314,7 @@ pub fn verify_shreds_gpu(
                 batch.push(packet.clone());
                 Cow::Owned(batch.to_pinned_packet_batch())
             }
+            PacketBatch::WithClientId(batch) => Cow::Owned(batch.to_pinned_packet_batch()),
         })
         .collect::<Vec<_>>();
     elems.extend(pinned_batches.iter().map(|batch| perf_libs::Elems {
@@ -472,6 +473,7 @@ fn sign_shreds_gpu(
                 batch.push(packet.clone());
                 Cow::Owned(batch.to_pinned_packet_batch())
             }
+            PacketBatch::WithClientId(batch) => Cow::Owned(batch.to_pinned_packet_batch()),
         })
         .collect::<Vec<_>>();
     elems.extend(pinned_batches.iter().map(|batch| perf_libs::Elems {
