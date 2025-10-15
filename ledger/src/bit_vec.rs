@@ -24,7 +24,7 @@ const BITS_PER_WORD: usize = std::mem::size_of::<Word>() * 8;
 /// assert_eq!(bit_vec.range(..2).iter_ones().collect::<Vec<_>>(), [0, 1]);
 /// assert_eq!(bit_vec.range(1..).count_ones(), 1);
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct BitVec<const NUM_BITS: usize> {
     #[serde(with = "serde_bytes")]
@@ -36,6 +36,19 @@ impl<const NUM_BITS: usize> Default for BitVec<NUM_BITS> {
         Self {
             words: vec![0; Self::NUM_WORDS],
         }
+    }
+}
+
+impl<'de, const NUM_BITS: usize> Deserialize<'de> for BitVec<NUM_BITS> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let bytes = <serde_bytes::ByteBuf as Deserialize>::deserialize(deserializer)?;
+        let mut words = bytes.into_vec();
+        words.resize(Self::NUM_WORDS, 0);
+
+        Ok(Self { words })
     }
 }
 
