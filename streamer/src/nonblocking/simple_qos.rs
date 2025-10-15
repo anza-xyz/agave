@@ -125,8 +125,6 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
             get_connection_stake(connection, &self.staked_nodes).map_or(
                 (ConnectionPeerType::Unstaked, None, 0),
                 |(pubkey, stake, total_stake, _max_stake, _min_stake)| {
-                    // The heuristic is that the stake should be large engouh to have 1 stream pass throuh within one throttle
-                    // interval during which we allow max (MAX_STREAMS_PER_MS * STREAM_THROTTLING_INTERVAL_MS) streams.
                     (ConnectionPeerType::Staked(stake), Some(pubkey), total_stake)
                 },
             );
