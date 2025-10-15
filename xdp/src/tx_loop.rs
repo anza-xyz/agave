@@ -1,14 +1,15 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
+    log::info,
     crate::{
         device::{NetworkDevice, QueueId, RingSizes},
         netlink::MacAddress,
         packet::{
-            write_eth_header, write_ip_header, write_udp_header, ETH_HEADER_SIZE, IP_HEADER_SIZE,
-            UDP_HEADER_SIZE,
+            construct_gre_packet, write_eth_header, write_ip_header_for_udp, write_udp_header,
+            ETH_HEADER_SIZE, GRE_HEADER_SIZE, IP_HEADER_SIZE, UDP_HEADER_SIZE,
         },
-        route::Router,
+        route::AtomicRouter,
         set_cpu_affinity,
         socket::{Socket, Tx, TxRing},
         umem::{Frame as _, PageAlignedMemory, SliceUmem, SliceUmemFrame, Umem as _},
@@ -18,9 +19,10 @@ use {
         Capability::{CAP_NET_ADMIN, CAP_NET_RAW},
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError},
-    libc::{sysconf, _SC_PAGESIZE},
+    libc::{sysconf, ARPHRD_IPGRE, _SC_PAGESIZE},
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr},
+        sync::Arc,
         thread,
         time::Duration,
     },
@@ -38,6 +40,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
     dest_mac: Option<MacAddress>,
     receiver: Receiver<(A, T)>,
     drop_sender: Sender<(A, T)>,
+    atomic_router: Arc<AtomicRouter>,
 ) {
     log::info!(
         "starting xdp loop on {} queue {queue_id:?} cpu {cpu_id}",
@@ -52,11 +55,11 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
         dev.mac_addr()
             .expect("no src_mac provided, device must have a MAC address")
     });
-    let src_ip = src_ip.unwrap_or_else(|| {
-        // if no source IP is provided, use the device's IPv4 address
-        dev.ipv4_addr()
-            .expect("no src_ip provided, device must have an IPv4 address")
-    });
+    // let src_ip = src_ip.unwrap_or_else(|| {
+    //     // if no source IP is provided, use the device's IPv4 address
+    //     dev.ipv4_addr()
+    //         .expect("no src_ip provided, device must have an IPv4 address")
+    // });
 
     // some drivers require frame_size=page_size
     let frame_size = unsafe { sysconf(_SC_PAGESIZE) } as usize;
@@ -93,8 +96,86 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
         caps::raise(None, CapSet::Effective, cap).unwrap();
     }
 
-    let Ok((mut socket, tx)) = Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size) else {
-        panic!("failed to create AF_XDP socket on queue {queue_id:?}");
+    // Get interface info to show device type
+    let router = atomic_router.load();
+    // let interface_info = router.get_interface(dev.if_index());
+    let gre_interface_index = router.get_gre_interface_index().unwrap();
+    // todo: greg: this will fail if no gre interface is found. so make sure to fix
+    // the problem is the interface index we are using here is technically enp65s0f0, not the gre doublezero0
+    let interface_info = router.get_interface(gre_interface_index); 
+    let dev_type_str = match interface_info {
+        Some(info) => match info.dev_type {
+            libc::ARPHRD_ETHER => "ETHERNET",
+            libc::ARPHRD_IPGRE => "GRE_TUNNEL", 
+            libc::ARPHRD_LOOPBACK => "LOOPBACK",
+            _ => "UNKNOWN",
+        },
+        None => "UNKNOWN",
+    };
+    
+    info!(
+        "greg: Creating XDP socket for interface {} (if_index: {}, type: {}) queue {queue_id:?} zero_copy: {}",
+        dev.name(),
+        dev.if_index(),
+        dev_type_str,
+        zero_copy
+    );
+    
+    // Check interface state for GRE interfaces
+    // if dev.if_index() == 31 { // doublezero0
+    //     log::info!("greg: Checking GRE interface state before XDP socket creation");
+    //     // We could add interface state checking here if needed
+    // }
+
+    // Show GRE tunnel info if available
+    // let src_ip = {
+    //     let mut ip = None;
+    //     if let Some(info) = interface_info {
+    //         if let Some(gre_tunnel) = &info.gre_tunnel {
+    //             log::info!(
+    //                 "greg: GRE tunnel endpoints: {} -> {}",
+    //                 gre_tunnel.src_ip,
+    //                 gre_tunnel.dst_ip
+    //             );
+    //             ip = Some(gre_tunnel.src_ip);
+    //         } 
+    //     } 
+    //     ip.unwrap_or_else(|| {
+    //         // if no source IP is provided, use the device's IPv4 address
+    //         dev.ipv4_addr()
+    //             .expect("no src_ip provided, device must have an IPv4 address")
+    //     })
+    // };
+
+    let src_ip = if let Some(info) = interface_info {
+        if let Some(gre_tunnel) = &info.gre_tunnel {
+            gre_tunnel.src_ip
+        } else {
+            dev.ipv4_addr()
+                .expect("device must have an IPv4 address if not tunneling")
+        }
+    } else {
+        dev.ipv4_addr()
+            .expect("device must have an IPv4 address if not tunneling")
+    };
+
+    info!("greg: src_ip: {src_ip}",);
+    
+    let (mut socket, tx) = match Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size) {
+        Ok((socket, tx)) => {
+            log::info!("greg: Successfully created XDP socket for interface {}", dev.name());
+            (socket, tx)
+        }
+        Err(error) => {
+            log::error!(
+                "greg: Failed to create AF_XDP socket on queue {} for interface {} (if_index: {}): {}",
+                queue_id.0,
+                dev.name(),
+                dev.if_index(),
+                error
+            );
+            panic!("greg: failed to create AF_XDP socket on queue {queue_id:?}");
+        }
     };
 
     let umem = socket.umem();
@@ -106,9 +187,6 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
         mut completion,
     } = tx;
     let mut ring = ring.unwrap();
-
-    // get the routing table from netlink
-    let router = Router::new().expect("failed to create router");
 
     // we don't need higher caps anymore
     for cap in [CAP_NET_ADMIN, CAP_NET_RAW] {
@@ -199,15 +277,23 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                     panic!("IPv6 not supported");
                 };
 
+                let len = payload.as_ref().len();
+
                 let dest_mac = if let Some(mac) = dest_mac {
                     mac
                 } else {
-                    let next_hop = router.route(addr.ip()).unwrap();
+                    // lock free route lookup - get both next hop and GRE info
+                    let router = atomic_router.load();
+                    let (next_hop, interface_info) = router.route(addr.ip()).unwrap();
 
+                    info!("greg: next_hop: {next_hop:?}");
                     let mut skip = false;
 
                     // sanity check that the address is routable through our NIC
-                    if next_hop.if_index != dev.if_index() {
+                    // For GRE tunnels, we allow routing through the physical interface
+                    // even if the route points to the GRE tunnel interface
+                    let is_gre_route = interface_info.dev_type == ARPHRD_IPGRE;
+                    if next_hop.if_index != dev.if_index() && !is_gre_route {
                         log::warn!(
                             "dropping packet: turbine peer {addr} must be routed through \
                              if_index: {} our if_index: {}",
@@ -218,7 +304,18 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                     }
 
                     // we need the MAC address to send the packet
-                    if next_hop.mac_addr.is_none() {
+                    // For GRE routes, we use the physical interface's MAC address
+                    // let mac_addr = if is_gre_route {
+                    //     // For GRE tunnels, use the physical interface's MAC address
+                    //     Some(src_mac) // should this be the next_hop.mac_addr? 
+                    // } else {
+                    //     next_hop.mac_addr
+                    // };
+
+                    let destination_mac_addr = next_hop.mac_addr;
+                    info!("greg: mac_addr: {destination_mac_addr:?}");
+                    
+                    if destination_mac_addr.is_none() {
                         log::warn!(
                             "dropping packet: turbine peer {addr} must be routed through {} which \
                              has no known MAC address",
@@ -233,12 +330,68 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                         continue;
                     }
 
-                    next_hop.mac_addr.unwrap()
+                    // Handle GRE wrapping if required
+                    let requires_gre = interface_info.dev_type == ARPHRD_IPGRE;
+                    if requires_gre {
+                        log::info!("greg: Packet to {} requires GRE wrapping", addr.ip());
+
+                        // Get GRE tunnel endpoints from interface info
+                        let Some(gre_tunnel) = interface_info.gre_tunnel else {
+                            log::warn!(
+                                "greg: dropping packet: GRE interface {} has no tunnel \
+                                 configuration (missing src/dst IPs)",
+                                interface_info.if_name
+                            );
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        };
+                        let gre_src_ip = gre_tunnel.src_ip;
+                        let gre_dst_ip = gre_tunnel.dst_ip;
+                        info!("greg: gre_src_ip: {gre_src_ip}, gre_dst_ip: {gre_dst_ip}");
+
+                        // Calculate GRE packet size
+                        const INNER_PACKET_HEADER_SIZE: usize = IP_HEADER_SIZE + UDP_HEADER_SIZE;
+                        let inner_packet_len = INNER_PACKET_HEADER_SIZE + len;
+                        let gre_packet_size =
+                            ETH_HEADER_SIZE + IP_HEADER_SIZE + GRE_HEADER_SIZE + inner_packet_len;
+
+                        // Reserve space for GRE packet
+                        frame.set_len(gre_packet_size);
+                        let packet = umem.map_frame_mut(&frame);
+
+                        // Construct the GRE packet
+                        let gre_packet_len = construct_gre_packet(
+                            packet,
+                            &src_ip,
+                            &dst_ip,
+                            src_port,
+                            addr.port(),
+                            payload.as_ref(),
+                            gre_src_ip,
+                            gre_dst_ip,
+                            &src_mac.0,
+                            &destination_mac_addr.unwrap().0, // i think this should be the next_hop.mac_addr?
+                        );
+
+                        // Update frame length and submit packet
+                        frame.set_len(gre_packet_len);
+                        submit_packet_to_ring(
+                            frame,
+                            &mut ring,
+                            &mut batched_packets,
+                            &mut chunk_remaining,
+                            BATCH_SIZE,
+                        );
+
+                        continue;
+                    }
+
+                    destination_mac_addr.unwrap()
                 };
 
                 const PACKET_HEADER_SIZE: usize =
                     ETH_HEADER_SIZE + IP_HEADER_SIZE + UDP_HEADER_SIZE;
-                let len = payload.as_ref().len();
                 frame.set_len(PACKET_HEADER_SIZE + len);
                 let packet = umem.map_frame_mut(&frame);
 
@@ -247,7 +400,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
 
                 write_eth_header(packet, &src_mac.0, &dest_mac.0);
 
-                write_ip_header(
+                write_ip_header_for_udp(
                     &mut packet[ETH_HEADER_SIZE..],
                     &src_ip,
                     &dst_ip,
@@ -265,23 +418,14 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                     false,
                 );
 
-                // write the packet into the ring
-                ring.write(frame, 0)
-                    .map_err(|_| "ring full")
-                    // this should never happen as we check for available slots above
-                    .expect("failed to write to ring");
-
-                batched_packets -= 1;
-                chunk_remaining -= 1;
-
-                // check if it's time to commit the ring and kick the driver
-                if chunk_remaining == 0 {
-                    chunk_remaining = BATCH_SIZE.min(batched_packets);
-
-                    // commit new frames
-                    ring.commit();
-                    kick(&ring);
-                }
+                // Submit packet to ring
+                submit_packet_to_ring(
+                    frame,
+                    &mut ring,
+                    &mut batched_packets,
+                    &mut chunk_remaining,
+                    BATCH_SIZE,
+                );
             }
             let _ = drop_sender.try_send((addrs, payload));
         }
@@ -336,5 +480,29 @@ fn kick_error(e: std::io::Error) {
         _ => {
             log::error!("network interface driver error: {e:?}");
         }
+    }
+}
+
+/// Common packet submission logic - handles ring writing, batching, and driver kicking
+fn submit_packet_to_ring<'a>(
+    frame: SliceUmemFrame<'a>,
+    ring: &mut TxRing<SliceUmemFrame<'a>>,
+    batched_packets: &mut usize,
+    chunk_remaining: &mut usize,
+    batch_size: usize,
+) {
+    // Write the packet into the ring
+    ring.write(frame, 0)
+        .map_err(|_| "ring full")
+        .expect("failed to write to ring");
+
+    *batched_packets -= 1;
+    *chunk_remaining -= 1;
+
+    // Check if it's time to commit the ring and kick the driver
+    if *chunk_remaining == 0 {
+        *chunk_remaining = batch_size.min(*batched_packets);
+        ring.commit();
+        kick(ring);
     }
 }
