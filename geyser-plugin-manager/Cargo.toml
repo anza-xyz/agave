@@ -38,3 +38,8 @@ solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+
+# Geyse V2 related dependencies
+geyser-shaq-bindings = { path = "../geyser-shaq-bindings" }
+geyser-shaq-queues = { path = "../geyser-shaq-queues" }
+bincode = { workspace = true } # wincode ?

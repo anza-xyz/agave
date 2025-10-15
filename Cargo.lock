@@ -3425,6 +3425,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "geyser-shaq-bindings"
+version = "3.1.0"
+
+[[package]]
+name = "geyser-shaq-queues"
+version = "3.1.0"
+dependencies = [
+ "geyser-shaq-bindings",
+ "rts-alloc",
+ "shaq",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "glob"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8877,8 +8891,11 @@ name = "solana-geyser-plugin-manager"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-geyser-plugin-interface",
+ "bincode",
  "bs58",
  "crossbeam-channel",
+ "geyser-shaq-bindings",
+ "geyser-shaq-queues",
  "json5",
  "jsonrpc-core",
  "libloading",

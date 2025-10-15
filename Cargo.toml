@@ -39,6 +39,8 @@ members = [
     "genesis-utils",
     "geyser-plugin-interface",
     "geyser-plugin-manager",
+    "geyser-shaq-bindings",
+    "geyser-shaq-queues",
     "gossip",
     "gossip-bin",
     "install",
