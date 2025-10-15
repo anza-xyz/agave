@@ -1,5 +1,4 @@
 #![cfg(feature = "agave-unstable-api")]
-#![allow(clippy::arithmetic_side_effects)]
 
 mod archive_format;
 pub mod hardened_unpack;

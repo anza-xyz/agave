@@ -65,6 +65,7 @@ fn checked_total_size_sum(total_size: u64, entry_size: u64, limit_size: u64) -> 
     Ok(total_size)
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 fn checked_total_count_increment(total_count: u64, limit_count: u64) -> Result<u64> {
     let total_count = total_count + 1;
     if total_count > limit_count {
@@ -91,6 +92,7 @@ pub enum UnpackPath<'a> {
     Invalid,
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 fn unpack_archive<'a, A, C, D>(
     mut archive: Archive<A>,
     memlock_budget_size: usize,
@@ -433,6 +435,7 @@ fn all_digits(v: &str) -> bool {
     true
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 fn like_storage(v: &str) -> bool {
     let mut periods = 0;
     let mut saw_numbers = false;
