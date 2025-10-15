@@ -76,19 +76,6 @@ impl PartialEq<AccountSharedData> for TransactionAccountView<'_> {
     }
 }
 
-impl TransactionAccountView<'_> {
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn as_account_shared_data_for_tests(&self) -> AccountSharedData {
-        AccountSharedData::create(
-            self.lamports(),
-            self.data().to_vec(),
-            *self.owner(),
-            self.executable(),
-            self.rent_epoch(),
-        )
-    }
-}
-
 #[derive(Debug)]
 pub struct TransactionAccountMutView<'a> {
     svm_account: &'a mut SVMAccount,
