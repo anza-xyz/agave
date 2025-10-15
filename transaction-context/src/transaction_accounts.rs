@@ -1,7 +1,10 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
-    crate::{IndexOfAccount, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION, MAX_ACCOUNT_DATA_LEN},
+    crate::{
+        vm_slice::VmSlice, IndexOfAccount, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION,
+        MAX_ACCOUNT_DATA_LEN,
+    },
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
@@ -13,6 +16,10 @@ use {
     },
 };
 
+const GUEST_REGION_SIZE: u64 = 1 << 32;
+const GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS: u64 = 9 * GUEST_REGION_SIZE;
+
+/// This struct is shared with programs. Do not alter its fields.
 #[repr(C)]
 #[derive(Debug, PartialEq)]
 struct SVMAccount {
@@ -21,7 +28,7 @@ struct SVMAccount {
     lamports: u64,
     // The payload is going to be filled with the guest virtual address of the account payload
     // vector.
-    // payload: VmSlice,
+    payload: VmSlice<u8>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -88,7 +95,10 @@ impl TransactionAccountMutView<'_> {
     }
 
     pub(crate) fn resize(&mut self, new_len: usize, value: u8) {
-        self.data_mut().resize(new_len, value)
+        self.data_mut().resize(new_len, value);
+        unsafe {
+            self.svm_account.payload.set_len(new_len as u64);
+        }
     }
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -98,6 +108,9 @@ impl TransactionAccountMutView<'_> {
             // If the buffer is shared, the cheapest thing to do is to clone the
             // incoming slice and replace the buffer.
             self.private_fields.payload = Arc::new(new_data.to_vec());
+            unsafe {
+                self.svm_account.payload.set_len(new_data.len() as u64);
+            }
             return;
         };
 
@@ -129,11 +142,15 @@ impl TransactionAccountMutView<'_> {
             data.set_len(0);
             ptr::copy_nonoverlapping(new_data.as_ptr(), data.as_mut_ptr(), new_len);
             data.set_len(new_len);
+            self.svm_account.payload.set_len(new_len as u64);
         };
     }
 
     pub(crate) fn extend_from_slice(&mut self, data: &[u8]) {
-        self.data_mut().extend_from_slice(data)
+        self.data_mut().extend_from_slice(data);
+        unsafe {
+            self.svm_account.payload.set_len(data.len() as u64);
+        }
     }
 
     pub(crate) fn reserve(&mut self, additional: usize) {
@@ -240,12 +257,18 @@ impl TransactionAccounts {
         let borrow_counters = vec![BorrowCounter::default(); accounts.len()].into_boxed_slice();
         let (shared_accounts, private_fields) = accounts
             .into_iter()
-            .map(|item| {
+            .enumerate()
+            .map(|(idx, item)| {
                 (
                     SVMAccount {
                         key: item.0,
                         owner: *item.1.owner(),
                         lamports: item.1.lamports(),
+                        payload: VmSlice::new(
+                            GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS
+                                .saturating_add(GUEST_REGION_SIZE.saturating_mul(idx as u64)),
+                            item.1.data().len() as u64,
+                        ),
                     },
                     PrivateAccountFields {
                         rent_epoch: item.1.rent_epoch(),
