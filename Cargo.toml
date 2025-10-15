@@ -568,7 +568,7 @@ solana-sysvar-id = "3.0.0"
 solana-test-validator = { path = "test-validator", version = "=4.0.0-alpha.0" }
 solana-time-utils = "3.0.0"
 solana-tls-utils = { path = "tls-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-tlv = { path = "tlv", version = "=3.1.0" }
+solana-tlv = { path = "tlv", version = "=4.0.0-alpha.0" }
 solana-tps-client = { path = "tps-client", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-tpu-client = { path = "tpu-client", version = "=4.0.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-tpu-client-next = { path = "tpu-client-next", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }

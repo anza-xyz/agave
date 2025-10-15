@@ -1,13 +1,20 @@
 use {
-    bincode::Options,
-    bytes::{Buf, Bytes, BytesMut},
-    serde::{Deserialize, Serialize},
+    bytes::{Bytes, BytesMut},
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 mod tlv_record;
-pub use tlv_record::{tlv_bincode_options, TlvDecodeError, TlvEncodeError, TlvRecord};
+pub use tlv_record::{TlvDecodeError, TlvEncodeError, TlvRecord};
+use wincode::io::Cursor;
 
 const MAX_VALUE_LENGTH: usize = 1500;
+
+/// Marks types that can be serialized using TLV.
+/// Implemented by the define_tlv_enum macro.
+/// Do not implement this trait for your types.
+pub trait TlvSerialize {
+    fn serialize(&self, buffer: &mut BytesMut) -> Result<(), TlvEncodeError>;
+}
 
 /// Macro that provides a quick and easy way to define TLV compatible enums.
 ///
@@ -94,9 +101,9 @@ macro_rules! define_tlv_enum {
         Ok($variant(<$inner>::from($record.value().to_owned())))
     };
 
-    // Helper to deserialize with bincode
+    // Helper to deserialize with wincode
     (@decode [] $record:ident $variant:path, $inner:ty) => {
-        Ok($variant($crate::deserialize_tagged_value_with_bincode($record)?))
+        Ok($variant($crate::deserialize_tagged_value_with_wincode($record)?))
     };
 
     // Helper to be able to serialize #[raw] variants
@@ -107,64 +114,64 @@ macro_rules! define_tlv_enum {
         )
     };
 
-    // Helper to serialize via bincode
+    // Helper to serialize via wincode
     (@serialize [] $inner:ident, $tag:expr) => {
-        $crate::serialize_tagged_value_with_bincode($inner, $tag)
+        $crate::serialize_tagged_value_with_wincode($inner, $tag)
     };
 }
 
 /// To be used by define_tlv_enum! macro, do not use directly
-pub fn deserialize_tagged_value_with_bincode<'a, INNER: Deserialize<'a>>(
+pub fn deserialize_tagged_value_with_wincode<'a, INNER: SchemaRead<'a, Dst = INNER>>(
     record: &'a TlvRecord,
 ) -> Result<INNER, TlvDecodeError> {
-    let opts = tlv_bincode_options();
-    Ok(opts.deserialize::<INNER>(record.value())?)
+    wincode::deserialize::<INNER>(record.value()).map_err(TlvDecodeError::from)
 }
 
 /// To be used by define_tlv_enum! macro, do not use directly
-pub fn serialize_tagged_value_with_bincode<T: Serialize>(
+pub fn serialize_tagged_value_with_wincode<T: SchemaWrite<Src = T> + ?Sized>(
     inner: &T,
     tag: u8,
 ) -> Result<TlvRecord, TlvEncodeError> {
-    let opts = tlv_bincode_options();
-    let data = opts.serialize(inner)?;
-    TlvRecord::new(tag, Bytes::from_owner(data))
-}
-
-/// Marks types that can be serialized using TLV.
-/// Implemented by the define_tlv_enum macro.
-/// Do not implement this trait for your types.
-pub trait TlvSerialize {
-    fn serialize(&self, buffer: &mut BytesMut) -> Result<(), TlvEncodeError>;
+    let data = wincode::serialize(inner)?;
+    TlvRecord::new(tag, data.into_boxed_slice())
 }
 
 /// Walks TLV records in a buffer without parsing them.
 ///
 /// This iterator is not guaranteed to walk the entirety of the provided
 /// buffer, and will instead stop on the first invalid entry.
-pub struct TlvIter {
-    entries: Bytes,
+pub struct TlvIter<T>
+where
+    T: AsRef<[u8]>,
+{
+    entries: Cursor<T>,
 }
 
-impl TlvIter {
+impl<T> TlvIter<T>
+where
+    T: AsRef<[u8]>,
+{
     /// Construct an iterator over Bytes object holding serialized TlvRecords
     ///
     /// This iterator is not guaranteed to walk the entirety of the provided
     /// buffer, and will instead stop on the first invalid entry.
-    pub fn new(entries: Bytes) -> Self {
-        Self { entries }
+    pub fn new(entries: T) -> Self {
+        Self {
+            entries: Cursor::new(entries),
+        }
     }
 }
 
-impl Iterator for TlvIter {
-    type Item = (usize, TlvRecord);
+impl<T> Iterator for TlvIter<T>
+where
+    T: AsRef<[u8]>,
+{
+    type Item = TlvRecord;
     /// Consume next item from the iterator.
     /// If this returns None, no more valid items can be read from the buffer.
     fn next(&mut self) -> Option<Self::Item> {
-        let total_bytes = self.entries.remaining();
         let item = TlvRecord::deserialize(&mut self.entries)?;
-        let bytes_consumed = total_bytes.saturating_sub(self.entries.remaining());
-        Some((bytes_consumed, item))
+        Some(item)
     }
 }
 
@@ -183,14 +190,14 @@ pub fn serialize_into_buffer<'a, T: 'a + TlvSerialize>(
 /// Walk over a given buffer returning deserialized TLV items
 /// This will quietly skip all invalid entries.
 pub fn deserialize_from_buffer<T: TryFrom<TlvRecord>>(buffer: Bytes) -> impl Iterator<Item = T> {
-    TlvIter::new(buffer).filter_map(|(_, v)| v.try_into().ok())
+    TlvIter::new(buffer).filter_map(|v| v.try_into().ok())
 }
 
 #[cfg(test)]
 mod tests {
     use {
         crate::{define_tlv_enum, deserialize_from_buffer, serialize_into_buffer},
-        bytes::{Bytes, BytesMut},
+        bytes::BytesMut,
         serde::Serialize,
         solana_short_vec::decode_shortu16_len,
     };
@@ -200,7 +207,7 @@ mod tests {
         2=>LegacyString(String),
         3=>NewString(String),
         #[raw]
-        5=>ByteArray(Bytes),
+        5=>ByteArray(Box<[u8]>),
         6=>NewEmptyTag(()),
     });
 
@@ -270,7 +277,7 @@ mod tests {
     fn test_tlv_wire_format() {
         let tlv_data = vec![
             ExtensionNew::Test(u64::MAX),
-            ExtensionNew::ByteArray(Bytes::from(vec![77u8; 256])),
+            ExtensionNew::ByteArray(vec![77u8; 256].into_boxed_slice()),
         ];
         let mut buffer = BytesMut::with_capacity(2000);
         serialize_into_buffer(&tlv_data, &mut buffer).unwrap();

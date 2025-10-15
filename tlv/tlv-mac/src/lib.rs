@@ -5,9 +5,8 @@ use {
     },
     chacha20poly1305::aead::KeyInit,
     poly1305::{Poly1305, universal_hash::UniversalHash},
-    serde::{Deserialize, Serialize},
-    serde_with::serde_as,
     std::{net::SocketAddr, ops::Deref},
+    wincode::{SchemaRead, SchemaWrite},
 };
 
 /// marker trait for valid signature sizes
@@ -23,13 +22,8 @@ impl<const N: usize> _ConstUsize<N> {}
 
 /// Poly 1305 signature for a packet.
 /// Can be truncated from default of 16 bytes down as needed.
-#[serde_as]
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy)]
-pub struct Signature<const N: usize = 16>
-where
-    _ConstUsize<N>: _ValidSigSize, // Signature exists only when N implements ValidSigSize
-{
-    #[serde_as(as = "[_; N]")]
+#[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, Clone, Copy)]
+pub struct Signature<const N: usize = 16> {
     signature: [u8; N],
 }
 

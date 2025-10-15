@@ -1,33 +1,24 @@
 use {
     crate::{TlvSerialize, MAX_VALUE_LENGTH},
-    bincode::Options,
-    bytes::{Buf, BufMut, Bytes, BytesMut},
-    solana_short_vec::{self as short_vec, ShortU16},
-    std::io::{self, Write},
+    bytes::BytesMut,
+    std::mem::MaybeUninit,
+    wincode::{containers, io::Reader, len::ShortU16Len, SchemaRead, SchemaWrite},
 };
 
-#[inline(always)]
-pub fn tlv_bincode_options() -> impl Options {
-    bincode::DefaultOptions::new()
-        .with_limit(MAX_VALUE_LENGTH as u64)
-        .with_fixint_encoding()
-}
-
 /// Type-Length-Value encoded entry.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, SchemaRead, SchemaWrite)]
 pub struct TlvRecord {
     // tag (aka type)
     tag: u8,
     // virtual: length: ShortU16 of the following byte slice
-    // will be encoded as ShortU16 on the wire
-
     // serialized bytes of the value
-    value: Bytes,
+    #[wincode(with = "containers::Box<[u8], ShortU16Len>")]
+    value: Box<[u8]>,
 }
 
 impl TlvRecord {
     /// Construct a new TlvRecord
-    pub fn new(tag: u8, value: Bytes) -> Result<Self, TlvEncodeError> {
+    pub fn new(tag: u8, value: Box<[u8]>) -> Result<Self, TlvEncodeError> {
         if tag == 0 {
             return Err(TlvEncodeError::InvalidTag(tag));
         }
@@ -41,62 +32,43 @@ impl TlvRecord {
         self.tag
     }
 
-    pub fn value(&self) -> &Bytes {
+    pub fn value(&self) -> &[u8] {
         &self.value
     }
 
-    /// Fetches a TlvRecord from a given Bytes slice and advances buffer pointers appropriately.
+    pub fn serialized_size(&self) -> usize {
+        wincode::serialized_size(self).unwrap_or(0) as usize
+    }
+
+    /// Fetches a TlvRecord from a given Reader and advances buffer pointers appropriately.
     /// If this returns None, the record was not properly formatted,
     /// and one must assume the rest of the buffer is not readable.
-    /// This function is zero-copy.
-    pub fn deserialize(buffer: &mut Bytes) -> Option<Self> {
-        let tag = buffer.try_get_u8().ok()?;
-        let (length, consumed) = short_vec::decode_shortu16_len(buffer).ok()?;
-        buffer.advance(consumed);
-        if length > MAX_VALUE_LENGTH.min(buffer.len()) {
-            return None;
-        }
-        Some(Self {
-            tag,
-            value: buffer.split_to(length),
-        })
-    }
-}
-
-/// Helper to allow serialization into BytesMut.
-struct BytesMutWriter<'a>(&'a mut BytesMut);
-
-impl Write for BytesMutWriter<'_> {
-    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-        self.0.extend_from_slice(data);
-        Ok(data.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+    pub fn deserialize<'a>(buffer: &mut impl Reader<'a>) -> Option<Self> {
+        let mut tlv_record: MaybeUninit<Self> = MaybeUninit::uninit();
+        Self::read(buffer, &mut tlv_record).ok()?;
+        let tlv_record = unsafe { tlv_record.assume_init() };
+        Some(tlv_record)
     }
 }
 
 impl TlvSerialize for TlvRecord {
     /// Write the TlvRecord instance into provided byte buffer.
     fn serialize(&self, buffer: &mut BytesMut) -> Result<(), TlvEncodeError> {
-        // check for sanity
-        let opts = tlv_bincode_options();
-        let len = ShortU16(self.value.len() as u16);
-        #[allow(clippy::arithmetic_side_effects)] // this has no chance to overflow u64
-        let total_len = 1 + opts.serialized_size(&len)? + self.value.len() as u64;
-        if total_len > buffer.spare_capacity_mut().len() as u64 {
+        let serialized_len = self.serialized_size();
+        if serialized_len > buffer.spare_capacity_mut().len() {
             return Err(TlvEncodeError::NotEnoughSpace);
         }
-        // write tag
-        buffer.put_u8(self.tag);
-        // write length
-        let writer = BytesMutWriter(buffer);
-        let opts = tlv_bincode_options();
-        opts.serialize_into(writer, &len)?;
-        // write value
-        buffer.put_slice(&self.value);
-        Ok(())
+        let mut dst = buffer.spare_capacity_mut();
+        let res = wincode::serialize_into(&mut dst, self);
+        unsafe {
+            buffer.set_len(
+                buffer
+                    .len()
+                    .checked_add(serialized_len)
+                    .ok_or(TlvEncodeError::PayloadTooBig)?,
+            );
+        }
+        res.map_err(TlvEncodeError::from)
     }
 }
 
@@ -105,7 +77,7 @@ pub enum TlvDecodeError {
     #[error("Invalid tag: {0}")]
     InvalidTag(u8),
     #[error("Malformed payload: {0}")]
-    MalformedPayload(#[from] bincode::Error),
+    MalformedPayload(#[from] wincode::ReadError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -117,21 +89,22 @@ pub enum TlvEncodeError {
     #[error("Payload exceeds MAX_VALUE_LENGTH")]
     PayloadTooBig,
     #[error("Malformed payload: {0}")]
-    MalformedPayload(#[from] bincode::Error),
+    MalformedPayload(#[from] wincode::WriteError),
 }
 
 #[cfg(test)]
 mod tests {
     use {
         crate::{TlvEncodeError, TlvRecord, TlvSerialize},
-        bytes::{Bytes, BytesMut},
+        bytes::BytesMut,
     };
 
     #[test]
     fn test_serialize() {
+        let message = b"blabla";
         let rec = TlvRecord {
             tag: 1,
-            value: Bytes::from_static(b"blabla"),
+            value: Box::new(*message),
         };
         let mut buffer = BytesMut::with_capacity(4);
         assert!(matches!(
@@ -140,9 +113,41 @@ mod tests {
         ));
         let mut buffer = BytesMut::with_capacity(16);
         rec.serialize(&mut buffer).unwrap();
-        assert_eq!(buffer[0], 1);
-        assert_eq!(buffer[1], 6);
+        assert_eq!(buffer[0], 1, "Tag should be 1");
+        assert_eq!(
+            buffer[1],
+            message.len() as u8,
+            "Length should match length of message"
+        );
 
-        assert_eq!(buffer[2..8], *b"blabla");
+        assert_eq!(buffer[2..2 + message.len()], *message);
+        assert_eq!(
+            buffer.len(),
+            message.len() + 2,
+            "Buffer length should be set correctly"
+        );
+    }
+
+    #[test]
+    fn test_deserialize() {
+        let message = b"blabla";
+        let rec = TlvRecord {
+            tag: 1,
+            value: Box::new(*message),
+        };
+        let mut buffer = BytesMut::with_capacity(16);
+        rec.serialize(&mut buffer).unwrap();
+        {
+            let mut corrupted = buffer.clone();
+            corrupted[1] = 255; // corrupt the length field
+            let mut cursor = wincode::io::Cursor::new(corrupted.freeze());
+            assert!(TlvRecord::deserialize(&mut cursor).is_none());
+        }
+        {
+            let mut cursor = wincode::io::Cursor::new(buffer.freeze());
+            let received = TlvRecord::deserialize(&mut cursor).unwrap();
+            assert_eq!(cursor.position(), rec.serialized_size());
+            assert_eq!(received.value(), rec.value());
+        }
     }
 }

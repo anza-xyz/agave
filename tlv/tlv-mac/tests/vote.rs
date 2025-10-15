@@ -1,28 +1,22 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     bytes::{Bytes, BytesMut},
-    serde::{Deserialize, Serialize},
-    serde_with::serde_as,
-    solana_short_vec as short_vec,
     solana_tlv::*,
     solana_tlv_mac::Signature,
     std::net::SocketAddr,
+    wincode::{SchemaRead, SchemaWrite, containers, len::ShortU16Len},
 };
 
-#[serde_as]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, SchemaRead, SchemaWrite, PartialEq, Eq)]
 struct Finalize {
     pubkey: [u8; 32],
-    #[serde_as(as = "[_; 96]")]
     bls_signature: [u8; 96],
 }
 
-#[serde_as]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, SchemaRead, SchemaWrite, PartialEq, Eq)]
 struct NotarizeCert {
-    #[serde_as(as = "[_; 96]")]
     bls_signature: [u8; 96],
-    #[serde(with = "short_vec")]
+    #[wincode(with = "containers::Vec<u8, ShortU16Len>")]
     bitmap: Vec<u8>,
 }
 
@@ -91,7 +85,8 @@ fn decode_and_verify_signature(
     let mut recovered = Vec::new();
     let mut signed_portion = 0;
     let mut nonce = [0u8; 12];
-    for (size, maybe_record) in TlvIter::new(buffer.clone()) {
+    for maybe_record in TlvIter::new(buffer.clone()) {
+        let size = maybe_record.serialized_size();
         let maybe_record: Result<AlepnglowVotor, _> = maybe_record.try_into();
         let record = match maybe_record {
             Ok(record) => record,

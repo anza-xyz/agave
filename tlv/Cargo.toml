@@ -11,15 +11,22 @@ edition = { workspace = true }
 publish = false
 
 [dependencies]
-bincode = { workspace = true }
 bytes = { workspace = true }
 chacha20 = "0.9.1"
 chacha20poly1305 = { version = "0.10.1" }
 poly1305 = "0.8.0"
+thiserror = { workspace = true }
+wincode = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+bencher = { workspace = true }
+bincode = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_with = { workspace = true, features = ["macros"] }
 solana-short-vec = { workspace = true }
-thiserror = { workspace = true }
-
 [lints]
 workspace = true
+
+[[bench]]
+name = "tlv_vs_wincode"
+harness = false

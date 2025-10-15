@@ -1891,7 +1891,7 @@ version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3613f74bd2eac03dad61bd53dbe620703d4371614fe0bc3b9f04dd36fe4e818"
 dependencies = [
- "cfg-if 1.0.3",
+ "cfg-if 1.0.4",
  "cipher",
  "cpufeatures",
 ]
@@ -11403,8 +11403,9 @@ dependencies = [
 
 [[package]]
 name = "solana-tlv"
-version = "3.1.0"
+version = "4.0.0-alpha.0"
 dependencies = [
+ "bencher",
  "bincode",
  "bytes",
  "chacha20",
@@ -11413,21 +11414,21 @@ dependencies = [
  "serde",
  "serde_with",
  "solana-short-vec",
- "thiserror 2.0.16",
+ "thiserror 2.0.17",
+ "wincode",
 ]
 
 [[package]]
 name = "solana-tlv-mac"
-version = "3.1.0"
+version = "4.0.0-alpha.0"
 dependencies = [
  "bytes",
  "chacha20",
  "chacha20poly1305",
  "poly1305",
- "serde",
- "serde_with",
  "solana-short-vec",
  "solana-tlv",
+ "wincode",
 ]
 
 [[package]]

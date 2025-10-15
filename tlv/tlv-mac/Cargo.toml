@@ -14,8 +14,7 @@ publish = false
 chacha20 = "0.9.1"
 chacha20poly1305 = { version = "0.10.1" }
 poly1305 = "0.8.0"
-serde = { workspace = true, features = ["derive"] }
-serde_with = { workspace = true, features = ["macros"] }
+wincode = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
 bytes = { workspace = true }
