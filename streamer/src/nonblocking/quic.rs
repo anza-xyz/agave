@@ -559,6 +559,8 @@ async fn setup_connection<Q, C>(
                     return;
                 }
 
+                stats.total_new_connections.fetch_add(1, Ordering::Relaxed);
+
                 let mut conn_context = qos.derive_connection_context(&new_connection);
                 if let Some((cancel_connection, stream_counter)) = qos
                     .try_cache_connection(
