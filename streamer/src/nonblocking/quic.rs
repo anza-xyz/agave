@@ -1755,16 +1755,19 @@ pub mod test {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_quic_server_exit() {
+    async fn test_quic_server_exit_on_cancel() {
         let SpawnTestServerResult {
             join_handle,
-            receiver: _,
+            receiver,
             server_address: _,
             stats: _,
             cancel,
         } = setup_quic_server(None, QuicServerParams::default_for_tests());
         cancel.cancel();
         join_handle.await.unwrap();
+        // test that it is stopped by cancel, not due to receiver
+        // dropped.
+        drop(receiver);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1839,7 +1842,7 @@ pub mod test {
         solana_logger::setup();
         let SpawnTestServerResult {
             join_handle,
-            receiver: _,
+            receiver,
             server_address,
             stats,
             cancel,
@@ -1866,6 +1869,7 @@ pub mod test {
         assert!(s1.write_all(&[0u8]).await.is_err());
 
         cancel.cancel();
+        drop(receiver);
         join_handle.await.unwrap();
     }
 
@@ -1874,13 +1878,14 @@ pub mod test {
         solana_logger::setup();
         let SpawnTestServerResult {
             join_handle,
-            receiver: _,
+            receiver,
             server_address,
             stats: _,
             cancel,
         } = setup_quic_server(None, QuicServerParams::default_for_tests());
         check_block_multiple_connections(server_address).await;
         cancel.cancel();
+        drop(receiver);
         join_handle.await.unwrap();
     }
 
@@ -1935,7 +1940,8 @@ pub mod test {
         );
 
         let start = Instant::now();
-        while stats.connection_removed.load(Ordering::Relaxed) != 1 {
+        while stats.connection_removed.load(Ordering::Relaxed) != 1 && start.elapsed().as_secs() < 1
+        {
             debug!("First connection not removed yet");
             sleep(Duration::from_millis(10)).await;
         }
@@ -1950,7 +1956,8 @@ pub mod test {
         );
 
         let start = Instant::now();
-        while stats.connection_removed.load(Ordering::Relaxed) != 2 {
+        while stats.connection_removed.load(Ordering::Relaxed) != 2 && start.elapsed().as_secs() < 1
+        {
             debug!("Second connection not removed yet");
             sleep(Duration::from_millis(10)).await;
         }
@@ -2000,7 +2007,7 @@ pub mod test {
         check_multiple_writes(receiver, server_address, Some(&client_keypair)).await;
         cancel.cancel();
         join_handle.await.unwrap();
-        sleep(Duration::from_millis(100)).await;
+
         assert_eq!(
             stats
                 .connection_added_from_unstaked_peer
@@ -2032,7 +2039,7 @@ pub mod test {
         check_multiple_writes(receiver, server_address, Some(&client_keypair)).await;
         cancel.cancel();
         join_handle.await.unwrap();
-        sleep(Duration::from_millis(100)).await;
+
         assert_eq!(
             stats
                 .connection_added_from_staked_peer
@@ -2056,7 +2063,7 @@ pub mod test {
         check_multiple_writes(receiver, server_address, None).await;
         cancel.cancel();
         join_handle.await.unwrap();
-        sleep(Duration::from_millis(100)).await;
+
         assert_eq!(
             stats
                 .connection_added_from_staked_peer
@@ -2135,10 +2142,7 @@ pub mod test {
         assert_eq!(stats.total_new_connections.load(Ordering::Relaxed), 2);
         cancel.cancel();
         t.await.unwrap();
-        // handle of the streamer doesn't wait for the child task to finish, so
-        // it is not deterministic if the tasks handling connections exit before
-        // the assertion below or after.
-        sleep(Duration::from_millis(100)).await;
+
         assert_eq!(stats.total_connections.load(Ordering::Relaxed), 0);
         assert_eq!(stats.total_new_connections.load(Ordering::Relaxed), 2);
     }
@@ -2514,7 +2518,6 @@ pub mod test {
         }
         assert_eq!(expected_num_txs, num_txs_received);
 
-        // stop it
         cancel.cancel();
         join_handle.await.unwrap();
 
