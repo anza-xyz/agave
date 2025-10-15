@@ -3585,6 +3585,11 @@ mod tests {
              Withdraw Authority: \n\
              Credits: 0\n\
              Commission: 0%\n\
+             Inflation Rewards Commission: 0 basis points\n\
+             Inflation Rewards Collector: \n\
+             Block Revenue Collector: \n\
+             Block Revenue Commission: 0 basis points\n\
+             Pending Delegator Rewards: 0 SOL\n\
              Root Slot: ~\n\
              Recent Timestamp: 1970-01-01T00:00:00Z from slot 0\n";
 
