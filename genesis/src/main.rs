@@ -249,11 +249,12 @@ fn add_validator_accounts(
             AccountSharedData::new(lamports, 0, &system_program::id()),
         );
 
-        let vote_account = vote_state::create_account_with_authorized(
+        let vote_account = vote_state::create_v4_account_with_authorized(
             identity_pubkey,
             identity_pubkey,
             identity_pubkey,
-            commission,
+            None,
+            u16::from(commission) * 100,
             rent.minimum_balance(VoteStateV4::size_of()).max(1),
         );
 
