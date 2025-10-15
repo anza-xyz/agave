@@ -45,7 +45,6 @@ const MAX_SNAPSHOT_ARCHIVE_UNPACKED_APPARENT_SIZE: u64 = 64 * 1024 * 1024 * 1024
 const MAX_SNAPSHOT_ARCHIVE_UNPACKED_ACTUAL_SIZE: u64 = 4 * 1024 * 1024 * 1024 * 1024;
 
 const MAX_SNAPSHOT_ARCHIVE_UNPACKED_COUNT: u64 = 5_000_000;
-pub const MAX_GENESIS_ARCHIVE_UNPACKED_SIZE: u64 = 10 * 1024 * 1024; // 10 MiB
 const MAX_GENESIS_ARCHIVE_UNPACKED_COUNT: u64 = 100;
 
 // The buffer should be large enough to saturate write I/O bandwidth, while also accommodating:
@@ -814,9 +813,7 @@ mod tests {
     }
 
     fn finalize_and_unpack_genesis(archive: tar::Builder<Vec<u8>>) -> Result<()> {
-        with_finalize_and_unpack(archive, |a, b| {
-            unpack_genesis(a, b, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE)
-        })
+        with_finalize_and_unpack(archive, |a, b| unpack_genesis(a, b, 1024))
     }
 
     #[test]

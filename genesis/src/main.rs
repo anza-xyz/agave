@@ -7,7 +7,6 @@ use {
     clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches},
     itertools::Itertools,
     solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_accounts_db::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     solana_clap_utils::{
         input_parsers::{
             cluster_type_of, pubkey_of, pubkeys_of, unix_timestamp_from_rfc3339_datetime,
@@ -31,7 +30,10 @@ use {
     solana_genesis_config::GenesisConfig,
     solana_inflation::Inflation,
     solana_keypair::{read_keypair_file, Keypair},
-    solana_ledger::{blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions},
+    solana_ledger::{
+        blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions,
+        genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+    },
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_poh_config::PohConfig,

@@ -39,9 +39,7 @@ use {
     solana_accounts_db::{
         accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
-        hardened_unpack::{
-            open_genesis_config, OpenGenesisConfigError, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
-        },
+        hardened_unpack::{open_genesis_config, OpenGenesisConfigError},
         utils::move_and_async_delete_path_contents,
     },
     solana_client::{
@@ -80,6 +78,7 @@ use {
         blockstore_processor::{self, TransactionStatusSender},
         entry_notifier_interface::EntryNotifierArc,
         entry_notifier_service::{EntryNotifierSender, EntryNotifierService},
+        genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         leader_schedule::FixedSchedule,
         leader_schedule_cache::LeaderScheduleCache,
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,

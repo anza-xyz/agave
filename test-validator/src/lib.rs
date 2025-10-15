@@ -8,7 +8,6 @@ use {
     solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
     solana_accounts_db::{
         accounts_db::AccountsDbConfig, accounts_index::AccountsIndexConfig,
-        hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         utils::create_accounts_run_and_snapshot_dirs,
     },
     solana_cli_output::CliAccount,
@@ -35,7 +34,7 @@ use {
     solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
     solana_ledger::{
         blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions,
-        create_new_tmp_ledger,
+        create_new_tmp_ledger, genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     },
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_message::Message,
