@@ -176,24 +176,24 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
 
         // Create accounts
         let node_account = Account::new(VALIDATOR_LAMPORTS, 0, &system_program::id());
-        let vote_account = if is_alpenglow {
+        let bls_pubkey_compressed = if is_alpenglow {
             let bls_keypair = BLSKeypair::derive_from_signer(
                 &validator_voting_keypairs.borrow().vote_keypair,
                 BLS_KEYPAIR_DERIVE_SEED,
             )
             .unwrap();
-            let bls_pubkey_compressed = bls_pubkey_to_compressed_bytes(&bls_keypair.public);
-            vote_state::create_v4_account_with_authorized(
-                &node_pubkey,
-                &vote_pubkey,
-                &vote_pubkey,
-                Some(bls_pubkey_compressed),
-                0,
-                *stake,
-            )
+            Some(bls_pubkey_to_compressed_bytes(&bls_keypair.public))
         } else {
-            vote_state::create_account(&vote_pubkey, &node_pubkey, 0, *stake)
+            None
         };
+        let vote_account = vote_state::create_v4_account_with_authorized(
+            &node_pubkey,
+            &vote_pubkey,
+            &vote_pubkey,
+            bls_pubkey_compressed,
+            0,
+            *stake,
+        );
         let stake_account = Account::from(stake_state::create_account(
             &stake_pubkey,
             &vote_pubkey,
@@ -339,23 +339,14 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     cluster_type: ClusterType,
     mut initial_accounts: Vec<(Pubkey, AccountSharedData)>,
 ) -> GenesisConfig {
-    let validator_vote_account = if let Some(bls_pubkey_compressed) = validator_bls_pubkey {
-        vote_state::create_v4_account_with_authorized(
-            validator_pubkey,
-            validator_vote_account_pubkey,
-            validator_vote_account_pubkey,
-            Some(bls_pubkey_compressed),
-            0,
-            validator_stake_lamports,
-        )
-    } else {
-        vote_state::create_account(
-            validator_vote_account_pubkey,
-            validator_pubkey,
-            0,
-            validator_stake_lamports,
-        )
-    };
+    let validator_vote_account = vote_state::create_v4_account_with_authorized(
+        validator_pubkey,
+        validator_vote_account_pubkey,
+        validator_vote_account_pubkey,
+        validator_bls_pubkey,
+        0,
+        validator_stake_lamports,
+    );
 
     let validator_stake_account = stake_state::create_account(
         validator_stake_account_pubkey,
