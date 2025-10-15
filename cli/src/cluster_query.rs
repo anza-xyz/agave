@@ -65,10 +65,7 @@ use {
         num::Saturating,
         rc::Rc,
         str::FromStr,
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc,
-        },
+        sync::Arc,
         thread::sleep,
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     },
@@ -1710,14 +1707,11 @@ pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> Pr
 }
 
 pub fn process_live_slots(config: &CliConfig) -> ProcessResult {
-    let exit = Arc::new(AtomicBool::new(false));
-
     let mut current: Option<SlotInfo> = None;
-    let mut message = "".to_string();
 
     let slot_progress = new_spinner_progress_bar();
     slot_progress.set_message("Connecting...");
-    let (mut client, receiver) = PubsubClient::slot_subscribe(&config.websocket_url)?;
+    let (_client, receiver) = PubsubClient::slot_subscribe(&config.websocket_url)?;
     slot_progress.set_message("Connected.");
 
     let spacer = "|";
@@ -1727,12 +1721,6 @@ pub fn process_live_slots(config: &CliConfig) -> ProcessResult {
     let mut last_root_update = Instant::now();
     let mut slots_per_second = f64::NAN;
     loop {
-        if exit.load(Ordering::Relaxed) {
-            eprintln!("{message}");
-            client.shutdown().unwrap();
-            break;
-        }
-
         match receiver.recv() {
             Ok(new_info) => {
                 if last_root == u64::MAX {
@@ -1747,14 +1735,14 @@ pub fn process_live_slots(config: &CliConfig) -> ProcessResult {
                     last_root = root;
                 }
 
-                message = if slots_per_second.is_nan() {
+                let message = if slots_per_second.is_nan() {
                     format!("{new_info:?}")
                 } else {
                     format!(
                         "{new_info:?} | root slot advancing at {slots_per_second:.2} slots/second"
                     )
                 };
-                slot_progress.set_message(message.clone());
+                slot_progress.set_message(message);
 
                 if let Some(previous) = current {
                     let slot_delta = (new_info.slot as i64).saturating_sub(previous.slot as i64);
