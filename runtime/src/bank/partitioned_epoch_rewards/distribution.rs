@@ -405,8 +405,14 @@ mod tests {
         let validator_pubkey = Pubkey::new_unique();
         let validator_vote_pubkey = Pubkey::new_unique();
 
-        let validator_vote_account =
-            vote_state::create_account(&validator_vote_pubkey, &validator_pubkey, 10, 20);
+        let validator_vote_account = vote_state::create_v4_account_with_authorized(
+            &validator_pubkey,
+            &validator_vote_pubkey,
+            &validator_vote_pubkey,
+            None,
+            1000,
+            20,
+        );
 
         for stake_reward in rewards.iter() {
             // store account in Bank, since distribution now checks for account existence

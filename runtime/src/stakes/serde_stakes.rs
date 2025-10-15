@@ -195,14 +195,18 @@ mod tests {
     #[test]
     fn test_serde_stakes_to_stake_format() {
         let mut stake_delegations = ImHashMap::new();
+        let vote_pubkey = Pubkey::new_unique();
+        let node_pubkey = Pubkey::new_unique();
         stake_delegations.insert(
             Pubkey::new_unique(),
             StakeAccount::try_from(stake_state::create_account(
                 &Pubkey::new_unique(),
-                &Pubkey::new_unique(),
-                &vote_state::create_account(
-                    &Pubkey::new_unique(),
-                    &Pubkey::new_unique(),
+                &vote_pubkey,
+                &vote_state::create_v4_account_with_authorized(
+                    &node_pubkey,
+                    &vote_pubkey,
+                    &vote_pubkey,
+                    None,
                     0,
                     1_000_000_000,
                 ),
@@ -262,10 +266,15 @@ mod tests {
         });
         for _ in 0..rng.gen_range(5usize..10) {
             let vote_pubkey = solana_pubkey::new_rand();
-            let vote_account = vote_state::create_account(
+            let node_pubkey = solana_pubkey::new_rand();
+            let commission = rng.gen_range(0..101);
+            let commission_bps = commission * 100;
+            let vote_account = vote_state::create_v4_account_with_authorized(
+                &node_pubkey,
                 &vote_pubkey,
-                &solana_pubkey::new_rand(),  // node_pubkey
-                rng.gen_range(0..101),       // commission
+                &vote_pubkey,
+                None,
+                commission_bps,
                 rng.gen_range(0..1_000_000), // lamports
             );
             stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
