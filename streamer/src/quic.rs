@@ -1034,7 +1034,7 @@ mod test {
                 max_unstaked_connections: 0,
                 ..QuicServerParams::default_for_tests()
             },
-            max_streams_per_second: 50,
+            max_streams_per_second: 20,
         };
         let (t, receiver, server_address, cancel) = setup_simple_qos_quic_server_with_params(
             server_params,
@@ -1042,7 +1042,7 @@ mod test {
         );
 
         let runtime = rt_for_test();
-        let num_expected_packets = 50;
+        let num_expected_packets = 20;
 
         runtime.block_on(check_multiple_packets(
             receiver,

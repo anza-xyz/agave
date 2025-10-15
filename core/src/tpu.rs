@@ -99,6 +99,9 @@ impl SigVerifier {
     }
 }
 
+// Conservatively allow 20 TPS per validator.
+pub const MAX_VOTES_PER_SECOND: u64 = 20;
+
 pub struct Tpu {
     fetch_stage: FetchStage,
     sig_verifier: SigVerifier,

@@ -23,8 +23,6 @@ use {
     thiserror::Error,
 };
 
-// Convservatively allow 50 TPS per validator.
-pub const MAX_VOTES_PER_SECOND: u64 = 50;
 pub enum VoteOp {
     PushVote {
         tx: Transaction,
