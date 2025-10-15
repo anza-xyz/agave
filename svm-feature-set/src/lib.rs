@@ -39,7 +39,6 @@ pub struct SVMFeatureSet {
     pub raise_cpi_nesting_limit_to_8: bool,
     pub provide_instruction_data_offset_in_vm_r2: bool,
     pub vote_state_v4: bool,
-    pub replace_spl_token_with_p_token: bool,
 }
 
 impl SVMFeatureSet {
@@ -84,7 +83,6 @@ impl SVMFeatureSet {
             raise_cpi_nesting_limit_to_8: true,
             provide_instruction_data_offset_in_vm_r2: true,
             vote_state_v4: true,
-            replace_spl_token_with_p_token: true,
         }
     }
 }
