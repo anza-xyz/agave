@@ -21,13 +21,13 @@ use {
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfoGetter,
         },
-        snapshot_config::SnapshotConfig,
+        snapshot_config::{SnapshotConfig, SnapshotVersion},
         snapshot_hash::SnapshotHash,
         snapshot_package::{SnapshotKind, SnapshotPackage},
         snapshot_utils::{
             self, get_highest_bank_snapshot, get_highest_full_snapshot_archive_info,
             get_highest_incremental_snapshot_archive_info, rebuild_storages_from_snapshot_dir,
-            verify_and_unarchive_snapshots, BankSnapshotInfo, SnapshotError, SnapshotVersion,
+            verify_and_unarchive_snapshots, BankSnapshotInfo, SnapshotError,
             StorageAndNextAccountsFileId, UnarchivedSnapshots, VerifyEpochStakesError,
             VerifySlotDeltasError, VerifySlotHistoryError,
         },
