@@ -2334,11 +2334,12 @@ fn main() {
                                 ),
                             );
 
-                            let vote_account = vote_state::create_account_with_authorized(
+                            let vote_account = vote_state::create_v4_account_with_authorized(
                                 identity_pubkey,
                                 identity_pubkey,
                                 identity_pubkey,
-                                100,
+                                None,
+                                10000,
                                 rent.minimum_balance(VoteStateV4::size_of()).max(1),
                             );
 
