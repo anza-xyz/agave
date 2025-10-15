@@ -12,6 +12,7 @@
 use std::marker::PhantomData;
 
 #[repr(C)]
+#[derive(Debug, PartialEq)]
 pub struct VmSlice<T> {
     ptr: u64,
     len: u64,
@@ -37,5 +38,13 @@ impl<T> VmSlice<T> {
 
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    /// # Safety
+    /// Set a new length for the mapped account.
+    /// This function is not safe to use if not coupled with the respective change in
+    /// the underlying vector.
+    pub unsafe fn set_len(&mut self, new_len: u64) {
+        self.len = new_len;
     }
 }
