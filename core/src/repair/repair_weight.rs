@@ -1820,8 +1820,8 @@ mod test {
             TreeRoot::Root(20)
         );
 
-        // Now set root at a slot 30 that doesnt exist in `repair_weight`, but is
-        // higher than the remaining orphan
+        // Now set root at a slot 30 that doesn't exist in `repair_weight`, but
+        // is higher than the remaining orphan
         assert!(!repair_weight.slot_to_tree.contains_key(&30));
         repair_weight.set_root(30);
         check_old_root_purged_verify_new_root(3, 30, &repair_weight);

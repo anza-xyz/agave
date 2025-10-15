@@ -1426,7 +1426,7 @@ pub fn rebuild_storages_from_snapshot_dir(
             .join(ACCOUNTS_RUN_DIR);
         if !account_run_paths.contains(&account_run_path) {
             // The appendvec from the bank snapshot storage does not match any of the provided account_paths set.
-            // The accout paths have changed so the snapshot is no longer usable.
+            // The account paths have changed so the snapshot is no longer usable.
             return Err(SnapshotError::AccountPathsMismatch);
         }
         // Generate hard-links to make the account files available in the main accounts/, and let the new appendvec

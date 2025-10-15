@@ -368,7 +368,7 @@ pub struct Stats {
 /// The initial state of an account prior to being modified in this slot/transaction
 #[derive(Debug, Clone, PartialEq)]
 pub enum InitialStateOfAccount {
-    /// The account was initiall dead
+    /// The account was initially dead
     Dead,
     /// The account was initially alive
     Alive(AccountSharedData),

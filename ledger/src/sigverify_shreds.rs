@@ -448,7 +448,7 @@ mod tests {
                 .collect()
         };
         let mut packets = make_packets(&mut rng, &shreds);
-        // Assert that initially all signatrues are invalid.
+        // Assert that initially all signatures are invalid.
         assert_eq!(
             verify_shreds(&thread_pool, &packets, &pubkeys, &cache),
             packets

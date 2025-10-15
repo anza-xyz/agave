@@ -33,7 +33,7 @@ pub type Result<T> = std::result::Result<T, UnpackError>;
 
 // 64 TiB; some safe margin to the max 128 TiB in amd64 linux userspace VmSize
 // (ref: https://unix.stackexchange.com/a/386555/364236)
-// note that this is directly related to the mmaped data size
+// note that this is directly related to the mmapped data size
 // so protect against insane value
 // This is the file size including holes for sparse files
 const MAX_SNAPSHOT_ARCHIVE_UNPACKED_APPARENT_SIZE: u64 = 64 * 1024 * 1024 * 1024 * 1024;

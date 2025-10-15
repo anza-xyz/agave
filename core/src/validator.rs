@@ -335,7 +335,7 @@ pub struct ValidatorConfig {
     pub repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>, // Empty = repair with all
     pub gossip_validators: Option<HashSet<Pubkey>>, // None = gossip with all
     pub max_genesis_archive_unpacked_size: u64,
-    /// Run PoH, transaction signature and other transaction verifications during blockstore
+    /// Run PoH, transaction signature and other transaction verification during blockstore
     /// processing.
     pub run_verification: bool,
     pub require_tower: bool,
@@ -563,7 +563,7 @@ pub struct ValidatorTpuConfig {
     pub vote_use_quic: bool,
     /// Controls the connection cache pool size
     pub tpu_connection_pool_size: usize,
-    /// Controls if to enable UDP for TPU tansactions.
+    /// Controls if to enable UDP for TPU transactions.
     pub tpu_enable_udp: bool,
     /// QUIC server config for regular TPU
     pub tpu_quic_server_config: SwQosQuicStreamerConfig,

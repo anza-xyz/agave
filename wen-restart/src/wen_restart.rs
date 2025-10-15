@@ -509,7 +509,7 @@ pub(crate) fn generate_snapshot(
     }
 
     // Snapshot generation calls AccountsDb background tasks (flush/clean/shrink).
-    // These cannot run conncurrent with each other, so we must shutdown
+    // These cannot run concurrent with each other, so we must shutdown
     // AccountsBackgroundService before proceeding.
     abs_status.stop();
     info!("Waiting for AccountsBackgroundService to stop");
