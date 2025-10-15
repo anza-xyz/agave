@@ -74,7 +74,6 @@ pub struct UiVoteState {
     block_revenue_collector: String,
     block_revenue_commission_bps: u16,
     pending_delegator_rewards: StringAmount,
-    #[serde(skip_serializing_if = "Option::is_none")]
     bls_pubkey_compressed: Option<String>,
 }
 

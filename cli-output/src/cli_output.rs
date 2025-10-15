@@ -1716,7 +1716,6 @@ pub struct CliVoteAccount {
     pub block_revenue_collector: String,
     pub block_revenue_commission_bps: u16,
     pub pending_delegator_rewards: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub bls_pubkey_compressed: Option<String>,
 }
 
