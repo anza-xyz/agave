@@ -602,10 +602,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         reclaims: &mut ReclaimsSlotList<T>,
         reclaim: UpsertReclaim,
     ) -> usize {
-        let slot_list = current.slot_list_write_lock();
+        let mut slot_list = current.slot_list_write_lock();
         let (slot, new_entry) = new_value;
-        let (ref_count_change, slot_list_len) =
-            Self::update_slot_list(slot_list, slot, new_entry, other_slot, reclaims, reclaim);
+        let (ref_count_change, slot_list_len) = Self::update_slot_list(
+            &mut slot_list,
+            slot,
+            new_entry,
+            other_slot,
+            reclaims,
+            reclaim,
+        );
 
         match ref_count_change.cmp(&0) {
             cmp::Ordering::Equal => {
@@ -635,7 +641,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// The reference count change is the number of entries added (1) - the number of uncached
     /// entries removed or replaced
     fn update_slot_list(
-        mut slot_list: SlotListWriteGuard<T>,
+        slot_list: &mut SlotListWriteGuard<T>,
         slot: Slot,
         account_info: T,
         other_slot: Option<Slot>,
@@ -1505,10 +1511,11 @@ mod tests {
         for other_slot in [Some(new_slot), Some(unique_other_slot), None] {
             let mut reclaims = ReclaimsSlotList::new();
             let entry = AccountMapEntry::empty_for_tests();
+            let mut slot_list = entry.slot_list_write_lock();
             // upserting into empty slot_list, so always addref
             assert_eq!(
                 InMemAccountsIndex::<u64, u64>::update_slot_list(
-                    entry.slot_list_write_lock(),
+                    &mut slot_list,
                     new_slot,
                     info,
                     other_slot,
@@ -1518,7 +1525,7 @@ mod tests {
                 (1, 1),
                 "other_slot: {other_slot:?}"
             );
-            assert_eq!(entry.slot_list_read_lock().as_ref(), &[at_new_slot]);
+            assert_eq!(slot_list.clone_list(), SlotList::from([at_new_slot]));
             assert!(reclaims.is_empty());
         }
 
@@ -1528,7 +1535,7 @@ mod tests {
             1,
             AccountMapEntryMeta::default(),
         );
-        let slot_list = entry.slot_list_write_lock();
+        let mut slot_list = entry.slot_list_write_lock();
         let expected_reclaims = ReclaimsSlotList::from(slot_list.as_ref());
         let other_slot = Some(unique_other_slot);
         let mut reclaims = ReclaimsSlotList::new();
@@ -1537,7 +1544,7 @@ mod tests {
             // but, it DOES contain an entry at other_slot, so we do NOT add-ref. The assumption is that 'other_slot' is going away
             // and that the previously held add-ref is now used by 'new_slot'
             InMemAccountsIndex::<u64, u64>::update_slot_list(
-                slot_list,
+                &mut slot_list,
                 new_slot,
                 info,
                 other_slot,
@@ -1547,8 +1554,7 @@ mod tests {
             (0, 1),
             "other_slot: {other_slot:?}"
         );
-        let slot_list = entry.slot_list_read_lock();
-        assert_eq!(slot_list.as_ref(), &[at_new_slot]);
+        assert_eq!(slot_list.clone_list(), SlotList::from([at_new_slot]));
         assert_eq!(reclaims, expected_reclaims);
 
         // nothing will exist at this slot
@@ -1617,20 +1623,20 @@ mod tests {
                         1,
                         AccountMapEntryMeta::default(),
                     );
-                    let slot_list = entry.slot_list_write_lock();
+                    let mut slot_list = entry.slot_list_write_lock();
                     let mut expected = slot_list.clone_list();
                     let original = slot_list.clone_list();
                     let mut reclaims = ReclaimsSlotList::new();
 
                     let (result, _len) = InMemAccountsIndex::<u64, u64>::update_slot_list(
-                        slot_list,
+                        &mut slot_list,
                         new_slot,
                         info,
                         other_slot,
                         &mut reclaims,
                         reclaim,
                     );
-                    let mut slot_list = entry.slot_list_write_lock().clone_list();
+                    let mut slot_list = slot_list.clone_list();
 
                     // calculate expected reclaims
                     let mut expected_reclaims = ReclaimsSlotList::new();
@@ -1877,10 +1883,11 @@ mod tests {
         for other_slot in [Some(new_slot), Some(unique_other_slot), None] {
             let mut reclaims = ReclaimsSlotList::new();
             let entry = AccountMapEntry::empty_for_tests();
+            let mut slot_list = entry.slot_list_write_lock();
             // upserting into empty slot_list, so always addref
             assert_eq!(
                 InMemAccountsIndex::<u64, u64>::update_slot_list(
-                    entry.slot_list_write_lock(),
+                    &mut slot_list,
                     new_slot,
                     info,
                     other_slot,
@@ -1890,7 +1897,7 @@ mod tests {
                 (1, 1),
                 "other_slot: {other_slot:?}"
             );
-            assert_eq!(entry.slot_list_read_lock().as_ref(), &[at_new_slot]);
+            assert_eq!(slot_list.clone_list(), SlotList::from([at_new_slot]));
             assert!(reclaims.is_empty());
         }
 
@@ -1900,7 +1907,7 @@ mod tests {
             1,
             AccountMapEntryMeta::default(),
         );
-        let slot_list = entry.slot_list_write_lock();
+        let mut slot_list = entry.slot_list_write_lock();
         let expected_reclaims = ReclaimsSlotList::from(slot_list.as_ref());
         let other_slot = Some(unique_other_slot);
         let mut reclaims = ReclaimsSlotList::new();
@@ -1909,7 +1916,7 @@ mod tests {
             // but, it DOES contain an entry at other_slot, so we do NOT add-ref. The assumption is that 'other_slot' is going away
             // and that the previously held add-ref is now used by 'new_slot'
             InMemAccountsIndex::<u64, u64>::update_slot_list(
-                slot_list,
+                &mut slot_list,
                 new_slot,
                 info,
                 other_slot,
@@ -1919,8 +1926,7 @@ mod tests {
             (0, 1),
             "other_slot: {other_slot:?}"
         );
-        let slot_list = entry.slot_list_read_lock();
-        assert_eq!(slot_list.as_ref(), &[at_new_slot]);
+        assert_eq!(slot_list.clone_list(), SlotList::from([at_new_slot]));
         assert_eq!(reclaims, expected_reclaims);
 
         // nothing will exist at this slot
@@ -1995,20 +2001,20 @@ mod tests {
                         1,
                         AccountMapEntryMeta::default(),
                     );
-                    let slot_list = entry.slot_list_write_lock();
+                    let mut slot_list = entry.slot_list_write_lock();
                     let mut expected = slot_list.clone_list();
                     let original = slot_list.clone_list();
                     let mut reclaims = ReclaimsSlotList::new();
 
                     let (result, _len) = InMemAccountsIndex::<u64, u64>::update_slot_list(
-                        slot_list,
+                        &mut slot_list,
                         new_slot,
                         info,
                         other_slot,
                         &mut reclaims,
                         reclaim,
                     );
-                    let mut slot_list = entry.slot_list_write_lock().clone_list();
+                    let mut slot_list = slot_list.clone_list();
 
                     // calculate expected reclaims
                     let mut expected_reclaims = ReclaimsSlotList::new();
@@ -2061,12 +2067,13 @@ mod tests {
             1,
             AccountMapEntryMeta::default(),
         );
+        let mut slot_list = entry.slot_list_write_lock();
         let mut reclaims = ReclaimsSlotList::new();
         let new_info = 1;
 
         // Attempt to update the slot list with a duplicate slot, which should trigger the panic
         InMemAccountsIndex::<u64, u64>::update_slot_list(
-            entry.slot_list_write_lock(),
+            &mut slot_list,
             new_slot,
             new_info,
             Some(slot_to_replace),
