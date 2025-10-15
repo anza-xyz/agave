@@ -51,7 +51,6 @@ pub struct SVMFeatureSet {
     pub vote_state_v4: bool,
     pub poseidon_enforce_padding: bool,
     pub fix_alt_bn128_pairing_length_check: bool,
-    pub replace_spl_token_with_p_token: bool,
 }
 
 impl SVMFeatureSet {
@@ -99,7 +98,6 @@ impl SVMFeatureSet {
             vote_state_v4: true,
             poseidon_enforce_padding: true,
             fix_alt_bn128_pairing_length_check: true,
-            replace_spl_token_with_p_token: true,
         }
     }
 }
