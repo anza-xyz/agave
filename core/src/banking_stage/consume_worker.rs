@@ -191,10 +191,10 @@ impl<Channels: ConsumeWorkerChannels> ConsumeWorker<Channels> {
     fn retry_drain(&mut self, work: ConsumeWork<Channels::Tx>) -> Result<(), ConsumeWorkerError> {
         self.retry(work)?;
         while let Ok(work) = self.channels.try_recv() {
+            self.retry(work)?;
             if self.exit.load(Ordering::Relaxed) {
                 return Ok(());
             }
-            self.retry(work)?;
         }
         Ok(())
     }
