@@ -7549,8 +7549,14 @@ dependencies = [
  "log",
  "predicates",
  "regex",
+<<<<<<< HEAD
  "reqwest 0.12.23",
  "semver 1.0.26",
+=======
+ "reqwest 0.12.24",
+ "semver 1.0.27",
+ "serde",
+>>>>>>> 83c02c790 (Add --install-only command for `cargo-build-sbf` (#8461))
  "serial_test",
  "solana-file-download",
  "solana-keypair",
