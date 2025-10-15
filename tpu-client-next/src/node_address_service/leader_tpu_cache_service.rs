@@ -385,7 +385,8 @@ impl ClusterInfoProvider for RpcClient {
                 let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
                 let last_slot_in_epoch = epoch_schedule.get_last_slot_in_epoch(epoch);
                 debug!(
-                    "Updated slots in epoch: {slots_in_epoch}, last slot in epoch: {last_slot_in_epoch}",
+                    "Updated slots in epoch: {slots_in_epoch}, last slot in epoch: \
+                     {last_slot_in_epoch}",
                 );
                 Ok((slots_in_epoch, last_slot_in_epoch))
             }
@@ -883,7 +884,7 @@ mod tests {
     ) -> Vec<SocketAddr> {
         let lookahead_slots = lookahead_leaders * (NUM_CONSECUTIVE_LEADER_SLOTS as usize);
         let expected_leaders = generate_slot_leaders(nodes);
-        debug!("Expected leaders: {:?}", expected_leaders);
+        debug!("Expected leaders: {expected_leaders:?}");
 
         let expected_keys_slice: Vec<_> = expected_leaders
             .iter()

@@ -14,9 +14,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 [features]
 agave-unstable-api = ["dep:qualifier_attr"]
 default = ["log"]
-dev-context-only-utils = [
-    "dep:qualifier_attr",
-]
+dev-context-only-utils = ["dep:qualifier_attr"]
 log = ["dep:log"]
 metrics = ["dep:solana-metrics"]
 tracing = ["dep:tracing"]
@@ -60,4 +58,4 @@ solana-net-utils = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
-solana-tpu-client-next = { workspace = true, features = ["dev-context-only-utils"] }
+solana-tpu-client-next = { path = ".", features = ["dev-context-only-utils"] }
