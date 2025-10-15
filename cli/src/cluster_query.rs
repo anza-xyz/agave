@@ -5,11 +5,13 @@ use {
             simulate_for_compute_unit_limit, ComputeUnitConfig, WithComputeUnitConfig,
         },
         feature::get_feature_activation_epoch,
+        rpc_subscriptions::{subscribe, SubscriptionWithClient},
         spend_utils::{resolve_spend_tx_and_check_account_balance, SpendAmount},
     },
     clap::{value_t, value_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand},
     console::style,
     crossbeam_channel::unbounded,
+    jsonrpsee::rpc_params,
     serde::{Deserialize, Serialize},
     solana_account::{from_account, state_traits::StateMut, Account},
     solana_clap_utils::{
@@ -27,13 +29,13 @@ use {
         },
         *,
     },
+    solana_client::rpc_response::{Response, RpcLogsResponse},
     solana_clock::{self as clock, Clock, Epoch, Slot},
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
     solana_message::Message,
     solana_nonce::state::State as NonceState,
     solana_pubkey::Pubkey,
-    solana_pubsub_client::pubsub_client::PubsubClient,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rent::Rent,
     solana_rpc_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient},
@@ -62,6 +64,7 @@ use {
     std::{
         collections::{BTreeMap, HashMap, HashSet, VecDeque},
         fmt,
+        future::Future,
         num::Saturating,
         rc::Rc,
         str::FromStr,
@@ -70,6 +73,7 @@ use {
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     },
     thiserror::Error,
+    tokio::runtime::Builder,
 };
 
 const DEFAULT_RPC_PORT_STR: &str = "8899";
@@ -504,6 +508,18 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                 ),
         )
     }
+}
+
+fn block_on<F, T>(future: F) -> T
+where
+    F: Future<Output = T>,
+{
+    let rt = Builder::new_current_thread()
+        .enable_time()
+        .enable_io()
+        .build()
+        .unwrap();
+    rt.block_on(future)
 }
 
 pub fn parse_catchup(
@@ -1674,36 +1690,42 @@ pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> Pr
         config.commitment.commitment
     );
 
-    let (_client, receiver) = PubsubClient::logs_subscribe(
-        &config.websocket_url,
-        filter.clone(),
-        RpcTransactionLogsConfig {
-            commitment: Some(config.commitment),
-        },
-    )?;
-
-    loop {
-        match receiver.recv() {
-            Ok(logs) => {
-                println!("Transaction executed in slot {}:", logs.context.slot);
-                println!("  Signature: {}", logs.value.signature);
-                println!(
-                    "  Status: {}",
-                    logs.value
-                        .err
-                        .map(|err| err.to_string())
-                        .unwrap_or_else(|| "Ok".to_string())
-                );
-                println!("  Log Messages:");
-                for log in logs.value.logs {
-                    println!("    {log}");
+    block_on(async {
+        let mut sub: SubscriptionWithClient<Response<RpcLogsResponse>> = subscribe(
+            &config.websocket_url,
+            "logs",
+            rpc_params![
+                filter,
+                RpcTransactionLogsConfig {
+                    commitment: Some(config.commitment)
+                }
+            ],
+        )
+        .await?;
+        while let Some(result) = sub.next().await {
+            match result {
+                Ok(logs) => {
+                    println!("Transaction executed in slot {}:", logs.context.slot);
+                    println!("  Signature: {}", logs.value.signature);
+                    println!(
+                        "  Status: {}",
+                        logs.value
+                            .err
+                            .map(|err| err.to_string())
+                            .unwrap_or_else(|| "Ok".to_string())
+                    );
+                    println!("  Log Messages:");
+                    for log in logs.value.logs {
+                        println!("    {log}");
+                    }
+                }
+                Err(err) => {
+                    return Ok(format!("Disconnected: {err}"));
                 }
             }
-            Err(err) => {
-                return Ok(format!("Disconnected: {err}"));
-            }
         }
-    }
+        Ok("".to_string())
+    })
 }
 
 pub fn process_live_slots(config: &CliConfig) -> ProcessResult {
@@ -1711,74 +1733,79 @@ pub fn process_live_slots(config: &CliConfig) -> ProcessResult {
 
     let slot_progress = new_spinner_progress_bar();
     slot_progress.set_message("Connecting...");
-    let (_client, receiver) = PubsubClient::slot_subscribe(&config.websocket_url)?;
-    slot_progress.set_message("Connected.");
+    block_on(async {
+        let mut sub: SubscriptionWithClient<SlotInfo> =
+            subscribe(&config.websocket_url, "slot", rpc_params![]).await?;
+        slot_progress.set_message("Connected.");
 
-    let spacer = "|";
-    slot_progress.println(spacer);
+        let spacer = "|";
+        slot_progress.println(spacer);
 
-    let mut last_root = u64::MAX;
-    let mut last_root_update = Instant::now();
-    let mut slots_per_second = f64::NAN;
-    loop {
-        match receiver.recv() {
-            Ok(new_info) => {
-                if last_root == u64::MAX {
-                    last_root = new_info.root;
-                    last_root_update = Instant::now();
-                }
-                if last_root_update.elapsed().as_secs() >= 5 {
-                    let root = new_info.root;
-                    slots_per_second = root.saturating_sub(last_root) as f64
-                        / last_root_update.elapsed().as_secs() as f64;
-                    last_root_update = Instant::now();
-                    last_root = root;
-                }
-
-                let message = if slots_per_second.is_nan() {
-                    format!("{new_info:?}")
-                } else {
-                    format!(
-                        "{new_info:?} | root slot advancing at {slots_per_second:.2} slots/second"
-                    )
-                };
-                slot_progress.set_message(message);
-
-                if let Some(previous) = current {
-                    let slot_delta = (new_info.slot as i64).saturating_sub(previous.slot as i64);
-                    let root_delta = (new_info.root as i64).saturating_sub(previous.root as i64);
-
-                    //
-                    // if slot has advanced out of step with the root, we detect
-                    // a mismatch and output the slot information
-                    //
-                    if slot_delta != root_delta {
-                        let prev_root = format!(
-                            "|<--- {} <- … <- {} <- {}   (prev)",
-                            previous.root, previous.parent, previous.slot
-                        );
-                        slot_progress.println(&prev_root);
-
-                        let new_root = format!(
-                            "|  '- {} <- … <- {} <- {}   (next)",
-                            new_info.root, new_info.parent, new_info.slot
-                        );
-
-                        slot_progress.println(prev_root);
-                        slot_progress.println(new_root);
-                        slot_progress.println(spacer);
+        let mut last_root = u64::MAX;
+        let mut last_root_update = Instant::now();
+        let mut slots_per_second = f64::NAN;
+        while let Some(result) = sub.next().await {
+            match result {
+                Ok(new_info) => {
+                    if last_root == u64::MAX {
+                        last_root = new_info.root;
+                        last_root_update = Instant::now();
                     }
+                    if last_root_update.elapsed().as_secs() >= 5 {
+                        let root = new_info.root;
+                        slots_per_second = root.saturating_sub(last_root) as f64
+                            / last_root_update.elapsed().as_secs() as f64;
+                        last_root_update = Instant::now();
+                        last_root = root;
+                    }
+
+                    let message = if slots_per_second.is_nan() {
+                        format!("{new_info:?}")
+                    } else {
+                        format!(
+                            "{new_info:?} | root slot advancing at {slots_per_second:.2} \
+                             slots/second"
+                        )
+                    };
+                    slot_progress.set_message(message);
+
+                    if let Some(previous) = current {
+                        let slot_delta =
+                            (new_info.slot as i64).saturating_sub(previous.slot as i64);
+                        let root_delta =
+                            (new_info.root as i64).saturating_sub(previous.root as i64);
+
+                        //
+                        // if slot has advanced out of step with the root, we detect
+                        // a mismatch and output the slot information
+                        //
+                        if slot_delta != root_delta {
+                            let prev_root = format!(
+                                "|<--- {} <- … <- {} <- {}   (prev)",
+                                previous.root, previous.parent, previous.slot
+                            );
+                            slot_progress.println(&prev_root);
+
+                            let new_root = format!(
+                                "|  '- {} <- … <- {} <- {}   (next)",
+                                new_info.root, new_info.parent, new_info.slot
+                            );
+
+                            slot_progress.println(prev_root);
+                            slot_progress.println(new_root);
+                            slot_progress.println(spacer);
+                        }
+                    }
+                    current = Some(new_info);
                 }
-                current = Some(new_info);
-            }
-            Err(err) => {
-                eprintln!("disconnected: {err}");
-                break;
+                Err(err) => {
+                    eprintln!("disconnected: {err}");
+                    break;
+                }
             }
         }
-    }
-
-    Ok("".to_string())
+        Ok("".to_string())
+    })
 }
 
 pub fn process_show_gossip(rpc_client: &RpcClient, config: &CliConfig) -> ProcessResult {
