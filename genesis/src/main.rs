@@ -683,9 +683,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     let bootstrap_validator_bls_pubkeys =
         bls_pubkeys_of(&matches, "bootstrap_validator_bls_pubkey");
-    if let Some(pubkeys) = &bootstrap_validator_bls_pubkeys {
+    if let Some(bls_pubkeys) = &bootstrap_validator_bls_pubkeys {
         assert_eq!(
-            pubkeys.len() * 3,
+            bls_pubkeys.len() * 3,
             bootstrap_validator_pubkeys.len(),
             "Number of BLS pubkeys must match the number of bootstrap validator identities"
         );
@@ -972,7 +972,9 @@ mod tests {
         solana_borsh::v1 as borsh1,
         solana_genesis_config::GenesisConfig,
         solana_stake_interface as stake,
-        std::{collections::HashMap, fs::remove_file, io::Write, path::Path},
+        solana_vote::vote_state_view::VoteStateView,
+        std::{collections::HashMap, fs::remove_file, io::Write, path::Path, sync::Arc},
+        test_case::test_case,
     };
 
     #[test]
@@ -1322,8 +1324,9 @@ mod tests {
         assert_eq!(genesis_config.accounts.len(), 3);
     }
 
-    #[test]
-    fn test_append_validator_accounts_to_genesis() {
+    #[test_case(true ; "alpenglow")]
+    #[test_case(false ; "towerbft")]
+    fn test_append_validator_accounts_to_genesis(is_alpenglow: bool) {
         // Test invalid file returns error
         assert!(load_validator_accounts(
             "unknownfile",
@@ -1336,13 +1339,19 @@ mod tests {
 
         let mut genesis_config = GenesisConfig::default();
 
-        let bls_pubkey: BLSPubkey = BLSKeypair::new().public;
+        let generate_bls_pubkey = || {
+            if is_alpenglow {
+                Some(BLSKeypair::new().public.to_string())
+            } else {
+                None
+            }
+        };
         let validator_accounts = vec![
             StakedValidatorAccountInfo {
                 identity_account: solana_pubkey::new_rand().to_string(),
                 vote_account: solana_pubkey::new_rand().to_string(),
                 stake_account: solana_pubkey::new_rand().to_string(),
-                bls_pubkey: None,
+                bls_pubkey: generate_bls_pubkey(),
                 balance_lamports: 100000000000,
                 stake_lamports: 10000000000,
             },
@@ -1350,7 +1359,7 @@ mod tests {
                 identity_account: solana_pubkey::new_rand().to_string(),
                 vote_account: solana_pubkey::new_rand().to_string(),
                 stake_account: solana_pubkey::new_rand().to_string(),
-                bls_pubkey: Some(bls_pubkey.to_string()),
+                bls_pubkey: generate_bls_pubkey(),
                 balance_lamports: 200000000000,
                 stake_lamports: 20000000000,
             },
@@ -1358,7 +1367,7 @@ mod tests {
                 identity_account: solana_pubkey::new_rand().to_string(),
                 vote_account: solana_pubkey::new_rand().to_string(),
                 stake_account: solana_pubkey::new_rand().to_string(),
-                bls_pubkey: Some(bls_pubkey.to_string()),
+                bls_pubkey: generate_bls_pubkey(),
                 balance_lamports: 300000000000,
                 stake_lamports: 30000000000,
             },
@@ -1367,17 +1376,22 @@ mod tests {
         let serialized = serde_yaml::to_string(&validator_accounts).unwrap();
 
         // write accounts to file
-        let path = Path::new("test_append_validator_accounts_to_genesis.yml");
+        let filename = if is_alpenglow {
+            "test_append_validator_accounts_to_genesis_alpenglow.yml"
+        } else {
+            "test_append_validator_accounts_to_genesis_towerbft.yml"
+        };
+        let path = Path::new(filename);
         let mut file = File::create(path).unwrap();
         file.write_all(b"validator_accounts:\n").unwrap();
         file.write_all(serialized.as_bytes()).unwrap();
 
         load_validator_accounts(
-            "test_append_validator_accounts_to_genesis.yml",
+            filename,
             100,
             &Rent::default(),
             &mut genesis_config,
-            false,
+            is_alpenglow,
         )
         .expect("Failed to load validator accounts");
 
@@ -1389,7 +1403,7 @@ mod tests {
             assert_eq!(genesis_config.accounts.len(), expected_accounts_len);
 
             // test account data matches
-            for (i, b64_account) in validator_accounts.iter().enumerate() {
+            for b64_account in validator_accounts.iter() {
                 // check identity
                 let identity_pk = b64_account.identity_account.parse().unwrap();
                 assert_eq!(
@@ -1403,12 +1417,23 @@ mod tests {
 
                 // check vote account
                 let vote_pk = b64_account.vote_account.parse().unwrap();
-                let vote_data = genesis_config.accounts[&vote_pk].data.clone();
-                let vote_state = VoteStateV3::deserialize(&vote_data).unwrap();
-                assert_eq!(vote_state.node_pubkey, identity_pk);
-                assert_eq!(vote_state.authorized_withdrawer, identity_pk);
-                let authorized_voters = vote_state.authorized_voters();
-                assert_eq!(authorized_voters.first().unwrap().1, &identity_pk);
+                let vote_data = Arc::new(genesis_config.accounts[&vote_pk].data.clone());
+                let vote_state_view = VoteStateView::try_new(vote_data).expect("vote account");
+                assert_eq!(vote_state_view.node_pubkey(), &identity_pk);
+                let authorized_voter = vote_state_view.get_authorized_voter(0);
+                assert_eq!(authorized_voter, Some(&identity_pk));
+                if is_alpenglow {
+                    assert_eq!(
+                        bls_pubkey_to_compressed_bytes(
+                            &BLSPubkey::from_str(&b64_account.bls_pubkey.as_ref().unwrap())
+                                .unwrap()
+                        ),
+                        vote_state_view.bls_pubkey_compressed().unwrap()
+                    );
+                } else {
+                    assert!(b64_account.bls_pubkey.is_none());
+                    assert!(vote_state_view.bls_pubkey_compressed().is_none());
+                }
 
                 // check stake account
                 let stake_pk = b64_account.stake_account.parse().unwrap();
@@ -1416,13 +1441,6 @@ mod tests {
                     b64_account.stake_lamports,
                     genesis_config.accounts[&stake_pk].lamports
                 );
-
-                // check BLS pubkey
-                if i == 0 {
-                    assert!(b64_account.bls_pubkey.is_none());
-                } else {
-                    assert_eq!(b64_account.bls_pubkey, Some(bls_pubkey.to_string()));
-                }
 
                 let stake_data = genesis_config.accounts[&stake_pk].data.clone();
                 let stake_state =

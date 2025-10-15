@@ -66,3 +66,5 @@ tempfile = { workspace = true }
 solana-borsh = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-vote = { workspace = true }
+test-case = { workspace = true }

@@ -8804,8 +8804,10 @@ dependencies = [
  "solana-stake-program",
  "solana-time-utils",
  "solana-version",
+ "solana-vote",
  "solana-vote-program",
  "tempfile",
+ "test-case",
 ]
 
 [[package]]
