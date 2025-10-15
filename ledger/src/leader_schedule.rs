@@ -39,9 +39,7 @@ pub trait LeaderScheduleVariant:
         pubkey: &Pubkey,
         offset: usize, // Starting index.
     ) -> Box<dyn Iterator<Item = usize> + '_> {
-        let index = self
-            .get_leader_slots_map()
-            .get(pubkey);
+        let index = self.get_leader_slots_map().get(pubkey);
         let num_slots = self.num_slots();
 
         match index {
@@ -55,7 +53,10 @@ pub trait LeaderScheduleVariant:
                 // for LeaderSchedule, where the schedule keeps repeating endlessly.
                 // The '%' returns where in a cycle we are and the '/' returns how many
                 // times the schedule is repeated.
-                Box::new((start_offset..=usize::MAX).map(move |k| index[k % size] + k / size * num_slots))
+                Box::new(
+                    (start_offset..=usize::MAX)
+                        .map(move |k| index[k % size] + k / size * num_slots),
+                )
             }
             _ => {
                 // Empty iterator for pubkeys not in schedule
