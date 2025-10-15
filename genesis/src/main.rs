@@ -1425,8 +1425,7 @@ mod tests {
                 if is_alpenglow {
                     assert_eq!(
                         bls_pubkey_to_compressed_bytes(
-                            &BLSPubkey::from_str(&b64_account.bls_pubkey.as_ref().unwrap())
-                                .unwrap()
+                            &BLSPubkey::from_str(b64_account.bls_pubkey.as_ref().unwrap()).unwrap()
                         ),
                         vote_state_view.bls_pubkey_compressed().unwrap()
                     );
