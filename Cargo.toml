@@ -105,6 +105,7 @@ members = [
     "svm",
     "svm-callback",
     "svm-feature-set",
+    "svm-fuzz-harness",
     "svm-log-collector",
     "svm-measure",
     "svm-timings",
@@ -271,9 +272,8 @@ futures = "0.3.31"
 futures-util = "0.3.29"
 gag = "1.0.0"
 gethostname = "0.2.3"
-getrandom = "0.3.3"
+getrandom = "0.3.4"
 goauth = "0.13.1"
-governor = "0.6.3"
 hex = "0.4.3"
 hidapi = { version = "2.6.3", default-features = false }
 histogram = "0.6.9"
@@ -349,7 +349,7 @@ rand_chacha0-2 = { package = "rand_chacha", version = "0.2.2" }
 rayon = "1.11.0"
 reed-solomon-erasure = "6.0.0"
 regex = "1.12.2"
-reqwest = { version = "0.12.23", default-features = false }
+reqwest = { version = "0.12.24", default-features = false }
 reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.4"
@@ -531,6 +531,7 @@ solana-streamer = { path = "streamer", version = "=3.1.0" }
 solana-svm = { path = "svm", version = "=3.1.0" }
 solana-svm-callback = { path = "svm-callback", version = "=3.1.0" }
 solana-svm-feature-set = { path = "svm-feature-set", version = "=3.1.0" }
+solana-svm-fuzz-harness = { path = "svm-fuzz-harness", version = "=3.1.0" }
 solana-svm-log-collector = { path = "svm-log-collector", version = "=3.1.0" }
 solana-svm-measure = { path = "svm-measure", version = "=3.1.0" }
 solana-svm-timings = { path = "svm-timings", version = "=3.1.0" }
@@ -593,7 +594,7 @@ test-case = "3.3.1"
 thiserror = "2.0.17"
 thread-priority = "1.2.0"
 tiny-bip39 = "0.8.2"
-tokio = "1.47.1"
+tokio = "1.48.0"
 tokio-serde = "0.8"
 tokio-stream = "0.1.17"
 tokio-tungstenite = "0.28.0"

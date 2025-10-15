@@ -778,6 +778,23 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 ),
         )
         .arg(
+            Arg::with_name("advertised_ip")
+                .long("advertised-ip")
+                .value_name("HOST")
+                .takes_value(true)
+                .validator(solana_net_utils::is_host)
+                .hidden(hidden_unless_forced())
+                .help(
+                    "Use when running a validator behind a NAT. DNS name or IP address for this \
+                     validator to advertise in gossip. This address will be used as the target \
+                     desination address for peers trying to contact this node. [default: the \
+                     first --bind-address, or ask --entrypoint when --bind-address is not \
+                     provided, or 127.0.0.1 when --entrypoint is not provided]. Note: this \
+                     argument cannot be used in a multihoming context (when multiple \
+                     --bind-address values are provided).",
+                ),
+        )
+        .arg(
             Arg::with_name("clone_account")
                 .long("clone")
                 .short("c")

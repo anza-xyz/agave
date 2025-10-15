@@ -227,6 +227,13 @@ pub fn execute(
         ))?;
     }
 
+    if bind_addresses.len() > 1 && matches.is_present("advertised_ip") {
+        Err(String::from(
+            "--advertised-ip cannot be used in a multihoming context. In multihoming, the \
+             validator will advertise the first --bind-address as this node's public IP address.",
+        ))?;
+    }
+
     let rpc_bind_address = if matches.is_present("rpc_bind_address") {
         solana_net_utils::parse_host(matches.value_of("rpc_bind_address").unwrap())
             .expect("invalid rpc_bind_address")
@@ -734,8 +741,18 @@ pub fn execute(
         })
         .transpose()?;
 
+    let advertised_ip = matches
+        .value_of("advertised_ip")
+        .map(|advertised_ip| {
+            solana_net_utils::parse_host(advertised_ip)
+                .map_err(|err| format!("failed to parse --advertised-ip: {err}"))
+        })
+        .transpose()?;
+
     let advertised_ip = if let Some(ip) = gossip_host {
         ip
+    } else if let Some(cli_ip) = advertised_ip {
+        cli_ip
     } else if !bind_addresses.active().is_unspecified() && !bind_addresses.active().is_loopback() {
         bind_addresses.active()
     } else if !entrypoint_addrs.is_empty() {
