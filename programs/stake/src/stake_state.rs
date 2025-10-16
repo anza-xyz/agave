@@ -24,6 +24,10 @@ pub fn stake_from<T: ReadableAccount + StateMut<StakeStateV2>>(account: &T) -> O
     from(account).and_then(|state: StakeStateV2| state.stake())
 }
 
+#[deprecated(
+    since = "2.2.0",
+    note = "Use `from(account).and_then(|state| state.delegation())` instead"
+)]
 pub fn delegation_from(account: &AccountSharedData) -> Option<Delegation> {
     from(account).and_then(|state: StakeStateV2| state.delegation())
 }
@@ -36,6 +40,10 @@ pub fn lockup_from<T: ReadableAccount + StateMut<StakeStateV2>>(account: &T) -> 
     from(account).and_then(|state: StakeStateV2| state.lockup())
 }
 
+#[deprecated(
+    since = "2.2.0",
+    note = "Use `from(account).and_then(|state| state.meta())` instead"
+)]
 pub fn meta_from(account: &AccountSharedData) -> Option<Meta> {
     from(account).and_then(|state: StakeStateV2| state.meta())
 }
