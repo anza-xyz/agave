@@ -9815,6 +9815,7 @@ dependencies = [
  "solana-program-entrypoint",
  "solana-program-error",
  "solana-program-runtime",
+ "solana-program-test",
  "solana-pubkey",
  "solana-rent",
  "solana-runtime",
