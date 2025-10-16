@@ -11,7 +11,7 @@ use {
         streamer::StakedNodes,
     },
     bytes::{BufMut, Bytes, BytesMut},
-    crossbeam_channel::{bounded, Receiver, Sender, TrySendError},
+    crossbeam_channel::{bounded, Receiver, Sender, TryRecvError, TrySendError},
     futures::{stream::FuturesUnordered, Future, StreamExt as _},
     indexmap::map::{Entry, IndexMap},
     percentage::Percentage,
@@ -993,8 +993,21 @@ fn run_packet_batch_sender(
                 break;
             }
 
-            /* try_iter() just calls try_recv().ok() under the hood, so we skip the abstraction here */
-            while let Ok(mut packet_accumulator) = packet_receiver.try_recv() {
+            // On the first receive, we block on recv.
+            // On subsequent receives, we call try_recv.
+            let mut first = true;
+            let mut recv = || {
+                if first {
+                    first = false;
+                    // recv is only an error if empty and disconnected
+                    packet_receiver
+                        .recv()
+                        .map_err(|_| TryRecvError::Disconnected)
+                } else {
+                    packet_receiver.try_recv()
+                }
+            };
+            while let Ok(mut packet_accumulator) = recv() {
                 // 86% of transactions/packets come in one chunk. In that case,
                 // we can just move the chunk to the `Packet` and no copy is
                 // made.
