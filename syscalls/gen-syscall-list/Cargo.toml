@@ -8,5 +8,8 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[features]
+agave-unstable-api = []
+
 [build-dependencies]
 regex = { workspace = true }
