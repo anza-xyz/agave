@@ -39,7 +39,6 @@ pub struct SwQos {
     max_unstaked_connections: usize,
     max_connections_per_peer: usize,
     staked_stream_load_ema: Arc<StakedStreamLoadEMA>,
-    wait_for_chunk_timeout: std::time::Duration,
     stats: Arc<StreamerStats>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     unstaked_connection_table: Arc<Mutex<ConnectionTable>>,
@@ -74,7 +73,6 @@ impl SwQos {
         max_staked_connections: usize,
         max_unstaked_connections: usize,
         max_connections_per_peer: usize,
-        wait_for_chunk_timeout: std::time::Duration,
         stats: Arc<StreamerStats>,
         staked_nodes: Arc<RwLock<StakedNodes>>,
         cancel: CancellationToken,
@@ -83,7 +81,6 @@ impl SwQos {
             max_staked_connections,
             max_unstaked_connections,
             max_connections_per_peer,
-            wait_for_chunk_timeout,
             staked_stream_load_ema: Arc::new(StakedStreamLoadEMA::new(
                 stats.clone(),
                 max_unstaked_connections,
@@ -301,7 +298,7 @@ impl SwQos {
 }
 
 impl QosController<SwQosConnectionContext> for SwQos {
-    fn derive_connection_context(&self, connection: &Connection) -> SwQosConnectionContext {
+    fn build_connection_context(&self, connection: &Connection) -> SwQosConnectionContext {
         get_connection_stake(connection, &self.staked_nodes).map_or(
             SwQosConnectionContext {
                 peer_type: ConnectionPeerType::Unstaked,
@@ -343,7 +340,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
     }
 
     #[allow(clippy::manual_async_fn)]
-    fn try_cache_connection(
+    fn try_add_connection(
         &self,
         client_connection_tracker: ClientConnectionTracker,
         connection: &quinn::Connection,
@@ -454,10 +451,6 @@ impl QosController<SwQosConnectionContext> for SwQos {
         self.staked_stream_load_ema.update_ema_if_needed();
     }
 
-    fn total_stake(&self) -> u64 {
-        self.staked_nodes.read().map_or(0, |sn| sn.total_stake())
-    }
-
     fn max_streams_per_throttling_interval(&self, conn_context: &SwQosConnectionContext) -> u64 {
         self.staked_stream_load_ema
             .available_load_capacity_in_throttling_duration(
@@ -490,10 +483,6 @@ impl QosController<SwQosConnectionContext> for SwQos {
             update_open_connections_stat(&self.stats, &lock);
             removed_count
         }
-    }
-
-    fn wait_for_chunk_timeout(&self) -> std::time::Duration {
-        self.wait_for_chunk_timeout
     }
 
     fn on_stream_finished(&self, context: &SwQosConnectionContext) {

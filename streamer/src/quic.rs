@@ -636,6 +636,7 @@ pub struct QuicServerParams {
     pub accumulator_channel_size: usize,
     pub num_threads: NonZeroUsize,
     pub max_streams_per_ms: u64,
+    pub max_streams_per_second: u64,
 }
 
 impl Default for QuicServerParams {
@@ -649,20 +650,6 @@ impl Default for QuicServerParams {
             accumulator_channel_size: DEFAULT_ACCUMULATOR_CHANNEL_SIZE,
             num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
             max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct SimpleQosQuicServerParams {
-    pub quic_server_params: QuicServerParams,
-    pub max_streams_per_second: u64,
-}
-
-impl Default for SimpleQosQuicServerParams {
-    fn default() -> Self {
-        SimpleQosQuicServerParams {
-            quic_server_params: QuicServerParams::default(),
             max_streams_per_second: DEFAULT_MAX_STREAMS_PER_MS * 1000,
         }
     }
@@ -786,7 +773,6 @@ pub fn spawn_server_with_cancel(
         quic_server_params.max_staked_connections,
         quic_server_params.max_unstaked_connections,
         quic_server_params.max_connections_per_peer,
-        quic_server_params.wait_for_chunk_timeout,
         stats.clone(),
         staked_nodes,
         cancel.clone(),
@@ -812,21 +798,15 @@ pub fn spawn_simple_qos_server_with_cancel(
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
-    quic_server_params: SimpleQosQuicServerParams,
+    quic_server_params: QuicServerParams,
     cancel: CancellationToken,
 ) -> Result<SpawnServerResult, QuicServerError> {
     let stats = Arc::<StreamerStats>::default();
 
-    let SimpleQosQuicServerParams {
-        quic_server_params,
-        max_streams_per_second,
-    } = quic_server_params;
-
     let simple_qos = Arc::new(SimpleQos::new(
-        max_streams_per_second,
+        quic_server_params.max_streams_per_second,
         quic_server_params.max_connections_per_peer,
         quic_server_params.max_staked_connections,
-        quic_server_params.wait_for_chunk_timeout,
         stats.clone(),
         staked_nodes,
         cancel.clone(),
@@ -897,7 +877,7 @@ mod test {
     }
 
     fn setup_simple_qos_quic_server_with_params(
-        server_params: SimpleQosQuicServerParams,
+        server_params: QuicServerParams,
         staked_nodes: Arc<RwLock<StakedNodes>>,
     ) -> (
         std::thread::JoinHandle<()>,
@@ -1029,12 +1009,10 @@ mod test {
             HashMap::<Pubkey, u64>::default(), // overrides
         );
 
-        let server_params = SimpleQosQuicServerParams {
-            quic_server_params: QuicServerParams {
-                max_unstaked_connections: 0,
-                ..QuicServerParams::default_for_tests()
-            },
+        let server_params = QuicServerParams {
+            max_unstaked_connections: 0,
             max_streams_per_second: 20,
+            ..QuicServerParams::default_for_tests()
         };
         let (t, receiver, server_address, cancel) = setup_simple_qos_quic_server_with_params(
             server_params,

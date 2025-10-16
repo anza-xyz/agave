@@ -51,7 +51,7 @@ use {
     solana_streamer::{
         quic::{
             spawn_server_with_cancel, spawn_simple_qos_server_with_cancel, QuicServerParams,
-            SimpleQosQuicServerParams, SpawnServerResult,
+            SpawnServerResult,
         },
         streamer::StakedNodes,
     },
@@ -154,7 +154,7 @@ impl Tpu {
         tpu_enable_udp: bool,
         tpu_quic_server_config: QuicServerParams,
         tpu_fwd_quic_server_config: QuicServerParams,
-        vote_quic_server_config: SimpleQosQuicServerParams,
+        vote_quic_server_config: QuicServerParams,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         block_production_method: BlockProductionMethod,
         block_production_num_workers: NonZeroUsize,

@@ -14,9 +14,12 @@ use {
     },
     quinn::Connection,
     solana_time_utils as timing,
-    std::sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, RwLock,
+    std::{
+        future::Future,
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc, RwLock,
+        },
     },
     tokio::sync::{Mutex, MutexGuard},
     tokio_util::sync::CancellationToken,
@@ -26,7 +29,6 @@ pub struct SimpleQos {
     max_streams_per_second: u64,
     max_staked_connections: usize,
     max_connections_per_peer: usize,
-    wait_for_chunk_timeout: std::time::Duration,
     stats: Arc<StreamerStats>,
     staked_connection_table: Arc<Mutex<ConnectionTable>>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
@@ -37,7 +39,6 @@ impl SimpleQos {
         max_streams_per_second: u64,
         max_connections_per_peer: usize,
         max_staked_connections: usize,
-        wait_for_chunk_timeout: std::time::Duration,
         stats: Arc<StreamerStats>,
         staked_nodes: Arc<RwLock<StakedNodes>>,
         cancel: CancellationToken,
@@ -46,7 +47,6 @@ impl SimpleQos {
             max_streams_per_second,
             max_connections_per_peer,
             max_staked_connections,
-            wait_for_chunk_timeout,
             stats,
             staked_nodes,
             staked_connection_table: Arc::new(Mutex::new(ConnectionTable::new(
@@ -120,7 +120,7 @@ impl ConnectionContext for SimpleQosConnectionContext {
 }
 
 impl QosController<SimpleQosConnectionContext> for SimpleQos {
-    fn derive_connection_context(&self, connection: &Connection) -> SimpleQosConnectionContext {
+    fn build_connection_context(&self, connection: &Connection) -> SimpleQosConnectionContext {
         let (peer_type, remote_pubkey, _total_stake) =
             get_connection_stake(connection, &self.staked_nodes).map_or(
                 (ConnectionPeerType::Unstaked, None, 0),
@@ -137,13 +137,13 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
     }
 
     #[allow(clippy::manual_async_fn)]
-    fn try_cache_connection(
+    fn try_add_connection(
         &self,
         client_connection_tracker: ClientConnectionTracker,
         connection: &quinn::Connection,
         conn_context: &mut SimpleQosConnectionContext,
-    ) -> impl std::future::Future<Output = Option<(CancellationToken, Arc<ConnectionStreamCounter>)>>
-           + Send {
+    ) -> impl Future<Output = Option<(CancellationToken, Arc<ConnectionStreamCounter>)>> + Send
+    {
         async move {
             const PRUNE_RANDOM_SAMPLE_SIZE: usize = 2;
             match conn_context.peer_type() {
@@ -198,7 +198,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
         &self,
         conn_context: &SimpleQosConnectionContext,
         connection: Connection,
-    ) -> impl std::future::Future<Output = usize> + Send {
+    ) -> impl Future<Output = usize> + Send {
         async move {
             let stable_id = connection.stable_id();
             let remote_addr = connection.remote_address();
@@ -212,14 +212,6 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
             update_open_connections_stat(&self.stats, &connection_table);
             removed_connection_count
         }
-    }
-
-    fn wait_for_chunk_timeout(&self) -> std::time::Duration {
-        self.wait_for_chunk_timeout
-    }
-
-    fn total_stake(&self) -> u64 {
-        self.staked_nodes.read().map_or(0, |sn| sn.total_stake())
     }
 
     fn on_stream_finished(&self, context: &SimpleQosConnectionContext) {

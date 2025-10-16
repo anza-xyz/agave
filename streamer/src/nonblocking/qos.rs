@@ -4,7 +4,7 @@ use {
         stream_throttle::ConnectionStreamCounter,
     },
     quinn::Connection,
-    std::{sync::Arc, time::Duration},
+    std::{future::Future, sync::Arc},
     tokio_util::sync::CancellationToken,
 };
 
@@ -20,25 +20,23 @@ pub(crate) trait ConnectionContext: Clone + Send + Sync {
 /// 1) deriving the ConnectionContext for a connection
 /// 2) managing connection caching and connection limits, stream limits
 pub(crate) trait QosController<C: ConnectionContext> {
-    /// Derive the ConnectionContext for a connection
-    fn derive_connection_context(&self, connection: &Connection) -> C;
+    /// Build the ConnectionContext for a connection
+    fn build_connection_context(&self, connection: &Connection) -> C;
 
-    /// Try to add a new connection to cache. If successful, return a CancellationToken and
-    /// a ConnectionStreamCounter to track the streams created on this connection.
-    /// Otherwise return None.
-    fn try_cache_connection(
+    /// Try to add a new connection to the connection table. This is an async operation that
+    /// returns a Future. If successful, the Future resolves to Some containing a CancellationToken
+    /// and a ConnectionStreamCounter to track the streams created on this connection.
+    /// Otherwise, the Future resolves to None.
+    fn try_add_connection(
         &self,
         client_connection_tracker: ClientConnectionTracker,
         connection: &quinn::Connection,
         context: &mut C,
-    ) -> impl std::future::Future<Output = Option<(CancellationToken, Arc<ConnectionStreamCounter>)>>
-           + Send;
+    ) -> impl Future<Output = Option<(CancellationToken, Arc<ConnectionStreamCounter>)>> + Send;
 
     /// The maximum number of streams that can be opened per throttling interval
     /// on this connection.
     fn max_streams_per_throttling_interval(&self, context: &C) -> u64;
-
-    fn total_stake(&self) -> u64;
 
     /// Called when a stream is accepted on a connection
     fn on_stream_accepted(&self, context: &C);
@@ -57,8 +55,5 @@ pub(crate) trait QosController<C: ConnectionContext> {
         &self,
         context: &C,
         connection: Connection,
-    ) -> impl std::future::Future<Output = usize> + Send;
-
-    /// The timeout duration to wait for a chunk to arrive on a stream
-    fn wait_for_chunk_timeout(&self) -> Duration;
+    ) -> impl Future<Output = usize> + Send;
 }

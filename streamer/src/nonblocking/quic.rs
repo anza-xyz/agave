@@ -205,7 +205,6 @@ where
         quic_server_params.max_staked_connections,
         quic_server_params.max_unstaked_connections,
         quic_server_params.max_connections_per_peer,
-        quic_server_params.wait_for_chunk_timeout,
         stats.clone(),
         staked_nodes,
         cancel.clone(),
@@ -351,6 +350,7 @@ where
     Q: QosController<C> + Send + Sync + 'static,
     C: ConnectionContext + Send + Sync + 'static,
 {
+    let quic_server_params = Arc::new(quic_server_params);
     let rate_limiter = Arc::new(ConnectionRateLimiter::new(
         quic_server_params.max_connections_per_ipaddr_per_min,
     ));
@@ -443,6 +443,7 @@ where
                         client_connection_tracker,
                         packet_batch_sender.clone(),
                         stats.clone(),
+                        quic_server_params.clone(),
                         qos.clone(),
                         tasks.clone(),
                     ));
@@ -516,6 +517,7 @@ async fn setup_connection<Q, C>(
     client_connection_tracker: ClientConnectionTracker,
     packet_sender: Sender<PacketAccumulator>,
     stats: Arc<StreamerStats>,
+    server_params: Arc<QuicServerParams>,
     qos: Arc<Q>,
     tasks: TaskTracker,
 ) where
@@ -561,9 +563,9 @@ async fn setup_connection<Q, C>(
 
                 stats.total_new_connections.fetch_add(1, Ordering::Relaxed);
 
-                let mut conn_context = qos.derive_connection_context(&new_connection);
+                let mut conn_context = qos.build_connection_context(&new_connection);
                 if let Some((cancel_connection, stream_counter)) = qos
-                    .try_cache_connection(
+                    .try_add_connection(
                         client_connection_tracker,
                         &new_connection,
                         &mut conn_context,
@@ -574,6 +576,7 @@ async fn setup_connection<Q, C>(
                         packet_sender.clone(),
                         new_connection,
                         stats,
+                        server_params.wait_for_chunk_timeout,
                         conn_context.clone(),
                         qos,
                         stream_counter,
@@ -786,6 +789,7 @@ async fn handle_connection<Q, C>(
     packet_sender: Sender<PacketAccumulator>,
     connection: Connection,
     stats: Arc<StreamerStats>,
+    wait_for_chunk_timeout: Duration,
     context: C,
     qos: Arc<Q>,
     stream_counter: Arc<ConnectionStreamCounter>,
@@ -795,7 +799,6 @@ async fn handle_connection<Q, C>(
     C: ConnectionContext + Send + Sync + 'static,
 {
     let peer_type = context.peer_type();
-    let total_stake = qos.total_stake();
     let remote_addr = connection.remote_address();
     debug!(
         "quic new connection {} streams: {} connections: {}",
@@ -831,10 +834,10 @@ async fn handle_connection<Q, C>(
 
             if !throttle_duration.is_zero() {
                 debug!(
-                    "Throttling stream from {remote_addr:?}, peer type: {peer_type:?}, total \
-                     stake: {total_stake}, max_streams_per_interval: \
-                     {max_streams_per_throttling_interval}, read_interval_streams: \
-                     {streams_read_in_throttle_interval} throttle_duration: {throttle_duration:?}"
+                    "Throttling stream from {remote_addr:?}, peer type: {peer_type:?}, \
+                     max_streams_per_interval: {max_streams_per_throttling_interval}, \
+                     read_interval_streams: {streams_read_in_throttle_interval} \
+                     throttle_duration: {throttle_duration:?}"
                 );
                 stats.throttled_streams.fetch_add(1, Ordering::Relaxed);
                 match peer_type {
@@ -878,7 +881,7 @@ async fn handle_connection<Q, C>(
             // packet loss or the peer stops sending for whatever reason.
             let n_chunks = match tokio::select! {
                 chunk = tokio::time::timeout(
-                    qos.wait_for_chunk_timeout(),
+                    wait_for_chunk_timeout,
                     stream.read_chunks(&mut chunks)) => chunk,
 
                 // If the peer gets disconnected stop the task right away.
