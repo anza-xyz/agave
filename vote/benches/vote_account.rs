@@ -3,8 +3,9 @@ use {
     rand::Rng,
     solana_account::AccountSharedData,
     solana_pubkey::Pubkey,
-    solana_vote::vote_account::VoteAccount,
+    solana_vote::vote_account::{VoteAccount, VoteAccounts},
     solana_vote_interface::state::{VoteInit, VoteStateV4, VoteStateVersions},
+    std::{collections::HashMap, sync::Arc},
 };
 
 fn new_rand_vote_account<R: Rng>(
@@ -56,5 +57,47 @@ fn bench_vote_account_try_from(b: &mut Bencher) {
     });
 }
 
-benchmark_group!(benches, bench_vote_account_try_from);
+fn bench_staked_nodes_compute(b: &mut Bencher) {
+    let mut rng = rand::thread_rng();
+    let mut vote_accounts_map = HashMap::new();
+
+    // Create realistic scenario with 100 nodes, each with 3-5 vote accounts
+    // This simulates stake aggregation across multiple vote accounts per node
+    let node_count = 100;
+
+    for _ in 0..node_count {
+        let node_pubkey = Pubkey::new_unique();
+        let vote_accounts_per_node = rng.gen_range(3..=5);
+
+        for _ in 0..vote_accounts_per_node {
+            let (account, _) = new_rand_vote_account(&mut rng, Some(node_pubkey));
+            let vote_account = VoteAccount::try_from(account).unwrap();
+            let stake: u64 = rng.gen_range(1_000_000..100_000_000);
+            vote_accounts_map.insert(Pubkey::new_unique(), (stake, vote_account));
+        }
+    }
+
+    // Add some zero-stake accounts to test filtering
+    for _ in 0..50 {
+        let (account, _) = new_rand_vote_account(&mut rng, None);
+        let vote_account = VoteAccount::try_from(account).unwrap();
+        vote_accounts_map.insert(Pubkey::new_unique(), (0, vote_account));
+    }
+
+    let vote_accounts_map = Arc::new(vote_accounts_map);
+
+    // Benchmark measures only the staked_nodes() computation
+    // Create new VoteAccounts each iteration to bypass OnceLock cache
+    b.iter(|| {
+        let vote_accounts = VoteAccounts::from(Arc::clone(&vote_accounts_map));
+        let staked_nodes = vote_accounts.staked_nodes();
+        assert!(!staked_nodes.is_empty());
+    });
+}
+
+benchmark_group!(
+    benches,
+    bench_vote_account_try_from,
+    bench_staked_nodes_compute
+);
 benchmark_main!(benches);
