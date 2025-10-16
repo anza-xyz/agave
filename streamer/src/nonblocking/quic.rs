@@ -1027,6 +1027,11 @@ fn run_packet_batch_sender(
                 stats
                     .total_chunks_processed_by_batcher
                     .fetch_add(num_chunks, Ordering::Relaxed);
+
+                // prevent getting stuck in loop
+                if packet_batch.len() >= PACKETS_PER_BATCH {
+                    break;
+                }
             }
         }
     }
