@@ -1628,7 +1628,7 @@ declare_builtin_function!(
             }
             ALT_BN128_G1_MUL_BE => {
                 alt_bn128_versioned_g1_multiplication(
-                    VersionedG1Multiplication::V0,
+                    VersionedG1Multiplication::V1,
                     input,
                     Endianness::BE
                 )
