@@ -1982,6 +1982,7 @@ mod tests {
     /// If zero lamport accounts are not handled correctly, Account1 or Account2 will come back
     /// failing the test
     #[test_case(MarkObsoleteAccounts::Disabled)]
+    #[test_case(MarkObsoleteAccounts::Enabled)]
     fn test_fastboot_handle_zero_lamport_accounts(mark_obsolete_accounts: MarkObsoleteAccounts) {
         let collector = Pubkey::new_unique();
         let key1 = Keypair::new();
@@ -2066,6 +2067,40 @@ mod tests {
 
         // Ensure the deserialized bank matches the original bank
         assert_eq!(*bank2, deserialized_bank);
+    }
+
+    /// Test that removing the obsolete accounts file causes fastboot to fail.
+    /// Fastboot requires obsolete accounts files in newer versions.
+    #[test]
+    fn test_fastboot_missing_obsolete_accounts() {
+        let genesis_config = GenesisConfig::default();
+        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let bank = create_snapshot_dirs_for_tests(&genesis_config, &bank_snapshots_dir, 3, true);
+
+        let account_paths = &bank.rc.accounts.accounts_db.paths;
+        let bank_snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
+
+        // Remove the obsolete account file
+        let obsolete_accounts_file = bank_snapshot
+            .snapshot_dir
+            .join(snapshot_utils::SNAPSHOT_OBSOLETE_ACCOUNTS_FILENAME);
+        fs::remove_file(obsolete_accounts_file).unwrap();
+
+        let deserialized_bank = bank_from_snapshot_dir(
+            account_paths,
+            &bank_snapshot,
+            &genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None,
+            false,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        );
+
+        // Should fail due to missing file
+        assert!(deserialized_bank.is_err());
     }
 
     #[test_case(StorageAccess::Mmap)]
