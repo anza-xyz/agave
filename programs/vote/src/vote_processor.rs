@@ -677,6 +677,8 @@ mod tests {
         );
         let vote_state = VoteStateV3::deserialize(accounts[0].data()).unwrap();
         assert_eq!(vote_state.node_pubkey, node_pubkey);
+        // TODO: When the feature gate for vote state v4 is added, check the
+        // block revenue collector here for the v4 target.
     }
 
     #[test]

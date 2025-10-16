@@ -116,6 +116,7 @@ pub struct TransactionResponseRegion {
 /// TPU passes transactions to the external pack process.
 /// This is also a transfer of ownership of the transaction:
 ///   the external pack process is responsible for freeing the memory.
+#[repr(C)]
 pub struct TpuToPackMessage {
     pub transaction: SharableTransactionRegion,
     /// See [`tpu_message_flags`] for details.
@@ -244,7 +245,7 @@ pub mod worker_message_types {
     pub struct ExecutionResponse {
         /// Indicates if the transaction was included in the block or not.
         /// If [`not_included_reasons::NONE`], the transaction was included.
-        not_included_reason: u8,
+        pub not_included_reason: u8,
         /// If included, cost units used by the transaction.
         pub cost_units: u64,
         /// If included, the fee-payer balance after execution.
