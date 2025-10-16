@@ -116,6 +116,7 @@ pub struct TransactionResponseRegion {
 /// TPU passes transactions to the external pack process.
 /// This is also a transfer of ownership of the transaction:
 ///   the external pack process is responsible for freeing the memory.
+#[repr(C)]
 pub struct TpuToPackMessage {
     pub transaction: SharableTransactionRegion,
     /// See [`tpu_message_flags`] for details.
