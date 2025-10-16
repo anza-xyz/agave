@@ -727,6 +727,9 @@ pub fn update_validator_identity<S: std::hash::BuildHasher>(
     verify_authorized_signer(node_pubkey, signers)?;
 
     vote_state.set_node_pubkey(*node_pubkey);
+    // Keep block_revenue_collector in sync with node_pubkey until SIMD-0232
+    // is implemented.
+    vote_state.set_block_revenue_collector(*node_pubkey);
 
     vote_state.set_vote_account_state(vote_account)
 }
