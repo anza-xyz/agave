@@ -1758,7 +1758,6 @@ declare_builtin_function!(
         hash_result.copy_from_slice(&hash.to_bytes());
 
         Ok(SUCCESS)
-
     }
 );
 
