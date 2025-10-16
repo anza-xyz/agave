@@ -8793,6 +8793,7 @@ version = "3.1.0"
 dependencies = [
  "agave-feature-set",
  "anyhow",
+ "arc-swap",
  "arrayvec",
  "assert_matches",
  "bincode",

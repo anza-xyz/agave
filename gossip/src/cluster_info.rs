@@ -43,6 +43,7 @@ use {
         },
         weighted_shuffle::WeightedShuffle,
     },
+    arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, TrySendError},
     itertools::{Either, Itertools},
     rand::{seq::SliceRandom, CryptoRng, Rng},
@@ -155,7 +156,7 @@ pub struct ClusterInfo {
     /// The network
     pub gossip: CrdsGossip,
     /// set the keypair that will be used to sign crds values generated. It is unset only in tests.
-    keypair: RwLock<Arc<Keypair>>,
+    keypair: ArcSwap<Keypair>,
     /// Network entrypoints
     entrypoints: RwLock<Vec<ContactInfo>>,
     outbound_budget: DataBudget,
@@ -179,7 +180,7 @@ impl ClusterInfo {
         assert_eq!(contact_info.pubkey(), &keypair.pubkey());
         let me = Self {
             gossip: CrdsGossip::default(),
-            keypair: RwLock::new(keypair),
+            keypair: ArcSwap::from(keypair),
             entrypoints: RwLock::default(),
             outbound_budget: DataBudget::default(),
             my_contact_info: RwLock::new(contact_info),
@@ -226,7 +227,7 @@ impl ClusterInfo {
         sender: &impl ChannelSend<PacketBatch>,
     ) {
         let shred_version = self.my_contact_info.read().unwrap().shred_version();
-        let self_keypair: Arc<Keypair> = self.keypair().clone();
+        let self_keypair = self.keypair();
         let mut pings = Vec::new();
         self.gossip.refresh_push_active_set(
             &self_keypair,
@@ -381,18 +382,17 @@ impl ClusterInfo {
     }
 
     pub fn id(&self) -> Pubkey {
-        self.keypair.read().unwrap().pubkey()
+        self.keypair.load().pubkey()
     }
 
-    pub fn keypair(&self) -> RwLockReadGuard<Arc<Keypair>> {
-        self.keypair.read().unwrap()
+    pub fn keypair(&self) -> Arc<Keypair> {
+        self.keypair.load_full()
     }
 
     pub fn set_keypair(&self, new_keypair: Arc<Keypair>) {
         let id = new_keypair.pubkey();
-        *self.keypair.write().unwrap() = new_keypair;
+        self.keypair.store(new_keypair);
         self.my_contact_info.write().unwrap().hot_swap_pubkey(id);
-
         self.refresh_my_gossip_contact_info();
     }
 
@@ -1163,7 +1163,7 @@ impl ClusterInfo {
     }
 
     fn refresh_my_gossip_contact_info(&self) {
-        let keypair: Arc<Keypair> = self.keypair().clone();
+        let keypair: Arc<Keypair> = self.keypair();
         let node = {
             let mut node = self.my_contact_info.write().unwrap();
             node.set_wallclock(timestamp());
@@ -1841,7 +1841,7 @@ impl ClusterInfo {
         response_sender: &impl ChannelSend<PacketBatch>,
     ) {
         let _st = ScopedTimer::from(&self.stats.handle_batch_ping_messages_time);
-        let keypair: Arc<Keypair> = self.keypair().clone();
+        let keypair = self.keypair();
         let pongs = pings.into_iter().map(|(addr, ping)| {
             let pong = Pong::new(&ping, &keypair);
             (addr, Protocol::PongMessage(pong))
@@ -1938,7 +1938,7 @@ impl ClusterInfo {
         // Create and sign Protocol::PruneMessages.
         thread_pool.install(|| {
             let wallclock = timestamp();
-            let keypair: Arc<Keypair> = self.keypair().clone();
+            let keypair = self.keypair();
             prunes
                 .into_par_iter()
                 .flat_map(|(destination, addr, prunes)| {
@@ -2009,7 +2009,7 @@ impl ClusterInfo {
         };
         let mut pings = Vec::new();
         let mut rng = rand::thread_rng();
-        let keypair: Arc<Keypair> = self.keypair().clone();
+        let keypair = self.keypair();
         let mut verify_gossip_addr = |value: &CrdsValue| {
             if verify_gossip_addr(
                 &mut rng,
