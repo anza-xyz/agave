@@ -9302,10 +9302,6 @@ name = "solana-measure"
 version = "3.1.0"
 
 [[package]]
-name = "solana-memory-management"
-version = "3.1.0"
-
-[[package]]
 name = "solana-merkle-tree"
 version = "3.1.0"
 dependencies = [

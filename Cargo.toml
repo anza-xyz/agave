@@ -51,7 +51,6 @@ members = [
     "ledger-tool",
     "local-cluster",
     "measure",
-    "memory-management",
     "merkle-tree",
     "metrics",
     "net-utils",
