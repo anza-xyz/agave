@@ -244,7 +244,7 @@ pub mod worker_message_types {
     pub struct ExecutionResponse {
         /// Indicates if the transaction was included in the block or not.
         /// If [`not_included_reasons::NONE`], the transaction was included.
-        not_included_reason: u8,
+        pub not_included_reason: u8,
         /// If included, cost units used by the transaction.
         pub cost_units: u64,
         /// If included, the fee-payer balance after execution.
