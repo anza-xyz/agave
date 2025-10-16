@@ -285,29 +285,16 @@ fn add_validator_accounts(
             )
         };
 
-        if is_alpenglow {
-            genesis_config.add_account(
-                *stake_pubkey,
-                stake_state::create_alpenglow_account(
-                    authorized_pubkey.unwrap_or(identity_pubkey),
-                    vote_pubkey,
-                    &vote_account,
-                    rent,
-                    stake_lamports,
-                ),
-            );
-        } else {
-            genesis_config.add_account(
-                *stake_pubkey,
-                stake_state::create_account(
-                    authorized_pubkey.unwrap_or(identity_pubkey),
-                    vote_pubkey,
-                    &vote_account,
-                    rent,
-                    stake_lamports,
-                ),
-            );
-        }
+        genesis_config.add_account(
+            *stake_pubkey,
+            stake_state::create_account(
+                authorized_pubkey.unwrap_or(identity_pubkey),
+                vote_pubkey,
+                &vote_account,
+                rent,
+                stake_lamports,
+            ),
+        );
         genesis_config.add_account(*vote_pubkey, vote_account);
     }
     Ok(())
