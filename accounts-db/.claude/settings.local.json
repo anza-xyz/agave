@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//home/sol/src/agave/**)",
+      "Read(//home/sol/src/agave/**)",
+      "Read(//home/sol/src/**)",
+      "Bash(./cargo --help)",
+      "Bash(./cargo build -p solana-accounts-db)",
+      "Bash(gh:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

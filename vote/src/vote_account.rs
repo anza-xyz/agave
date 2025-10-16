@@ -8,6 +8,7 @@ use {
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
+    solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
     std::{
         cmp::Ordering,
@@ -16,6 +17,7 @@ use {
         iter::FromIterator,
         mem,
         sync::{Arc, OnceLock},
+        time::Instant,
     },
     thiserror::Error,
 };
@@ -139,16 +141,46 @@ impl VoteAccounts {
     pub fn staked_nodes(&self) -> Arc<HashMap</*node_pubkey:*/ Pubkey, /*stake:*/ u64>> {
         self.staked_nodes
             .get_or_init(|| {
-                Arc::new(
-                    self.vote_accounts
-                        .values()
-                        .filter(|(stake, _)| *stake != 0u64)
-                        .map(|(stake, vote_account)| (*vote_account.node_pubkey(), stake))
-                        .into_grouping_map()
-                        .aggregate(|acc, _node_pubkey, stake| {
-                            Some(acc.unwrap_or_default() + stake)
-                        }),
-                )
+                let num_vote_accounts = self.vote_accounts.len();
+
+                // OLD implementation with itertools
+                let start_old = Instant::now();
+                let _result_old: HashMap<Pubkey, u64> = self
+                    .vote_accounts
+                    .values()
+                    .filter(|(stake, _)| *stake != 0u64)
+                    .map(|(stake, vote_account)| (*vote_account.node_pubkey(), stake))
+                    .into_grouping_map()
+                    .aggregate(|acc: Option<u64>, _node_pubkey, stake| {
+                        Some(acc.unwrap_or_default() + stake)
+                    });
+                let elapsed_old_us = start_old.elapsed().as_micros() as i64;
+
+                // NEW implementation with manual HashMap
+                let start_new = Instant::now();
+                let mut staked_nodes =
+                    HashMap::with_capacity(self.vote_accounts.len().saturating_div(2));
+                for (stake, vote_account) in self.vote_accounts.values() {
+                    if *stake != 0 {
+                        staked_nodes
+                            .entry(*vote_account.node_pubkey())
+                            .and_modify(|total_stake| *total_stake += stake)
+                            .or_insert(*stake);
+                    }
+                }
+                let elapsed_new_us = start_new.elapsed().as_micros() as i64;
+
+                // Report metrics
+                datapoint_info!(
+                    "staked_nodes_timing",
+                    ("num_vote_accounts", num_vote_accounts, i64),
+                    ("old_impl_us", elapsed_old_us, i64),
+                    ("new_impl_us", elapsed_new_us, i64),
+                    ("speedup_ratio", elapsed_old_us as f64 / elapsed_new_us as f64, f64),
+                );
+
+                // Return the new implementation result
+                Arc::new(staked_nodes)
             })
             .clone()
     }

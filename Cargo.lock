@@ -11792,6 +11792,7 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-logger",
+ "solana-metrics",
  "solana-packet",
  "solana-pubkey",
  "solana-sdk-ids",

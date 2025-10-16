@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit",
+      "Bash",
+      "Read",
+      "mcp__github__*",
+      "Fetch"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
