@@ -8867,7 +8867,10 @@ fn test_compute_budget_program_noop() {
                 ..ComputeBudget::new_with_defaults(
                     invoke_context
                         .get_feature_set()
-                        .raise_cpi_nesting_limit_to_8
+                        .raise_cpi_nesting_limit_to_8,
+                    invoke_context
+                        .get_feature_set()
+                        .increase_cpi_info_account_limit
                 )
             }
         );
@@ -8919,7 +8922,10 @@ fn test_compute_request_instruction() {
                 ..ComputeBudget::new_with_defaults(
                     invoke_context
                         .get_feature_set()
-                        .raise_cpi_nesting_limit_to_8
+                        .raise_cpi_nesting_limit_to_8,
+                    invoke_context
+                        .get_feature_set()
+                        .increase_cpi_info_account_limit
                 )
             }
         );
@@ -8978,7 +8984,10 @@ fn test_failed_compute_request_instruction() {
                 ..ComputeBudget::new_with_defaults(
                     invoke_context
                         .get_feature_set()
-                        .raise_cpi_nesting_limit_to_8
+                        .raise_cpi_nesting_limit_to_8,
+                    invoke_context
+                        .get_feature_set()
+                        .increase_cpi_info_account_limit
                 )
             }
         );

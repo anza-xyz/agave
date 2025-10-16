@@ -831,7 +831,9 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             environment_config,
             Some(LogCollector::new_ref()),
             compute_budget,
-            SVMTransactionExecutionCost::default(),
+            SVMTransactionExecutionCost::new_with_defaults(
+                $feature_set.increase_cpi_info_account_limit,
+            ),
         );
     };
 }

@@ -114,8 +114,8 @@ struct SolSignerSeedsC {
 
 /// Maximum number of account info structs that can be used in a single CPI invocation
 const MAX_CPI_ACCOUNT_INFOS: usize = 128;
+/// Maximum number of account info structs that can be used in a single CPI invocation with SIMD-0339 active
 const MAX_CPI_ACCOUNT_INFOS_SIMD_0339: usize = 255;
-const INVOKE_UNITS_COST_SIMD_0339: u64 = 946;
 
 
 /// Check that an account info pointer field points to the expected address
@@ -839,11 +839,7 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
     // changes so the callee can see them.
     consume_compute_meter(
         invoke_context,
-        if invoke_context.get_feature_set().increase_cpi_info_account_limit {
-            INVOKE_UNITS_COST_SIMD_0339
-        } else {
-            invoke_context.get_execution_cost().invoke_units
-        },
+        invoke_context.get_execution_cost().invoke_units
     )?; 
     if let Some(execute_time) = invoke_context.execute_time.as_mut() {
         execute_time.stop();
