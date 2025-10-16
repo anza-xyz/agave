@@ -10,7 +10,8 @@ use {
                 CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT,
             },
             stream_throttle::{
-                ConnectionStreamCounter, StakedStreamLoadEMA, STREAM_THROTTLING_INTERVAL_MS,
+                throttle_stream, ConnectionStreamCounter, StakedStreamLoadEMA,
+                STREAM_THROTTLING_INTERVAL_MS,
             },
         },
         quic::StreamerStats,
@@ -26,9 +27,12 @@ use {
         QUIC_UNSTAKED_RECEIVE_WINDOW_RATIO,
     },
     solana_time_utils as timing,
-    std::sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, RwLock,
+    std::{
+        future::Future,
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc, RwLock,
+        },
     },
     tokio::sync::{Mutex, MutexGuard},
     tokio_util::sync::CancellationToken,
@@ -55,6 +59,8 @@ pub struct SwQosConnectionContext {
     total_stake: u64,
     in_staked_table: bool,
     last_update: Arc<AtomicU64>,
+    remote_address: std::net::SocketAddr,
+    stream_counter: Option<Arc<ConnectionStreamCounter>>,
 }
 
 impl ConnectionContext for SwQosConnectionContext {
@@ -295,6 +301,14 @@ impl SwQos {
             Err(ConnectionHandlerError::ConnectionAddError)
         }
     }
+
+    fn max_streams_per_throttling_interval(&self, conn_context: &SwQosConnectionContext) -> u64 {
+        self.staked_stream_load_ema
+            .available_load_capacity_in_throttling_duration(
+                conn_context.peer_type,
+                conn_context.total_stake,
+            )
+    }
 }
 
 impl QosController<SwQosConnectionContext> for SwQos {
@@ -307,6 +321,8 @@ impl QosController<SwQosConnectionContext> for SwQos {
                 total_stake: 0,
                 remote_pubkey: None,
                 in_staked_table: false,
+                remote_address: connection.remote_address(),
+                stream_counter: None,
                 last_update: Arc::new(AtomicU64::new(timing::timestamp())),
             },
             |(pubkey, stake, total_stake, max_stake, min_stake)| {
@@ -333,7 +349,9 @@ impl QosController<SwQosConnectionContext> for SwQos {
                     total_stake,
                     remote_pubkey: Some(pubkey),
                     in_staked_table: false,
+                    remote_address: connection.remote_address(),
                     last_update: Arc::new(AtomicU64::new(timing::timestamp())),
+                    stream_counter: None,
                 }
             },
         )
@@ -345,8 +363,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
         client_connection_tracker: ClientConnectionTracker,
         connection: &quinn::Connection,
         conn_context: &mut SwQosConnectionContext,
-    ) -> impl std::future::Future<Output = Option<(CancellationToken, Arc<ConnectionStreamCounter>)>>
-           + Send {
+    ) -> impl Future<Output = Option<CancellationToken>> + Send {
         async move {
             const PRUNE_RANDOM_SAMPLE_SIZE: usize = 2;
 
@@ -377,7 +394,8 @@ impl QosController<SwQosConnectionContext> for SwQos {
                                 .fetch_add(1, Ordering::Relaxed);
                             conn_context.in_staked_table = true;
                             conn_context.last_update = last_update;
-                            return Some((cancel_connection, stream_counter));
+                            conn_context.stream_counter = Some(stream_counter);
+                            return Some(cancel_connection);
                         }
                     } else {
                         // If we couldn't prune a connection in the staked connection table, let's
@@ -398,7 +416,8 @@ impl QosController<SwQosConnectionContext> for SwQos {
                                 .fetch_add(1, Ordering::Relaxed);
                             conn_context.in_staked_table = false;
                             conn_context.last_update = last_update;
-                            return Some((cancel_connection, stream_counter));
+                            conn_context.stream_counter = Some(stream_counter);
+                            return Some(cancel_connection);
                         } else {
                             self.stats
                                 .connection_add_failed_on_pruning
@@ -425,7 +444,8 @@ impl QosController<SwQosConnectionContext> for SwQos {
                             .fetch_add(1, Ordering::Relaxed);
                         conn_context.in_staked_table = false;
                         conn_context.last_update = last_update;
-                        return Some((cancel_connection, stream_counter));
+                        conn_context.stream_counter = Some(stream_counter);
+                        return Some(cancel_connection);
                     } else {
                         self.stats
                             .connection_add_failed_unstaked_node
@@ -441,6 +461,12 @@ impl QosController<SwQosConnectionContext> for SwQos {
     fn on_stream_accepted(&self, conn_context: &SwQosConnectionContext) {
         self.staked_stream_load_ema
             .increment_load(conn_context.peer_type);
+        conn_context
+            .stream_counter
+            .as_ref()
+            .unwrap()
+            .stream_count
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     fn on_stream_error(&self, _conn_context: &SwQosConnectionContext) {
@@ -451,20 +477,12 @@ impl QosController<SwQosConnectionContext> for SwQos {
         self.staked_stream_load_ema.update_ema_if_needed();
     }
 
-    fn max_streams_per_throttling_interval(&self, conn_context: &SwQosConnectionContext) -> u64 {
-        self.staked_stream_load_ema
-            .available_load_capacity_in_throttling_duration(
-                conn_context.peer_type,
-                conn_context.total_stake,
-            )
-    }
-
     #[allow(clippy::manual_async_fn)]
     fn remove_connection(
         &self,
         conn_context: &SwQosConnectionContext,
         connection: Connection,
-    ) -> impl std::future::Future<Output = usize> + Send {
+    ) -> impl Future<Output = usize> + Send {
         async move {
             let mut lock = if conn_context.in_staked_table {
                 self.staked_connection_table.lock().await
@@ -489,6 +507,28 @@ impl QosController<SwQosConnectionContext> for SwQos {
         context
             .last_update
             .store(timing::timestamp(), Ordering::Relaxed);
+    }
+
+    #[allow(clippy::manual_async_fn)]
+    fn on_new_stream(&self, context: &SwQosConnectionContext) -> impl Future<Output = ()> + Send {
+        async move {
+            let peer_type = context.peer_type();
+            let remote_addr = context.remote_address;
+            let stream_counter: &Arc<ConnectionStreamCounter> =
+                context.stream_counter.as_ref().unwrap();
+
+            let max_streams_per_throttling_interval =
+                self.max_streams_per_throttling_interval(context);
+
+            throttle_stream(
+                &self.stats,
+                peer_type,
+                remote_addr,
+                stream_counter,
+                max_streams_per_throttling_interval,
+            )
+            .await;
+        }
     }
 }
 

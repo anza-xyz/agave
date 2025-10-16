@@ -1,10 +1,7 @@
 use {
-    crate::nonblocking::{
-        quic::{ClientConnectionTracker, ConnectionPeerType},
-        stream_throttle::ConnectionStreamCounter,
-    },
+    crate::nonblocking::quic::{ClientConnectionTracker, ConnectionPeerType},
     quinn::Connection,
-    std::{future::Future, sync::Arc},
+    std::future::Future,
     tokio_util::sync::CancellationToken,
 };
 
@@ -32,11 +29,10 @@ pub(crate) trait QosController<C: ConnectionContext> {
         client_connection_tracker: ClientConnectionTracker,
         connection: &quinn::Connection,
         context: &mut C,
-    ) -> impl Future<Output = Option<(CancellationToken, Arc<ConnectionStreamCounter>)>> + Send;
+    ) -> impl Future<Output = Option<CancellationToken>> + Send;
 
-    /// The maximum number of streams that can be opened per throttling interval
-    /// on this connection.
-    fn max_streams_per_throttling_interval(&self, context: &C) -> u64;
+    /// Called when a new stream is received on a connection
+    fn on_new_stream(&self, context: &C) -> impl Future<Output = ()> + Send;
 
     /// Called when a stream is accepted on a connection
     fn on_stream_accepted(&self, context: &C);

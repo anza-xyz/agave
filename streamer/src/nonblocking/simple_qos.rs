@@ -7,7 +7,9 @@ use {
                 ConnectionHandlerError, ConnectionPeerType, ConnectionTable, ConnectionTableKey,
                 ConnectionTableType,
             },
-            stream_throttle::{ConnectionStreamCounter, STREAM_THROTTLING_INTERVAL},
+            stream_throttle::{
+                throttle_stream, ConnectionStreamCounter, STREAM_THROTTLING_INTERVAL,
+            },
         },
         quic::StreamerStats,
         streamer::StakedNodes,
@@ -100,13 +102,20 @@ impl SimpleQos {
             Err(ConnectionHandlerError::ConnectionAddError)
         }
     }
+
+    fn max_streams_per_throttling_interval(&self, _context: &SimpleQosConnectionContext) -> u64 {
+        let interval_ms = STREAM_THROTTLING_INTERVAL.as_millis() as u64;
+        (self.max_streams_per_second * interval_ms / 1000).max(1)
+    }
 }
 
 #[derive(Clone)]
 pub struct SimpleQosConnectionContext {
     peer_type: ConnectionPeerType,
     remote_pubkey: Option<solana_pubkey::Pubkey>,
+    remote_address: std::net::SocketAddr,
     last_update: Arc<AtomicU64>,
+    stream_counter: Option<Arc<ConnectionStreamCounter>>,
 }
 
 impl ConnectionContext for SimpleQosConnectionContext {
@@ -132,7 +141,9 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
         SimpleQosConnectionContext {
             peer_type,
             remote_pubkey,
+            remote_address: connection.remote_address(),
             last_update: Arc::new(AtomicU64::new(timing::timestamp())),
+            stream_counter: None,
         }
     }
 
@@ -142,8 +153,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
         client_connection_tracker: ClientConnectionTracker,
         connection: &quinn::Connection,
         conn_context: &mut SimpleQosConnectionContext,
-    ) -> impl Future<Output = Option<(CancellationToken, Arc<ConnectionStreamCounter>)>> + Send
-    {
+    ) -> impl Future<Output = Option<CancellationToken>> + Send {
         async move {
             const PRUNE_RANDOM_SAMPLE_SIZE: usize = 2;
             match conn_context.peer_type() {
@@ -172,7 +182,8 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
                                 .connection_added_from_staked_peer
                                 .fetch_add(1, Ordering::Relaxed);
                             conn_context.last_update = last_update;
-                            return Some((cancel_connection, stream_counter));
+                            conn_context.stream_counter = Some(stream_counter);
+                            return Some(cancel_connection);
                         }
                     }
                     None
@@ -182,16 +193,18 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
         }
     }
 
-    fn on_stream_accepted(&self, _conn_context: &SimpleQosConnectionContext) {}
+    fn on_stream_accepted(&self, conn_context: &SimpleQosConnectionContext) {
+        conn_context
+            .stream_counter
+            .as_ref()
+            .unwrap()
+            .stream_count
+            .fetch_add(1, Ordering::Relaxed);
+    }
 
     fn on_stream_error(&self, _conn_context: &SimpleQosConnectionContext) {}
 
     fn on_stream_closed(&self, _conn_context: &SimpleQosConnectionContext) {}
-
-    fn max_streams_per_throttling_interval(&self, _context: &SimpleQosConnectionContext) -> u64 {
-        let interval_ms = STREAM_THROTTLING_INTERVAL.as_millis() as u64;
-        (self.max_streams_per_second * interval_ms / 1000).max(1)
-    }
 
     #[allow(clippy::manual_async_fn)]
     fn remove_connection(
@@ -218,5 +231,30 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
         context
             .last_update
             .store(timing::timestamp(), Ordering::Relaxed);
+    }
+
+    #[allow(clippy::manual_async_fn)]
+    fn on_new_stream(
+        &self,
+        context: &SimpleQosConnectionContext,
+    ) -> impl Future<Output = ()> + Send {
+        async move {
+            let peer_type = context.peer_type();
+            let remote_addr = context.remote_address;
+            let stream_counter: &Arc<ConnectionStreamCounter> =
+                context.stream_counter.as_ref().unwrap();
+
+            let max_streams_per_throttling_interval =
+                self.max_streams_per_throttling_interval(context);
+
+            throttle_stream(
+                &self.stats,
+                peer_type,
+                remote_addr,
+                stream_counter,
+                max_streams_per_throttling_interval,
+            )
+            .await;
+        }
     }
 }

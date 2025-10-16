@@ -3,7 +3,7 @@ use {
         nonblocking::{
             connection_rate_limiter::{ConnectionRateLimiter, TotalConnectionRateLimiter},
             qos::{ConnectionContext, QosController},
-            stream_throttle::{ConnectionStreamCounter, STREAM_THROTTLING_INTERVAL},
+            stream_throttle::ConnectionStreamCounter,
             swqos::SwQos,
         },
         quic::{configure_server, QuicServerError, QuicServerParams, StreamerStats},
@@ -564,7 +564,7 @@ async fn setup_connection<Q, C>(
                 stats.total_new_connections.fetch_add(1, Ordering::Relaxed);
 
                 let mut conn_context = qos.build_connection_context(&new_connection);
-                if let Some((cancel_connection, stream_counter)) = qos
+                if let Some(cancel_connection) = qos
                     .try_add_connection(
                         client_connection_tracker,
                         &new_connection,
@@ -579,7 +579,6 @@ async fn setup_connection<Q, C>(
                         server_params.wait_for_chunk_timeout,
                         conn_context.clone(),
                         qos,
-                        stream_counter,
                         cancel_connection,
                     ));
                 }
@@ -792,7 +791,6 @@ async fn handle_connection<Q, C>(
     wait_for_chunk_timeout: Duration,
     context: C,
     qos: Arc<Q>,
-    stream_counter: Arc<ConnectionStreamCounter>,
     cancel: CancellationToken,
 ) where
     Q: QosController<C> + Send + Sync + 'static,
@@ -822,41 +820,8 @@ async fn handle_connection<Q, C>(
             _ = cancel.cancelled() => break,
         };
 
-        let max_streams_per_throttling_interval = qos.max_streams_per_throttling_interval(&context);
-
-        let throttle_interval_start = stream_counter.reset_throttling_params_if_needed();
-        let streams_read_in_throttle_interval = stream_counter.stream_count.load(Ordering::Relaxed);
-        if streams_read_in_throttle_interval >= max_streams_per_throttling_interval {
-            // The peer is sending faster than we're willing to read. Sleep for what's
-            // left of this read interval so the peer backs off.
-            let throttle_duration =
-                STREAM_THROTTLING_INTERVAL.saturating_sub(throttle_interval_start.elapsed());
-
-            if !throttle_duration.is_zero() {
-                debug!(
-                    "Throttling stream from {remote_addr:?}, peer type: {peer_type:?}, \
-                     max_streams_per_interval: {max_streams_per_throttling_interval}, \
-                     read_interval_streams: {streams_read_in_throttle_interval} \
-                     throttle_duration: {throttle_duration:?}"
-                );
-                stats.throttled_streams.fetch_add(1, Ordering::Relaxed);
-                match peer_type {
-                    ConnectionPeerType::Unstaked => {
-                        stats
-                            .throttled_unstaked_streams
-                            .fetch_add(1, Ordering::Relaxed);
-                    }
-                    ConnectionPeerType::Staked(_) => {
-                        stats
-                            .throttled_staked_streams
-                            .fetch_add(1, Ordering::Relaxed);
-                    }
-                }
-                sleep(throttle_duration).await;
-            }
-        }
+        qos.on_new_stream(&context).await;
         qos.on_stream_accepted(&context);
-        stream_counter.stream_count.fetch_add(1, Ordering::Relaxed);
         stats.active_streams.fetch_add(1, Ordering::Relaxed);
         stats.total_new_streams.fetch_add(1, Ordering::Relaxed);
 
