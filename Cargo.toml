@@ -105,6 +105,7 @@ members = [
     "svm",
     "svm-callback",
     "svm-feature-set",
+    "svm-fuzz-harness",
     "svm-log-collector",
     "svm-measure",
     "svm-timings",
@@ -190,6 +191,7 @@ agave-thread-manager = { path = "thread-manager", version = "=3.1.0" }
 agave-transaction-view = { path = "transaction-view", version = "=3.1.0" }
 agave-verified-packet-receiver = { path = "verified-packet-receiver", version = "=3.1.0" }
 agave-votor = { path = "votor", version = "=3.1.0" }
+agave-votor-messages = { path = "votor-messages", version = "=3.1.0" }
 agave-xdp = { path = "xdp", version = "=3.1.0" }
 ahash = "0.8.11"
 anyhow = "1.0.100"
@@ -227,7 +229,7 @@ bytes = "1.10"
 bzip2 = "0.4.4"
 caps = "0.5.5"
 cargo_metadata = "0.15.4"
-cfg-if = "1.0.3"
+cfg-if = "1.0.4"
 cfg_eval = "0.1.2"
 chrono = { version = "0.4.42", default-features = false }
 chrono-humanize = "0.2.3"
@@ -270,9 +272,8 @@ futures = "0.3.31"
 futures-util = "0.3.29"
 gag = "1.0.0"
 gethostname = "0.2.3"
-getrandom = "0.3.3"
+getrandom = "0.3.4"
 goauth = "0.13.1"
-governor = "0.6.3"
 hex = "0.4.3"
 hidapi = { version = "2.6.3", default-features = false }
 histogram = "0.6.9"
@@ -347,8 +348,8 @@ rand_chacha = "0.3.1"
 rand_chacha0-2 = { package = "rand_chacha", version = "0.2.2" }
 rayon = "1.11.0"
 reed-solomon-erasure = "6.0.0"
-regex = "1.11.3"
-reqwest = { version = "0.12.23", default-features = false }
+regex = "1.12.2"
+reqwest = { version = "0.12.24", default-features = false }
 reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.4"
@@ -373,7 +374,7 @@ siphasher = "1.0.1"
 slab = "0.4.11"
 smallvec = { version = "1.15.1", default-features = false, features = ["union"] }
 smpl_jwt = "0.7.1"
-socket2 = "0.6.0"
+socket2 = "0.6.1"
 soketto = "0.7"
 solana-account = "3.1.0"
 solana-account-decoder = { path = "account-decoder", version = "=3.1.0" }
@@ -391,7 +392,7 @@ solana-big-mod-exp = "3.0.0"
 solana-bincode = "3.0.0"
 solana-blake3-hasher = "3.0.0"
 solana-bloom = { path = "bloom", version = "=3.1.0" }
-solana-bls-signatures = { version = "0.3.0", features = ["serde"] }
+solana-bls-signatures = { version = "1.0.0", features = ["serde"] }
 solana-bn254 = "3.0.0"
 solana-borsh = "3.0.0"
 solana-bpf-loader-program = { path = "programs/bpf_loader", version = "=3.1.0" }
@@ -530,6 +531,7 @@ solana-streamer = { path = "streamer", version = "=3.1.0" }
 solana-svm = { path = "svm", version = "=3.1.0" }
 solana-svm-callback = { path = "svm-callback", version = "=3.1.0" }
 solana-svm-feature-set = { path = "svm-feature-set", version = "=3.1.0" }
+solana-svm-fuzz-harness = { path = "svm-fuzz-harness", version = "=3.1.0" }
 solana-svm-log-collector = { path = "svm-log-collector", version = "=3.1.0" }
 solana-svm-measure = { path = "svm-measure", version = "=3.1.0" }
 solana-svm-timings = { path = "svm-timings", version = "=3.1.0" }
@@ -561,7 +563,6 @@ solana-version = { path = "version", version = "=3.1.0" }
 solana-vote = { path = "vote", version = "=3.1.0" }
 solana-vote-interface = "4.0.3"
 solana-vote-program = { path = "programs/vote", version = "=3.1.0", default-features = false }
-solana-votor-messages = { path = "votor-messages", version = "=3.1.0" }
 solana-wen-restart = { path = "wen-restart", version = "=3.1.0" }
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=3.1.0" }
 solana-zk-sdk = "4.0.0"
@@ -593,7 +594,7 @@ test-case = "3.3.1"
 thiserror = "2.0.17"
 thread-priority = "1.2.0"
 tiny-bip39 = "0.8.2"
-tokio = "1.47.1"
+tokio = "1.48.0"
 tokio-serde = "0.8"
 tokio-stream = "0.1.17"
 tokio-tungstenite = "0.28.0"
@@ -612,7 +613,7 @@ url = "2.5.7"
 vec_extract_if_polyfill = "0.1.0"
 wasm-bindgen = "0.2"
 winapi = "0.3.8"
-wincode = { version = "0.1.0", features = ["derive", "solana-short-vec"] }
+wincode = { version = "0.1.2", features = ["derive", "solana-short-vec"] }
 winreg = "0.50"
 x509-parser = "0.14.0"
 zeroize = { version = "1.8", default-features = false }

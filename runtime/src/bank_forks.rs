@@ -25,7 +25,6 @@ use {
         },
         time::Instant,
     },
-    thiserror::Error,
 };
 
 pub const MAX_ROOT_DISTANCE_FOR_VOTE_ONLY: Slot = 400;
@@ -72,9 +71,6 @@ pub struct BankPair {
     pub root_bank: Arc<Bank>,
     pub working_bank: Arc<Bank>,
 }
-
-#[derive(Error, Debug)]
-pub enum SetRootError {}
 
 #[derive(Debug, Default, Copy, Clone)]
 struct SetRootMetrics {
@@ -393,7 +389,7 @@ impl BankForks {
         root: Slot,
         snapshot_controller: Option<&SnapshotController>,
         highest_super_majority_root: Option<Slot>,
-    ) -> Result<(Vec<BankWithScheduler>, SetRootMetrics), SetRootError> {
+    ) -> (Vec<BankWithScheduler>, SetRootMetrics) {
         let old_epoch = self.sharable_banks.root().epoch();
 
         let root_bank = &self
@@ -438,7 +434,7 @@ impl BankForks {
         let total_parent_banks = banks.len();
         let (is_root_bank_squashed, mut squash_timing, total_snapshot_ms) =
             if let Some(snapshot_controller) = snapshot_controller {
-                snapshot_controller.handle_new_roots(root, &banks)?
+                snapshot_controller.handle_new_roots(root, &banks)
             } else {
                 (false, SquashTiming::default(), 0)
             };
@@ -458,7 +454,7 @@ impl BankForks {
         drop(parents);
         drop_parent_banks_time.stop();
 
-        Ok((
+        (
             removed_banks,
             SetRootMetrics {
                 timings: SetRootTimings {
@@ -474,7 +470,7 @@ impl BankForks {
                 dropped_banks_len: dropped_banks_len as i64,
                 accounts_data_len,
             },
-        ))
+        )
     }
 
     pub fn prune_program_cache(&self, root: Slot) {
@@ -488,14 +484,11 @@ impl BankForks {
         root: Slot,
         snapshot_controller: Option<&SnapshotController>,
         highest_super_majority_root: Option<Slot>,
-    ) -> Result<Vec<BankWithScheduler>, SetRootError> {
+    ) -> Vec<BankWithScheduler> {
         let program_cache_prune_start = Instant::now();
         let set_root_start = Instant::now();
-        let (removed_banks, set_root_metrics) = self.do_set_root_return_metrics(
-            root,
-            snapshot_controller,
-            highest_super_majority_root,
-        )?;
+        let (removed_banks, set_root_metrics) =
+            self.do_set_root_return_metrics(root, snapshot_controller, highest_super_majority_root);
         datapoint_info!(
             "bank-forks_set_root",
             (
@@ -573,7 +566,7 @@ impl BankForks {
             ("dropped_banks_len", set_root_metrics.dropped_banks_len, i64),
             ("accounts_data_len", set_root_metrics.accounts_data_len, i64),
         );
-        Ok(removed_banks)
+        removed_banks
     }
 
     pub fn root(&self) -> Slot {
@@ -837,7 +830,7 @@ mod tests {
         let bank0 = Bank::new_for_tests(&genesis_config);
         let bank_forks0 = BankForks::new_rw_arc(bank0);
         let mut bank_forks0 = bank_forks0.write().unwrap();
-        bank_forks0.set_root(0, None, None).unwrap();
+        bank_forks0.set_root(0, None, None);
 
         let bank1 = Bank::new_for_tests(&genesis_config);
         let bank_forks1 = BankForks::new_rw_arc(bank1);
@@ -872,7 +865,7 @@ mod tests {
 
             // Set root in bank_forks0 to truncate the ancestor history
             bank_forks0.insert(child1);
-            bank_forks0.set_root(slot, None, None).unwrap();
+            bank_forks0.set_root(slot, None, None);
 
             // Don't set root in bank_forks1 to keep the ancestor history
             bank_forks1.insert(child2);
@@ -934,15 +927,11 @@ mod tests {
                 (4, vec![]),
             ])
         );
-        bank_forks
-            .write()
-            .unwrap()
-            .set_root(
-                2,    // root
-                None, // snapshot_controller
-                None, // highest confirmed root
-            )
-            .unwrap();
+        bank_forks.write().unwrap().set_root(
+            2,    // root
+            None, // snapshot_controller
+            None, // highest confirmed root
+        );
         bank_forks.read().unwrap().get(2).unwrap().squash();
         assert_eq!(
             bank_forks.read().unwrap().ancestors(),
@@ -1001,15 +990,11 @@ mod tests {
                 (4, vec![]),
             ])
         );
-        bank_forks
-            .write()
-            .unwrap()
-            .set_root(
-                2,
-                None,    // snapshot_controller
-                Some(1), // highest confirmed root
-            )
-            .unwrap();
+        bank_forks.write().unwrap().set_root(
+            2,
+            None,    // snapshot_controller
+            Some(1), // highest confirmed root
+        );
         bank_forks.read().unwrap().get(2).unwrap().squash();
         assert_eq!(
             bank_forks.read().unwrap().ancestors(),
@@ -1095,13 +1080,11 @@ mod tests {
 
         assert_matches!(bank_forks.relationship(1, 13), BlockRelation::Unknown);
         assert_matches!(bank_forks.relationship(13, 2), BlockRelation::Unknown);
-        bank_forks
-            .set_root(
-                2,
-                None,    // snapshot_controller
-                Some(1), // highest confirmed root
-            )
-            .unwrap();
+        bank_forks.set_root(
+            2,
+            None,    // snapshot_controller
+            Some(1), // highest confirmed root
+        );
         assert_matches!(bank_forks.relationship(1, 2), BlockRelation::Unknown);
         assert_matches!(bank_forks.relationship(2, 0), BlockRelation::Unknown);
     }

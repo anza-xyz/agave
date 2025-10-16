@@ -116,6 +116,7 @@ pub struct TransactionResponseRegion {
 /// TPU passes transactions to the external pack process.
 /// This is also a transfer of ownership of the transaction:
 ///   the external pack process is responsible for freeing the memory.
+#[repr(C)]
 pub struct TpuToPackMessage {
     pub transaction: SharableTransactionRegion,
     /// See [`tpu_message_flags`] for details.
@@ -155,6 +156,16 @@ pub struct ProgressMessage {
     /// Progress through the current slot in percentage.
     pub current_slot_progress: u8,
 }
+
+/// Maximum number of transactions allowed in a [`PackToWorkerMessage`].
+/// If the number of transactions exceeds this value, agave will
+/// not process the message.
+//
+// The reason for this constraint is because rts-alloc currently only
+// supports up to 4096 byte allocations. We must ensure that the
+// `TransactionResponseRegion` is able to contain responses for all
+// transactions sent. This is a conservative bound.
+pub const MAX_TRANSACTIONS_PER_MESSAGE: usize = 64;
 
 /// Message: [Pack -> Worker]
 /// External pack processe passes transactions to worker threads within agave.
@@ -234,7 +245,7 @@ pub mod worker_message_types {
     pub struct ExecutionResponse {
         /// Indicates if the transaction was included in the block or not.
         /// If [`not_included_reasons::NONE`], the transaction was included.
-        not_included_reason: u8,
+        pub not_included_reason: u8,
         /// If included, cost units used by the transaction.
         pub cost_units: u64,
         /// If included, the fee-payer balance after execution.

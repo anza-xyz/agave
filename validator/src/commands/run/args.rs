@@ -20,7 +20,7 @@ use {
     },
     solana_core::{
         banking_trace::DirByteLimit,
-        validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
+        validator::{BlockProductionMethod, BlockVerificationMethod},
     },
     solana_keypair::Keypair,
     solana_ledger::{blockstore_options::BlockstoreOptions, use_snapshot_archives_at_startup},
@@ -282,12 +282,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Enable JSON RPC on this port, and the next port for the RPC websocket"),
     )
     .arg(
-        Arg::with_name("full_rpc_api")
-            .long("full-rpc-api")
-            .takes_value(false)
-            .help("Expose RPC methods for querying chain state and transaction history"),
-    )
-    .arg(
         Arg::with_name("private_rpc")
             .long("private-rpc")
             .takes_value(false)
@@ -299,79 +293,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(false)
             .hidden(hidden_unless_forced())
             .help("Do not perform TCP/UDP reachable port checks at start-up"),
-    )
-    .arg(
-        Arg::with_name("enable_rpc_transaction_history")
-            .long("enable-rpc-transaction-history")
-            .takes_value(false)
-            .help(
-                "Enable historical transaction info over JSON RPC, including the \
-                 'getConfirmedBlock' API. This will cause an increase in disk usage and IOPS",
-            ),
-    )
-    .arg(
-        Arg::with_name("enable_rpc_bigtable_ledger_storage")
-            .long("enable-rpc-bigtable-ledger-storage")
-            .requires("enable_rpc_transaction_history")
-            .takes_value(false)
-            .help(
-                "Fetch historical transaction info from a BigTable instance as a fallback to \
-                 local ledger data",
-            ),
-    )
-    .arg(
-        Arg::with_name("enable_bigtable_ledger_upload")
-            .long("enable-bigtable-ledger-upload")
-            .requires("enable_rpc_transaction_history")
-            .takes_value(false)
-            .help("Upload new confirmed blocks into a BigTable instance"),
-    )
-    .arg(
-        Arg::with_name("enable_extended_tx_metadata_storage")
-            .long("enable-extended-tx-metadata-storage")
-            .requires("enable_rpc_transaction_history")
-            .takes_value(false)
-            .help(
-                "Include CPI inner instructions, logs, and return data in the historical \
-                 transaction info stored",
-            ),
-    )
-    .arg(
-        Arg::with_name("rpc_max_multiple_accounts")
-            .long("rpc-max-multiple-accounts")
-            .value_name("MAX ACCOUNTS")
-            .takes_value(true)
-            .default_value(&default_args.rpc_max_multiple_accounts)
-            .help(
-                "Override the default maximum accounts accepted by the getMultipleAccounts JSON \
-                 RPC method",
-            ),
-    )
-    .arg(
-        Arg::with_name("health_check_slot_distance")
-            .long("health-check-slot-distance")
-            .value_name("SLOT_DISTANCE")
-            .takes_value(true)
-            .default_value(&default_args.health_check_slot_distance)
-            .help(
-                "Report this validator as healthy if its latest replayed optimistically confirmed \
-                 slot is within the specified number of slots from the cluster's latest \
-                 optimistically confirmed slot",
-            ),
-    )
-    .arg(
-        Arg::with_name("skip_preflight_health_check")
-            .long("skip-preflight-health-check")
-            .takes_value(false)
-            .help("Skip health check when running a preflight check"),
-    )
-    .arg(
-        Arg::with_name("rpc_faucet_addr")
-            .long("rpc-faucet-address")
-            .value_name("HOST:PORT")
-            .takes_value(true)
-            .validator(solana_net_utils::is_host_port)
-            .help("Enable the JSON RPC 'requestAirdrop' API with this faucet address."),
     )
     .arg(
         Arg::with_name("account_paths")
@@ -1010,51 +931,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("rpc_threads")
-            .long("rpc-threads")
-            .value_name("NUMBER")
-            .validator(is_parsable::<usize>)
-            .takes_value(true)
-            .default_value(&default_args.rpc_threads)
-            .help("Number of threads to use for servicing RPC requests"),
-    )
-    .arg(
-        Arg::with_name("rpc_blocking_threads")
-            .long("rpc-blocking-threads")
-            .value_name("NUMBER")
-            .validator(is_parsable::<usize>)
-            .validator(|value| {
-                value
-                    .parse::<u64>()
-                    .map_err(|err| format!("error parsing '{value}': {err}"))
-                    .and_then(|threads| {
-                        if threads > 0 {
-                            Ok(())
-                        } else {
-                            Err("value must be >= 1".to_string())
-                        }
-                    })
-            })
-            .takes_value(true)
-            .default_value(&default_args.rpc_blocking_threads)
-            .help(
-                "Number of blocking threads to use for servicing CPU bound RPC requests (eg \
-                 getMultipleAccounts)",
-            ),
-    )
-    .arg(
-        Arg::with_name("rpc_niceness_adj")
-            .long("rpc-niceness-adjustment")
-            .value_name("ADJUSTMENT")
-            .takes_value(true)
-            .validator(solana_perf::thread::is_niceness_adjustment_valid)
-            .default_value(&default_args.rpc_niceness_adjustment)
-            .help(
-                "Add this value to niceness of RPC threads. Negative value increases priority, \
-                 positive value decreases priority.",
-            ),
-    )
-    .arg(
         Arg::with_name("rpc_bigtable_timeout")
             .long("rpc-bigtable-timeout")
             .value_name("SECONDS")
@@ -1178,22 +1054,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(
                 "With `--rpc-send-transaction-tpu-peer HOST:PORT`, also send to the current leader",
             ),
-    )
-    .arg(
-        Arg::with_name("rpc_scan_and_fix_roots")
-            .long("rpc-scan-and-fix-roots")
-            .takes_value(false)
-            .requires("enable_rpc_transaction_history")
-            .help("Verifies blockstore roots on boot and fixes any gaps"),
-    )
-    .arg(
-        Arg::with_name("rpc_max_request_body_size")
-            .long("rpc-max-request-body-size")
-            .value_name("BYTES")
-            .takes_value(true)
-            .validator(is_parsable::<usize>)
-            .default_value(&default_args.rpc_max_request_body_size)
-            .help("The maximum request body size accepted by rpc service"),
     )
     .arg(
         Arg::with_name("geyser_plugin_config")
@@ -1568,15 +1428,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(BlockProductionMethod::cli_message()),
     )
     .arg(
-        Arg::with_name("transaction_struct")
-            .long("transaction-structure")
-            .value_name("STRUCT")
-            .takes_value(true)
-            .possible_values(TransactionStructure::cli_names())
-            .default_value(TransactionStructure::default().into())
-            .help(TransactionStructure::cli_message()),
-    )
-    .arg(
         Arg::with_name("block_production_pacing_fill_time_millis")
             .long("block-production-pacing-fill-time-millis")
             .value_name("MILLIS")
@@ -1657,6 +1508,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .args(&pub_sub_config::args())
+    .args(&json_rpc_config::args(default_args))
 }
 
 fn validators_set(

@@ -1,11 +1,11 @@
 #![allow(dead_code)]
 
 use {
+    agave_votor_messages::vote::Vote,
     histogram::Histogram,
     solana_clock::{Epoch, Slot},
     solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
-    solana_votor_messages::vote::Vote,
     std::{
         collections::BTreeMap,
         time::{Duration, Instant},

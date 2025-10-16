@@ -3,10 +3,7 @@ use {
         latest_validator_vote_packet::VoteSource, leader_slot_metrics::LeaderSlotMetricsTracker,
         vote_storage::VoteStorage, BankingStageStats,
     },
-    crate::banking_stage::{
-        packet_deserializer::PacketReceiverStats,
-        transaction_scheduler::transaction_state_container::SharedBytes,
-    },
+    crate::banking_stage::transaction_scheduler::transaction_state_container::SharedBytes,
     agave_banking_stage_ingress_types::BankingPacketReceiver,
     agave_transaction_view::{
         result::TransactionViewError, transaction_view::SanitizedTransactionView,
@@ -224,4 +221,18 @@ impl VotePacketReceiver {
             *dropped_packets_count += vote_batch_insertion_metrics.total_dropped_packets();
         }
     }
+}
+
+#[derive(Default, Debug, PartialEq)]
+pub struct PacketReceiverStats {
+    /// Number of packets passing sigverify
+    pub passed_sigverify_count: Saturating<u64>,
+    /// Number of packets failing sigverify
+    pub failed_sigverify_count: Saturating<u64>,
+    /// Number of packets dropped due to sanitization error
+    pub failed_sanitization_count: Saturating<u64>,
+    /// Number of packets dropped due to prioritization error
+    pub failed_prioritization_count: Saturating<u64>,
+    /// Number of vote packets dropped
+    pub invalid_vote_count: Saturating<u64>,
 }

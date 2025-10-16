@@ -6,12 +6,8 @@ use {
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_core::banking_stage::{
         decision_maker::BufferedPacketsDecision,
-        packet_deserializer::PacketDeserializer,
         transaction_scheduler::{
-            receive_and_buffer::{
-                ReceiveAndBuffer, SanitizedTransactionReceiveAndBuffer,
-                TransactionViewReceiveAndBuffer,
-            },
+            receive_and_buffer::{ReceiveAndBuffer, TransactionViewReceiveAndBuffer},
             transaction_state_container::StateContainer,
         },
         TOTAL_BUFFERED_PACKETS,
@@ -146,15 +142,6 @@ impl ReceiveAndBufferCreator for TransactionViewReceiveAndBuffer {
             receiver,
             bank_forks,
         }
-    }
-}
-
-impl ReceiveAndBufferCreator for SanitizedTransactionReceiveAndBuffer {
-    fn create(
-        receiver: Receiver<Arc<Vec<PacketBatch>>>,
-        bank_forks: Arc<RwLock<BankForks>>,
-    ) -> Self {
-        SanitizedTransactionReceiveAndBuffer::new(PacketDeserializer::new(receiver), bank_forks)
     }
 }
 

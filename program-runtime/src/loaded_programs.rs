@@ -110,6 +110,11 @@ impl From<ProgramCacheEntryOwner> for Pubkey {
     - Loaded / FailedVerification => Loaded in UpgradeableLoaderInstruction::Upgrade
     - Loaded / FailedVerification => Closed in UpgradeableLoaderInstruction::Close
 
+    Loader migration:
+    - Closed => Closed (in the same slot)
+    - FailedVerification => FailedVerification (with different account_owner)
+    - Loaded => Loaded (with different account_owner)
+
     Eviction and unloading (in the same slot):
     - Unloaded => Loaded in ProgramCache::assign_program
     - Loaded => Unloaded in ProgramCache::unload_program_entry
@@ -904,6 +909,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 ProgramCacheEntryType::Unloaded(_),
                                 ProgramCacheEntryType::Loaded(_),
                             ) => {}
+                            (ProgramCacheEntryType::Closed, ProgramCacheEntryType::Closed)
+                                if existing.account_owner != entry.account_owner => {}
                             _ => {
                                 // Something is wrong, I can feel it ...
                                 error!(
@@ -928,6 +935,18 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         slot_versions.insert(index, Arc::clone(&entry));
                     }
                 }
+                // Remove existing entries in the same deployment slot unless they are for a different environment.
+                // This overwrites the current status of a program in program management instructions.
+                slot_versions.retain(|existing| {
+                    existing.deployment_slot != entry.deployment_slot
+                        || existing
+                            .program
+                            .get_environment()
+                            .zip(entry.program.get_environment())
+                            .map(|(a, b)| !Arc::ptr_eq(a, b))
+                            .unwrap_or(false)
+                        || existing == &entry
+                });
             }
         }
         false
@@ -1835,8 +1854,16 @@ mod tests {
             entries.shuffle(&mut rng);
             let mut cache = new_mock_cache::<TestForkGraph>();
             for (deployment_slot, effective_slot) in entries {
-                assert!(!cache
-                    .assign_program(program_id, new_test_entry(deployment_slot, effective_slot)));
+                let entry = Arc::new(ProgramCacheEntry {
+                    program: new_loaded_entry(Arc::new(BuiltinProgram::new_mock())), // Assign them different environments
+                    account_owner: ProgramCacheEntryOwner::LoaderV2,
+                    account_size: 0,
+                    deployment_slot,
+                    effective_slot,
+                    tx_usage_counter: Arc::new(AtomicU64::default()),
+                    latest_access_slot: AtomicU64::new(deployment_slot),
+                });
+                assert!(!cache.assign_program(program_id, entry));
             }
             for ((deployment_slot, effective_slot), entry) in EXPECTED_ENTRIES
                 .iter()
@@ -1947,6 +1974,62 @@ mod tests {
                 latest_access_slot: AtomicU64::default(),
             }),
         ));
+    }
+
+    #[test]
+    fn test_assign_program_removes_entries_in_same_slot() {
+        let mut cache = ProgramCache::<TestForkGraph>::new(0, 0);
+        cache.environments.program_runtime_v1 = get_mock_env();
+        let program_id = Pubkey::new_unique();
+        let closed_other_slot = Arc::new(ProgramCacheEntry {
+            program: ProgramCacheEntryType::Closed,
+            account_owner: ProgramCacheEntryOwner::LoaderV2,
+            account_size: 0,
+            deployment_slot: 9,
+            effective_slot: 9,
+            tx_usage_counter: Arc::default(),
+            latest_access_slot: AtomicU64::default(),
+        });
+        let closed_current_slot = Arc::new(ProgramCacheEntry {
+            program: ProgramCacheEntryType::Closed,
+            account_owner: ProgramCacheEntryOwner::LoaderV2,
+            account_size: 0,
+            deployment_slot: 10,
+            effective_slot: 10,
+            tx_usage_counter: Arc::default(),
+            latest_access_slot: AtomicU64::default(),
+        });
+        let loaded_entry_current_env = Arc::new(ProgramCacheEntry {
+            program: ProgramCacheEntryType::Unloaded(get_mock_env()),
+            account_owner: ProgramCacheEntryOwner::LoaderV2,
+            account_size: 0,
+            deployment_slot: 10,
+            effective_slot: 11,
+            tx_usage_counter: Arc::default(),
+            latest_access_slot: AtomicU64::default(),
+        });
+        let loaded_entry_upcoming_env = Arc::new(ProgramCacheEntry {
+            program: ProgramCacheEntryType::Unloaded(Arc::new(BuiltinProgram::new_mock())),
+            account_owner: ProgramCacheEntryOwner::LoaderV2,
+            account_size: 0,
+            deployment_slot: 10,
+            effective_slot: 11,
+            tx_usage_counter: Arc::default(),
+            latest_access_slot: AtomicU64::default(),
+        });
+        assert!(!cache.assign_program(program_id, closed_other_slot.clone()));
+        assert!(!cache.assign_program(program_id, closed_current_slot));
+        assert!(!cache.assign_program(program_id, loaded_entry_upcoming_env.clone()));
+        assert!(!cache.assign_program(program_id, loaded_entry_current_env.clone()));
+        // Only the conflicting entry in the same slot which does not have a different environment is removed
+        assert_eq!(
+            cache.get_slot_versions_for_tests(&program_id),
+            &[
+                closed_other_slot,
+                loaded_entry_current_env,
+                loaded_entry_upcoming_env
+            ]
+        );
     }
 
     #[test]

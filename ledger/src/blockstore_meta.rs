@@ -39,7 +39,6 @@ bitflags! {
         // CONNECTED is explicitly the first bit to ensure backwards compatibility
         // with the boolean field that ConnectedFlags replaced in SlotMeta.
         const CONNECTED        = 0b0000_0001;
-        // PARENT_CONNECTED IS INTENTIONALLY UNUSED FOR NOW
         const PARENT_CONNECTED = 0b1000_0000;
     }
 }
@@ -215,9 +214,9 @@ impl From<SlotMetaV2> for SlotMetaV1 {
 // pub type CompletedDataIndexes = CompletedDataIndexesV1;
 // pub type SlotMetaFallback = SlotMetaV2;
 // ```
-pub type SlotMeta = SlotMetaV1;
-pub type CompletedDataIndexes = CompletedDataIndexesV1;
-pub type SlotMetaFallback = SlotMetaV2;
+pub type SlotMeta = SlotMetaV2;
+pub type CompletedDataIndexes = CompletedDataIndexesV2;
+pub type SlotMetaFallback = SlotMetaV1;
 
 // Serde implementation of serialize and deserialize for Option<u64>
 // where None is represented as u64::MAX; for backward compatibility.

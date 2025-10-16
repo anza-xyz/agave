@@ -1,5 +1,6 @@
 use {
     agave_feature_set::{FeatureSet, FEATURE_NAMES},
+    agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     log::*,
     solana_account::{Account, AccountSharedData},
     solana_bls_signatures::{
@@ -21,7 +22,6 @@ use {
     solana_system_interface::program as system_program,
     solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
     solana_vote_program::vote_state,
-    solana_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     std::borrow::Borrow,
 };
 
@@ -194,23 +194,13 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         } else {
             vote_state::create_account(&vote_pubkey, &node_pubkey, 0, *stake)
         };
-        let stake_account = if is_alpenglow {
-            Account::from(stake_state::create_alpenglow_account(
-                &stake_pubkey,
-                &vote_pubkey,
-                &vote_account,
-                &genesis_config_info.genesis_config.rent,
-                *stake,
-            ))
-        } else {
-            Account::from(stake_state::create_account(
-                &stake_pubkey,
-                &vote_pubkey,
-                &vote_account,
-                &genesis_config_info.genesis_config.rent,
-                *stake,
-            ))
-        };
+        let stake_account = Account::from(stake_state::create_account(
+            &stake_pubkey,
+            &vote_pubkey,
+            &vote_account,
+            &genesis_config_info.genesis_config.rent,
+            *stake,
+        ));
 
         let vote_account = Account::from(vote_account);
 
@@ -349,7 +339,6 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     cluster_type: ClusterType,
     mut initial_accounts: Vec<(Pubkey, AccountSharedData)>,
 ) -> GenesisConfig {
-    let is_alpenglow = validator_bls_pubkey.is_some();
     let validator_vote_account = if let Some(bls_pubkey_compressed) = validator_bls_pubkey {
         vote_state::create_v4_account_with_authorized(
             validator_pubkey,
@@ -368,23 +357,13 @@ pub fn create_genesis_config_with_leader_ex_no_features(
         )
     };
 
-    let validator_stake_account = if is_alpenglow {
-        stake_state::create_alpenglow_account(
-            validator_stake_account_pubkey,
-            validator_vote_account_pubkey,
-            &validator_vote_account,
-            &rent,
-            validator_stake_lamports,
-        )
-    } else {
-        stake_state::create_account(
-            validator_stake_account_pubkey,
-            validator_vote_account_pubkey,
-            &validator_vote_account,
-            &rent,
-            validator_stake_lamports,
-        )
-    };
+    let validator_stake_account = stake_state::create_account(
+        validator_stake_account_pubkey,
+        validator_vote_account_pubkey,
+        &validator_vote_account,
+        &rent,
+        validator_stake_lamports,
+    );
 
     initial_accounts.push((
         *mint_pubkey,

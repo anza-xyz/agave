@@ -1710,6 +1710,13 @@ pub struct CliVoteAccount {
     pub use_csv: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub epoch_rewards: Option<Vec<CliEpochReward>>,
+    // Fields added with vote state v4 via SIMD-0185:
+    pub inflation_rewards_commission_bps: u16,
+    pub inflation_rewards_collector: String,
+    pub block_revenue_collector: String,
+    pub block_revenue_commission_bps: u16,
+    pub pending_delegator_rewards: u64,
+    pub bls_pubkey_compressed: Option<String>,
 }
 
 impl QuietDisplay for CliVoteAccount {}
@@ -1727,6 +1734,34 @@ impl fmt::Display for CliVoteAccount {
         writeln!(f, "Withdraw Authority: {}", self.authorized_withdrawer)?;
         writeln!(f, "Credits: {}", self.credits)?;
         writeln!(f, "Commission: {}%", self.commission)?;
+        writeln!(
+            f,
+            "Inflation Rewards Commission: {} basis points",
+            self.inflation_rewards_commission_bps
+        )?;
+        writeln!(
+            f,
+            "Inflation Rewards Collector: {}",
+            self.inflation_rewards_collector
+        )?;
+        writeln!(
+            f,
+            "Block Revenue Collector: {}",
+            self.block_revenue_collector
+        )?;
+        writeln!(
+            f,
+            "Block Revenue Commission: {} basis points",
+            self.block_revenue_commission_bps
+        )?;
+        writeln!(
+            f,
+            "Pending Delegator Rewards: {}",
+            build_balance_message(self.pending_delegator_rewards, self.use_lamports_unit, true)
+        )?;
+        if let Some(bls_key) = &self.bls_pubkey_compressed {
+            writeln!(f, "BLS Public Key: {bls_key}")?;
+        }
         writeln!(
             f,
             "Root Slot: {}",
@@ -3549,6 +3584,11 @@ mod tests {
              Withdraw Authority: \n\
              Credits: 0\n\
              Commission: 0%\n\
+             Inflation Rewards Commission: 0 basis points\n\
+             Inflation Rewards Collector: \n\
+             Block Revenue Collector: \n\
+             Block Revenue Commission: 0 basis points\n\
+             Pending Delegator Rewards: 0 SOL\n\
              Root Slot: ~\n\
              Recent Timestamp: 1970-01-01T00:00:00Z from slot 0\n";
 

@@ -774,6 +774,10 @@ impl AdminRpc for AdminRpcImpl {
             )));
         }
 
+        if transaction_struct != TransactionStructure::View {
+            warn!("TransactionStructure::Sdk has no effect on block production");
+        }
+
         meta.with_post_init(|post_init| {
             let mut banking_stage = post_init.banking_stage.write().unwrap();
             let Some(banking_stage) = banking_stage.as_mut() else {
@@ -783,7 +787,6 @@ impl AdminRpc for AdminRpcImpl {
 
             banking_stage
                 .spawn_threads(
-                    transaction_struct,
                     block_production_method,
                     num_workers,
                     SchedulerConfig { scheduler_pacing },

@@ -258,15 +258,19 @@ fn commission_split(commission: u8, on: u64) -> (u64, u64, bool) {
 #[cfg(test)]
 mod tests {
     use {
-        self::points::null_tracer, super::*, solana_native_token::LAMPORTS_PER_SOL,
-        solana_pubkey::Pubkey, solana_stake_interface::state::Delegation,
-        solana_vote_program::vote_state::VoteStateV3, test_case::test_case,
+        self::points::null_tracer,
+        super::*,
+        solana_native_token::LAMPORTS_PER_SOL,
+        solana_pubkey::Pubkey,
+        solana_stake_interface::state::Delegation,
+        solana_vote_program::vote_state::{handler::VoteStateHandle, VoteStateV4},
+        test_case::test_case,
     };
 
     fn new_stake(
         stake: u64,
         voter_pubkey: &Pubkey,
-        vote_state: &VoteStateV3,
+        vote_state: &VoteStateV4,
         activation_epoch: Epoch,
     ) -> Stake {
         Stake {
@@ -277,7 +281,7 @@ mod tests {
 
     #[test]
     fn test_stake_state_redeem_rewards() {
-        let mut vote_state = VoteStateV3::default();
+        let mut vote_state = VoteStateV4::default();
         // assume stake.stake() is right
         // bootstrap means fully-vested stake at epoch 0
         let stake_lamports = 1;
@@ -330,7 +334,7 @@ mod tests {
 
     #[test]
     fn test_stake_state_calculate_rewards() {
-        let mut vote_state = VoteStateV3::default();
+        let mut vote_state = VoteStateV4::default();
         // assume stake.stake() is right
         // bootstrap means fully-vested stake at epoch 0
         let mut stake = new_stake(1, &Pubkey::default(), &vote_state, u64::MAX);
@@ -474,7 +478,7 @@ mod tests {
 
         // same as above, but is a really small commission out of 32 bits,
         //  verify that None comes back on small redemptions where no one gets paid
-        vote_state.commission = 1;
+        vote_state.inflation_rewards_commission_bps = 100;
         assert_eq!(
             None, // would be Some((0, 2 * 1 + 1 * 2, 4)),
             calculate_stake_rewards(
@@ -490,7 +494,7 @@ mod tests {
                 None,
             )
         );
-        vote_state.commission = 99;
+        vote_state.inflation_rewards_commission_bps = 9900;
         assert_eq!(
             None, // would be Some((0, 2 * 1 + 1 * 2, 4)),
             calculate_stake_rewards(
@@ -604,7 +608,7 @@ mod tests {
         );
 
         // get rewards and credits observed when not the activation epoch
-        vote_state.commission = 0;
+        vote_state.inflation_rewards_commission_bps = 0;
         stake.credits_observed = 3;
         stake.delegation.activation_epoch = 1;
         assert_eq!(
@@ -655,7 +659,7 @@ mod tests {
     #[test_case(u64::MAX, 1_000, u64::MAX => panics "Rewards intermediate calculation should fit within u128")]
     #[test_case(1, u64::MAX, u64::MAX => panics "Rewards should fit within u64")]
     fn calculate_rewards_tests(stake: u64, rewards: u64, credits: u64) {
-        let mut vote_state = VoteStateV3::default();
+        let mut vote_state = VoteStateV4::default();
 
         let stake = new_stake(stake, &Pubkey::default(), &vote_state, u64::MAX);
 
@@ -674,7 +678,7 @@ mod tests {
 
     #[test]
     fn test_stake_state_calculate_points_with_typical_values() {
-        let vote_state = VoteStateV3::default();
+        let vote_state = VoteStateV4::default();
 
         // bootstrap means fully-vested stake at epoch 0 with
         //  10_000_000 SOL is a big but not unreasaonable stake

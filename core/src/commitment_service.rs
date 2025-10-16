@@ -271,7 +271,7 @@ impl AggregateCommitmentService {
 mod tests {
     use {
         super::*,
-        solana_account::Account,
+        solana_account::{state_traits::StateMut, Account, ReadableAccount},
         solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
         solana_pubkey::Pubkey,
         solana_runtime::{
@@ -282,7 +282,8 @@ mod tests {
         solana_stake_program::stake_state,
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::{
-            self, process_slot_vote_unchecked, TowerSync, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            self, process_slot_vote_unchecked, TowerSync, VoteStateV4, VoteStateVersions,
+            MAX_LOCKOUT_HISTORY,
         },
     };
 
@@ -463,32 +464,32 @@ mod tests {
         // Create bank
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
-        let mut vote_state1 = vote_state::from(&vote_account1).unwrap();
+        let mut vote_state1 = VoteStateV4::deserialize(vote_account1.data(), &pk1).unwrap();
         process_slot_vote_unchecked(&mut vote_state1, 3);
         process_slot_vote_unchecked(&mut vote_state1, 5);
         if !with_node_vote_state {
-            let versioned = VoteStateVersions::new_v3(vote_state1.clone());
-            vote_state::to(&versioned, &mut vote_account1).unwrap();
+            let versioned = VoteStateVersions::new_v4(vote_state1.clone());
+            vote_account1.set_state(&versioned).unwrap();
             bank.store_account(&pk1, &vote_account1);
         }
 
-        let mut vote_state2 = vote_state::from(&vote_account2).unwrap();
+        let mut vote_state2 = VoteStateV4::deserialize(vote_account2.data(), &pk2).unwrap();
         process_slot_vote_unchecked(&mut vote_state2, 9);
         process_slot_vote_unchecked(&mut vote_state2, 10);
-        let versioned = VoteStateVersions::new_v3(vote_state2);
-        vote_state::to(&versioned, &mut vote_account2).unwrap();
+        let versioned = VoteStateVersions::new_v4(vote_state2);
+        vote_account2.set_state(&versioned).unwrap();
         bank.store_account(&pk2, &vote_account2);
 
-        let mut vote_state3 = vote_state::from(&vote_account3).unwrap();
+        let mut vote_state3 = VoteStateV4::deserialize(vote_account3.data(), &pk3).unwrap();
         vote_state3.root_slot = Some(1);
-        let versioned = VoteStateVersions::new_v3(vote_state3);
-        vote_state::to(&versioned, &mut vote_account3).unwrap();
+        let versioned = VoteStateVersions::new_v4(vote_state3);
+        vote_account3.set_state(&versioned).unwrap();
         bank.store_account(&pk3, &vote_account3);
 
-        let mut vote_state4 = vote_state::from(&vote_account4).unwrap();
+        let mut vote_state4 = VoteStateV4::deserialize(vote_account4.data(), &pk4).unwrap();
         vote_state4.root_slot = Some(2);
-        let versioned = VoteStateVersions::new_v3(vote_state4);
-        vote_state::to(&versioned, &mut vote_account4).unwrap();
+        let versioned = VoteStateVersions::new_v4(vote_state4);
+        vote_account4.set_state(&versioned).unwrap();
         bank.store_account(&pk4, &vote_account4);
 
         let node_vote_pubkey = if with_node_vote_state {
@@ -587,7 +588,7 @@ mod tests {
             .root_slot
             .unwrap();
         for x in 0..root {
-            bank_forks.write().unwrap().set_root(x, None, None).unwrap();
+            bank_forks.write().unwrap().set_root(x, None, None);
         }
 
         // Add an additional bank/vote that will root slot 2
@@ -630,8 +631,7 @@ mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(root, None, Some(highest_super_majority_root))
-            .unwrap();
+            .set_root(root, None, Some(highest_super_majority_root));
         let highest_super_majority_root_bank =
             bank_forks.read().unwrap().get(highest_super_majority_root);
         assert!(highest_super_majority_root_bank.is_some());
@@ -714,8 +714,7 @@ mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(root, None, Some(highest_super_majority_root))
-            .unwrap();
+            .set_root(root, None, Some(highest_super_majority_root));
         let highest_super_majority_root_bank =
             bank_forks.read().unwrap().get(highest_super_majority_root);
         assert!(highest_super_majority_root_bank.is_some());

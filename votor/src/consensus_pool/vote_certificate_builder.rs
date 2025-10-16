@@ -1,10 +1,9 @@
 use {
     crate::common::{certificate_limits_and_vote_types, VoteType},
+    agave_votor_messages::consensus_message::{Certificate, CertificateMessage, VoteMessage},
     bitvec::prelude::*,
-    itertools::Itertools,
     solana_bls_signatures::{BlsError, SignatureProjective},
     solana_signer_store::{decode, encode_base2, encode_base3, DecodeError, Decoded, EncodeError},
-    solana_votor_messages::consensus_message::{Certificate, CertificateMessage, VoteMessage},
     thiserror::Error,
 };
 
@@ -107,11 +106,9 @@ impl VoteCertificateBuilder {
             }
         }
 
-        let signature_iter = messages
-            .iter()
-            .map(|vote_message| &vote_message.signature)
-            .collect_vec();
-        Ok(self.signature.aggregate_with(&signature_iter)?)
+        Ok(self
+            .signature
+            .aggregate_with(messages.iter().map(|m| &m.signature))?)
     }
 
     pub fn build(self) -> Result<CertificateMessage, CertificateError> {
@@ -154,15 +151,15 @@ impl VoteCertificateBuilder {
 mod tests {
     use {
         super::*,
+        agave_votor_messages::{
+            consensus_message::{Certificate, CertificateType, VoteMessage},
+            vote::Vote,
+        },
         solana_bls_signatures::{
             Keypair as BLSKeypair, PubkeyProjective as BLSPubkeyProjective,
             Signature as BLSSignature, SignatureProjective, VerifiablePubkey,
         },
         solana_hash::Hash,
-        solana_votor_messages::{
-            consensus_message::{Certificate, CertificateType, VoteMessage},
-            vote::Vote,
-        },
     };
 
     #[test]
@@ -381,9 +378,8 @@ mod tests {
         let certificate_message = builder.build().expect("Failed to build certificate");
 
         // 3. Verification: Aggregate the public keys and verify the signature.
-        let pubkey_refs: Vec<_> = keypairs.iter().map(|kp| &kp.public).collect();
-        let aggregate_pubkey =
-            BLSPubkeyProjective::aggregate(&pubkey_refs).expect("Failed to aggregate public keys");
+        let aggregate_pubkey = BLSPubkeyProjective::aggregate(keypairs.iter().map(|kp| &kp.public))
+            .expect("Failed to aggregate public keys");
 
         let verification_result =
             aggregate_pubkey.verify_signature(&certificate_message.signature, &serialized_vote);
@@ -463,13 +459,10 @@ mod tests {
             }
         }
 
-        let pubkey_refs: Vec<_> = all_pubkeys.iter().collect();
-        let message_refs: Vec<&[u8]> = all_messages.iter().map(|m| m.as_slice()).collect();
-
         SignatureProjective::verify_distinct_aggregated(
-            &pubkey_refs,
+            all_pubkeys.iter(),
             &certificate_message.signature,
-            &message_refs,
+            all_messages.iter().map(Vec::as_slice),
         )
         .unwrap();
     }

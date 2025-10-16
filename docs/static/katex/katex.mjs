@@ -3688,7 +3688,7 @@ var metricMap = {
 // 7-8pt), and scriptscriptstyle (size index 1 and 2: 5-6pt).  These are
 // provided in the arrays below, in that order.
 //
-// The font metrics are stored in fonts cmsy10, cmsy7, and cmsy5 respsectively.
+// The font metrics are stored in fonts cmsy10, cmsy7, and cmsy5 respectively.
 // This was determined by running the following script:
 //
 //     latex -interaction=nonstopmode \
@@ -3907,7 +3907,7 @@ function getCharacterMetrics(character, font, mode) {
     // So if the character is in a script we support but we
     // don't have metrics for it, just use the metrics for
     // the Latin capital letter M. This is close enough because
-    // we (currently) only care about the height of the glpyh
+    // we (currently) only care about the height of the glyph
     // not its width.
     if (supportedCodepoint(ch)) {
       metrics = metricMap[font][77]; // 77 is the charcode for 'M'
@@ -4131,7 +4131,7 @@ defineSymbol(math, main, rel, "\u21c1", "\\rightharpoondown", true);
 defineSymbol(math, main, rel, "\u2196", "\\nwarrow", true);
 defineSymbol(math, main, rel, "\u21cc", "\\rightleftharpoons", true); // AMS Negated Binary Relations
 
-defineSymbol(math, ams, rel, "\u226e", "\\nless", true); // Symbol names preceeded by "@" each have a corresponding macro.
+defineSymbol(math, ams, rel, "\u226e", "\\nless", true); // Symbol names proceeded by "@" each have a corresponding macro.
 
 defineSymbol(math, ams, rel, "\ue010", "\\@nleqslant");
 defineSymbol(math, ams, rel, "\ue011", "\\@nleqq");
@@ -4638,7 +4638,7 @@ defineSymbol(text$1, main, accent, "\u02da", "\\r"); // ring above
 
 defineSymbol(text$1, main, accent, "\u02c7", "\\v"); // caron
 
-defineSymbol(text$1, main, accent, "\u00a8", '\\"'); // diaresis
+defineSymbol(text$1, main, accent, "\u00a8", '\\"'); // diaeresis
 
 defineSymbol(text$1, main, accent, "\u02dd", "\\H"); // double acute
 
@@ -5532,7 +5532,7 @@ const canCombine = (prev, next) => {
   return true;
 };
 /**
- * Combine consequetive domTree.symbolNodes into a single symbolNode.
+ * Combine consecutive domTree.symbolNodes into a single symbolNode.
  * Note: this function mutates the argument.
  */
 
@@ -6534,7 +6534,7 @@ function buildHTML(tree, options) {
  * since we're mainly using MathML to improve accessibility, we don't manage
  * any of the styling state that the plain DOM nodes do.
  *
- * The `toNode` and `toMarkup` functions work simlarly to how they do in
+ * The `toNode` and `toMarkup` functions work similarly to how they do in
  * domTree.js, creating namespaced DOM nodes and HTML text markup respectively.
  */
 function newDocumentFragment(children) {
@@ -6655,7 +6655,7 @@ class TextNode {
   }
   /**
    * Converts the text node into a string
-   * (representing the text iteself).
+   * (representing the text itself).
    */
 
 
@@ -6750,7 +6750,7 @@ var mathMLTree = {
 };
 
 /**
- * This file converts a parse tree into a cooresponding MathML tree. The main
+ * This file converts a parse tree into a corresponding MathML tree. The main
  * entry point is the `buildMathML` function, which takes a parse tree from the
  * parser.
  */
@@ -8440,7 +8440,7 @@ const makeStackedDelim = function makeStackedDelim(delim, heightTotal, center, o
     const middleMetrics = getMetrics(middle, font, mode);
     middleHeightTotal = middleMetrics.height + middleMetrics.depth;
     middleFactor = 2; // repeat symmetrically above and below middle
-  } // Calcuate the minimal height that the delimiter can have.
+  } // Calculate the minimal height that the delimiter can have.
   // It is at least the size of the top, bottom, and optional middle combined.
 
 
@@ -9194,7 +9194,7 @@ defineFunction({
     return middleDelim;
   },
   mathmlBuilder: (group, options) => {
-    // A Firefox \middle will strech a character vertically only if it
+    // A Firefox \middle will stretch a character vertically only if it
     // is in the fence part of the operator dictionary at:
     // https://www.w3.org/TR/MathML3/appendixc.html.
     // So we need to avoid U+2223 and use plain "|" instead.
@@ -9913,7 +9913,7 @@ const mathmlBuilder$3 = function mathmlBuilder(group, options) {
   // LaTeX \arraystretch multiplies the row baseline-to-baseline distance.
   // We simulate this by adding (arraystretch - 1)em to the gap. This
   // does a reasonable job of adjusting arrays containing 1 em tall content.
-  // The 0.16 and 0.09 values are found emprically. They produce an array
+  // The 0.16 and 0.09 values are found empirically. They produce an array
   // similar to LaTeX and in which content does not interfere with \hines.
 
   const gap = group.arraystretch === 0.5 ? 0.1 // {smallmatrix}, {subarray}

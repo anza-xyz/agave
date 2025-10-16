@@ -36,6 +36,7 @@ use {
     crossbeam_channel::{bounded, unbounded, Receiver},
     quinn::Endpoint,
     serde::{Deserialize, Serialize},
+    solana_account::ReadableAccount,
     solana_accounts_db::{
         accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
@@ -142,7 +143,7 @@ use {
     },
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_validator_exit::Exit,
-    solana_vote_program::vote_state,
+    solana_vote_program::vote_state::VoteStateV4,
     solana_wen_restart::wen_restart::{wait_for_wen_restart, WenRestartConfig},
     std::{
         borrow::Cow,
@@ -251,7 +252,7 @@ impl TransactionStructure {
     }
 
     pub fn cli_message() -> &'static str {
-        "Switch internal transaction structure/representation"
+        "DEPRECATED: has no impact on banking stage; will be removed in a future version"
     }
 }
 
@@ -358,7 +359,6 @@ pub struct ValidatorConfig {
     pub block_production_method: BlockProductionMethod,
     pub block_production_num_workers: NonZeroUsize,
     pub block_production_scheduler_config: SchedulerConfig,
-    pub transaction_struct: TransactionStructure,
     pub enable_block_production_forwarding: bool,
     pub generator_config: Option<GeneratorConfig>,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
@@ -438,7 +438,6 @@ impl ValidatorConfig {
             block_production_method: BlockProductionMethod::default(),
             block_production_num_workers: BankingStage::default_num_workers(),
             block_production_scheduler_config: SchedulerConfig::default(),
-            transaction_struct: TransactionStructure::default(),
             // enable forwarding by default for tests
             enable_block_production_forwarding: true,
             generator_config: None,
@@ -976,11 +975,8 @@ impl Validator {
             },
         );
         info!(
-            "Using: block-verification-method: {}, block-production-method: {}, \
-             transaction-structure: {}",
-            config.block_verification_method,
-            config.block_production_method,
-            config.transaction_struct
+            "Using: block-verification-method: {}, block-production-method: {}",
+            config.block_verification_method, config.block_production_method,
         );
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
@@ -1733,7 +1729,6 @@ impl Validator {
             config.block_production_method.clone(),
             config.block_production_num_workers,
             config.block_production_scheduler_config.clone(),
-            config.transaction_struct.clone(),
             config.enable_block_production_forwarding,
             config.generator_config.clone(),
             key_notifiers.clone(),
@@ -1961,7 +1956,7 @@ impl Validator {
 
 fn active_vote_account_exists_in_bank(bank: &Bank, vote_account: &Pubkey) -> bool {
     if let Some(account) = &bank.get_account(vote_account) {
-        if let Some(vote_state) = vote_state::from(account) {
+        if let Ok(vote_state) = VoteStateV4::deserialize(account.data(), vote_account) {
             return !vote_state.votes.is_empty();
         }
     }
@@ -2418,9 +2413,7 @@ fn maybe_warp_slot(
             &Pubkey::default(),
             warp_slot,
         ));
-        bank_forks
-            .set_root(warp_slot, Some(snapshot_controller), Some(warp_slot))
-            .map_err(|err| err.to_string())?;
+        bank_forks.set_root(warp_slot, Some(snapshot_controller), Some(warp_slot));
         leader_schedule_cache.set_root(&bank_forks.root_bank());
 
         let full_snapshot_archive_info = match snapshot_bank_utils::bank_to_full_snapshot_archive(

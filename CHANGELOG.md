@@ -18,6 +18,7 @@ Release channels have their own copy of this changelog:
 #### Breaking
 * A signature verification failure in `simulateTransaction()` or the preflight stage of `sendTransaction()` will now be attached to the simulation result's `err` property as `TransactionError::SignatureFailure` instead of being thrown as a JSON RPC API error (-32003). Applications that already guard against JSON RPC exceptions should expect signature verification errors to appear on the simulation result instead. Applications that already handle the materialization of `TransactionErrors` on simulation results can now expect to receive errors of type `TransactionError::SignatureFailure` at those verification sites.
 #### Changes
+* The `getProgramAccounts` RPC endpoint now returns JSON-RPC errors when malformed filters are provided (previously these malformed filters would be silently ignored and the RPC call would execute an unfiltered query).
 * `PubsubClient` can now be constructed with the URI of an RPC (as a `str`, `String`, or `Uri`) as well as an `http::Request<()>`. The addition of `Request` allows you to set request headers when establishing a websocket connection with an RPC.
 ### Validator
 #### Breaking
@@ -51,6 +52,7 @@ Release channels have their own copy of this changelog:
   * `--no-check-vote-account`
   * `--no-rocksdb-compaction`, `--rocksdb-compaction-interval-slots`, `--rocksdb-max-compaction-jitter-slots`
   * `--replay-slots-concurrently`
+    * Use `--replay-forks-threads` with a value of `4` to match preexisting behavior
   * `--rpc-pubsub-max-connections`, `--rpc-pubsub-max-fragment-size`, `--rpc-pubsub-max-in-buffer-capacity`, `--rpc-pubsub-max-out-buffer-capacity`, `--enable-cpi-and-log-storage`, `--minimal-rpc-api`
   * `--skip-poh-verify`
 * Deprecated snapshot archive formats have been removed and are no longer loadable.

@@ -2,9 +2,9 @@ use {
     super::{
         consumer::LeaderProcessedTransactionCounts,
         leader_slot_timing_metrics::{LeaderExecuteAndCommitTimings, LeaderSlotTimingMetrics},
-        packet_deserializer::PacketReceiverStats,
         vote_storage::VoteBatchInsertionMetrics,
     },
+    crate::banking_stage::vote_packet_receiver::PacketReceiverStats,
     solana_clock::Slot,
     solana_runtime::bank::Bank,
     solana_svm::transaction_error_metrics::*,

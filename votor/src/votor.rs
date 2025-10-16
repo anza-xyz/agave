@@ -52,6 +52,7 @@ use {
         vote_history_storage::VoteHistoryStorage,
         voting_service::BLSOp,
     },
+    agave_votor_messages::consensus_message::ConsensusMessage,
     crossbeam_channel::{Receiver, Sender},
     parking_lot::RwLock as PlRwLock,
     solana_clock::Slot,
@@ -68,8 +69,13 @@ use {
         bank_forks::BankForks, installed_scheduler_pool::BankWithScheduler,
         snapshot_controller::SnapshotController,
     },
-    solana_votor_messages::consensus_message::ConsensusMessage,
-    std::sync::{atomic::AtomicBool, Arc, Condvar, Mutex, RwLock},
+    std::{
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, Condvar, Mutex, RwLock,
+        },
+        time::Duration,
+    },
 };
 
 /// Communication with the block creation loop to notify leader window
@@ -131,4 +137,22 @@ pub struct Votor {
     event_handler: EventHandler,
     consensus_pool_service: ConsensusPoolService,
     timer_manager: Arc<PlRwLock<TimerManager>>,
+}
+
+impl Votor {
+    pub(crate) fn wait_for_migration_or_exit(
+        exit: &AtomicBool,
+        (lock, cvar): &(Mutex<bool>, Condvar),
+    ) {
+        let mut started = lock.lock().unwrap();
+        while !*started {
+            if exit.load(Ordering::Relaxed) {
+                return;
+            }
+            // Add timeout to check for exit flag. Check infrequent enough to
+            // not hit performance while frequent enough that validator exit
+            // isn't delayed a lot.
+            (started, _) = cvar.wait_timeout(started, Duration::from_secs(1)).unwrap();
+        }
+    }
 }

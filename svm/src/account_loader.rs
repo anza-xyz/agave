@@ -364,7 +364,7 @@ pub fn update_rent_exempt_status_for_account(rent: &Rent, account: &mut AccountS
 
 /// Check whether the payer_account is capable of paying the fee. The
 /// side effect is to subtract the fee amount from the payer_account
-/// balance of lamports. If the payer_acount is not able to pay the
+/// balance of lamports. If the payer_account is not able to pay the
 /// fee, the error_metrics is incremented, and a specific error is
 /// returned.
 pub fn validate_fee_payer(
@@ -559,7 +559,7 @@ fn load_transaction_accounts_simd186<CB: TransactionProcessingCallback>(
             // This has been annotated branch-by-branch because collapsing the logic is infeasible.
             // Its purpose is to ensure programdata accounts are counted once and *only* once per
             // transaction. By checking account_keys, we never double-count a programdata account
-            // that was explictly included in the transaction. We also use a hashset to gracefully
+            // that was explicitly included in the transaction. We also use a hashset to gracefully
             // handle cases that LoaderV3 presumably makes impossible, such as self-referential
             // program accounts or multiply-referenced programdata accounts, for added safety.
             //
@@ -2844,7 +2844,7 @@ mod tests {
                     u64::MAX,
                 );
 
-                // give half loaderv3 accounts (if theyre long enough) a valid programdata
+                // give half loaderv3 accounts (if they're long enough) a valid programdata
                 // a quarter a dead pointer and a quarter nothing
                 // we set executable like a program because after the flag is disabled...
                 // ...programdata and buffer accounts can be used as program ids without aborting loading

@@ -230,6 +230,8 @@ impl Tvu {
             rpc_subscriptions.clone(),
             slot_status_notifier.clone(),
             tvu_config.xdp_sender,
+            // votor_event_sender is Alpenglow specific sender, it is None if Alpenglow is not enabled.
+            None,
         );
 
         let (ancestor_duplicate_slots_sender, ancestor_duplicate_slots_receiver) = unbounded();

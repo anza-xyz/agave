@@ -15,7 +15,9 @@ use {
         },
     },
     solana_clock::Slot,
-    solana_core::banking_trace::BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
+    solana_core::{
+        banking_trace::BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT, validator::TransactionStructure,
+    },
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_faucet::faucet::{self, FAUCET_PORT},
     solana_hash::Hash,
@@ -212,6 +214,17 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .takes_value(false)
             .help("Enable UDP for receiving/sending transactions."),
         usage_warning: "UDP support will be dropped"
+    );
+    add_arg!(
+        // deprecated in v3.1.0
+        Arg::with_name("transaction_struct")
+            .long("transaction-structure")
+            .value_name("STRUCT")
+            .takes_value(true)
+            .possible_values(TransactionStructure::cli_names())
+            .default_value(TransactionStructure::default().into())
+            .help(TransactionStructure::cli_message()),
+        usage_warning: "Transaction structure is no longer configurable"
     );
     res
 }
@@ -762,6 +775,23 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                      AdminRPC: Gossip switches to send/receive from the new interface, while \
                      TVU/TPU continue receiving from ALL interfaces but send from the new \
                      interface only.",
+                ),
+        )
+        .arg(
+            Arg::with_name("advertised_ip")
+                .long("advertised-ip")
+                .value_name("HOST")
+                .takes_value(true)
+                .validator(solana_net_utils::is_host)
+                .hidden(hidden_unless_forced())
+                .help(
+                    "Use when running a validator behind a NAT. DNS name or IP address for this \
+                     validator to advertise in gossip. This address will be used as the target \
+                     desination address for peers trying to contact this node. [default: the \
+                     first --bind-address, or ask --entrypoint when --bind-address is not \
+                     provided, or 127.0.0.1 when --entrypoint is not provided]. Note: this \
+                     argument cannot be used in a multihoming context (when multiple \
+                     --bind-address values are provided).",
                 ),
         )
         .arg(

@@ -173,11 +173,7 @@ mod tests {
             &root_bank,
         );
         // root is updated but epoch still the same.
-        bank_forks
-            .write()
-            .unwrap()
-            .set_root(17, None, None)
-            .unwrap();
+        bank_forks.write().unwrap().set_root(17, None, None);
         let root_bank = bank_forks.read().unwrap().get(17).unwrap();
         verify_epoch_specs(
             &mut epoch_specs,
@@ -186,11 +182,7 @@ mod tests {
             &root_bank,
         );
         // root is updated but epoch still the same.
-        bank_forks
-            .write()
-            .unwrap()
-            .set_root(19, None, None)
-            .unwrap();
+        bank_forks.write().unwrap().set_root(19, None, None);
         let root_bank = bank_forks.read().unwrap().get(19).unwrap();
         verify_epoch_specs(
             &mut epoch_specs,
@@ -199,11 +191,7 @@ mod tests {
             &root_bank,
         );
         // root is updated to a new epoch.
-        bank_forks
-            .write()
-            .unwrap()
-            .set_root(37, None, None)
-            .unwrap();
+        bank_forks.write().unwrap().set_root(37, None, None);
         let root_bank = bank_forks.read().unwrap().get(37).unwrap();
         verify_epoch_specs(
             &mut epoch_specs,
@@ -212,11 +200,7 @@ mod tests {
             &root_bank,
         );
         // root is updated but epoch still the same.
-        bank_forks
-            .write()
-            .unwrap()
-            .set_root(59, None, None)
-            .unwrap();
+        bank_forks.write().unwrap().set_root(59, None, None);
         let root_bank = bank_forks.read().unwrap().get(59).unwrap();
         verify_epoch_specs(
             &mut epoch_specs,
@@ -225,11 +209,7 @@ mod tests {
             &root_bank,
         );
         // root is updated to a new epoch.
-        bank_forks
-            .write()
-            .unwrap()
-            .set_root(97, None, None)
-            .unwrap();
+        bank_forks.write().unwrap().set_root(97, None, None);
         let root_bank = bank_forks.read().unwrap().get(97).unwrap();
         verify_epoch_specs(
             &mut epoch_specs,
