@@ -1,6 +1,9 @@
 //! Vote state, vote program
 //! Receive and processes votes from validators
 
+#[cfg(feature = "dev-context-only-utils")]
+pub mod handler;
+#[cfg(not(feature = "dev-context-only-utils"))]
 mod handler;
 
 pub use {
@@ -10,7 +13,7 @@ pub use {
 use {
     handler::{VoteStateHandle, VoteStateHandler},
     log::*,
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{AccountSharedData, WritableAccount},
     solana_clock::{Clock, Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
@@ -28,16 +31,6 @@ use {
 
 // TODO: Change me once the program has full v4 feature gate support.
 pub(crate) const TEMP_HARDCODED_TARGET_VERSION: VoteStateTargetVersion = VoteStateTargetVersion::V3;
-
-// utility function, used by Stakes, tests
-pub fn from<T: ReadableAccount>(account: &T) -> Option<VoteStateV3> {
-    VoteStateV3::deserialize(account.data()).ok()
-}
-
-// utility function, used by Stakes, tests
-pub fn to<T: WritableAccount>(versioned: &VoteStateVersions, account: &mut T) -> Option<()> {
-    VoteStateV3::serialize(versioned, account.data_as_mut_slice()).ok()
-}
 
 /// Checks the proposed vote state with the current and
 /// slot hashes, making adjustments to the root / filtering
@@ -1084,7 +1077,7 @@ mod tests {
     use {
         super::*,
         assert_matches::assert_matches,
-        solana_account::AccountSharedData,
+        solana_account::{AccountSharedData, ReadableAccount},
         solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_sha256_hasher::hash,
         solana_transaction_context::{InstructionAccount, TransactionContext},

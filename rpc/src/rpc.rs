@@ -4527,7 +4527,7 @@ pub mod tests {
         jsonrpc_core::{futures, ErrorCode, MetaIoHandler, Output, Response, Value},
         jsonrpc_core_client::transports::local,
         serde::de::DeserializeOwned,
-        solana_account::{Account, WritableAccount},
+        solana_account::{state_traits::StateMut, Account, WritableAccount},
         solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         solana_address_lookup_table_interface::{
             self as address_lookup_table,
@@ -4591,7 +4591,7 @@ pub mod tests {
         solana_vote_interface::state::VoteStateV3,
         solana_vote_program::{
             vote_instruction,
-            vote_state::{self, TowerSync, VoteInit, VoteStateVersions, MAX_LOCKOUT_HISTORY},
+            vote_state::{TowerSync, VoteInit, VoteStateVersions, MAX_LOCKOUT_HISTORY},
         },
         spl_pod::optional_keys::OptionalNonZeroPubkey,
         spl_token_2022_interface::{
@@ -5048,7 +5048,7 @@ pub mod tests {
             let balance = bank.get_minimum_balance_for_rent_exemption(space);
             let mut vote_account =
                 AccountSharedData::new(balance, space, &solana_vote_program::id());
-            vote_state::to(&versioned, &mut vote_account).unwrap();
+            vote_account.set_state(&versioned).unwrap();
             bank.store_account(vote_pubkey, &vote_account);
         }
 
@@ -7698,6 +7698,9 @@ pub mod tests {
         assert_eq!(bank.vote_accounts().len(), 1);
 
         // Create a vote account with no stake.
+        // TODO: Update this test to use `VoteStateV4` after vote program
+        // migration is complete. Currently using `VoteStateV3` because this
+        // test invokes the vote program which hasn't been migrated to v4 yet.
         let alice_vote_keypair = Keypair::new();
         let alice_vote_state = VoteStateV3::new(
             &VoteInit {

@@ -156,6 +156,16 @@ pub struct ProgressMessage {
     pub current_slot_progress: u8,
 }
 
+/// Maximum number of transactions allowed in a [`PackToWorkerMessage`].
+/// If the number of transactions exceeds this value, agave will
+/// not process the message.
+//
+// The reason for this constraint is because rts-alloc currently only
+// supports up to 4096 byte allocations. We must ensure that the
+// `TransactionResponseRegion` is able to contain responses for all
+// transactions sent. This is a conservative bound.
+pub const MAX_TRANSACTIONS_PER_MESSAGE: usize = 64;
+
 /// Message: [Pack -> Worker]
 /// External pack processe passes transactions to worker threads within agave.
 ///
