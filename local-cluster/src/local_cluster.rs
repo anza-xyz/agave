@@ -352,11 +352,11 @@ impl LocalCluster {
             })
             .collect();
 
-        // Check if any validator (including leader) has wait_for_supermajority set
+        // Check if we should start validators in parallel in order to enable WFSM
         let wait_for_supermajority = config
             .validator_configs
             .iter()
-            .any(|cfg| cfg.wait_for_supermajority.is_some());
+            .all(|cfg| cfg.wait_for_supermajority.is_some());
 
         let (mut cluster, leader_contact_info) = if wait_for_supermajority {
             info!(
@@ -406,6 +406,13 @@ impl LocalCluster {
 
             (cluster, leader_contact_info)
         } else {
+            assert!(
+                config
+                    .validator_configs
+                    .iter()
+                    .all(|cfg| cfg.wait_for_supermajority.is_none()),
+                "Cannot partially specify WFSM in local cluster"
+            );
             let leader_server = Validator::new(
                 leader_node,
                 leader_keypair.clone(),
@@ -700,7 +707,7 @@ impl LocalCluster {
                 ValidatorTpuConfig::new_for_tests(true),
                 Arc::new(RwLock::new(None)),
             )
-            .expect("Leader failed to start");
+            .unwrap_or_else(|e| panic!("Cluster leader failed to start: {e:?}"));
 
             let leader_contact_info = leader_server.cluster_info.my_contact_info();
             let leader_info = ValidatorInfo {
@@ -719,9 +726,10 @@ impl LocalCluster {
         handles.push(handle);
 
         // Start remaining validators
-        for ((key, _), validator_config) in validator_keys[1..]
+        for (i, ((key, _), validator_config)) in validator_keys[1..]
             .iter()
             .zip(validator_configs[1..].iter())
+            .enumerate()
         {
             let validator_keypair = key.clone();
             let voting_keypair = node_pubkey_to_vote_key
@@ -765,7 +773,7 @@ impl LocalCluster {
                     ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
                     Arc::new(RwLock::new(None)),
                 )
-                .expect("Validator failed to start");
+                .unwrap_or_else(|e| panic!("Validator {i} failed to start: {e:?}"));
 
                 let validator_pubkey = validator_keypair.pubkey();
                 let validator_info = ClusterValidatorInfo::new(
