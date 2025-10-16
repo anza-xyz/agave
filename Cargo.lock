@@ -8674,6 +8674,7 @@ dependencies = [
  "agave-feature-set",
  "agave-logger",
  "anyhow",
+ "arc-swap",
  "arrayvec",
  "assert_matches",
  "bincode",
