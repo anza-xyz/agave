@@ -455,7 +455,10 @@ mod tests {
         let (vote_pubkey, vote_account) = create_test_account();
         let vote_account_space = vote_account.data().len();
 
-        let mut vote_state = vote_state::from(&vote_account).unwrap();
+        // TODO: Update this test to use `VoteStateV4` after vote program
+        // migration is complete. Currently using `VoteStateV3` because this
+        // test invokes the vote program which hasn't been migrated to v4 yet.
+        let mut vote_state = VoteStateV3::deserialize(vote_account.data()).unwrap();
         vote_state.authorized_withdrawer = vote_pubkey;
         vote_state.epoch_credits = Vec::new();
 
@@ -475,7 +478,9 @@ mod tests {
         let mut vote_account_with_epoch_credits =
             AccountSharedData::new(lamports, vote_account_space, &id());
         let versioned = VoteStateVersions::new_v3(vote_state);
-        vote_state::to(&versioned, &mut vote_account_with_epoch_credits);
+        vote_account_with_epoch_credits
+            .set_state(&versioned)
+            .unwrap();
 
         (vote_pubkey, vote_account_with_epoch_credits)
     }
@@ -672,6 +677,8 @@ mod tests {
         );
         let vote_state = VoteStateV3::deserialize(accounts[0].data()).unwrap();
         assert_eq!(vote_state.node_pubkey, node_pubkey);
+        // TODO: When the feature gate for vote state v4 is added, check the
+        // block revenue collector here for the v4 target.
     }
 
     #[test]

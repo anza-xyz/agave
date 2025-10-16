@@ -3,6 +3,7 @@ use {
     log::*,
     rand::{seq::SliceRandom, thread_rng, Rng},
     rayon::prelude::*,
+    solana_account::ReadableAccount,
     solana_clock::Slot,
     solana_commitment_config::CommitmentConfig,
     solana_core::validator::{ValidatorConfig, ValidatorStartProgress},
@@ -26,6 +27,7 @@ use {
     },
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
+    solana_vote_program::vote_state::VoteStateV4,
     std::{
         collections::{hash_map::RandomState, HashMap, HashSet},
         net::{SocketAddr, TcpListener, TcpStream, UdpSocket},
@@ -261,9 +263,9 @@ fn check_vote_account(
         .value
         .ok_or_else(|| format!("identity account does not exist: {identity_pubkey}"))?;
 
-    let vote_state = solana_vote_program::vote_state::from(&vote_account);
+    let vote_state = VoteStateV4::deserialize(vote_account.data(), vote_account_address).ok();
     if let Some(vote_state) = vote_state {
-        if vote_state.authorized_voters().is_empty() {
+        if vote_state.authorized_voters.is_empty() {
             return Err("Vote account not yet initialized".to_string());
         }
 
@@ -274,7 +276,7 @@ fn check_vote_account(
             ));
         }
 
-        for (_, vote_account_authorized_voter_pubkey) in vote_state.authorized_voters().iter() {
+        for (_, vote_account_authorized_voter_pubkey) in vote_state.authorized_voters.iter() {
             if !authorized_voter_pubkeys.contains(vote_account_authorized_voter_pubkey) {
                 return Err(format!(
                     "authorized voter {vote_account_authorized_voter_pubkey} not available"

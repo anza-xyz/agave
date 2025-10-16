@@ -232,7 +232,7 @@ pub mod test {
         solana_keypair::Keypair,
         solana_vote::vote_transaction::VoteTransaction,
         solana_vote_program::vote_state::{
-            BlockTimestamp, LandedVote, Vote, VoteState1_14_11, VoteStateV3, MAX_LOCKOUT_HISTORY,
+            BlockTimestamp, Lockout, Vote, VoteState1_14_11, MAX_LOCKOUT_HISTORY,
         },
         tempfile::TempDir,
     };
@@ -242,10 +242,10 @@ pub mod test {
         let tower_path = TempDir::new().unwrap();
         let identity_keypair = Keypair::new();
         let node_pubkey = identity_keypair.pubkey();
-        let mut vote_state = VoteStateV3::default();
+        let mut vote_state = VoteState1_14_11::default();
         vote_state
             .votes
-            .resize(MAX_LOCKOUT_HISTORY, LandedVote::default());
+            .resize(MAX_LOCKOUT_HISTORY, Lockout::default());
         vote_state.root_slot = Some(1);
 
         let vote = Vote::new(vec![1, 2, 3, 4], Hash::default());
@@ -255,7 +255,7 @@ pub mod test {
             node_pubkey,
             threshold_depth: 10,
             threshold_size: 0.9,
-            vote_state: VoteState1_14_11::from(vote_state),
+            vote_state,
             last_vote: vote.clone(),
             last_timestamp: BlockTimestamp::default(),
             last_vote_tx_blockhash: BlockhashStatus::Uninitialized,

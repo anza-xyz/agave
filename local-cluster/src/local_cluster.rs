@@ -7,7 +7,7 @@ use {
     },
     itertools::izip,
     log::*,
-    solana_account::{Account, AccountSharedData},
+    solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
     solana_client::connection_cache::ConnectionCache,
     solana_clock::{Slot, DEFAULT_DEV_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT},
@@ -58,7 +58,7 @@ use {
     solana_transaction_error::TransportError,
     solana_vote_program::{
         vote_instruction,
-        vote_state::{self, VoteInit},
+        vote_state::{self, VoteInit, VoteStateV4},
     },
     std::{
         collections::HashMap,
@@ -821,7 +821,7 @@ impl LocalCluster {
                 },
                 amount,
                 vote_instruction::CreateVoteAccountConfig {
-                    space: vote_state::VoteStateV3::size_of() as u64,
+                    space: vote_state::VoteStateV4::size_of() as u64,
                     ..vote_instruction::CreateVoteAccountConfig::default()
                 },
             );
@@ -902,7 +902,8 @@ impl LocalCluster {
                     (Some(stake_account), Some(vote_account)) => {
                         match (
                             stake_state::stake_from(&stake_account),
-                            vote_state::from(&vote_account),
+                            VoteStateV4::deserialize(vote_account.data(), &vote_account_pubkey)
+                                .ok(),
                         ) {
                             (Some(stake_state), Some(vote_state)) => {
                                 if stake_state.delegation.voter_pubkey != vote_account_pubkey

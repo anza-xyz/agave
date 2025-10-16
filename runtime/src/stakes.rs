@@ -513,15 +513,9 @@ fn refresh_vote_accounts(
 #[cfg(test)]
 pub(crate) mod tests {
     use {
-        super::*,
-        rayon::ThreadPoolBuilder,
-        solana_account::WritableAccount,
-        solana_pubkey::Pubkey,
-        solana_rent::Rent,
-        solana_stake_interface as stake,
-        solana_stake_program::stake_state,
-        solana_vote_interface::state::{VoteStateV3, VoteStateVersions},
-        solana_vote_program::vote_state,
+        super::*, rayon::ThreadPoolBuilder, solana_account::WritableAccount, solana_pubkey::Pubkey,
+        solana_rent::Rent, solana_stake_interface as stake, solana_stake_program::stake_state,
+        solana_vote_interface::state::VoteStateV4, solana_vote_program::vote_state,
     };
 
     //  set up some dummies for a staked node     ((     vote      )  (     stake     ))
@@ -636,7 +630,9 @@ pub(crate) mod tests {
         stakes_cache.check_and_store(&vote11_pubkey, &vote11_account, None);
         stakes_cache.check_and_store(&stake11_pubkey, &stake11_account, None);
 
-        let vote11_node_pubkey = vote_state::from(&vote11_account).unwrap().node_pubkey;
+        let vote11_node_pubkey = VoteStateV4::deserialize(vote11_account.data(), &vote11_pubkey)
+            .unwrap()
+            .node_pubkey;
 
         let highest_staked_node = stakes_cache.stakes().highest_staked_node().copied();
         assert_eq!(highest_staked_node, Some(vote11_node_pubkey));
@@ -697,9 +693,7 @@ pub(crate) mod tests {
         }
 
         // Vote account uninitialized
-        let default_vote_state = VoteStateV3::default();
-        let versioned = VoteStateVersions::new_v3(default_vote_state);
-        vote_state::to(&versioned, &mut vote_account).unwrap();
+        vote_account.set_data(vec![0; VoteStateV4::size_of()]);
         stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
 
         {
