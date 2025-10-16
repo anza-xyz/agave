@@ -61,6 +61,8 @@ pub trait VoteStateHandle {
 
     fn set_node_pubkey(&mut self, node_pubkey: Pubkey);
 
+    fn set_block_revenue_collector(&mut self, collector: Pubkey);
+
     fn votes(&self) -> &VecDeque<LandedVote>;
 
     fn votes_mut(&mut self) -> &mut VecDeque<LandedVote>;
@@ -353,6 +355,10 @@ impl VoteStateHandle for VoteStateV3 {
         self.node_pubkey = node_pubkey;
     }
 
+    fn set_block_revenue_collector(&mut self, _collector: Pubkey) {
+        // No-op for v3: field does not exist.
+    }
+
     fn votes(&self) -> &VecDeque<LandedVote> {
         &self.votes
     }
@@ -514,6 +520,10 @@ impl VoteStateHandle for VoteStateV4 {
 
     fn set_node_pubkey(&mut self, node_pubkey: Pubkey) {
         self.node_pubkey = node_pubkey;
+    }
+
+    fn set_block_revenue_collector(&mut self, collector: Pubkey) {
+        self.block_revenue_collector = collector;
     }
 
     fn votes(&self) -> &VecDeque<LandedVote> {
@@ -746,6 +756,13 @@ impl VoteStateHandle for VoteStateHandler {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_node_pubkey(node_pubkey),
             TargetVoteState::V4(v4) => v4.set_node_pubkey(node_pubkey),
+        }
+    }
+
+    fn set_block_revenue_collector(&mut self, collector: Pubkey) {
+        match &mut self.target_state {
+            TargetVoteState::V3(v3) => v3.set_block_revenue_collector(collector),
+            TargetVoteState::V4(v4) => v4.set_block_revenue_collector(collector),
         }
     }
 

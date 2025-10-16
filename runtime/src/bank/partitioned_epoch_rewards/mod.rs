@@ -389,7 +389,7 @@ mod tests {
         solana_stake_interface::state::StakeStateV2,
         solana_system_transaction as system_transaction,
         solana_vote::vote_transaction,
-        solana_vote_interface::state::{VoteStateVersions, MAX_LOCKOUT_HISTORY},
+        solana_vote_interface::state::{VoteStateV4, VoteStateVersions, MAX_LOCKOUT_HISTORY},
         solana_vote_program::vote_state::{self, TowerSync},
         std::sync::{Arc, RwLock},
     };
@@ -558,18 +558,19 @@ mod tests {
             let vote_id = validator_vote_keypairs.vote_keypair.pubkey();
             let mut vote_account = bank.get_account(&vote_id).unwrap();
             // generate some rewards
-            let mut vote_state = Some(vote_state::from(&vote_account).unwrap());
+            let mut vote_state =
+                Some(VoteStateV4::deserialize(vote_account.data(), &vote_id).unwrap());
             for i in 0..MAX_LOCKOUT_HISTORY + 42 {
                 if let Some(v) = vote_state.as_mut() {
                     vote_state::process_slot_vote_unchecked(v, i as u64)
                 }
-                let versioned = VoteStateVersions::V3(Box::new(vote_state.take().unwrap()));
-                vote_state::to(&versioned, &mut vote_account).unwrap();
+                let versioned = VoteStateVersions::V4(Box::new(vote_state.take().unwrap()));
+                vote_account.set_state(&versioned).unwrap();
                 match versioned {
-                    VoteStateVersions::V3(v) => {
+                    VoteStateVersions::V4(v) => {
                         vote_state = Some(*v);
                     }
-                    _ => panic!("Has to be of type Current"),
+                    _ => panic!("Has to be of type V4"),
                 };
             }
             bank.store_account_and_update_capitalization(&vote_id, &vote_account);

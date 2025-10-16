@@ -18,7 +18,7 @@ pub(crate) mod tests {
         solana_vote::vote_account::{VoteAccount, VoteAccounts},
         solana_vote_program::{
             vote_instruction,
-            vote_state::{VoteInit, VoteStateV3, VoteStateVersions},
+            vote_state::{VoteInit, VoteStateV4, VoteStateVersions},
         },
     };
 
@@ -54,7 +54,7 @@ pub(crate) mod tests {
                 },
                 amount,
                 vote_instruction::CreateVoteAccountConfig {
-                    space: VoteStateV3::size_of() as u64,
+                    space: VoteStateV4::size_of() as u64,
                     ..vote_instruction::CreateVoteAccountConfig::default()
                 },
             ),
@@ -94,12 +94,14 @@ pub(crate) mod tests {
     fn test_to_staked_nodes() {
         let mut stakes = Vec::new();
         let node1 = solana_pubkey::new_rand();
+        let vote_pubkey1 = solana_pubkey::new_rand();
 
         // Node 1 has stake of 3
         for i in 0..3 {
             stakes.push((
                 i,
-                VoteStateV3::new(
+                VoteStateV4::new(
+                    &vote_pubkey1,
                     &VoteInit {
                         node_pubkey: node1,
                         ..VoteInit::default()
@@ -111,10 +113,12 @@ pub(crate) mod tests {
 
         // Node 1 has stake of 5
         let node2 = solana_pubkey::new_rand();
+        let vote_pubkey2 = solana_pubkey::new_rand();
 
         stakes.push((
             5,
-            VoteStateV3::new(
+            VoteStateV4::new(
+                &vote_pubkey2,
                 &VoteInit {
                     node_pubkey: node2,
                     ..VoteInit::default()
@@ -126,7 +130,7 @@ pub(crate) mod tests {
         let vote_accounts = stakes.into_iter().map(|(stake, vote_state)| {
             let account = AccountSharedData::new_data(
                 rng.gen(), // lamports
-                &VoteStateVersions::new_v3(vote_state),
+                &VoteStateVersions::new_v4(vote_state),
                 &solana_vote_program::id(), // owner
             )
             .unwrap();

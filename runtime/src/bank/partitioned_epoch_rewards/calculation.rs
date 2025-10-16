@@ -691,7 +691,7 @@ mod tests {
         solana_native_token::LAMPORTS_PER_SOL,
         solana_reward_info::RewardType,
         solana_stake_interface::state::{Delegation, StakeStateV2},
-        solana_vote_interface::state::VoteStateV3,
+        solana_vote_interface::state::VoteStateV4,
         solana_vote_program::vote_state,
         std::sync::{Arc, RwLockReadGuard},
     };
@@ -923,7 +923,7 @@ mod tests {
             .load_slow_with_fixed_root(&bank.ancestors, vote_pubkey)
             .unwrap()
             .0;
-        let vote_state = VoteStateV3::deserialize(vote_account.data()).unwrap();
+        let vote_state = VoteStateV4::deserialize(vote_account.data(), vote_pubkey).unwrap();
 
         assert_eq!(
             vote_rewards_accounts.accounts_with_rewards.len(),
@@ -933,7 +933,7 @@ mod tests {
         let (vote_pubkey_from_result, rewards, account) =
             &vote_rewards_accounts.accounts_with_rewards[0];
         let vote_rewards = 0;
-        let commission = vote_state.commission;
+        let commission = (vote_state.inflation_rewards_commission_bps / 100) as u8;
         assert_eq!(account.lamports(), vote_account.lamports());
         assert!(accounts_equal(account, &vote_account));
         assert_eq!(

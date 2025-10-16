@@ -12,7 +12,7 @@ use {
     },
     crate::{
         banking_stage::{
-            consume_worker::ConsumeWorker,
+            consume_worker::{ConsumeWorker, CrossbeamConsumeWorkerChannels},
             transaction_scheduler::{
                 prio_graph_scheduler::PrioGraphScheduler,
                 scheduler_controller::{
@@ -485,14 +485,16 @@ impl BankingStage {
             let consume_worker = ConsumeWorker::new(
                 id,
                 exit.clone(),
-                work_receiver,
+                CrossbeamConsumeWorkerChannels {
+                    receiver: work_receiver,
+                    sender: finished_work_sender.clone(),
+                },
                 Consumer::new(
                     context.committer.clone(),
                     context.transaction_recorder.clone(),
                     QosService::new(id),
                     context.log_messages_bytes_limit,
                 ),
-                finished_work_sender.clone(),
                 context.poh_recorder.read().unwrap().shared_working_bank(),
             );
 
