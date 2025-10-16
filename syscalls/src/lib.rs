@@ -25,7 +25,6 @@ use {
     crate::mem_ops::is_nonoverlapping,
     solana_big_mod_exp::{big_mod_exp, BigModExpParams},
     solana_blake3_hasher as blake3,
-    solana_bn254::prelude::{ALT_BN128_G1_POINT_SIZE, ALT_BN128_G2_POINT_SIZE},
     solana_cpi::MAX_RETURN_DATA,
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta, ProcessedSiblingInstruction},
@@ -1821,10 +1820,14 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        use solana_bn254::compression::prelude::{
-            alt_bn128_g1_compress, alt_bn128_g1_decompress, alt_bn128_g2_compress,
-            alt_bn128_g2_decompress, ALT_BN128_G1_COMPRESS_BE, ALT_BN128_G1_DECOMPRESS_BE,
-            ALT_BN128_G2_COMPRESS_BE, ALT_BN128_G2_DECOMPRESS_BE, ALT_BN128_G1_COMPRESSED_POINT_SIZE, ALT_BN128_G2_COMPRESSED_POINT_SIZE,
+        use solana_bn254::{
+            prelude::{ALT_BN128_G1_POINT_SIZE, ALT_BN128_G2_POINT_SIZE},
+            compression::prelude::{
+                alt_bn128_g1_compress, alt_bn128_g1_decompress, alt_bn128_g2_compress,
+                alt_bn128_g2_decompress, ALT_BN128_G1_COMPRESS_BE, ALT_BN128_G1_DECOMPRESS_BE,
+                ALT_BN128_G2_COMPRESS_BE, ALT_BN128_G2_DECOMPRESS_BE, ALT_BN128_G1_COMPRESSED_POINT_SIZE,
+                ALT_BN128_G2_COMPRESSED_POINT_SIZE,
+            }
         };
         let execution_cost = invoke_context.get_execution_cost();
         let base_cost = execution_cost.syscall_base_cost;
