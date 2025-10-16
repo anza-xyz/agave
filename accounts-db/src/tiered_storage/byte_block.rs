@@ -131,7 +131,7 @@ pub struct ByteBlockReader;
 
 /// Reads the raw part of the input byte_block, at the specified offset, as type T.
 ///
-/// Returns None if `offset` + size_of::<T>() exceeds the size of the input byte_block.
+/// Returns None if `offset` + `size_of::<T>()` exceeds the size of the input byte_block.
 ///
 /// Type T must be plain ol' data to ensure no undefined behavior.
 pub fn read_pod<T: bytemuck::AnyBitPattern>(byte_block: &[u8], offset: usize) -> Option<&T> {
@@ -142,7 +142,7 @@ pub fn read_pod<T: bytemuck::AnyBitPattern>(byte_block: &[u8], offset: usize) ->
 /// Reads the raw part of the input byte_block at the specified offset
 /// as type T.
 ///
-/// If `offset` + size_of::<T>() exceeds the size of the input byte_block,
+/// If `offset` + `size_of::<T>()` exceeds the size of the input byte_block,
 /// then None will be returned.
 ///
 /// Prefer `read_pod()` when possible, because `read_type()` may cause

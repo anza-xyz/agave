@@ -243,7 +243,7 @@ pub type Index = IndexV2;
 pub type ShredIndex = ShredIndexV2;
 /// We currently support falling back to the previous format for migration purposes.
 ///
-/// See https://github.com/anza-xyz/agave/issues/3570.
+/// See <https://github.com/anza-xyz/agave/issues/3570>.
 pub type IndexFallback = IndexV1;
 pub type ShredIndexFallback = ShredIndexV1;
 

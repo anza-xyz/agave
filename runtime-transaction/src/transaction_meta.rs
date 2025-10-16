@@ -5,7 +5,7 @@
 //!
 //! The premise is if anything qualifies as metadata, then it must be valid
 //! and available as long as the transaction itself is valid and available.
-//! Hence they are not Option<T> type. Their visibility at different states
+//! Hence they are not [`Option<T>`] type. Their visibility at different states
 //! are defined in traits.
 //!
 //! The StaticMeta and DynamicMeta traits are accessor traits on the

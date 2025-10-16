@@ -935,7 +935,7 @@ pub fn keypair_from_source(
 ///
 /// # Examples
 ///
-/// ```no_run`
+/// ```no_run
 /// use clap::{Arg, Command};
 /// use solana_clap_v3_utils::keypair::elgamal_keypair_from_path;
 ///
@@ -1008,7 +1008,7 @@ fn confirm_encodable_keypair_pubkey<K: EncodableKeypair>(keypair: &K, pubkey_lab
 ///
 /// # Examples
 ///
-/// ```no_run`
+/// ```no_run
 /// use clap::{Arg, Command};
 /// use solana_clap_v3_utils::keypair::ae_key_from_path;
 ///

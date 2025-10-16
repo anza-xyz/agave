@@ -235,7 +235,7 @@ pub struct WorkerToPackMessage {
 pub mod worker_message_types {
     use crate::SharablePubkeys;
 
-    /// Tag indicating [`ExecutionResonse`] inner message.
+    /// Tag indicating [`ExecutionResponse`] inner message.
     pub const EXECUTION_RESPONSE: u8 = 0;
 
     /// Response to pack for a transaction that attempted execution.
