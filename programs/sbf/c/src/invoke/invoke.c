@@ -31,7 +31,7 @@ static const uint8_t ADD_LAMPORTS = 18;
 static const uint8_t TEST_RETURN_DATA_TOO_LARGE = 19;
 static const uint8_t TEST_DUPLICATE_PRIVILEGE_ESCALATION_SIGNER = 20;
 static const uint8_t TEST_DUPLICATE_PRIVILEGE_ESCALATION_WRITABLE = 21;
-static const uint8_t TEST_MAX_ACCOUNT_INFOS_EXCEEDED = 22;
+static const uint8_t TEST_MAX_ACCOUNT_INFOS_EXCEEDED_INCREASE_CPI_INFO = 22;
 // TEST_CPI_INVALID_* must match the definitions in
 // https://github.com/solana-labs/solana/blob/master/programs/sbf/rust/invoke/src/instructions.rs
 static const uint8_t TEST_CPI_INVALID_KEY_POINTER = 35;
@@ -42,6 +42,11 @@ static const uint8_t TEST_WRITE_ACCOUNT = 40;
 static const uint8_t TEST_ACCOUNT_INFO_IN_ACCOUNT = 43;
 static const uint8_t TEST_NESTED_INVOKE_SIMD_0268_OK = 46;
 static const uint8_t TEST_NESTED_INVOKE_SIMD_0268_TOO_DEEP = 47;
+static const uint8_t TEST_MAX_ACCOUNT_INFOS_SIMD_0339_OK = 48;
+static const uint8_t TEST_MAX_ACCOUNT_INFOS_SIMD_0339_EXCEEDED = 49;
+static const uint8_t TEST_MAX_ACCOUNT_INFOS_OK = 50;
+static const uint8_t TEST_MAX_ACCOUNT_INFOS_OK_INCREASE_CPI_INFO = 51;
+static const uint8_t TEST_MAX_ACCOUNT_INFOS_EXCEEDED = 52;
 
 static const int MINT_INDEX = 0;
 static const int ARGUMENT_INDEX = 1;
@@ -548,10 +553,105 @@ extern uint64_t entrypoint(const uint8_t *input) {
 
     break;
   }
+  case TEST_MAX_ACCOUNT_INFOS_OK: {
+    sol_log("Test max allowed account infos");
+    SolAccountMeta arguments[] = {};
+    uint64_t account_infos_len = 64;
+    SolAccountInfo *account_infos = sol_calloc(account_infos_len, sizeof(SolAccountInfo));
+    sol_assert(0 != account_infos);
+    for (uint64_t i = 0; i < account_infos_len; i++) {
+      account_infos[i] = accounts[0]; 
+    }
+    uint8_t data[] = {};
+    const SolInstruction instruction = {accounts[INVOKED_PROGRAM_INDEX].key,
+                                        arguments, SOL_ARRAY_SIZE(arguments),
+                                        data, SOL_ARRAY_SIZE(data)};
+    const SolSignerSeeds signers_seeds[] = {};
+    sol_assert(SUCCESS == sol_invoke_signed(
+                              &instruction, account_infos, account_infos_len,
+                              signers_seeds, SOL_ARRAY_SIZE(signers_seeds)));
+
+    break;
+  }
   case TEST_MAX_ACCOUNT_INFOS_EXCEEDED: {
     sol_log("Test max account infos exceeded");
     SolAccountMeta arguments[] = {};
+    uint64_t account_infos_len = 65;
+    SolAccountInfo *account_infos = sol_calloc(account_infos_len, sizeof(SolAccountInfo));
+    sol_assert(0 != account_infos);
+    uint8_t data[] = {};
+    const SolInstruction instruction = {accounts[INVOKED_PROGRAM_INDEX].key,
+                                        arguments, SOL_ARRAY_SIZE(arguments),
+                                        data, SOL_ARRAY_SIZE(data)};
+    const SolSignerSeeds signers_seeds[] = {};
+    sol_assert(SUCCESS == sol_invoke_signed(
+                              &instruction, account_infos, account_infos_len,
+                              signers_seeds, SOL_ARRAY_SIZE(signers_seeds)));
+
+    break;
+  }
+  case TEST_MAX_ACCOUNT_INFOS_OK_INCREASE_CPI_INFO: {
+    sol_log("Test max account infos allowed with increase cpi info");
+    SolAccountMeta arguments[] = {};
+    uint64_t account_infos_len = MAX_CPI_ACCOUNT_INFOS;
+    SolAccountInfo *account_infos = sol_calloc(account_infos_len, sizeof(SolAccountInfo));
+    sol_assert(0 != account_infos);
+     for (uint64_t i = 0; i < account_infos_len; i++) {
+      account_infos[i] = accounts[0]; 
+    }
+    uint8_t data[] = {};
+    const SolInstruction instruction = {accounts[INVOKED_PROGRAM_INDEX].key,
+                                        arguments, SOL_ARRAY_SIZE(arguments),
+                                        data, SOL_ARRAY_SIZE(data)};
+    const SolSignerSeeds signers_seeds[] = {};
+    sol_assert(SUCCESS == sol_invoke_signed(
+                              &instruction, account_infos, account_infos_len,
+                              signers_seeds, SOL_ARRAY_SIZE(signers_seeds)));
+
+    break;
+  }
+  case TEST_MAX_ACCOUNT_INFOS_EXCEEDED_INCREASE_CPI_INFO: {
+    sol_log("Test max account infos exceeded with increase cpi info");
+    SolAccountMeta arguments[] = {};
     uint64_t account_infos_len = MAX_CPI_ACCOUNT_INFOS + 1;
+    SolAccountInfo *account_infos = sol_calloc(account_infos_len, sizeof(SolAccountInfo));
+    sol_assert(0 != account_infos);
+    uint8_t data[] = {};
+    const SolInstruction instruction = {accounts[INVOKED_PROGRAM_INDEX].key,
+                                        arguments, SOL_ARRAY_SIZE(arguments),
+                                        data, SOL_ARRAY_SIZE(data)};
+    const SolSignerSeeds signers_seeds[] = {};
+    sol_assert(SUCCESS == sol_invoke_signed(
+                              &instruction, account_infos, account_infos_len,
+                              signers_seeds, SOL_ARRAY_SIZE(signers_seeds)));
+
+    break;
+  }
+  case TEST_MAX_ACCOUNT_INFOS_SIMD_0339_OK: {
+    sol_log("Test max account infos allowed with SIMD-0339");
+    SolAccountMeta arguments[] = {};
+    uint64_t account_infos_len = 255;
+    SolAccountInfo *account_infos = sol_calloc(account_infos_len, sizeof(SolAccountInfo));
+    sol_assert(0 != account_infos);
+    
+    for (uint64_t i = 0; i < account_infos_len; i++) {
+      account_infos[i] = accounts[0]; 
+    }
+    uint8_t data[] = {};
+    const SolInstruction instruction = {accounts[INVOKED_PROGRAM_INDEX].key,
+                                        arguments, SOL_ARRAY_SIZE(arguments),
+                                        data, SOL_ARRAY_SIZE(data)};
+    const SolSignerSeeds signers_seeds[] = {};
+    sol_assert(SUCCESS == sol_invoke_signed(
+                              &instruction, account_infos, account_infos_len,
+                              signers_seeds, SOL_ARRAY_SIZE(signers_seeds)));
+
+    break;
+  }
+  case TEST_MAX_ACCOUNT_INFOS_SIMD_0339_EXCEEDED: {
+    sol_log("Test max account infos exceeded with SIMD-0339");
+    SolAccountMeta arguments[] = {};
+    uint64_t account_infos_len = 256;
     SolAccountInfo *account_infos = sol_calloc(account_infos_len, sizeof(SolAccountInfo));
     sol_assert(0 != account_infos);
     uint8_t data[] = {};

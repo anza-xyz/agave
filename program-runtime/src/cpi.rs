@@ -114,6 +114,9 @@ struct SolSignerSeedsC {
 
 /// Maximum number of account info structs that can be used in a single CPI invocation
 const MAX_CPI_ACCOUNT_INFOS: usize = 128;
+const MAX_CPI_ACCOUNT_INFOS_SIMD_0339: usize = 255;
+const INVOKE_UNITS_COST_SIMD_0339: u64 = 946;
+
 
 /// Check that an account info pointer field points to the expected address
 fn check_account_info_pointer(
@@ -159,7 +162,12 @@ fn check_account_infos(
 ) -> Result<(), Error> {
     let max_cpi_account_infos = if invoke_context
         .get_feature_set()
-        .increase_tx_account_lock_limit
+        .increase_cpi_info_account_limit
+    {
+        MAX_CPI_ACCOUNT_INFOS_SIMD_0339
+    } else if invoke_context
+            .get_feature_set()
+            .increase_tx_account_lock_limit
     {
         MAX_CPI_ACCOUNT_INFOS
     } else {
@@ -536,6 +544,20 @@ pub fn translate_instruction_rust(
 
     check_instruction_size(account_metas.len(), data.len())?;
 
+    if invoke_context.get_feature_set().increase_cpi_info_account_limit{
+        // Each account meta is 34 bytes (32 for pubkey, 1 for is_signer, 1 for is_writable)
+        let account_meta_bytes = account_metas
+            .len()
+            .saturating_mul(34); 
+
+        consume_compute_meter(
+        invoke_context,
+        (account_meta_bytes as u64)
+            .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+            .unwrap_or(u64::MAX),
+    )?;
+    }
+
     consume_compute_meter(
         invoke_context,
         (data.len() as u64)
@@ -579,6 +601,20 @@ pub fn translate_accounts_rust<'a>(
         invoke_context,
         check_aligned,
     )?;
+
+    if invoke_context.get_feature_set().increase_cpi_info_account_limit{
+        //sizeof(AccountInfo) is 80 bytes
+         let account_infos_bytes = account_infos
+            .len()
+            .saturating_mul(80);
+        
+        consume_compute_meter(
+        invoke_context,
+        (account_infos_bytes as u64)
+            .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+            .unwrap_or(u64::MAX),
+    )?;
+    }
 
     translate_accounts_common(
         &account_info_keys,
@@ -655,6 +691,19 @@ pub fn translate_instruction_c(
 
     check_instruction_size(ix_c.accounts_len as usize, data.len())?;
 
+    if invoke_context.get_feature_set().increase_cpi_info_account_limit{
+        // Each account meta is 34 bytes (32 for pubkey, 1 for is_signer, 1 for is_writable)
+        let account_meta_bytes = ix_c.accounts_len 
+            .saturating_mul(34); 
+
+        consume_compute_meter(
+        invoke_context,
+        (account_meta_bytes as u64)
+            .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+            .unwrap_or(u64::MAX),
+    )?;
+    }
+        
     consume_compute_meter(
         invoke_context,
         (data.len() as u64)
@@ -704,6 +753,20 @@ pub fn translate_accounts_c<'a>(
         invoke_context,
         check_aligned,
     )?;
+
+     if invoke_context.get_feature_set().increase_cpi_info_account_limit{
+        //sizeof(AccountInfo) is 80 bytes
+         let account_infos_bytes = account_infos
+            .len()
+            .saturating_mul(80);
+        
+        consume_compute_meter(
+        invoke_context,
+        (account_infos_bytes as u64)
+            .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+            .unwrap_or(u64::MAX),
+    )?;
+    }
 
     translate_accounts_common(
         &account_info_keys,
@@ -776,8 +839,12 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
     // changes so the callee can see them.
     consume_compute_meter(
         invoke_context,
-        invoke_context.get_execution_cost().invoke_units,
-    )?;
+        if invoke_context.get_feature_set().increase_cpi_info_account_limit {
+            INVOKE_UNITS_COST_SIMD_0339
+        } else {
+            invoke_context.get_execution_cost().invoke_units
+        },
+    )?; 
     if let Some(execute_time) = invoke_context.execute_time.as_mut() {
         execute_time.stop();
         invoke_context.timings.execute_us += execute_time.as_us();
