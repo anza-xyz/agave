@@ -693,7 +693,7 @@ pub fn authorize<S: std::hash::BuildHasher>(
     signers: &HashSet<Pubkey, S>,
     clock: &Clock,
 ) -> Result<(), InstructionError> {
-    let mut vote_state = VoteStateHandler::deserialize_and_convert(vote_account, target_version)?;
+    let mut vote_state = get_vote_state_handler_checked(vote_account, target_version)?;
 
     match vote_authorize {
         VoteAuthorize::Voter => {
@@ -734,7 +734,7 @@ pub fn update_validator_identity<S: std::hash::BuildHasher>(
     node_pubkey: &Pubkey,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    let mut vote_state = VoteStateHandler::deserialize_and_convert(vote_account, target_version)?;
+    let mut vote_state = get_vote_state_handler_checked(vote_account, target_version)?;
 
     // current authorized withdrawer must say "yay"
     verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
@@ -759,7 +759,7 @@ pub fn update_commission<S: std::hash::BuildHasher>(
     epoch_schedule: &EpochSchedule,
     clock: &Clock,
 ) -> Result<(), InstructionError> {
-    let vote_state_result = VoteStateHandler::deserialize_and_convert(vote_account, target_version);
+    let vote_state_result = get_vote_state_handler_checked(vote_account, target_version);
     let enforce_commission_update_rule = if let Ok(decoded_vote_state) = &vote_state_result {
         commission > decoded_vote_state.commission()
     } else {
@@ -820,7 +820,7 @@ pub fn withdraw<S: std::hash::BuildHasher>(
 ) -> Result<(), InstructionError> {
     let mut vote_account =
         instruction_context.try_borrow_instruction_account(vote_account_index)?;
-    let vote_state = VoteStateHandler::deserialize_and_convert(&vote_account, target_version)?;
+    let vote_state = get_vote_state_handler_checked(&vote_account, target_version)?;
 
     verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
 
@@ -1217,7 +1217,7 @@ mod tests {
 
         // Convert the vote state to current as would occur during vote instructions
         let converted_vote_state =
-            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version).unwrap();
+            get_vote_state_handler_checked(&borrowed_account, target_version).unwrap();
 
         // Check to make sure that the vote_state is unchanged
         assert!(vote_state == converted_vote_state);
@@ -1251,7 +1251,7 @@ mod tests {
 
         // Convert the vote state to current as would occur during vote instructions
         let converted_vote_state =
-            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version).unwrap();
+            get_vote_state_handler_checked(&borrowed_account, target_version).unwrap();
 
         // Check to make sure that the vote_state is unchanged
         assert!(vote_state == converted_vote_state);
@@ -1287,7 +1287,7 @@ mod tests {
 
         // Convert the vote state to current as would occur during vote instructions
         let converted_vote_state =
-            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version).unwrap();
+            get_vote_state_handler_checked(&borrowed_account, target_version).unwrap();
 
         // Check to make sure that the vote_state is unchanged
         assert_eq!(vote_state, converted_vote_state);
@@ -1384,7 +1384,7 @@ mod tests {
 
         // Increase commission in first half of epoch -- allowed
         assert_eq!(
-            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
+            get_vote_state_handler_checked(&borrowed_account, target_version)
                 .unwrap()
                 .commission(),
             10
@@ -1401,7 +1401,7 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
+            get_vote_state_handler_checked(&borrowed_account, target_version)
                 .unwrap()
                 .commission(),
             11
@@ -1420,7 +1420,7 @@ mod tests {
             Err(_)
         );
         assert_eq!(
-            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
+            get_vote_state_handler_checked(&borrowed_account, target_version)
                 .unwrap()
                 .commission(),
             11
@@ -1439,14 +1439,14 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
+            get_vote_state_handler_checked(&borrowed_account, target_version)
                 .unwrap()
                 .commission(),
             10
         );
 
         assert_eq!(
-            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
+            get_vote_state_handler_checked(&borrowed_account, target_version)
                 .unwrap()
                 .commission(),
             10
@@ -1464,7 +1464,7 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
+            get_vote_state_handler_checked(&borrowed_account, target_version)
                 .unwrap()
                 .commission(),
             9

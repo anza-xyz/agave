@@ -874,26 +874,6 @@ impl VoteStateHandler {
         }
     }
 
-    /// Create a new handler for the provided target version by deserializing
-    /// the vote state and converting it to the target.
-    pub fn deserialize_and_convert(
-        vote_account: &BorrowedInstructionAccount,
-        target_version: VoteStateTargetVersion,
-    ) -> Result<Self, InstructionError> {
-        let target_state = match target_version {
-            VoteStateTargetVersion::V3 => {
-                let vote_state = VoteStateV3::deserialize(vote_account.get_data())?;
-                TargetVoteState::V3(vote_state)
-            }
-            VoteStateTargetVersion::V4 => {
-                let vote_state =
-                    VoteStateV4::deserialize(vote_account.get_data(), vote_account.get_key())?;
-                TargetVoteState::V4(vote_state)
-            }
-        };
-        Ok(Self { target_state })
-    }
-
     pub fn init_vote_account_state(
         vote_account: &mut BorrowedInstructionAccount,
         vote_init: &VoteInit,
@@ -2073,8 +2053,6 @@ mod tests {
         let epoch_credits = vec![(5, 200, 100)];
         let root_slot = Some(50);
 
-        let rent = Rent::default();
-
         // Helper to verify v4 defaults per SIMD-0185.
         let verify_v4_defaults = |v4_state: &VoteStateV4, expected_commission_bps: u16| {
             assert_eq!(
@@ -2089,28 +2067,6 @@ mod tests {
             );
             assert_eq!(v4_state.pending_delegator_rewards, 0);
             assert_eq!(v4_state.bls_pubkey_compressed, None);
-        };
-
-        // Helper to deserialize and convert vote state through handler.
-        let deserialize_and_convert = |versioned: VoteStateVersions, space: usize| -> VoteStateV4 {
-            let vote_account =
-                AccountSharedData::new_data(rent.minimum_balance(space), &versioned, &id())
-                    .unwrap();
-
-            let transaction_context =
-                mock_transaction_context(vote_pubkey, vote_account, rent.clone());
-            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let vote_account_borrowed = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
-            let handler = VoteStateHandler::deserialize_and_convert(
-                &vote_account_borrowed,
-                VoteStateTargetVersion::V4,
-            )
-            .unwrap();
-
-            handler.as_ref_v4().clone()
         };
 
         // V0_23_5
@@ -2132,7 +2088,7 @@ mod tests {
             };
 
             let versioned = VoteStateVersions::V1_14_11(Box::new(vote_state_v2.clone()));
-            let vote_state_v4 = deserialize_and_convert(versioned, VoteState1_14_11::size_of());
+            let vote_state_v4 = try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
 
             // Compare fields that were already present in V1_14_11.
             assert_eq!(vote_state_v4.node_pubkey, node_pubkey);
@@ -2171,7 +2127,7 @@ mod tests {
             vote_state_v3.root_slot = root_slot;
 
             let versioned = VoteStateVersions::V3(Box::new(vote_state_v3.clone()));
-            let vote_state_v4 = deserialize_and_convert(versioned, VoteStateV3::size_of());
+            let vote_state_v4 = try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
 
             // Compare fields that were already present in V3.
             assert_eq!(vote_state_v4.node_pubkey, node_pubkey);
@@ -2213,7 +2169,7 @@ mod tests {
             }
 
             let versioned = VoteStateVersions::V4(Box::new(initial_vote_state_v4.clone()));
-            let vote_state_v4 = deserialize_and_convert(versioned, VoteStateV4::size_of());
+            let vote_state_v4 = try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
 
             // Should be an exact copy.
             assert_eq!(vote_state_v4, initial_vote_state_v4);
