@@ -874,6 +874,17 @@ impl VoteStateHandler {
         }
     }
 
+    /// Deserialize a vote account and coerce it to v3 (done internally by the
+    /// `VoteStateV3::deserialize` API).
+    pub fn deserialize_v3(
+        vote_account: &BorrowedInstructionAccount,
+    ) -> Result<Self, InstructionError> {
+        let vote_state = VoteStateV3::deserialize(vote_account.get_data())?;
+        Ok(Self {
+            target_state: TargetVoteState::V3(vote_state),
+        })
+    }
+
     pub fn init_vote_account_state(
         vote_account: &mut BorrowedInstructionAccount,
         vote_init: &VoteInit,

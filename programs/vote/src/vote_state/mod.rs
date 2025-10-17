@@ -48,6 +48,18 @@ fn get_vote_state_handler_checked(
     VoteStateHandler::new_from_versioned(versioned, vote_account.get_key(), target_version)
 }
 
+// Wrapper that preserves old behavior before vote state v4 feature gate.
+// This should be cleaned up when vote state v4 is activated.
+fn get_vote_state_handler_checked_preserve_v3_behavior(
+    vote_account: &BorrowedInstructionAccount,
+    target_version: VoteStateTargetVersion,
+) -> Result<VoteStateHandler, InstructionError> {
+    match target_version {
+        VoteStateTargetVersion::V3 => VoteStateHandler::deserialize_v3(vote_account),
+        VoteStateTargetVersion::V4 => get_vote_state_handler_checked(vote_account, target_version),
+    }
+}
+
 /// Checks the proposed vote state with the current and
 /// slot hashes, making adjustments to the root / filtering
 /// votes as needed.
@@ -693,7 +705,8 @@ pub fn authorize<S: std::hash::BuildHasher>(
     signers: &HashSet<Pubkey, S>,
     clock: &Clock,
 ) -> Result<(), InstructionError> {
-    let mut vote_state = get_vote_state_handler_checked(vote_account, target_version)?;
+    let mut vote_state =
+        get_vote_state_handler_checked_preserve_v3_behavior(vote_account, target_version)?;
 
     match vote_authorize {
         VoteAuthorize::Voter => {
@@ -734,7 +747,8 @@ pub fn update_validator_identity<S: std::hash::BuildHasher>(
     node_pubkey: &Pubkey,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    let mut vote_state = get_vote_state_handler_checked(vote_account, target_version)?;
+    let mut vote_state =
+        get_vote_state_handler_checked_preserve_v3_behavior(vote_account, target_version)?;
 
     // current authorized withdrawer must say "yay"
     verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
@@ -759,7 +773,8 @@ pub fn update_commission<S: std::hash::BuildHasher>(
     epoch_schedule: &EpochSchedule,
     clock: &Clock,
 ) -> Result<(), InstructionError> {
-    let vote_state_result = get_vote_state_handler_checked(vote_account, target_version);
+    let vote_state_result =
+        get_vote_state_handler_checked_preserve_v3_behavior(vote_account, target_version);
     let enforce_commission_update_rule = if let Ok(decoded_vote_state) = &vote_state_result {
         commission > decoded_vote_state.commission()
     } else {
@@ -820,7 +835,8 @@ pub fn withdraw<S: std::hash::BuildHasher>(
 ) -> Result<(), InstructionError> {
     let mut vote_account =
         instruction_context.try_borrow_instruction_account(vote_account_index)?;
-    let vote_state = get_vote_state_handler_checked(&vote_account, target_version)?;
+    let vote_state =
+        get_vote_state_handler_checked_preserve_v3_behavior(&vote_account, target_version)?;
 
     verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
 
