@@ -785,7 +785,7 @@ fn test_program_sbf_invoke_sanity() {
 
             let (result, _log_messages, _executed_units, invoked_programs, no_invoked_programs) =
                 do_invoke(test, additional_instructions, bank);
-
+            
             assert_eq!(result, Ok(()));
             assert_eq!(invoked_programs.len(), expected_invoked_programs.len());
             assert_eq!(invoked_programs, expected_invoked_programs);
@@ -871,7 +871,64 @@ fn test_program_sbf_invoke_sanity() {
             &[invoked_program_id.clone(); 16], // 16, 8 for each invoke
             &bank,
         );
+        do_invoke_success(
+            TEST_MAX_ACCOUNT_INFOS_SIMD_0339_OK,
+            &[],
+            &[invoked_program_id.clone()],
+            &bank,
+        );
 
+        let bank = bank_with_feature_deactivated(
+            &bank_forks,
+            bank,
+            &feature_set::increase_cpi_account_info_limit::id(),
+        );
+        
+         assert!(!bank
+            .feature_set
+            .is_active(&feature_set::increase_cpi_account_info_limit::id()));
+
+        do_invoke_success(
+            TEST_MAX_ACCOUNT_INFOS_OK_INCREASE_CPI_INFO,
+            &[],
+            &[invoked_program_id.clone()],
+            &bank,
+        );
+
+        let bank = bank_with_feature_deactivated(
+            &bank_forks,
+            bank,
+            &feature_set::increase_tx_account_lock_limit::id(),
+        );
+         assert!(!bank
+            .feature_set
+            .is_active(&feature_set::increase_tx_account_lock_limit::id()));
+        
+        do_invoke_success(
+            TEST_MAX_ACCOUNT_INFOS_OK,
+            &[],
+            &[invoked_program_id.clone()],
+            &bank,
+        );
+        let bank = bank_with_feature_activated(
+            &bank_forks,
+            bank,
+            &feature_set::increase_tx_account_lock_limit::id(),
+        );
+
+         assert!(bank
+            .feature_set
+            .is_active(&feature_set::increase_tx_account_lock_limit::id()));
+        
+        let bank = bank_with_feature_activated(
+            &bank_forks,
+            bank,
+            &feature_set::increase_cpi_account_info_limit::id(),
+        );
+
+         assert!(bank
+            .feature_set
+            .is_active(&feature_set::increase_cpi_account_info_limit::id()));
         // failure cases
 
         let do_invoke_failure_test_local_with_compute_check =
@@ -1024,6 +1081,60 @@ fn test_program_sbf_invoke_sanity() {
         );
 
         do_invoke_failure_test_local(
+            TEST_MAX_ACCOUNT_INFOS_SIMD_0339_EXCEEDED,
+            TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete),
+            &[],
+            Some(vec![
+                format!("Program {invoke_program_id} invoke [1]"),
+                format!("Program log: invoke {program_lang} program"),
+                "Program log: Test max account infos exceeded with SIMD-0339".into(),
+                "skip".into(), // don't compare compute consumption logs
+                format!(
+                    "Program {invoke_program_id} failed: Invoked an instruction with too many \
+                     account info's (256 > 255)"
+                ),
+            ]),
+            &bank,
+        );
+
+        let bank = bank_with_feature_deactivated(
+            &bank_forks,
+            bank,
+            &feature_set::increase_cpi_account_info_limit::id(),
+        );
+
+         assert!(!bank
+            .feature_set
+            .is_active(&feature_set::increase_cpi_account_info_limit::id()));
+
+        do_invoke_failure_test_local(
+            TEST_MAX_ACCOUNT_INFOS_EXCEEDED_INCREASE_CPI_INFO,
+            TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete),
+            &[],
+            Some(vec![
+                format!("Program {invoke_program_id} invoke [1]"),
+                format!("Program log: invoke {program_lang} program"),
+                "Program log: Test max account infos exceeded with increase cpi info".into(),
+                "skip".into(), // don't compare compute consumption logs
+                format!(
+                    "Program {invoke_program_id} failed: Invoked an instruction with too many \
+                     account info's (129 > 128)"
+                ),
+            ]),
+            &bank,
+        );
+
+        let bank = bank_with_feature_deactivated(
+            &bank_forks,
+            bank,
+            &feature_set::increase_tx_account_lock_limit::id(),
+        );
+
+         assert!(!bank
+            .feature_set
+            .is_active(&feature_set::increase_tx_account_lock_limit::id()));
+
+        do_invoke_failure_test_local(
             TEST_MAX_ACCOUNT_INFOS_EXCEEDED,
             TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete),
             &[],
@@ -1034,7 +1145,7 @@ fn test_program_sbf_invoke_sanity() {
                 "skip".into(), // don't compare compute consumption logs
                 format!(
                     "Program {invoke_program_id} failed: Invoked an instruction with too many \
-                     account info's (129 > 128)"
+                     account info's (65 > 64)"
                 ),
             ]),
             &bank,
@@ -1378,6 +1489,9 @@ fn test_program_sbf_call_depth() {
         genesis_config
             .accounts
             .contains_key(&feature_set::raise_cpi_nesting_limit_to_8::id()),
+        genesis_config
+            .accounts
+            .contains_key(&feature_set::increase_cpi_account_info_limit::id()),
     );
     let instruction =
         Instruction::new_with_bincode(program_id, &(budget.max_call_depth - 1), vec![]);

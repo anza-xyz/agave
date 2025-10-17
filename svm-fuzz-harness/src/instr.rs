@@ -83,7 +83,7 @@ fn create_invoke_context_fields(
     ComputeBudget,
 )> {
     let compute_budget = {
-        let mut budget = ComputeBudget::new_with_defaults(false);
+        let mut budget = ComputeBudget::new_with_defaults(false, false);
         budget.compute_unit_limit = input.cu_avail;
         budget
     };
