@@ -1488,6 +1488,9 @@ fn test_program_sbf_call_depth() {
         genesis_config
             .accounts
             .contains_key(&feature_set::raise_cpi_nesting_limit_to_8::id()),
+        genesis_config
+            .accounts
+            .contains_key(&feature_set::increase_cpi_info_account_limit::id()),
     );
     let instruction =
         Instruction::new_with_bincode(program_id, &(budget.max_call_depth - 1), vec![]);
