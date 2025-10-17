@@ -42,7 +42,6 @@ pub fn setup_program_cache(
 
     cache.set_slot_for_tests(slot);
     cache.environments = environments.clone();
-    cache.upcoming_environments = Some(environments);
 
     for builtin in BUILTINS {
         // Skip migrated builtins.

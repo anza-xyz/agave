@@ -543,6 +543,54 @@ impl Default for ProgramRuntimeEnvironments {
     }
 }
 
+/// Globally manages the transition between environments at the epoch boundary
+#[derive(Debug, Default)]
+pub struct EpochBoundaryPreparation {
+    /// The epoch of the last rerooting
+    pub latest_root_epoch: Epoch,
+    /// Anticipated replacement for `environments` at the next epoch
+    ///
+    /// This is `None` during most of an epoch, and only `Some` around the boundaries (at the end and beginning of an epoch).
+    /// More precisely, it starts with the cache preparation phase a few hundred slots before the epoch boundary,
+    /// and it ends with the first rerooting after the epoch boundary.
+    pub upcoming_environments: Option<ProgramRuntimeEnvironments>,
+    /// List of loaded programs which should be recompiled before the next epoch (but don't have to).
+    pub programs_to_recompile: Vec<(Pubkey, Arc<ProgramCacheEntry>)>,
+}
+
+impl EpochBoundaryPreparation {
+    pub fn new(root_epoch: Epoch) -> Self {
+        Self {
+            latest_root_epoch: root_epoch,
+            upcoming_environments: None,
+            programs_to_recompile: Vec::default(),
+        }
+    }
+
+    /// Returns the upcoming environments depending on the given epoch
+    pub fn get_upcoming_environments_for_epoch(
+        &self,
+        epoch: Epoch,
+    ) -> Option<ProgramRuntimeEnvironments> {
+        if epoch != self.latest_root_epoch {
+            return self.upcoming_environments.clone();
+        }
+        None
+    }
+
+    /// Before rerooting the blockstore this concludes the epoch boundary preparation
+    pub fn reroot(&mut self, new_root_epoch: Epoch) -> Option<ProgramRuntimeEnvironments> {
+        if self.latest_root_epoch != new_root_epoch {
+            self.latest_root_epoch = new_root_epoch;
+            if let Some(upcoming_environments) = self.upcoming_environments.take() {
+                self.programs_to_recompile.clear();
+                return Some(upcoming_environments);
+            }
+        }
+        None
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct LoadingTaskCookie(u64);
 
@@ -632,18 +680,10 @@ pub struct ProgramCache<FG: ForkGraph> {
     index: IndexImplementation,
     /// The slot of the last rerooting
     pub latest_root_slot: Slot,
-    /// The epoch of the last rerooting
-    pub latest_root_epoch: Epoch,
+    /// Anticipates the environments of the upcoming epoch
+    pub epoch_boundary_preparation: Arc<RwLock<EpochBoundaryPreparation>>,
     /// Environments of the current epoch
     pub environments: ProgramRuntimeEnvironments,
-    /// Anticipated replacement for `environments` at the next epoch
-    ///
-    /// This is `None` during most of an epoch, and only `Some` around the boundaries (at the end and beginning of an epoch).
-    /// More precisely, it starts with the cache preparation phase a few hundred slots before the epoch boundary,
-    /// and it ends with the first rerooting after the epoch boundary.
-    pub upcoming_environments: Option<ProgramRuntimeEnvironments>,
-    /// List of loaded programs which should be recompiled before the next epoch (but don't have to).
-    pub programs_to_recompile: Vec<(Pubkey, Arc<ProgramCacheEntry>)>,
     /// Statistics counters
     pub stats: ProgramCacheStats,
     /// Reference to the block store
@@ -656,7 +696,6 @@ impl<FG: ForkGraph> Debug for ProgramCache<FG> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProgramCache")
             .field("root slot", &self.latest_root_slot)
-            .field("root epoch", &self.latest_root_epoch)
             .field("stats", &self.stats)
             .field("index", &self.index)
             .finish()
@@ -676,17 +715,9 @@ pub struct ProgramCacheForTxBatch {
     /// Program entries modified during the transaction batch.
     modified_entries: HashMap<Pubkey, Arc<ProgramCacheEntry>>,
     slot: Slot,
+    /// Anticipates the environments of the upcoming epoch
+    pub epoch_boundary_preparation: Arc<RwLock<EpochBoundaryPreparation>>,
     pub environments: ProgramRuntimeEnvironments,
-    /// Anticipated replacement for `environments` at the next epoch.
-    ///
-    /// This is `None` during most of an epoch, and only `Some` around the boundaries (at the end and beginning of an epoch).
-    /// More precisely, it starts with the cache preparation phase a few hundred slots before the epoch boundary,
-    /// and it ends with the first rerooting after the epoch boundary.
-    /// Needed when a program is deployed at the last slot of an epoch, becomes effective in the next epoch.
-    /// So needs to be compiled with the environment for the next epoch.
-    pub upcoming_environments: Option<ProgramRuntimeEnvironments>,
-    /// The epoch of the last rerooting
-    pub latest_root_epoch: Epoch,
     pub hit_max_limit: bool,
     pub loaded_missing: bool,
     pub merged_modified: bool,
@@ -696,16 +727,14 @@ impl ProgramCacheForTxBatch {
     pub fn new(
         slot: Slot,
         environments: ProgramRuntimeEnvironments,
-        upcoming_environments: Option<ProgramRuntimeEnvironments>,
-        latest_root_epoch: Epoch,
+        epoch_boundary_preparation: Arc<RwLock<EpochBoundaryPreparation>>,
     ) -> Self {
         Self {
             entries: HashMap::new(),
             modified_entries: HashMap::new(),
             slot,
+            epoch_boundary_preparation,
             environments,
-            upcoming_environments,
-            latest_root_epoch,
             hit_max_limit: false,
             loaded_missing: false,
             merged_modified: false,
@@ -721,9 +750,8 @@ impl ProgramCacheForTxBatch {
             entries: HashMap::new(),
             modified_entries: HashMap::new(),
             slot,
+            epoch_boundary_preparation: cache.epoch_boundary_preparation.clone(),
             environments: cache.get_environments_for_epoch(epoch),
-            upcoming_environments: cache.get_upcoming_environments_for_epoch(epoch),
-            latest_root_epoch: cache.latest_root_epoch,
             hit_max_limit: false,
             loaded_missing: false,
             merged_modified: false,
@@ -731,13 +759,12 @@ impl ProgramCacheForTxBatch {
     }
 
     /// Returns the current environments depending on the given epoch
-    pub fn get_environments_for_epoch(&self, epoch: Epoch) -> &ProgramRuntimeEnvironments {
-        if epoch != self.latest_root_epoch {
-            if let Some(upcoming_environments) = self.upcoming_environments.as_ref() {
-                return upcoming_environments;
-            }
-        }
-        &self.environments
+    pub fn get_environments_for_epoch(&self, epoch: Epoch) -> ProgramRuntimeEnvironments {
+        self.epoch_boundary_preparation
+            .read()
+            .unwrap()
+            .get_upcoming_environments_for_epoch(epoch)
+            .unwrap_or_else(|| self.environments.clone())
     }
 
     /// Refill the cache with a single entry. It's typically called during transaction loading, and
@@ -816,17 +843,18 @@ pub enum ProgramCacheMatchCriteria {
 }
 
 impl<FG: ForkGraph> ProgramCache<FG> {
-    pub fn new(root_slot: Slot, root_epoch: Epoch) -> Self {
+    pub fn new(
+        root_slot: Slot,
+        epoch_boundary_preparation: Arc<RwLock<EpochBoundaryPreparation>>,
+    ) -> Self {
         Self {
             index: IndexImplementation::V1 {
                 entries: HashMap::new(),
                 loading_entries: Mutex::new(HashMap::new()),
             },
             latest_root_slot: root_slot,
-            latest_root_epoch: root_epoch,
+            epoch_boundary_preparation,
             environments: ProgramRuntimeEnvironments::default(),
-            upcoming_environments: None,
-            programs_to_recompile: Vec::default(),
             stats: ProgramCacheStats::default(),
             fork_graph: None,
             loading_task_waiter: Arc::new(LoadingTaskWaiter::default()),
@@ -839,23 +867,11 @@ impl<FG: ForkGraph> ProgramCache<FG> {
 
     /// Returns the current environments depending on the given epoch
     pub fn get_environments_for_epoch(&self, epoch: Epoch) -> ProgramRuntimeEnvironments {
-        if epoch != self.latest_root_epoch {
-            if let Some(upcoming_environments) = self.upcoming_environments.as_ref() {
-                return upcoming_environments.clone();
-            }
-        }
-        self.environments.clone()
-    }
-
-    /// Returns the upcoming environments depending on the given epoch
-    pub fn get_upcoming_environments_for_epoch(
-        &self,
-        epoch: Epoch,
-    ) -> Option<ProgramRuntimeEnvironments> {
-        if epoch == self.latest_root_epoch {
-            return self.upcoming_environments.clone();
-        }
-        None
+        self.epoch_boundary_preparation
+            .read()
+            .unwrap()
+            .get_upcoming_environments_for_epoch(epoch)
+            .unwrap_or_else(|| self.environments.clone())
     }
 
     /// Insert a single entry. It's typically called during transaction loading,
@@ -974,15 +990,11 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             error!("Failed to lock fork graph for reading.");
             return;
         };
-        let mut preparation_phase_ends = false;
-        if self.latest_root_epoch != new_root_epoch {
-            self.latest_root_epoch = new_root_epoch;
-            if let Some(upcoming_environments) = self.upcoming_environments.take() {
-                preparation_phase_ends = true;
-                self.environments = upcoming_environments;
-                self.programs_to_recompile.clear();
-            }
-        }
+        let upcoming_environments = self
+            .epoch_boundary_preparation
+            .write()
+            .unwrap()
+            .reroot(new_root_epoch);
         match &mut self.index {
             IndexImplementation::V1 { entries, .. } => {
                 for second_level in entries.values_mut() {
@@ -1027,13 +1039,13 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         })
                         .filter(|entry| {
                             // Remove outdated environment of previous feature set
-                            if preparation_phase_ends
-                                && !Self::matches_environment(entry, &self.environments)
-                            {
-                                self.stats
-                                    .prunes_environment
-                                    .fetch_add(1, Ordering::Relaxed);
-                                return false;
+                            if let Some(upcoming_environments) = upcoming_environments.as_ref() {
+                                if !Self::matches_environment(entry, upcoming_environments) {
+                                    self.stats
+                                        .prunes_environment
+                                        .fetch_add(1, Ordering::Relaxed);
+                                    return false;
+                                }
                             }
                             true
                         })
@@ -1044,6 +1056,9 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             }
         }
         self.remove_programs_with_no_entries();
+        if let Some(upcoming_environments) = upcoming_environments {
+            self.environments = upcoming_environments;
+        }
         debug_assert!(self.latest_root_slot <= new_root_slot);
         self.latest_root_slot = new_root_slot;
     }

@@ -36,8 +36,8 @@ use {
         execution_budget::SVMTransactionExecutionCost,
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
-            ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheForTxBatch,
-            ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
+            EpochBoundaryPreparation, ForkGraph, ProgramCache, ProgramCacheEntry,
+            ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
         },
         solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
         sysvar_cache::SysvarCache,
@@ -184,7 +184,7 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
             sysvar_cache: RwLock::<SysvarCache>::default(),
             global_program_cache: Arc::new(RwLock::new(ProgramCache::new(
                 Slot::default(),
-                Epoch::default(),
+                Arc::new(RwLock::new(EpochBoundaryPreparation::default())),
             ))),
             builtin_program_ids: RwLock::new(HashSet::new()),
             execution_cost: SVMTransactionExecutionCost::default(),
@@ -203,10 +203,15 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     /// When using this method, it's advisable to call `set_fork_graph_in_program_cache`
     /// as well as `add_builtin` to configure the cache before using the processor.
     pub fn new_uninitialized(slot: Slot, epoch: Epoch) -> Self {
+        let epoch_boundary_preparation =
+            Arc::new(RwLock::new(EpochBoundaryPreparation::new(epoch)));
         Self {
             slot,
             epoch,
-            global_program_cache: Arc::new(RwLock::new(ProgramCache::new(slot, epoch))),
+            global_program_cache: Arc::new(RwLock::new(ProgramCache::new(
+                slot,
+                epoch_boundary_preparation,
+            ))),
             ..Self::default()
         }
     }
@@ -271,7 +276,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let empty_loader = || Arc::new(BuiltinProgram::new_loader(VmConfig::default()));
 
         global_program_cache.latest_root_slot = self.slot;
-        global_program_cache.latest_root_epoch = self.epoch;
+        global_program_cache
+            .epoch_boundary_preparation
+            .write()
+            .unwrap()
+            .latest_root_epoch = self.epoch;
         global_program_cache.environments.program_runtime_v1 =
             program_runtime_environment_v1.unwrap_or(empty_loader());
         global_program_cache.environments.program_runtime_v2 =

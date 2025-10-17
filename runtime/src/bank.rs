@@ -1496,25 +1496,26 @@ impl Bank {
                 .checked_div(2)
                 .unwrap();
 
-        let mut program_cache = self
+        let program_cache = self
             .transaction_processor
             .global_program_cache
-            .write()
+            .read()
             .unwrap();
+        let mut epoch_boundary_preparation =
+            program_cache.epoch_boundary_preparation.write().unwrap();
 
-        if program_cache.upcoming_environments.is_some() {
-            if let Some((key, program_to_recompile)) = program_cache.programs_to_recompile.pop() {
-                let effective_epoch = program_cache.latest_root_epoch.saturating_add(1);
+        if let Some(upcoming_environments) =
+            epoch_boundary_preparation.upcoming_environments.as_ref()
+        {
+            let upcoming_environments = upcoming_environments.clone();
+            if let Some((key, program_to_recompile)) =
+                epoch_boundary_preparation.programs_to_recompile.pop()
+            {
+                drop(epoch_boundary_preparation);
                 drop(program_cache);
-                let environments_for_epoch = self
-                    .transaction_processor
-                    .global_program_cache
-                    .read()
-                    .unwrap()
-                    .get_environments_for_epoch(effective_epoch);
                 if let Some(recompiled) = load_program_with_pubkey(
                     self,
-                    &environments_for_epoch,
+                    &upcoming_environments,
                     &key,
                     self.slot,
                     &mut ExecuteTimings::default(),
@@ -1534,17 +1535,11 @@ impl Bank {
                     program_cache.assign_program(key, recompiled);
                 }
             }
-        } else if self.epoch != program_cache.latest_root_epoch
+        } else if self.epoch != epoch_boundary_preparation.latest_root_epoch
             || slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch
         {
             // Anticipate the upcoming program runtime environment for the next epoch,
             // so we can try to recompile loaded programs before the feature transition hits.
-            drop(program_cache);
-            let mut program_cache = self
-                .transaction_processor
-                .global_program_cache
-                .write()
-                .unwrap();
             let (program_runtime_environment_v1, program_runtime_environment_v2) =
                 self.create_program_runtime_environments(&upcoming_feature_set);
             let mut upcoming_environments = program_cache.environments.clone();
@@ -1558,10 +1553,10 @@ impl Bank {
             if changed_program_runtime_v2 {
                 upcoming_environments.program_runtime_v2 = program_runtime_environment_v2;
             }
-            program_cache.upcoming_environments = Some(upcoming_environments);
-            program_cache.programs_to_recompile = program_cache
+            epoch_boundary_preparation.upcoming_environments = Some(upcoming_environments);
+            epoch_boundary_preparation.programs_to_recompile = program_cache
                 .get_flattened_entries(changed_program_runtime_v1, changed_program_runtime_v2);
-            program_cache
+            epoch_boundary_preparation
                 .programs_to_recompile
                 .sort_by_cached_key(|(_id, program)| program.decayed_usage_counter(self.slot));
         }
