@@ -159,6 +159,7 @@ impl FeatureSet {
             raise_cpi_nesting_limit_to_8: self.is_active(&raise_cpi_nesting_limit_to_8::id()),
             provide_instruction_data_offset_in_vm_r2: self
                 .is_active(&provide_instruction_data_offset_in_vm_r2::id()),
+            poseidon_enforce_padding: self.is_active(&poseidon_enforce_padding::id()),
         }
     }
 }
@@ -1145,6 +1146,10 @@ pub mod discard_unexpected_data_complete_shreds {
     solana_pubkey::declare_id!("8MhfKhoZEoiySpVe248bDkisyEcBA7JQLyUS94xoTSqN");
 }
 
+pub mod poseidon_enforce_padding {
+    solana_pubkey::declare_id!("poUdAqRXXsNmfqAZ6UqpjbeYgwBygbfQLEvWSqVhSnb");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2070,6 +2075,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             discard_unexpected_data_complete_shreds::id(),
             "SIMD-0337: Markers for Alpenglow Fast Leader Handover, DATA_COMPLETE_SHRED placement \
              rules",
+        ),
+        (
+            poseidon_enforce_padding::id(),
+            "Enforce padding in Poseidon hash inputs",
         ), /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

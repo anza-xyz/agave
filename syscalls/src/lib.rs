@@ -1752,11 +1752,17 @@ declare_builtin_function!(
             })
             .collect::<Result<Vec<_>, Error>>()?;
 
-        let simplify_alt_bn128_syscall_error_codes = invoke_context
-            .get_feature_set()
-            .simplify_alt_bn128_syscall_error_codes;
+        let feature_set = invoke_context.get_feature_set();
+        let simplify_alt_bn128_syscall_error_codes =
+            feature_set.simplify_alt_bn128_syscall_error_codes;
+        let enforce_padding = feature_set.poseidon_enforce_padding;
 
-        let hash = match poseidon::hashv(parameters, endianness, inputs.as_slice()) {
+        let result = if enforce_padding {
+            poseidon::hashv(parameters, endianness, inputs.as_slice())
+        } else {
+            poseidon::legacy::hashv(parameters, endianness, inputs.as_slice())
+        };
+        let hash = match result {
             Ok(hash) => hash,
             Err(e) => {
                 return if simplify_alt_bn128_syscall_error_codes {
