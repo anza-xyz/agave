@@ -17,3 +17,7 @@ semver = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 toml_edit = { workspace = true, features = ["serde"] }
 walkdir = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+pretty_assertions = { workspace = true }

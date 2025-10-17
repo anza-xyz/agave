@@ -71,3 +71,27 @@ pub fn get_current_version() -> Result<String> {
     };
     Ok(version.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use {super::*, pretty_assertions::assert_eq};
+
+    #[test]
+    fn test_get_git_root_path() {
+        // create a temporary directory
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // cd into the temporary directory and do git init
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+        Command::new("git").args(["init"]).output().unwrap();
+
+        // call get_git_root_path should get the temporary directory
+        let root_path = get_git_root_path().unwrap();
+
+        // canonicalize the paths since macos may return a symlink
+        let canonicalized_root_path = fs::canonicalize(root_path).unwrap();
+        let canonicalized_temp_dir_path = fs::canonicalize(temp_dir.path()).unwrap();
+
+        assert_eq!(canonicalized_root_path, canonicalized_temp_dir_path);
+    }
+}
