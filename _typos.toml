@@ -1,0 +1,78 @@
+[default]
+# Only check comments and markdown files initially
+files = ["**/*.rs", "**/*.md"]
+extend-exclude = [
+    "target/**",
+    "**/target/**",
+    "programs/sbf/**",
+    "**/*.so",
+    "**/*.dylib",
+    "**/*.dll",
+    "**/*.js",
+    "**/*.mjs",
+    "**/*.min.js",
+    "docs/static/**"
+]
+
+[default.extend-words]
+# Project-specific terms
+agave = "agave"
+solana = "solana"
+bpf = "bpf"
+sbf = "sbf"
+lamports = "lamports"
+pubkey = "pubkey"
+keypair = "keypair"
+keypairs = "keypairs"
+sysvar = "sysvar"
+sysvars = "sysvars"
+validator = "validator"
+validators = "validators"
+blockstore = "blockstore"
+shred = "shred"
+shreds = "shreds"
+turbine = "turbine"
+gossip = "gossip"
+crds = "crds"
+epoch = "epoch"
+slot = "slot"
+slots = "slots"
+stake = "stake"
+voting = "voting"
+runtime = "runtime"
+transaction = "transaction"
+transactions = "transactions"
+instruction = "instruction"
+instructions = "instructions"
+program = "program"
+programs = "programs"
+account = "account"
+accounts = "accounts"
+ledger = "ledger"
+genesis = "genesis"
+cluster = "cluster"
+rpc = "rpc"
+tpu = "tpu"
+quic = "quic"
+udp = "udp"
+tcp = "tcp"
+websocket = "websocket"
+jsonrpc = "jsonrpc"
+api = "api"
+endpoint = "endpoint"
+endpoints = "endpoints"
+config = "config"
+configs = "configs"
+metadata = "metadata"
+serialize = "serialize"
+deserialize = "deserialize"
+serialization = "serialization"
+deserialization = "deserialization"
+# Additional blockchain/crypto terms
+cryptocurrency = "cryptocurrency"
+blockchain = "blockchain"
+consensus = "consensus"
+cryptographic = "cryptographic"
+cryptography = "cryptography"
+# Common abbreviations
+nonce = "nonce"
