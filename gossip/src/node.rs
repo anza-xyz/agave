@@ -10,10 +10,9 @@ use {
         find_available_ports_in_range,
         multihomed_sockets::BindIpAddrs,
         sockets::{
-            bind_gossip_port_in_range, bind_in_range_with_config, bind_more_with_config,
-            bind_to_with_config, bind_two_in_range_with_offset_and_config,
-            localhost_port_range_for_tests, multi_bind_in_range_with_config,
-            SocketConfiguration as SocketConfig,
+            bind_in_range_with_config, bind_more_with_config, bind_to_with_config,
+            bind_two_in_range_with_offset_and_config, localhost_port_range_for_tests,
+            multi_bind_in_range_with_config, SocketConfiguration as SocketConfig,
         },
     },
     solana_pubkey::Pubkey,
@@ -23,7 +22,7 @@ use {
     std::{
         io,
         iter::once,
-        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+        net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
         num::NonZero,
         sync::Arc,
     },
@@ -59,9 +58,13 @@ impl Node {
     pub fn new_localhost_with_pubkey(pubkey: &Pubkey) -> Self {
         let port_range = localhost_port_range_for_tests();
         let bind_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let sockaddr = SocketAddr::new(bind_ip_addr, port_range.0);
+        let gossip_sockets = vec![UdpSocket::bind(sockaddr).unwrap()];
+        let ip_echo_sockets = vec![TcpListener::bind(sockaddr).unwrap()];
         let config = NodeConfig {
             bind_ip_addrs: BindIpAddrs::new(vec![bind_ip_addr]).expect("should bind"),
-            gossip_port: port_range.0,
+            gossip_sockets,
+            ip_echo_sockets,
             port_range,
             advertised_ip: bind_ip_addr,
             public_tpu_addr: None,
@@ -84,7 +87,6 @@ impl Node {
     pub fn new_with_external_ip(pubkey: &Pubkey, config: NodeConfig) -> Node {
         let NodeConfig {
             advertised_ip,
-            gossip_port,
             port_range,
             bind_ip_addrs,
             public_tpu_addr,
@@ -93,20 +95,14 @@ impl Node {
             num_tvu_retransmit_sockets,
             num_quic_endpoints,
             vortexor_receiver_addr,
+            gossip_sockets,
+            ip_echo_sockets,
         } = config;
         let bind_ip_addr = bind_ip_addrs.active();
-
-        let mut gossip_sockets = Vec::with_capacity(bind_ip_addrs.len());
-        let mut gossip_ports = Vec::with_capacity(bind_ip_addrs.len());
-        let mut ip_echo_sockets = Vec::with_capacity(bind_ip_addrs.len());
-        for ip in bind_ip_addrs.iter() {
-            let gossip_addr = SocketAddr::new(*ip, gossip_port);
-            let (port, (gossip, ip_echo)) =
-                bind_gossip_port_in_range(&gossip_addr, port_range, *ip);
-            gossip_sockets.push(gossip);
-            gossip_ports.push(port);
-            ip_echo_sockets.push(ip_echo);
-        }
+        let gossip_ports = gossip_sockets
+            .iter()
+            .map(|s| s.local_addr().unwrap().port())
+            .collect::<Vec<_>>();
         let socket_config = SocketConfig::default();
 
         let (tvu_port, mut tvu_sockets) = multi_bind_in_range_with_config(
