@@ -811,7 +811,7 @@ mod tests {
         let upcoming_environments = ProgramRuntimeEnvironments::default();
         let current_environments = {
             let global_program_cache = batch_processor.global_program_cache.read().unwrap();
-            global_program_cache
+            batch_processor
                 .epoch_boundary_preparation
                 .write()
                 .unwrap()

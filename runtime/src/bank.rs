@@ -1501,8 +1501,11 @@ impl Bank {
             .global_program_cache
             .read()
             .unwrap();
-        let mut epoch_boundary_preparation =
-            program_cache.epoch_boundary_preparation.write().unwrap();
+        let mut epoch_boundary_preparation = self
+            .transaction_processor
+            .epoch_boundary_preparation
+            .write()
+            .unwrap();
 
         if let Some(upcoming_environments) =
             epoch_boundary_preparation.upcoming_environments.as_ref()
@@ -1563,11 +1566,17 @@ impl Bank {
     }
 
     pub fn prune_program_cache(&self, new_root_slot: Slot, new_root_epoch: Epoch) {
+        let upcoming_environments = self
+            .transaction_processor
+            .epoch_boundary_preparation
+            .write()
+            .unwrap()
+            .reroot(new_root_epoch);
         self.transaction_processor
             .global_program_cache
             .write()
             .unwrap()
-            .prune(new_root_slot, new_root_epoch);
+            .prune(new_root_slot, upcoming_environments);
     }
 
     pub fn prune_program_cache_by_deployment_slot(&self, deployment_slot: Slot) {
@@ -5890,6 +5899,9 @@ impl Bank {
         ProgramCacheForTxBatch::new_from_cache(
             slot,
             self.epoch_schedule.get_epoch(slot),
+            self.transaction_processor
+                .epoch_boundary_preparation
+                .clone(),
             &self
                 .transaction_processor
                 .global_program_cache

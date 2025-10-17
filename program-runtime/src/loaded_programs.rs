@@ -680,8 +680,6 @@ pub struct ProgramCache<FG: ForkGraph> {
     index: IndexImplementation,
     /// The slot of the last rerooting
     pub latest_root_slot: Slot,
-    /// Anticipates the environments of the upcoming epoch
-    pub epoch_boundary_preparation: Arc<RwLock<EpochBoundaryPreparation>>,
     /// Environments of the current epoch
     pub environments: ProgramRuntimeEnvironments,
     /// Statistics counters
@@ -744,14 +742,16 @@ impl ProgramCacheForTxBatch {
     pub fn new_from_cache<FG: ForkGraph>(
         slot: Slot,
         epoch: Epoch,
+        epoch_boundary_preparation: Arc<RwLock<EpochBoundaryPreparation>>,
         cache: &ProgramCache<FG>,
     ) -> Self {
+        let environments = cache.get_environments_for_epoch(&epoch_boundary_preparation, epoch);
         Self {
             entries: HashMap::new(),
             modified_entries: HashMap::new(),
             slot,
-            epoch_boundary_preparation: cache.epoch_boundary_preparation.clone(),
-            environments: cache.get_environments_for_epoch(epoch),
+            epoch_boundary_preparation,
+            environments,
             hit_max_limit: false,
             loaded_missing: false,
             merged_modified: false,
@@ -843,17 +843,13 @@ pub enum ProgramCacheMatchCriteria {
 }
 
 impl<FG: ForkGraph> ProgramCache<FG> {
-    pub fn new(
-        root_slot: Slot,
-        epoch_boundary_preparation: Arc<RwLock<EpochBoundaryPreparation>>,
-    ) -> Self {
+    pub fn new(root_slot: Slot) -> Self {
         Self {
             index: IndexImplementation::V1 {
                 entries: HashMap::new(),
                 loading_entries: Mutex::new(HashMap::new()),
             },
             latest_root_slot: root_slot,
-            epoch_boundary_preparation,
             environments: ProgramRuntimeEnvironments::default(),
             stats: ProgramCacheStats::default(),
             fork_graph: None,
@@ -866,8 +862,12 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     }
 
     /// Returns the current environments depending on the given epoch
-    pub fn get_environments_for_epoch(&self, epoch: Epoch) -> ProgramRuntimeEnvironments {
-        self.epoch_boundary_preparation
+    pub fn get_environments_for_epoch(
+        &self,
+        epoch_boundary_preparation: &Arc<RwLock<EpochBoundaryPreparation>>,
+        epoch: Epoch,
+    ) -> ProgramRuntimeEnvironments {
+        epoch_boundary_preparation
             .read()
             .unwrap()
             .get_upcoming_environments_for_epoch(epoch)
@@ -980,7 +980,11 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     }
 
     /// Before rerooting the blockstore this removes all superfluous entries
-    pub fn prune(&mut self, new_root_slot: Slot, new_root_epoch: Epoch) {
+    pub fn prune(
+        &mut self,
+        new_root_slot: Slot,
+        upcoming_environments: Option<ProgramRuntimeEnvironments>,
+    ) {
         let Some(fork_graph) = self.fork_graph.clone() else {
             error!("Program cache doesn't have fork graph.");
             return;
@@ -990,11 +994,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             error!("Failed to lock fork graph for reading.");
             return;
         };
-        let upcoming_environments = self
-            .epoch_boundary_preparation
-            .write()
-            .unwrap()
-            .reroot(new_root_epoch);
         match &mut self.index {
             IndexImplementation::V1 { entries, .. } => {
                 for second_level in entries.values_mut() {
@@ -1405,7 +1404,7 @@ impl solana_frozen_abi::abi_example::AbiExample for ProgramCacheEntry {
 impl<FG: ForkGraph> solana_frozen_abi::abi_example::AbiExample for ProgramCache<FG> {
     fn example() -> Self {
         // ProgramCache isn't serializable by definition.
-        Self::new(Slot::default(), Epoch::default())
+        Self::new(Slot::default())
     }
 }
 
@@ -1413,9 +1412,10 @@ impl<FG: ForkGraph> solana_frozen_abi::abi_example::AbiExample for ProgramCache<
 mod tests {
     use {
         crate::loaded_programs::{
-            BlockRelation, ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheEntryOwner,
-            ProgramCacheEntryType, ProgramCacheForTxBatch, ProgramCacheMatchCriteria,
-            ProgramRuntimeEnvironment, ProgramRuntimeEnvironments, DELAY_VISIBILITY_SLOT_OFFSET,
+            BlockRelation, EpochBoundaryPreparation, ForkGraph, ProgramCache, ProgramCacheEntry,
+            ProgramCacheEntryOwner, ProgramCacheEntryType, ProgramCacheForTxBatch,
+            ProgramCacheMatchCriteria, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
+            DELAY_VISIBILITY_SLOT_OFFSET,
         },
         assert_matches::assert_matches,
         percentage::Percentage,
@@ -1444,7 +1444,7 @@ mod tests {
     }
 
     fn new_mock_cache<FG: ForkGraph>() -> ProgramCache<FG> {
-        let mut cache = ProgramCache::new(0, 0);
+        let mut cache = ProgramCache::new(0);
         cache.environments.program_runtime_v1 = get_mock_env();
         cache
     }
@@ -1993,7 +1993,7 @@ mod tests {
 
     #[test]
     fn test_assign_program_removes_entries_in_same_slot() {
-        let mut cache = ProgramCache::<TestForkGraph>::new(0, 0);
+        let mut cache = ProgramCache::<TestForkGraph>::new(0);
         cache.environments.program_runtime_v1 = get_mock_env();
         let program_id = Pubkey::new_unique();
         let closed_other_slot = Arc::new(ProgramCacheEntry {
@@ -2127,10 +2127,10 @@ mod tests {
 
         cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
-        cache.prune(0, 0);
+        cache.prune(0, None);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
 
-        cache.prune(10, 0);
+        cache.prune(10, None);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
 
         let mut cache = new_mock_cache::<TestForkGraph>();
@@ -2140,10 +2140,10 @@ mod tests {
 
         cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
-        cache.prune(0, 0);
+        cache.prune(0, None);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
 
-        cache.prune(10, 0);
+        cache.prune(10, None);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
 
         let mut cache = new_mock_cache::<TestForkGraph>();
@@ -2153,10 +2153,10 @@ mod tests {
 
         cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
-        cache.prune(0, 0);
+        cache.prune(0, None);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
 
-        cache.prune(10, 0);
+        cache.prune(10, None);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
 
         let mut cache = new_mock_cache::<TestForkGraph>();
@@ -2165,10 +2165,10 @@ mod tests {
         }));
         cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
-        cache.prune(0, 0);
+        cache.prune(0, None);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
 
-        cache.prune(10, 0);
+        cache.prune(10, None);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
     }
 
@@ -2186,7 +2186,7 @@ mod tests {
         cache.assign_program(program1, new_test_entry(10, 10));
 
         let new_env = Arc::new(BuiltinProgram::new_mock());
-        cache.upcoming_environments = Some(ProgramRuntimeEnvironments {
+        let upcoming_environments = Some(ProgramRuntimeEnvironments {
             program_runtime_v1: new_env.clone(),
             program_runtime_v2: new_env.clone(),
         });
@@ -2204,12 +2204,12 @@ mod tests {
         // Test that there are 2 entries for the program
         assert_eq!(cache.get_slot_versions_for_tests(&program1).len(), 2);
 
-        cache.prune(21, cache.latest_root_epoch);
+        cache.prune(21, None);
 
         // Test that prune didn't remove the entry, since environments are different.
         assert_eq!(cache.get_slot_versions_for_tests(&program1).len(), 2);
 
-        cache.prune(22, cache.latest_root_epoch.saturating_add(1));
+        cache.prune(22, upcoming_environments);
 
         // Test that prune removed 1 entry, since epoch changed
         assert_eq!(cache.get_slot_versions_for_tests(&program1).len(), 1);
@@ -2316,6 +2316,7 @@ mod tests {
     #[test]
     fn test_fork_extract_and_prune() {
         let mut cache = new_mock_cache::<TestForkGraphSpecific>();
+        let epoch_boundary_preparation = Arc::new(RwLock::new(EpochBoundaryPreparation::default()));
 
         // Fork graph created for the test
         //                   0
@@ -2384,7 +2385,11 @@ mod tests {
             get_entries_to_load(&cache, 22, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program2, false));
         assert!(match_missing(&missing, &program3, false));
-        let mut extracted = ProgramCacheForTxBatch::new(22, cache.environments.clone(), None, 0);
+        let mut extracted = ProgramCacheForTxBatch::new(
+            22,
+            cache.environments.clone(),
+            epoch_boundary_preparation.clone(),
+        );
         cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 20, 22));
         assert!(match_slot(&extracted, &program4, 0, 22));
@@ -2393,7 +2398,11 @@ mod tests {
         let mut missing =
             get_entries_to_load(&cache, 15, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
-        let mut extracted = ProgramCacheForTxBatch::new(15, cache.environments.clone(), None, 0);
+        let mut extracted = ProgramCacheForTxBatch::new(
+            15,
+            cache.environments.clone(),
+            epoch_boundary_preparation.clone(),
+        );
         cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 15));
         assert!(match_slot(&extracted, &program2, 11, 15));
@@ -2409,7 +2418,11 @@ mod tests {
         let mut missing =
             get_entries_to_load(&cache, 18, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
-        let mut extracted = ProgramCacheForTxBatch::new(18, cache.environments.clone(), None, 0);
+        let mut extracted = ProgramCacheForTxBatch::new(
+            18,
+            cache.environments.clone(),
+            epoch_boundary_preparation.clone(),
+        );
         cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 18));
         assert!(match_slot(&extracted, &program2, 11, 18));
@@ -2420,7 +2433,11 @@ mod tests {
         let mut missing =
             get_entries_to_load(&cache, 23, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
-        let mut extracted = ProgramCacheForTxBatch::new(23, cache.environments.clone(), None, 0);
+        let mut extracted = ProgramCacheForTxBatch::new(
+            23,
+            cache.environments.clone(),
+            epoch_boundary_preparation.clone(),
+        );
         cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 23));
         assert!(match_slot(&extracted, &program2, 11, 23));
@@ -2431,7 +2448,11 @@ mod tests {
         let mut missing =
             get_entries_to_load(&cache, 11, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
-        let mut extracted = ProgramCacheForTxBatch::new(11, cache.environments.clone(), None, 0);
+        let mut extracted = ProgramCacheForTxBatch::new(
+            11,
+            cache.environments.clone(),
+            epoch_boundary_preparation.clone(),
+        );
         cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 11));
         // program2 was updated at slot 11, but is not effective till slot 12. The result should contain a tombstone.
@@ -2442,7 +2463,7 @@ mod tests {
         assert_eq!(tombstone.deployment_slot, 11);
         assert!(match_slot(&extracted, &program4, 5, 11));
 
-        cache.prune(5, 0);
+        cache.prune(5, None);
 
         // Fork graph after pruning
         //                   0
@@ -2463,7 +2484,11 @@ mod tests {
         let mut missing =
             get_entries_to_load(&cache, 21, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
-        let mut extracted = ProgramCacheForTxBatch::new(21, cache.environments.clone(), None, 0);
+        let mut extracted = ProgramCacheForTxBatch::new(
+            21,
+            cache.environments.clone(),
+            epoch_boundary_preparation.clone(),
+        );
         cache.extract(&mut missing, &mut extracted, true, true);
         // Since the fork was pruned, we should not find the entry deployed at slot 20.
         assert!(match_slot(&extracted, &program1, 0, 21));
@@ -2473,14 +2498,18 @@ mod tests {
         // Testing fork 0 - 5 - 11 - 25 - 27 with current slot at 27
         let mut missing =
             get_entries_to_load(&cache, 27, &[program1, program2, program3, program4]);
-        let mut extracted = ProgramCacheForTxBatch::new(27, cache.environments.clone(), None, 0);
+        let mut extracted = ProgramCacheForTxBatch::new(
+            27,
+            cache.environments.clone(),
+            epoch_boundary_preparation.clone(),
+        );
         cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 27));
         assert!(match_slot(&extracted, &program2, 11, 27));
         assert!(match_slot(&extracted, &program3, 25, 27));
         assert!(match_slot(&extracted, &program4, 5, 27));
 
-        cache.prune(15, 0);
+        cache.prune(15, None);
 
         // Fork graph after pruning
         //                  0
@@ -2501,7 +2530,11 @@ mod tests {
         let mut missing =
             get_entries_to_load(&cache, 23, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
-        let mut extracted = ProgramCacheForTxBatch::new(23, cache.environments.clone(), None, 0);
+        let mut extracted = ProgramCacheForTxBatch::new(
+            23,
+            cache.environments.clone(),
+            epoch_boundary_preparation.clone(),
+        );
         cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 23));
         assert!(match_slot(&extracted, &program2, 11, 23));
@@ -2511,6 +2544,7 @@ mod tests {
     #[test]
     fn test_extract_using_deployment_slot() {
         let mut cache = new_mock_cache::<TestForkGraphSpecific>();
+        let epoch_boundary_preparation = Arc::new(RwLock::new(EpochBoundaryPreparation::default()));
 
         // Fork graph created for the test
         //                   0
@@ -2549,7 +2583,11 @@ mod tests {
         // Testing fork 0 - 5 - 11 - 15 - 16 - 19 - 21 - 23 with current slot at 19
         let mut missing = get_entries_to_load(&cache, 12, &[program1, program2, program3]);
         assert!(match_missing(&missing, &program3, false));
-        let mut extracted = ProgramCacheForTxBatch::new(12, cache.environments.clone(), None, 0);
+        let mut extracted = ProgramCacheForTxBatch::new(
+            12,
+            cache.environments.clone(),
+            epoch_boundary_preparation.clone(),
+        );
         cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 12));
         assert!(match_slot(&extracted, &program2, 11, 12));
@@ -2559,7 +2597,11 @@ mod tests {
         missing.get_mut(0).unwrap().1 = ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
         missing.get_mut(1).unwrap().1 = ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
         assert!(match_missing(&missing, &program3, false));
-        let mut extracted = ProgramCacheForTxBatch::new(12, cache.environments.clone(), None, 0);
+        let mut extracted = ProgramCacheForTxBatch::new(
+            12,
+            cache.environments.clone(),
+            epoch_boundary_preparation.clone(),
+        );
         cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_missing(&missing, &program1, true));
         assert!(match_slot(&extracted, &program2, 11, 12));
@@ -2568,6 +2610,7 @@ mod tests {
     #[test]
     fn test_extract_unloaded() {
         let mut cache = new_mock_cache::<TestForkGraphSpecific>();
+        let epoch_boundary_preparation = Arc::new(RwLock::new(EpochBoundaryPreparation::default()));
 
         // Fork graph created for the test
         //                   0
@@ -2619,14 +2662,22 @@ mod tests {
         // Testing fork 0 - 5 - 11 - 15 - 16 - 19 - 21 - 23 with current slot at 19
         let mut missing = get_entries_to_load(&cache, 19, &[program1, program2, program3]);
         assert!(match_missing(&missing, &program3, false));
-        let mut extracted = ProgramCacheForTxBatch::new(19, cache.environments.clone(), None, 0);
+        let mut extracted = ProgramCacheForTxBatch::new(
+            19,
+            cache.environments.clone(),
+            epoch_boundary_preparation.clone(),
+        );
         cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 19));
         assert!(match_slot(&extracted, &program2, 11, 19));
 
         // Testing fork 0 - 5 - 11 - 25 - 27 with current slot at 27
         let mut missing = get_entries_to_load(&cache, 27, &[program1, program2, program3]);
-        let mut extracted = ProgramCacheForTxBatch::new(27, cache.environments.clone(), None, 0);
+        let mut extracted = ProgramCacheForTxBatch::new(
+            27,
+            cache.environments.clone(),
+            epoch_boundary_preparation.clone(),
+        );
         cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 27));
         assert!(match_slot(&extracted, &program2, 11, 27));
@@ -2635,7 +2686,11 @@ mod tests {
         // Testing fork 0 - 10 - 20 - 22 with current slot at 22
         let mut missing = get_entries_to_load(&cache, 22, &[program1, program2, program3]);
         assert!(match_missing(&missing, &program2, false));
-        let mut extracted = ProgramCacheForTxBatch::new(22, cache.environments.clone(), None, 0);
+        let mut extracted = ProgramCacheForTxBatch::new(
+            22,
+            cache.environments.clone(),
+            epoch_boundary_preparation.clone(),
+        );
         cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 20, 22));
         assert!(match_missing(&missing, &program3, true));
@@ -2644,13 +2699,18 @@ mod tests {
     #[test]
     fn test_extract_nonexistent() {
         let mut cache = new_mock_cache::<TestForkGraphSpecific>();
+        let epoch_boundary_preparation = Arc::new(RwLock::new(EpochBoundaryPreparation::default()));
         let fork_graph = TestForkGraphSpecific::default();
         let fork_graph = Arc::new(RwLock::new(fork_graph));
         cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
         let program1 = Pubkey::new_unique();
         let mut missing = vec![(program1, ProgramCacheMatchCriteria::NoCriteria)];
-        let mut extracted = ProgramCacheForTxBatch::new(0, cache.environments.clone(), None, 0);
+        let mut extracted = ProgramCacheForTxBatch::new(
+            0,
+            cache.environments.clone(),
+            epoch_boundary_preparation.clone(),
+        );
         cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_missing(&missing, &program1, true));
     }
@@ -2702,6 +2762,7 @@ mod tests {
     #[test]
     fn test_fork_prune_find_first_ancestor() {
         let mut cache = new_mock_cache::<TestForkGraphSpecific>();
+        let epoch_boundary_preparation = Arc::new(RwLock::new(EpochBoundaryPreparation::default()));
 
         // Fork graph created for the test
         //                   0
@@ -2723,10 +2784,14 @@ mod tests {
         cache.assign_program(program1, new_test_entry(0, 1));
         cache.assign_program(program1, new_test_entry(5, 6));
 
-        cache.prune(10, 0);
+        cache.prune(10, None);
 
         let mut missing = get_entries_to_load(&cache, 20, &[program1]);
-        let mut extracted = ProgramCacheForTxBatch::new(20, cache.environments.clone(), None, 0);
+        let mut extracted = ProgramCacheForTxBatch::new(
+            20,
+            cache.environments.clone(),
+            epoch_boundary_preparation.clone(),
+        );
         cache.extract(&mut missing, &mut extracted, true, true);
 
         // The cache should have the program deployed at slot 0
@@ -2742,6 +2807,7 @@ mod tests {
     #[test]
     fn test_prune_by_deployment_slot() {
         let mut cache = new_mock_cache::<TestForkGraphSpecific>();
+        let epoch_boundary_preparation = Arc::new(RwLock::new(EpochBoundaryPreparation::default()));
 
         // Fork graph created for the test
         //                   0
@@ -2767,14 +2833,22 @@ mod tests {
         cache.assign_program(program2, new_test_entry(10, 11));
 
         let mut missing = get_entries_to_load(&cache, 20, &[program1, program2]);
-        let mut extracted = ProgramCacheForTxBatch::new(20, cache.environments.clone(), None, 0);
+        let mut extracted = ProgramCacheForTxBatch::new(
+            20,
+            cache.environments.clone(),
+            epoch_boundary_preparation.clone(),
+        );
         cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 20));
         assert!(match_slot(&extracted, &program2, 10, 20));
 
         let mut missing = get_entries_to_load(&cache, 6, &[program1, program2]);
         assert!(match_missing(&missing, &program2, false));
-        let mut extracted = ProgramCacheForTxBatch::new(6, cache.environments.clone(), None, 0);
+        let mut extracted = ProgramCacheForTxBatch::new(
+            6,
+            cache.environments.clone(),
+            epoch_boundary_preparation.clone(),
+        );
         cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 5, 6));
 
@@ -2783,14 +2857,22 @@ mod tests {
         cache.prune_by_deployment_slot(5);
 
         let mut missing = get_entries_to_load(&cache, 20, &[program1, program2]);
-        let mut extracted = ProgramCacheForTxBatch::new(20, cache.environments.clone(), None, 0);
+        let mut extracted = ProgramCacheForTxBatch::new(
+            20,
+            cache.environments.clone(),
+            epoch_boundary_preparation.clone(),
+        );
         cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 20));
         assert!(match_slot(&extracted, &program2, 10, 20));
 
         let mut missing = get_entries_to_load(&cache, 6, &[program1, program2]);
         assert!(match_missing(&missing, &program2, false));
-        let mut extracted = ProgramCacheForTxBatch::new(6, cache.environments.clone(), None, 0);
+        let mut extracted = ProgramCacheForTxBatch::new(
+            6,
+            cache.environments.clone(),
+            epoch_boundary_preparation.clone(),
+        );
         cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 6));
 
@@ -2800,7 +2882,11 @@ mod tests {
 
         let mut missing = get_entries_to_load(&cache, 20, &[program1, program2]);
         assert!(match_missing(&missing, &program2, false));
-        let mut extracted = ProgramCacheForTxBatch::new(20, cache.environments.clone(), None, 0);
+        let mut extracted = ProgramCacheForTxBatch::new(
+            20,
+            cache.environments.clone(),
+            epoch_boundary_preparation.clone(),
+        );
         cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 20));
     }
