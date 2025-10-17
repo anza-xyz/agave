@@ -943,6 +943,7 @@ fn run_packet_batch_sender(
     stats: Arc<StreamerStats>,
     cancel: CancellationToken,
 ) {
+    let mut channel_disconnected = false;
     trace!("enter packet_batch_sender");
     loop {
         let mut packet_perf_measure: Vec<([u8; 64], Instant)> = Vec::default();
@@ -957,7 +958,7 @@ fn run_packet_batch_sender(
             .fetch_add(PACKETS_PER_BATCH, Ordering::Relaxed);
 
         loop {
-            if cancel.is_cancelled() {
+            if cancel.is_cancelled() || channel_disconnected {
                 return;
             }
             if !packet_batch.is_empty() {
@@ -993,19 +994,23 @@ fn run_packet_batch_sender(
                 break;
             }
 
-            // On the first receive, we block on recv not to use excessive CPU when the channel is idle. 
+            // On the first receive, we block on recv not to use excessive CPU when the channel is idle.
             // This will not block the exit as the channel will be dropped on the sender's side.
             //
             // On subsequent receives, we call try_recv, so that we do not get blocked waiting for packets
             // when we already have something in the batch.
+            //
+            // For setting channel_disconnected, we can ignore TryRecvError::Disconnected on try_recv and
+            // set it on the next iteration (if we don't exit early anyway from cancel token)
             let mut first = true;
             let mut recv = || {
                 if first {
                     first = false;
                     // recv is only an error if empty and disconnected
-                    packet_receiver
-                        .recv()
-                        .map_err(|_| TryRecvError::Disconnected)
+                    packet_receiver.recv().map_err(|_| {
+                        channel_disconnected = true;
+                        TryRecvError::Disconnected
+                    })
                 } else {
                     packet_receiver.try_recv()
                 }
