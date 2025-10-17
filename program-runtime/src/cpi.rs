@@ -580,7 +580,7 @@ pub fn translate_accounts_rust<'a>(
         check_aligned,
     )?;
 
-    translate_accounts_common(
+    translate_and_update_accounts(
         &account_info_keys,
         account_infos,
         account_infos_addr,
@@ -705,7 +705,7 @@ pub fn translate_accounts_c<'a>(
         check_aligned,
     )?;
 
-    translate_accounts_common(
+    translate_and_update_accounts(
         &account_info_keys,
         account_infos,
         account_infos_addr,
@@ -770,6 +770,8 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
     signers_seeds_len: u64,
     memory_mapping: &mut MemoryMapping,
 ) -> Result<u64, Error> {
+    let check_aligned = invoke_context.get_check_aligned();
+
     // CPI entry.
     //
     // Translate the inputs to the syscall and synchronize the caller's account
@@ -782,11 +784,6 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
         execute_time.stop();
         invoke_context.timings.execute_us += execute_time.as_us();
     }
-    let stricter_abi_and_runtime_constraints = invoke_context
-        .get_feature_set()
-        .stricter_abi_and_runtime_constraints;
-    let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
-    let check_aligned = invoke_context.get_check_aligned();
 
     let instruction = S::translate_instruction(
         instruction_addr,
@@ -815,26 +812,6 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
         check_aligned,
     )?;
 
-    // before initiating CPI, the caller may have modified the
-    // account (caller_account). We need to update the corresponding
-    // BorrowedAccount (callee_account) so the callee can see the
-    // changes.
-    let transaction_context = &invoke_context.transaction_context;
-    let instruction_context = transaction_context.get_current_instruction_context()?;
-    for translated_account in accounts.iter_mut() {
-        let callee_account = instruction_context
-            .try_borrow_instruction_account(translated_account.index_in_caller)?;
-        let update_caller = update_callee_account(
-            check_aligned,
-            &translated_account.caller_account,
-            callee_account,
-            stricter_abi_and_runtime_constraints,
-            account_data_direct_mapping,
-        )?;
-        translated_account.update_caller_account_region =
-            translated_account.update_caller_account_info || update_caller;
-    }
-
     // Process the callee instruction
     let mut compute_units_consumed = 0;
     invoke_context
@@ -847,15 +824,20 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
     // CPI exit.
     //
     // Synchronize the callee's account changes so the caller can see them.
-    for translated_account in accounts.iter_mut() {
+    let stricter_abi_and_runtime_constraints = invoke_context
+        .get_feature_set()
+        .stricter_abi_and_runtime_constraints;
+    let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
+
+    for translate_account in accounts.iter_mut() {
         let mut callee_account = instruction_context
-            .try_borrow_instruction_account(translated_account.index_in_caller)?;
-        if translated_account.update_caller_account_info {
+            .try_borrow_instruction_account(translate_account.index_in_caller)?;
+        if translate_account.update_caller_account_info {
             update_caller_account(
                 invoke_context,
                 memory_mapping,
                 check_aligned,
-                &mut translated_account.caller_account,
+                &mut translate_account.caller_account,
                 &mut callee_account,
                 stricter_abi_and_runtime_constraints,
                 account_data_direct_mapping,
@@ -864,14 +846,14 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
     }
 
     if stricter_abi_and_runtime_constraints {
-        for translated_account in accounts.iter() {
+        for translate_account in accounts.iter() {
             let mut callee_account = instruction_context
-                .try_borrow_instruction_account(translated_account.index_in_caller)?;
-            if translated_account.update_caller_account_region {
+                .try_borrow_instruction_account(translate_account.index_in_caller)?;
+            if translate_account.update_caller_account_region {
                 update_caller_account_region(
                     memory_mapping,
                     check_aligned,
-                    &translated_account.caller_account,
+                    &translate_account.caller_account,
                     &mut callee_account,
                     account_data_direct_mapping,
                 )?;
@@ -938,8 +920,9 @@ where
     Ok((account_infos, account_info_keys))
 }
 
-// Finish translating accounts and build TranslatedAccount from CallerAccount.
-fn translate_accounts_common<'a, T, F>(
+// Finish translating accounts, build CallerAccount values and update callee
+// accounts in preparation of executing the callee.
+fn translate_and_update_accounts<'a, T, F>(
     account_info_keys: &[&Pubkey],
     account_infos: &[T],
     account_infos_addr: u64,
@@ -970,6 +953,11 @@ where
         .get_syscall_context()
         .unwrap()
         .accounts_metadata;
+
+    let stricter_abi_and_runtime_constraints = invoke_context
+        .get_feature_set()
+        .stricter_abi_and_runtime_constraints;
+    let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
 
     for (instruction_account_index, instruction_account) in
         next_instruction_accounts.iter().enumerate()
@@ -1029,10 +1017,22 @@ where
                     serialized_metadata,
                 )?;
 
+            // before initiating CPI, the caller may have modified the
+            // account (caller_account). We need to update the corresponding
+            // BorrowedAccount (callee_account) so the callee can see the
+            // changes.
+            let update_caller = update_callee_account(
+                check_aligned,
+                &caller_account,
+                callee_account,
+                stricter_abi_and_runtime_constraints,
+                account_data_direct_mapping,
+            )?;
+
             accounts.push(TranslatedAccount {
                 index_in_caller,
                 caller_account,
-                update_caller_account_region: true,
+                update_caller_account_region: instruction_account.is_writable() || update_caller,
                 update_caller_account_info: instruction_account.is_writable(),
             });
         } else {

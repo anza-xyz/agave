@@ -24,7 +24,7 @@ agave-syscalls = { workspace = true }
 bincode = { workspace = true }
 clap = { version = "4.5.2", features = ["derive"] }
 prost = { workspace = true }
-protosol = { git = "https://github.com/firedancer-io/protosol", tag = "v1.0.2" }
+protosol = { git = "https://github.com/firedancer-io/protosol", tag = "v1.0.4" }
 solana-account = { workspace = true }
 solana-builtins = { workspace = true }
 solana-clock = { workspace = true, features = ["sysvar"] }

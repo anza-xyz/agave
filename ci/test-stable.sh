@@ -17,10 +17,10 @@ cargo_build_sbf_sanity() {
 
   pushd programs/sbf
   # Generate the sanity programs list
-  if [ ! -f sanity_programs.txt ]; then
+  if [ ! -f target/sanity_programs.txt ]; then
     cargo test --features="sbf_rust,sbf_sanity_list" --test programs test_program_sbf_sanity
   fi
-  mapfile -t rust_programs < <(cat sanity_programs.txt)
+  mapfile -t rust_programs < <(cat target/sanity_programs.txt)
 
   pushd rust
   # This is done in a loop to mock how developers invoke `cargo-build-sbf`

@@ -27,6 +27,7 @@ pub mod next_leader;
 pub mod optimistic_confirmation_verifier;
 pub mod repair;
 pub mod replay_stage;
+pub mod resource_limits;
 mod result;
 pub mod sample_performance_service;
 mod shred_fetch_stage;

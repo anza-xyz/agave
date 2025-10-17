@@ -411,7 +411,7 @@ dependencies = [
  "affinity",
  "agave-thread-manager",
  "anyhow",
- "axum 0.7.9",
+ "axum 0.8.6",
  "cfg-if 1.0.4",
  "env_logger",
  "hyper 0.14.32",
@@ -1129,7 +1129,7 @@ dependencies = [
  "http-body 0.4.5",
  "hyper 0.14.32",
  "itoa",
- "matchit",
+ "matchit 0.7.0",
  "memchr",
  "mime",
  "percent-encoding 2.3.2",
@@ -1144,13 +1144,13 @@ dependencies = [
 
 [[package]]
 name = "axum"
-version = "0.7.9"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edca88bc138befd0323b20752846e6587272d3b03b0343c8ea28a6f819e6e71f"
+checksum = "8a18ed336352031311f4e0b4dd2ff392d4fbb370777c9d18d7fc9d7359f73871"
 dependencies = [
- "async-trait",
- "axum-core 0.4.5",
+ "axum-core 0.5.5",
  "bytes",
+ "form_urlencoded",
  "futures-util",
  "http 1.1.0",
  "http-body 1.0.1",
@@ -1158,13 +1158,12 @@ dependencies = [
  "hyper 1.6.0",
  "hyper-util",
  "itoa",
- "matchit",
+ "matchit 0.8.4",
  "memchr",
  "mime",
  "percent-encoding 2.3.2",
  "pin-project-lite",
- "rustversion",
- "serde",
+ "serde_core",
  "serde_json",
  "serde_path_to_error",
  "serde_urlencoded",
@@ -1195,19 +1194,17 @@ dependencies = [
 
 [[package]]
 name = "axum-core"
-version = "0.4.5"
+version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09f2bd6146b97ae3359fa0cc6d6b376d9539582c7b4220f041a33ec24c226199"
+checksum = "59446ce19cd142f8833f856eb31f3eb097812d1479ab224f54d72428ca21ea22"
 dependencies = [
- "async-trait",
  "bytes",
- "futures-util",
+ "futures-core",
  "http 1.1.0",
  "http-body 1.0.1",
  "http-body-util",
  "mime",
  "pin-project-lite",
- "rustversion",
  "sync_wrapper 1.0.2",
  "tower-layer",
  "tower-service",
@@ -3230,10 +3227,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fc3cb4d91f53b50155bdcfd23f6a4c39ae1969c2ae85982b135750cccaf5fce"
 dependencies = [
  "cfg-if 1.0.4",
- "js-sys",
  "libc",
  "wasi 0.9.0+wasi-snapshot-preview1",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -4523,6 +4518,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b87248edafb776e59e6ee64a79086f65890d3510f2c656c000bf2a7e8a0aea40"
 
 [[package]]
+name = "matchit"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
+
+[[package]]
 name = "memchr"
 version = "2.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5080,20 +5081,21 @@ checksum = "b1de2e551fb905ac83f73f7aedf2f0cb4a0da7e35efa24a202a936269f1f18e1"
 
 [[package]]
 name = "pbkdf2"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "216eaa586a190f0a738f2f918511eecfa90f13295abec0e457cdebcceda80cbd"
-dependencies = [
- "crypto-mac",
-]
-
-[[package]]
-name = "pbkdf2"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83a0692ec44e4cf1ef28ca317f14f8f07da2d95ec3fa01f86e4467b725e60917"
 dependencies = [
  "digest 0.10.7",
+]
+
+[[package]]
+name = "pbkdf2"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8ed6a7761f76e3b9f92dfb0a60a6a6477c61024b775147ff0973a02653abaf2"
+dependencies = [
+ "digest 0.10.7",
+ "hmac 0.12.1",
 ]
 
 [[package]]
@@ -5540,7 +5542,7 @@ dependencies = [
 [[package]]
 name = "protosol"
 version = "1.0.1"
-source = "git+https://github.com/firedancer-io/protosol?tag=v1.0.2#56629ce3939dd8059acd900b74e29e3aaa1b178b"
+source = "git+https://github.com/firedancer-io/protosol?tag=v1.0.4#72fb79f2a24e60a55d392c386c1ac7c2d15c13a4"
 dependencies = [
  "prost",
  "prost-build",
@@ -8103,6 +8105,7 @@ dependencies = [
  "futures 0.3.31",
  "histogram",
  "itertools 0.12.1",
+ "libc",
  "log",
  "lru",
  "min-max-heap",
@@ -9058,7 +9061,6 @@ dependencies = [
  "futures 0.3.31",
  "itertools 0.12.1",
  "lazy-lru",
- "libc",
  "log",
  "lru",
  "mockall",
@@ -9299,10 +9301,6 @@ dependencies = [
 
 [[package]]
 name = "solana-measure"
-version = "3.1.0"
-
-[[package]]
-name = "solana-memory-management"
 version = "3.1.0"
 
 [[package]]
@@ -11810,9 +11808,9 @@ dependencies = [
 
 [[package]]
 name = "solana-vote-interface"
-version = "4.0.3"
+version = "4.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6970d0b048a7b2c80203fe54e10e0cc6d52a88ef7115bb7214908415e33b930"
+checksum = "db6e123e16bfdd7a81d71b4c4699e0b29580b619f4cd2ef5b6aae1eb85e8979f"
 dependencies = [
  "arbitrary",
  "bincode",
@@ -11869,6 +11867,7 @@ dependencies = [
  "solana-sha256-hasher",
  "solana-signer",
  "solana-slot-hashes",
+ "solana-svm-feature-set",
  "solana-transaction",
  "solana-transaction-context",
  "solana-vote-interface",
@@ -12725,17 +12724,15 @@ checksum = "42657b1a6f4d817cda8e7a0ace261fe0cc946cf3a80314390b22cc61ae080792"
 
 [[package]]
 name = "tiny-bip39"
-version = "0.8.2"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffc59cb9dfc85bb312c3a78fd6aa8a8582e310b0fa885d5bb877f6dcc601839d"
+checksum = "a30fd743a02bf35236f6faf99adb03089bb77e91c998dac2c2ad76bb424f668c"
 dependencies = [
- "anyhow",
- "hmac 0.8.1",
  "once_cell",
- "pbkdf2 0.4.0",
- "rand 0.7.3",
+ "pbkdf2 0.12.2",
+ "rand 0.8.5",
  "rustc-hash 1.1.0",
- "sha2 0.9.9",
+ "sha2 0.10.9",
  "thiserror 1.0.69",
  "unicode-normalization",
  "wasm-bindgen",
@@ -14057,6 +14054,17 @@ dependencies = [
  "libc",
  "linux-raw-sys 0.4.14",
  "rustix 0.38.39",
+]
+
+[[package]]
+name = "xtask"
+version = "3.1.0"
+dependencies = [
+ "anyhow",
+ "clap 4.5.31",
+ "env_logger",
+ "log",
+ "tokio",
 ]
 
 [[package]]

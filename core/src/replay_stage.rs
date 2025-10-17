@@ -736,7 +736,7 @@ impl ReplayStage {
                 .build()
                 .expect("new rayon threadpool");
 
-            let shared_poh_bank = poh_recorder.read().unwrap().shared_working_bank();
+            let poh_shared_leader_state = poh_recorder.read().unwrap().shared_leader_state();
             if !is_alpenglow_migration_complete {
                 // This reset is handled by Votor instead when alpenglow is active
                 Self::reset_poh_recorder(
@@ -771,8 +771,8 @@ impl ReplayStage {
 
                 // We either have a bank currently, OR there is a pending message to either reset or set
                 // the bank.
-                let tpu_has_bank =
-                    shared_poh_bank.load_full().is_some() || poh_controller.has_pending_message();
+                let tpu_has_bank = poh_shared_leader_state.load().working_bank().is_some()
+                    || poh_controller.has_pending_message();
 
                 let mut replay_active_banks_time = Measure::start("replay_active_banks_time");
                 let (mut ancestors, mut descendants) = {
@@ -1168,7 +1168,10 @@ impl ReplayStage {
                     let mut dump_then_repair_correct_slots_time =
                         Measure::start("dump_then_repair_correct_slots_time");
                     // Used for correctness check
-                    let poh_bank = shared_poh_bank.load_full();
+                    let poh_bank = poh_shared_leader_state
+                        .load()
+                        .working_bank()
+                        .map(Arc::clone);
                     // Dump any duplicate slots that have been confirmed by the network in
                     // anticipation of repairing the confirmed version of the slot.
                     //

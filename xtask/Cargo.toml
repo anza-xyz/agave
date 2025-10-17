@@ -1,0 +1,16 @@
+[package]
+name = "xtask"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { version = "4.5.31", features = ["derive"] }
+env_logger = { workspace = true }
+log = { workspace = true }
+tokio = { workspace = true, features = ["full"] }

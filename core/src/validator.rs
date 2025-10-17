@@ -21,6 +21,7 @@ use {
             repair_handler::RepairHandlerType,
             serve_repair_service::ServeRepairService,
         },
+        resource_limits::{adjust_nofile_limit, ResourceLimitError},
         sample_performance_service::SamplePerformanceService,
         sigverify,
         snapshot_packager_service::SnapshotPackagerService,
@@ -340,6 +341,7 @@ pub struct ValidatorConfig {
     pub no_os_network_stats_reporting: bool,
     pub no_os_cpu_stats_reporting: bool,
     pub no_os_disk_stats_reporting: bool,
+    pub enforce_ulimit_nofile: bool,
     pub poh_pinned_cpu_core: usize,
     pub poh_hashes_per_batch: u64,
     pub process_ledger_before_services: bool,
@@ -419,6 +421,8 @@ impl ValidatorConfig {
             no_os_network_stats_reporting: true,
             no_os_cpu_stats_reporting: true,
             no_os_disk_stats_reporting: true,
+            // No need to enforce nofile limit in tests
+            enforce_ulimit_nofile: false,
             poh_pinned_cpu_core: poh_service::DEFAULT_PINNED_CPU_CORE,
             poh_hashes_per_batch: poh_service::DEFAULT_HASHES_PER_BATCH,
             process_ledger_before_services: false,
@@ -670,6 +674,8 @@ impl Validator {
         } = tpu_config;
 
         let start_time = Instant::now();
+
+        adjust_nofile_limit(config.enforce_ulimit_nofile)?;
 
         // Initialize the global rayon pool first to ensure the value in config
         // is honored. Otherwise, some code accessing the global pool could
@@ -2657,6 +2663,9 @@ pub enum ValidatorError {
         "PoH hashes/second rate is slower than the cluster target: mine {mine}, cluster {target}"
     )]
     PohTooSlow { mine: u64, target: u64 },
+
+    #[error(transparent)]
+    ResourceLimitError(#[from] ResourceLimitError),
 
     #[error("shred version mismatch: actual {actual}, expected {expected}")]
     ShredVersionMismatch { actual: u16, expected: u16 },

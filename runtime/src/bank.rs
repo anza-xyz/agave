@@ -5274,6 +5274,16 @@ impl Bank {
         if new_feature_activations.contains(&feature_set::raise_account_cu_limit::id()) {
             self.apply_simd_0306_cost_tracker_changes();
         }
+
+        if new_feature_activations.contains(&feature_set::vote_state_v4::id()) {
+            if let Err(e) = self.upgrade_core_bpf_program(
+                &solana_sdk_ids::stake::id(),
+                &feature_set::vote_state_v4::stake_program_buffer::id(),
+                "upgrade_stake_program_for_vote_state_v4",
+            ) {
+                error!("Failed to upgrade Core BPF Stake program: {e}");
+            }
+        }
     }
 
     fn apply_new_builtin_program_feature_transitions(
