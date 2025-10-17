@@ -49,6 +49,7 @@ pub struct SVMFeatureSet {
     pub provide_instruction_data_offset_in_vm_r2: bool,
     pub increase_cpi_account_info_limit: bool,
     pub vote_state_v4: bool,
+    pub poseidon_enforce_padding: bool,
 }
 
 impl SVMFeatureSet {
@@ -94,6 +95,7 @@ impl SVMFeatureSet {
             provide_instruction_data_offset_in_vm_r2: true,
             increase_cpi_account_info_limit: true,
             vote_state_v4: true,
+            poseidon_enforce_padding: true,
         }
     }
 }
