@@ -64,7 +64,6 @@ pub fn command(default_args: &DefaultArgs) -> App<'_, '_> {
                 .value_name("STRUCT")
                 .takes_value(true)
                 .possible_values(TransactionStructure::cli_names())
-                .default_value(TransactionStructure::default().into())
                 .help(TransactionStructure::cli_message()),
         )
         .arg(

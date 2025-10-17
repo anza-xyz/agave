@@ -222,7 +222,6 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .value_name("STRUCT")
             .takes_value(true)
             .possible_values(TransactionStructure::cli_names())
-            .default_value(TransactionStructure::default().into())
             .help(TransactionStructure::cli_message()),
         usage_warning: "Transaction structure is no longer configurable"
     );

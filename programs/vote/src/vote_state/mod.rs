@@ -4,14 +4,11 @@
 #[cfg(feature = "dev-context-only-utils")]
 pub mod handler;
 #[cfg(not(feature = "dev-context-only-utils"))]
-mod handler;
+pub(crate) mod handler;
 
-pub use {
-    handler::VoteStateTargetVersion,
-    solana_vote_interface::state::{vote_state_versions::*, *},
-};
+pub use solana_vote_interface::state::{vote_state_versions::*, *};
 use {
-    handler::{VoteStateHandle, VoteStateHandler},
+    handler::{VoteStateHandle, VoteStateHandler, VoteStateTargetVersion},
     log::*,
     solana_account::{AccountSharedData, WritableAccount},
     solana_clock::{Clock, Epoch, Slot},
@@ -29,8 +26,55 @@ use {
     },
 };
 
-// TODO: Change me once the program has full v4 feature gate support.
-pub(crate) const TEMP_HARDCODED_TARGET_VERSION: VoteStateTargetVersion = VoteStateTargetVersion::V3;
+// Switch that preserves old behavior before vote state v4 feature gate.
+// This should be cleaned up when vote state v4 is activated.
+enum PreserveBehaviorInHandlerHelper {
+    V3 { check_initialized: bool },
+    V4,
+}
+
+impl PreserveBehaviorInHandlerHelper {
+    fn new(target_version: VoteStateTargetVersion, check_initialized: bool) -> Self {
+        match target_version {
+            VoteStateTargetVersion::V3 => Self::V3 { check_initialized },
+            VoteStateTargetVersion::V4 => Self::V4,
+        }
+    }
+}
+
+fn get_vote_state_handler_checked(
+    vote_account: &BorrowedInstructionAccount,
+    preserve_behavior: PreserveBehaviorInHandlerHelper,
+) -> Result<VoteStateHandler, InstructionError> {
+    match preserve_behavior {
+        PreserveBehaviorInHandlerHelper::V3 { check_initialized } => {
+            // Existing flow before v4 feature gate activation:
+            // 1. Deserialize as `VoteState3`, converting during deserialization
+            // 2. Check for uninitialized
+            //
+            // Some callsites would deserialize without checking initialization
+            // status, hence the nested `check_initialized` switch.
+            let vote_state = VoteStateV3::deserialize(vote_account.get_data())?;
+            if check_initialized && vote_state.is_uninitialized() {
+                return Err(InstructionError::UninitializedAccount);
+            }
+            Ok(VoteStateHandler::new_v3(vote_state))
+        }
+        PreserveBehaviorInHandlerHelper::V4 => {
+            // New flow after v4 feature gate activation:
+            // 1. Deserialize as `VoteStateVersions`
+            // 2. Check for uninitialized
+            // 3. Convert
+            let versioned = VoteStateVersions::deserialize(vote_account.get_data())?;
+            if versioned.is_uninitialized() {
+                return Err(InstructionError::UninitializedAccount);
+            }
+            let vote_state =
+                handler::try_convert_to_vote_state_v4(versioned, vote_account.get_key())?;
+            Ok(VoteStateHandler::new_v4(vote_state))
+        }
+    }
+}
 
 /// Checks the proposed vote state with the current and
 /// slot hashes, making adjustments to the root / filtering
@@ -677,7 +721,10 @@ pub fn authorize<S: std::hash::BuildHasher>(
     signers: &HashSet<Pubkey, S>,
     clock: &Clock,
 ) -> Result<(), InstructionError> {
-    let mut vote_state = VoteStateHandler::deserialize_and_convert(vote_account, target_version)?;
+    let mut vote_state = get_vote_state_handler_checked(
+        vote_account,
+        PreserveBehaviorInHandlerHelper::new(target_version, false),
+    )?;
 
     match vote_authorize {
         VoteAuthorize::Voter => {
@@ -718,7 +765,10 @@ pub fn update_validator_identity<S: std::hash::BuildHasher>(
     node_pubkey: &Pubkey,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    let mut vote_state = VoteStateHandler::deserialize_and_convert(vote_account, target_version)?;
+    let mut vote_state = get_vote_state_handler_checked(
+        vote_account,
+        PreserveBehaviorInHandlerHelper::new(target_version, false),
+    )?;
 
     // current authorized withdrawer must say "yay"
     verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
@@ -743,7 +793,10 @@ pub fn update_commission<S: std::hash::BuildHasher>(
     epoch_schedule: &EpochSchedule,
     clock: &Clock,
 ) -> Result<(), InstructionError> {
-    let vote_state_result = VoteStateHandler::deserialize_and_convert(vote_account, target_version);
+    let vote_state_result = get_vote_state_handler_checked(
+        vote_account,
+        PreserveBehaviorInHandlerHelper::new(target_version, false),
+    );
     let enforce_commission_update_rule = if let Ok(decoded_vote_state) = &vote_state_result {
         commission > decoded_vote_state.commission()
     } else {
@@ -804,7 +857,10 @@ pub fn withdraw<S: std::hash::BuildHasher>(
 ) -> Result<(), InstructionError> {
     let mut vote_account =
         instruction_context.try_borrow_instruction_account(vote_account_index)?;
-    let vote_state = VoteStateHandler::deserialize_and_convert(&vote_account, target_version)?;
+    let vote_state = get_vote_state_handler_checked(
+        &vote_account,
+        PreserveBehaviorInHandlerHelper::new(target_version, false),
+    )?;
 
     verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
 
@@ -869,24 +925,6 @@ pub fn initialize_account<S: std::hash::BuildHasher>(
     VoteStateHandler::init_vote_account_state(vote_account, vote_init, clock, target_version)
 }
 
-fn verify_and_get_vote_state_handler<S: std::hash::BuildHasher>(
-    vote_account: &BorrowedInstructionAccount,
-    target_version: VoteStateTargetVersion,
-    clock: &Clock,
-    signers: &HashSet<Pubkey, S>,
-) -> Result<VoteStateHandler, InstructionError> {
-    let mut vote_state = VoteStateHandler::deserialize_and_convert(vote_account, target_version)?;
-
-    if vote_state.is_uninitialized() {
-        return Err(InstructionError::UninitializedAccount);
-    }
-
-    let authorized_voter = vote_state.get_and_update_authorized_voter(clock.epoch)?;
-    verify_authorized_signer(&authorized_voter, signers)?;
-
-    Ok(vote_state)
-}
-
 pub fn process_vote_with_account<S: std::hash::BuildHasher>(
     vote_account: &mut BorrowedInstructionAccount,
     target_version: VoteStateTargetVersion,
@@ -895,8 +933,13 @@ pub fn process_vote_with_account<S: std::hash::BuildHasher>(
     vote: &Vote,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    let mut vote_state =
-        verify_and_get_vote_state_handler(vote_account, target_version, clock, signers)?;
+    let mut vote_state = get_vote_state_handler_checked(
+        vote_account,
+        PreserveBehaviorInHandlerHelper::new(target_version, true),
+    )?;
+
+    let authorized_voter = vote_state.get_and_update_authorized_voter(clock.epoch)?;
+    verify_authorized_signer(&authorized_voter, signers)?;
 
     process_vote(&mut vote_state, vote, slot_hashes, clock.epoch, clock.slot)?;
     if let Some(timestamp) = vote.timestamp {
@@ -917,8 +960,14 @@ pub fn process_vote_state_update<S: std::hash::BuildHasher>(
     vote_state_update: VoteStateUpdate,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    let mut vote_state =
-        verify_and_get_vote_state_handler(vote_account, target_version, clock, signers)?;
+    let mut vote_state = get_vote_state_handler_checked(
+        vote_account,
+        PreserveBehaviorInHandlerHelper::new(target_version, true),
+    )?;
+
+    let authorized_voter = vote_state.get_and_update_authorized_voter(clock.epoch)?;
+    verify_authorized_signer(&authorized_voter, signers)?;
+
     do_process_vote_state_update(
         &mut vote_state,
         slot_hashes,
@@ -965,8 +1014,14 @@ pub fn process_tower_sync<S: std::hash::BuildHasher>(
     tower_sync: TowerSync,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    let mut vote_state =
-        verify_and_get_vote_state_handler(vote_account, target_version, clock, signers)?;
+    let mut vote_state = get_vote_state_handler_checked(
+        vote_account,
+        PreserveBehaviorInHandlerHelper::new(target_version, true),
+    )?;
+
+    let authorized_voter = vote_state.get_and_update_authorized_voter(clock.epoch)?;
+    verify_authorized_signer(&authorized_voter, signers)?;
+
     do_process_tower_sync(
         &mut vote_state,
         slot_hashes,
@@ -1210,8 +1265,11 @@ mod tests {
         assert_matches!(vote_state_version, VoteStateVersions::V1_14_11(_));
 
         // Convert the vote state to current as would occur during vote instructions
-        let converted_vote_state =
-            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version).unwrap();
+        let converted_vote_state = get_vote_state_handler_checked(
+            &borrowed_account,
+            PreserveBehaviorInHandlerHelper::new(target_version, true),
+        )
+        .unwrap();
 
         // Check to make sure that the vote_state is unchanged
         assert!(vote_state == converted_vote_state);
@@ -1244,8 +1302,11 @@ mod tests {
         }
 
         // Convert the vote state to current as would occur during vote instructions
-        let converted_vote_state =
-            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version).unwrap();
+        let converted_vote_state = get_vote_state_handler_checked(
+            &borrowed_account,
+            PreserveBehaviorInHandlerHelper::new(target_version, true),
+        )
+        .unwrap();
 
         // Check to make sure that the vote_state is unchanged
         assert!(vote_state == converted_vote_state);
@@ -1280,8 +1341,11 @@ mod tests {
         }
 
         // Convert the vote state to current as would occur during vote instructions
-        let converted_vote_state =
-            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version).unwrap();
+        let converted_vote_state = get_vote_state_handler_checked(
+            &borrowed_account,
+            PreserveBehaviorInHandlerHelper::new(target_version, true),
+        )
+        .unwrap();
 
         // Check to make sure that the vote_state is unchanged
         assert_eq!(vote_state, converted_vote_state);
@@ -1378,9 +1442,12 @@ mod tests {
 
         // Increase commission in first half of epoch -- allowed
         assert_eq!(
-            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
-                .unwrap()
-                .commission(),
+            get_vote_state_handler_checked(
+                &borrowed_account,
+                PreserveBehaviorInHandlerHelper::new(target_version, true),
+            )
+            .unwrap()
+            .commission(),
             10
         );
         assert_matches!(
@@ -1395,9 +1462,12 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
-                .unwrap()
-                .commission(),
+            get_vote_state_handler_checked(
+                &borrowed_account,
+                PreserveBehaviorInHandlerHelper::new(target_version, true),
+            )
+            .unwrap()
+            .commission(),
             11
         );
 
@@ -1414,9 +1484,12 @@ mod tests {
             Err(_)
         );
         assert_eq!(
-            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
-                .unwrap()
-                .commission(),
+            get_vote_state_handler_checked(
+                &borrowed_account,
+                PreserveBehaviorInHandlerHelper::new(target_version, true),
+            )
+            .unwrap()
+            .commission(),
             11
         );
 
@@ -1433,16 +1506,22 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
-                .unwrap()
-                .commission(),
+            get_vote_state_handler_checked(
+                &borrowed_account,
+                PreserveBehaviorInHandlerHelper::new(target_version, true),
+            )
+            .unwrap()
+            .commission(),
             10
         );
 
         assert_eq!(
-            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
-                .unwrap()
-                .commission(),
+            get_vote_state_handler_checked(
+                &borrowed_account,
+                PreserveBehaviorInHandlerHelper::new(target_version, true),
+            )
+            .unwrap()
+            .commission(),
             10
         );
 
@@ -1458,9 +1537,12 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
-                .unwrap()
-                .commission(),
+            get_vote_state_handler_checked(
+                &borrowed_account,
+                PreserveBehaviorInHandlerHelper::new(target_version, true),
+            )
+            .unwrap()
+            .commission(),
             9
         );
     }

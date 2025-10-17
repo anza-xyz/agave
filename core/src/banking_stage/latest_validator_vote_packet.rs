@@ -1,7 +1,6 @@
 #[cfg(test)]
 use solana_perf::packet::PacketRef;
 use {
-    super::immutable_deserialized_packet::DeserializedPacketError,
     crate::banking_stage::transaction_scheduler::transaction_state_container::SharedBytes,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
     solana_bincode::limited_deserialize,
@@ -10,6 +9,7 @@ use {
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_vote_program::vote_instruction::VoteInstruction,
+    thiserror::Error,
 };
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
@@ -38,7 +38,7 @@ impl LatestValidatorVote {
         let (_, instruction) = vote
             .program_instructions_iter()
             .next()
-            .ok_or(DeserializedPacketError::VoteTransactionError)?;
+            .ok_or(DeserializedPacketError::VoteTransaction)?;
 
         let instruction_filter = |ix: &VoteInstruction| {
             if deprecate_legacy_vote_ixs {
@@ -59,12 +59,12 @@ impl LatestValidatorVote {
                     .accounts
                     .first()
                     .copied()
-                    .ok_or(DeserializedPacketError::VoteTransactionError)?;
+                    .ok_or(DeserializedPacketError::VoteTransaction)?;
                 let vote_pubkey = vote
                     .static_account_keys()
                     .get(vote_account_index as usize)
                     .copied()
-                    .ok_or(DeserializedPacketError::VoteTransactionError)?;
+                    .ok_or(DeserializedPacketError::VoteTransaction)?;
                 let slot = vote_state_update_instruction.last_voted_slot().unwrap_or(0);
                 let hash = vote_state_update_instruction.hash();
                 let timestamp = vote_state_update_instruction.timestamp();
@@ -78,7 +78,7 @@ impl LatestValidatorVote {
                     timestamp,
                 })
             }
-            _ => Err(DeserializedPacketError::VoteTransactionError),
+            _ => Err(DeserializedPacketError::VoteTransaction),
         }
     }
 
@@ -89,7 +89,7 @@ impl LatestValidatorVote {
         deprecate_legacy_vote_ixs: bool,
     ) -> Result<Self, DeserializedPacketError> {
         if !packet.meta().is_simple_vote_tx() {
-            return Err(DeserializedPacketError::VoteTransactionError);
+            return Err(DeserializedPacketError::VoteTransaction);
         }
 
         let vote = SanitizedTransactionView::try_new_sanitized(
@@ -128,6 +128,12 @@ impl LatestValidatorVote {
     pub fn take_vote(&mut self) -> Option<SanitizedTransactionView<SharedBytes>> {
         self.vote.take()
     }
+}
+
+#[derive(Debug, Error)]
+pub enum DeserializedPacketError {
+    #[error("vote transaction failure")]
+    VoteTransaction,
 }
 
 #[cfg(test)]

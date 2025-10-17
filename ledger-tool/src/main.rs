@@ -36,6 +36,7 @@ use {
     solana_cluster_type::ClusterType,
     solana_core::{
         banking_simulation::{BankingSimulator, BankingTraceEvents},
+        resource_limits::adjust_nofile_limit,
         system_monitor_service::{SystemMonitorService, SystemMonitorStatsReportConfig},
         validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
     },
@@ -1000,9 +1001,9 @@ fn main() {
                 .takes_value(false)
                 .global(true)
                 .help(
-                    "Allow opening the blockstore to succeed even if the desired open file \
-                     descriptor limit cannot be configured. Use with caution as some commands may \
-                     run fine with a reduced file descriptor limit while others will not",
+                    "Allow the command to continue even if the desired open file descriptor limit \
+                     cannot be configured. Use with caution as some commands may run fine with a \
+                     a reduced file descriptor limit while others may fail in nonobvious ways",
                 ),
         )
         .arg(
@@ -1691,6 +1692,12 @@ fn main() {
 
     let ledger_path = PathBuf::from(value_t_or_exit!(matches, "ledger_path", String));
     let verbose_level = matches.occurrences_of("verbose");
+
+    let enforce_nofile_limit = !matches.is_present("ignore_ulimit_nofile_error");
+    adjust_nofile_limit(enforce_nofile_limit).unwrap_or_else(|err| {
+        eprintln!("Error: {err:?}");
+        exit(1);
+    });
 
     // Name the rayon global thread pool
     rayon::ThreadPoolBuilder::new()

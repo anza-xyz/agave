@@ -5,7 +5,7 @@ use {
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
     crate::banking_stage::consumer::RetryableIndex,
-    solana_poh::poh_recorder::SharedWorkingBank,
+    solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
     solana_runtime::bank::Bank,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
@@ -39,7 +39,7 @@ pub(crate) struct ConsumeWorker<Ch> {
     channels: Ch,
     consumer: Consumer,
 
-    shared_working_bank: SharedWorkingBank,
+    shared_leader_state: SharedLeaderState,
     metrics: Arc<ConsumeWorkerMetrics>,
 }
 
@@ -49,13 +49,13 @@ impl<Channels: ConsumeWorkerChannels> ConsumeWorker<Channels> {
         exit: Arc<AtomicBool>,
         channels: Channels,
         consumer: Consumer,
-        shared_working_bank: SharedWorkingBank,
+        shared_leader_state: SharedLeaderState,
     ) -> Self {
         Self {
             exit,
             channels,
             consumer,
-            shared_working_bank,
+            shared_leader_state,
             metrics: Arc::new(ConsumeWorkerMetrics::new(id)),
         }
     }
@@ -105,20 +105,18 @@ impl<Channels: ConsumeWorkerChannels> ConsumeWorker<Channels> {
         &mut self,
         work: ConsumeWork<Channels::Tx>,
     ) -> Result<ProcessingStatus<Channels::Tx>, ConsumeWorkerError> {
-        let Some(bank) = self.active_working_bank_with_timeout() else {
+        let Some(leader_state) = self.active_leader_state_with_timeout() else {
             return Ok(ProcessingStatus::CouldNotProcess(work));
         };
-
+        let bank = leader_state
+            .working_bank()
+            .expect("active_leader_state_with_timeout should only return an active bank");
         self.metrics
             .count_metrics
             .num_messages_processed
             .fetch_add(1, Ordering::Relaxed);
 
-        self.consume_with_bank(
-            bank.as_ref()
-                .expect("active_working_bank_with_timeout only returns if the bank is Some"),
-            work,
-        )?;
+        self.consume_with_bank(bank, work)?;
         Ok(ProcessingStatus::Processed)
     }
 
@@ -150,11 +148,11 @@ impl<Channels: ConsumeWorkerChannels> ConsumeWorker<Channels> {
     }
 
     /// Get active bank with timeout.
-    fn active_working_bank_with_timeout(&self) -> Option<arc_swap::Guard<Option<Arc<Bank>>>> {
+    fn active_leader_state_with_timeout(&self) -> Option<arc_swap::Guard<Arc<LeaderState>>> {
         // Do an initial bank load without sampling time. If we're in a hot loop
         // of work this saves us from checking the time at all and we'd only end up
         // checking between or after our leader slots.
-        if let Some(guard) = self.active_working_bank() {
+        if let Some(guard) = self.active_leader_state() {
             return Some(guard);
         }
 
@@ -165,7 +163,7 @@ impl<Channels: ConsumeWorkerChannels> ConsumeWorker<Channels> {
         const TIMEOUT: Duration = Duration::from_millis(50);
         let now = Instant::now();
         while now.elapsed() < TIMEOUT {
-            if let Some(guard) = self.active_working_bank() {
+            if let Some(guard) = self.active_leader_state() {
                 return Some(guard);
             }
             core::hint::spin_loop();
@@ -174,10 +172,11 @@ impl<Channels: ConsumeWorkerChannels> ConsumeWorker<Channels> {
         None
     }
 
-    fn active_working_bank(&self) -> Option<arc_swap::Guard<Option<Arc<Bank>>>> {
-        let guard = self.shared_working_bank.load_ref();
+    fn active_leader_state(&self) -> Option<arc_swap::Guard<Arc<LeaderState>>> {
+        let guard = self.shared_leader_state.load();
         if guard
             .as_ref()
+            .working_bank()
             .map(|bank| bank.is_complete())
             .unwrap_or(true)
         {
@@ -883,7 +882,7 @@ mod tests {
         _bank_forks: Arc<RwLock<BankForks>>,
         _replay_vote_receiver: ReplayVoteReceiver,
         record_receiver: RecordReceiver,
-        shared_working_bank: SharedWorkingBank,
+        shared_leader_state: SharedLeaderState,
 
         consume_sender: Sender<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
         consumed_receiver: Receiver<FinishedConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
@@ -922,7 +921,7 @@ mod tests {
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
-        let shared_working_bank = SharedWorkingBank::empty();
+        let shared_leader_state = SharedLeaderState::new(0, None);
 
         let (consume_sender, consume_receiver) = unbounded();
         let (consumed_sender, consumed_receiver) = unbounded();
@@ -935,7 +934,7 @@ mod tests {
             Arc::new(AtomicBool::new(false)),
             channels,
             consumer,
-            shared_working_bank.clone(),
+            shared_leader_state.clone(),
         );
 
         (
@@ -946,7 +945,7 @@ mod tests {
                 _bank_forks: bank_forks,
                 _replay_vote_receiver: replay_vote_receiver,
                 record_receiver,
-                shared_working_bank,
+                shared_leader_state,
                 consume_sender,
                 consumed_receiver,
             },
@@ -1009,13 +1008,17 @@ mod tests {
             genesis_config,
             bank,
             ref mut record_receiver,
-            ref mut shared_working_bank,
+            ref mut shared_leader_state,
             consume_sender,
             consumed_receiver,
             ..
         } = &mut test_frame;
         let worker_thread = std::thread::spawn(move || worker.run());
-        shared_working_bank.store(bank.clone());
+        shared_leader_state.store(Arc::new(LeaderState::new(
+            Some(bank.clone()),
+            bank.tick_height(),
+            None,
+        )));
         record_receiver.restart(bank.slot());
 
         let pubkey1 = Pubkey::new_unique();
@@ -1058,13 +1061,17 @@ mod tests {
             genesis_config,
             bank,
             ref mut record_receiver,
-            ref mut shared_working_bank,
+            ref mut shared_leader_state,
             consume_sender,
             consumed_receiver,
             ..
         } = &mut test_frame;
         let worker_thread = std::thread::spawn(move || worker.run());
-        shared_working_bank.store(bank.clone());
+        shared_leader_state.store(Arc::new(LeaderState::new(
+            Some(bank.clone()),
+            bank.tick_height(),
+            None,
+        )));
         record_receiver.restart(bank.slot());
 
         let pubkey1 = Pubkey::new_unique();
@@ -1118,13 +1125,17 @@ mod tests {
             genesis_config,
             bank,
             ref mut record_receiver,
-            ref mut shared_working_bank,
+            ref mut shared_leader_state,
             consume_sender,
             consumed_receiver,
             ..
         } = &mut test_frame;
         let worker_thread = std::thread::spawn(move || worker.run());
-        shared_working_bank.store(bank.clone());
+        shared_leader_state.store(Arc::new(LeaderState::new(
+            Some(bank.clone()),
+            bank.tick_height(),
+            None,
+        )));
         record_receiver.restart(bank.slot());
 
         let pubkey1 = Pubkey::new_unique();
@@ -1192,13 +1203,17 @@ mod tests {
             genesis_config,
             bank,
             ref mut record_receiver,
-            ref mut shared_working_bank,
+            ref mut shared_leader_state,
             consume_sender,
             consumed_receiver,
             ..
         } = &mut test_frame;
         let worker_thread = std::thread::spawn(move || worker.run());
-        shared_working_bank.store(bank.clone());
+        shared_leader_state.store(Arc::new(LeaderState::new(
+            Some(bank.clone()),
+            bank.tick_height(),
+            None,
+        )));
         record_receiver.restart(bank.slot());
         assert!(bank.slot() > 0);
         assert!(bank.epoch() > 0);
