@@ -100,7 +100,7 @@ Or using Docker and the normal build script, you can perform a full production b
 Got permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock: Post
 ```
 
-Running docs build script (`./build.sh`) required the use of Docker.\*\*\*\*
+Running the docs build script (`./build.sh`) requires the use of Docker.
 
 Ensuring you have Docker installed on your system and it is running.
 

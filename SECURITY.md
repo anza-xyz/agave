@@ -1,8 +1,8 @@
 # Security Policy
 
 1. [Reporting security problems](#reporting)
-4. [Security Bug Bounties](#bounty)
-2. [Incident Response Process](#process)
+2. [Security Bug Bounties](#bounty)
+3. [Incident Response Process](#process)
 
 <a name="reporting"></a>
 ## Reporting security problems in the Agave Validator

@@ -63,7 +63,7 @@ are not present, then write them.
 All changes should be benchmarked and evidence posted to the PR.
 Microbenchmark results along with mainnet/testnet validator timings or profiles,
 bench-tps or other relevant integration benchmarks. Any code that adds complexity
-should be justified by a comisurate improvement in speed.
+should be justified by a commensurate improvement in speed.
 
 All changes should be reviewed by subject matter experts.
 
@@ -73,7 +73,7 @@ be backported to release branches.
 Duplicate code should generally be avoided.
 
 Features should be activated on testnet before mainnet in the closest configuration to mainnet as possible
-Relevant metrics need to be monitored and approriate follow-up given after feature activation.
+Relevant metrics need to be monitored and appropriate follow-up given after feature activation.
 
 Avoid “hack” or “one-off” solutions, prefer well-architected designs which are not fragile.
 
