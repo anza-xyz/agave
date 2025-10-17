@@ -159,7 +159,7 @@ impl FeatureSet {
             raise_cpi_nesting_limit_to_8: self.is_active(&raise_cpi_nesting_limit_to_8::id()),
             provide_instruction_data_offset_in_vm_r2: self
                 .is_active(&provide_instruction_data_offset_in_vm_r2::id()),
-            increase_cpi_info_account_limit: self.is_active(&increase_cpi_info_account_limit::id()),
+            increase_cpi_account_info_limit: self.is_active(&increase_cpi_account_info_limit::id()),
 
         }
     }
@@ -1147,7 +1147,7 @@ pub mod discard_unexpected_data_complete_shreds {
     solana_pubkey::declare_id!("8MhfKhoZEoiySpVe248bDkisyEcBA7JQLyUS94xoTSqN");
 }
 
-pub mod increase_cpi_info_account_limit {
+pub mod increase_cpi_account_info_limit {
     solana_pubkey::declare_id!("7wM2pdjwmSXviEdsorpcBY3T4YWUPQXDMepZudub7nGQ"); // Placeholder ID HAVE TO CHANGE BEFORE USE
 }
 
@@ -2078,7 +2078,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
              rules",
         ),
         (
-            increase_cpi_info_account_limit::id(),
+            increase_cpi_account_info_limit::id(),
             "SIMD-0339: increase CPI info account limit",
         ),
         /*************** ADD NEW FEATURES HERE ***************/

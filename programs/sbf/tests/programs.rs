@@ -880,12 +880,12 @@ fn test_program_sbf_invoke_sanity() {
         let bank = bank_with_feature_deactivated(
             &bank_forks,
             bank,
-            &feature_set::increase_cpi_info_account_limit::id(),
+            &feature_set::increase_cpi_account_info_limit::id(),
         );
         
          assert!(!bank
             .feature_set
-            .is_active(&feature_set::increase_cpi_info_account_limit::id()));
+            .is_active(&feature_set::increase_cpi_account_info_limit::id()));
 
         do_invoke_success(
             TEST_MAX_ACCOUNT_INFOS_OK_INCREASE_CPI_INFO,
@@ -922,12 +922,12 @@ fn test_program_sbf_invoke_sanity() {
         let bank = bank_with_feature_activated(
             &bank_forks,
             bank,
-            &feature_set::increase_cpi_info_account_limit::id(),
+            &feature_set::increase_cpi_account_info_limit::id(),
         );
 
          assert!(bank
             .feature_set
-            .is_active(&feature_set::increase_cpi_info_account_limit::id()));
+            .is_active(&feature_set::increase_cpi_account_info_limit::id()));
         // failure cases
 
         let do_invoke_failure_test_local_with_compute_check =
@@ -1099,12 +1099,12 @@ fn test_program_sbf_invoke_sanity() {
         let bank = bank_with_feature_deactivated(
             &bank_forks,
             bank,
-            &feature_set::increase_cpi_info_account_limit::id(),
+            &feature_set::increase_cpi_account_info_limit::id(),
         );
 
          assert!(!bank
             .feature_set
-            .is_active(&feature_set::increase_cpi_info_account_limit::id()));
+            .is_active(&feature_set::increase_cpi_account_info_limit::id()));
 
         do_invoke_failure_test_local(
             TEST_MAX_ACCOUNT_INFOS_EXCEEDED_INCREASE_CPI_INFO,
@@ -1490,7 +1490,7 @@ fn test_program_sbf_call_depth() {
             .contains_key(&feature_set::raise_cpi_nesting_limit_to_8::id()),
         genesis_config
             .accounts
-            .contains_key(&feature_set::increase_cpi_info_account_limit::id()),
+            .contains_key(&feature_set::increase_cpi_account_info_limit::id()),
     );
     let instruction =
         Instruction::new_with_bincode(program_id, &(budget.max_call_depth - 1), vec![]);
