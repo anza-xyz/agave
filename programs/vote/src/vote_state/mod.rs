@@ -32,7 +32,7 @@ use {
 // TODO: Change me once the program has full v4 feature gate support.
 pub(crate) const TEMP_HARDCODED_TARGET_VERSION: VoteStateTargetVersion = VoteStateTargetVersion::V3;
 
-fn verify_and_get_vote_state_handler(
+fn get_vote_state_handler_checked(
     vote_account: &BorrowedInstructionAccount,
     target_version: VoteStateTargetVersion,
 ) -> Result<VoteStateHandler, InstructionError> {
@@ -890,7 +890,7 @@ pub fn process_vote_with_account<S: std::hash::BuildHasher>(
     vote: &Vote,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    let mut vote_state = verify_and_get_vote_state_handler(vote_account, target_version)?;
+    let mut vote_state = get_vote_state_handler_checked(vote_account, target_version)?;
 
     let authorized_voter = vote_state.get_and_update_authorized_voter(clock.epoch)?;
     verify_authorized_signer(&authorized_voter, signers)?;
@@ -914,7 +914,7 @@ pub fn process_vote_state_update<S: std::hash::BuildHasher>(
     vote_state_update: VoteStateUpdate,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    let mut vote_state = verify_and_get_vote_state_handler(vote_account, target_version)?;
+    let mut vote_state = get_vote_state_handler_checked(vote_account, target_version)?;
 
     let authorized_voter = vote_state.get_and_update_authorized_voter(clock.epoch)?;
     verify_authorized_signer(&authorized_voter, signers)?;
@@ -965,7 +965,7 @@ pub fn process_tower_sync<S: std::hash::BuildHasher>(
     tower_sync: TowerSync,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    let mut vote_state = verify_and_get_vote_state_handler(vote_account, target_version)?;
+    let mut vote_state = get_vote_state_handler_checked(vote_account, target_version)?;
 
     let authorized_voter = vote_state.get_and_update_authorized_voter(clock.epoch)?;
     verify_authorized_signer(&authorized_voter, signers)?;
