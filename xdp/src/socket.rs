@@ -1,25 +1,21 @@
 use {
     crate::{
         device::{
-            mmap_ring, DeviceQueue, RingConsumer, RingMmap, RingProducer, RxFillRing,
-            TxCompletionRing, XdpDesc,
+            mmap_ring, DeviceQueue, RxFillRing, RxRing, TxCompletionRing, TxRing, XdpDesc
         },
         umem::{Frame, Umem},
     },
     libc::{
-        bind, getsockopt, sa_family_t, sendto, setsockopt, sockaddr, sockaddr_xdp, socket,
+        bind, getsockopt, sa_family_t, setsockopt, sockaddr, sockaddr_xdp, socket,
         socklen_t, xdp_mmap_offsets, xdp_umem_reg, AF_XDP, SOCK_RAW, SOL_XDP, XDP_COPY,
-        XDP_MMAP_OFFSETS, XDP_PGOFF_RX_RING, XDP_PGOFF_TX_RING, XDP_RING_NEED_WAKEUP, XDP_RX_RING,
+        XDP_MMAP_OFFSETS, XDP_PGOFF_RX_RING, XDP_PGOFF_TX_RING, XDP_RX_RING,
         XDP_TX_RING, XDP_UMEM_COMPLETION_RING, XDP_UMEM_FILL_RING, XDP_UMEM_PGOFF_COMPLETION_RING,
         XDP_UMEM_PGOFF_FILL_RING, XDP_USE_NEED_WAKEUP, XDP_ZEROCOPY,
     },
     std::{
         io,
-        marker::PhantomData,
         mem,
-        os::fd::{AsFd, AsRawFd as _, BorrowedFd, FromRawFd as _, OwnedFd, RawFd},
-        ptr,
-        sync::atomic::Ordering,
+        os::fd::{AsFd, AsRawFd as _, BorrowedFd, FromRawFd as _, OwnedFd},
     },
 };
 
@@ -264,109 +260,4 @@ pub struct Tx<F: Frame> {
 pub struct Rx<F: Frame> {
     pub fill: RxFillRing<F>,
     pub ring: Option<RxRing>,
-}
-
-pub struct TxRing<F: Frame> {
-    mmap: RingMmap<XdpDesc>,
-    producer: RingProducer,
-    size: u32,
-    fd: RawFd,
-    _frame: PhantomData<F>,
-}
-
-#[derive(Debug)]
-pub struct RingFull<F: Frame>(pub F);
-
-impl<F: Frame> TxRing<F> {
-    fn new(mmap: RingMmap<XdpDesc>, size: u32, fd: RawFd) -> Self {
-        debug_assert!(size.is_power_of_two());
-        Self {
-            producer: RingProducer::new(mmap.producer, mmap.consumer, size),
-            mmap,
-            size,
-            fd,
-            _frame: PhantomData,
-        }
-    }
-
-    pub fn write(&mut self, frame: F, options: u32) -> Result<(), RingFull<F>> {
-        let Some(index) = self.producer.produce() else {
-            return Err(RingFull(frame));
-        };
-        let index = index & self.size.saturating_sub(1);
-        unsafe {
-            let desc = self.mmap.desc.add(index as usize);
-            desc.write(XdpDesc {
-                addr: frame.offset().0 as u64,
-                len: frame.len() as u32,
-                options,
-            });
-        }
-        Ok(())
-    }
-
-    pub fn needs_wakeup(&self) -> bool {
-        unsafe { (*self.mmap.flags).load(Ordering::Relaxed) & XDP_RING_NEED_WAKEUP != 0 }
-    }
-
-    pub fn wake(&self) -> Result<u64, io::Error> {
-        let result = unsafe { sendto(self.fd, ptr::null(), 0, libc::MSG_DONTWAIT, ptr::null(), 0) };
-        if result < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(result as u64)
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.size as usize
-    }
-
-    pub fn available(&self) -> usize {
-        self.producer.available() as usize
-    }
-
-    pub fn commit(&mut self) {
-        self.producer.commit();
-    }
-
-    pub fn sync(&mut self, commit: bool) {
-        self.producer.sync(commit);
-    }
-}
-
-pub struct RxRing {
-    #[allow(dead_code)]
-    mmap: RingMmap<XdpDesc>,
-    consumer: RingConsumer,
-    size: u32,
-    #[allow(dead_code)]
-    fd: RawFd,
-}
-
-impl RxRing {
-    fn new(mmap: RingMmap<XdpDesc>, size: u32, fd: RawFd) -> Self {
-        debug_assert!(size.is_power_of_two());
-        Self {
-            consumer: RingConsumer::new(mmap.producer, mmap.consumer),
-            mmap,
-            size,
-            fd,
-        }
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.size as usize
-    }
-
-    pub fn available(&self) -> usize {
-        self.consumer.available() as usize
-    }
-
-    pub fn commit(&mut self) {
-        self.consumer.commit();
-    }
-
-    pub fn sync(&mut self, commit: bool) {
-        self.consumer.sync(commit);
-    }
 }
