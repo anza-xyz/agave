@@ -10,11 +10,11 @@ responsible for propagating blocks between validators and ensuring that
 those blocks' transactions reach the replay stage. Its principal external
 interface is the turbine protocol.
 
-![TVU Block Diagram](/img/tvu.svg)
+![TVU Block Diagram](./img/tvu.svg)
 
 ## Retransmit Stage
 
-![Retransmit Block Diagram](/img/retransmit_stage.svg)
+![Retransmit Block Diagram](./img/retransmit_stage.svg)
 
 ## TVU sockets
 
