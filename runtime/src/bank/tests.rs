@@ -7677,13 +7677,17 @@ fn test_store_scan_consistency_unrooted() {
 
 #[test]
 fn test_store_scan_consistency_root() {
+    let (pruned_banks_sender, pruned_banks_receiver) = unbounded();
+    let pruned_banks_request_handler = PrunedBanksRequestHandler {
+        pruned_banks_receiver,
+    };
     test_store_scan_consistency(
-        |bank0,
-         bank_to_scan_sender,
-         _scan_finished_receiver,
-         pubkeys_to_modify,
-         program_id,
-         starting_lamports| {
+        move |bank0,
+              bank_to_scan_sender,
+              _scan_finished_receiver,
+              pubkeys_to_modify,
+              program_id,
+              starting_lamports| {
             let mut current_bank = bank0.clone();
             let mut prev_bank = bank0;
             loop {
@@ -7716,9 +7720,13 @@ fn test_store_scan_consistency_root() {
                     &solana_pubkey::new_rand(),
                     slot,
                 ));
+
+                // Move purge here so that Bank::drop()->purge_slots() doesn't race
+                // with clean. Simulates the call from AccountsBackgroundService
+                pruned_banks_request_handler.handle_request(&current_bank);
             }
         },
-        None,
+        Some(Box::new(SendDroppedBankCallback::new(pruned_banks_sender))),
         AcceptableScanResults::NoFailure,
     );
 }
