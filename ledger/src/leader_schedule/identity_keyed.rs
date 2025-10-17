@@ -1,8 +1,9 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     super::{stake_weighted_slot_leaders, LeaderScheduleVariant},
-    itertools::Itertools,
     solana_clock::Epoch,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     std::{collections::HashMap, ops::Index, sync::Arc},
 };
 
@@ -10,7 +11,7 @@ use {
 pub struct LeaderSchedule {
     slot_leaders: Vec<Pubkey>,
     // Inverted index from pubkeys to indices where they are the leader.
-    leader_slots_map: HashMap<Pubkey, Arc<Vec<usize>>>,
+    leader_slots_map: HashMap<Pubkey, Arc<Vec<usize>>, PubkeyHasherBuilder>,
 }
 
 impl LeaderSchedule {
@@ -26,25 +27,43 @@ impl LeaderSchedule {
             .map(|(pubkey, stake)| (pubkey, *stake))
             .collect();
         let slot_leaders = stake_weighted_slot_leaders(keyed_stakes, epoch, len, repeat);
-        Self::new_from_schedule(slot_leaders)
-    }
-
-    pub fn new_from_schedule(slot_leaders: Vec<Pubkey>) -> Self {
         Self {
-            leader_slots_map: Self::invert_slot_leaders(&slot_leaders),
+            leader_slots_map: Self::invert_slot_leaders(
+                &slot_leaders,
+                Some(epoch_staked_nodes.len()),
+            ),
             slot_leaders,
         }
     }
 
-    fn invert_slot_leaders(slot_leaders: &[Pubkey]) -> HashMap<Pubkey, Arc<Vec<usize>>> {
-        slot_leaders
-            .iter()
-            .enumerate()
-            .map(|(i, pk)| (*pk, i))
-            .into_group_map()
-            .into_iter()
-            .map(|(k, v)| (k, Arc::new(v)))
-            .collect()
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    pub fn new_from_schedule(slot_leaders: Vec<Pubkey>) -> Self {
+        Self {
+            leader_slots_map: Self::invert_slot_leaders(&slot_leaders, None),
+            slot_leaders,
+        }
+    }
+
+    fn invert_slot_leaders(
+        slot_leaders: &[Pubkey],
+        nodes_len: Option<usize>,
+    ) -> HashMap<Pubkey, Arc<Vec<usize>>, PubkeyHasherBuilder> {
+        let mut grouped_slot_leaders = match nodes_len {
+            Some(nodes_len) => {
+                HashMap::with_capacity_and_hasher(nodes_len, PubkeyHasherBuilder::default())
+            }
+            None => HashMap::with_hasher(PubkeyHasherBuilder::default()),
+        };
+        for (slot, leader) in slot_leaders.iter().enumerate() {
+            grouped_slot_leaders
+                .entry(*leader)
+                .and_modify(|slots: &mut Arc<Vec<usize>>| {
+                    let slots = Arc::get_mut(slots).expect("should be the only reference");
+                    slots.push(slot)
+                })
+                .or_insert(Arc::new(vec![slot]));
+        }
+        grouped_slot_leaders
     }
 
     pub fn get_slot_leaders(&self) -> &[Pubkey] {
@@ -57,7 +76,7 @@ impl LeaderScheduleVariant for LeaderSchedule {
         &self.slot_leaders
     }
 
-    fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Arc<Vec<usize>>> {
+    fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Arc<Vec<usize>>, PubkeyHasherBuilder> {
         &self.leader_slots_map
     }
 }
@@ -183,7 +202,7 @@ mod tests {
             victor_pubkey,
         ];
 
-        let grouped_slot_leaders = LeaderSchedule::invert_slot_leaders(leaders);
+        let grouped_slot_leaders = LeaderSchedule::invert_slot_leaders(leaders, Some(4));
         assert_eq!(
             grouped_slot_leaders.get(&alice_pubkey).unwrap().as_slice(),
             &[0, 2, 5],
