@@ -354,7 +354,7 @@ pub fn register_builtins(
     );
 }
 
-pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a>> {
+pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a, 'a>> {
     let compute_budget = SVMTransactionExecutionBudget::default();
     let vm_config = Config {
         max_call_depth: compute_budget.max_call_depth,
