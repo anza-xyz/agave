@@ -1,0 +1,256 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="968" height="608" class="svgbob">
+  <style>.svgbob line, .svgbob path, .svgbob circle, .svgbob rect, .svgbob polygon {
+  stroke: black;
+  stroke-width: 2;
+  stroke-opacity: 1;
+  fill-opacity: 1;
+  stroke-linecap: round;
+  stroke-linejoin: miter;
+}
+
+.svgbob text {
+  white-space: pre;
+  fill: black;
+  font-family: Iosevka Fixed, monospace;
+  font-size: 14px;
+}
+
+.svgbob rect.backdrop {
+  stroke: none;
+  fill: white;
+}
+
+.svgbob .broken {
+  stroke-dasharray: 8;
+}
+
+.svgbob .filled {
+  fill: black;
+}
+
+.svgbob .bg_filled {
+  fill: white;
+  stroke-width: 1;
+}
+
+.svgbob .nofill {
+  fill: white;
+}
+
+.svgbob .end_marked_arrow {
+  marker-end: url(#arrow);
+}
+
+.svgbob .start_marked_arrow {
+  marker-start: url(#arrow);
+}
+
+.svgbob .end_marked_diamond {
+  marker-end: url(#diamond);
+}
+
+.svgbob .start_marked_diamond {
+  marker-start: url(#diamond);
+}
+
+.svgbob .end_marked_circle {
+  marker-end: url(#circle);
+}
+
+.svgbob .start_marked_circle {
+  marker-start: url(#circle);
+}
+
+.svgbob .end_marked_open_circle {
+  marker-end: url(#open_circle);
+}
+
+.svgbob .start_marked_open_circle {
+  marker-start: url(#open_circle);
+}
+
+.svgbob .end_marked_big_open_circle {
+  marker-end: url(#big_open_circle);
+}
+
+.svgbob .start_marked_big_open_circle {
+  marker-start: url(#big_open_circle);
+}
+
+</style>
+  <defs>
+    <marker id="arrow" viewBox="-2 -2 8 8" refX="4" refY="2" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <polygon points="0,0 0,4 4,2 0,0"></polygon>
+    </marker>
+    <marker id="diamond" viewBox="-2 -2 8 8" refX="4" refY="2" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <polygon points="0,2 2,0 4,2 2,4 0,2"></polygon>
+    </marker>
+    <marker id="circle" viewBox="0 0 8 8" refX="4" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <circle cx="4" cy="4" r="2" class="filled"></circle>
+    </marker>
+    <marker id="open_circle" viewBox="0 0 8 8" refX="4" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <circle cx="4" cy="4" r="2" class="bg_filled"></circle>
+    </marker>
+    <marker id="big_open_circle" viewBox="0 0 8 8" refX="4" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <circle cx="4" cy="4" r="3" class="bg_filled"></circle>
+    </marker>
+  </defs>
+  <rect class="backdrop" x="0" y="0" width="968" height="608"></rect>
+  <rect x="212" y="56" width="112" height="64" class="solid nofill" rx="0"></rect>
+  <text x="218" y="76" >Child</text>
+  <text x="218" y="92" >Validators</text>
+  <rect x="420" y="72" width="104" height="64" class="solid nofill" rx="0"></rect>
+  <text x="426" y="92" >Neighborhood</text>
+  <text x="426" y="108" >Validators</text>
+  <rect x="828" y="264" width="112" height="80" class="solid nofill" rx="0"></rect>
+  <text x="842" y="284" >Transaction</text>
+  <text x="842" y="300" >Status</text>
+  <text x="842" y="316" >Service</text>
+  <path d="M 848,320 A 16,16 0,0,0 848,336" class="nofill"></path>
+  <text x="850" y="332" >optional</text>
+  <path d="M 912,320 A 16,16 0,0,1 912,336" class="nofill"></path>
+  <text x="618" y="28" >Gossip</text>
+  <text x="618" y="44" >Service</text>
+  <polygon points="648,92 652,80 656,92" class="filled"></polygon>
+  <line x1="652" y1="92" x2="652" y2="192" class="solid"></line>
+  <polygon points="272,140 276,128 280,140" class="filled"></polygon>
+  <text x="570" y="140" >Peer</text>
+  <text x="658" y="140" >Votes</text>
+  <polygon points="496,156 500,144 504,156" class="filled"></polygon>
+  <line x1="500" y1="156" x2="500" y2="192" class="solid"></line>
+  <text x="570" y="156" >List</text>
+  <text x="282" y="188" >shreds</text>
+  <path d="M 336,176 A 16,16 0,0,0 336,192" class="nofill"></path>
+  <text x="338" y="188" >forward</text>
+  <line x1="400" y1="182" x2="408" y2="182" class="solid"></line>
+  <line x1="400" y1="186" x2="408" y2="186" class="solid"></line>
+  <text x="418" y="188" >true</text>
+  <path d="M 448,176 A 16,16 0,0,1 448,192" class="nofill"></path>
+  <line x1="532" y1="240" x2="532" y2="244" class="solid"></line>
+  <polygon points="528,244 536,244 532,256" class="filled"></polygon>
+  <text x="138" y="284" >Repair</text>
+  <text x="474" y="284" >Retransmit</text>
+  <text x="634" y="284" >Replay</text>
+  <polygon points="216,292 224,296 216,300" class="filled"></polygon>
+  <polygon points="304,292 312,296 304,300" class="filled"></polygon>
+  <polygon points="448,292 456,296 448,300" class="filled"></polygon>
+  <text x="474" y="300" >Stage</text>
+  <polygon points="608,292 616,296 608,300" class="filled"></polygon>
+  <text x="634" y="300" >Stage</text>
+  <polygon points="816,292 824,296 816,300" class="filled"></polygon>
+  <text x="130" y="316" >Turbine</text>
+  <line x1="204" y1="304" x2="204" y2="320" class="solid"></line>
+  <polygon points="216,324 224,328 216,332" class="filled"></polygon>
+  <text x="650" y="332" >PoH</text>
+  <text x="682" y="332" >Verify</text>
+  <line x1="204" y1="336" x2="204" y2="352" class="solid"></line>
+  <polygon points="512,348 516,336 520,348" class="filled"></polygon>
+  <line x1="516" y1="348" x2="516" y2="464" class="solid"></line>
+  <text x="650" y="348" >TX</text>
+  <text x="674" y="348" >Sig</text>
+  <text x="706" y="348" >Verify</text>
+  <polygon points="216,356 224,360 216,364" class="filled"></polygon>
+  <text x="130" y="380" >Turbine</text>
+  <text x="130" y="396" >Forwards</text>
+  <polygon points="336,396 340,384 344,396" class="filled"></polygon>
+  <line x1="340" y1="396" x2="340" y2="464" class="solid"></line>
+  <line x1="652" y1="416" x2="652" y2="464" class="solid"></line>
+  <line x1="652" y1="480" x2="652" y2="500" class="solid"></line>
+  <text x="522" y="508" >Validator</text>
+  <polygon points="648,500 656,500 652,512" class="filled"></polygon>
+  <text x="522" y="524" >Stakes</text>
+  <text x="386" y="572" >Leader</text>
+  <text x="386" y="588" >Schedule</text>
+  <text x="226" y="236" >TVU</text>
+  <text x="18" y="300" >Upstream</text>
+  <text x="18" y="316" >Validators</text>
+  <text x="330" y="300" >Shred</text>
+  <text x="330" y="316" >Verify</text>
+  <text x="330" y="332" >Leader</text>
+  <text x="330" y="348" >Stage</text>
+  <text x="242" y="316" >Shred</text>
+  <text x="242" y="332" >Fetch</text>
+  <text x="242" y="348" >Stage</text>
+  <text x="386" y="332" >Sig</text>
+  <text x="634" y="556" >Bank</text>
+  <g>
+    <line x1="588" y1="8" x2="692" y2="8" class="solid"></line>
+    <line x1="588" y1="8" x2="588" y2="72" class="solid"></line>
+    <line x1="692" y1="8" x2="692" y2="72" class="solid"></line>
+    <line x1="588" y1="72" x2="692" y2="72" class="solid"></line>
+    <line x1="604" y1="72" x2="604" y2="192" class="solid"></line>
+  </g>
+  <g>
+    <line x1="276" y1="140" x2="276" y2="168" class="solid"></line>
+    <line x1="276" y1="168" x2="476" y2="168" class="solid"></line>
+    <line x1="476" y1="168" x2="476" y2="192" class="solid"></line>
+  </g>
+  <g>
+    <line x1="204" y1="200" x2="956" y2="200" class="solid"></line>
+    <line x1="204" y1="200" x2="204" y2="288" class="solid"></line>
+    <line x1="956" y1="200" x2="956" y2="472" class="solid"></line>
+    <line x1="204" y1="368" x2="204" y2="472" class="solid"></line>
+    <line x1="204" y1="472" x2="956" y2="472" class="solid"></line>
+  </g>
+  <g>
+    <line x1="476" y1="208" x2="476" y2="264" class="solid"></line>
+    <line x1="500" y1="208" x2="500" y2="264" class="solid"></line>
+    <line x1="460" y1="264" x2="564" y2="264" class="solid"></line>
+    <line x1="460" y1="264" x2="460" y2="328" class="solid"></line>
+    <line x1="564" y1="264" x2="564" y2="328" class="solid"></line>
+    <line x1="564" y1="296" x2="608" y2="296" class="solid"></line>
+    <line x1="460" y1="328" x2="564" y2="328" class="solid"></line>
+  </g>
+  <g>
+    <line x1="604" y1="208" x2="604" y2="232" class="solid"></line>
+    <line x1="532" y1="232" x2="604" y2="232" class="solid"></line>
+  </g>
+  <g>
+    <line x1="652" y1="208" x2="652" y2="264" class="solid"></line>
+    <line x1="620" y1="264" x2="772" y2="264" class="solid"></line>
+    <line x1="620" y1="264" x2="620" y2="408" class="solid"></line>
+    <line x1="772" y1="264" x2="772" y2="408" class="solid"></line>
+    <line x1="772" y1="296" x2="816" y2="296" class="solid"></line>
+    <line x1="620" y1="408" x2="772" y2="408" class="solid"></line>
+  </g>
+  <g>
+    <line x1="4" y1="264" x2="108" y2="264" class="solid"></line>
+    <line x1="4" y1="264" x2="4" y2="392" class="solid"></line>
+    <line x1="108" y1="264" x2="108" y2="392" class="solid"></line>
+    <line x1="108" y1="296" x2="216" y2="296" class="solid"></line>
+    <line x1="108" y1="328" x2="216" y2="328" class="solid"></line>
+    <line x1="108" y1="360" x2="216" y2="360" class="solid"></line>
+    <line x1="4" y1="392" x2="108" y2="392" class="solid"></line>
+  </g>
+  <g>
+    <line x1="228" y1="264" x2="292" y2="264" class="solid"></line>
+    <line x1="228" y1="264" x2="228" y2="392" class="solid"></line>
+    <line x1="292" y1="264" x2="292" y2="392" class="solid"></line>
+    <line x1="292" y1="296" x2="304" y2="296" class="solid"></line>
+    <line x1="228" y1="392" x2="292" y2="392" class="solid"></line>
+  </g>
+  <g>
+    <line x1="316" y1="264" x2="420" y2="264" class="solid"></line>
+    <line x1="316" y1="264" x2="316" y2="376" class="solid"></line>
+    <line x1="420" y1="264" x2="420" y2="376" class="solid"></line>
+    <line x1="420" y1="296" x2="448" y2="296" class="solid"></line>
+    <line x1="316" y1="376" x2="420" y2="376" class="solid"></line>
+  </g>
+  <g>
+    <line x1="636" y1="312" x2="756" y2="312" class="solid"></line>
+    <line x1="636" y1="312" x2="636" y2="376" class="solid"></line>
+    <line x1="756" y1="312" x2="756" y2="376" class="solid"></line>
+    <line x1="636" y1="376" x2="756" y2="376" class="solid"></line>
+    <line x1="652" y1="376" x2="652" y2="400" class="solid"></line>
+  </g>
+  <g>
+    <line x1="340" y1="480" x2="340" y2="552" class="solid"></line>
+    <line x1="516" y1="480" x2="516" y2="536" class="solid"></line>
+    <line x1="620" y1="520" x2="700" y2="520" class="solid"></line>
+    <line x1="620" y1="520" x2="620" y2="584" class="solid"></line>
+    <line x1="700" y1="520" x2="700" y2="584" class="solid"></line>
+    <line x1="516" y1="536" x2="620" y2="536" class="solid"></line>
+    <line x1="340" y1="552" x2="620" y2="552" class="solid"></line>
+    <line x1="620" y1="584" x2="700" y2="584" class="solid"></line>
+  </g>
+</svg>
