@@ -92,7 +92,7 @@ every slot, based on the fee-rate governor.
 
 - Address: `SysvarFees111111111111111111111111111111111`
 - Layout:
-  [Fees](https://docs.rs/solana-program/VERSION_FOR_DOCS_RS/solana_program/sysvar/fees/struct.Fees.html)
+  [Fees](https://docs.rs/solana-program/latest/solana_program/sysvar/fees/struct.Fees.html)
 
 ## Instructions
 
