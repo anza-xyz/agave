@@ -23,7 +23,7 @@ Transactions are batched and processed in a pipeline. The TPU and TVU follow a s
 
 The TVU runtime ensures that PoH verification occurs before the runtime processes any transactions.
 
-![Runtime pipeline](/img/runtime.svg)
+![Runtime pipeline](./img/runtime.svg)
 
 At the _execute_ stage, the loaded accounts have no data dependencies, so all the programs can be executed in parallel.
 
