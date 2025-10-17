@@ -30,8 +30,6 @@ use {
 
 /// Trait defining the interface for vote state operations.
 pub trait VoteStateHandle {
-    fn is_uninitialized(&self) -> bool;
-
     fn authorized_withdrawer(&self) -> &Pubkey;
 
     fn set_authorized_withdrawer(&mut self, authorized_withdrawer: Pubkey);
@@ -250,10 +248,6 @@ pub trait VoteStateHandle {
 }
 
 impl VoteStateHandle for VoteStateV3 {
-    fn is_uninitialized(&self) -> bool {
-        self.authorized_voters.is_empty()
-    }
-
     fn authorized_withdrawer(&self) -> &Pubkey {
         &self.authorized_withdrawer
     }
@@ -441,11 +435,6 @@ impl VoteStateHandle for VoteStateV3 {
 }
 
 impl VoteStateHandle for VoteStateV4 {
-    fn is_uninitialized(&self) -> bool {
-        // As per SIMD-0185, v4 is always initialized.
-        false
-    }
-
     fn authorized_withdrawer(&self) -> &Pubkey {
         &self.authorized_withdrawer
     }
@@ -673,13 +662,6 @@ pub struct VoteStateHandler {
 }
 
 impl VoteStateHandle for VoteStateHandler {
-    fn is_uninitialized(&self) -> bool {
-        match &self.target_state {
-            TargetVoteState::V3(v3) => v3.is_uninitialized(),
-            TargetVoteState::V4(v4) => v4.is_uninitialized(),
-        }
-    }
-
     fn authorized_withdrawer(&self) -> &Pubkey {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.authorized_withdrawer(),
@@ -869,6 +851,29 @@ impl VoteStateHandle for VoteStateHandler {
 }
 
 impl VoteStateHandler {
+    /// Create a new handler for the provided target version by converting the
+    /// provided `VoteStateVersions` to the target version explicitly.
+    pub fn new_from_versioned(
+        versioned: VoteStateVersions,
+        vote_pubkey: &Pubkey,
+        target_version: VoteStateTargetVersion,
+    ) -> Result<Self, InstructionError> {
+        match target_version {
+            VoteStateTargetVersion::V3 => {
+                let vote_state = try_convert_to_vote_state_v3(versioned)?;
+                Ok(Self {
+                    target_state: TargetVoteState::V3(vote_state),
+                })
+            }
+            VoteStateTargetVersion::V4 => {
+                let vote_state = try_convert_to_vote_state_v4(versioned, vote_pubkey)?;
+                Ok(Self {
+                    target_state: TargetVoteState::V4(vote_state),
+                })
+            }
+        }
+    }
+
     /// Create a new handler for the provided target version by deserializing
     /// the vote state and converting it to the target.
     pub fn deserialize_and_convert(
@@ -1000,6 +1005,80 @@ impl VoteStateHandler {
 // Computes the vote latency for vote on voted_for_slot where the vote itself landed in current_slot
 pub(crate) fn compute_vote_latency(voted_for_slot: Slot, current_slot: Slot) -> u8 {
     std::cmp::min(current_slot.saturating_sub(voted_for_slot), u8::MAX as u64) as u8
+}
+
+fn try_convert_to_vote_state_v3(
+    versioned: VoteStateVersions,
+) -> Result<VoteStateV3, InstructionError> {
+    match versioned {
+        VoteStateVersions::V0_23_5(_) => {
+            // V0_23_5 not supported.
+            Err(InstructionError::UninitializedAccount)
+        }
+        VoteStateVersions::V1_14_11(state) => Ok(VoteStateV3 {
+            node_pubkey: state.node_pubkey,
+            authorized_withdrawer: state.authorized_withdrawer,
+            commission: state.commission,
+            votes: landed_votes_from_lockouts(state.votes),
+            root_slot: state.root_slot,
+            authorized_voters: state.authorized_voters.clone(),
+            prior_voters: state.prior_voters,
+            epoch_credits: state.epoch_credits,
+            last_timestamp: state.last_timestamp,
+        }),
+        VoteStateVersions::V3(state) => Ok(*state),
+        VoteStateVersions::V4(_) => {
+            // Cannot convert V4 to V3.
+            Err(InstructionError::InvalidArgument)
+        }
+    }
+}
+
+fn try_convert_to_vote_state_v4(
+    versioned: VoteStateVersions,
+    vote_pubkey: &Pubkey,
+) -> Result<VoteStateV4, InstructionError> {
+    match versioned {
+        VoteStateVersions::V0_23_5(_) => {
+            // V0_23_5 not supported.
+            Err(InstructionError::UninitializedAccount)
+        }
+        VoteStateVersions::V1_14_11(state) => Ok(VoteStateV4 {
+            node_pubkey: state.node_pubkey,
+            authorized_withdrawer: state.authorized_withdrawer,
+            inflation_rewards_collector: *vote_pubkey,
+            block_revenue_collector: state.node_pubkey,
+            inflation_rewards_commission_bps: u16::from(state.commission).saturating_mul(100),
+            block_revenue_commission_bps: 10_000u16,
+            pending_delegator_rewards: 0,
+            bls_pubkey_compressed: None,
+            votes: landed_votes_from_lockouts(state.votes),
+            root_slot: state.root_slot,
+            authorized_voters: state.authorized_voters.clone(),
+            epoch_credits: state.epoch_credits,
+            last_timestamp: state.last_timestamp,
+        }),
+        VoteStateVersions::V3(state) => Ok(VoteStateV4 {
+            node_pubkey: state.node_pubkey,
+            authorized_withdrawer: state.authorized_withdrawer,
+            inflation_rewards_collector: *vote_pubkey,
+            block_revenue_collector: state.node_pubkey,
+            inflation_rewards_commission_bps: u16::from(state.commission).saturating_mul(100),
+            block_revenue_commission_bps: 10_000u16,
+            pending_delegator_rewards: 0,
+            bls_pubkey_compressed: None,
+            votes: state.votes,
+            root_slot: state.root_slot,
+            authorized_voters: state.authorized_voters,
+            epoch_credits: state.epoch_credits,
+            last_timestamp: state.last_timestamp,
+        }),
+        VoteStateVersions::V4(state) => Ok(*state),
+    }
+}
+
+fn landed_votes_from_lockouts(lockouts: VecDeque<Lockout>) -> VecDeque<LandedVote> {
+    lockouts.into_iter().map(|lockout| lockout.into()).collect()
 }
 
 #[allow(clippy::arithmetic_side_effects)]

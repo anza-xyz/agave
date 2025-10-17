@@ -32,17 +32,20 @@ use {
 // TODO: Change me once the program has full v4 feature gate support.
 pub(crate) const TEMP_HARDCODED_TARGET_VERSION: VoteStateTargetVersion = VoteStateTargetVersion::V3;
 
+// Deserialize the vote account, check if it's initialized, then convert to the
+// target using the `VoteStateHandler` constructor, returning the initialized
+// `VoteStateHandler`.
 fn get_vote_state_handler_checked(
     vote_account: &BorrowedInstructionAccount,
     target_version: VoteStateTargetVersion,
 ) -> Result<VoteStateHandler, InstructionError> {
-    let vote_state = VoteStateHandler::deserialize_and_convert(vote_account, target_version)?;
+    let versioned = VoteStateVersions::deserialize(vote_account.get_data())?;
 
-    if vote_state.is_uninitialized() {
+    if versioned.is_uninitialized() {
         return Err(InstructionError::UninitializedAccount);
     }
 
-    Ok(vote_state)
+    VoteStateHandler::new_from_versioned(versioned, vote_account.get_key(), target_version)
 }
 
 /// Checks the proposed vote state with the current and
