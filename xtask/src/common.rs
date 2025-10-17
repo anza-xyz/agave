@@ -74,9 +74,10 @@ pub fn get_current_version() -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, pretty_assertions::assert_eq};
+    use {super::*, pretty_assertions::assert_eq, serial_test::serial, std::collections::HashSet};
 
     #[test]
+    #[serial] // std::env::set_current_dir will affect other tests
     fn test_get_git_root_path() {
         // create a temporary directory
         let temp_dir = tempfile::tempdir().unwrap();
@@ -93,5 +94,130 @@ mod tests {
         let canonicalized_temp_dir_path = fs::canonicalize(temp_dir.path()).unwrap();
 
         assert_eq!(canonicalized_root_path, canonicalized_temp_dir_path);
+    }
+
+    #[test]
+    #[serial] // std::env::set_current_dir will affect other tests
+    fn test_workspace_functions() {
+        // $TEMPDIR
+        // |-- .git
+        // |-- Cargo.toml
+        // |-- Cargo.lock
+        // |-- foo
+        // |---- Cargo.toml
+        // |---- Cargo.lock
+        // |-- bar
+        // |---- Cargo.toml
+        // |---- Cargo.lock
+        let root_dir = tempfile::tempdir().unwrap();
+        let root_dir_path = root_dir.path();
+        std::env::set_current_dir(root_dir_path).unwrap();
+        Command::new("git").args(["init"]).output().unwrap();
+
+        // create the files
+        fs::write(
+            root_dir_path.join("Cargo.toml"),
+            r#"
+[workspace.package]
+version = "3.1.0"
+authors = ["Anza Maintainers <maintainers@anza.xyz>"]
+description = "Blockchain, Rebuilt for Scale"
+repository = "https://github.com/anza-xyz/agave"
+homepage = "https://anza.xyz/"
+license = "Apache-2.0"
+edition = "2021"
+
+[members]
+foo = { path = "foo" }
+bar = { path = "bar" }
+"#,
+        )
+        .unwrap();
+        fs::write(root_dir_path.join("Cargo.lock"), "").unwrap();
+        fs::create_dir_all(root_dir_path.join("foo")).unwrap();
+        fs::write(
+            root_dir_path.join("foo/Cargo.toml"),
+            r#"
+[package]
+name = "foo"
+documentation = "https://docs.rs/foo"
+version = { workspace = true }
+authors = { workspace = true }
+description = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+"#,
+        )
+        .unwrap();
+        fs::write(root_dir_path.join("foo/Cargo.lock"), "").unwrap();
+
+        fs::create_dir_all(root_dir_path.join("bar")).unwrap();
+        fs::write(
+            root_dir_path.join("bar/Cargo.toml"),
+            r#"
+[package]
+name = "bar"
+documentation = "https://docs.rs/bar"
+version = { workspace = true }
+authors = { workspace = true }
+description = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+"#,
+        )
+        .unwrap();
+        fs::write(root_dir_path.join("bar/Cargo.lock"), "").unwrap();
+
+        // test find_files_by_name for Cargo.toml
+        {
+            let files = find_files_by_name("Cargo.toml").unwrap();
+            assert_eq!(files.len(), 3);
+
+            let expected_files: HashSet<_> = [
+                fs::canonicalize(root_dir_path.join("Cargo.toml")).unwrap(),
+                fs::canonicalize(root_dir_path.join("foo/Cargo.toml")).unwrap(),
+                fs::canonicalize(root_dir_path.join("bar/Cargo.toml")).unwrap(),
+            ]
+            .iter()
+            .cloned()
+            .collect();
+
+            let actual_files: HashSet<_> = files.iter().cloned().collect();
+
+            assert_eq!(expected_files, actual_files);
+        }
+
+        // test find_files_by_name for Cargo.lock
+        {
+            let files = find_files_by_name("Cargo.lock").unwrap();
+            assert_eq!(files.len(), 3);
+
+            let expected_files: HashSet<_> = [
+                fs::canonicalize(root_dir_path.join("Cargo.lock")).unwrap(),
+                fs::canonicalize(root_dir_path.join("foo/Cargo.lock")).unwrap(),
+                fs::canonicalize(root_dir_path.join("bar/Cargo.lock")).unwrap(),
+            ]
+            .iter()
+            .cloned()
+            .collect();
+
+            let actual_files: HashSet<_> = files.iter().cloned().collect();
+
+            assert_eq!(expected_files, actual_files);
+        }
+
+        // test get_all_crates
+        {
+            let crates = get_all_crates().unwrap();
+            assert_eq!(crates.len(), 2);
+            let expected_crates: HashSet<String> =
+                ["foo", "bar"].iter().map(|s| s.to_string()).collect();
+            let actual_crates: HashSet<String> = crates.iter().map(|s| s.to_string()).collect();
+            assert_eq!(expected_crates, actual_crates);
+        }
     }
 }

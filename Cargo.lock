@@ -14074,6 +14074,7 @@ dependencies = [
  "log",
  "pretty_assertions",
  "semver 1.0.27",
+ "serial_test",
  "tempfile",
  "tokio",
  "toml_edit 0.22.27",
