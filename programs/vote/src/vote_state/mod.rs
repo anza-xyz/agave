@@ -32,20 +32,15 @@ use {
 // TODO: Change me once the program has full v4 feature gate support.
 pub(crate) const TEMP_HARDCODED_TARGET_VERSION: VoteStateTargetVersion = VoteStateTargetVersion::V3;
 
-fn verify_and_get_vote_state_handler<S: std::hash::BuildHasher>(
+fn verify_and_get_vote_state_handler(
     vote_account: &BorrowedInstructionAccount,
     target_version: VoteStateTargetVersion,
-    clock: &Clock,
-    signers: &HashSet<Pubkey, S>,
 ) -> Result<VoteStateHandler, InstructionError> {
-    let mut vote_state = VoteStateHandler::deserialize_and_convert(vote_account, target_version)?;
+    let vote_state = VoteStateHandler::deserialize_and_convert(vote_account, target_version)?;
 
     if vote_state.is_uninitialized() {
         return Err(InstructionError::UninitializedAccount);
     }
-
-    let authorized_voter = vote_state.get_and_update_authorized_voter(clock.epoch)?;
-    verify_authorized_signer(&authorized_voter, signers)?;
 
     Ok(vote_state)
 }
@@ -895,8 +890,10 @@ pub fn process_vote_with_account<S: std::hash::BuildHasher>(
     vote: &Vote,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    let mut vote_state =
-        verify_and_get_vote_state_handler(vote_account, target_version, clock, signers)?;
+    let mut vote_state = verify_and_get_vote_state_handler(vote_account, target_version)?;
+
+    let authorized_voter = vote_state.get_and_update_authorized_voter(clock.epoch)?;
+    verify_authorized_signer(&authorized_voter, signers)?;
 
     process_vote(&mut vote_state, vote, slot_hashes, clock.epoch, clock.slot)?;
     if let Some(timestamp) = vote.timestamp {
@@ -917,8 +914,11 @@ pub fn process_vote_state_update<S: std::hash::BuildHasher>(
     vote_state_update: VoteStateUpdate,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    let mut vote_state =
-        verify_and_get_vote_state_handler(vote_account, target_version, clock, signers)?;
+    let mut vote_state = verify_and_get_vote_state_handler(vote_account, target_version)?;
+
+    let authorized_voter = vote_state.get_and_update_authorized_voter(clock.epoch)?;
+    verify_authorized_signer(&authorized_voter, signers)?;
+
     do_process_vote_state_update(
         &mut vote_state,
         slot_hashes,
@@ -965,8 +965,11 @@ pub fn process_tower_sync<S: std::hash::BuildHasher>(
     tower_sync: TowerSync,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    let mut vote_state =
-        verify_and_get_vote_state_handler(vote_account, target_version, clock, signers)?;
+    let mut vote_state = verify_and_get_vote_state_handler(vote_account, target_version)?;
+
+    let authorized_voter = vote_state.get_and_update_authorized_voter(clock.epoch)?;
+    verify_authorized_signer(&authorized_voter, signers)?;
+
     do_process_tower_sync(
         &mut vote_state,
         slot_hashes,
