@@ -851,40 +851,6 @@ impl VoteStateHandle for VoteStateHandler {
 }
 
 impl VoteStateHandler {
-    /// Create a new handler for the provided target version by converting the
-    /// provided `VoteStateVersions` to the target version explicitly.
-    pub fn new_from_versioned(
-        versioned: VoteStateVersions,
-        vote_pubkey: &Pubkey,
-        target_version: VoteStateTargetVersion,
-    ) -> Result<Self, InstructionError> {
-        match target_version {
-            VoteStateTargetVersion::V3 => {
-                let vote_state = try_convert_to_vote_state_v3(versioned)?;
-                Ok(Self {
-                    target_state: TargetVoteState::V3(vote_state),
-                })
-            }
-            VoteStateTargetVersion::V4 => {
-                let vote_state = try_convert_to_vote_state_v4(versioned, vote_pubkey)?;
-                Ok(Self {
-                    target_state: TargetVoteState::V4(vote_state),
-                })
-            }
-        }
-    }
-
-    /// Deserialize a vote account and coerce it to v3 (done internally by the
-    /// `VoteStateV3::deserialize` API).
-    pub fn deserialize_v3(
-        vote_account: &BorrowedInstructionAccount,
-    ) -> Result<Self, InstructionError> {
-        let vote_state = VoteStateV3::deserialize(vote_account.get_data())?;
-        Ok(Self {
-            target_state: TargetVoteState::V3(vote_state),
-        })
-    }
-
     pub fn init_vote_account_state(
         vote_account: &mut BorrowedInstructionAccount,
         vote_init: &VoteInit,
@@ -934,15 +900,13 @@ impl VoteStateHandler {
         }
     }
 
-    #[cfg(test)]
-    pub fn new_v3(vote_state: VoteStateV3) -> Self {
+    pub(crate) fn new_v3(vote_state: VoteStateV3) -> Self {
         Self {
             target_state: TargetVoteState::V3(vote_state),
         }
     }
 
-    #[cfg(test)]
-    pub fn new_v4(vote_state: VoteStateV4) -> Self {
+    pub(crate) fn new_v4(vote_state: VoteStateV4) -> Self {
         Self {
             target_state: TargetVoteState::V4(vote_state),
         }
@@ -998,34 +962,7 @@ pub(crate) fn compute_vote_latency(voted_for_slot: Slot, current_slot: Slot) -> 
     std::cmp::min(current_slot.saturating_sub(voted_for_slot), u8::MAX as u64) as u8
 }
 
-fn try_convert_to_vote_state_v3(
-    versioned: VoteStateVersions,
-) -> Result<VoteStateV3, InstructionError> {
-    match versioned {
-        VoteStateVersions::V0_23_5(_) => {
-            // V0_23_5 not supported.
-            Err(InstructionError::UninitializedAccount)
-        }
-        VoteStateVersions::V1_14_11(state) => Ok(VoteStateV3 {
-            node_pubkey: state.node_pubkey,
-            authorized_withdrawer: state.authorized_withdrawer,
-            commission: state.commission,
-            votes: landed_votes_from_lockouts(state.votes),
-            root_slot: state.root_slot,
-            authorized_voters: state.authorized_voters.clone(),
-            prior_voters: state.prior_voters,
-            epoch_credits: state.epoch_credits,
-            last_timestamp: state.last_timestamp,
-        }),
-        VoteStateVersions::V3(state) => Ok(*state),
-        VoteStateVersions::V4(_) => {
-            // Cannot convert V4 to V3.
-            Err(InstructionError::InvalidArgument)
-        }
-    }
-}
-
-fn try_convert_to_vote_state_v4(
+pub(crate) fn try_convert_to_vote_state_v4(
     versioned: VoteStateVersions,
     vote_pubkey: &Pubkey,
 ) -> Result<VoteStateV4, InstructionError> {
