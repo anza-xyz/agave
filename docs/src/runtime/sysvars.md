@@ -7,7 +7,7 @@ sidebar_label: Sysvar Cluster Data
 Solana exposes a variety of cluster state data to programs via
 [`sysvar`](https://solana.com/docs/terminology#sysvar) accounts. These accounts
 are populated at known addresses published along with the account layouts in the
-[`solana-program` crate](https://docs.rs/solana-program/VERSION_FOR_DOCS_RS/solana_program/sysvar/index.html),
+[`solana-program` crate](https://docs.rs/solana-program/latest/solana_program/sysvar/index.html),
 and outlined below.
 
 There are two ways for a program to access a sysvar.
