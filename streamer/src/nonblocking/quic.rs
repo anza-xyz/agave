@@ -993,8 +993,11 @@ fn run_packet_batch_sender(
                 break;
             }
 
-            // On the first receive, we block on recv.
-            // On subsequent receives, we call try_recv.
+            // On the first receive, we block on recv not to use excessive CPU when the channel is idle. 
+            // This will not block the exit as the channel will be dropped on the sender's side.
+            //
+            // On subsequent receives, we call try_recv, so that we do not get blocked waiting for packets
+            // when we already have something in the batch.
             let mut first = true;
             let mut recv = || {
                 if first {
