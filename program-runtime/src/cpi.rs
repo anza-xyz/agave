@@ -815,6 +815,28 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
         check_aligned,
     )?;
 
+    if stricter_abi_and_runtime_constraints {
+        // before initiating CPI, the caller may have modified the
+        // account (caller_account). We need to update the corresponding
+        // BorrowedAccount (callee_account) so the callee can see the
+        // changes.
+        let transaction_context = &invoke_context.transaction_context;
+        let instruction_context = transaction_context.get_current_instruction_context()?;
+        for translate_account in accounts.iter_mut() {
+            let callee_account = instruction_context
+                .try_borrow_instruction_account(translate_account.index_in_caller)?;
+            let update_caller = update_callee_account(
+                check_aligned,
+                &translate_account.caller_account,
+                callee_account,
+                stricter_abi_and_runtime_constraints,
+                account_data_direct_mapping,
+            )?;
+            translate_account.update_caller_account_region =
+                translate_account.update_caller_account_info || update_caller;
+        }
+    }
+
     // Process the callee instruction
     let mut compute_units_consumed = 0;
     invoke_context
@@ -918,8 +940,7 @@ where
     Ok((account_infos, account_info_keys))
 }
 
-// Finish translating accounts, build CallerAccount values and update callee
-// accounts in preparation of executing the callee.
+// Finish translating accounts and build TranslatedAccount from CallerAccount.
 fn translate_and_update_accounts<'a, T, F>(
     account_info_keys: &[&Pubkey],
     account_infos: &[T],
@@ -1015,17 +1036,21 @@ where
                     serialized_metadata,
                 )?;
 
-            // before initiating CPI, the caller may have modified the
-            // account (caller_account). We need to update the corresponding
-            // BorrowedAccount (callee_account) so the callee can see the
-            // changes.
-            let update_caller = update_callee_account(
-                check_aligned,
-                &caller_account,
-                callee_account,
-                stricter_abi_and_runtime_constraints,
-                account_data_direct_mapping,
-            )?;
+            let update_caller = if stricter_abi_and_runtime_constraints {
+                true
+            } else {
+                // before initiating CPI, the caller may have modified the
+                // account (caller_account). We need to update the corresponding
+                // BorrowedAccount (callee_account) so the callee can see the
+                // changes.
+                update_callee_account(
+                    check_aligned,
+                    &caller_account,
+                    callee_account,
+                    stricter_abi_and_runtime_constraints,
+                    account_data_direct_mapping,
+                )?
+            };
 
             accounts.push(TranslatedAccount {
                 index_in_caller,
