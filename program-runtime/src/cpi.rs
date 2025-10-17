@@ -770,8 +770,6 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
     signers_seeds_len: u64,
     memory_mapping: &mut MemoryMapping,
 ) -> Result<u64, Error> {
-    let check_aligned = invoke_context.get_check_aligned();
-
     // CPI entry.
     //
     // Translate the inputs to the syscall and synchronize the caller's account
@@ -784,6 +782,11 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
         execute_time.stop();
         invoke_context.timings.execute_us += execute_time.as_us();
     }
+    let stricter_abi_and_runtime_constraints = invoke_context
+        .get_feature_set()
+        .stricter_abi_and_runtime_constraints;
+    let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
+    let check_aligned = invoke_context.get_check_aligned();
 
     let instruction = S::translate_instruction(
         instruction_addr,
@@ -824,11 +827,6 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
     // CPI exit.
     //
     // Synchronize the callee's account changes so the caller can see them.
-    let stricter_abi_and_runtime_constraints = invoke_context
-        .get_feature_set()
-        .stricter_abi_and_runtime_constraints;
-    let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
-
     for translate_account in accounts.iter_mut() {
         let mut callee_account = instruction_context
             .try_borrow_instruction_account(translate_account.index_in_caller)?;
