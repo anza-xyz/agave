@@ -46,7 +46,7 @@ epoch, and estimated wall-clock Unix timestamp. It is updated every slot.
 
 - Address: `SysvarC1ock11111111111111111111111111111111`
 - Layout:
-  [Clock](https://docs.rs/solana-program/VERSION_FOR_DOCS_RS/solana_program/clock/struct.Clock.html)
+  [Clock](https://docs.rs/solana-program/latest/solana_program/sysvar/clock/index.html)
 - Fields:
 
   - `slot`: the current slot
