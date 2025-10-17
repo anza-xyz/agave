@@ -437,12 +437,6 @@ impl RxRing {
     pub fn sync(&mut self, commit: bool) {
         self.consumer.sync(commit);
     }
-
-    pub (crate) fn read(&mut self) -> Option<XdpDesc> {
-        let index = self.consumer.consume()? & self.size.saturating_sub(1);
-        let desc = unsafe { ptr::read(self.mmap.desc.add(index as usize)) };
-        Some(desc)
-    }
 }
 
 pub struct TxCompletionRing {
