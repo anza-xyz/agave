@@ -117,20 +117,11 @@ impl<T: IndexValue> AccountMapEntry<T> {
     /// This function might need to acquire a read lock on the slot list, so it should not be called
     /// while any slot list accessor is active (since they hold the lock).
     pub fn slot_list_lock_read_len(&self) -> usize {
-        if !self.meta.is_single.load(Ordering::Acquire) {
-            let slot_list_repr = self.slot_list.read().unwrap();
-            if !self.meta.is_single.load(Ordering::Relaxed) {
-                // Safety: `is_single` confirmed to be false while holding the lock
-                return unsafe {
-                    slot_list_repr
-                        .multiple
-                        .as_ref()
-                        .map(|slot_list| slot_list.0.len())
-                        .unwrap_or(0)
-                };
-            }
+        if self.meta.is_single.load(Ordering::Acquire) {
+            1 // single item
+        } else {
+            self.slot_list_read_lock().len()
         }
-        1 // single list
     }
 
     /// Acquire a read lock on the slot list and return accessor for interpreting its representation
@@ -157,11 +148,16 @@ impl<T: IndexValue> AccountMapEntry<T> {
     }
 }
 
-impl<T: Copy> Debug for AccountMapEntry<T> {
+impl<T: Copy + Debug> Debug for AccountMapEntry<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let slot_list_maybe_locked = self.slot_list.try_read().map(|rl| SlotListReadGuard {
+            repr_guard: rl,
+            is_single: self.meta.is_single.load(Ordering::Relaxed),
+        });
         f.debug_struct("AccountMapEntry")
             .field("meta", &self.meta)
             .field("ref_count", &self.ref_count)
+            .field("slot_list", &slot_list_maybe_locked)
             .finish()
     }
 }
@@ -172,47 +168,49 @@ impl<T: Copy> Drop for AccountMapEntry<T> {
             // Make drop panic-resistant
             if let Ok(mut slot_list) = self.slot_list.write() {
                 // Safety: we operate on &mut self, so is_single==false won't change since above check
-                unsafe { ManuallyDrop::drop(&mut slot_list.multiple) }
+                unsafe { ManuallyDrop::drop(&mut slot_list.dynamic) }
             }
         }
     }
 }
 
 /// Slot list with dynamic number of elements
+///
+/// `None` indicates empty list such that no allocation is performed until elements are added
 #[allow(clippy::box_collection)]
-struct SlotListMultiple<T: Copy>(Box<Vec<(Slot, T)>>);
+struct SlotListDynamic<T: Copy>(Option<Box<Vec<(Slot, T)>>>);
 
-impl<T: Copy> SlotListMultiple<T> {
+impl<T: Copy> SlotListDynamic<T> {
+    const fn empty() -> Self {
+        Self(None)
+    }
+
     fn new(slot_list: Vec<(Slot, T)>) -> Self {
-        Self(Box::new(slot_list))
+        if slot_list.is_empty() {
+            Self::empty()
+        } else {
+            Self(Some(Box::new(slot_list)))
+        }
     }
 }
 
-/// Dynamic representation of a slot list with denominator stored in entry metadata to minimize memory usage
+/// Representation of a slot list with denominator stored in entry metadata to minimize memory usage
 union SlotListRepr<T: Copy> {
     /// This variant is used when entry's metadata `is_single` loads as `true` while holding the lock
     single: (Slot, T),
-    /// Slot list with potentially different number of elements than 1, used when `is_single` loads as `false`
-    ///
-    /// `None` indicates empty list such that no allocation is performed until >1 elements are added
-    multiple: ManuallyDrop<Option<SlotListMultiple<T>>>,
+    /// Dynamically sized slot list (usually with size different than 1), used when `is_single` loads as `false`
+    dynamic: ManuallyDrop<SlotListDynamic<T>>,
 }
 
 impl<T: Copy> SlotListRepr<T> {
     fn from_list(slot_list: SlotList<T>) -> (bool, Self) {
-        let multiple = match slot_list.len() {
-            1 => {
-                return (
-                    true,
-                    Self {
-                        single: slot_list[0],
-                    },
-                )
-            }
-            0 => ManuallyDrop::new(None),
-            _ => ManuallyDrop::new(Some(SlotListMultiple::new(slot_list.into_vec()))),
-        };
-        (false, Self { multiple })
+        if slot_list.len() == 1 {
+            let single = slot_list[0];
+            (true, Self { single })
+        } else {
+            let dynamic = ManuallyDrop::new(SlotListDynamic::new(slot_list.into_vec()));
+            (false, Self { dynamic })
+        }
     }
 
     // Safety: `is_single` needs to match current representation mode, thus this function is unsafe
@@ -221,8 +219,8 @@ impl<T: Copy> SlotListRepr<T> {
             if is_single {
                 std::slice::from_ref(&self.single)
             } else {
-                match self.multiple.as_ref() {
-                    Some(slot_list_multiple) => slot_list_multiple.0.as_slice(),
+                match self.dynamic.0.as_ref() {
+                    Some(slot_list) => slot_list.as_slice(),
                     None => &[],
                 }
             }
@@ -262,8 +260,8 @@ impl<T: Copy + Debug> Debug for SlotListReadGuard<'_, T> {
 
 /// Holds slot list lock for writing and provides mutable API translating changes to the representation.
 ///
-/// Note: the adjustment of representation happens on-demand when transitioning from single to multiple
-/// and on `Drop` to check possible transition from list to single.
+/// Note: the adjustment of representation happens on-demand when transitioning from single to dynamic
+/// and on `Drop` to check possible transition from dynamic to single.
 pub struct SlotListWriteGuard<'a, T: Copy> {
     repr_guard: RwLockWriteGuard<'a, SlotListRepr<T>>,
     meta: &'a AccountMapEntryMeta,
@@ -274,15 +272,15 @@ impl<T: Copy> SlotListWriteGuard<'_, T> {
     pub fn push(&mut self, item: (Slot, T)) {
         if self.swap_is_single(false) {
             let existing_item = unsafe { self.repr_guard.single };
-            self.repr_guard.multiple =
-                ManuallyDrop::new(Some(SlotListMultiple::new(vec![existing_item, item])))
+            self.repr_guard.dynamic =
+                ManuallyDrop::new(SlotListDynamic::new(vec![existing_item, item]))
         } else {
-            match unsafe { self.repr_guard.multiple.as_mut() } {
+            match unsafe { self.repr_guard.dynamic.0.as_mut() } {
                 None => {
                     self.store_is_single(true);
                     self.repr_guard.single = item
                 }
-                Some(slot_list) => slot_list.0.push(item),
+                Some(slot_list) => slot_list.push(item),
             }
         }
     }
@@ -298,15 +296,15 @@ impl<T: Copy> SlotListWriteGuard<'_, T> {
             let single_mut = unsafe { &mut self.repr_guard.single };
             if !f(single_mut) {
                 self.store_is_single(false);
-                // representation wasn't multiple before, so no need to handle dropping existing value
-                self.repr_guard.multiple = ManuallyDrop::new(None);
+                // representation wasn't dynamic before, so no need to handle dropping existing value
+                self.repr_guard.dynamic = ManuallyDrop::new(SlotListDynamic::empty());
                 0
             } else {
                 1
             }
-        } else if let Some(slot_list) = unsafe { self.repr_guard.multiple.as_mut() } {
-            slot_list.0.retain_mut(f);
-            slot_list.0.len()
+        } else if let Some(slot_list) = unsafe { self.repr_guard.dynamic.0.as_mut() } {
+            slot_list.retain_mut(f);
+            slot_list.len()
         } else {
             0
         }
@@ -314,10 +312,10 @@ impl<T: Copy> SlotListWriteGuard<'_, T> {
 
     fn try_change_to_single(&mut self) {
         if !self.is_single() {
-            if let Some(slot_list_multiple) = unsafe { self.repr_guard.multiple.as_mut() } {
-                if slot_list_multiple.0.len() == 1 {
-                    let item = slot_list_multiple.0.pop().unwrap();
-                    unsafe { ManuallyDrop::drop(&mut self.repr_guard.multiple) };
+            if let Some(slot_list) = unsafe { self.repr_guard.dynamic.0.as_mut() } {
+                if slot_list.len() == 1 {
+                    let item = slot_list.pop().unwrap();
+                    unsafe { ManuallyDrop::drop(&mut self.repr_guard.dynamic) };
                     self.repr_guard.single = item;
                     self.store_is_single(true);
                 }
@@ -345,20 +343,16 @@ impl<T: Copy> SlotListWriteGuard<'_, T> {
 
     #[cfg(test)]
     pub fn clear(&mut self) {
-        if !self.swap_is_single(false) {
-            // This will deallocate box/vec in slot list multiple if value is `Some`
-            unsafe { ManuallyDrop::drop(&mut self.repr_guard.multiple) };
-        }
-        self.repr_guard.multiple = ManuallyDrop::new(None);
+        self.assign(vec![]);
     }
 
     #[cfg(test)]
     pub fn assign(&mut self, value: impl IntoIterator<Item = (Slot, T)>) {
         let (is_single, repr) = SlotListRepr::from_list(value.into_iter().collect());
-        // Representation is going to be replaced, so drop any existing multiple value
+        // Representation is going to be replaced, so drop any existing dynamic value
         if !self.swap_is_single(is_single) {
-            // This will deallocate box/vec in slot list multiple if value is `Some`
-            unsafe { ManuallyDrop::drop(&mut self.repr_guard.multiple) };
+            // This will deallocate any box(vec) in dynamic slot list
+            unsafe { ManuallyDrop::drop(&mut self.repr_guard.dynamic) };
         }
         *self.repr_guard = repr;
     }
@@ -401,10 +395,11 @@ pub struct AccountMapEntryMeta {
     dirty: AtomicBool,
     /// 'age' at which this entry should be purged from the cache (implements lru)
     age: AtomicAge,
-    /// Marker for intepreting `SlotListRepr` as either a single or a multiple.
+    /// Marker for intepreting `SlotListRepr` as either a single item or dynamic list.
     ///
-    /// It is updated when write access to the slot list is released and the size of the slot
-    /// list changes between 1 and != 1.
+    /// Updated the size of the slot list changes between 1 and != 1 (changes to true may
+    /// be delayed to avoid dropping already allocated dynamic list, e.g. until write lock
+    /// to the slot list is released).
     is_single: AtomicBool,
 }
 
@@ -530,7 +525,7 @@ mod tests {
         assert!(entry.meta.is_single.load(Ordering::Acquire));
         assert_eq!(entry.slot_list_lock_read_len(), 1);
 
-        // Push second element - should become multiple
+        // Push second element - should become dynamic
         {
             let mut write_guard = entry.slot_list_write_lock();
             write_guard.push((20, 200));
