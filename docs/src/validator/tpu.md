@@ -8,7 +8,7 @@ pagination_label: Validator's Transaction Processing Unit (TPU)
 TPU (Transaction Processing Unit) is the logic of the validator
 responsible for block production.
 
-![TPU Block Diagram](/img/tpu.svg)
+![TPU Block Diagram](./img/tpu.svg)
 
 Transactions are encoded and sent in QUIC streams into the validator
 from clients (other validators/users of the network) as follows:
