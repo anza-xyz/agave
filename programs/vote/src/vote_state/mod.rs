@@ -32,6 +32,24 @@ use {
 // TODO: Change me once the program has full v4 feature gate support.
 pub(crate) const TEMP_HARDCODED_TARGET_VERSION: VoteStateTargetVersion = VoteStateTargetVersion::V3;
 
+fn verify_and_get_vote_state_handler<S: std::hash::BuildHasher>(
+    vote_account: &BorrowedInstructionAccount,
+    target_version: VoteStateTargetVersion,
+    clock: &Clock,
+    signers: &HashSet<Pubkey, S>,
+) -> Result<VoteStateHandler, InstructionError> {
+    let mut vote_state = VoteStateHandler::deserialize_and_convert(vote_account, target_version)?;
+
+    if vote_state.is_uninitialized() {
+        return Err(InstructionError::UninitializedAccount);
+    }
+
+    let authorized_voter = vote_state.get_and_update_authorized_voter(clock.epoch)?;
+    verify_authorized_signer(&authorized_voter, signers)?;
+
+    Ok(vote_state)
+}
+
 /// Checks the proposed vote state with the current and
 /// slot hashes, making adjustments to the root / filtering
 /// votes as needed.
@@ -867,24 +885,6 @@ pub fn initialize_account<S: std::hash::BuildHasher>(
     verify_authorized_signer(&vote_init.node_pubkey, signers)?;
 
     VoteStateHandler::init_vote_account_state(vote_account, vote_init, clock, target_version)
-}
-
-fn verify_and_get_vote_state_handler<S: std::hash::BuildHasher>(
-    vote_account: &BorrowedInstructionAccount,
-    target_version: VoteStateTargetVersion,
-    clock: &Clock,
-    signers: &HashSet<Pubkey, S>,
-) -> Result<VoteStateHandler, InstructionError> {
-    let mut vote_state = VoteStateHandler::deserialize_and_convert(vote_account, target_version)?;
-
-    if vote_state.is_uninitialized() {
-        return Err(InstructionError::UninitializedAccount);
-    }
-
-    let authorized_voter = vote_state.get_and_update_authorized_voter(clock.epoch)?;
-    verify_authorized_signer(&authorized_voter, signers)?;
-
-    Ok(vote_state)
 }
 
 pub fn process_vote_with_account<S: std::hash::BuildHasher>(
