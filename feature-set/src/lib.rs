@@ -1148,6 +1148,10 @@ pub mod discard_unexpected_data_complete_shreds {
 
 pub mod vote_state_v4 {
     solana_pubkey::declare_id!("Gx4XFcrVMt4HUvPzTpTSVkdDVgcDSjKhDN1RqRS6KDuZ");
+
+    pub mod stake_program_buffer {
+        solana_pubkey::declare_id!("BM11F4hqrpinQs28sEZfzQ2fYddivYs4NEAHF6QMjkJF");
+    }
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
