@@ -3,4 +3,4 @@
 rustflags = ["-Ctarget-cpu=x86-64-v2"]
 
 [alias]
-xtask = "run --package xtask --"
+xtask = "run --manifest-path ci/xtask/Cargo.toml --bin xtask --"

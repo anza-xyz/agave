@@ -139,11 +139,10 @@ members = [
     "watchtower",
     "wen-restart",
     "xdp",
-    "xtask",
     "zk-token-sdk",
 ]
 
-exclude = ["programs/sbf", "svm/tests/example-programs"]
+exclude = ["ci/xtask", "programs/sbf", "svm/tests/example-programs"]
 
 resolver = "2"
 
