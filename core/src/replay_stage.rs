@@ -652,7 +652,7 @@ impl ReplayStage {
             let verify_recyclers = VerifyRecyclers::default();
             let _exit = Finalizer::new(exit.clone());
 
-            let mut identity_keypair = cluster_info.keypair().clone();
+            let mut identity_keypair = cluster_info.keypair();
             let mut my_pubkey = identity_keypair.pubkey();
             if !is_alpenglow_migration_complete && my_pubkey != tower.node_pubkey {
                 // set-identity was called during the startup procedure, ensure the tower is consistent
@@ -1105,7 +1105,7 @@ impl ReplayStage {
                             );
 
                             if my_pubkey != cluster_info.id() {
-                                identity_keypair = cluster_info.keypair().clone();
+                                identity_keypair = cluster_info.keypair();
                                 let my_old_pubkey = my_pubkey;
                                 my_pubkey = identity_keypair.pubkey();
 
@@ -7714,7 +7714,7 @@ pub(crate) mod tests {
         let has_new_vote_been_rooted = false;
         let mut tracked_vote_transactions = vec![];
 
-        let identity_keypair = cluster_info.keypair().clone();
+        let identity_keypair = cluster_info.keypair();
         let my_vote_keypair = vec![Arc::new(
             validator_keypairs.remove(&my_pubkey).unwrap().vote_keypair,
         )];
@@ -8227,7 +8227,7 @@ pub(crate) mod tests {
         let has_new_vote_been_rooted = false;
         let mut tracked_vote_transactions = vec![];
 
-        let identity_keypair = cluster_info.keypair().clone();
+        let identity_keypair = cluster_info.keypair();
         let my_vote_keypair = vec![Arc::new(
             validator_keypairs.remove(&my_pubkey).unwrap().vote_keypair,
         )];
