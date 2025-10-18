@@ -13,4 +13,12 @@ anyhow = { workspace = true }
 clap = { version = "4.5.31", features = ["derive"] }
 env_logger = { workspace = true }
 log = { workspace = true }
+semver = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+toml_edit = { workspace = true, features = ["serde"] }
+walkdir = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+pretty_assertions = { workspace = true }
+serial_test = { workspace = true }
