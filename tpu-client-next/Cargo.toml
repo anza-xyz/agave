@@ -12,8 +12,8 @@ edition = { workspace = true }
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-agave-unstable-api = ["dep:qualifier_attr"]
 default = ["log"]
+agave-unstable-api = []
 log = ["dep:log"]
 metrics = ["dep:solana-metrics"]
 tracing = ["dep:tracing"]
@@ -22,7 +22,6 @@ tracing = ["dep:tracing"]
 async-trait = { workspace = true }
 log = { workspace = true, optional = true }
 lru = { workspace = true }
-qualifier_attr = { workspace = true, optional = true }
 quinn = { workspace = true }
 rustls = { workspace = true }
 solana-clock = { workspace = true }
@@ -50,3 +49,4 @@ solana-net-utils = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
+solana-tpu-client-next = { path = ".", features = ["agave-unstable-api"] }

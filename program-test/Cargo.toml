@@ -8,6 +8,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 agave-feature-set = { workspace = true }
 assert_matches = { workspace = true }
@@ -70,5 +73,6 @@ tokio = { workspace = true, features = ["full"] }
 [dev-dependencies]
 solana-cpi = { workspace = true }
 solana-program = { workspace = true }
+solana-program-test = { path = ".", features = ["agave-unstable-api"] }
 solana-stake-program = { workspace = true }
 test-case = { workspace = true }

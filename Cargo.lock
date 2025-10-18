@@ -273,6 +273,7 @@ name = "agave-precompiles"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-precompiles",
  "bincode",
  "bytemuck",
  "digest 0.10.7",
@@ -7390,6 +7391,7 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "serde",
+ "solana-bloom",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-hash",
@@ -7643,6 +7645,7 @@ dependencies = [
  "chrono",
  "clap 3.2.23",
  "rpassword",
+ "solana-clap-v3-utils",
  "solana-clock",
  "solana-cluster-type",
  "solana-commitment-config",
@@ -7979,6 +7982,7 @@ dependencies = [
  "solana-borsh",
  "solana-builtins-default-costs",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-compute-budget-interface",
  "solana-hash",
  "solana-instruction",
@@ -8695,6 +8699,7 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-feature-gate-interface",
  "solana-fee-calculator",
+ "solana-genesis",
  "solana-genesis-config",
  "solana-inflation",
  "solana-keypair",
@@ -8830,6 +8835,7 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "solana-gossip",
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
@@ -9035,6 +9041,7 @@ dependencies = [
  "criterion",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
+ "solana-lattice-hash",
 ]
 
 [[package]]
@@ -9197,7 +9204,6 @@ version = "3.1.0"
 dependencies = [
  "bincode",
  "log",
- "qualifier_attr",
  "solana-account",
  "solana-bincode",
  "solana-bpf-loader-program",
@@ -9346,6 +9352,7 @@ dependencies = [
  "reqwest 0.12.24",
  "serial_test",
  "solana-cluster-type",
+ "solana-metrics",
  "solana-sha256-hasher",
  "solana-time-utils",
  "thiserror 2.0.17",
@@ -9385,6 +9392,7 @@ dependencies = [
  "shuttle",
  "socket2 0.6.1",
  "solana-logger",
+ "solana-net-utils",
  "solana-serde",
  "solana-svm-type-overrides",
  "tokio",
@@ -9807,6 +9815,7 @@ dependencies = [
  "solana-program-entrypoint",
  "solana-program-error",
  "solana-program-runtime",
+ "solana-program-test",
  "solana-pubkey",
  "solana-rent",
  "solana-runtime",
@@ -9890,6 +9899,7 @@ dependencies = [
  "solana-packet",
  "solana-perf",
  "solana-pubkey",
+ "solana-quic-client",
  "solana-quic-definitions",
  "solana-rpc-client-api",
  "solana-signer",
@@ -9916,6 +9926,7 @@ version = "3.1.0"
 dependencies = [
  "log",
  "num_cpus",
+ "solana-rayon-threadlimit",
 ]
 
 [[package]]
@@ -10107,6 +10118,7 @@ dependencies = [
  "solana-keypair",
  "solana-message",
  "solana-pubkey",
+ "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-signature",
  "solana-signer",
@@ -10405,6 +10417,7 @@ dependencies = [
  "solana-keypair",
  "solana-message",
  "solana-pubkey",
+ "solana-runtime-transaction",
  "solana-sdk-ids",
  "solana-signature",
  "solana-signer",
@@ -11106,6 +11119,7 @@ dependencies = [
  "solana-svm-log-collector",
  "solana-svm-type-overrides",
  "solana-system-interface",
+ "solana-system-program",
  "solana-sysvar",
  "solana-transaction-context",
 ]
@@ -11360,7 +11374,6 @@ dependencies = [
  "futures 0.3.31",
  "log",
  "lru",
- "qualifier_attr",
  "quinn",
  "rustls 0.23.32",
  "solana-cli-config",
@@ -11379,6 +11392,7 @@ dependencies = [
  "solana-time-utils",
  "solana-tls-utils",
  "solana-tpu-client",
+ "solana-tpu-client-next",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util 0.7.16",
@@ -11530,6 +11544,7 @@ dependencies = [
  "solana-system-interface",
  "solana-transaction",
  "solana-transaction-error",
+ "solana-transaction-status",
  "solana-transaction-status-client-types",
  "solana-vote-interface",
  "spl-associated-token-account-interface",
@@ -11800,6 +11815,7 @@ dependencies = [
  "solana-signer",
  "solana-svm-transaction",
  "solana-transaction",
+ "solana-vote",
  "solana-vote-interface",
  "static_assertions",
  "thiserror 2.0.17",
@@ -11870,6 +11886,7 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-context",
  "solana-vote-interface",
+ "solana-vote-program",
  "test-case",
  "thiserror 2.0.17",
 ]

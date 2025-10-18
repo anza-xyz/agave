@@ -9,6 +9,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 async-lock = { workspace = true }
 async-trait = { workspace = true }
@@ -39,5 +42,6 @@ solana-logger = { workspace = true }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 solana-packet = { workspace = true }
 solana-perf = { workspace = true }
+solana-quic-client = { path = ".", features = ["agave-unstable-api"] }
 solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
 tokio-util = { workspace = true }

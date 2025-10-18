@@ -15,6 +15,9 @@ targets = ["x86_64-unknown-linux-gnu"]
 [lib]
 name = "solana_notifier"
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 log = { workspace = true }
 reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "json"] }

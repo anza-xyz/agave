@@ -17,6 +17,9 @@ crate-type = ["cdylib", "rlib"]
 name = "test_exec_instr"
 path = "bin/test_exec_instr.rs"
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-precompiles = { workspace = true }

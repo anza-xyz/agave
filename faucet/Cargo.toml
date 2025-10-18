@@ -21,6 +21,7 @@ name = "solana-faucet"
 path = "src/bin/faucet.rs"
 
 [features]
+agave-unstable-api = []
 dev-context-only-utils = []
 
 [dependencies]
@@ -51,4 +52,4 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
-solana-faucet = { path = ".", features = ["dev-context-only-utils"] }
+solana-faucet = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }

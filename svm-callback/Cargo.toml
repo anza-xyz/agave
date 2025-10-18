@@ -9,6 +9,9 @@ license = { workspace = true }
 edition = { workspace = true }
 readme = false
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 solana-account = { workspace = true }
 solana-clock = { workspace = true }

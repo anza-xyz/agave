@@ -16,6 +16,9 @@ targets = ["x86_64-unknown-linux-gnu"]
 crate-type = ["lib"]
 name = "solana_storage_proto"
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 bincode = { workspace = true }
 bs58 = { workspace = true }
