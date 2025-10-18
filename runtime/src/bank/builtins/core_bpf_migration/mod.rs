@@ -477,16 +477,26 @@ impl Bank {
 pub(crate) mod tests {
     use {
         super::*,
-        crate::bank::{
-            test_utils::goto_end_of_slot,
-            tests::{create_genesis_config, create_simple_test_bank},
-            Bank,
+        crate::{
+            bank::{
+                test_utils::goto_end_of_slot,
+                tests::{
+                    create_genesis_config, create_simple_test_bank,
+                    new_bank_from_parent_with_bank_forks,
+                },
+                Bank,
+            },
+            runtime_config::RuntimeConfig,
+            snapshot_bank_utils::{bank_from_snapshot_archives, bank_to_full_snapshot_archive},
+            snapshot_config::SnapshotConfig,
+            snapshot_utils::create_tmp_accounts_dir_for_tests,
         },
         agave_feature_set::FeatureSet,
         assert_matches::assert_matches,
         solana_account::{
             state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount,
         },
+        solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
         solana_builtins::{
             core_bpf_migration::{CoreBpfMigrationConfig, CoreBpfMigrationTargetType},
             prototype::{BuiltinPrototype, StatelessBuiltinPrototype},
@@ -2024,7 +2034,8 @@ pub(crate) mod tests {
     // activated and the migration was successful.
     #[test]
     fn test_startup_from_snapshot_after_replace_spl_token_with_p_token() {
-        let mut bank = create_simple_test_bank(0);
+        let (genesis_config, _mint_keypair) = create_genesis_config(0);
+        let mut bank = Bank::new_for_tests(&genesis_config);
 
         let bpf_loader_v2_program_address = Pubkey::new_unique();
         let source_buffer_address = Pubkey::new_unique();
@@ -2072,13 +2083,48 @@ pub(crate) mod tests {
         )
         .unwrap();
 
-        // Freeze the bank to simulate a snapshot.
-        bank.freeze();
-
-        // Simulate starting up from snapshot finishing the initialization for a frozen bank.
-        bank.compute_and_apply_features_after_snapshot_restore();
-
         // Run the post-upgrade program checks.
         test_context.run_program_checks(&bank, upgrade_slot);
+
+        bank.squash();
+        bank.force_flush_accounts_cache();
+
+        // Create a snapshot of the bank.
+        let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
+        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+        let snapshot_archive_format = SnapshotConfig::default().archive_format;
+
+        let full_snapshot_archive_info = bank_to_full_snapshot_archive(
+            bank_snapshots_dir.path(),
+            &bank,
+            None,
+            snapshot_archives_dir.path(),
+            snapshot_archives_dir.path(),
+            snapshot_archive_format,
+        )
+        .unwrap();
+
+        // Restore the bank from the snapshot and run checks.
+        let roundtrip_bank = bank_from_snapshot_archives(
+            &[accounts_dir],
+            bank_snapshots_dir.path(),
+            &full_snapshot_archive_info,
+            None,
+            &genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None,
+            false,
+            false,
+            false,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+
+        test_context.run_program_checks(&roundtrip_bank, upgrade_slot);
+        assert_eq!(bank, roundtrip_bank);
     }
 }
