@@ -1,0 +1,17 @@
+[store]
+dir = "target/nextest"
+
+[test-groups]
+build-sbf = { max-threads = 1 }
+
+[profile.ci]
+failure-output = "immediate-final"
+slow-timeout = { period = "60s", terminate-after = 1 }
+retries = { backoff = "fixed", count = 3, delay = "1s" }
+
+[profile.ci.junit]
+path = "../junit.xml"
+
+[[profile.ci.overrides]]
+filter = "package(solana-bench-tps)"
+threads-required = "num-cpus"
