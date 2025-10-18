@@ -7,7 +7,6 @@ use {
         net::UdpSocket,
         sync::{atomic::AtomicBool, Arc},
         thread::{self, JoinHandle},
-        time::Duration,
     },
 };
 
@@ -19,7 +18,6 @@ impl VerifiedPacketReceiver {
     pub fn new(
         sockets: Vec<Arc<UdpSocket>>,
         sender: &PacketBatchSender,
-        coalesce: Duration,
         in_vote_only_mode: Option<Arc<AtomicBool>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
@@ -38,7 +36,7 @@ impl VerifiedPacketReceiver {
                     sender.clone(),
                     recycler.clone(),
                     tpu_stats.clone(),
-                    Some(coalesce),
+                    None, // coalesce
                     true,
                     in_vote_only_mode.clone(),
                     false, // is_staked_service
