@@ -160,7 +160,6 @@ impl FeatureSet {
             provide_instruction_data_offset_in_vm_r2: self
                 .is_active(&provide_instruction_data_offset_in_vm_r2::id()),
             vote_state_v4: self.is_active(&vote_state_v4::id()),
-            replace_spl_token_with_p_token: self.is_active(&replace_spl_token_with_p_token::id()),
         }
     }
 }
