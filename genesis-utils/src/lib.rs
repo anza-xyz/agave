@@ -1,6 +1,6 @@
 use {
+    agave_snapshots::hardened_unpack::unpack_genesis_archive,
     log::*,
-    solana_accounts_db::hardened_unpack::unpack_genesis_archive,
     solana_download_utils::download_genesis_if_missing,
     solana_genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE},
     solana_hash::Hash,
