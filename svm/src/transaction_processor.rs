@@ -36,8 +36,8 @@ use {
         execution_budget::SVMTransactionExecutionCost,
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
-            ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheForTxBatch,
-            ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
+            EpochBoundaryPreparation, ForkGraph, ProgramCache, ProgramCacheEntry,
+            ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
         },
         solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
         sysvar_cache::SysvarCache,
@@ -156,6 +156,9 @@ pub struct TransactionBatchProcessor<FG: ForkGraph> {
     /// client code (e.g. Bank) and forwarded to process_message.
     sysvar_cache: RwLock<SysvarCache>,
 
+    /// Anticipates the environments of the upcoming epoch
+    pub epoch_boundary_preparation: Arc<RwLock<EpochBoundaryPreparation>>,
+
     /// Programs required for transaction batch processing
     pub global_program_cache: Arc<RwLock<ProgramCache<FG>>>,
 
@@ -182,10 +185,8 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
             slot: Slot::default(),
             epoch: Epoch::default(),
             sysvar_cache: RwLock::<SysvarCache>::default(),
-            global_program_cache: Arc::new(RwLock::new(ProgramCache::new(
-                Slot::default(),
-                Epoch::default(),
-            ))),
+            epoch_boundary_preparation: Arc::new(RwLock::new(EpochBoundaryPreparation::default())),
+            global_program_cache: Arc::new(RwLock::new(ProgramCache::new(Slot::default()))),
             builtin_program_ids: RwLock::new(HashSet::new()),
             execution_cost: SVMTransactionExecutionCost::default(),
         }
@@ -203,10 +204,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     /// When using this method, it's advisable to call `set_fork_graph_in_program_cache`
     /// as well as `add_builtin` to configure the cache before using the processor.
     pub fn new_uninitialized(slot: Slot, epoch: Epoch) -> Self {
+        let epoch_boundary_preparation =
+            Arc::new(RwLock::new(EpochBoundaryPreparation::new(epoch)));
         Self {
             slot,
             epoch,
-            global_program_cache: Arc::new(RwLock::new(ProgramCache::new(slot, epoch))),
+            epoch_boundary_preparation,
+            global_program_cache: Arc::new(RwLock::new(ProgramCache::new(slot))),
             ..Self::default()
         }
     }
@@ -250,6 +254,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             slot,
             epoch,
             sysvar_cache: RwLock::<SysvarCache>::default(),
+            epoch_boundary_preparation: self.epoch_boundary_preparation.clone(),
             global_program_cache: self.global_program_cache.clone(),
             builtin_program_ids: RwLock::new(self.builtin_program_ids.read().unwrap().clone()),
             execution_cost: self.execution_cost,
@@ -271,7 +276,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let empty_loader = || Arc::new(BuiltinProgram::new_loader(VmConfig::default()));
 
         global_program_cache.latest_root_slot = self.slot;
-        global_program_cache.latest_root_epoch = self.epoch;
+        self.epoch_boundary_preparation
+            .write()
+            .unwrap()
+            .latest_root_epoch = self.epoch;
         global_program_cache.environments.program_runtime_v1 =
             program_runtime_environment_v1.unwrap_or(empty_loader());
         global_program_cache.environments.program_runtime_v2 =
@@ -302,7 +310,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.global_program_cache
             .try_read()
             .ok()
-            .map(|cache| cache.get_environments_for_epoch(epoch))
+            .map(|cache| cache.get_environments_for_epoch(&self.epoch_boundary_preparation, epoch))
     }
 
     pub fn sysvar_cache(&self) -> RwLockReadGuard<SysvarCache> {
@@ -358,6 +366,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new_from_cache(
                 self.slot,
                 self.epoch,
+                self.epoch_boundary_preparation.clone(),
                 &global_program_cache,
             );
             drop(global_program_cache);
@@ -770,7 +779,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     // Load, verify and compile one program.
                     let program = load_program_with_pubkey(
                         account_loader,
-                        &global_program_cache.get_environments_for_epoch(self.epoch),
+                        &global_program_cache.get_environments_for_epoch(
+                            &self.epoch_boundary_preparation,
+                            self.epoch,
+                        ),
                         &key,
                         self.slot,
                         execute_timings,
@@ -798,6 +810,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     *program_cache_for_tx_batch = ProgramCacheForTxBatch::new_from_cache(
                         self.slot,
                         self.epoch,
+                        self.epoch_boundary_preparation.clone(),
                         &global_program_cache,
                     );
                     program_cache_for_tx_batch.hit_max_limit = true;
@@ -1467,6 +1480,7 @@ mod tests {
             ProgramCacheForTxBatch::new_from_cache(
                 batch_processor.slot,
                 batch_processor.epoch,
+                batch_processor.epoch_boundary_preparation.clone(),
                 &global_program_cache,
             )
         };
@@ -1509,6 +1523,7 @@ mod tests {
                 ProgramCacheForTxBatch::new_from_cache(
                     batch_processor.slot,
                     batch_processor.epoch,
+                    batch_processor.epoch_boundary_preparation.clone(),
                     &global_program_cache,
                 )
             };
@@ -1882,6 +1897,7 @@ mod tests {
         let mut loaded_programs_for_tx_batch = ProgramCacheForTxBatch::new_from_cache(
             0,
             0,
+            batch_processor.epoch_boundary_preparation.clone(),
             &batch_processor.global_program_cache.read().unwrap(),
         );
         batch_processor

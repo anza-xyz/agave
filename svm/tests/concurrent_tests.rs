@@ -72,6 +72,7 @@ fn program_cache_execution(threads: usize) {
                     ProgramCacheForTxBatch::new_from_cache(
                         processor.slot,
                         processor.epoch,
+                        processor.epoch_boundary_preparation.clone(),
                         &global_program_cache,
                     )
                 };

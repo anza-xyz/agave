@@ -810,8 +810,12 @@ mod tests {
 
         let upcoming_environments = ProgramRuntimeEnvironments::default();
         let current_environments = {
-            let mut global_program_cache = batch_processor.global_program_cache.write().unwrap();
-            global_program_cache.upcoming_environments = Some(upcoming_environments.clone());
+            let global_program_cache = batch_processor.global_program_cache.read().unwrap();
+            batch_processor
+                .epoch_boundary_preparation
+                .write()
+                .unwrap()
+                .upcoming_environments = Some(upcoming_environments.clone());
             global_program_cache.environments.clone()
         };
         mock_bank
