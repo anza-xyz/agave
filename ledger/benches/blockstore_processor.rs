@@ -122,7 +122,7 @@ fn bench_execute_batch(bencher: &mut Bencher, batch_size: usize) {
         _bank_forks,
         prioritization_fee_cache,
     } = setup();
-    let transactions = create_transactions(&bank, 2_usize.pow(20));
+    let transactions = create_transactions(&bank, 2_usize.pow(22));
     let batches: Vec<_> = transactions
         .chunks(batch_size)
         .map(|txs| {
