@@ -32,6 +32,7 @@ use {
         repair::repair_handler::RepairHandlerType,
         snapshot_packager_service::SnapshotPackagerService,
         system_monitor_service::SystemMonitorService,
+        tpu::MAX_VOTES_PER_SECOND,
         validator::{
             is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod,
             SchedulerPacing, Validator, ValidatorConfig, ValidatorError, ValidatorStartProgress,
@@ -947,10 +948,10 @@ pub fn execute(
         max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
         max_staked_connections: tpu_max_staked_connections.try_into().unwrap(),
         max_unstaked_connections: tpu_max_unstaked_connections.try_into().unwrap(),
-        max_streams_per_ms,
         max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
         coalesce: tpu_coalesce,
         num_threads: tpu_transaction_receive_threads,
+        max_streams_per_ms,
         ..Default::default()
     };
 
@@ -965,12 +966,15 @@ pub fn execute(
         ..Default::default()
     };
 
-    // Vote shares TPU forward's characteristics, except that we accept 1 connection
-    // per peer and no unstaked connections are accepted.
-    let mut vote_quic_server_config = tpu_fwd_quic_server_config.clone();
-    vote_quic_server_config.max_connections_per_peer = 1;
-    vote_quic_server_config.max_unstaked_connections = 0;
-    vote_quic_server_config.num_threads = tpu_vote_transaction_receive_threads;
+    let vote_quic_server_config = QuicServerParams {
+        max_connections_per_peer: 1,
+        max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
+        max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+        coalesce: tpu_coalesce,
+        num_threads: tpu_vote_transaction_receive_threads,
+        max_streams_per_second: MAX_VOTES_PER_SECOND,
+        ..Default::default()
+    };
 
     let validator = match Validator::new(
         node,

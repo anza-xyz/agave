@@ -51,7 +51,10 @@ use {
         vote_sender_types::{ReplayVoteReceiver, ReplayVoteSender},
     },
     solana_streamer::{
-        quic::{spawn_server_with_cancel, QuicServerParams, SpawnServerResult},
+        quic::{
+            spawn_server_with_cancel, spawn_simple_qos_server_with_cancel, QuicServerParams,
+            SpawnServerResult,
+        },
         streamer::StakedNodes,
     },
     solana_turbine::{
@@ -97,6 +100,9 @@ impl SigVerifier {
         }
     }
 }
+
+// Conservatively allow 20 TPS per validator.
+pub const MAX_VOTES_PER_SECOND: u64 = 20;
 
 pub struct Tpu {
     fetch_stage: FetchStage,
@@ -212,7 +218,7 @@ impl Tpu {
             endpoints: _,
             thread: tpu_vote_quic_t,
             key_updater: vote_streamer_key_updater,
-        } = spawn_server_with_cancel(
+        } = spawn_simple_qos_server_with_cancel(
             "solQuicTVo",
             "quic_streamer_tpu_vote",
             tpu_vote_quic_sockets,

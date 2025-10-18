@@ -122,10 +122,10 @@ impl Vortexor {
             max_connections_per_peer,
             max_staked_connections: max_tpu_staked_connections,
             max_unstaked_connections: max_tpu_unstaked_connections,
-            max_streams_per_ms,
             max_connections_per_ipaddr_per_min,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             coalesce: tpu_coalesce,
+            max_streams_per_ms,
             ..Default::default()
         };
 

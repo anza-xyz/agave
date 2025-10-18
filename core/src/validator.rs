@@ -587,7 +587,12 @@ impl ValidatorTpuConfig {
         };
 
         // vote and tpu_fwd share the same characteristics -- disallow non-staked connections:
-        let vote_quic_server_config = tpu_fwd_quic_server_config.clone();
+        let vote_quic_server_config = QuicServerParams {
+            max_connections_per_ipaddr_per_min: 32,
+            max_unstaked_connections: 0,
+            coalesce_channel_size: 100_000, // smaller channel size for faster test
+            ..Default::default()
+        };
 
         ValidatorTpuConfig {
             use_quic: DEFAULT_TPU_USE_QUIC,
