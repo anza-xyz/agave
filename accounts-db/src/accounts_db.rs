@@ -7356,19 +7356,6 @@ impl AccountsDb {
         }
     }
 
-    pub fn sizes_of_accounts_in_storage_for_tests(&self, slot: Slot) -> Vec<usize> {
-        let mut sizes = Vec::default();
-        if let Some(storage) = self.storage.get_slot_storage_entry(slot) {
-            storage
-                .accounts
-                .scan_accounts_stored_meta(|account| {
-                    sizes.push(account.stored_size());
-                })
-                .expect("must scan accounts storage");
-        }
-        sizes
-    }
-
     // With obsolete accounts marked, obsolete references are marked in the storage
     // and no longer need to be referenced. This leads to a static reference count
     // of 1. As referencing checking is common in tests, this test wrapper abstracts the behavior
