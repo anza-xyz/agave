@@ -745,6 +745,29 @@ impl TransactionStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, std::hash::Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct MaxSupportedTransactionVersionConfig {
+    pub max_supported_transaction_version: u8,
+}
+
+impl MaxSupportedTransactionVersionConfig {
+    pub fn new(max_supported_transaction_version: u8) -> Self {
+        Self {
+            max_supported_transaction_version,
+        }
+    }
+}
+
+impl Default for MaxSupportedTransactionVersionConfig {
+    fn default() -> Self {
+        Self {
+            // Support all transaction versions be default
+            max_supported_transaction_version: u8::MAX,
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use {

@@ -56,7 +56,8 @@ use {
     solana_tps_client::TpsClient,
     solana_transaction::Transaction,
     solana_transaction_status::{
-        EncodableWithMeta, EncodedConfirmedTransactionWithStatusMeta, UiTransactionEncoding,
+        EncodableWithMeta, EncodedConfirmedTransactionWithStatusMeta,
+        MaxSupportedTransactionVersionConfig, UiTransactionEncoding,
     },
     solana_vote_program::vote_state::VoteStateV4,
     std::{
@@ -1080,7 +1081,7 @@ pub fn process_get_block(
             RpcBlockConfig {
                 encoding: Some(UiTransactionEncoding::Base64),
                 commitment: Some(CommitmentConfig::confirmed()),
-                max_supported_transaction_version: Some(0),
+                max_supported_transaction_version: MaxSupportedTransactionVersionConfig::new(0),
                 ..RpcBlockConfig::default()
             },
         )?
@@ -2181,7 +2182,8 @@ pub fn process_transaction_history(
                     RpcTransactionConfig {
                         encoding: Some(UiTransactionEncoding::Base64),
                         commitment: Some(CommitmentConfig::confirmed()),
-                        max_supported_transaction_version: Some(0),
+                        max_supported_transaction_version:
+                            MaxSupportedTransactionVersionConfig::new(0),
                     },
                 ) {
                     Ok(confirmed_transaction) => {

@@ -13,7 +13,9 @@ use {
         bank_forks::BankForks,
     },
     solana_signature::Signature,
-    solana_transaction_status::{TransactionDetails, UiTransactionEncoding},
+    solana_transaction_status::{
+        MaxSupportedTransactionVersionConfig, TransactionDetails, UiTransactionEncoding,
+    },
     std::{
         collections::hash_map::{Entry, HashMap},
         fmt,
@@ -139,7 +141,7 @@ pub struct BlockSubscriptionParams {
     pub kind: BlockSubscriptionKind,
     pub transaction_details: TransactionDetails,
     pub show_rewards: bool,
-    pub max_supported_transaction_version: Option<u8>,
+    pub max_supported_transaction_version: MaxSupportedTransactionVersionConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

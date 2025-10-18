@@ -12,6 +12,7 @@ use {
     solana_accounts_db::{
         hardened_unpack::open_genesis_config, utils::create_accounts_run_and_snapshot_dirs,
     },
+    solana_client::rpc_config::MaxSupportedTransactionVersionConfig,
     solana_client_traits::AsyncClient,
     solana_clock::{
         self as clock, Slot, DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE,
@@ -2743,7 +2744,7 @@ fn test_rpc_block_subscribe() {
             encoding: None,
             transaction_details: None,
             show_rewards: None,
-            max_supported_transaction_version: None,
+            max_supported_transaction_version: MaxSupportedTransactionVersionConfig::new(0),
         }),
     )
     .unwrap();
@@ -2895,7 +2896,7 @@ fn test_oc_bad_signatures() {
             encoding: None,
             transaction_details: None,
             show_rewards: None,
-            max_supported_transaction_version: None,
+            max_supported_transaction_version: MaxSupportedTransactionVersionConfig::new(0),
         }),
     )
     .unwrap();

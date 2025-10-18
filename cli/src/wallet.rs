@@ -42,7 +42,7 @@ use {
     solana_transaction::{versioned::VersionedTransaction, Transaction},
     solana_transaction_status::{
         EncodableWithMeta, EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction,
-        TransactionBinaryEncoding, UiTransactionEncoding,
+        MaxSupportedTransactionVersionConfig, TransactionBinaryEncoding, UiTransactionEncoding,
     },
     std::{fmt::Write as FmtWrite, fs::File, io::Write, rc::Rc, str::FromStr},
 };
@@ -763,7 +763,8 @@ pub fn process_confirm(
                         RpcTransactionConfig {
                             encoding: Some(UiTransactionEncoding::Base64),
                             commitment: Some(CommitmentConfig::confirmed()),
-                            max_supported_transaction_version: Some(0),
+                            max_supported_transaction_version:
+                                MaxSupportedTransactionVersionConfig::new(0),
                         },
                     ) {
                         Ok(confirmed_transaction) => {
