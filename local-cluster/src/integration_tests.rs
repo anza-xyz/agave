@@ -318,6 +318,7 @@ pub fn run_cluster_partition<C>(
     let turbine_disabled = Arc::new(AtomicBool::new(false));
     let mut validator_config = ValidatorConfig {
         turbine_disabled: turbine_disabled.clone(),
+        wait_for_supermajority: Some(0),
         ..ValidatorConfig::default_for_test()
     };
 
@@ -483,6 +484,7 @@ pub fn test_faulty_node(
     validator_configs[0].broadcast_stage_type = faulty_node_type;
     for config in &mut validator_configs {
         config.fixed_leader_schedule = Some(fixed_leader_schedule.clone());
+        config.wait_for_supermajority = Some(0);
     }
 
     let mut cluster_config = ClusterConfig {
