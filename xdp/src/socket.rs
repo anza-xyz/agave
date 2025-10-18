@@ -257,7 +257,26 @@ pub struct Tx<F: Frame> {
     pub ring: Option<TxRing<F>>,
 }
 
+impl<F: Frame> Tx<F> {
+    pub(crate) fn needs_wakeup(&self) -> bool {
+        self.ring.as_ref().unwrap().needs_wakeup()
+    }
+
+    pub(crate) fn wake(&self) -> Result<u64, io::Error> {
+        self.ring.as_ref().unwrap().wake()
+    }
+}
+
 pub struct Rx<F: Frame> {
     pub fill: RxFillRing<F>,
     pub ring: Option<RxRing>,
+}
+
+impl<F: Frame> Rx<F> {
+    pub (crate) fn needs_wakeup(&self) -> bool {
+        self.fill.needs_wakeup()
+    }
+    pub (crate) fn wake(&self) -> Result<u64, io::Error> {
+        self.fill.wake()
+    }
 }
