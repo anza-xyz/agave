@@ -13,6 +13,7 @@ const COMMAND: &str = "set-public-address";
 pub struct SetPublicAddressArgs {
     pub tpu_addr: Option<SocketAddr>,
     pub tpu_forwards_addr: Option<SocketAddr>,
+    pub tvu_addr: Option<SocketAddr>,
 }
 
 impl FromClapArgMatches for SetPublicAddressArgs {
@@ -36,6 +37,7 @@ impl FromClapArgMatches for SetPublicAddressArgs {
         Ok(SetPublicAddressArgs {
             tpu_addr: parse_arg_addr("tpu_addr", "tpu")?,
             tpu_forwards_addr: parse_arg_addr("tpu_forwards_addr", "tpu-forwards")?,
+            tvu_addr: parse_arg_addr("tvu_addr", "tvu")?,
         })
     }
 }
@@ -59,9 +61,17 @@ pub fn command<'a>() -> App<'a, 'a> {
                 .validator(solana_net_utils::is_host_port)
                 .help("TPU Forwards address to advertise in gossip"),
         )
+        .arg(
+            Arg::with_name("tvu_addr")
+                .long("tvu")
+                .value_name("HOST:PORT")
+                .takes_value(true)
+                .validator(solana_net_utils::is_host_port)
+                .help("TVU address to advertise in gossip"),
+        )
         .group(
             ArgGroup::with_name("set_public_address_details")
-                .args(&["tpu_addr", "tpu_forwards_addr"])
+                .args(&["tpu_addr", "tpu_forwards_addr", "tvu_addr"])
                 .required(true)
                 .multiple(true),
         )
@@ -72,7 +82,7 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     let set_public_address_args = SetPublicAddressArgs::from_clap_arg_match(matches)?;
 
     macro_rules! set_public_address {
-        ($public_addr:expr, $set_public_address:ident, $request:literal) => {
+        ($public_addr:expr, $set_public_address:ident) => {
             if let Some(public_addr) = $public_addr {
                 let admin_client = admin_rpc_service::connect(ledger_path);
                 admin_rpc_service::runtime().block_on(async move {
@@ -83,16 +93,12 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
             }
         };
     }
-    set_public_address!(
-        set_public_address_args.tpu_addr,
-        set_public_tpu_address,
-        "setPublicTpuAddress"
-    )?;
+    set_public_address!(set_public_address_args.tpu_addr, set_public_tpu_address)?;
     set_public_address!(
         set_public_address_args.tpu_forwards_addr,
-        set_public_tpu_forwards_address,
-        "set public tpu forwards address"
+        set_public_tpu_forwards_address
     )?;
+    set_public_address!(set_public_address_args.tvu_addr, set_public_tvu_address)?;
     Ok(())
 }
 
@@ -118,6 +124,7 @@ mod tests {
             SetPublicAddressArgs {
                 tpu_addr: Some(SocketAddr::from(([127, 0, 0, 1], 8080))),
                 tpu_forwards_addr: None,
+                tvu_addr: None,
             },
         );
     }
@@ -130,6 +137,7 @@ mod tests {
             SetPublicAddressArgs {
                 tpu_addr: None,
                 tpu_forwards_addr: Some(SocketAddr::from(([127, 0, 0, 1], 8081))),
+                tvu_addr: None,
             },
         );
     }
@@ -144,10 +152,13 @@ mod tests {
                 "127.0.0.1:8080",
                 "--tpu-forwards",
                 "127.0.0.1:8081",
+                "--tvu",
+                "127.0.0.1:8082",
             ],
             SetPublicAddressArgs {
                 tpu_addr: Some(SocketAddr::from(([127, 0, 0, 1], 8080))),
                 tpu_forwards_addr: Some(SocketAddr::from(([127, 0, 0, 1], 8081))),
+                tvu_addr: Some(SocketAddr::from(([127, 0, 0, 1], 8082))),
             },
         );
     }
