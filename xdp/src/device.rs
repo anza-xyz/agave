@@ -5,8 +5,7 @@ use {
         umem::{Frame, FrameOffset},
     },
     libc::{
-        ifreq, mmap, munmap, socket, syscall, xdp_ring_offset, SYS_ioctl, AF_INET, IF_NAMESIZE,
-        SIOCETHTOOL, SIOCGIFADDR, SIOCGIFHWADDR, SOCK_DGRAM,
+        ifreq, mmap, munmap, sendto, socket, syscall, xdp_ring_offset, SYS_ioctl, AF_INET, IF_NAMESIZE, SIOCETHTOOL, SIOCGIFADDR, SIOCGIFHWADDR, SOCK_DGRAM, XDP_RING_NEED_WAKEUP
     },
     std::{
         ffi::{c_char, CStr, CString},
@@ -462,7 +461,7 @@ impl RxRing {
         self.consumer.sync(commit);
     }
 
-    pub fn read(&mut self) -> Option<XdpDesc> {
+    pub (crate) fn read(&mut self) -> Option<XdpDesc> {
         let index = self.consumer.consume()? & self.size.saturating_sub(1);
         let desc = unsafe { ptr::read(self.mmap.desc.add(index as usize)) };
         Some(desc)
