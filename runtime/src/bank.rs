@@ -188,7 +188,7 @@ use {
     },
     solana_nonce as nonce,
     solana_nonce_account::{get_system_account_kind, SystemAccountKind},
-    solana_program_runtime::{loaded_programs::ProgramCacheForTxBatch, sysvar_cache::SysvarCache},
+    solana_program_runtime::sysvar_cache::SysvarCache,
 };
 pub use {partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_reward_info::RewardType};
 
@@ -1496,25 +1496,29 @@ impl Bank {
                 .checked_div(2)
                 .unwrap();
 
-        let mut program_cache = self
+        let program_cache = self
             .transaction_processor
             .global_program_cache
+            .read()
+            .unwrap();
+        let mut epoch_boundary_preparation = self
+            .transaction_processor
+            .epoch_boundary_preparation
             .write()
             .unwrap();
 
-        if program_cache.upcoming_environments.is_some() {
-            if let Some((key, program_to_recompile)) = program_cache.programs_to_recompile.pop() {
-                let effective_epoch = program_cache.latest_root_epoch.saturating_add(1);
+        if let Some(upcoming_environments) =
+            epoch_boundary_preparation.upcoming_environments.as_ref()
+        {
+            let upcoming_environments = upcoming_environments.clone();
+            if let Some((key, program_to_recompile)) =
+                epoch_boundary_preparation.programs_to_recompile.pop()
+            {
+                drop(epoch_boundary_preparation);
                 drop(program_cache);
-                let environments_for_epoch = self
-                    .transaction_processor
-                    .global_program_cache
-                    .read()
-                    .unwrap()
-                    .get_environments_for_epoch(effective_epoch);
                 if let Some(recompiled) = load_program_with_pubkey(
                     self,
-                    &environments_for_epoch,
+                    &upcoming_environments,
                     &key,
                     self.slot,
                     &mut ExecuteTimings::default(),
@@ -1534,17 +1538,11 @@ impl Bank {
                     program_cache.assign_program(key, recompiled);
                 }
             }
-        } else if self.epoch != program_cache.latest_root_epoch
+        } else if self.epoch != epoch_boundary_preparation.latest_root_epoch
             || slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch
         {
             // Anticipate the upcoming program runtime environment for the next epoch,
             // so we can try to recompile loaded programs before the feature transition hits.
-            drop(program_cache);
-            let mut program_cache = self
-                .transaction_processor
-                .global_program_cache
-                .write()
-                .unwrap();
             let (program_runtime_environment_v1, program_runtime_environment_v2) =
                 self.create_program_runtime_environments(&upcoming_feature_set);
             let mut upcoming_environments = program_cache.environments.clone();
@@ -1558,21 +1556,27 @@ impl Bank {
             if changed_program_runtime_v2 {
                 upcoming_environments.program_runtime_v2 = program_runtime_environment_v2;
             }
-            program_cache.upcoming_environments = Some(upcoming_environments);
-            program_cache.programs_to_recompile = program_cache
+            epoch_boundary_preparation.upcoming_environments = Some(upcoming_environments);
+            epoch_boundary_preparation.programs_to_recompile = program_cache
                 .get_flattened_entries(changed_program_runtime_v1, changed_program_runtime_v2);
-            program_cache
+            epoch_boundary_preparation
                 .programs_to_recompile
                 .sort_by_cached_key(|(_id, program)| program.decayed_usage_counter(self.slot));
         }
     }
 
     pub fn prune_program_cache(&self, new_root_slot: Slot, new_root_epoch: Epoch) {
+        let upcoming_environments = self
+            .transaction_processor
+            .epoch_boundary_preparation
+            .write()
+            .unwrap()
+            .reroot(new_root_epoch);
         self.transaction_processor
             .global_program_cache
             .write()
             .unwrap()
-            .prune(new_root_slot, new_root_epoch);
+            .prune(new_root_slot, upcoming_environments);
     }
 
     pub fn prune_program_cache_by_deployment_slot(&self, deployment_slot: Slot) {
@@ -3251,11 +3255,23 @@ impl Bank {
 
         let (blockhash, blockhash_lamports_per_signature) =
             self.last_blockhash_and_lamports_per_signature();
+        let effective_epoch_of_deployments =
+            self.epoch_schedule().get_epoch(self.slot.saturating_add(
+                solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
+            ));
         let processing_environment = TransactionProcessingEnvironment {
             blockhash,
             blockhash_lamports_per_signature,
             epoch_total_stake: self.get_current_epoch_total_stake(),
             feature_set: self.feature_set.runtime_features(),
+            program_runtime_environments_for_execution: self
+                .transaction_processor
+                .get_environments_for_epoch(self.epoch)
+                .unwrap(),
+            program_runtime_environments_for_deployment: self
+                .transaction_processor
+                .get_environments_for_epoch(effective_epoch_of_deployments)
+                .unwrap(),
             rent: self.rent_collector.rent.clone(),
         };
 
@@ -5899,18 +5915,6 @@ impl Bank {
             .accounts
             .accounts_db
             .calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors, self.slot)
-    }
-
-    pub fn new_program_cache_for_tx_batch_for_slot(&self, slot: Slot) -> ProgramCacheForTxBatch {
-        ProgramCacheForTxBatch::new_from_cache(
-            slot,
-            self.epoch_schedule.get_epoch(slot),
-            &self
-                .transaction_processor
-                .global_program_cache
-                .read()
-                .unwrap(),
-        )
     }
 
     pub fn get_transaction_processor(&self) -> &TransactionBatchProcessor<BankForks> {

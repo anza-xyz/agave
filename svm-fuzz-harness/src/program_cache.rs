@@ -2,12 +2,8 @@ use {
     agave_feature_set::{
         enable_loader_v4, zk_elgamal_proof_program_enabled, zk_token_sdk_enabled, FeatureSet,
     },
-    agave_syscalls::create_program_runtime_environment_v1,
     solana_builtins::BUILTINS,
-    solana_compute_budget::compute_budget::ComputeBudget,
-    solana_program_runtime::loaded_programs::{
-        ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments,
-    },
+    solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
     solana_pubkey::Pubkey,
     std::sync::Arc,
 };
@@ -20,29 +16,9 @@ const MIGRATED_BUILTINS: &[Pubkey] = &[
     solana_sdk_ids::stake::id(),
 ];
 
-pub fn setup_program_cache(
-    feature_set: &FeatureSet,
-    compute_budget: &ComputeBudget,
-    slot: u64,
-) -> ProgramCacheForTxBatch {
+pub fn setup_program_cache(feature_set: &FeatureSet, slot: u64) -> ProgramCacheForTxBatch {
     let mut cache = ProgramCacheForTxBatch::default();
-
-    let environments = ProgramRuntimeEnvironments {
-        program_runtime_v1: Arc::new(
-            create_program_runtime_environment_v1(
-                &feature_set.runtime_features(),
-                &compute_budget.to_budget(),
-                false, /* deployment */
-                false, /* debugging_features */
-            )
-            .unwrap(),
-        ),
-        ..ProgramRuntimeEnvironments::default()
-    };
-
     cache.set_slot_for_tests(slot);
-    cache.environments = environments.clone();
-    cache.upcoming_environments = Some(environments);
 
     for builtin in BUILTINS {
         // Skip migrated builtins.
