@@ -2086,6 +2086,8 @@ pub(crate) mod tests {
         // Run the post-upgrade program checks.
         test_context.run_program_checks(&bank, upgrade_slot);
 
+        bank.fill_bank_with_ticks_for_tests();
+        // Force flush the bank to create the account storage entry
         bank.squash();
         bank.force_flush_accounts_cache();
 
