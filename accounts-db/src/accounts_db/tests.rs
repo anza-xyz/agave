@@ -4316,7 +4316,7 @@ fn test_shrink_unref_handle_zero_lamport_single_ref_accounts() {
     // And now, slot 1 should be marked complete dead, which will be added
     // to uncleaned slots, which handle dropping dead storage. And it WON'T
     // be participating shrinking in the next round.
-    assert!(db.dirty_stores.contains_key(&1));
+    assert!(db.dirty_stores.lock().unwrap().contains_key(&1));
     assert!(!db.shrink_candidate_slots.lock().unwrap().contains(&1));
 
     // Now, make slot 0 dead by updating the remaining key
@@ -5562,7 +5562,7 @@ define_accounts_db_test!(test_mark_dirty_dead_stores_empty, |db| {
     for add_dirty_stores in [false, true] {
         let dead_storages = db.mark_dirty_dead_stores(slot, add_dirty_stores, None, false);
         assert!(dead_storages.is_empty());
-        assert!(db.dirty_stores.is_empty());
+        assert!(db.dirty_stores.lock().unwrap().is_empty());
     }
 });
 
@@ -5583,11 +5583,11 @@ fn test_mark_dirty_dead_stores_no_shrink_in_progress() {
         assert_eq!(dead_storages.len(), 1);
         assert_eq!(dead_storages.first().unwrap().id(), old_id);
         if add_dirty_stores {
-            assert_eq!(1, db.dirty_stores.len());
-            let dirty_store = db.dirty_stores.get(&slot).unwrap();
-            assert_eq!(dirty_store.id(), old_id);
+            assert_eq!(1, db.dirty_stores.lock().unwrap().len());
+            let dirty_store_id = db.dirty_stores.lock().unwrap().get(&slot).unwrap().id();
+            assert_eq!(dirty_store_id, old_id);
         } else {
-            assert!(db.dirty_stores.is_empty());
+            assert!(db.dirty_stores.lock().unwrap().is_empty());
         }
         assert!(db.storage.is_empty_entry(slot));
     }
@@ -5610,11 +5610,11 @@ fn test_mark_dirty_dead_stores() {
         assert_eq!(dead_storages.len(), 1);
         assert_eq!(dead_storages.first().unwrap().id(), old_id);
         if add_dirty_stores {
-            assert_eq!(1, db.dirty_stores.len());
-            let dirty_store = db.dirty_stores.get(&slot).unwrap();
-            assert_eq!(dirty_store.id(), old_id);
+            assert_eq!(1, db.dirty_stores.lock().unwrap().len());
+            let dirty_store_id = db.dirty_stores.lock().unwrap().get(&slot).unwrap().id();
+            assert_eq!(dirty_store_id, old_id);
         } else {
-            assert!(db.dirty_stores.is_empty());
+            assert!(db.dirty_stores.lock().unwrap().is_empty());
         }
         assert!(db.storage.get_slot_storage_entry(slot).is_some());
     }
@@ -6434,7 +6434,7 @@ fn test_clean_old_storages_with_reclaims_rooted() {
         accounts_db.uncleaned_pubkeys.remove(&slot);
         // ensure this slot is *not* in the dirty_stores nor uncleaned_pubkeys, because we want to
         // test cleaning *old* storages, i.e. when they aren't explicitly marked for cleaning
-        assert!(!accounts_db.dirty_stores.contains_key(&slot));
+        assert!(!accounts_db.dirty_stores.lock().unwrap().contains_key(&slot));
         assert!(!accounts_db.uncleaned_pubkeys.contains_key(&slot));
     }
 
@@ -6443,7 +6443,11 @@ fn test_clean_old_storages_with_reclaims_rooted() {
         .storage
         .get_slot_storage_entry_shrinking_in_progress_ok(old_slot)
         .unwrap();
-    accounts_db.dirty_stores.insert(old_slot, old_storage);
+    accounts_db
+        .dirty_stores
+        .lock()
+        .unwrap()
+        .insert(old_slot, old_storage);
 
     // ensure the slot list for `pubkey` has both the old and new slots
     let slot_list = accounts_db
@@ -6499,10 +6503,18 @@ fn test_clean_old_storages_with_reclaims_unrooted() {
 
     // ensure `old_slot` is in uncleaned_pubkeys (but not dirty_stores) so it'll be cleaned
     assert!(accounts_db.uncleaned_pubkeys.contains_key(&old_slot));
-    assert!(!accounts_db.dirty_stores.contains_key(&old_slot));
+    assert!(!accounts_db
+        .dirty_stores
+        .lock()
+        .unwrap()
+        .contains_key(&old_slot));
     // and `new_slot` should be in neither
     assert!(!accounts_db.uncleaned_pubkeys.contains_key(&new_slot));
-    assert!(!accounts_db.dirty_stores.contains_key(&new_slot));
+    assert!(!accounts_db
+        .dirty_stores
+        .lock()
+        .unwrap()
+        .contains_key(&new_slot));
 
     // ensure the slot list for `pubkey` has both the old and new slots
     let slot_list = accounts_db
