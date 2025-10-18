@@ -82,10 +82,12 @@ impl StakeReward {
         let validator_staking_keypair = Keypair::new();
         let validator_voting_keypair = Keypair::new();
 
-        let validator_vote_account = vote_state::create_account(
-            &validator_voting_keypair.pubkey(),
+        let validator_vote_account = vote_state::create_v4_account_with_authorized(
             &validator_pubkey,
-            10,
+            &validator_voting_keypair.pubkey(),
+            &validator_voting_keypair.pubkey(),
+            None,
+            1000,
             validator_stake_lamports,
         );
 

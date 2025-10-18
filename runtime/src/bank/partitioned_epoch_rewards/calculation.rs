@@ -1316,14 +1316,35 @@ mod tests {
         let mut accumulator2 = RewardsAccumulator::default();
 
         let vote_pubkey_a = Pubkey::new_unique();
-        let vote_account_a =
-            vote_state::create_account(&vote_pubkey_a, &Pubkey::new_unique(), 20, 100);
+        let node_pubkey_a = Pubkey::new_unique();
+        let vote_account_a = vote_state::create_v4_account_with_authorized(
+            &node_pubkey_a,
+            &vote_pubkey_a,
+            &vote_pubkey_a,
+            None,
+            2000,
+            100,
+        );
         let vote_pubkey_b = Pubkey::new_unique();
-        let vote_account_b =
-            vote_state::create_account(&vote_pubkey_b, &Pubkey::new_unique(), 20, 100);
+        let node_pubkey_b = Pubkey::new_unique();
+        let vote_account_b = vote_state::create_v4_account_with_authorized(
+            &node_pubkey_b,
+            &vote_pubkey_b,
+            &vote_pubkey_b,
+            None,
+            2000,
+            100,
+        );
         let vote_pubkey_c = Pubkey::new_unique();
-        let vote_account_c =
-            vote_state::create_account(&vote_pubkey_c, &Pubkey::new_unique(), 20, 100);
+        let node_pubkey_c = Pubkey::new_unique();
+        let vote_account_c = vote_state::create_v4_account_with_authorized(
+            &node_pubkey_c,
+            &vote_pubkey_c,
+            &vote_pubkey_c,
+            None,
+            2000,
+            100,
+        );
 
         accumulator1.add_reward(
             vote_pubkey_a,
