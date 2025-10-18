@@ -30,6 +30,7 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 solana-account = "=3.1.0"
 solana-accounts-db = { workspace = true }
+solana-bls-signatures = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-clock = "=3.0.0"
@@ -65,3 +66,5 @@ tempfile = { workspace = true }
 solana-borsh = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-vote = { workspace = true }
+test-case = { workspace = true }
