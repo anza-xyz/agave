@@ -6,7 +6,7 @@ extern crate log;
 
 pub mod commitment;
 pub mod common;
-mod consensus_metrics;
+pub mod consensus_metrics;
 pub mod consensus_pool;
 #[allow(dead_code)]
 mod consensus_pool_service;
@@ -19,6 +19,7 @@ mod timer_manager;
 pub mod vote_history;
 pub mod vote_history_storage;
 mod voting_service;
+#[allow(dead_code)]
 mod voting_utils;
 #[allow(dead_code)]
 mod votor;
