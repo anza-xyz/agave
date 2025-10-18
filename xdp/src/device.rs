@@ -534,6 +534,18 @@ impl<F: Frame> RxFillRing<F> {
     pub fn sync(&mut self, commit: bool) {
         self.producer.sync(commit);
     }
+
+    pub fn needs_wakeup(&self) -> bool {
+        unsafe { (*self.mmap.flags).load(Ordering::Relaxed) & XDP_RING_NEED_WAKEUP != 0 }
+    }
+
+    pub fn wake(&self) -> Result<u64, io::Error> {
+        let result = unsafe { sendto(self._fd, ptr::null(), 0, libc::MSG_DONTWAIT, ptr::null(), 0) };
+        if result < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(result as u64)
+    }
 }
 
 pub struct RingMmap<T> {
