@@ -77,6 +77,9 @@ pub mod transaction_scheduler;
 conditional_vis_mod!(unified_scheduler, feature = "dev-context-only-utils", pub, pub(crate));
 #[allow(dead_code)]
 #[cfg(unix)]
+mod progress_tracker;
+#[allow(dead_code)]
+#[cfg(unix)]
 mod tpu_to_pack;
 
 /// The maximum number of worker threads that can be spawned by banking stage.
