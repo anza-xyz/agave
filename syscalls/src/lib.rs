@@ -1752,19 +1752,8 @@ declare_builtin_function!(
             })
             .collect::<Result<Vec<_>, Error>>()?;
 
-        let simplify_alt_bn128_syscall_error_codes = invoke_context
-            .get_feature_set()
-            .simplify_alt_bn128_syscall_error_codes;
-
-        let hash = match poseidon::hashv(parameters, endianness, inputs.as_slice()) {
-            Ok(hash) => hash,
-            Err(e) => {
-                return if simplify_alt_bn128_syscall_error_codes {
-                    Ok(1)
-                } else {
-                    Ok(e.into())
-                };
-            }
+        let Ok(hash) = poseidon::hashv(parameters, endianness, inputs.as_slice()) else {
+            return Ok(1);
         };
         hash_result.copy_from_slice(&hash.to_bytes());
 
@@ -1845,69 +1834,35 @@ declare_builtin_function!(
             invoke_context.get_check_aligned(),
         )?;
 
-        let simplify_alt_bn128_syscall_error_codes = invoke_context
-            .get_feature_set()
-            .simplify_alt_bn128_syscall_error_codes;
-
         match op {
             ALT_BN128_G1_COMPRESS => {
-                let result_point = match alt_bn128_g1_compress(input) {
-                    Ok(result_point) => result_point,
-                    Err(e) => {
-                        return if simplify_alt_bn128_syscall_error_codes {
-                            Ok(1)
-                        } else {
-                            Ok(e.into())
-                        };
-                    }
+                let Ok(result_point) = alt_bn128_g1_compress(input) else {
+                    return Ok(1);
                 };
                 call_result.copy_from_slice(&result_point);
-                Ok(SUCCESS)
             }
             ALT_BN128_G1_DECOMPRESS => {
-                let result_point = match alt_bn128_g1_decompress(input) {
-                    Ok(result_point) => result_point,
-                    Err(e) => {
-                        return if simplify_alt_bn128_syscall_error_codes {
-                            Ok(1)
-                        } else {
-                            Ok(e.into())
-                        };
-                    }
+                let Ok(result_point) = alt_bn128_g1_decompress(input) else {
+                    return Ok(1);
                 };
                 call_result.copy_from_slice(&result_point);
-                Ok(SUCCESS)
             }
             ALT_BN128_G2_COMPRESS => {
-                let result_point = match alt_bn128_g2_compress(input) {
-                    Ok(result_point) => result_point,
-                    Err(e) => {
-                        return if simplify_alt_bn128_syscall_error_codes {
-                            Ok(1)
-                        } else {
-                            Ok(e.into())
-                        };
-                    }
+                let Ok(result_point) = alt_bn128_g2_compress(input) else {
+                    return Ok(1);
                 };
                 call_result.copy_from_slice(&result_point);
-                Ok(SUCCESS)
             }
             ALT_BN128_G2_DECOMPRESS => {
-                let result_point = match alt_bn128_g2_decompress(input) {
-                    Ok(result_point) => result_point,
-                    Err(e) => {
-                        return if simplify_alt_bn128_syscall_error_codes {
-                            Ok(1)
-                        } else {
-                            Ok(e.into())
-                        };
-                    }
+                let Ok(result_point) = alt_bn128_g2_decompress(input) else {
+                    return Ok(1);
                 };
                 call_result.copy_from_slice(&result_point);
-                Ok(SUCCESS)
             }
-            _ => Err(SyscallError::InvalidAttribute.into()),
+            _ => return Err(SyscallError::InvalidAttribute.into()),
         }
+
+        Ok(SUCCESS)
     }
 );
 
