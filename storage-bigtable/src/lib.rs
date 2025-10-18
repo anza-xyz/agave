@@ -58,7 +58,7 @@ pub enum Error {
     BlockNotFound(Slot),
 
     #[error("Signature not found")]
-    SignatureNotFound,
+    SignatureNotFound(Signature),
 
     #[error("tokio error")]
     TokioJoinError(JoinError),
@@ -627,7 +627,7 @@ impl LedgerStorage {
             .get_bincode_cell::<TransactionInfo>("tx", signature.to_string())
             .await
             .map_err(|err| match err {
-                bigtable::Error::RowNotFound => Error::SignatureNotFound,
+                bigtable::Error::RowNotFound => Error::SignatureNotFound(*signature),
                 _ => err.into(),
             })?;
         Ok(transaction_info.into())
@@ -706,7 +706,7 @@ impl LedgerStorage {
             .get_bincode_cell("tx", signature.to_string())
             .await
             .map_err(|err| match err {
-                bigtable::Error::RowNotFound => Error::SignatureNotFound,
+                bigtable::Error::RowNotFound => Error::SignatureNotFound(*signature),
                 _ => err.into(),
             })?;
 
@@ -764,7 +764,7 @@ impl LedgerStorage {
                     .get_bincode_cell("tx", before_signature.to_string())
                     .await
                     .map_err(|err| match err {
-                        bigtable::Error::RowNotFound => Error::SignatureNotFound,
+                        bigtable::Error::RowNotFound => Error::SignatureNotFound(*before_signature),
                         _ => err.into(),
                     })?;
 
@@ -780,7 +780,7 @@ impl LedgerStorage {
                     .get_bincode_cell("tx", until_signature.to_string())
                     .await
                     .map_err(|err| match err {
-                        bigtable::Error::RowNotFound => Error::SignatureNotFound,
+                        bigtable::Error::RowNotFound => Error::SignatureNotFound(*until_signature),
                         _ => err.into(),
                     })?;
 
