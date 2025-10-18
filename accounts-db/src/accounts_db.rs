@@ -913,6 +913,14 @@ impl AccountStorageEntry {
         self.alive_bytes.load(Ordering::Acquire)
     }
 
+    /// Returns the accounts that were marked obsolete as of the passed in slot
+    /// or earlier. Returned data includes the slots that the accounts were marked
+    /// obsolete at
+    pub fn obsolete_accounts_for_snapshots(&self, slot: Slot) -> ObsoleteAccounts {
+        self.obsolete_accounts_read_lock()
+            .obsolete_accounts_for_snapshots(slot)
+    }
+
     /// Locks obsolete accounts with a read lock and returns the the accounts with the guard
     pub(crate) fn obsolete_accounts_read_lock(&self) -> RwLockReadGuard<ObsoleteAccounts> {
         self.obsolete_accounts.read().unwrap()
