@@ -167,6 +167,7 @@
 //! ```
 
 use {
+    crate::pubsub_client::{DEFAULT_MAX_FAILED_PINGS, DEFAULT_PING_DURATION_SECONDS},
     futures_util::{
         future::{ready, BoxFuture, FutureExt},
         sink::SinkExt,
@@ -197,7 +198,7 @@ use {
         net::TcpStream,
         sync::{mpsc, oneshot},
         task::JoinHandle,
-        time::{sleep, Duration},
+        time::{interval, Duration, Interval},
     },
     tokio_stream::wrappers::UnboundedReceiverStream,
     tokio_tungstenite::{
@@ -247,6 +248,18 @@ pub enum PubsubClientError {
 
     #[error("could not find node version: {0}")]
     UnexpectedGetVersionResponse(String),
+}
+
+impl PubsubClientError {
+    pub fn is_timeout(&self) -> bool {
+        match self {
+            PubsubClientError::WsError(err) => match err.as_ref() {
+                tungstenite::Error::Io(ref err) => err.kind() == std::io::ErrorKind::WouldBlock,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
 }
 
 type UnsubscribeFn = Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>;
@@ -496,6 +509,10 @@ impl PubsubClient {
         let mut subscriptions = BTreeMap::new();
         let (unsubscribe_sender, mut unsubscribe_receiver) = mpsc::unbounded_channel();
 
+        let mut ping_interval: Interval =
+            interval(Duration::from_secs(DEFAULT_PING_DURATION_SECONDS));
+        let mut elapsed_pings: usize = 0usize;
+
         loop {
             tokio::select! {
                 // Send close on shutdown signal
@@ -506,8 +523,21 @@ impl PubsubClient {
                     break;
                 },
                 // Send `Message::Ping` each 10s if no any other communication
-                () = sleep(Duration::from_secs(10)) => {
+                _ = ping_interval.tick() => {
                     ws.send(Message::Ping(Bytes::new())).await.map_err(Box::new)?;
+                    elapsed_pings += 1;
+
+                    if elapsed_pings > DEFAULT_MAX_FAILED_PINGS {
+                        info!("No pong received after {DEFAULT_MAX_FAILED_PINGS} pings. Closing connection...");
+                        ws.close(Some(CloseFrame {
+                            code: CloseCode::Normal,
+                            reason: "No pong received".into(),
+                        }))
+                        .await
+                        .map_err(Box::new)?;
+
+                        break;
+                    }
                 },
                 // Read message for subscribe
                 Some((operation, params, response_sender)) = subscribe_receiver.recv() => {
@@ -543,13 +573,20 @@ impl PubsubClient {
 
                     // Get text from the message
                     let text = match msg {
-                        Message::Text(text) => text,
+                        Message::Text(text) => {
+                            elapsed_pings = 0;
+                            text
+                        },
                         Message::Binary(_data) => continue, // Ignore
                         Message::Ping(data) => {
                             ws.send(Message::Pong(data)).await.map_err(Box::new)?;
+                            elapsed_pings = 0;
                             continue
                         },
-                        Message::Pong(_data) => continue,
+                        Message::Pong(_data) => {
+                            elapsed_pings = 0;
+                            continue
+                        },
                         Message::Close(_frame) => break,
                         Message::Frame(_frame) => continue,
                     };
