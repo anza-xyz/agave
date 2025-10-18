@@ -5,7 +5,8 @@ use {
         umem::{Frame, FrameOffset},
     },
     libc::{
-        ifreq, mmap, munmap, sendto, socket, syscall, xdp_ring_offset, SYS_ioctl, AF_INET, IF_NAMESIZE, SIOCETHTOOL, SIOCGIFADDR, SIOCGIFHWADDR, SOCK_DGRAM, XDP_RING_NEED_WAKEUP
+        ifreq, mmap, munmap, sendto, socket, syscall, xdp_ring_offset, SYS_ioctl, AF_INET,
+        IF_NAMESIZE, SIOCETHTOOL, SIOCGIFADDR, SIOCGIFHWADDR, SOCK_DGRAM, XDP_RING_NEED_WAKEUP,
     },
     std::{
         ffi::{c_char, CStr, CString},
@@ -369,7 +370,7 @@ pub struct TxRing<F: Frame> {
 pub struct RingFull<F: Frame>(pub F);
 
 impl<F: Frame> TxRing<F> {
-    pub (crate) fn new(mmap: RingMmap<XdpDesc>, size: u32, fd: RawFd) -> Self {
+    pub(crate) fn new(mmap: RingMmap<XdpDesc>, size: u32, fd: RawFd) -> Self {
         debug_assert!(size.is_power_of_two());
         Self {
             producer: RingProducer::new(mmap.producer, mmap.consumer, size),
@@ -435,7 +436,7 @@ pub struct RxRing {
 }
 
 impl RxRing {
-    pub (crate) fn new(mmap: RingMmap<XdpDesc>, size: u32, fd: RawFd) -> Self {
+    pub(crate) fn new(mmap: RingMmap<XdpDesc>, size: u32, fd: RawFd) -> Self {
         debug_assert!(size.is_power_of_two());
         Self {
             consumer: RingConsumer::new(mmap.producer, mmap.consumer),
@@ -461,7 +462,7 @@ impl RxRing {
         self.consumer.sync(commit);
     }
 
-    pub (crate) fn read(&mut self) -> Option<XdpDesc> {
+    pub(crate) fn read(&mut self) -> Option<XdpDesc> {
         let index = self.consumer.consume()? & self.size.saturating_sub(1);
         let desc = unsafe { ptr::read(self.mmap.desc.add(index as usize)) };
         Some(desc)
