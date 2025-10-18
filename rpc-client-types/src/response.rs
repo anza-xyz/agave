@@ -288,6 +288,8 @@ pub struct RpcContactInfo {
     pub feature_set: Option<u32>,
     /// Shred version
     pub shred_version: Option<u16>,
+    /// Client ID (0: SolanaLabs, 1: JitoLabs, 2: Firedancer, 3: Agave, 4: Paladin)
+    pub client_id: Option<u16>,
 }
 
 /// Map of leader base58 identity pubkeys to the slot indices relative to the first epoch slot
