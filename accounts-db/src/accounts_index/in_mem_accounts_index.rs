@@ -34,15 +34,15 @@ pub struct StartupStats {
 }
 
 #[derive(Debug)]
-pub struct PossibleEvictions<T: IndexValue> {
+pub struct PossibleEvictions {
     /// vec per age in the future, up to size 'ages_to_stay_in_cache'
-    possible_evictions: Vec<FlushScanResult<T>>,
+    possible_evictions: Vec<FlushScanResult>,
     /// next index to use into 'possible_evictions'
     /// if 'index' >= 'possible_evictions.len()', then there are no available entries
     index: usize,
 }
 
-impl<T: IndexValue> PossibleEvictions<T> {
+impl PossibleEvictions {
     fn new(max_ages: Age) -> Self {
         Self {
             possible_evictions: (0..max_ages).map(|_| FlushScanResult::default()).collect(),
@@ -50,8 +50,8 @@ impl<T: IndexValue> PossibleEvictions<T> {
         }
     }
 
-    /// remove the possible evictions. This is required because we need ownership of the Arc strong counts to transfer to caller so entries can be removed from the accounts index
-    fn get_possible_evictions(&mut self) -> Option<FlushScanResult<T>> {
+    /// remove the possible evictions queued for the current flush window
+    fn get_possible_evictions(&mut self) -> Option<FlushScanResult> {
         self.possible_evictions.get_mut(self.index).map(|result| {
             self.index += 1;
             // remove the list from 'possible_evictions'
@@ -74,11 +74,11 @@ impl<T: IndexValue> PossibleEvictions<T> {
         self.index = self.possible_evictions.len() - entries;
     }
 
-    /// insert 'entry' at 'relative_age' in the future into 'possible_evictions'
-    fn insert(&mut self, relative_age: Age, key: Pubkey, entry: Arc<AccountMapEntry<T>>) {
+    /// insert `key` at `relative_age` in the future into `possible_evictions`
+    fn insert(&mut self, relative_age: Age, key: Pubkey, is_dirty: bool, ref_count: RefCount) {
         let index = self.index + (relative_age as usize);
         let list = &mut self.possible_evictions[index];
-        list.evictions_age_possible.push((key, entry));
+        list.evictions_age_possible.push((key, is_dirty, ref_count));
     }
 }
 
@@ -102,7 +102,7 @@ pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<
     startup_info: StartupInfo<T, U>,
 
     /// possible evictions for next few slots coming up
-    possible_evictions: RwLock<PossibleEvictions<T>>,
+    possible_evictions: RwLock<PossibleEvictions>,
 
     /// how many more ages to skip before this bucket is flushed (as opposed to being skipped).
     /// When this reaches 0, this bucket is flushed.
@@ -164,9 +164,10 @@ struct StartupInfo<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
 
 #[derive(Default, Debug)]
 /// result from scanning in-mem index during flush
-struct FlushScanResult<T> {
+struct FlushScanResult {
     /// pubkeys whose age indicates they may be evicted now, pending further checks.
-    evictions_age_possible: Vec<(Pubkey, Arc<AccountMapEntry<T>>)>,
+    /// Each entry contains: (pubkey, is_dirty, ref_count)
+    evictions_age_possible: Vec<(Pubkey, bool, RefCount)>,
 }
 
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T, U> {
@@ -921,9 +922,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     }
 
     /// fill in `possible_evictions` from `iter` by checking age
+    /// Filter as much as possible and capture dirty and ref_count info
     fn gather_possible_evictions<'a>(
         iter: impl Iterator<Item = (&'a Pubkey, &'a Arc<AccountMapEntry<T>>)>,
-        possible_evictions: &mut PossibleEvictions<T>,
+        possible_evictions: &mut PossibleEvictions,
         startup: bool,
         current_age: Age,
         ages_flushing_now: Age,
@@ -934,7 +936,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 continue;
             }
 
-            possible_evictions.insert(0, *k, Arc::clone(v));
+            // Capture dirty and ref_count early during scan
+            let is_dirty = v.dirty();
+            let ref_count = v.ref_count();
+
+            possible_evictions.insert(0, *k, is_dirty, ref_count);
         }
     }
 
@@ -947,7 +953,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         startup: bool,
         _flush_guard: &FlushGuard,
         ages_flushing_now: Age,
-    ) -> FlushScanResult<T> {
+    ) -> FlushScanResult {
         let mut possible_evictions = self.possible_evictions.write().unwrap();
         possible_evictions.reset(1);
         let m;
@@ -1126,76 +1132,108 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             let mut flush_stats = DiskFlushStats::new();
             // we don't care about lock time in this metric - bg threads can wait
             let flush_update_measure = Measure::start("flush_update");
-            let evictions_age = evictions_age_possible
-                .into_iter()
-                .filter_map(|(k, v)| {
-                    // consider whether to write to disk for all the items we may evict
-                    let mut mse = Measure::start("flush_should_evict");
-                    let should_evict = self.should_evict_from_mem(
-                        current_age,
-                        &v,
-                        startup,
-                        true,
-                        ages_flushing_now,
-                    );
-                    mse.stop();
-                    flush_stats.flush_should_evict_us += mse.as_us();
-                    if !should_evict {
-                        // not evicting, so don't write, even if dirty
-                        return None;
-                    };
 
-                    // if we are evicting it, then we need to update disk if we're dirty
-                    if v.clear_dirty() {
-                        // step 1: clear the dirty flag
-                        // step 2: perform the update on disk based on the fields in the entry
-                        // If a parallel operation dirties the item again - even while this flush is occurring,
-                        //  the last thing the writer will do, after updating contents, is set_dirty(true)
-                        //  That prevents dropping an item from cache before disk is updated to latest in mem.
-                        // It is possible that the item in the cache is marked as dirty while these updates are happening. That is ok.
-                        //  The dirty will be picked up and the item will be prevented from being evicted.
+            // Process each eviction candidate
+            // For dirty entries: lock map briefly, get entry, calculate disk value, release lock, then write to disk
+            // For non-dirty entries: skip checks and pass to evict_from_cache
+            let evictions_age: Vec<_> = evictions_age_possible
+                .iter()
+                .filter_map(|(key, is_dirty, ref_count)| {
+                    if *is_dirty {
+                        // Entry was dirty at scan time, need to write to disk
+                        // Lock the map briefly to get the full entry reference
+                        let lock_measure = Measure::start("flush_read_lock");
+                        let map = self.map_internal.read().unwrap();
+                        let entry = map.get(key)?;
 
-                        // may have to loop if disk has to grow and we have to retry the write
-                        loop {
-                            let disk_resize = {
-                                // Check the refcount before grabbing the slot list read lock. If ref_count != 1, then skip.
-                                let mut ref_count = v.ref_count();
-                                if ref_count != 1 {
-                                    v.set_dirty(true);
-                                    return None;
-                                }
+                        // Calculate should_evict_from_mem and disk index value under read lock
+                        let mut mse = Measure::start("flush_should_evict");
+                        let should_evict = self.should_evict_from_mem(
+                            current_age,
+                            entry,
+                            startup,
+                            true,
+                            ages_flushing_now,
+                        );
+                        mse.stop();
+                        flush_stats.flush_should_evict_us += mse.as_us();
 
-                                // Re-acquire the slot list lock just before disk write to minimize lock contention
-                                let slot_list = v.slot_list_read_lock();
-                                ref_count = v.ref_count(); // neded to re-check ref count after grabbing slot list lock
-                                if ref_count != 1 || slot_list.len() != 1 {
-                                    v.set_dirty(true);
-                                    return None;
-                                }
-                                // since we know slot_list.len() == 1, we can create a stack-allocated array for single element.
-                                let (slot, info) = slot_list[0];
-                                let disk_entry = [(slot, info.into())];
-                                disk.try_write(&k, (&disk_entry, ref_count.into()))
-                            };
-                            match disk_resize {
-                                Ok(_) => {
-                                    // successfully written to disk
-                                    flush_stats.flush_entries_updated_on_disk += 1;
-                                    // exit disk-resize loop
-                                    break;
-                                }
-                                Err(err) => {
-                                    // disk needs to resize. This item did not get written. Resize and try again.
-                                    let m = Measure::start("flush_grow");
-                                    disk.grow(err);
-                                    flush_stats.flush_grow_us += m.end_as_us();
+                        if !should_evict {
+                            // not evicting, so don't write, even if dirty
+                            drop(map);
+                            flush_stats.flush_read_lock_us += lock_measure.end_as_us();
+                            return None;
+                        }
+
+                        // Clear dirty and prepare disk write
+                        if entry.clear_dirty() {
+                            // Check the refcount before grabbing the slot list read lock. If ref_count != 1, then skip.
+                            let mut ref_count = entry.ref_count();
+                            if ref_count != 1 {
+                                entry.set_dirty(true);
+                                drop(map);
+                                flush_stats.flush_read_lock_us += lock_measure.end_as_us();
+                                return None;
+                            }
+
+                            // Re-acquire the slot list lock just before disk write to minimize lock contention
+                            let slot_list = entry.slot_list_read_lock();
+                            ref_count = entry.ref_count(); // needed to re-check ref count after grabbing slot list lock
+                            if ref_count != 1 || slot_list.len() != 1 {
+                                entry.set_dirty(true);
+                                drop(slot_list);
+                                drop(map);
+                                flush_stats.flush_read_lock_us += lock_measure.end_as_us();
+                                return None;
+                            }
+                            // since we know slot_list.len() == 1, we can create a stack-allocated array for single element.
+                            let (slot, info) = slot_list[0];
+                            let disk_entry = [(slot, info.into())];
+                            let disk_ref_count = ref_count;
+                            drop(slot_list);
+                            drop(map);
+                            flush_stats.flush_read_lock_us += lock_measure.end_as_us();
+
+                            // Now write to disk WITHOUT holding the map lock
+                            // may have to loop if disk has to grow and we have to retry the write
+                            loop {
+                                let disk_resize =
+                                    disk.try_write(key, (&disk_entry, disk_ref_count.into()));
+                                match disk_resize {
+                                    Ok(_) => {
+                                        // successfully written to disk
+                                        flush_stats.flush_entries_updated_on_disk += 1;
+                                        // exit disk-resize loop
+                                        break;
+                                    }
+                                    Err(err) => {
+                                        // disk needs to resize. This item did not get written. Resize and try again.
+                                        let m = Measure::start("flush_grow");
+                                        disk.grow(err);
+                                        flush_stats.flush_grow_us += m.end_as_us();
+                                    }
                                 }
                             }
+                        } else {
+                            // Entry was not dirty anymore, skip disk write
+                            drop(map);
+                            flush_stats.flush_read_lock_us += lock_measure.end_as_us();
                         }
+
+                        Some(*key)
+                    } else {
+                        // Entry was not dirty at scan time
+                        // Skip all checks (including should_evict_from_mem) and do not do any disk ops
+                        // Still pass the entry to evict_from_cache, which will re-check under write lock
+                        if *ref_count != 1 {
+                            // Fast path: if ref_count != 1 at scan time, we know it won't be evictable
+                            return None;
+                        }
+                        Some(*key)
                     }
-                    Some(k)
                 })
                 .collect();
+
             flush_stats.flush_update_us = flush_update_measure.end_as_us();
             flush_stats.update_to_bucket_map_stats(self.stats());
 
@@ -1307,6 +1345,8 @@ struct DiskFlushStats {
     flush_entries_updated_on_disk: u64,
     /// Time spent growing disk storage
     flush_grow_us: u64,
+    /// Time spent holding map_internal read lock
+    flush_read_lock_us: u64,
 }
 
 impl DiskFlushStats {
@@ -1322,6 +1362,7 @@ impl DiskFlushStats {
             self.flush_entries_updated_on_disk,
         );
         Self::update_stat(&stats.flush_grow_us, self.flush_grow_us);
+        Self::update_stat(&stats.flush_read_lock_us, self.flush_read_lock_us);
     }
 
     fn update_stat(stat: &AtomicU64, value: u64) {
@@ -1740,21 +1781,24 @@ mod tests {
                     evictions.evictions_age_possible.len(),
                     1 + ages_flushing_now as usize
                 );
-                evictions.evictions_age_possible.iter().for_each(|key| {
-                    let entry = map.get(&key.0).unwrap();
-                    assert!(
-                        InMemAccountsIndex::<u64, u64>::should_evict_based_on_age(
+                evictions
+                    .evictions_age_possible
+                    .iter()
+                    .for_each(|(key, _is_dirty, _ref_count)| {
+                        let entry = map.get(key).unwrap();
+                        assert!(
+                            InMemAccountsIndex::<u64, u64>::should_evict_based_on_age(
+                                current_age,
+                                entry,
+                                startup,
+                                ages_flushing_now,
+                            ),
+                            "current_age: {}, age: {}, ages_flushing_now: {}",
                             current_age,
-                            entry,
-                            startup,
-                            ages_flushing_now,
-                        ),
-                        "current_age: {}, age: {}, ages_flushing_now: {}",
-                        current_age,
-                        entry.age(),
-                        ages_flushing_now
-                    );
-                });
+                            entry.age(),
+                            ages_flushing_now
+                        );
+                    });
             }
         }
     }
