@@ -227,7 +227,7 @@ enum ScanTypes<R: RangeBounds<Pubkey>> {
 }
 
 /// specification of how much memory in-mem portion of account index can use
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum IndexLimitMb {
     /// use disk index while keeping a minimal amount in-mem
     Minimal,
@@ -235,7 +235,7 @@ pub enum IndexLimitMb {
     InMemOnly,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AccountsIndexConfig {
     pub bins: Option<usize>,
     pub num_flush_threads: Option<NonZeroUsize>,
