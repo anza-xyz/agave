@@ -127,7 +127,7 @@ https://github.com/anza-xyz/agave/blob/7b66701c490414268f4116f5c047eb2f94911d6e/
 ```
 
 A good place to implement this logic along existing streaming logic in the
-validator's replay logic: https://github.com/solana-labs/solana/blob/b6bfed64cb159ee67bb6bdbaefc7f833bbed3563/core/src/replay_stage.rs#L1092-L1096
+validator's replay logic: https://github.com/anza-xyz/agave/blob/7b66701c490414268f4116f5c047eb2f94911d6e/core/src/replay_stage.rs#L3407-L3149
 
 #### Optimistic Confirmation Proof
 
