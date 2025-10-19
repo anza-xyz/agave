@@ -48,7 +48,6 @@ main {
   background-color: var(--ifm-link-color);
   color: var(--ifm-background-surface-color) !important;
   padding: 0.5em 0.8em;
-  border: 0px solid red;
   font-size: 1em !important;
 }
 
