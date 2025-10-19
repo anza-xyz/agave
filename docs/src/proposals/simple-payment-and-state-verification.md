@@ -133,7 +133,7 @@ validator's replay logic: https://github.com/anza-xyz/agave/blob/7b66701c4904142
 
 Currently optimistic confirmation is detected via a listener that monitors
 gossip and the replay pipeline for votes:
-https://github.com/solana-labs/solana/blob/b6bfed64cb159ee67bb6bdbaefc7f833bbed3563/core/src/cluster_info_vote_listener.rs#L604-L614.
+https://github.com/anza-xyz/agave/blob/master/core/src/cluster_info_vote_listener.rs#L544-L554
 
 Each vote is a signed transaction that includes the bank hash of the block the
 validator voted for, i.e. the `B` from the `Transaction Merkle` section above.
