@@ -12,7 +12,7 @@ so that they can be combined to enable a number different applications.
 
 - Program id: `ZkE1Gama1Proof11111111111111111111111111111`
 - Instructions:
-  [ProofInstruction](https://github.com/anza-xyz/agave/blob/master/zk-sdk/src/zk_elgamal_proof_program/instruction.rs)
+  [ProofInstruction](https://github.com/anza-xyz/agave/blob/master/zk-token-sdk/src/zk_token_proof_instruction.rs)
 
 ### Pedersen commitments and ElGamal encryption
 
