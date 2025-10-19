@@ -111,7 +111,7 @@ Accounts-Hash described in the `Transaction Merkle` section above.
 
 In the code:
 
-https://github.com/solana-labs/solana/blob/b6bfed64cb159ee67bb6bdbaefc7f833bbed3563/runtime/src/bank.rs#L3468-L3473
+https://github.com/anza-xyz/agave/blob/7b66701c490414268f4116f5c047eb2f94911d6e/runtime/src/bank.rs#4432-4436
 
 ```
         let mut hash = hashv(&[
