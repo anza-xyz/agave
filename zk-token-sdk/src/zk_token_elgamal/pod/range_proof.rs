@@ -129,20 +129,25 @@ impl TryFrom<RangeProofU256> for decoded::RangeProof {
 
 #[cfg(not(target_os = "solana"))]
 fn copy_range_proof_modulo_inner_product_proof(proof: &decoded::RangeProof, buf: &mut [u8]) {
-    let mut chunks = buf.chunks_mut(UNIT_LEN);
-    chunks.next().unwrap().copy_from_slice(proof.A.as_bytes());
-    chunks.next().unwrap().copy_from_slice(proof.S.as_bytes());
-    chunks.next().unwrap().copy_from_slice(proof.T_1.as_bytes());
-    chunks.next().unwrap().copy_from_slice(proof.T_2.as_bytes());
-    chunks.next().unwrap().copy_from_slice(proof.t_x.as_bytes());
-    chunks
-        .next()
-        .unwrap()
-        .copy_from_slice(proof.t_x_blinding.as_bytes());
-    chunks
-        .next()
-        .unwrap()
-        .copy_from_slice(proof.e_blinding.as_bytes());
+     // Each field is exactly UNIT_LEN (32 bytes)
+    const EXPECTED_SIZE: usize = 7 * UNIT_LEN; // 7 fields × 32 bytes = 224 bytes
+    debug_assert_eq!(buf.len(), EXPECTED_SIZE, "Buffer size mismatch");
+    
+    let mut offset = 0;
+    let fields = [
+        proof.A.as_bytes(),
+        proof.S.as_bytes(),
+        proof.T_1.as_bytes(),
+        proof.T_2.as_bytes(),
+        proof.t_x.as_bytes(),
+        proof.t_x_blinding.as_bytes(),
+        proof.e_blinding.as_bytes(),
+    ];
+    
+    for field in &fields {
+        buf[offset..offset + UNIT_LEN].copy_from_slice(field);
+        offset += UNIT_LEN;
+    }
 }
 
 // The range proof pod types are wrappers for byte arrays, which are both `Pod` and `Zeroable`. However,
