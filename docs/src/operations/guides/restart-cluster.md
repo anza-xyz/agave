@@ -15,7 +15,7 @@ agave-ledger-tool -l ledger latest-optimistic-slots
 ```
 
 In Agave 1.13 or less, the latest optimistically confirmed can be found by looking for the more recent occurrence of
-[this](https://github.com/solana-labs/solana/blob/0264147d42d506fb888f5c4c021a998e231a3e74/core/src/optimistic_confirmation_verifier.rs#L71)
+[this](https://github.com/anza-xyz/agave/blob/7b66701c490414268f4116f5c047eb2f94911d6e/core/src/optimistic_confirmation_verifier.rs#L80)
 metrics datapoint.
 
 Call this slot `SLOT_X`
