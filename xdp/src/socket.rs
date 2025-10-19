@@ -4,19 +4,17 @@ use {
             mmap_ring, DeviceQueue, RxFillRing, RxRing, TxCompletionRing, TxRing, XdpDesc
         },
         umem::{Frame, Umem},
-    },
-    libc::{
+    }, aya::{maps::XskMap, Ebpf}, libc::{
         bind, getsockopt, sa_family_t, setsockopt, sockaddr, sockaddr_xdp, socket,
         socklen_t, xdp_mmap_offsets, xdp_umem_reg, AF_XDP, SOCK_RAW, SOL_XDP, XDP_COPY,
         XDP_MMAP_OFFSETS, XDP_PGOFF_RX_RING, XDP_PGOFF_TX_RING, XDP_RX_RING,
         XDP_TX_RING, XDP_UMEM_COMPLETION_RING, XDP_UMEM_FILL_RING, XDP_UMEM_PGOFF_COMPLETION_RING,
         XDP_UMEM_PGOFF_FILL_RING, XDP_USE_NEED_WAKEUP, XDP_ZEROCOPY,
-    },
-    std::{
+    }, std::{
         io,
         mem,
         os::fd::{AsFd, AsRawFd as _, BorrowedFd, FromRawFd as _, OwnedFd},
-    },
+    }
 };
 
 pub struct Socket<U: Umem> {
@@ -243,6 +241,41 @@ impl<U: Umem> Socket<U> {
 
     pub fn umem(&mut self) -> &mut U {
         &mut self.umem
+    }
+
+    /// Register this AF_XDP socket's fd into the `xsks_map` at the queue id index.
+    /// Safe to call multiple times; later calls overwrite the map entry.
+    pub fn register_in_xskmap(&self, bpf: &mut Ebpf) {
+        let key = self.dev_queue.id().0 as u32;
+        let fd = self.as_fd().as_raw_fd();
+        log::info!(
+            "SOCKET REGISTRATION: Attempting to register AF_XDP socket fd {} at queue {}",
+            fd,
+            key
+        );
+        log::info!("SOCKET REGISTRATION: Using xsks_map from eBPF object");
+        let map_result = bpf.map_mut("xsks_map");
+
+        match map_result {
+            Some(map) => {
+                log::info!("Found xsks_map (pinned or embedded)");
+                match XskMap::try_from(map) {
+                    Ok(mut xsks) => {
+                        if let Err(e) = xsks.set(key, fd, 0) {
+                            log::error!("Failed to set xsks_map[{}]: {:?}", key, e);
+                        } else {
+                            log::info!("SUCCESS: xsks_map[{}] bound to AF_XDP fd {}", key, fd);
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to convert map to XskMap: {:?}", e);
+                    }
+                }
+            }
+            None => {
+                log::error!("CRITICAL: xsks_map not found in pinned location or eBPF object");
+            }
+        }
     }
 }
 
