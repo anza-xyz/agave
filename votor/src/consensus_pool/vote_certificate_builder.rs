@@ -222,7 +222,7 @@ mod tests {
                 }
                 assert_eq!(bitmap2.count_ones(), 4);
             }
-            _ => panic!("Expected Base3 encoding"),
+            _ => unreachable!("Expected Base3 encoding"),
         }
 
         // Build a new certificate with only Notarize votes, we should get Base2 encoding
