@@ -26,13 +26,6 @@
   --ifm-footer-background-color: #232323;
 }
 
-@keyframes fadeInUp {
-  /* 0% {
-    opacity: 0;
-    transform: translateY(1.5rem);
-  } */
-}
-
 main {
   margin: 1rem 0 5rem 0;
 }
