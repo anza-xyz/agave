@@ -2157,7 +2157,9 @@ impl Bank {
         //  crossed a boundary
         if !self.epoch_stakes.contains_key(&leader_schedule_epoch) {
             self.epoch_stakes.retain(|&epoch, _| {
-                epoch >= leader_schedule_epoch.saturating_sub(MAX_LEADER_SCHEDULE_STAKES)
+                // Note the greater-than-or-equal (and the `- 1`) is needed here
+                // to ensure we retain the oldest epoch, if that epoch is 0.
+                epoch >= leader_schedule_epoch.saturating_sub(MAX_LEADER_SCHEDULE_STAKES - 1)
             });
             let stakes = self.stakes_cache.stakes().clone();
             let stakes = SerdeStakesToStakeFormat::from(stakes);

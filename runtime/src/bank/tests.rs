@@ -371,8 +371,8 @@ fn test_bank_update_epoch_stakes() {
         assert_eq!(bank.epoch_stake_keys(), initial_epochs);
     }
 
-    for epoch in (initial_epochs.len() as Epoch)..MAX_LEADER_SCHEDULE_STAKES {
-        bank.update_epoch_stakes(epoch);
+    for epoch in (initial_epochs.len() as Epoch)..(MAX_LEADER_SCHEDULE_STAKES - 1) {
+        bank.update_epoch_stakes(dbg!(epoch));
         assert_eq!(bank.epoch_stakes.len() as Epoch, epoch + 1);
     }
 
@@ -380,8 +380,18 @@ fn test_bank_update_epoch_stakes() {
         bank.epoch_stake_key_info(),
         (
             0,
+            MAX_LEADER_SCHEDULE_STAKES - 2,
+            MAX_LEADER_SCHEDULE_STAKES as usize - 1,
+        )
+    );
+
+    bank.update_epoch_stakes(MAX_LEADER_SCHEDULE_STAKES - 1);
+    assert_eq!(
+        bank.epoch_stake_key_info(),
+        (
+            0,
             MAX_LEADER_SCHEDULE_STAKES - 1,
-            MAX_LEADER_SCHEDULE_STAKES as usize
+            MAX_LEADER_SCHEDULE_STAKES as usize,
         )
     );
 
@@ -389,19 +399,9 @@ fn test_bank_update_epoch_stakes() {
     assert_eq!(
         bank.epoch_stake_key_info(),
         (
-            0,
-            MAX_LEADER_SCHEDULE_STAKES,
-            MAX_LEADER_SCHEDULE_STAKES as usize + 1
-        )
-    );
-
-    bank.update_epoch_stakes(MAX_LEADER_SCHEDULE_STAKES + 1);
-    assert_eq!(
-        bank.epoch_stake_key_info(),
-        (
             1,
-            MAX_LEADER_SCHEDULE_STAKES + 1,
-            MAX_LEADER_SCHEDULE_STAKES as usize + 1
+            MAX_LEADER_SCHEDULE_STAKES,
+            MAX_LEADER_SCHEDULE_STAKES as usize,
         )
     );
 }
