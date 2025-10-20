@@ -1,8 +1,5 @@
 use {
-    crate::{
-        cli::DefaultArgs,
-        commands::{FromClapArgMatches, Result},
-    },
+    crate::commands::{FromClapArgMatches, Result},
     clap::{value_t, Arg, ArgMatches},
     solana_accounts_db::accounts_index::AccountSecondaryIndexes,
     solana_clap_utils::input_validators::is_parsable,
@@ -58,7 +55,7 @@ impl FromClapArgMatches for JsonRpcConfig {
     }
 }
 
-pub(crate) fn args<'a>(default_args: &DefaultArgs) -> Vec<Arg<'_, 'a>> {
+pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
     vec![
         Arg::with_name("enable_rpc_transaction_history")
             .long("enable-rpc-transaction-history")
