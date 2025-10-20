@@ -179,7 +179,7 @@ edition = { workspace = true }
 
         // test find_files_by_name for Cargo.toml
         {
-            let files = find_files_by_name("Cargo.toml").unwrap();
+            let files = find_all_cargo_tomls().unwrap();
             assert_eq!(files.len(), 3);
 
             let expected_files: HashSet<_> = [
