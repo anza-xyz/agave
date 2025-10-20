@@ -1,6 +1,6 @@
 use {
     crate::commands,
-    agave_snapshots::DEFAULT_ARCHIVE_COMPRESSION,
+    agave_snapshots::{SnapshotVersion, DEFAULT_ARCHIVE_COMPRESSION},
     clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches, SubCommand},
     solana_accounts_db::{
         accounts_db::{
@@ -26,7 +26,7 @@ use {
     solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,
     solana_rpc_client_api::request::{DELINQUENT_VALIDATOR_SLOT_DISTANCE, MAX_MULTIPLE_ACCOUNTS},
     solana_runtime::snapshot_utils::{
-        SnapshotVersion, DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
+        DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
         DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
         DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
         DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,

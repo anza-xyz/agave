@@ -19,7 +19,7 @@ use {
             get_slot_and_append_vec_id, SnapshotStorageRebuilder,
         },
     },
-    agave_snapshots::{ArchiveFormat, ArchiveFormatDecompressor},
+    agave_snapshots::{ArchiveFormat, ArchiveFormatDecompressor, SnapshotVersion},
     crossbeam_channel::{Receiver, Sender},
     log::*,
     regex::Regex,
@@ -38,7 +38,7 @@ use {
     std::{
         cmp::Ordering,
         collections::{HashMap, HashSet},
-        fmt, fs,
+        fs,
         io::{self, BufRead, BufReader, BufWriter, Error as IoError, Read, Seek, Write},
         mem,
         num::{NonZeroU64, NonZeroUsize},
@@ -73,7 +73,6 @@ pub const BANK_SNAPSHOTS_DIR: &str = "snapshots";
 pub const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
 const MAX_SNAPSHOT_VERSION_FILE_SIZE: u64 = 8; // byte
 const SNAPSHOT_FASTBOOT_VERSION: Version = Version::new(1, 0, 0);
-const VERSION_STRING_V1_2_0: &str = "1.2.0";
 pub const TMP_SNAPSHOT_ARCHIVE_PREFIX: &str = "tmp-snapshot-archive-";
 pub const DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: NonZeroU64 =
     NonZeroU64::new(100_000).unwrap();
@@ -94,52 +93,6 @@ const MAX_SNAPSHOT_READER_BUF_SIZE: u64 = 128 * 1024 * 1024;
 // such that during unpacking large writes are mixed with file metadata operations
 // and towards the end of archive (sizes equalize) writes are >256KiB / file.
 const INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO: (usize, usize) = (4, 1);
-
-#[derive(Copy, Clone, Default, Eq, PartialEq, Debug)]
-pub enum SnapshotVersion {
-    #[default]
-    V1_2_0,
-}
-
-impl fmt::Display for SnapshotVersion {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(From::from(*self))
-    }
-}
-
-impl From<SnapshotVersion> for &'static str {
-    fn from(snapshot_version: SnapshotVersion) -> &'static str {
-        match snapshot_version {
-            SnapshotVersion::V1_2_0 => VERSION_STRING_V1_2_0,
-        }
-    }
-}
-
-impl FromStr for SnapshotVersion {
-    type Err = &'static str;
-
-    fn from_str(version_string: &str) -> std::result::Result<Self, Self::Err> {
-        // Remove leading 'v' or 'V' from slice
-        let version_string = if version_string
-            .get(..1)
-            .is_some_and(|s| s.eq_ignore_ascii_case("v"))
-        {
-            &version_string[1..]
-        } else {
-            version_string
-        };
-        match version_string {
-            VERSION_STRING_V1_2_0 => Ok(SnapshotVersion::V1_2_0),
-            _ => Err("unsupported snapshot version"),
-        }
-    }
-}
-
-impl SnapshotVersion {
-    pub fn as_str(self) -> &'static str {
-        <&str as From<Self>>::from(self)
-    }
-}
 
 /// Information about a bank snapshot. Namely the slot of the bank, the path to the snapshot, and
 /// the kind of the snapshot.

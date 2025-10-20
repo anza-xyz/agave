@@ -1,6 +1,6 @@
 use {
-    crate::snapshot_utils::{self, SnapshotVersion},
-    agave_snapshots::{ArchiveFormat, SnapshotInterval, ZstdConfig},
+    crate::snapshot_utils,
+    agave_snapshots::{ArchiveFormat, SnapshotInterval, SnapshotVersion, ZstdConfig},
     std::{num::NonZeroUsize, path::PathBuf},
 };
 
