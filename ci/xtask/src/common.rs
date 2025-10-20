@@ -20,7 +20,12 @@ pub fn find_files_by_name(filename: &str) -> Result<Vec<PathBuf>> {
 
     for entry in WalkDir::new(git_root)
         .into_iter()
-        .filter_entry(|entry| !entry.path().components().any(|c| c.as_os_str() == "target"))
+        .filter_entry(|entry| {
+            !entry
+                .path()
+                .components()
+                .any(|c| c.as_os_str() == "target" || c.as_os_str() == ".git")
+        })
         .filter_map(Result::ok)
         .filter(|e| e.file_name() == filename)
     {
