@@ -1416,7 +1416,6 @@ mod tests {
         super::*,
         crate::cli::thread_args::thread_args,
         scopeguard::defer,
-        solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,
         std::{
             fs,
             net::{IpAddr, Ipv4Addr},
@@ -1442,11 +1441,23 @@ mod tests {
                 rpc_bootstrap_config: RpcBootstrapConfig::default(),
                 blockstore_options: BlockstoreOptions::default(),
                 json_rpc_config: JsonRpcConfig {
-                    health_check_slot_distance: 128,
-                    max_multiple_accounts: Some(100),
-                    rpc_threads: num_cpus::get(),
-                    rpc_blocking_threads: 1.max(num_cpus::get() / 4),
-                    max_request_body_size: Some(MAX_REQUEST_BODY_SIZE),
+                    health_check_slot_distance: json_rpc_config::DEFAULT_HEALTH_CHECK_SLOT_DISTANCE
+                        .parse()
+                        .unwrap(),
+                    max_multiple_accounts: Some(
+                        json_rpc_config::DEFAULT_MAX_MULTIPLE_ACCOUNTS
+                            .parse()
+                            .unwrap(),
+                    ),
+                    rpc_threads: json_rpc_config::DEFAULT_RPC_THREADS.parse().unwrap(),
+                    rpc_blocking_threads: json_rpc_config::DEFAULT_RPC_BLOCKING_THREADS
+                        .parse()
+                        .unwrap(),
+                    max_request_body_size: Some(
+                        json_rpc_config::DEFAULT_RPC_MAX_REQUEST_BODY_SIZE
+                            .parse()
+                            .unwrap(),
+                    ),
                     ..JsonRpcConfig::default()
                 },
                 pub_sub_config: PubSubConfig {

@@ -7,13 +7,14 @@ use {
     std::sync::LazyLock,
 };
 
-const DEFAULT_HEALTH_CHECK_SLOT_DISTANCE: &str = "128"; // solana_rpc_client_api::request::DELINQUENT_VALIDATOR_SLOT_DISTANCE
-const DEFAULT_MAX_MULTIPLE_ACCOUNTS: &str = "100"; // solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS
-static DEFAULT_RPC_THREADS: LazyLock<String> = LazyLock::new(|| num_cpus::get().to_string());
-static DEFAULT_RPC_BLOCKING_THREADS: LazyLock<String> =
+pub(crate) const DEFAULT_HEALTH_CHECK_SLOT_DISTANCE: &str = "128"; // solana_rpc_client_api::request::DELINQUENT_VALIDATOR_SLOT_DISTANCE
+pub(crate) const DEFAULT_MAX_MULTIPLE_ACCOUNTS: &str = "100"; // solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS
+pub(crate) static DEFAULT_RPC_THREADS: LazyLock<String> =
+    LazyLock::new(|| num_cpus::get().to_string());
+pub(crate) static DEFAULT_RPC_BLOCKING_THREADS: LazyLock<String> =
     LazyLock::new(|| (1.max(num_cpus::get() / 4)).to_string());
-const DEFAULT_RPC_NICENESS_ADJ: &str = "0";
-const DEFAULT_RPC_MAX_REQUEST_BODY_SIZE: &str = "51200"; // solana_rpc::rpc::MAX_REQUEST_BODY_SIZE = 50 * (1 << 10) = 51200
+pub(crate) const DEFAULT_RPC_NICENESS_ADJ: &str = "0";
+pub(crate) const DEFAULT_RPC_MAX_REQUEST_BODY_SIZE: &str = "51200"; // solana_rpc::rpc::MAX_REQUEST_BODY_SIZE = 50 * (1 << 10) = 51200
 
 impl FromClapArgMatches for JsonRpcConfig {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
