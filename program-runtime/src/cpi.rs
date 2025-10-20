@@ -701,7 +701,9 @@ pub fn translate_instruction_c(
         .increase_cpi_account_info_limit
     {
         // Each account meta is 34 bytes (32 for pubkey, 1 for is_signer, 1 for is_writable)
-        let account_meta_bytes = ix_c.accounts_len.saturating_mul(34);
+        let account_meta_bytes = ix_c
+            .accounts_len
+            .saturating_mul(size_of::<AccountMeta>() as u64);
 
         consume_compute_meter(
             invoke_context,
@@ -765,8 +767,12 @@ pub fn translate_accounts_c<'a>(
         .get_feature_set()
         .increase_cpi_account_info_limit
     {
-        //sizeof(AccountInfo) is 80 bytes
-        let account_infos_bytes = account_infos.len().saturating_mul(80);
+        //std::mem::size_of::<AccountInfo>() returns 48 bytes, which contains references to the 2 Pubkeys of owner and key,
+        //but we need the full size here so, need to add (32 + 32) bytes for Pubkey types and account for 8 + 8 bytes already existing for refence types.
+        //Hence adding 32 here due to 5 bytes being the padding and 11 bytes being the other data, see SIMD-0339 for calculations.
+        let account_infos_bytes = account_infos
+            .len()
+            .saturating_mul(std::mem::size_of::<AccountInfo>().saturating_add(32));
 
         consume_compute_meter(
             invoke_context,
