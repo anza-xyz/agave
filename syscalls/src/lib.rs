@@ -575,6 +575,7 @@ fn translate_string_and_do(
 }
 
 // Do not use this directly
+#[allow(clippy::mut_from_ref)]
 fn translate_type_mut<'a, T>(
     memory_mapping: &'a MemoryMapping,
     vm_addr: u64,
@@ -583,6 +584,7 @@ fn translate_type_mut<'a, T>(
     translate_type_inner!(memory_mapping, AccessType::Store, vm_addr, T, check_aligned)
 }
 // Do not use this directly
+#[allow(clippy::mut_from_ref)]
 fn translate_slice_mut<'a, T>(
     memory_mapping: &'a MemoryMapping,
     vm_addr: u64,
