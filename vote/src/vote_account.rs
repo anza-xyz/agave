@@ -542,8 +542,12 @@ mod tests {
         solana_account::WritableAccount,
         solana_clock::Clock,
         solana_pubkey::Pubkey,
-        solana_vote_interface::state::{VoteInit, VoteStateV4, VoteStateVersions},
-        std::iter::repeat_with,
+        solana_vote_interface::{
+            authorized_voters::AuthorizedVoters,
+            state::{VoteInit, VoteStateV4, VoteStateVersions, BLS_PUBLIC_KEY_COMPRESSED_SIZE},
+        },
+        std::{collections::HashSet, iter::repeat_with},
+        test_case::test_case,
     };
 
     const MIN_STAKE_FOR_STAKED_ACCOUNT: u64 = 1;
@@ -561,14 +565,14 @@ mod tests {
             authorized_withdrawer: Pubkey::new_unique(),
             commission: rng.gen(),
         };
-        let vote_state_versions = if is_alpenglow {
-            VoteStateVersions::new_v4(VoteStateV4 {
+        let vote_state = if is_alpenglow {
+            VoteStateV4 {
                 node_pubkey: vote_init.node_pubkey,
                 authorized_voters: AuthorizedVoters::new(0, vote_init.authorized_voter),
                 authorized_withdrawer: vote_init.authorized_withdrawer,
                 bls_pubkey_compressed: Some([42; BLS_PUBLIC_KEY_COMPRESSED_SIZE]),
                 ..VoteStateV4::default()
-            })
+            }
         } else {
             let clock = Clock {
                 slot: rng.gen(),
@@ -577,9 +581,8 @@ mod tests {
                 leader_schedule_epoch: rng.gen(),
                 unix_timestamp: rng.gen(),
             };
-            VoteStateVersions::new_v3(VoteStateV3::new(&vote_init, &clock))
+            VoteStateV4::new(&vote_pubkey, &vote_init, &clock)
         };
-        let vote_state = VoteStateV4::new(&vote_pubkey, &vote_init, &clock);
         AccountSharedData::new_data(
             rng.gen(), // lamports
             &VoteStateVersions::new_v4(vote_state.clone()),
