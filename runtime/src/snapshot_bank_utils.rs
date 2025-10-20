@@ -835,7 +835,7 @@ mod tests {
         solana_system_transaction as system_transaction,
         solana_transaction::sanitized::SanitizedTransaction,
         std::{
-            fs,
+            fs, slice,
             sync::{atomic::Ordering, Arc, RwLock},
         },
         test_case::test_case,
@@ -1445,7 +1445,7 @@ mod tests {
         )
         .unwrap();
         let deserialized_bank = bank_from_snapshot_archives(
-            &[accounts_dir.clone()],
+            slice::from_ref(&accounts_dir),
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
             Some(&incremental_snapshot_archive_info),
