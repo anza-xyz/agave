@@ -230,7 +230,7 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
 
 // Helper to add arguments that are no longer used but are being kept around to avoid breaking
 // validator startup commands.
-fn get_deprecated_arguments() -> Vec<Arg<'static, 'static>> {
+pub(crate) fn get_deprecated_arguments() -> Vec<Arg<'static, 'static>> {
     deprecated_arguments()
         .into_iter()
         .map(|info| {

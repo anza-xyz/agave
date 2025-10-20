@@ -16,7 +16,7 @@ use {
     std::{num::NonZeroUsize, path::PathBuf},
 };
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct AccountsDbConfig {
     pub index: Option<AccountsIndexConfig>,
     pub account_indexes: Option<AccountSecondaryIndexes>,
