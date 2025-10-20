@@ -380,7 +380,7 @@ impl PohRecorder {
     pub(crate) fn tick(&mut self) {
         let (poh_entry, tick_lock_contention_us) = measure_us!({
             let mut poh_l = self.poh.lock().unwrap();
-            let poh_entry = poh_l.tick();
+            poh_l.tick()
             poh_entry
         });
         self.metrics.tick_lock_contention_us += tick_lock_contention_us;
