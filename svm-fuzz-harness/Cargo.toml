@@ -10,9 +10,6 @@ license = { workspace = true }
 edition = { workspace = true }
 publish = false
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [[bin]]
 name = "test_exec_instr"
 path = "bin/test_exec_instr.rs"
