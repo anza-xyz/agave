@@ -5460,6 +5460,79 @@ fn test_clean_nonrooted() {
 }
 
 #[test]
+fn test_shrink_candidate_slots_cached() {
+    solana_logger::setup();
+
+    let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000_000);
+    let pubkey0 = solana_pubkey::new_rand();
+    let pubkey1 = solana_pubkey::new_rand();
+    let pubkey2 = solana_pubkey::new_rand();
+
+    // Set root for bank 0, with caching enabled
+    let bank0 = Arc::new(Bank::new_with_config_for_tests(
+        &genesis_config,
+        BankTestConfig::default(),
+    ));
+
+    // Make pubkey0 large so any slot containing it is a candidate for shrinking
+    let pubkey0_size = 100_000;
+
+    let account0 = AccountSharedData::new(1000, pubkey0_size, &Pubkey::new_unique());
+    bank0.store_account(&pubkey0, &account0);
+
+    goto_end_of_slot(bank0.clone());
+    bank0.freeze();
+    bank0.squash();
+    // Flush now so that accounts cache cleaning doesn't clean up bank 0 when later
+    // slots add updates to the cache
+    bank0.force_flush_accounts_cache();
+
+    // Store some lamports in bank 1
+    let some_lamports = 123;
+    let bank1 = Arc::new(new_from_parent(bank0));
+    test_utils::deposit(&bank1, &pubkey1, some_lamports).unwrap();
+    test_utils::deposit(&bank1, &pubkey2, some_lamports).unwrap();
+    goto_end_of_slot(bank1.clone());
+    bank1.freeze();
+    bank1.squash();
+    // Flush now so that accounts cache cleaning doesn't clean up bank 0 when later
+    // slots add updates to the cache
+    bank1.force_flush_accounts_cache();
+
+    // Store some lamports for pubkey1 in bank 2, root bank 2
+    let bank2 = Arc::new(new_from_parent(bank1));
+    test_utils::deposit(&bank2, &pubkey1, some_lamports).unwrap();
+    bank2.store_account(&pubkey0, &account0);
+    goto_end_of_slot(bank2.clone());
+    bank2.freeze();
+    bank2.squash();
+    bank2.force_flush_accounts_cache();
+
+    // Clean accounts, which should add earlier slots to the shrink
+    // candidate set
+    bank2.clean_accounts_for_tests();
+
+    // Slots 0 and 1 should be candidates for shrinking, but slot 2
+    // shouldn't because none of its accounts are outdated by a later
+    // root
+    assert_eq!(bank2.shrink_candidate_slots(), 2);
+    let alive_counts: Vec<usize> = (0..3)
+        .map(|slot| {
+            bank2
+                .rc
+                .accounts
+                .accounts_db
+                .alive_account_count_in_slot(slot)
+        })
+        .collect();
+
+    // No more slots should be shrunk
+    assert_eq!(bank2.shrink_candidate_slots(), 0);
+    // alive_counts represents the count of alive accounts in the three slots 0,1,2
+    assert_eq!(alive_counts, vec![12, 1, 6]);
+}
+
+#[test]
 fn test_add_builtin_no_overwrite() {
     let slot = 123;
     let program_id = solana_pubkey::new_rand();
