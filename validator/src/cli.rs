@@ -30,7 +30,7 @@ use {
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
     solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,
-    solana_rpc_client_api::request::{DELINQUENT_VALIDATOR_SLOT_DISTANCE, MAX_MULTIPLE_ACCOUNTS},
+    solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
     solana_send_transaction_service::send_transaction_service::{self},
     solana_streamer::quic::{
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER,
@@ -272,7 +272,6 @@ pub struct DefaultArgs {
     pub ledger_path: String,
 
     pub genesis_archive_unpacked_size: String,
-    pub health_check_slot_distance: String,
     pub tower_storage: String,
     pub send_transaction_service_config: send_transaction_service::Config,
 
@@ -333,7 +332,6 @@ impl DefaultArgs {
             maximum_local_snapshot_age: "2500".to_string(),
             genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE.to_string(),
             rpc_max_multiple_accounts: MAX_MULTIPLE_ACCOUNTS.to_string(),
-            health_check_slot_distance: DELINQUENT_VALIDATOR_SLOT_DISTANCE.to_string(),
             tower_storage: "file".to_string(),
             send_transaction_service_config: send_transaction_service::Config::default(),
             rpc_threads: num_cpus::get().to_string(),

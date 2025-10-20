@@ -9,6 +9,8 @@ use {
     solana_rpc::rpc::{JsonRpcConfig, RpcBigtableConfig},
 };
 
+const DEFAULT_HEALTH_CHECK_SLOT_DISTANCE: &str = "128"; // solana_rpc_client_api::request::DELINQUENT_VALIDATOR_SLOT_DISTANCE
+
 impl FromClapArgMatches for JsonRpcConfig {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         let rpc_bigtable_config = if matches.is_present("enable_rpc_bigtable_ledger_storage")
@@ -84,7 +86,7 @@ pub(crate) fn args<'a>(default_args: &DefaultArgs) -> Vec<Arg<'_, 'a>> {
             .long("health-check-slot-distance")
             .value_name("SLOT_DISTANCE")
             .takes_value(true)
-            .default_value(&default_args.health_check_slot_distance)
+            .default_value(&DEFAULT_HEALTH_CHECK_SLOT_DISTANCE)
             .help(
                 "Report this validator as healthy if its latest replayed optimistically confirmed \
                  slot is within the specified number of slots from the cluster's latest \
