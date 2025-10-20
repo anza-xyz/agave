@@ -7750,7 +7750,7 @@ pub mod tests {
                     .chain(
                         completed_data_end_indexes[i..=j]
                             .windows(2)
-                            .map(|end_indexes| (end_indexes[0] + 1..end_indexes[1] + 1)),
+                            .map(|end_indexes| end_indexes[0] + 1..end_indexes[1] + 1),
                     )
                     .collect::<Vec<_>>();
 
