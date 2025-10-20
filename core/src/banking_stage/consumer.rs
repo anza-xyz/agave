@@ -562,6 +562,7 @@ mod tests {
         solana_transaction_status::{TransactionStatusMeta, VersionedTransactionWithStatusMeta},
         std::{
             borrow::Cow,
+            slice,
             sync::{
                 atomic::{AtomicBool, AtomicU64},
                 Arc,
@@ -1558,7 +1559,7 @@ mod tests {
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         let consumer_output =
-            consumer.process_and_record_transactions(&bank, &[sanitized_tx.clone()]);
+            consumer.process_and_record_transactions(&bank, slice::from_ref(&sanitized_tx));
         let CommitTransactionDetails::Committed {
             compute_units,
             loaded_accounts_data_size,
