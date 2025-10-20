@@ -8,7 +8,7 @@ use {
 };
 
 #[derive(Args)]
-pub struct BumpArgs {
+pub struct CommandArgs {
     #[arg(value_enum)]
     pub level: BumpLevel,
 }
@@ -31,7 +31,7 @@ impl fmt::Display for BumpLevel {
     }
 }
 
-pub fn run(args: BumpArgs) -> Result<()> {
+pub fn run(args: CommandArgs) -> Result<()> {
     // get the current version
     let current_version_str =
         crate::common::get_current_version().context("failed to get current version")?;

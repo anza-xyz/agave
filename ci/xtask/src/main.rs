@@ -22,7 +22,7 @@ enum Commands {
     #[command(about = "Hello")]
     Hello,
     #[command(about = "Bump version")]
-    BumpVersion(commands::bump_version::BumpArgs),
+    BumpVersion(commands::bump_version::CommandArgs),
 }
 
 #[derive(Args, Debug)]
