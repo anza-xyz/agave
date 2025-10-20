@@ -793,7 +793,7 @@ pub fn process_confirm(
                     confirmation_status: Some(transaction_status.confirmation_status()),
                     transaction,
                     get_transaction_error,
-                    err: transaction_status.err.clone(),
+                    err: transaction_status.err.clone().map(Into::into),
                 }
             } else {
                 CliTransactionConfirmation {
