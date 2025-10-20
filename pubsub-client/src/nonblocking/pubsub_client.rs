@@ -275,7 +275,7 @@ pub struct PubsubClient {
     ws: JoinHandle<PubsubClientResult>,
 }
 
-async fn connect_async_with_retry<R: IntoClientRequest>(
+async fn connect_with_retry<R: IntoClientRequest>(
     request: R,
 ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, Box<tungstenite::Error>> {
     let mut connection_retries = 5;
@@ -314,7 +314,7 @@ async fn connect_async_with_retry<R: IntoClientRequest>(
 impl PubsubClient {
     pub async fn new<R: IntoClientRequest>(request: R) -> PubsubClientResult<Self> {
         let client_request = request.into_client_request().map_err(Box::new)?;
-        let ws = connect_async_with_retry(client_request)
+        let ws = connect_with_retry(client_request)
             .await
             .map_err(PubsubClientError::ConnectionError)?;
 
