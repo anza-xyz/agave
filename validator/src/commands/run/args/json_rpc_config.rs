@@ -91,7 +91,7 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .long("health-check-slot-distance")
             .value_name("SLOT_DISTANCE")
             .takes_value(true)
-            .default_value(&DEFAULT_HEALTH_CHECK_SLOT_DISTANCE)
+            .default_value(DEFAULT_HEALTH_CHECK_SLOT_DISTANCE)
             .help(
                 "Report this validator as healthy if its latest replayed optimistically confirmed \
                  slot is within the specified number of slots from the cluster's latest \
@@ -105,7 +105,7 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .long("rpc-max-multiple-accounts")
             .value_name("MAX ACCOUNTS")
             .takes_value(true)
-            .default_value(&DEFAULT_MAX_MULTIPLE_ACCOUNTS)
+            .default_value(DEFAULT_MAX_MULTIPLE_ACCOUNTS)
             .help(
                 "Override the default maximum accounts accepted by the getMultipleAccounts JSON \
                  RPC method",
@@ -144,7 +144,7 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .value_name("ADJUSTMENT")
             .takes_value(true)
             .validator(solana_perf::thread::is_niceness_adjustment_valid)
-            .default_value(&DEFAULT_RPC_NICENESS_ADJ)
+            .default_value(DEFAULT_RPC_NICENESS_ADJ)
             .help(
                 "Add this value to niceness of RPC threads. Negative value increases priority, \
                  positive value decreases priority.",
@@ -163,7 +163,7 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .value_name("BYTES")
             .takes_value(true)
             .validator(is_parsable::<usize>)
-            .default_value(&DEFAULT_RPC_MAX_REQUEST_BODY_SIZE)
+            .default_value(DEFAULT_RPC_MAX_REQUEST_BODY_SIZE)
             .help("The maximum request body size accepted by rpc service"),
     ]
 }
