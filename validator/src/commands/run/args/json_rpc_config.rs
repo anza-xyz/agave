@@ -10,6 +10,7 @@ use {
 };
 
 const DEFAULT_HEALTH_CHECK_SLOT_DISTANCE: &str = "128"; // solana_rpc_client_api::request::DELINQUENT_VALIDATOR_SLOT_DISTANCE
+const DEFAULT_MAX_MULTIPLE_ACCOUNTS: &str = "100"; // solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS
 
 impl FromClapArgMatches for JsonRpcConfig {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
@@ -100,7 +101,7 @@ pub(crate) fn args<'a>(default_args: &DefaultArgs) -> Vec<Arg<'_, 'a>> {
             .long("rpc-max-multiple-accounts")
             .value_name("MAX ACCOUNTS")
             .takes_value(true)
-            .default_value(&default_args.rpc_max_multiple_accounts)
+            .default_value(&DEFAULT_MAX_MULTIPLE_ACCOUNTS)
             .help(
                 "Override the default maximum accounts accepted by the getMultipleAccounts JSON \
                  RPC method",

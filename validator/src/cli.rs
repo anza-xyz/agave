@@ -30,7 +30,6 @@ use {
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
     solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,
-    solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
     solana_send_transaction_service::send_transaction_service::{self},
     solana_streamer::quic::{
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER,
@@ -275,7 +274,6 @@ pub struct DefaultArgs {
     pub tower_storage: String,
     pub send_transaction_service_config: send_transaction_service::Config,
 
-    pub rpc_max_multiple_accounts: String,
     pub rpc_threads: String,
     pub rpc_blocking_threads: String,
     pub rpc_niceness_adjustment: String,
@@ -331,7 +329,6 @@ impl DefaultArgs {
             dynamic_port_range: format!("{}-{}", VALIDATOR_PORT_RANGE.0, VALIDATOR_PORT_RANGE.1),
             maximum_local_snapshot_age: "2500".to_string(),
             genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE.to_string(),
-            rpc_max_multiple_accounts: MAX_MULTIPLE_ACCOUNTS.to_string(),
             tower_storage: "file".to_string(),
             send_transaction_service_config: send_transaction_service::Config::default(),
             rpc_threads: num_cpus::get().to_string(),
