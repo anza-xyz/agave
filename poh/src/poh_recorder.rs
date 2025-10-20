@@ -384,7 +384,7 @@ impl PohRecorder {
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn tick(&mut self) {
-        let ((poh_entry, target_time), tick_lock_contention_us) = measure_us!({
+        let ((poh_entry, _target_time), tick_lock_contention_us) = measure_us!({
             let mut poh_l = self.poh.lock().unwrap();
             let poh_entry = poh_l.tick();
             let target_time = if poh_entry.is_some() {
@@ -420,17 +420,6 @@ impl PohRecorder {
 
             let (_flush_res, flush_cache_and_tick_us) = measure_us!(self.flush_cache(true));
             self.metrics.flush_cache_tick_us += flush_cache_and_tick_us;
-
-            let (_, sleep_us) = measure_us!({
-                let target_time = target_time.unwrap();
-                // sleep is not accurate enough to get a predictable time.
-                // Kernel can not schedule the thread for a while.
-                while Instant::now() < target_time {
-                    // TODO: a caller could possibly desire to reset or record while we're spinning here
-                    std::hint::spin_loop();
-                }
-            });
-            self.metrics.total_sleep_us += sleep_us;
         }
     }
 
