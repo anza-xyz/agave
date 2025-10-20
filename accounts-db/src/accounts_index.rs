@@ -1736,7 +1736,6 @@ pub mod tests {
             accounts_index::account_map_entry::AccountMapEntryMeta,
             bucket_map_holder::BucketMapHolder,
         },
-        secondary::DashMapSecondaryIndexEntry,
         solana_account::{AccountSharedData, WritableAccount},
         solana_pubkey::PUBKEY_BYTES,
         spl_generic_token::{spl_token_ids, token::SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
@@ -1749,7 +1748,6 @@ pub mod tests {
 
     pub enum SecondaryIndexTypes<'a> {
         RwLock(&'a SecondaryIndex<RwLockSecondaryIndexEntry>),
-        DashMap(&'a SecondaryIndex<DashMapSecondaryIndexEntry>),
     }
 
     pub fn spl_token_mint_index_enabled() -> AccountSecondaryIndexes {
