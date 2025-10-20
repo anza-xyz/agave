@@ -274,7 +274,6 @@ pub struct DefaultArgs {
     pub tower_storage: String,
     pub send_transaction_service_config: send_transaction_service::Config,
 
-    pub rpc_blocking_threads: String,
     pub rpc_niceness_adjustment: String,
     pub rpc_max_request_body_size: String,
 
@@ -330,7 +329,6 @@ impl DefaultArgs {
             genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE.to_string(),
             tower_storage: "file".to_string(),
             send_transaction_service_config: send_transaction_service::Config::default(),
-            rpc_blocking_threads: 1.max(num_cpus::get() / 4).to_string(),
             rpc_niceness_adjustment: "0".to_string(),
             maximum_full_snapshot_archives_to_retain: DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN
                 .to_string(),
