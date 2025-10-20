@@ -1,0 +1,56 @@
+[package]
+name = "solana-svm-fuzz-harness"
+description = "Solana SVM fuzzing harnesses."
+documentation = "https://docs.rs/solana-svm-fuzz-harness"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "test_exec_instr"
+path = "bin/test_exec_instr.rs"
+
+[dependencies]
+agave-feature-set = { workspace = true }
+agave-precompiles = { workspace = true }
+agave-syscalls = { workspace = true }
+bincode = { workspace = true }
+clap = { version = "4.5.2", features = ["derive"] }
+prost = { workspace = true }
+protosol = { git = "https://github.com/firedancer-io/protosol", tag = "v1.0.4" }
+solana-account = { workspace = true }
+solana-builtins = { workspace = true }
+solana-clock = { workspace = true, features = ["sysvar"] }
+solana-compute-budget = { workspace = true }
+solana-epoch-schedule = { workspace = true, features = ["sysvar"] }
+solana-hash = { workspace = true }
+solana-instruction = { workspace = true }
+solana-instruction-error = { workspace = true, features = ["serde"] }
+solana-last-restart-slot = { workspace = true, features = ["sysvar"] }
+solana-logger = { workspace = true }
+solana-precompile-error = { workspace = true }
+solana-program-runtime = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true, features = ["sysvar"] }
+solana-sdk-ids = { workspace = true }
+solana-stable-layout = { workspace = true }
+solana-svm = { workspace = true }
+solana-svm-callback = { workspace = true }
+solana-svm-log-collector = { workspace = true }
+solana-svm-timings = { workspace = true }
+solana-sysvar-id = { workspace = true }
+solana-transaction-context = { workspace = true }
+thiserror = { workspace = true }
+
+[build-dependencies]
+prost-build = { workspace = true }
+
+[lints]
+workspace = true

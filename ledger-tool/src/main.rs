@@ -36,6 +36,7 @@ use {
     solana_cluster_type::ClusterType,
     solana_core::{
         banking_simulation::{BankingSimulator, BankingTraceEvents},
+        resource_limits::adjust_nofile_limit,
         system_monitor_service::{SystemMonitorService, SystemMonitorStatsReportConfig},
         validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
     },
@@ -80,7 +81,7 @@ use {
     solana_vote::vote_state_view::VoteStateView,
     solana_vote_program::{
         self,
-        vote_state::{self, VoteStateV3},
+        vote_state::{self, VoteStateV4},
     },
     std::{
         collections::{HashMap, HashSet},
@@ -943,7 +944,7 @@ fn main() {
 
     let rent = Rent::default();
     let default_bootstrap_validator_lamports = &(500 * LAMPORTS_PER_SOL)
-        .max(rent.minimum_balance(VoteStateV3::size_of()))
+        .max(rent.minimum_balance(VoteStateV4::size_of()))
         .to_string();
     let default_bootstrap_validator_stake_lamports = &(LAMPORTS_PER_SOL / 2)
         .max(rent.minimum_balance(StakeStateV2::size_of()))
@@ -1000,9 +1001,9 @@ fn main() {
                 .takes_value(false)
                 .global(true)
                 .help(
-                    "Allow opening the blockstore to succeed even if the desired open file \
-                     descriptor limit cannot be configured. Use with caution as some commands may \
-                     run fine with a reduced file descriptor limit while others will not",
+                    "Allow the command to continue even if the desired open file descriptor limit \
+                     cannot be configured. Use with caution as some commands may run fine with a \
+                     a reduced file descriptor limit while others may fail in nonobvious ways",
                 ),
         )
         .arg(
@@ -1692,6 +1693,12 @@ fn main() {
     let ledger_path = PathBuf::from(value_t_or_exit!(matches, "ledger_path", String));
     let verbose_level = matches.occurrences_of("verbose");
 
+    let enforce_nofile_limit = !matches.is_present("ignore_ulimit_nofile_error");
+    adjust_nofile_limit(enforce_nofile_limit).unwrap_or_else(|err| {
+        eprintln!("Error: {err:?}");
+        exit(1);
+    });
+
     // Name the rayon global thread pool
     rayon::ThreadPoolBuilder::new()
         .thread_name(|i| format!("solRayonGlob{i:02}"))
@@ -2331,7 +2338,7 @@ fn main() {
                                 identity_pubkey,
                                 identity_pubkey,
                                 100,
-                                rent.minimum_balance(VoteStateV3::size_of()).max(1),
+                                rent.minimum_balance(VoteStateV4::size_of()).max(1),
                             );
 
                             bank.store_account(

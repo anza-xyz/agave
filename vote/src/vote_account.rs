@@ -97,10 +97,11 @@ impl VoteAccount {
         use {
             rand::Rng as _,
             solana_clock::Clock,
-            solana_vote_interface::state::{VoteInit, VoteStateV3, VoteStateVersions},
+            solana_vote_interface::state::{VoteInit, VoteStateV4, VoteStateVersions},
         };
 
         let mut rng = rand::thread_rng();
+        let vote_pubkey = Pubkey::new_unique();
 
         let vote_init = VoteInit {
             node_pubkey: Pubkey::new_unique(),
@@ -115,10 +116,10 @@ impl VoteAccount {
             leader_schedule_epoch: rng.gen(),
             unix_timestamp: rng.gen(),
         };
-        let vote_state = VoteStateV3::new(&vote_init, &clock);
+        let vote_state = VoteStateV4::new(&vote_pubkey, &vote_init, &clock);
         let account = AccountSharedData::new_data(
             rng.gen(), // lamports
-            &VoteStateVersions::new_v3(vote_state.clone()),
+            &VoteStateVersions::new_v4(vote_state.clone()),
             &solana_sdk_ids::vote::id(), // owner
         )
         .unwrap();
@@ -454,7 +455,7 @@ mod tests {
         solana_account::WritableAccount,
         solana_clock::Clock,
         solana_pubkey::Pubkey,
-        solana_vote_interface::state::{VoteInit, VoteStateV3, VoteStateVersions},
+        solana_vote_interface::state::{VoteInit, VoteStateV4, VoteStateVersions},
         std::iter::repeat_with,
     };
 
@@ -462,6 +463,7 @@ mod tests {
         rng: &mut R,
         node_pubkey: Option<Pubkey>,
     ) -> AccountSharedData {
+        let vote_pubkey = Pubkey::new_unique();
         let vote_init = VoteInit {
             node_pubkey: node_pubkey.unwrap_or_else(Pubkey::new_unique),
             authorized_voter: Pubkey::new_unique(),
@@ -475,10 +477,10 @@ mod tests {
             leader_schedule_epoch: rng.gen(),
             unix_timestamp: rng.gen(),
         };
-        let vote_state = VoteStateV3::new(&vote_init, &clock);
+        let vote_state = VoteStateV4::new(&vote_pubkey, &vote_init, &clock);
         AccountSharedData::new_data(
             rng.gen(), // lamports
-            &VoteStateVersions::new_v3(vote_state.clone()),
+            &VoteStateVersions::new_v4(vote_state.clone()),
             &solana_sdk_ids::vote::id(), // owner
         )
         .unwrap()

@@ -446,13 +446,10 @@ mod tests {
             ],
         ];
 
-        for (i, expected_hash) in expected_hashes.iter().enumerate() {
-            let inputs = vec![&input; i + 1]
-                .into_iter()
-                .map(|arr| &arr[..])
-                .collect::<Vec<_>>();
+        for (i, expected_hash) in expected_hashes.into_iter().enumerate() {
+            let inputs = vec![&input[..]; i + 1];
             let hash = hashv(Parameters::Bn254X5, Endianness::BigEndian, &inputs).unwrap();
-            assert_eq!(hash.to_bytes(), *expected_hash);
+            assert_eq!(hash.to_bytes(), expected_hash);
         }
     }
 }

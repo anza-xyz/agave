@@ -26,7 +26,7 @@ pub trait LeaderScheduleVariant:
     std::fmt::Debug + Send + Sync + Index<u64, Output = Pubkey>
 {
     fn get_slot_leaders(&self) -> &[Pubkey];
-    fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Arc<Vec<usize>>>;
+    fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Vec<usize>>;
 
     /// Get the vote account address for the given epoch slot index. This is
     /// guaranteed to be Some if the leader schedule is keyed by vote account
@@ -38,29 +38,32 @@ pub trait LeaderScheduleVariant:
         &self,
         pubkey: &Pubkey,
         offset: usize, // Starting index.
-    ) -> Box<dyn Iterator<Item = usize>> {
-        let index = self
-            .get_leader_slots_map()
-            .get(pubkey)
-            .cloned()
-            .unwrap_or_default();
+    ) -> Box<dyn Iterator<Item = usize> + '_> {
+        let index = self.get_leader_slots_map().get(pubkey);
         let num_slots = self.num_slots();
-        let size = index.len();
-        #[allow(clippy::reversed_empty_ranges)]
-        let range = if index.is_empty() {
-            1..=0 // Intentionally empty range of type RangeInclusive.
-        } else {
-            let offset = index
-                .binary_search(&(offset % num_slots))
-                .unwrap_or_else(identity)
-                + offset / num_slots * size;
-            offset..=usize::MAX
-        };
-        // The modular arithmetic here and above replicate Index implementation
-        // for LeaderSchedule, where the schedule keeps repeating endlessly.
-        // The '%' returns where in a cycle we are and the '/' returns how many
-        // times the schedule is repeated.
-        Box::new(range.map(move |k| index[k % size] + k / size * num_slots))
+
+        match index {
+            Some(index) if !index.is_empty() => {
+                let size = index.len();
+                let start_offset = index
+                    .binary_search(&(offset % num_slots))
+                    .unwrap_or_else(identity)
+                    + offset / num_slots * size;
+                // The modular arithmetic here and above replicate Index implementation
+                // for LeaderSchedule, where the schedule keeps repeating endlessly.
+                // The '%' returns where in a cycle we are and the '/' returns how many
+                // times the schedule is repeated.
+                Box::new(
+                    (start_offset..=usize::MAX)
+                        .map(move |k| index[k % size] + k / size * num_slots),
+                )
+            }
+            _ => {
+                // Empty iterator for pubkeys not in schedule
+                #[allow(clippy::reversed_empty_ranges)]
+                Box::new((1..=0).map(|_| 0))
+            }
+        }
     }
 
     fn num_slots(&self) -> usize {

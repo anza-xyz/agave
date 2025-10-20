@@ -383,8 +383,6 @@ impl Blockstore {
         fs::create_dir_all(ledger_path)?;
         let blockstore_path = ledger_path.join(BLOCKSTORE_DIRECTORY_ROCKS_LEVEL);
 
-        adjust_ulimit_nofile(options.enforce_ulimit_nofile)?;
-
         // Open the database
         let mut measure = Measure::start("blockstore open");
         info!("Opening blockstore at {blockstore_path:?}");
@@ -4810,7 +4808,6 @@ pub fn create_new_ledger(
     let blockstore = Blockstore::open_with_options(
         ledger_path,
         BlockstoreOptions {
-            enforce_ulimit_nofile: false,
             column_options: column_options.clone(),
             ..BlockstoreOptions::default()
         },
@@ -5211,58 +5208,6 @@ pub fn make_chaining_slot_entries(
     }
 
     slots_shreds_and_entries
-}
-
-#[cfg(not(unix))]
-fn adjust_ulimit_nofile(_enforce_ulimit_nofile: bool) -> Result<()> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn adjust_ulimit_nofile(enforce_ulimit_nofile: bool) -> Result<()> {
-    // Rocks DB likes to have many open files.  The default open file descriptor limit is
-    // usually not enough
-    // AppendVecs and disk Account Index are also heavy users of mmapped files.
-    // This should be kept in sync with published validator instructions.
-    // https://docs.anza.xyz/operations/guides/validator-start#system-tuning
-    let desired_nofile = 1_000_000;
-
-    fn get_nofile() -> libc::rlimit {
-        let mut nofile = libc::rlimit {
-            rlim_cur: 0,
-            rlim_max: 0,
-        };
-        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut nofile) } != 0 {
-            warn!("getrlimit(RLIMIT_NOFILE) failed");
-        }
-        nofile
-    }
-
-    let mut nofile = get_nofile();
-    let current = nofile.rlim_cur;
-    if current < desired_nofile {
-        nofile.rlim_cur = desired_nofile;
-        if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &nofile) } != 0 {
-            error!(
-                "Unable to increase the maximum open file descriptor limit to {} from {}",
-                nofile.rlim_cur, current,
-            );
-
-            if cfg!(target_os = "macos") {
-                error!(
-                    "On mac OS you may need to run |sudo launchctl limit maxfiles \
-                     {desired_nofile} {desired_nofile}| first",
-                );
-            }
-            if enforce_ulimit_nofile {
-                return Err(BlockstoreError::UnableToSetOpenFileDescriptorLimit);
-            }
-        }
-
-        nofile = get_nofile();
-    }
-    info!("Maximum open file descriptors: {}", nofile.rlim_cur);
-    Ok(())
 }
 
 #[cfg(test)]

@@ -5274,6 +5274,16 @@ impl Bank {
         if new_feature_activations.contains(&feature_set::raise_account_cu_limit::id()) {
             self.apply_simd_0306_cost_tracker_changes();
         }
+
+        if new_feature_activations.contains(&feature_set::vote_state_v4::id()) {
+            if let Err(e) = self.upgrade_core_bpf_program(
+                &solana_sdk_ids::stake::id(),
+                &feature_set::vote_state_v4::stake_program_buffer::id(),
+                "upgrade_stake_program_for_vote_state_v4",
+            ) {
+                error!("Failed to upgrade Core BPF Stake program: {e}");
+            }
+        }
     }
 
     fn apply_new_builtin_program_feature_transitions(
@@ -6010,11 +6020,12 @@ pub mod test_utils {
     use {
         super::Bank,
         crate::installed_scheduler_pool::BankWithScheduler,
-        solana_account::{ReadableAccount, WritableAccount},
+        solana_account::{state_traits::StateMut, ReadableAccount, WritableAccount},
         solana_instruction::error::LamportsError,
         solana_pubkey::Pubkey,
         solana_sha256_hasher::hashv,
-        solana_vote_program::vote_state::{self, BlockTimestamp, VoteStateVersions},
+        solana_vote_interface::state::VoteStateV4,
+        solana_vote_program::vote_state::{BlockTimestamp, VoteStateVersions},
         std::sync::Arc,
     };
     pub fn goto_end_of_slot(bank: Arc<Bank>) {
@@ -6039,10 +6050,12 @@ pub mod test_utils {
         vote_pubkey: &Pubkey,
     ) {
         let mut vote_account = bank.get_account(vote_pubkey).unwrap_or_default();
-        let mut vote_state = vote_state::from(&vote_account).unwrap_or_default();
+        let mut vote_state = VoteStateV4::deserialize(vote_account.data(), vote_pubkey)
+            .ok()
+            .unwrap_or_default();
         vote_state.last_timestamp = timestamp;
-        let versioned = VoteStateVersions::new_v3(vote_state);
-        vote_state::to(&versioned, &mut vote_account).unwrap();
+        let versioned = VoteStateVersions::new_v4(vote_state);
+        vote_account.set_state(&versioned).unwrap();
         bank.store_account(vote_pubkey, &vote_account);
     }
 

@@ -24,7 +24,7 @@ use {
 /// 4. Processed by `ConsumeWorker`
 ///    a. If consumed, remove `Pending` state from the `TransactionStateContainer`
 ///    b. If retryable, transition back to `Unprocessed` state.
-///       Re-insert to the queue, and return to step 3.
+///    Re-insert to the queue, and return to step 3.
 ///
 /// The structure is composed of two main components:
 /// 1. A priority queue of wrapped `TransactionId`s, which are used to

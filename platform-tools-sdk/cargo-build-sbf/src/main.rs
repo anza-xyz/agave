@@ -6,8 +6,9 @@ use {
     crate::{
         post_processing::post_process,
         toolchain::{
-            corrupted_toolchain, generate_toolchain_name, get_base_rust_version, install_tools,
-            rust_target_triple, DEFAULT_PLATFORM_TOOLS_VERSION,
+            corrupted_toolchain, generate_toolchain_name, get_base_rust_version,
+            install_and_link_tools, install_tools, rust_target_triple,
+            validate_platform_tools_version, DEFAULT_PLATFORM_TOOLS_VERSION,
         },
         utils::spawn,
     },
@@ -48,6 +49,7 @@ pub struct Config<'a> {
     arch: &'a str,
     optimize_size: bool,
     lto: bool,
+    install_only: bool,
 }
 
 impl Default for Config<'_> {
@@ -81,6 +83,7 @@ impl Default for Config<'_> {
             arch: "v0",
             optimize_size: false,
             lto: false,
+            install_only: false,
         }
     }
 }
@@ -139,7 +142,7 @@ fn prepare_environment(
         exit(1);
     });
 
-    install_tools(config, package, metadata)
+    install_and_link_tools(config, package, metadata)
 }
 
 fn invoke_cargo(config: &Config, validated_toolchain_version: String) {
@@ -437,6 +440,17 @@ fn main() {
                 .help("Download and install platform-tools even when existing tools are located"),
         )
         .arg(
+            Arg::new("install_only")
+                .long("install-only")
+                .takes_value(false)
+                .conflicts_with("skip_tools_install")
+                .help(
+                    "Download and install platform-tools, without building a program. May be used \
+                     together with `--force-tools-install` to override an existing installation. \
+                     To choose a specific version, use `--install-only --tools-version v1.51`",
+                ),
+        )
+        .arg(
             Arg::new("skip_tools_install")
                 .long("skip-tools-install")
                 .takes_value(false)
@@ -615,12 +629,25 @@ fn main() {
         arch: matches.value_of("arch").unwrap(),
         optimize_size: matches.is_present("optimize_size"),
         lto: matches.is_present("lto"),
+        install_only: matches.is_present("install_only"),
     };
     let manifest_path: Option<PathBuf> = matches.value_of_t("manifest_path").ok();
     if config.verbose {
         debug!("{config:?}");
         debug!("manifest_path: {manifest_path:?}");
     }
+
+    if config.install_only {
+        let platform_tools_version = validate_platform_tools_version(
+            config
+                .platform_tools_version
+                .unwrap_or(DEFAULT_PLATFORM_TOOLS_VERSION),
+            DEFAULT_PLATFORM_TOOLS_VERSION,
+        );
+        install_tools(&config, &platform_tools_version, true);
+        return;
+    }
+
     build_solana(config, manifest_path);
 }
 

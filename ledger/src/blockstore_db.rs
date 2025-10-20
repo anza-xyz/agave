@@ -1344,7 +1344,6 @@ pub mod tests {
         {
             let options = BlockstoreOptions {
                 access_type: AccessType::Primary,
-                enforce_ulimit_nofile: false,
                 ..BlockstoreOptions::default()
             };
             let mut rocks = Rocks::open(db_path.to_path_buf(), options).unwrap();
@@ -1361,7 +1360,6 @@ pub mod tests {
         {
             let options = BlockstoreOptions {
                 access_type: AccessType::Secondary,
-                enforce_ulimit_nofile: false,
                 ..BlockstoreOptions::default()
             };
             let _ = Rocks::open(db_path.to_path_buf(), options).unwrap();
@@ -1369,7 +1367,6 @@ pub mod tests {
         {
             let options = BlockstoreOptions {
                 access_type: AccessType::Primary,
-                enforce_ulimit_nofile: false,
                 ..BlockstoreOptions::default()
             };
             let _ = Rocks::open(db_path.to_path_buf(), options).unwrap();
@@ -1392,7 +1389,6 @@ pub mod tests {
 
         let options = BlockstoreOptions {
             access_type: AccessType::Primary,
-            enforce_ulimit_nofile: false,
             ..BlockstoreOptions::default()
         };
 

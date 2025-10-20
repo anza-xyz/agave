@@ -13,9 +13,6 @@ pub struct BlockstoreOptions {
     pub access_type: AccessType,
     // Whether to open a blockstore under a recovery mode. Default: None.
     pub recovery_mode: Option<BlockstoreRecoveryMode>,
-    // When opening the Blockstore, determines whether to error or not if the
-    // desired open file descriptor limit cannot be configured. Default: true.
-    pub enforce_ulimit_nofile: bool,
     pub column_options: LedgerColumnOptions,
     pub num_rocksdb_compaction_threads: NonZeroUsize,
     pub num_rocksdb_flush_threads: NonZeroUsize,
@@ -29,7 +26,6 @@ impl Default for BlockstoreOptions {
         Self {
             access_type: AccessType::Primary,
             recovery_mode: None,
-            enforce_ulimit_nofile: true,
             column_options: LedgerColumnOptions::default(),
             num_rocksdb_compaction_threads: default_num_compaction_threads(),
             num_rocksdb_flush_threads: default_num_flush_threads(),
@@ -39,11 +35,7 @@ impl Default for BlockstoreOptions {
 
 impl BlockstoreOptions {
     pub fn default_for_tests() -> Self {
-        Self {
-            // No need to enforce the limit in tests
-            enforce_ulimit_nofile: false,
-            ..BlockstoreOptions::default()
-        }
+        BlockstoreOptions::default()
     }
 }
 
