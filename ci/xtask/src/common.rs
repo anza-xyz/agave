@@ -198,7 +198,7 @@ edition = { workspace = true }
 
         // test find_files_by_name for Cargo.lock
         {
-            let files = find_files_by_name("Cargo.lock").unwrap();
+            let files = find_all_cargo_locks().unwrap();
             assert_eq!(files.len(), 3);
 
             let expected_files: HashSet<_> = [
