@@ -7,7 +7,6 @@ use {
     crate::banking_stage::consumer::RetryableIndex,
     crossbeam_channel::{Receiver, SendError, Sender, TryRecvError},
     solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
-    solana_runtime::bank::Bank,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     solana_time_utils::AtomicInterval,
@@ -120,22 +119,11 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             .num_messages_processed
             .fetch_add(1, Ordering::Relaxed);
 
-        self.consume_with_bank(bank, work)?;
-        Ok(ProcessingStatus::Processed)
-    }
-
-    /// Consume a single batch.
-    fn consume_with_bank(
-        &self,
-        bank: &Arc<Bank>,
-        work: ConsumeWork<Tx>,
-    ) -> Result<(), ConsumeWorkerError<Tx>> {
         let output = self.consumer.process_and_record_aged_transactions(
             bank,
             &work.transactions,
             &work.max_ages,
         );
-
         self.metrics.update_for_consume(&output);
         self.metrics.has_data.store(true, Ordering::Relaxed);
 
@@ -145,7 +133,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
                 .execute_and_commit_transactions_output
                 .retryable_transaction_indexes,
         })?;
-        Ok(())
+        Ok(ProcessingStatus::Processed)
     }
 
     /// Retry current batch and all outstanding batches.
@@ -813,7 +801,7 @@ mod tests {
         },
         solana_pubkey::Pubkey,
         solana_runtime::{
-            bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
+            bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
             vote_sender_types::ReplayVoteReceiver,
         },
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
