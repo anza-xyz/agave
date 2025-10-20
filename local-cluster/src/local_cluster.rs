@@ -915,7 +915,7 @@ impl LocalCluster {
                                 } else {
                                     info!("node {node_pubkey} {stake_state:?} {vote_state:?}");
 
-                                    return Ok(());
+                                    Ok(())
                                 }
                             }
                             (None, _) => Err(Error::other("invalid stake account data")),
