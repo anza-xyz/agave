@@ -2580,12 +2580,9 @@ impl ReplayStage {
                 return GenerateVoteTxResult::Failed;
             }
         }
-        let vote_account = match bank.get_vote_account(vote_account_pubkey) {
-            None => {
-                warn!("Vote account {vote_account_pubkey} does not exist.  Unable to vote",);
-                return GenerateVoteTxResult::Failed;
-            }
-            Some(vote_account) => vote_account,
+        let Some(vote_account) = bank.get_vote_account(vote_account_pubkey) else {
+            warn!("Vote account {vote_account_pubkey} does not exist.  Unable to vote",);
+            return GenerateVoteTxResult::Failed;
         };
         let vote_state_view = vote_account.vote_state_view();
         if vote_state_view.node_pubkey() != &node_keypair.pubkey() {
@@ -2607,18 +2604,15 @@ impl ReplayStage {
             return GenerateVoteTxResult::Failed;
         };
 
-        let authorized_voter_keypair = match authorized_voter_keypairs
+        let Some(authorized_voter_keypair) = authorized_voter_keypairs
             .iter()
             .find(|keypair| &keypair.pubkey() == authorized_voter_pubkey)
-        {
-            None => {
-                warn!(
-                    "The authorized keypair {authorized_voter_pubkey} for vote account \
-                     {vote_account_pubkey} is not available.  Unable to vote"
-                );
-                return GenerateVoteTxResult::NonVoting;
-            }
-            Some(authorized_voter_keypair) => authorized_voter_keypair,
+        else {
+            warn!(
+                "The authorized keypair {authorized_voter_pubkey} for vote account \
+                 {vote_account_pubkey} is not available.  Unable to vote"
+            );
+            return GenerateVoteTxResult::NonVoting;
         };
 
         // Send our last few votes along with the new one
