@@ -257,7 +257,7 @@ impl PohService {
         let record = record_receiver.recv_timeout(timeout);
         if let Ok(record) = record {
             match poh_recorder.write().unwrap().record(
-                record.slot,
+                record.bank_id,
                 record.mixins,
                 record.transaction_batches,
             ) {
@@ -400,7 +400,7 @@ impl PohService {
                 let mut record_time = Measure::start("record");
                 loop {
                     match poh_recorder_l.record(
-                        record.slot,
+                        record.bank_id,
                         record.mixins,
                         std::mem::take(&mut record.transaction_batches),
                     ) {
@@ -594,13 +594,13 @@ impl PohService {
                     recorder.reset(reset_bank, next_leader_slot);
                 }
                 PohServiceMessage::SetBank { bank } => {
-                    let slot = bank.slot();
+                    let bank_id = bank.bank_id();
                     let bank_max_tick_height = bank.max_tick_height();
                     recorder.set_bank(bank);
                     let should_restart =
                         recorder.tick_height() < bank_max_tick_height.saturating_sub(1);
                     if should_restart {
-                        record_receiver.restart(slot);
+                        record_receiver.restart(bank_id);
                     }
                 }
             }

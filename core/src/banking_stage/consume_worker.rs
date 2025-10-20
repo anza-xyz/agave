@@ -1019,7 +1019,7 @@ mod tests {
             bank.tick_height(),
             None,
         )));
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let pubkey1 = Pubkey::new_unique();
 
@@ -1072,7 +1072,7 @@ mod tests {
             bank.tick_height(),
             None,
         )));
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let pubkey1 = Pubkey::new_unique();
         let pubkey2 = Pubkey::new_unique();
@@ -1136,7 +1136,7 @@ mod tests {
             bank.tick_height(),
             None,
         )));
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let pubkey1 = Pubkey::new_unique();
         let pubkey2 = Pubkey::new_unique();
@@ -1214,7 +1214,7 @@ mod tests {
             bank.tick_height(),
             None,
         )));
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
         assert!(bank.slot() > 0);
         assert!(bank.epoch() > 0);
 

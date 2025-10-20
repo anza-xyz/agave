@@ -20,7 +20,7 @@ use {
     arc_swap::ArcSwap,
     crossbeam_channel::{unbounded, Receiver, SendError, Sender, TrySendError},
     log::*,
-    solana_clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
+    solana_clock::{BankId, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_entry::{
         entry::Entry,
         poh::{Poh, PohEntry},
@@ -76,19 +76,19 @@ pub struct RecordSummary {
 pub struct Record {
     pub mixins: Vec<Hash>,
     pub transaction_batches: Vec<Vec<VersionedTransaction>>,
-    pub slot: Slot,
+    pub bank_id: BankId,
 }
 
 impl Record {
     pub fn new(
         mixins: Vec<Hash>,
         transaction_batches: Vec<Vec<VersionedTransaction>>,
-        slot: Slot,
+        bank_id: BankId,
     ) -> Self {
         Self {
             mixins,
             transaction_batches,
-            slot,
+            bank_id,
         }
     }
 }
@@ -305,7 +305,7 @@ impl PohRecorder {
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn record(
         &mut self,
-        bank_slot: Slot,
+        bank_id: BankId,
         mixins: Vec<Hash>,
         transaction_batches: Vec<Vec<VersionedTransaction>>,
     ) -> Result<RecordSummary> {
@@ -320,8 +320,11 @@ impl PohRecorder {
             "No transactions provided"
         );
 
-        let ((), report_metrics_us) = measure_us!(self.metrics.report(bank_slot));
-        self.metrics.report_metrics_us += report_metrics_us;
+        if let Some(working_bank) = self.working_bank.as_ref() {
+            let ((), report_metrics_us) =
+                measure_us!(self.metrics.report(working_bank.bank.slot()));
+            self.metrics.report_metrics_us += report_metrics_us;
+        }
 
         loop {
             let (flush_cache_res, flush_cache_us) = measure_us!(self.flush_cache(false));
@@ -333,7 +336,7 @@ impl PohRecorder {
                 .working_bank
                 .as_mut()
                 .ok_or(PohRecorderError::MaxHeightReached)?;
-            if bank_slot != working_bank.bank.slot() {
+            if bank_id != working_bank.bank.bank_id() {
                 return Err(PohRecorderError::MaxHeightReached);
             }
 
