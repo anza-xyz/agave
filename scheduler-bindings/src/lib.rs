@@ -84,7 +84,7 @@ pub struct SharableTransactionBatchRegion {
     /// Offset within the shared memory allocator for the batch of transactions.
     /// The transactions are laid out back-to-back in memory as a
     /// [`SharableTransactionRegion`] with size `num_transactions`.
-    pub transactions_offset: u32,
+    pub transactions_offset: usize,
 }
 /// Reference to an array of response messages.
 /// General flow:
@@ -109,7 +109,7 @@ pub struct TransactionResponseRegion {
     /// this offset. The type of each inner message is indicated by `tag`.
     /// There are `num_transaction_responses` inner messages.
     /// See [`worker_message_types`] for details on the inner message types.
-    pub transaction_responses_offset: u32,
+    pub transaction_responses_offset: usize,
 }
 
 /// Message: [TPU -> Pack]

@@ -3,7 +3,7 @@ use {
         poh_recorder::{PohRecorderError, Record},
         record_channels::{RecordSender, RecordSenderError},
     },
-    solana_clock::Slot,
+    solana_clock::BankId,
     solana_entry::entry::hash_transactions,
     solana_hash::Hash,
     solana_measure::measure_us,
@@ -51,7 +51,7 @@ impl TransactionRecorder {
     /// Panics on unexpected (non-`MaxHeightReached`) errors.
     pub fn record_transactions(
         &self,
-        bank_slot: Slot,
+        bank_id: BankId,
         transactions: Vec<VersionedTransaction>,
     ) -> RecordTransactionsSummary {
         let mut record_transactions_timings = RecordTransactionsTimings::default();
@@ -62,14 +62,14 @@ impl TransactionRecorder {
             record_transactions_timings.hash_us = Saturating(hash_us);
 
             let (res, poh_record_us) =
-                measure_us!(self.record(bank_slot, vec![hash], vec![transactions]));
+                measure_us!(self.record(bank_id, vec![hash], vec![transactions]));
             record_transactions_timings.poh_record_us = Saturating(poh_record_us);
 
             match res {
                 Ok(starting_index) => {
                     starting_transaction_index = starting_index;
                 }
-                Err(RecordSenderError::InactiveSlot | RecordSenderError::Shutdown) => {
+                Err(RecordSenderError::InactiveBankId | RecordSenderError::Shutdown) => {
                     return RecordTransactionsSummary {
                         record_transactions_timings,
                         result: Err(PohRecorderError::MaxHeightReached),
@@ -103,11 +103,11 @@ impl TransactionRecorder {
     // Returns the index of `transactions.first()` in the slot, if being tracked by WorkingBank
     pub fn record(
         &self,
-        bank_slot: Slot,
+        bank_id: BankId,
         mixins: Vec<Hash>,
         transaction_batches: Vec<Vec<VersionedTransaction>>,
     ) -> Result<Option<usize>, RecordSenderError> {
         self.record_sender
-            .try_send(Record::new(mixins, transaction_batches, bank_slot))
+            .try_send(Record::new(mixins, transaction_batches, bank_id))
     }
 }

@@ -35,7 +35,6 @@ use {
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_accounts_db::{
         accounts::AccountAddressFilter,
-        accounts_db::DEFAULT_ACCOUNTS_SHRINK_RATIO,
         accounts_index::{
             AccountIndex, AccountSecondaryIndexes, IndexKey, ScanConfig, ScanError, ITER_BATCH_SIZE,
         },
@@ -5387,36 +5386,6 @@ fn test_same_program_id_uses_unique_executable_accounts() {
     assert_eq!(1, bank.get_account(&program2_pubkey).unwrap().data().len());
 }
 
-fn get_shrink_account_size() -> usize {
-    let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000_000);
-
-    // Set root for bank 0, with caching disabled so we can get the size
-    // of the storage for this slot
-    let bank0 = Arc::new(Bank::new_with_config_for_tests(
-        &genesis_config,
-        BankTestConfig::default(),
-    ));
-    goto_end_of_slot(bank0.clone());
-    bank0.freeze();
-    bank0.squash();
-    add_root_and_flush_write_cache(&bank0);
-
-    let sizes = bank0
-        .rc
-        .accounts
-        .accounts_db
-        .sizes_of_accounts_in_storage_for_tests(0);
-
-    // Create an account such that it takes DEFAULT_ACCOUNTS_SHRINK_RATIO of the total account space for
-    // the slot, so when it gets pruned, the storage entry will become a shrink candidate.
-    let bank0_total_size: usize = sizes.into_iter().sum();
-    let pubkey0_size = (bank0_total_size as f64 / (1.0 - DEFAULT_ACCOUNTS_SHRINK_RATIO)).ceil();
-    assert!(
-        pubkey0_size / (pubkey0_size + bank0_total_size as f64) > DEFAULT_ACCOUNTS_SHRINK_RATIO
-    );
-    pubkey0_size as usize
-}
-
 #[test]
 fn test_clean_nonrooted() {
     solana_logger::setup();
@@ -5505,7 +5474,8 @@ fn test_shrink_candidate_slots_cached() {
         BankTestConfig::default(),
     ));
 
-    let pubkey0_size = get_shrink_account_size();
+    // Make pubkey0 large so any slot containing it is a candidate for shrinking
+    let pubkey0_size = 100_000;
 
     let account0 = AccountSharedData::new(1000, pubkey0_size, &Pubkey::new_unique());
     bank0.store_account(&pubkey0, &account0);
