@@ -7,10 +7,12 @@ use {
     solana_accounts_db::accounts_index::AccountSecondaryIndexes,
     solana_clap_utils::input_validators::is_parsable,
     solana_rpc::rpc::{JsonRpcConfig, RpcBigtableConfig},
+    std::sync::LazyLock,
 };
 
 const DEFAULT_HEALTH_CHECK_SLOT_DISTANCE: &str = "128"; // solana_rpc_client_api::request::DELINQUENT_VALIDATOR_SLOT_DISTANCE
 const DEFAULT_MAX_MULTIPLE_ACCOUNTS: &str = "100"; // solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS
+static DEFAULT_RPC_THREADS: LazyLock<String> = LazyLock::new(|| num_cpus::get().to_string());
 
 impl FromClapArgMatches for JsonRpcConfig {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
@@ -111,7 +113,7 @@ pub(crate) fn args<'a>(default_args: &DefaultArgs) -> Vec<Arg<'_, 'a>> {
             .value_name("NUMBER")
             .validator(is_parsable::<usize>)
             .takes_value(true)
-            .default_value(&default_args.rpc_threads)
+            .default_value(&DEFAULT_RPC_THREADS)
             .help("Number of threads to use for servicing RPC requests"),
         Arg::with_name("rpc_blocking_threads")
             .long("rpc-blocking-threads")
