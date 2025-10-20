@@ -73,7 +73,7 @@ impl ProgressTracker {
         }
     }
 
-    // returns true if a message was published
+    /// returns true if a message was published
     fn publish(
         &mut self,
         producer: &mut shaq::Producer<ProgressMessage>,
@@ -95,7 +95,7 @@ impl ProgressTracker {
         let leader_state = self.shared_leader_state.load();
         let tick_height = leader_state.tick_height();
         let progress_message = if let Some(working_bank) = leader_state.working_bank() {
-            // If newl leader slot grab the cost tracker lock to get limit and shared cost.
+            // If new leader slot grab the cost tracker lock to get limit and shared cost.
             // This avoid needing to lock except on new leader slots.
             if self.last_observed_leader_slot != Some(working_bank.slot()) {
                 let cost_tracker = working_bank.read_cost_tracker().unwrap();
