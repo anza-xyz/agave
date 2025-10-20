@@ -300,7 +300,17 @@ impl<'de> DeserializeTrait<'de> for UiTransactionError {
                 let instruction_error = arr.get(1).ok_or_else(|| {
                     DeserializeError::invalid_length(1, &"Expected there to be at least 2 elements")
                 })?;
+
+                // Handle SDK version compatibility: try deserializing as-is, but if it fails
+                // and the error is BorshIoError string, normalize to object format for v2.3 SDKs
                 let err: InstructionError = from_value(instruction_error.clone())
+                    .or_else(|e| {
+                        if instruction_error.as_str() == Some("BorshIoError") {
+                            from_value(serde_json::json!({"BorshIoError": ""}))
+                        } else {
+                            Err(e)
+                        }
+                    })
                     .map_err(|e| DeserializeError::custom(e.to_string()))?;
                 return Ok(UiTransactionError(TransactionError::InstructionError(
                     outer_instruction_index,
@@ -955,5 +965,30 @@ mod test {
             from_value::<UiTransactionError>(serialized_value)
                 .expect("Failed to deserialize `UiTransactionError");
         assert_eq!(actual_transaction_error, expected_transaction_error);
+    }
+
+    #[test]
+    fn test_deserialize_instruction_error_string_format() {
+        // Test that we can deserialize InstructionError when serialized as a string
+        // This handles compatibility across SDK versions where the same error may be
+        // a unit variant in one version and newtype variant in another
+        let error_json = json!({"InstructionError": [0, "BorshIoError"]});
+        let result = from_value::<UiTransactionError>(error_json);
+        assert!(
+            result.is_ok(),
+            "Failed to deserialize BorshIoError from string: {:?}",
+            result.err()
+        );
+
+        match result.unwrap().0 {
+            TransactionError::InstructionError(idx, _) => {
+                assert_eq!(idx, 0);
+                // Successfully deserialized InstructionError from BorshIoError string
+            }
+            other => panic!(
+                "Expected InstructionError, got: {:?}",
+                other
+            ),
+        }
     }
 }
