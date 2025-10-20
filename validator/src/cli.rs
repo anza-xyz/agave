@@ -29,7 +29,6 @@ use {
     solana_hash::Hash,
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
     solana_quic_definitions::QUIC_PORT_OFFSET,
-    solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,
     solana_send_transaction_service::send_transaction_service::{self},
     solana_streamer::quic::{
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER,
@@ -274,8 +273,6 @@ pub struct DefaultArgs {
     pub tower_storage: String,
     pub send_transaction_service_config: send_transaction_service::Config,
 
-    pub rpc_max_request_body_size: String,
-
     pub maximum_local_snapshot_age: String,
     pub maximum_full_snapshot_archives_to_retain: String,
     pub maximum_incremental_snapshot_archives_to_retain: String,
@@ -365,7 +362,6 @@ impl DefaultArgs {
             tpu_max_fwd_unstaked_connections: 0.to_string(),
             tpu_max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS.to_string(),
             num_quic_endpoints: DEFAULT_QUIC_ENDPOINTS.to_string(),
-            rpc_max_request_body_size: MAX_REQUEST_BODY_SIZE.to_string(),
             banking_trace_dir_byte_limit: BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT.to_string(),
             block_production_pacing_fill_time_millis: BankingStage::default_fill_time_millis()
                 .to_string(),
