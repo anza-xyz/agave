@@ -224,5 +224,11 @@ edition = { workspace = true }
             let actual_crates: HashSet<String> = crates.iter().map(|s| s.to_string()).collect();
             assert_eq!(expected_crates, actual_crates);
         }
+
+        // test get_current_version
+        {
+            let version = get_current_version().unwrap();
+            assert_eq!(version, "3.1.0");
+        }
     }
 }
