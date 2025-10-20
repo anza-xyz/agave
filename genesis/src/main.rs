@@ -263,13 +263,27 @@ fn add_validator_accounts(
             AccountSharedData::new(lamports, 0, &system_program::id()),
         );
 
-        let vote_account = vote_state::create_account_with_authorized(
-            identity_pubkey,
-            identity_pubkey,
-            identity_pubkey,
-            commission,
-            rent.minimum_balance(VoteStateV4::size_of()).max(1),
-        );
+        let vote_account = if is_alpenglow {
+            let bls_pubkey = bls_pubkeys_iter
+                .next()
+                .expect("Missing BLS pubkey for {identity_pubkey}");
+            vote_state::create_v4_account_with_authorized(
+                identity_pubkey,
+                identity_pubkey,
+                identity_pubkey,
+                Some(bls_pubkey_to_compressed_bytes(bls_pubkey)),
+                commission.into(),
+                rent.minimum_balance(VoteStateV4::size_of()).max(1),
+            )
+        } else {
+            vote_state::create_account_with_authorized(
+                identity_pubkey,
+                identity_pubkey,
+                identity_pubkey,
+                commission,
+                rent.minimum_balance(VoteStateV4::size_of()).max(1),
+            )
+        };
 
         genesis_config.add_account(
             *stake_pubkey,
@@ -945,8 +959,7 @@ mod tests {
         solana_borsh::v1 as borsh1,
         solana_genesis_config::GenesisConfig,
         solana_stake_interface as stake,
-        solana_vote::vote_state_view::VoteStateView,
-        std::{collections::HashMap, fs::remove_file, io::Write, path::Path, sync::Arc},
+        std::{collections::HashMap, fs::remove_file, io::Write, path::Path},
         test_case::test_case,
     };
 
@@ -1401,11 +1414,11 @@ mod tests {
                         bls_pubkey_to_compressed_bytes(
                             &BLSPubkey::from_str(b64_account.bls_pubkey.as_ref().unwrap()).unwrap()
                         ),
-                        vote_state_view.bls_pubkey_compressed().unwrap()
+                        vote_state.bls_pubkey_compressed.unwrap()
                     );
                 } else {
                     assert!(b64_account.bls_pubkey.is_none());
-                    assert!(vote_state_view.bls_pubkey_compressed().is_none());
+                    assert!(vote_state.bls_pubkey_compressed.is_none());
                 }
 
                 // check stake account
