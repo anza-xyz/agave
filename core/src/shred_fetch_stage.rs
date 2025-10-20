@@ -377,7 +377,7 @@ impl ShredFetchStage {
 
 impl RepairContext {
     fn keypair(&self) -> Arc<Keypair> {
-        self.cluster_info.keypair().clone()
+        self.cluster_info.keypair()
     }
 }
 

@@ -1643,7 +1643,7 @@ mod test {
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let cluster_slots = ClusterSlots::default();
         let cluster_info = Arc::new(new_test_cluster_info());
-        let identity_keypair = cluster_info.keypair().clone();
+        let identity_keypair = cluster_info.keypair();
         let serve_repair = {
             ServeRepair::new(
                 cluster_info,
