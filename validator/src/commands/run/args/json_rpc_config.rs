@@ -15,6 +15,7 @@ const DEFAULT_MAX_MULTIPLE_ACCOUNTS: &str = "100"; // solana_rpc_client_api::req
 static DEFAULT_RPC_THREADS: LazyLock<String> = LazyLock::new(|| num_cpus::get().to_string());
 static DEFAULT_RPC_BLOCKING_THREADS: LazyLock<String> =
     LazyLock::new(|| (1.max(num_cpus::get() / 4)).to_string());
+const DEFAULT_RPC_NICENESS_ADJ: &str = "0";
 
 impl FromClapArgMatches for JsonRpcConfig {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
@@ -144,7 +145,7 @@ pub(crate) fn args<'a>(default_args: &DefaultArgs) -> Vec<Arg<'_, 'a>> {
             .value_name("ADJUSTMENT")
             .takes_value(true)
             .validator(solana_perf::thread::is_niceness_adjustment_valid)
-            .default_value(&default_args.rpc_niceness_adjustment)
+            .default_value(&DEFAULT_RPC_NICENESS_ADJ)
             .help(
                 "Add this value to niceness of RPC threads. Negative value increases priority, \
                  positive value decreases priority.",
