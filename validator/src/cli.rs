@@ -287,10 +287,6 @@ pub struct DefaultArgs {
     pub rpc_threads: String,
     pub rpc_blocking_threads: String,
     pub rpc_niceness_adjustment: String,
-    pub rpc_bigtable_timeout: String,
-    pub rpc_bigtable_instance_name: String,
-    pub rpc_bigtable_app_profile_id: String,
-    pub rpc_bigtable_max_message_size: String,
     pub rpc_max_request_body_size: String,
 
     pub maximum_local_snapshot_age: String,
@@ -371,12 +367,6 @@ impl DefaultArgs {
             rpc_threads: num_cpus::get().to_string(),
             rpc_blocking_threads: 1.max(num_cpus::get() / 4).to_string(),
             rpc_niceness_adjustment: "0".to_string(),
-            rpc_bigtable_timeout: "30".to_string(),
-            rpc_bigtable_instance_name: solana_storage_bigtable::DEFAULT_INSTANCE_NAME.to_string(),
-            rpc_bigtable_app_profile_id: solana_storage_bigtable::DEFAULT_APP_PROFILE_ID
-                .to_string(),
-            rpc_bigtable_max_message_size: solana_storage_bigtable::DEFAULT_MAX_MESSAGE_SIZE
-                .to_string(),
             maximum_full_snapshot_archives_to_retain: DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN
                 .to_string(),
             maximum_incremental_snapshot_archives_to_retain:
