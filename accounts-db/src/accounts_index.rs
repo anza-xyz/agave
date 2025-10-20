@@ -1708,14 +1708,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         stats.roots_range = Some(roots_tracker.alive_roots.range_width());
     }
 
-    pub fn min_alive_root(&self) -> Option<Slot> {
-        self.roots_tracker.read().unwrap().min_alive_root()
-    }
-
-    pub fn num_alive_roots(&self) -> usize {
-        self.roots_tracker.read().unwrap().alive_roots.len()
-    }
-
     pub fn all_alive_roots(&self) -> Vec<Slot> {
         let tracker = self.roots_tracker.read().unwrap();
         tracker.alive_roots.get_all()

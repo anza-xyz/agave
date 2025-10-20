@@ -46,7 +46,7 @@ use {
     solana_signer::Signer,
     solana_stake_interface::state::StakeStateV2,
     solana_stake_program::stake_state,
-    solana_vote_program::vote_state::{self, VoteStateV3, VoteStateV4},
+    solana_vote_program::vote_state::{self, VoteStateV4},
     std::{
         collections::HashMap,
         error,
@@ -263,27 +263,13 @@ fn add_validator_accounts(
             AccountSharedData::new(lamports, 0, &system_program::id()),
         );
 
-        let vote_account = if is_alpenglow {
-            let bls_pubkey = bls_pubkeys_iter
-                .next()
-                .expect("Missing BLS pubkey for {identity_pubkey}");
-            vote_state::create_v4_account_with_authorized(
-                identity_pubkey,
-                identity_pubkey,
-                identity_pubkey,
-                Some(bls_pubkey_to_compressed_bytes(bls_pubkey)),
-                commission.into(),
-                rent.minimum_balance(VoteStateV4::size_of()).max(1),
-            )
-        } else {
-            vote_state::create_account_with_authorized(
-                identity_pubkey,
-                identity_pubkey,
-                identity_pubkey,
-                commission,
-                rent.minimum_balance(VoteStateV3::size_of()).max(1),
-            )
-        };
+        let vote_account = vote_state::create_account_with_authorized(
+            identity_pubkey,
+            identity_pubkey,
+            identity_pubkey,
+            commission,
+            rent.minimum_balance(VoteStateV4::size_of()).max(1),
+        );
 
         genesis_config.add_account(
             *stake_pubkey,
@@ -342,7 +328,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     // vote account
     let default_bootstrap_validator_lamports = &(500 * LAMPORTS_PER_SOL)
-        .max(rent.minimum_balance(VoteStateV3::size_of()))
+        .max(rent.minimum_balance(VoteStateV4::size_of()))
         .to_string();
     // stake account
     let default_bootstrap_validator_stake_lamports = &(LAMPORTS_PER_SOL / 2)
@@ -1404,11 +1390,12 @@ mod tests {
 
                 // check vote account
                 let vote_pk = b64_account.vote_account.parse().unwrap();
-                let vote_data = Arc::new(genesis_config.accounts[&vote_pk].data.clone());
-                let vote_state_view = VoteStateView::try_new(vote_data).expect("vote account");
-                assert_eq!(vote_state_view.node_pubkey(), &identity_pk);
-                let authorized_voter = vote_state_view.get_authorized_voter(0);
-                assert_eq!(authorized_voter, Some(&identity_pk));
+                let vote_data = genesis_config.accounts[&vote_pk].data.clone();
+                let vote_state = VoteStateV4::deserialize(&vote_data, &vote_pk).unwrap();
+                assert_eq!(vote_state.node_pubkey, identity_pk);
+                assert_eq!(vote_state.authorized_withdrawer, identity_pk);
+                let authorized_voters = &vote_state.authorized_voters;
+                assert_eq!(authorized_voters.first().unwrap().1, &identity_pk);
                 if is_alpenglow {
                     assert_eq!(
                         bls_pubkey_to_compressed_bytes(
