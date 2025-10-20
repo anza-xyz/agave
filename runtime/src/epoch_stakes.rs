@@ -347,7 +347,7 @@ pub(crate) mod tests {
             .map(|(node_pubkey, vote_accounts)| {
                 let mut vote_accounts = vote_accounts
                     .iter()
-                    .map(|v| (v.vote_account))
+                    .map(|v| v.vote_account)
                     .collect::<Vec<_>>();
                 vote_accounts.sort();
                 let node_vote_accounts = NodeVoteAccounts {

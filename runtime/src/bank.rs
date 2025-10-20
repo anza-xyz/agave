@@ -5682,7 +5682,7 @@ impl InvokeContextCallback for Bank {
     fn get_epoch_stake_for_vote_account(&self, vote_address: &Pubkey) -> u64 {
         self.get_current_epoch_vote_accounts()
             .get(vote_address)
-            .map(|(stake, _)| (*stake))
+            .map(|(stake, _)| *stake)
             .unwrap_or(0)
     }
 
