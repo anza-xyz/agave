@@ -729,10 +729,9 @@ mod tests {
 
     #[test]
     fn test_bank_forks_new_rw_arc_memory_leak() {
-        for _ in 0..1000 {
-            let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
-            BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
-        }
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        assert_eq!(Arc::strong_count(&bank_forks), 1);
     }
 
     #[test]
