@@ -16,6 +16,10 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "test_exec_instr"
 path = "bin/test_exec_instr.rs"
+required-features = ["fuzz"]
+
+[features]
+fuzz = ["dep:clap", "dep:prost", "dep:protosol", "dep:prost-build"]
 
 [features]
 agave-unstable-api = []
@@ -25,9 +29,9 @@ agave-feature-set = { workspace = true }
 agave-precompiles = { workspace = true }
 agave-syscalls = { workspace = true }
 bincode = { workspace = true }
-clap = { version = "4.5.2", features = ["derive"] }
-prost = { workspace = true }
-protosol = { git = "https://github.com/firedancer-io/protosol", tag = "v1.0.4" }
+clap = { version = "4.5.2", features = ["derive"], optional = true }
+prost = { workspace = true, optional = true }
+protosol = { git = "https://github.com/firedancer-io/protosol", tag = "v1.0.4", optional = true }
 solana-account = { workspace = true }
 solana-builtins = { workspace = true }
 solana-clock = { workspace = true, features = ["sysvar"] }
@@ -53,7 +57,7 @@ solana-transaction-context = { workspace = true }
 thiserror = { workspace = true }
 
 [build-dependencies]
-prost-build = { workspace = true }
+prost-build = { workspace = true, optional = true }
 
 [lints]
 workspace = true

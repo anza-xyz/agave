@@ -1,3 +1,7 @@
+//! Error types for fixture conversions.
+
+#![cfg(feature = "fuzz")]
+
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq)]
