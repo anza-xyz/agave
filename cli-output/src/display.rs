@@ -257,7 +257,7 @@ fn write_transaction<W: io::Write>(
     }
 
     if let Some(transaction_status) = transaction_status {
-        write_status(w, &transaction_status.status, prefix)?;
+        write_status(w, &transaction_status.status.clone().map_err(Into::into), prefix)?;
         write_fees(w, transaction_status.fee, prefix)?;
         write_balances(w, transaction_status, prefix)?;
         write_compute_units_consumed(

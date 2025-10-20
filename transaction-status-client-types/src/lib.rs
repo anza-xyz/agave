@@ -3,10 +3,16 @@ use {
     crate::option_serializer::OptionSerializer,
     base64::{prelude::BASE64_STANDARD, Engine},
     core::fmt,
+    serde::{
+        de::{self, Deserialize as DeserializeTrait, Error as DeserializeError},
+        ser::{Serialize as SerializeTrait, SerializeTupleVariant},
+        Deserializer,
+    },
     serde_derive::{Deserialize, Serialize},
-    serde_json::Value,
+    serde_json::{from_value, Value},
     solana_account_decoder_client_types::token::UiTokenAmount,
     solana_commitment_config::CommitmentConfig,
+    solana_instruction::error::InstructionError,
     solana_message::{
         compiled_instruction::CompiledInstruction,
         v0::{LoadedAddresses, MessageAddressTableLookup},
@@ -226,12 +232,121 @@ impl From<&MessageAddressTableLookup> for UiAddressTableLookup {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UiTransactionError(TransactionError);
+
+impl fmt::Display for UiTransactionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for UiTransactionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
+impl From<TransactionError> for UiTransactionError {
+    fn from(value: TransactionError) -> Self {
+        UiTransactionError(value)
+    }
+}
+
+impl From<UiTransactionError> for TransactionError {
+    fn from(value: UiTransactionError) -> Self {
+        value.0
+    }
+}
+
+impl SerializeTrait for UiTransactionError {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match &self.0 {
+            TransactionError::InstructionError(outer_instruction_index, err) => {
+                let mut state = serializer.serialize_tuple_variant(
+                    "TransactionError",
+                    8,
+                    "InstructionError",
+                    2,
+                )?;
+                state.serialize_field(outer_instruction_index)?;
+                state.serialize_field(err)?;
+                state.end()
+            }
+            err => TransactionError::serialize(err, serializer),
+        }
+    }
+}
+
+impl<'de> DeserializeTrait<'de> for UiTransactionError {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        if let Some(obj) = value.as_object() {
+            if let Some(arr) = obj.get("InstructionError").and_then(|v| v.as_array()) {
+                let outer_instruction_index: u8 = arr
+                    .first()
+                    .ok_or_else(|| {
+                        DeserializeError::invalid_length(0, &"Expected the first element to exist")
+                    })?
+                    .as_u64()
+                    .ok_or_else(|| {
+                        DeserializeError::custom("Expected the first element to be a u64")
+                    })? as u8;
+                let instruction_error_value = arr.get(1).ok_or_else(|| {
+                    DeserializeError::invalid_length(1, &"Expected there to be at least 2 elements")
+                })?;
+
+                // Handle the case where InstructionError variants are serialized inconsistently
+                // v3 validators may serialize BorshIoError (which is actually a newtype variant)
+                // as just the string "BorshIoError" instead of {"BorshIoError": "message"}
+                let err: InstructionError = if instruction_error_value.is_string() {
+                    let error_str = instruction_error_value.as_str().unwrap();
+                    if error_str == "BorshIoError" {
+                        // BorshIoError is a newtype variant that contains a String,
+                        // but v3 serializes it as a unit variant. Convert it to the expected format.
+                        let fixed_value = serde_json::json!({"BorshIoError": ""});
+                        from_value(fixed_value).map_err(|e| {
+                            DeserializeError::custom(format!(
+                                "Failed to deserialize BorshIoError: {}",
+                                e
+                            ))
+                        })?
+                    } else {
+                        // Try to deserialize other unit variants directly
+                        from_value(instruction_error_value.clone()).map_err(|e| {
+                            DeserializeError::custom(format!(
+                                "Failed to deserialize InstructionError from string '{}': {}",
+                                error_str, e
+                            ))
+                        })?
+                    }
+                } else {
+                    from_value(instruction_error_value.clone())
+                        .map_err(|e| DeserializeError::custom(e.to_string()))?
+                };
+                return Ok(UiTransactionError(TransactionError::InstructionError(
+                    outer_instruction_index,
+                    err,
+                )));
+            }
+        }
+        let err = TransactionError::deserialize(value).map_err(de::Error::custom)?;
+        Ok(UiTransactionError(err))
+    }
+}
+
 /// A duplicate representation of TransactionStatusMeta with `err` field
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiTransactionStatusMeta {
-    pub err: Option<TransactionError>,
-    pub status: TransactionResult<()>, // This field is deprecated.  See https://github.com/solana-labs/solana/issues/9302
+    pub err: Option<UiTransactionError>,
+    pub status: Result<(), UiTransactionError>, // This field is deprecated.  See https://github.com/solana-labs/solana/issues/9302
     pub fee: u64,
     pub pre_balances: Vec<u64>,
     pub post_balances: Vec<u64>,
@@ -285,8 +400,8 @@ pub struct UiTransactionStatusMeta {
 impl From<TransactionStatusMeta> for UiTransactionStatusMeta {
     fn from(meta: TransactionStatusMeta) -> Self {
         Self {
-            err: meta.status.clone().err(),
-            status: meta.status,
+            err: meta.status.clone().map_err(Into::into).err(),
+            status: meta.status.map_err(Into::into),
             fee: meta.fee,
             pre_balances: meta.pre_balances,
             post_balances: meta.post_balances,
@@ -811,5 +926,84 @@ mod test {
             }\
         }";
         test_serde::<UiTransactionTokenBalance>(json_input, expected_json_output);
+    }
+
+    #[test]
+    fn test_encoded_transaction_binary_deserialization() {
+        // Test that we can deserialize the Binary variant that v3 validators send
+        let json_str = r#"["test_tx_data", "base58"]"#;
+        let result: Result<EncodedTransaction, _> = serde_json::from_str(json_str);
+        assert!(
+            result.is_ok(),
+            "Failed to deserialize Binary variant: {:?}",
+            result.err()
+        );
+        match result.unwrap() {
+            EncodedTransaction::Binary(data, encoding) => {
+                assert_eq!(data, "test_tx_data");
+                assert_eq!(encoding, TransactionBinaryEncoding::Base58);
+            }
+            _ => panic!("Expected Binary variant"),
+        }
+
+        // Test Base64 variant
+        let json_str = r#"["test_tx_data", "base64"]"#;
+        let result: Result<EncodedTransaction, _> = serde_json::from_str(json_str);
+        assert!(
+            result.is_ok(),
+            "Failed to deserialize Binary variant with base64: {:?}",
+            result.err()
+        );
+        match result.unwrap() {
+            EncodedTransaction::Binary(data, encoding) => {
+                assert_eq!(data, "test_tx_data");
+                assert_eq!(encoding, TransactionBinaryEncoding::Base64);
+            }
+            _ => panic!("Expected Binary variant"),
+        }
+    }
+
+    #[test]
+    fn test_ui_confirmed_block_deserialization() {
+        // Test deserializing a block with Binary-encoded transactions from a v3 validator
+        let block_json = r#"{
+            "blockHeight": 401846194,
+            "blockTime": 1760203006,
+            "blockhash": "975QPuw7Tp5aZjL8jXwPT8VTG5MedtvzG6hhsFtuvWwj",
+            "parentSlot": 413908290,
+            "previousBlockhash": "6GJtexrY99MmU3ixUiJ7Sf44cTNRW2fJc9JQrLJSJFpD",
+            "rewards": [],
+            "transactions": [
+                {
+                    "meta": {
+                        "err": null,
+                        "fee": 5330,
+                        "preBalances": [34523444383],
+                        "postBalances": [34523439053],
+                        "status": {"Ok": null}
+                    },
+                    "transaction": ["Aa77KI2KjQXZ5wzYrpbKzhcfVu0nGSQTmY7MhwbvkK5Q", "base64"]
+                }
+            ]
+        }"#;
+
+        let result: Result<UiConfirmedBlock, _> = serde_json::from_str(block_json);
+        assert!(
+            result.is_ok(),
+            "Failed to deserialize UiConfirmedBlock: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_ui_transaction_error_with_instruction_error() {
+        // Test deserializing InstructionError with BorshIoError from v3 validator
+        let error_json = r#"{"InstructionError": [0, "BorshIoError"]}"#;
+        let result: Result<UiTransactionError, _> = serde_json::from_str(error_json);
+        assert!(
+            result.is_ok(),
+            "Failed to deserialize UiTransactionError: {:?}",
+            result.err()
+        );
     }
 }
