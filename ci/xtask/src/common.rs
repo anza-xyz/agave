@@ -1,7 +1,7 @@
 use {
     anyhow::{anyhow, Result},
     std::{fs, path::PathBuf, process::Command},
-    toml_edit::ImDocument,
+    toml_edit::Document,
     walkdir::WalkDir,
 };
 
@@ -43,7 +43,7 @@ pub fn get_all_crates() -> Result<Vec<String>> {
     let mut crates = vec![];
     for cargo_toml in cargo_tomls {
         let content = fs::read_to_string(cargo_toml)?;
-        let doc = content.parse::<ImDocument<String>>()?;
+        let doc = content.parse::<Document<String>>()?;
         let Some(name) = doc
             .get("package")
             .and_then(|package| package.get("name"))
@@ -60,7 +60,7 @@ pub fn get_current_version() -> Result<String> {
     let git_root = get_git_root_path()?;
     let cargo_toml = git_root.join("Cargo.toml");
     let content = fs::read_to_string(cargo_toml)?;
-    let doc = content.parse::<ImDocument<String>>()?;
+    let doc = content.parse::<Document<String>>()?;
     let Some(version) = doc
         .get("workspace")
         .and_then(|workspace| workspace.get("package"))
