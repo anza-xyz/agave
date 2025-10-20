@@ -439,7 +439,7 @@ mod tests {
         // Make stake monotonic decreasing so rank is deterministic
         let stake = (0..validator_keypairs.len())
             .rev()
-            .map(|i| ((i.saturating_add(5).saturating_mul(100)) as u64))
+            .map(|i| (i.saturating_add(5).saturating_mul(100)) as u64)
             .collect::<Vec<_>>();
         let genesis = create_genesis_config_with_alpenglow_vote_accounts(
             1_000_000_000,
