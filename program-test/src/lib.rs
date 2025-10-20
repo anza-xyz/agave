@@ -4,7 +4,9 @@
 // Export tokio for test clients
 pub use tokio;
 use {
-    agave_feature_set::{raise_cpi_nesting_limit_to_8, increase_cpi_account_info_limit, FEATURE_NAMES},
+    agave_feature_set::{
+        increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8, FEATURE_NAMES,
+    },
     async_trait::async_trait,
     base64::{prelude::BASE64_STANDARD, Engine},
     chrono_humanize::{Accuracy, HumanTime, Tense},

@@ -57,7 +57,10 @@ use {
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
     accounts_lt_hash::{CacheValue as AccountsLtHashCacheValue, Stats as AccountsLtHashStats},
-    agave_feature_set::{self as feature_set, raise_cpi_nesting_limit_to_8, increase_cpi_account_info_limit, FeatureSet},
+    agave_feature_set::{
+        self as feature_set, increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8,
+        FeatureSet,
+    },
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_syscalls::{
@@ -4085,7 +4088,10 @@ impl Bank {
         let compute_budget = self
             .compute_budget()
             .as_ref()
-            .unwrap_or(&ComputeBudget::new_with_defaults(simd_0268_active, simd_0339_active))
+            .unwrap_or(&ComputeBudget::new_with_defaults(
+                simd_0268_active,
+                simd_0339_active,
+            ))
             .to_budget();
         (
             Arc::new(

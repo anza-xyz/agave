@@ -39,7 +39,6 @@ pub struct SVMFeatureSet {
     pub raise_cpi_nesting_limit_to_8: bool,
     pub provide_instruction_data_offset_in_vm_r2: bool,
     pub increase_cpi_account_info_limit: bool,
-
 }
 
 impl SVMFeatureSet {

@@ -117,7 +117,6 @@ const MAX_CPI_ACCOUNT_INFOS: usize = 128;
 /// Maximum number of account info structs that can be used in a single CPI invocation with SIMD-0339 active
 const MAX_CPI_ACCOUNT_INFOS_SIMD_0339: usize = 255;
 
-
 /// Check that an account info pointer field points to the expected address
 fn check_account_info_pointer(
     invoke_context: &InvokeContext,
@@ -166,8 +165,8 @@ fn check_account_infos(
     {
         MAX_CPI_ACCOUNT_INFOS_SIMD_0339
     } else if invoke_context
-            .get_feature_set()
-            .increase_tx_account_lock_limit
+        .get_feature_set()
+        .increase_tx_account_lock_limit
     {
         MAX_CPI_ACCOUNT_INFOS
     } else {
@@ -544,18 +543,19 @@ pub fn translate_instruction_rust(
 
     check_instruction_size(account_metas.len(), data.len())?;
 
-    if invoke_context.get_feature_set().increase_cpi_account_info_limit{
+    if invoke_context
+        .get_feature_set()
+        .increase_cpi_account_info_limit
+    {
         // Each account meta is 34 bytes (32 for pubkey, 1 for is_signer, 1 for is_writable)
-        let account_meta_bytes = account_metas
-            .len()
-            .saturating_mul(size_of::<AccountMeta>()); 
+        let account_meta_bytes = account_metas.len().saturating_mul(size_of::<AccountMeta>());
 
         consume_compute_meter(
-        invoke_context,
-        (account_meta_bytes as u64)
-            .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-            .unwrap_or(u64::MAX),
-    )?;
+            invoke_context,
+            (account_meta_bytes as u64)
+                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+                .unwrap_or(u64::MAX),
+        )?;
     }
 
     consume_compute_meter(
@@ -602,20 +602,23 @@ pub fn translate_accounts_rust<'a>(
         check_aligned,
     )?;
 
-    if invoke_context.get_feature_set().increase_cpi_account_info_limit{
+    if invoke_context
+        .get_feature_set()
+        .increase_cpi_account_info_limit
+    {
         //std::mem::size_of::<AccountInfo>() returns 48 bytes, which contains references to the 2 Pubkeys of owner and key,
         //but we need the full size here so, need to add (32 + 32) bytes for Pubkey types and account for 8 + 8 bytes already existing for refence types.
         //Hence adding 32 here due to 5 bytes being the padding and 11 bytes being the other data, see SIMD-0339 for calculations.
-         let account_infos_bytes = account_infos
+        let account_infos_bytes = account_infos
             .len()
             .saturating_mul(std::mem::size_of::<AccountInfo>().saturating_add(32));
-        
+
         consume_compute_meter(
-        invoke_context,
-        (account_infos_bytes as u64)
-            .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-            .unwrap_or(u64::MAX),
-    )?;
+            invoke_context,
+            (account_infos_bytes as u64)
+                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+                .unwrap_or(u64::MAX),
+        )?;
     }
 
     translate_accounts_common(
@@ -693,19 +696,21 @@ pub fn translate_instruction_c(
 
     check_instruction_size(ix_c.accounts_len as usize, data.len())?;
 
-    if invoke_context.get_feature_set().increase_cpi_account_info_limit{
+    if invoke_context
+        .get_feature_set()
+        .increase_cpi_account_info_limit
+    {
         // Each account meta is 34 bytes (32 for pubkey, 1 for is_signer, 1 for is_writable)
-        let account_meta_bytes = ix_c.accounts_len 
-            .saturating_mul(34); 
+        let account_meta_bytes = ix_c.accounts_len.saturating_mul(34);
 
         consume_compute_meter(
-        invoke_context,
-        (account_meta_bytes as u64)
-            .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-            .unwrap_or(u64::MAX),
-    )?;
+            invoke_context,
+            (account_meta_bytes as u64)
+                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+                .unwrap_or(u64::MAX),
+        )?;
     }
-        
+
     consume_compute_meter(
         invoke_context,
         (data.len() as u64)
@@ -756,18 +761,19 @@ pub fn translate_accounts_c<'a>(
         check_aligned,
     )?;
 
-     if invoke_context.get_feature_set().increase_cpi_account_info_limit{
+    if invoke_context
+        .get_feature_set()
+        .increase_cpi_account_info_limit
+    {
         //sizeof(AccountInfo) is 80 bytes
-         let account_infos_bytes = account_infos
-            .len()
-            .saturating_mul(80);
-        
+        let account_infos_bytes = account_infos.len().saturating_mul(80);
+
         consume_compute_meter(
-        invoke_context,
-        (account_infos_bytes as u64)
-            .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-            .unwrap_or(u64::MAX),
-    )?;
+            invoke_context,
+            (account_infos_bytes as u64)
+                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+                .unwrap_or(u64::MAX),
+        )?;
     }
 
     translate_accounts_common(
@@ -841,8 +847,8 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
     // changes so the callee can see them.
     consume_compute_meter(
         invoke_context,
-        invoke_context.get_execution_cost().invoke_units
-    )?; 
+        invoke_context.get_execution_cost().invoke_units,
+    )?;
     if let Some(execute_time) = invoke_context.execute_time.as_mut() {
         execute_time.stop();
         invoke_context.timings.execute_us += execute_time.as_us();

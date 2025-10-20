@@ -160,7 +160,6 @@ impl FeatureSet {
             provide_instruction_data_offset_in_vm_r2: self
                 .is_active(&provide_instruction_data_offset_in_vm_r2::id()),
             increase_cpi_account_info_limit: self.is_active(&increase_cpi_account_info_limit::id()),
-
         }
     }
 }

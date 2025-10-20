@@ -587,43 +587,43 @@ fn process_instruction<'a>(
                 create_instruction(*accounts[INVOKED_PROGRAM_INDEX].key, &account_metas, vec![]);
             invoke_signed(&instruction, &[], &[])?;
         }
-        TEST_MAX_ACCOUNT_INFOS_OK => {
-            msg!("Test max allowed account infos");
+        TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_INCREASE_CPI_INFO_BEFORE_SIMD_0339 => {
+            msg!("Test max account infos ok before SIMD-0339 and before increase cpi info");
             let instruction = create_instruction(*accounts[INVOKED_PROGRAM_INDEX].key, &[], vec![]);
             let account_infos_len = 64;
             let account_infos = vec![accounts[0].clone(); account_infos_len];
             invoke_signed(&instruction, &account_infos, &[])?;
         }
-        TEST_MAX_ACCOUNT_INFOS_EXCEEDED => {
-            msg!("Test max account infos exceeded");
+        TEST_MAX_ACCOUNT_INFOS_EXCEEDED_BEFORE_INCREASE_CPI_INFO_BEFORE_SIMD_0339 => {
+            msg!("Test max account infos exceeded before SIMD-0339 and before increase cpi info");
             let instruction = create_instruction(*accounts[INVOKED_PROGRAM_INDEX].key, &[], vec![]);
             let account_infos_len = 65;
             let account_infos = vec![accounts[0].clone(); account_infos_len];
             invoke_signed(&instruction, &account_infos, &[])?;
         }
-        TEST_MAX_ACCOUNT_INFOS_OK_INCREASE_CPI_INFO => {
-            msg!("Test max account infos allowed with increase cpi info");
+        TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_SIMD_0339 => {
+            msg!("Test max account infos ok before SIMD-0339");
             let instruction = create_instruction(*accounts[INVOKED_PROGRAM_INDEX].key, &[], vec![]);
             let account_infos_len = MAX_CPI_ACCOUNT_INFOS;
             let account_infos = vec![accounts[0].clone(); account_infos_len];
             invoke_signed(&instruction, &account_infos, &[])?;
         }
-        TEST_MAX_ACCOUNT_INFOS_EXCEEDED_INCREASE_CPI_INFO => {
-            msg!("Test max account infos exceeded with increase cpi info");
+        TEST_MAX_ACCOUNT_INFOS_EXCEEDED_BEFORE_SIMD_0339 => {
+            msg!("Test max account infos exceeded before SIMD-0339");
             let instruction = create_instruction(*accounts[INVOKED_PROGRAM_INDEX].key, &[], vec![]);
             let account_infos_len = MAX_CPI_ACCOUNT_INFOS.saturating_add(1);
             let account_infos = vec![accounts[0].clone(); account_infos_len];
             invoke_signed(&instruction, &account_infos, &[])?;
         }
-        TEST_MAX_ACCOUNT_INFOS_SIMD_0339_OK => {
-            msg!("Test max account infos allowed with SIMD-0339");
+        TEST_MAX_ACCOUNT_INFOS_OK => {
+            msg!("Test max account infos ok");
             let instruction = create_instruction(*accounts[INVOKED_PROGRAM_INDEX].key, &[], vec![]);
             let account_infos_len = 255;
             let account_infos = vec![accounts[0].clone(); account_infos_len];
             invoke_signed(&instruction, &account_infos, &[])?;
         }
-        TEST_MAX_ACCOUNT_INFOS_SIMD_0339_EXCEEDED => {
-            msg!("Test max account infos exceeded with SIMD-0339");
+        TEST_MAX_ACCOUNT_INFOS_EXCEEDED => {
+            msg!("Test max account infos exceeded");
             let instruction = create_instruction(*accounts[INVOKED_PROGRAM_INDEX].key, &[], vec![]);
             let account_infos_len = 256;
             let account_infos = vec![accounts[0].clone(); account_infos_len];
