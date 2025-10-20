@@ -43,8 +43,14 @@ fn bench_vote_account_try_from(b: &mut Bencher) {
         let vote_account = VoteAccount::try_from(account.clone()).unwrap();
         let vote_state_view = vote_account.vote_state_view();
         assert_eq!(&vote_state.node_pubkey, vote_state_view.node_pubkey());
-        assert_eq!(vote_state.inflation_rewards_commission_bps, vote_state_view.commission().into());
-        assert_eq!(vote_state.epoch_credits.len(), vote_state_view.num_epoch_credits());
+        assert_eq!(
+            vote_state.inflation_rewards_commission_bps,
+            vote_state_view.inflation_rewards_commission()
+        );
+        assert_eq!(
+            vote_state.epoch_credits.len(),
+            vote_state_view.num_epoch_credits()
+        );
         assert_eq!(vote_state.last_timestamp, vote_state_view.last_timestamp());
         assert_eq!(vote_state.root_slot, vote_state_view.root_slot());
     });
