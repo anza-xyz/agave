@@ -55,7 +55,8 @@ use {
 #[cfg(test)]
 use {
     crate::repair::duplicate_repair_status::DuplicateSlotRepairStatus,
-    solana_clock::DEFAULT_MS_PER_SLOT, solana_keypair::Keypair,
+    solana_clock::DEFAULT_MS_PER_SLOT,
+    solana_keypair::{Keypair, Signer},
 };
 
 // Time to defer repair requests to allow for turbine propagation
@@ -1166,6 +1167,7 @@ impl RepairService {
                 cluster_slots,
                 serve_repair,
                 repair_validators,
+                &identity_keypair.pubkey(),
             );
             if let Some((repair_pubkey, repair_addr)) = status.repair_pubkey_and_addr {
                 let repairs = Self::generate_duplicate_repairs_for_slot(blockstore, *slot);
@@ -1210,13 +1212,19 @@ impl RepairService {
         cluster_slots: &ClusterSlots,
         serve_repair: &ServeRepair,
         repair_validators: &Option<HashSet<Pubkey>>,
+        my_pubkey: &Pubkey,
     ) {
         let now = timestamp();
         if status.repair_pubkey_and_addr.is_none()
             || now.saturating_sub(status.start_ts) >= MAX_DUPLICATE_WAIT_MS as u64
         {
             status.repair_pubkey_and_addr = serve_repair
-                .repair_request_duplicate_compute_best_peer(slot, cluster_slots, repair_validators);
+                .repair_request_duplicate_compute_best_peer(
+                    slot,
+                    cluster_slots,
+                    repair_validators,
+                    my_pubkey,
+                );
             status.start_ts = timestamp();
         }
     }
@@ -1229,6 +1237,7 @@ impl RepairService {
         cluster_slots: &ClusterSlots,
         serve_repair: &ServeRepair,
         repair_validators: &Option<HashSet<Pubkey>>,
+        my_pubkey: &Pubkey,
     ) {
         // If we're already in the middle of repairing this, ignore the signal.
         if duplicate_slot_repair_statuses.contains_key(&slot) {
@@ -1240,6 +1249,7 @@ impl RepairService {
             slot,
             cluster_slots,
             repair_validators,
+            my_pubkey,
         );
         let new_duplicate_slot_repair_status = DuplicateSlotRepairStatus {
             correct_ancestor_to_repair: (slot, Hash::default()),
@@ -1755,6 +1765,7 @@ mod test {
             )
         };
         let valid_repair_peer = Node::new_localhost().info;
+        let my_pubkey = cluster_info.id();
 
         // Signal that this peer has confirmed the dead slot, and is thus
         // a valid target for repair
@@ -1777,6 +1788,7 @@ mod test {
             &cluster_slots,
             &serve_repair,
             &None,
+            &my_pubkey,
         );
         assert_eq!(duplicate_status.repair_pubkey_and_addr, dummy_addr);
 
@@ -1792,6 +1804,7 @@ mod test {
             &cluster_slots,
             &serve_repair,
             &None,
+            &my_pubkey,
         );
         assert!(duplicate_status.repair_pubkey_and_addr.is_some());
 
@@ -1807,6 +1820,7 @@ mod test {
             &cluster_slots,
             &serve_repair,
             &None,
+            &my_pubkey,
         );
         assert_ne!(duplicate_status.repair_pubkey_and_addr, dummy_addr);
     }
