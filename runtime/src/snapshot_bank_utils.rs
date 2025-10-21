@@ -1681,7 +1681,7 @@ mod tests {
             .join(snapshot_utils::SNAPSHOT_FASTBOOT_VERSION_FILENAME);
         fs::remove_file(fastboot_version_file).unwrap();
 
-        // The fastboot file is not found, no snapshot is found
+        // The fastboot file is not found, no loadable snapshot is found
         let snapshot = get_highest_loadable_bank_snapshot(&snapshot_config);
         assert!(snapshot.is_none());
     }
