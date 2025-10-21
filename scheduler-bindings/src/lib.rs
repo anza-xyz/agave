@@ -210,8 +210,6 @@ pub mod pack_message_flags {
 
 /// Message: [Worker -> Pack]
 /// Message from worker threads in response to a [`PackToWorkerMessage`].
-/// [`PackToWorkerMessage`] may have multiple response messages that
-/// will follow the order of transactions in the original message.
 #[repr(C)]
 pub struct WorkerToPackMessage {
     /// Offset and number of transactions in the batch.
@@ -228,6 +226,7 @@ pub struct WorkerToPackMessage {
     /// If `false`, the value of [`Self::responses`] is undefined.
     pub processed: bool,
     /// Response per transaction in the batch.
+    /// If [`Self::processed`] is false, this field is undefined.
     /// See [`TransactionResponseRegion`] for details.
     pub responses: TransactionResponseRegion,
 }
