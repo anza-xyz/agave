@@ -575,6 +575,7 @@ impl PartialEq for Bank {
             block_id,
             bank_hash_stats: _,
             epoch_rewards_calculation_cache: _,
+            epoch_boundary_preparation: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
@@ -722,6 +723,37 @@ impl HashOverrides {
 struct HashOverride {
     blockhash: Hash,
     bank_hash: Hash,
+}
+
+// Tracks epoch boundary preparation state for program cache management.
+// Each new epoch, during `process_new_epoch`, this structure is recomputed.
+#[derive(Clone, Debug, Default)]
+struct EpochBoundaryPreparation {
+    // The slot at which program cache recompilation should begin.
+    program_cache_recompilation_begin_slot: Slot,
+}
+
+impl EpochBoundaryPreparation {
+    // Recompilation begins at the slot calculated as:
+    //
+    //     L - min(M, S) / 2 + 1
+    //
+    // where:
+    // - L: Last slot in the epoch
+    // - M: Maximum loaded entry count (`MAX_LOADED_ENTRY_COUNT`)
+    // - S: Slots in the epoch
+    fn update_recompilation_begin_slot(&mut self, epoch: Epoch, epoch_schedule: &EpochSchedule) {
+        let last_slot_in_epoch = epoch_schedule.get_last_slot_in_epoch(epoch);
+        let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
+        let slots_in_recompilation_phase =
+            (solana_program_runtime::loaded_programs::MAX_LOADED_ENTRY_COUNT as u64)
+                .min(slots_in_epoch)
+                .checked_div(2)
+                .unwrap();
+        self.program_cache_recompilation_begin_slot = last_slot_in_epoch
+            .saturating_sub(slots_in_recompilation_phase)
+            .saturating_add(1);
+    }
 }
 
 /// Manager for the state of all accounts and programs after processing its entries.
@@ -922,6 +954,9 @@ pub struct Bank {
     /// This is used to avoid recalculating the same epoch rewards at epoch boundary.
     /// The hashmap is keyed by parent_hash.
     epoch_rewards_calculation_cache: Arc<Mutex<HashMap<Hash, Arc<PartitionedRewardsCalculation>>>>,
+
+    /// Tracks epoch boundary preparation state for program cache management.
+    epoch_boundary_preparation: EpochBoundaryPreparation,
 }
 
 #[derive(Debug)]
@@ -1118,6 +1153,7 @@ impl Bank {
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
+            epoch_boundary_preparation: EpochBoundaryPreparation::default(),
         };
 
         bank.transaction_processor =
@@ -1185,6 +1221,8 @@ impl Bank {
         bank.update_last_restart_slot();
         bank.transaction_processor
             .fill_missing_sysvar_cache_entries(&bank);
+        bank.epoch_boundary_preparation
+            .update_recompilation_begin_slot(bank.epoch, &bank.epoch_schedule);
         bank
     }
 
@@ -1365,6 +1403,7 @@ impl Bank {
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
             epoch_rewards_calculation_cache: parent.epoch_rewards_calculation_cache.clone(),
+            epoch_boundary_preparation: parent.epoch_boundary_preparation.clone(),
         };
 
         let (_, ancestors_time_us) = measure_us!({
@@ -1485,16 +1524,7 @@ impl Bank {
     }
 
     fn prepare_program_cache_for_upcoming_feature_set(&self) {
-        let (_epoch, slot_index) = self.epoch_schedule.get_epoch_and_slot_index(self.slot);
-        let slots_in_epoch = self.epoch_schedule.get_slots_in_epoch(self.epoch);
         let (upcoming_feature_set, _newly_activated) = self.compute_active_feature_set(true);
-
-        // Recompile loaded programs one at a time before the next epoch hits
-        let slots_in_recompilation_phase =
-            (solana_program_runtime::loaded_programs::MAX_LOADED_ENTRY_COUNT as u64)
-                .min(slots_in_epoch)
-                .checked_div(2)
-                .unwrap();
 
         let mut program_cache = self
             .transaction_processor
@@ -1535,7 +1565,10 @@ impl Bank {
                 }
             }
         } else if self.epoch != program_cache.latest_root_epoch
-            || slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch
+            || self.slot
+                >= self
+                    .epoch_boundary_preparation
+                    .program_cache_recompilation_begin_slot
         {
             // Anticipate the upcoming program runtime environment for the next epoch,
             // so we can try to recompile loaded programs before the feature transition hits.
@@ -1647,6 +1680,10 @@ impl Bank {
             },
             rewards_metrics,
         );
+
+        // Calculate when program cache recompilation should begin for this epoch.
+        self.epoch_boundary_preparation
+            .update_recompilation_begin_slot(self.epoch, &self.epoch_schedule);
     }
 
     pub fn byte_limit_for_scans(&self) -> Option<usize> {
@@ -1737,6 +1774,7 @@ impl Bank {
         ));
         info!("Loading Stakes took: {stakes_time}");
         let stakes_accounts_load_duration = now.elapsed();
+
         let mut bank = Self {
             rc: bank_rc,
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
@@ -1805,6 +1843,7 @@ impl Bank {
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::new(&fields.bank_hash_stats),
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
+            epoch_boundary_preparation: EpochBoundaryPreparation::default(),
         };
 
         // Sanity assertions between bank snapshot and genesis config
@@ -5189,6 +5228,9 @@ impl Bank {
 
         self.transaction_processor
             .fill_missing_sysvar_cache_entries(self);
+
+        self.epoch_boundary_preparation
+            .update_recompilation_begin_slot(self.epoch, &self.epoch_schedule);
     }
 
     /// Compute and apply all activated features and also add accounts for builtins
