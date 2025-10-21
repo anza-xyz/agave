@@ -10,7 +10,8 @@ use {
 pub(crate) static DEFAULT_HEALTH_CHECK_SLOT_DISTANCE: LazyLock<String> = LazyLock::new(|| {
     solana_rpc_client_api::request::DELINQUENT_VALIDATOR_SLOT_DISTANCE.to_string()
 });
-pub(crate) const DEFAULT_MAX_MULTIPLE_ACCOUNTS: &str = "100"; // solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS
+pub(crate) static DEFAULT_MAX_MULTIPLE_ACCOUNTS: LazyLock<String> =
+    LazyLock::new(|| solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS.to_string());
 pub(crate) static DEFAULT_RPC_THREADS: LazyLock<String> =
     LazyLock::new(|| num_cpus::get().to_string());
 pub(crate) static DEFAULT_RPC_BLOCKING_THREADS: LazyLock<String> =
@@ -107,7 +108,7 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .long("rpc-max-multiple-accounts")
             .value_name("MAX ACCOUNTS")
             .takes_value(true)
-            .default_value(DEFAULT_MAX_MULTIPLE_ACCOUNTS)
+            .default_value(&DEFAULT_MAX_MULTIPLE_ACCOUNTS)
             .help(
                 "Override the default maximum accounts accepted by the getMultipleAccounts JSON \
                  RPC method",
@@ -451,6 +452,15 @@ mod tests {
             DEFAULT_HEALTH_CHECK_SLOT_DISTANCE.to_string(),
             "128",
             "DEFAULT_HEALTH_CHECK_SLOT_DISTANCE changed"
+        );
+    }
+
+    #[test]
+    fn test_default_max_multiple_accounts_unchanged() {
+        assert_eq!(
+            DEFAULT_MAX_MULTIPLE_ACCOUNTS.to_string(),
+            "100",
+            "DEFAULT_MAX_MULTIPLE_ACCOUNTS changed"
         );
     }
 }
