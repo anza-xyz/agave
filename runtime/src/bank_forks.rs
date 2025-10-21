@@ -727,6 +727,22 @@ mod tests {
         solana_vote_program::vote_state::BlockTimestamp,
     };
 
+    // This test verifies that BankForks::new_rw_arc() doesn't create a reference cycle.
+    //
+    // Before PR #1893, there was a cycle:
+    //   Arc<RwLock<BankForks>> → Bank → ProgramCache → Arc<RwLock<BankForks>>
+    //
+    // This happened because new_rw_arc() called:
+    //   root_bank.set_fork_graph_in_program_cache(bank_forks.clone())
+    //
+    // The fix changed it to use a Weak reference:
+    //   root_bank.set_fork_graph_in_program_cache(Arc::downgrade(&bank_forks))
+    //
+    // Breaking the cycle:
+    //   Arc<RwLock<BankForks>> → Bank → ProgramCache → Weak<RwLock<BankForks>>
+    //
+    // Without the fix: strong_count == 2 (the clone creates an extra strong ref)
+    // With the fix: strong_count == 1 (only the returned Arc holds a strong ref)
     #[test]
     fn test_bank_forks_new_rw_arc_memory_leak() {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
