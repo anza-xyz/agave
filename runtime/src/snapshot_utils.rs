@@ -82,9 +82,9 @@ pub const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
 const MAX_SNAPSHOT_VERSION_FILE_SIZE: u64 = 8; // byte
 
 // Snapshot Fastboot Version History
-// Legacy - No fastboot version file, uses storages flushed file to determine if snapshot is loadable
-// 1.0.0 - Initial version with version file. Backwards and forwards compatible with Legacy
-// 2.0.0 - Fastboot version file added, storages flushed file not written anymore
+// Legacy - No fastboot version file, storages flushed file presence determines if snapshot is loadable
+// 1.0.0 - Initial version file. Backwards and forwards compatible with Legacy.
+// 2.0.0 - Obsolete Accounts File added, storages flushed file not written anymore
 //         Snapshots created with version 2.0.0 will not fastboot to older versions
 //         Snapshots created with versions <2.0.0 will fastboot to version 2.0.0
 const SNAPSHOT_FASTBOOT_VERSION: Version = Version::new(2, 0, 0);
