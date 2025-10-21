@@ -1,0 +1,28 @@
+[package]
+name = "solana-rpc-internal"
+description = "Private utilities for making RPC requests and subscriptions"
+publish = false
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+subscriptions = ["jsonrpsee/ws-client"]
+
+[dependencies]
+jsonrpsee = { workspace = true, optional = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tokio = { workspace = true }
+ws-mock = { workspace = true }
+
+[lints]
+workspace = true
