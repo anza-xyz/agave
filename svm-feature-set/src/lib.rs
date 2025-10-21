@@ -85,4 +85,49 @@ impl SVMFeatureSet {
             vote_state_v4: true,
         }
     }
+
+    /// Converts the feature set into a bitmask.
+    #[allow(clippy::identity_op)]
+    #[inline]
+    pub const fn to_bitmask(&self) -> u64 {
+        (self.move_precompile_verification_to_svm as u64) << 0
+            | (self.stricter_abi_and_runtime_constraints as u64) << 1
+            | (self.account_data_direct_mapping as u64) << 2
+            | (self.enable_bpf_loader_set_authority_checked_ix as u64) << 3
+            | (self.enable_loader_v4 as u64) << 4
+            | (self.deplete_cu_meter_on_vm_failure as u64) << 5
+            | (self.abort_on_invalid_curve as u64) << 6
+            | (self.blake3_syscall_enabled as u64) << 7
+            | (self.curve25519_syscall_enabled as u64) << 8
+            | (self.disable_deploy_of_alloc_free_syscall as u64) << 9
+            | (self.disable_fees_sysvar as u64) << 10
+            | (self.disable_sbpf_v0_execution as u64) << 11
+            | (self.enable_alt_bn128_compression_syscall as u64) << 12
+            | (self.enable_alt_bn128_syscall as u64) << 13
+            | (self.enable_big_mod_exp_syscall as u64) << 14
+            | (self.enable_get_epoch_stake_syscall as u64) << 15
+            | (self.enable_poseidon_syscall as u64) << 16
+            | (self.enable_sbpf_v1_deployment_and_execution as u64) << 17
+            | (self.enable_sbpf_v2_deployment_and_execution as u64) << 18
+            | (self.enable_sbpf_v3_deployment_and_execution as u64) << 19
+            | (self.get_sysvar_syscall_enabled as u64) << 20
+            | (self.last_restart_slot_sysvar as u64) << 21
+            | (self.reenable_sbpf_v0_execution as u64) << 22
+            | (self.remaining_compute_units_syscall_enabled as u64) << 23
+            | (self.remove_bpf_loader_incorrect_program_id as u64) << 24
+            | (self.move_stake_and_move_lamports_ixs as u64) << 25
+            | (self.stake_raise_minimum_delegation_to_1_sol as u64) << 26
+            | (self.deprecate_legacy_vote_ixs as u64) << 27
+            | (self.mask_out_rent_epoch_in_vm_serialization as u64) << 28
+            | (self.simplify_alt_bn128_syscall_error_codes as u64) << 29
+            | (self.fix_alt_bn128_multiplication_input_length as u64) << 30
+            | (self.increase_tx_account_lock_limit as u64) << 31
+            | (self.enable_extend_program_checked as u64) << 32
+            | (self.formalize_loaded_transaction_data_size as u64) << 33
+            | (self.disable_zk_elgamal_proof_program as u64) << 34
+            | (self.reenable_zk_elgamal_proof_program as u64) << 35
+            | (self.raise_cpi_nesting_limit_to_8 as u64) << 36
+            | (self.provide_instruction_data_offset_in_vm_r2 as u64) << 37
+            | (self.vote_state_v4 as u64) << 38
+    }
 }
