@@ -96,6 +96,7 @@ impl TransactionAccountViewMut<'_> {
 
     pub(crate) fn resize(&mut self, new_len: usize, value: u8) {
         self.data_mut().resize(new_len, value);
+        // SAFETY: We are synchronizing the lengths.
         unsafe {
             self.abi_account.payload.set_len(new_len as u64);
         }
@@ -108,6 +109,7 @@ impl TransactionAccountViewMut<'_> {
             // If the buffer is shared, the cheapest thing to do is to clone the
             // incoming slice and replace the buffer.
             self.private_fields.payload = Arc::new(new_data.to_vec());
+            // SAFETY: We are synchronizing the lengths.
             unsafe {
                 self.abi_account.payload.set_len(new_data.len() as u64);
             }
@@ -148,8 +150,11 @@ impl TransactionAccountViewMut<'_> {
 
     pub(crate) fn extend_from_slice(&mut self, data: &[u8]) {
         self.data_mut().extend_from_slice(data);
+        // SAFETY: We are synchronizing the lengths.
         unsafe {
-            self.abi_account.payload.set_len(data.len() as u64);
+            self.abi_account
+                .payload
+                .set_len(self.private_fields.payload.len() as u64);
         }
     }
 
@@ -559,6 +564,13 @@ pub struct AccountRefMut<'a> {
 
 impl Drop for AccountRefMut<'_> {
     fn drop(&mut self) {
+        // SAFETY: We are synchronizing the lengths.
+        unsafe {
+            self.account
+                .abi_account
+                .payload
+                .set_len(self.account.private_fields.payload.len() as u64);
+        }
         self.borrow_counter.release_borrow_mut();
     }
 }
