@@ -784,7 +784,7 @@ fn test_program_sbf_invoke_sanity() {
 
             let (result, _log_messages, _executed_units, invoked_programs, no_invoked_programs) =
                 do_invoke(test, additional_instructions, bank);
-            
+
             assert_eq!(result, Ok(()));
             assert_eq!(invoked_programs.len(), expected_invoked_programs.len());
             assert_eq!(invoked_programs, expected_invoked_programs);
@@ -882,8 +882,8 @@ fn test_program_sbf_invoke_sanity() {
             bank,
             &feature_set::increase_cpi_account_info_limit::id(),
         );
-        
-         assert!(!bank
+
+        assert!(!bank
             .feature_set
             .is_active(&feature_set::increase_cpi_account_info_limit::id()));
 
@@ -899,10 +899,10 @@ fn test_program_sbf_invoke_sanity() {
             bank,
             &feature_set::increase_tx_account_lock_limit::id(),
         );
-         assert!(!bank
+        assert!(!bank
             .feature_set
             .is_active(&feature_set::increase_tx_account_lock_limit::id()));
-        
+
         do_invoke_success(
             TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_INCREASE_CPI_INFO_BEFORE_SIMD_0339,
             &[],
@@ -915,17 +915,17 @@ fn test_program_sbf_invoke_sanity() {
             &feature_set::increase_tx_account_lock_limit::id(),
         );
 
-         assert!(bank
+        assert!(bank
             .feature_set
             .is_active(&feature_set::increase_tx_account_lock_limit::id()));
-        
+
         let bank = bank_with_feature_activated(
             &bank_forks,
             bank,
             &feature_set::increase_cpi_account_info_limit::id(),
         );
 
-         assert!(bank
+        assert!(bank
             .feature_set
             .is_active(&feature_set::increase_cpi_account_info_limit::id()));
         // failure cases
@@ -1102,7 +1102,7 @@ fn test_program_sbf_invoke_sanity() {
             &feature_set::increase_cpi_account_info_limit::id(),
         );
 
-         assert!(!bank
+        assert!(!bank
             .feature_set
             .is_active(&feature_set::increase_cpi_account_info_limit::id()));
 
@@ -1129,7 +1129,7 @@ fn test_program_sbf_invoke_sanity() {
             &feature_set::increase_tx_account_lock_limit::id(),
         );
 
-         assert!(!bank
+        assert!(!bank
             .feature_set
             .is_active(&feature_set::increase_tx_account_lock_limit::id()));
 
@@ -1140,7 +1140,9 @@ fn test_program_sbf_invoke_sanity() {
             Some(vec![
                 format!("Program {invoke_program_id} invoke [1]"),
                 format!("Program log: invoke {program_lang} program"),
-                "Program log: Test max account infos exceeded before SIMD-0339 and before increase cpi info".into(),
+                "Program log: Test max account infos exceeded before SIMD-0339 and before \
+                 increase cpi info"
+                    .into(),
                 "skip".into(), // don't compare compute consumption logs
                 format!(
                     "Program {invoke_program_id} failed: Invoked an instruction with too many \

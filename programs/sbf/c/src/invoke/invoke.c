@@ -560,7 +560,7 @@ extern uint64_t entrypoint(const uint8_t *input) {
     SolAccountInfo *account_infos = sol_calloc(account_infos_len, sizeof(SolAccountInfo));
     sol_assert(0 != account_infos);
     for (uint64_t i = 0; i < account_infos_len; i++) {
-      account_infos[i] = accounts[0]; 
+      account_infos[i] = accounts[0];
     }
     uint8_t data[] = {};
     const SolInstruction instruction = {accounts[INVOKED_PROGRAM_INDEX].key,
@@ -597,7 +597,7 @@ extern uint64_t entrypoint(const uint8_t *input) {
     SolAccountInfo *account_infos = sol_calloc(account_infos_len, sizeof(SolAccountInfo));
     sol_assert(0 != account_infos);
      for (uint64_t i = 0; i < account_infos_len; i++) {
-      account_infos[i] = accounts[0]; 
+      account_infos[i] = accounts[0];
     }
     uint8_t data[] = {};
     const SolInstruction instruction = {accounts[INVOKED_PROGRAM_INDEX].key,
@@ -633,9 +633,8 @@ extern uint64_t entrypoint(const uint8_t *input) {
     uint64_t account_infos_len = 255;
     SolAccountInfo *account_infos = sol_calloc(account_infos_len, sizeof(SolAccountInfo));
     sol_assert(0 != account_infos);
-    
     for (uint64_t i = 0; i < account_infos_len; i++) {
-      account_infos[i] = accounts[0]; 
+      account_infos[i] = accounts[0];
     }
     uint8_t data[] = {};
     const SolInstruction instruction = {accounts[INVOKED_PROGRAM_INDEX].key,
