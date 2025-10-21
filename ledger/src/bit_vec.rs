@@ -595,6 +595,34 @@ mod tests {
                 prop_assert_eq!(iter.next_back(), range_iter.next_back());
             }
         }
+
+        #[test]
+        fn test_deserialize_from_smaller_length(data in prop::collection::vec(any::<u8>(), 0..BitVec::<1024>::NUM_WORDS)) {
+            const NUM_BITS: usize = 1024;
+            let mut expected = BitVec::<NUM_BITS>::default();
+            expected.words[..data.len()].copy_from_slice(&data);
+
+            #[derive(Serialize)]
+            #[serde(transparent)]
+            struct Source {
+                #[serde(with = "serde_bytes")]
+                data: Vec<u8>,
+            }
+            let serialized = bincode::serialize(&Source { data }).unwrap();
+            // Deserializing should always result in a BitVec with exactly NUM_WORDS words,
+            // adding zeroed bits that are not present in the serialized data.
+            let deserialized: BitVec<NUM_BITS> = bincode::deserialize(&serialized).unwrap();
+            prop_assert_eq!(deserialized, expected);
+        }
+
+        #[test]
+        fn serialize_roundtrip(range in rand_range(0..1024_usize)) {
+            const NUM_BITS: usize = 1024;
+            let bit_vec = range.into_iter().collect::<BitVec<NUM_BITS>>();
+            let serialized = bincode::serialize(&bit_vec).unwrap();
+            let deserialized: BitVec<NUM_BITS> = bincode::deserialize(&serialized).unwrap();
+            prop_assert_eq!(deserialized, bit_vec);
+        }
     }
 
     #[test]
