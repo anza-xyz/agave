@@ -7,7 +7,7 @@ use {
     super::leader_updater::LeaderUpdater,
     crate::{
         connection_worker::DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
-        logging::{debug, warn},
+        logging::debug,
         quic_networking::{
             create_client_config, create_client_endpoint, QuicClientCertificate, QuicError,
         },
@@ -338,23 +338,13 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
         for new_leader in leaders {
             let send_res =
                 workers.try_send_transactions_to_address(new_leader, transaction_batch.clone());
-            match send_res {
-                Ok(()) => (),
-                Err(WorkersCacheError::WorkerNotFound) => {
-                    warn!("No existing worker for {new_leader:?}, skip sending to this leader.");
-                }
-                Err(WorkersCacheError::ShutdownError) => {
-                    debug!("Connection to {new_leader} was closed, worker cache shutdown");
-                }
-                Err(WorkersCacheError::ReceiverDropped) => {
-                    // Remove the worker from the cache, if the peer has disconnected.
+            if let Err(err) = send_res {
+                debug!("Failed to send transactions to {new_leader:?}, worker send error: {err}.");
+                if err == WorkersCacheError::ReceiverDropped {
+                    // Remove the worker from the cache if the peer has disconnected.
                     if let Some(pop_worker) = workers.pop(*new_leader) {
                         shutdown_worker(pop_worker)
                     }
-                }
-                Err(err) => {
-                    warn!("Connection to {new_leader} was closed, worker error: {err}");
-                    // If we have failed to send batch, it will be dropped.
                 }
             }
         }
