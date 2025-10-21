@@ -463,4 +463,13 @@ mod tests {
             "DEFAULT_MAX_MULTIPLE_ACCOUNTS changed"
         );
     }
+
+    #[test]
+    fn test_default_rpc_threads_unchanged() {
+        assert_eq!(
+            DEFAULT_RPC_THREADS.to_string(),
+            num_cpus::get().to_string(),
+            "DEFAULT_RPC_THREADS changed"
+        );
+    }
 }
