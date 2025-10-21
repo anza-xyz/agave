@@ -7,7 +7,9 @@ use {
     std::sync::LazyLock,
 };
 
-pub(crate) const DEFAULT_HEALTH_CHECK_SLOT_DISTANCE: &str = "128"; // solana_rpc_client_api::request::DELINQUENT_VALIDATOR_SLOT_DISTANCE
+pub(crate) static DEFAULT_HEALTH_CHECK_SLOT_DISTANCE: LazyLock<String> = LazyLock::new(|| {
+    solana_rpc_client_api::request::DELINQUENT_VALIDATOR_SLOT_DISTANCE.to_string()
+});
 pub(crate) const DEFAULT_MAX_MULTIPLE_ACCOUNTS: &str = "100"; // solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS
 pub(crate) static DEFAULT_RPC_THREADS: LazyLock<String> =
     LazyLock::new(|| num_cpus::get().to_string());
@@ -91,7 +93,7 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .long("health-check-slot-distance")
             .value_name("SLOT_DISTANCE")
             .takes_value(true)
-            .default_value(DEFAULT_HEALTH_CHECK_SLOT_DISTANCE)
+            .default_value(&DEFAULT_HEALTH_CHECK_SLOT_DISTANCE)
             .help(
                 "Report this validator as healthy if its latest replayed optimistically confirmed \
                  slot is within the specified number of slots from the cluster's latest \
@@ -441,5 +443,14 @@ mod tests {
                 expected_args,
             );
         }
+    }
+
+    #[test]
+    fn test_default_health_check_slot_distance_unchanged() {
+        assert_eq!(
+            DEFAULT_HEALTH_CHECK_SLOT_DISTANCE.to_string(),
+            "128",
+            "DEFAULT_HEALTH_CHECK_SLOT_DISTANCE changed"
+        );
     }
 }
