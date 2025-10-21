@@ -431,6 +431,7 @@ impl ServeRepair {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn my_id(&self) -> Pubkey {
         self.cluster_info.id()
     }
