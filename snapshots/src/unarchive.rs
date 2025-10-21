@@ -10,7 +10,6 @@ use {
         path::{Path, PathBuf},
         thread::{self, JoinHandle},
     },
-    tar::Archive,
 };
 
 // Allows scheduling a large number of reads such that temporary disk access delays
@@ -35,7 +34,7 @@ pub fn streaming_unarchive_snapshot(
             let decompressor =
                 decompressed_tar_reader(archive_format, snapshot_archive_path, read_buf_size)?;
             hardened_unpack::streaming_unpack_snapshot(
-                Archive::new(decompressor),
+                decompressor,
                 read_write_budget_size,
                 ledger_dir.as_path(),
                 &account_paths,
