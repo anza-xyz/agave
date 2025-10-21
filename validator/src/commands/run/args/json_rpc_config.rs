@@ -472,4 +472,13 @@ mod tests {
             "DEFAULT_RPC_THREADS changed"
         );
     }
+
+    #[test]
+    fn test_default_rpc_blocking_threads_unchanged() {
+        assert_eq!(
+            DEFAULT_RPC_BLOCKING_THREADS.to_string(),
+            (1.max(num_cpus::get() / 4)).to_string(),
+            "DEFAULT_RPC_BLOCKING_THREADS changed"
+        );
+    }
 }
