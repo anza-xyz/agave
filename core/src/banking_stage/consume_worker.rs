@@ -5,6 +5,7 @@ use {
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
     crate::banking_stage::consumer::RetryableIndex,
+    crossbeam_channel::{Receiver, SendError, Sender, TryRecvError},
     solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
     solana_runtime::bank::Bank,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -21,11 +22,11 @@ use {
 };
 
 #[derive(Debug, Error)]
-pub enum ConsumeWorkerError {
-    #[error("Failed to receive work from scheduler")]
-    Recv(TryRecvError),
-    #[error("Failed to send finalized consume work to scheduler")]
-    Send(TrySendError),
+pub enum ConsumeWorkerError<Tx> {
+    #[error("Failed to receive work from scheduler: {0}")]
+    Recv(#[from] TryRecvError),
+    #[error("Failed to send finalized consume work to scheduler: {0}")]
+    Send(#[from] SendError<FinishedConsumeWork<Tx>>),
 }
 
 enum ProcessingStatus<Tx> {
@@ -34,27 +35,30 @@ enum ProcessingStatus<Tx> {
     CouldNotProcess(ConsumeWork<Tx>),
 }
 
-pub(crate) struct ConsumeWorker<Ch> {
+pub(crate) struct ConsumeWorker<Tx> {
     exit: Arc<AtomicBool>,
-    channels: Ch,
+    consume_receiver: Receiver<ConsumeWork<Tx>>,
     consumer: Consumer,
+    consumed_sender: Sender<FinishedConsumeWork<Tx>>,
 
     shared_leader_state: SharedLeaderState,
     metrics: Arc<ConsumeWorkerMetrics>,
 }
 
-impl<Channels: ConsumeWorkerChannels> ConsumeWorker<Channels> {
+impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     pub fn new(
         id: u32,
         exit: Arc<AtomicBool>,
-        channels: Channels,
+        consume_receiver: Receiver<ConsumeWork<Tx>>,
         consumer: Consumer,
+        consumed_sender: Sender<FinishedConsumeWork<Tx>>,
         shared_leader_state: SharedLeaderState,
     ) -> Self {
         Self {
             exit,
-            channels,
+            consume_receiver,
             consumer,
+            consumed_sender,
             shared_leader_state,
             metrics: Arc::new(ConsumeWorkerMetrics::new(id)),
         }
@@ -64,7 +68,7 @@ impl<Channels: ConsumeWorkerChannels> ConsumeWorker<Channels> {
         self.metrics.clone()
     }
 
-    pub fn run(mut self) -> Result<(), ConsumeWorkerError> {
+    pub fn run(self) -> Result<(), ConsumeWorkerError<Tx>> {
         const STARTING_SLEEP_DURATION: Duration = Duration::from_micros(250);
 
         let mut did_work = false;
@@ -72,7 +76,7 @@ impl<Channels: ConsumeWorkerChannels> ConsumeWorker<Channels> {
         let mut sleep_duration = STARTING_SLEEP_DURATION;
 
         while !self.exit.load(Ordering::Relaxed) {
-            match self.channels.try_recv() {
+            match self.consume_receiver.try_recv() {
                 Ok(work) => {
                     did_work = true;
                     match self.consume(work)? {
@@ -102,9 +106,9 @@ impl<Channels: ConsumeWorkerChannels> ConsumeWorker<Channels> {
     }
 
     fn consume(
-        &mut self,
-        work: ConsumeWork<Channels::Tx>,
-    ) -> Result<ProcessingStatus<Channels::Tx>, ConsumeWorkerError> {
+        &self,
+        work: ConsumeWork<Tx>,
+    ) -> Result<ProcessingStatus<Tx>, ConsumeWorkerError<Tx>> {
         let Some(leader_state) = self.active_leader_state_with_timeout() else {
             return Ok(ProcessingStatus::CouldNotProcess(work));
         };
@@ -122,10 +126,10 @@ impl<Channels: ConsumeWorkerChannels> ConsumeWorker<Channels> {
 
     /// Consume a single batch.
     fn consume_with_bank(
-        &mut self,
+        &self,
         bank: &Arc<Bank>,
-        work: ConsumeWork<Channels::Tx>,
-    ) -> Result<(), ConsumeWorkerError> {
+        work: ConsumeWork<Tx>,
+    ) -> Result<(), ConsumeWorkerError<Tx>> {
         let output = self.consumer.process_and_record_aged_transactions(
             bank,
             &work.transactions,
@@ -135,15 +139,12 @@ impl<Channels: ConsumeWorkerChannels> ConsumeWorker<Channels> {
         self.metrics.update_for_consume(&output);
         self.metrics.has_data.store(true, Ordering::Relaxed);
 
-        self.channels
-            .try_send(FinishedConsumeWork {
-                work,
-                retryable_indexes: output
-                    .execute_and_commit_transactions_output
-                    .retryable_transaction_indexes,
-            })
-            .map_err(ConsumeWorkerError::Send)?;
-
+        self.consumed_sender.send(FinishedConsumeWork {
+            work,
+            retryable_indexes: output
+                .execute_and_commit_transactions_output
+                .retryable_transaction_indexes,
+        })?;
         Ok(())
     }
 
@@ -187,19 +188,18 @@ impl<Channels: ConsumeWorkerChannels> ConsumeWorker<Channels> {
     }
 
     /// Retry current batch and all outstanding batches.
-    fn retry_drain(&mut self, work: ConsumeWork<Channels::Tx>) -> Result<(), ConsumeWorkerError> {
-        self.retry(work)?;
-        while let Ok(work) = self.channels.try_recv() {
-            self.retry(work)?;
+    fn retry_drain(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
+        for work in try_drain_iter(work, &self.consume_receiver) {
             if self.exit.load(Ordering::Relaxed) {
                 return Ok(());
             }
+            self.retry(work)?;
         }
         Ok(())
     }
 
     /// Send transactions back to scheduler as retryable.
-    fn retry(&mut self, work: ConsumeWork<Channels::Tx>) -> Result<(), ConsumeWorkerError> {
+    fn retry(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
         let retryable_indexes: Vec<_> = (0..work.transactions.len())
             .map(|index| RetryableIndex {
                 index,
@@ -216,14 +216,18 @@ impl<Channels: ConsumeWorkerChannels> ConsumeWorker<Channels> {
             .retryable_expired_bank_count
             .fetch_add(num_retryable, Ordering::Relaxed);
         self.metrics.has_data.store(true, Ordering::Relaxed);
-        self.channels
-            .try_send(FinishedConsumeWork {
-                work,
-                retryable_indexes,
-            })
-            .map_err(ConsumeWorkerError::Send)?;
+        self.consumed_sender.send(FinishedConsumeWork {
+            work,
+            retryable_indexes,
+        })?;
         Ok(())
     }
+}
+
+/// Helper function to create an non-blocking iterator over work in the receiver,
+/// starting with the given work item.
+fn try_drain_iter<T>(work: T, receiver: &Receiver<T>) -> impl Iterator<Item = T> + '_ {
+    std::iter::once(work).chain(receiver.try_iter())
 }
 
 fn backoff(idle_duration: Duration, sleep_duration: &mut Duration) {
@@ -779,55 +783,6 @@ impl ConsumeWorkerTransactionErrorMetrics {
     }
 }
 
-#[derive(Debug)]
-pub enum TryRecvError {
-    Empty,
-    Disconnected,
-}
-
-#[derive(Debug)]
-pub enum TrySendError {
-    Full,
-    Disconnected,
-}
-
-pub(crate) trait ConsumeWorkerChannels {
-    type Tx: TransactionWithMeta;
-    fn try_recv(&mut self) -> Result<ConsumeWork<Self::Tx>, TryRecvError>;
-    fn try_send(
-        &mut self,
-        finished_work: FinishedConsumeWork<Self::Tx>,
-    ) -> Result<(), TrySendError>;
-}
-
-pub(crate) struct CrossbeamConsumeWorkerChannels<Tx> {
-    pub receiver: crossbeam_channel::Receiver<ConsumeWork<Tx>>,
-    pub sender: crossbeam_channel::Sender<FinishedConsumeWork<Tx>>,
-}
-
-impl<Tx: TransactionWithMeta> ConsumeWorkerChannels for CrossbeamConsumeWorkerChannels<Tx> {
-    type Tx = Tx;
-
-    fn try_recv(&mut self) -> Result<ConsumeWork<Self::Tx>, TryRecvError> {
-        self.receiver.try_recv().map_err(|err| match err {
-            crossbeam_channel::TryRecvError::Empty => TryRecvError::Empty,
-            crossbeam_channel::TryRecvError::Disconnected => TryRecvError::Disconnected,
-        })
-    }
-
-    fn try_send(
-        &mut self,
-        finished_work: FinishedConsumeWork<Self::Tx>,
-    ) -> Result<(), TrySendError> {
-        self.sender
-            .try_send(finished_work)
-            .map_err(|err| match err {
-                crossbeam_channel::TrySendError::Full(_) => TrySendError::Full,
-                crossbeam_channel::TrySendError::Disconnected(_) => TrySendError::Disconnected,
-            })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use {
@@ -838,7 +793,7 @@ mod tests {
             scheduler_messages::{MaxAge, TransactionBatchId},
             tests::{create_slow_genesis_config, sanitize_transactions},
         },
-        crossbeam_channel::{unbounded, Receiver, Sender},
+        crossbeam_channel::unbounded,
         solana_clock::{Slot, MAX_PROCESSING_AGE},
         solana_genesis_config::GenesisConfig,
         solana_keypair::Keypair,
@@ -892,7 +847,7 @@ mod tests {
         relax_intrabatch_account_locks: bool,
     ) -> (
         TestFrame,
-        ConsumeWorker<CrossbeamConsumeWorkerChannels<RuntimeTransaction<SanitizedTransaction>>>,
+        ConsumeWorker<RuntimeTransaction<SanitizedTransaction>>,
     ) {
         let GenesisConfigInfo {
             genesis_config,
@@ -925,15 +880,12 @@ mod tests {
 
         let (consume_sender, consume_receiver) = unbounded();
         let (consumed_sender, consumed_receiver) = unbounded();
-        let channels = CrossbeamConsumeWorkerChannels {
-            receiver: consume_receiver,
-            sender: consumed_sender,
-        };
         let worker = ConsumeWorker::new(
             0,
             Arc::new(AtomicBool::new(false)),
-            channels,
+            consume_receiver,
             consumer,
+            consumed_sender,
             shared_leader_state.clone(),
         );
 
