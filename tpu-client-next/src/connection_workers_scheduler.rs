@@ -342,20 +342,13 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
 
             let send_res =
                 workers.try_send_transactions_to_address(new_leader, transaction_batch.clone());
-            match send_res {
-                Ok(()) => (),
-                Err(WorkersCacheError::ShutdownError) => {
-                    debug!("Connection to {new_leader} was closed, worker cache shutdown");
-                }
-                Err(WorkersCacheError::ReceiverDropped) => {
-                    // Remove the worker from the cache, if the peer has disconnected.
+            if let Err(err) = send_res {
+                debug!("Failed to send transactions to {new_leader:?}, worker send error: {err}.");
+                if err == WorkersCacheError::ReceiverDropped {
+                    // Remove the worker from the cache if the peer has disconnected.
                     if let Some(pop_worker) = workers.pop(*new_leader) {
                         shutdown_worker(pop_worker)
                     }
-                }
-                Err(err) => {
-                    warn!("Connection to {new_leader} was closed, worker error: {err}");
-                    // If we have failed to send batch, it will be dropped.
                 }
             }
         }
