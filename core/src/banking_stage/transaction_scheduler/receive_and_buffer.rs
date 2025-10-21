@@ -25,6 +25,7 @@ use {
     solana_clock::{Epoch, Slot, MAX_PROCESSING_AGE},
     solana_cost_model::cost_model::CostModel,
     solana_fee_structure::FeeBudgetLimits,
+    solana_message::v0::LoadedAddresses,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
@@ -450,18 +451,7 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
         return Err(PacketHandlingError::LockValidation);
     }
 
-    // Load addresses for transaction.
-    let load_addresses_result = match view.version() {
-        TransactionVersion::Legacy => Ok((None, u64::MAX)),
-        TransactionVersion::V0 => bank
-            .load_addresses_from_ref(view.address_table_lookup_iter())
-            .map(|(loaded_addresses, deactivation_slot)| {
-                (Some(loaded_addresses), deactivation_slot)
-            }),
-    };
-    let Ok((loaded_addresses, deactivation_slot)) = load_addresses_result else {
-        return Err(PacketHandlingError::Sanitization);
-    };
+    let (loaded_addresses, deactivation_slot) = load_addresses_for_view(&view, bank)?;
 
     let Ok(view) = RuntimeTransaction::<ResolvedTransactionView<_>>::try_from(
         view,
@@ -472,6 +462,23 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
     };
 
     Ok((view, deactivation_slot))
+}
+
+/// Load addresses from ALTs (if necessary) and return the
+/// [`LoadedAddresses`] with the minimum deactivation slot.
+pub(crate) fn load_addresses_for_view<D: TransactionData>(
+    view: &SanitizedTransactionView<D>,
+    bank: &Bank,
+) -> Result<(Option<LoadedAddresses>, Slot), PacketHandlingError> {
+    match view.version() {
+        TransactionVersion::Legacy => Ok((None, u64::MAX)),
+        TransactionVersion::V0 => bank
+            .load_addresses_from_ref(view.address_table_lookup_iter())
+            .map(|(loaded_addresses, deactivation_slot)| {
+                (Some(loaded_addresses), deactivation_slot)
+            })
+            .map_err(|_| PacketHandlingError::Sanitization),
+    }
 }
 
 /// Calculate priority and cost for a transaction:
