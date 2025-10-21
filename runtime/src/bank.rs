@@ -1552,47 +1552,19 @@ impl Bank {
             .write()
             .unwrap();
 
-        if program_cache.upcoming_environments.is_some() {
-            if let Some((key, program_to_recompile)) = program_cache.programs_to_recompile.pop() {
-                let effective_epoch = program_cache.latest_root_epoch.saturating_add(1);
-                drop(program_cache);
-                let environments_for_epoch = self
-                    .transaction_processor
-                    .global_program_cache
-                    .read()
-                    .unwrap()
-                    .get_environments_for_epoch(effective_epoch);
-                if let Some(recompiled) = load_program_with_pubkey(
-                    self,
-                    &environments_for_epoch,
-                    &key,
-                    self.slot,
-                    &mut ExecuteTimings::default(),
-                    false,
-                ) {
-                    recompiled.tx_usage_counter.fetch_add(
-                        program_to_recompile
-                            .tx_usage_counter
-                            .load(Ordering::Relaxed),
-                        Ordering::Relaxed,
-                    );
-                    let mut program_cache = self
-                        .transaction_processor
-                        .global_program_cache
-                        .write()
-                        .unwrap();
-                    program_cache.assign_program(key, recompiled);
-                }
-            }
-        } else if self.epoch != program_cache.latest_root_epoch
-            || (upcoming_feature_set_bitmask
+        // Check if we should recompute the upcoming environments.
+        // This happens when we're in the recompilation window AND either:
+        // 1. Feature set changed (staleness detection), OR
+        // 2. Environments haven't been set up yet (initial setup)
+        if self.slot
+            >= self
+                .epoch_boundary_preparation
+                .program_cache_recompilation_begin_slot
+            && (upcoming_feature_set_bitmask
                 != self
                     .epoch_boundary_preparation
                     .last_seen_feature_set_bitmask
-                && self.slot
-                    >= self
-                        .epoch_boundary_preparation
-                        .program_cache_recompilation_begin_slot)
+                || program_cache.upcoming_environments.is_none())
         {
             // Anticipate the upcoming program runtime environment for the next epoch,
             // so we can try to recompile loaded programs before the feature transition hits.
@@ -1626,6 +1598,38 @@ impl Bank {
             // feature set changes again.
             self.epoch_boundary_preparation
                 .store_last_seen_feature_set_bitmask(upcoming_feature_set_bitmask);
+        } else if program_cache.upcoming_environments.is_some() {
+            if let Some((key, program_to_recompile)) = program_cache.programs_to_recompile.pop() {
+                let effective_epoch = program_cache.latest_root_epoch.saturating_add(1);
+                drop(program_cache);
+                let environments_for_epoch = self
+                    .transaction_processor
+                    .global_program_cache
+                    .read()
+                    .unwrap()
+                    .get_environments_for_epoch(effective_epoch);
+                if let Some(recompiled) = load_program_with_pubkey(
+                    self,
+                    &environments_for_epoch,
+                    &key,
+                    self.slot,
+                    &mut ExecuteTimings::default(),
+                    false,
+                ) {
+                    recompiled.tx_usage_counter.fetch_add(
+                        program_to_recompile
+                            .tx_usage_counter
+                            .load(Ordering::Relaxed),
+                        Ordering::Relaxed,
+                    );
+                    let mut program_cache = self
+                        .transaction_processor
+                        .global_program_cache
+                        .write()
+                        .unwrap();
+                    program_cache.assign_program(key, recompiled);
+                }
+            }
         }
     }
 
