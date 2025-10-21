@@ -53,8 +53,9 @@ impl<'de, const NUM_BITS: usize> Deserialize<'de> for BitVec<NUM_BITS> {
     where
         D: serde::Deserializer<'de>,
     {
-        let bytes = <serde_bytes::ByteBuf as Deserialize>::deserialize(deserializer)?;
-        let mut words = bytes.into_vec();
+        let bytes = <&serde_bytes::Bytes as Deserialize>::deserialize(deserializer)?;
+        let mut words = Vec::with_capacity(Self::NUM_WORDS);
+        words.extend_from_slice(bytes);
         words.resize(Self::NUM_WORDS, 0);
 
         Ok(Self { words })
