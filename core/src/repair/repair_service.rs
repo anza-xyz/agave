@@ -27,6 +27,7 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
+    solana_keypair::Signer,
     solana_ledger::{
         blockstore::{Blockstore, SlotMeta},
         shred,
@@ -55,8 +56,7 @@ use {
 #[cfg(test)]
 use {
     crate::repair::duplicate_repair_status::DuplicateSlotRepairStatus,
-    solana_clock::DEFAULT_MS_PER_SLOT,
-    solana_keypair::{Keypair, Signer},
+    solana_clock::DEFAULT_MS_PER_SLOT, solana_keypair::Keypair,
 };
 
 // Time to defer repair requests to allow for turbine propagation
@@ -634,6 +634,7 @@ impl RepairService {
         repair_metrics: &mut RepairMetrics,
     ) {
         let mut build_repairs_batch_elapsed = Measure::start("build_repairs_batch_elapsed");
+        let identity_keypair = repair_info.cluster_info.keypair();
         let batch: Vec<(Vec<u8>, SocketAddr)> = {
             let mut outstanding_requests = outstanding_requests.write().unwrap();
             repairs
@@ -647,7 +648,7 @@ impl RepairService {
                             &mut repair_metrics.stats,
                             &repair_info.repair_validators,
                             &mut outstanding_requests,
-                            &repair_info.cluster_info.keypair(),
+                            &identity_keypair,
                             repair_request_quic_sender,
                             repair_protocol,
                         )
@@ -668,7 +669,7 @@ impl RepairService {
                     error!(
                         "{} batch_send failed to send {num_failed}/{num_pkts} packets first error \
                          {err:?}",
-                        repair_info.cluster_info.id()
+                        identity_keypair.pubkey()
                     );
                 }
             }
@@ -1052,7 +1053,8 @@ impl RepairService {
             .add_request(repair_request, timestamp());
 
         // Create repair request
-        let header = RepairRequestHeader::new(cluster_info.id(), pubkey, timestamp(), nonce);
+        let header =
+            RepairRequestHeader::new(identity_keypair.pubkey(), pubkey, timestamp(), nonce);
         let request_proto = RepairProtocol::WindowIndex {
             header,
             slot,
