@@ -314,9 +314,9 @@ fn benches() -> Vec<TestDescAndFn> {
         .enumerate()
         .for_each(|(i, &discard_factor)| {
             let name = format!(
-                "{:?}-bench_shrink_sigverify_stage_core - discard_factor: {:?}",
-                i, discard_factor
+                "{i:?}-bench_shrink_sigverify_stage_core - discard_factor: {discard_factor:?}"
             );
+
             benches.push(TestDescAndFn {
                 desc: TestDesc {
                     name: Cow::from(name),
