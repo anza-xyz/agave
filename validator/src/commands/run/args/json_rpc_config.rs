@@ -450,7 +450,7 @@ mod tests {
     #[test]
     fn test_default_health_check_slot_distance_unchanged() {
         assert_eq!(
-            DEFAULT_HEALTH_CHECK_SLOT_DISTANCE.to_string(),
+            *DEFAULT_HEALTH_CHECK_SLOT_DISTANCE,
             "128",
             "DEFAULT_HEALTH_CHECK_SLOT_DISTANCE changed"
         );
@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn test_default_max_multiple_accounts_unchanged() {
         assert_eq!(
-            DEFAULT_MAX_MULTIPLE_ACCOUNTS.to_string(),
+            *DEFAULT_MAX_MULTIPLE_ACCOUNTS,
             "100",
             "DEFAULT_MAX_MULTIPLE_ACCOUNTS changed"
         );
@@ -468,7 +468,7 @@ mod tests {
     #[test]
     fn test_default_rpc_threads_unchanged() {
         assert_eq!(
-            DEFAULT_RPC_THREADS.to_string(),
+            *DEFAULT_RPC_THREADS,
             num_cpus::get().to_string(),
             "DEFAULT_RPC_THREADS changed"
         );
@@ -477,7 +477,7 @@ mod tests {
     #[test]
     fn test_default_rpc_blocking_threads_unchanged() {
         assert_eq!(
-            DEFAULT_RPC_BLOCKING_THREADS.to_string(),
+            *DEFAULT_RPC_BLOCKING_THREADS,
             (1.max(num_cpus::get() / 4)).to_string(),
             "DEFAULT_RPC_BLOCKING_THREADS changed"
         );
@@ -494,7 +494,7 @@ mod tests {
     #[test]
     fn test_default_rpc_max_request_body_size_unchanged() {
         assert_eq!(
-            DEFAULT_RPC_MAX_REQUEST_BODY_SIZE.to_string(),
+            *DEFAULT_RPC_MAX_REQUEST_BODY_SIZE,
             "51200",
             "DEFAULT_RPC_MAX_REQUEST_BODY_SIZE changed"
         );
