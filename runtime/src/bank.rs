@@ -731,9 +731,26 @@ struct HashOverride {
 struct EpochBoundaryPreparation {
     // The slot at which program cache recompilation should begin.
     program_cache_recompilation_begin_slot: Slot,
+
+    /// Bitmask of the SVM feature set last seen during the current epoch.
+    ///
+    /// At the start of an epoch, during `process_new_epoch`, this is set to
+    /// bitmask of the SVM feature set at the start of the epoch. Later, after
+    /// a Bank has passed the `program_cache_recompilation_begin_slot`, this is
+    /// updated to the last seen feature set bitmask.
+    ///
+    /// Any subsequent changes to the SVM feature set after that point are
+    /// propagated to this data structure and used to coordinate an invalidation
+    /// of the recompiled programs, restarting the recompilation process.
+    last_seen_feature_set_bitmask: u64,
 }
 
 impl EpochBoundaryPreparation {
+    // Set a new "last seen" feature set bitmask.
+    fn store_last_seen_feature_set_bitmask(&mut self, feature_set_bitmask: u64) {
+        self.last_seen_feature_set_bitmask = feature_set_bitmask;
+    }
+
     // Recompilation begins at the slot calculated as:
     //
     //     L - min(M, S) / 2 + 1
@@ -1222,6 +1239,8 @@ impl Bank {
         bank.transaction_processor
             .fill_missing_sysvar_cache_entries(&bank);
         bank.epoch_boundary_preparation
+            .store_last_seen_feature_set_bitmask(bank.feature_set.runtime_features().to_bitmask());
+        bank.epoch_boundary_preparation
             .update_recompilation_begin_slot(bank.epoch, &bank.epoch_schedule);
         bank
     }
@@ -1523,8 +1542,9 @@ impl Bank {
             .set_fork_graph(fork_graph);
     }
 
-    fn prepare_program_cache_for_upcoming_feature_set(&self) {
+    fn prepare_program_cache_for_upcoming_feature_set(&mut self) {
         let (upcoming_feature_set, _newly_activated) = self.compute_active_feature_set(true);
+        let upcoming_feature_set_bitmask = upcoming_feature_set.runtime_features().to_bitmask();
 
         let mut program_cache = self
             .transaction_processor
@@ -1565,10 +1585,14 @@ impl Bank {
                 }
             }
         } else if self.epoch != program_cache.latest_root_epoch
-            || self.slot
-                >= self
+            || (upcoming_feature_set_bitmask
+                != self
                     .epoch_boundary_preparation
-                    .program_cache_recompilation_begin_slot
+                    .last_seen_feature_set_bitmask
+                && self.slot
+                    >= self
+                        .epoch_boundary_preparation
+                        .program_cache_recompilation_begin_slot)
         {
             // Anticipate the upcoming program runtime environment for the next epoch,
             // so we can try to recompile loaded programs before the feature transition hits.
@@ -1597,6 +1621,11 @@ impl Bank {
             program_cache
                 .programs_to_recompile
                 .sort_by_cached_key(|(_id, program)| program.decayed_usage_counter(self.slot));
+
+            // Store the last seen feature set bitmask, so we can see if the
+            // feature set changes again.
+            self.epoch_boundary_preparation
+                .store_last_seen_feature_set_bitmask(upcoming_feature_set_bitmask);
         }
     }
 
@@ -1681,7 +1710,10 @@ impl Bank {
             rewards_metrics,
         );
 
-        // Calculate when program cache recompilation should begin for this epoch.
+        // Store the bitmask of the epoch's beginning feature set and calculate
+        // when program cache recompilation should begin for this epoch.
+        self.epoch_boundary_preparation
+            .store_last_seen_feature_set_bitmask(self.feature_set.runtime_features().to_bitmask());
         self.epoch_boundary_preparation
             .update_recompilation_begin_slot(self.epoch, &self.epoch_schedule);
     }
@@ -5229,6 +5261,8 @@ impl Bank {
         self.transaction_processor
             .fill_missing_sysvar_cache_entries(self);
 
+        self.epoch_boundary_preparation
+            .store_last_seen_feature_set_bitmask(self.feature_set.runtime_features().to_bitmask());
         self.epoch_boundary_preparation
             .update_recompilation_begin_slot(self.epoch, &self.epoch_schedule);
     }
