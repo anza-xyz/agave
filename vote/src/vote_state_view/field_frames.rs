@@ -13,6 +13,7 @@ pub(super) trait ListFrame {
     // ensure that after casting it won't have alignment issues, any heap
     // allocated fields, or any assumptions about endianness.
     #[cfg(test)]
+    #[allow(dead_code)]
     const ASSERT_ITEM_ALIGNMENT: ();
 
     fn len(&self) -> usize;
