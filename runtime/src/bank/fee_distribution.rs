@@ -153,15 +153,21 @@ impl Bank {
             return Err(DepositFeeError::InvalidAccountOwner);
         }
 
-        let recipient_pre_rent_state =
-            get_account_rent_state(&self.rent_collector().rent, &account);
+        let recipient_pre_rent_state = get_account_rent_state(
+            &self.rent_collector().rent,
+            account.lamports(),
+            account.data().len(),
+        );
         let distribution = account.checked_add_lamports(fees);
         if distribution.is_err() {
             return Err(DepositFeeError::LamportOverflow);
         }
 
-        let recipient_post_rent_state =
-            get_account_rent_state(&self.rent_collector().rent, &account);
+        let recipient_post_rent_state = get_account_rent_state(
+            &self.rent_collector().rent,
+            account.lamports(),
+            account.data().len(),
+        );
         let rent_state_transition_allowed =
             transition_allowed(&recipient_pre_rent_state, &recipient_post_rent_state);
         if !rent_state_transition_allowed {
