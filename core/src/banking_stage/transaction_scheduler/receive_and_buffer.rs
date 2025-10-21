@@ -115,12 +115,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         container: &mut Self::Container,
         decision: &BufferedPacketsDecision,
     ) -> Result<ReceivingStats, DisconnectedError> {
-        let (root_bank, working_bank) = {
-            let bank_forks = self.bank_forks.read().unwrap();
-            let root_bank = bank_forks.root_bank();
-            let working_bank = bank_forks.working_bank();
-            (root_bank, working_bank)
-        };
+        let working_bank = self.bank_forks.read().unwrap().working_bank();
 
         // Receive packet batches.
         const TIMEOUT: Duration = Duration::from_millis(10);
@@ -163,7 +158,6 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
                     stats.accumulate(self.handle_packet_batch_message(
                         container,
                         decision,
-                        &root_bank,
                         &working_bank,
                         packet_batch_message,
                     ));
@@ -186,7 +180,6 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
                         let batch_stats = self.handle_packet_batch_message(
                             container,
                             decision,
-                            &root_bank,
                             &working_bank,
                             packet_batch_message,
                         );
@@ -233,8 +226,7 @@ impl TransactionViewReceiveAndBuffer {
         &mut self,
         container: &mut TransactionViewStateContainer,
         decision: &BufferedPacketsDecision,
-        root_bank: &Bank,
-        working_bank: &Bank,
+        bank: &Bank,
         packet_batch_message: BankingPacketBatch,
     ) -> ReceivingStats {
         let start = Instant::now();
@@ -242,9 +234,7 @@ impl TransactionViewReceiveAndBuffer {
         let should_parse = !matches!(decision, BufferedPacketsDecision::Forward);
 
         // Sanitize packets, generate IDs, and insert into the container.
-        let alt_resolved_slot = root_bank.slot();
-        let sanitized_epoch = root_bank.epoch();
-        let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
+        let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
 
         // Create temporary batches of transactions to be age-checked.
         let mut transaction_priority_ids = ArrayVec::<_, EXTRA_CAPACITY>::new();
@@ -268,7 +258,7 @@ impl TransactionViewReceiveAndBuffer {
                             .get_transaction(priority_id.id)
                             .expect("transaction must exist")
                     }));
-                    working_bank.check_transactions::<RuntimeTransaction<_>>(
+                    bank.check_transactions::<RuntimeTransaction<_>>(
                         &transactions,
                         &lock_results[..transactions.len()],
                         MAX_PROCESSING_AGE,
@@ -297,11 +287,9 @@ impl TransactionViewReceiveAndBuffer {
                     let transaction = container
                         .get_transaction(priority_id.id)
                         .expect("transaction must exist");
-                    if let Err(err) = Consumer::check_fee_payer_unlocked(
-                        working_bank,
-                        transaction,
-                        &mut error_counters,
-                    ) {
+                    if let Err(err) =
+                        Consumer::check_fee_payer_unlocked(bank, transaction, &mut error_counters)
+                    {
                         *result = Err(err);
                         num_dropped_on_fee_payer += 1;
                         container.remove_by_id(priority_id.id);
@@ -341,14 +329,7 @@ impl TransactionViewReceiveAndBuffer {
                 // Reserve free-space to copy packet into, run sanitization checks, and insert.
                 if let Some(transaction_id) =
                     container.try_insert_map_only_with_data(packet_data, |bytes| {
-                        match Self::try_handle_packet(
-                            bytes,
-                            root_bank,
-                            working_bank,
-                            alt_resolved_slot,
-                            sanitized_epoch,
-                            transaction_account_lock_limit,
-                        ) {
+                        match Self::try_handle_packet(bytes, bank, transaction_account_lock_limit) {
                             Ok(state) => Ok(state),
                             Err(PacketHandlingError::Sanitization) => {
                                 num_dropped_on_parsing_and_sanitization += 1;
@@ -401,17 +382,13 @@ impl TransactionViewReceiveAndBuffer {
 
     fn try_handle_packet(
         bytes: SharedBytes,
-        root_bank: &Bank,
-        working_bank: &Bank,
-        alt_resolved_slot: Slot,
-        sanitized_epoch: Epoch,
+        bank: &Bank,
         transaction_account_lock_limit: usize,
     ) -> Result<TransactionViewState, PacketHandlingError> {
         // Parsing and basic sanitization checks
         let Ok(view) = SanitizedTransactionView::try_new_sanitized(
             bytes,
-            working_bank
-                .feature_set
+            bank.feature_set
                 .is_active(&agave_feature_set::static_instruction_limit::id()),
         ) else {
             return Err(PacketHandlingError::Sanitization);
@@ -426,7 +403,7 @@ impl TransactionViewReceiveAndBuffer {
         };
 
         // Discard non-vote packets if in vote-only mode.
-        if root_bank.vote_only_bank() && !view.is_simple_vote_transaction() {
+        if bank.vote_only_bank() && !view.is_simple_vote_transaction() {
             return Err(PacketHandlingError::Sanitization);
         }
 
@@ -437,7 +414,7 @@ impl TransactionViewReceiveAndBuffer {
         // Load addresses for transaction.
         let load_addresses_result = match view.version() {
             TransactionVersion::Legacy => Ok((None, u64::MAX)),
-            TransactionVersion::V0 => root_bank
+            TransactionVersion::V0 => bank
                 .load_addresses_from_ref(view.address_table_lookup_iter())
                 .map(|(loaded_addresses, deactivation_slot)| {
                     (Some(loaded_addresses), deactivation_slot)
@@ -450,7 +427,7 @@ impl TransactionViewReceiveAndBuffer {
         let Ok(view) = RuntimeTransaction::<ResolvedTransactionView<_>>::try_from(
             view,
             loaded_addresses,
-            root_bank.get_reserved_account_keys(),
+            bank.get_reserved_account_keys(),
         ) else {
             return Err(PacketHandlingError::Sanitization);
         };
@@ -461,14 +438,14 @@ impl TransactionViewReceiveAndBuffer {
 
         let Ok(compute_budget_limits) = view
             .compute_budget_instruction_details()
-            .sanitize_and_convert_to_compute_budget_limits(&working_bank.feature_set)
+            .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set)
         else {
             return Err(PacketHandlingError::ComputeBudget);
         };
 
-        let max_age = calculate_max_age(sanitized_epoch, deactivation_slot, alt_resolved_slot);
+        let max_age = calculate_max_age(bank.epoch(), deactivation_slot, bank.slot());
         let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
-        let (priority, cost) = calculate_priority_and_cost(&view, &fee_budget_limits, working_bank);
+        let (priority, cost) = calculate_priority_and_cost(&view, &fee_budget_limits, bank);
 
         Ok(TransactionState::new(view, max_age, priority, cost))
     }
