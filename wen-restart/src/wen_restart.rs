@@ -1409,7 +1409,11 @@ pub(crate) fn write_wen_restart_records(
 mod tests {
     use {
         crate::wen_restart::{tests::wen_restart_proto::LastVotedForkSlotsAggregateFinal, *},
-        agave_snapshots::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+        agave_snapshots::{
+            hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+            snapshot_config::{SnapshotConfig, SnapshotUsage},
+            snapshot_hash::SnapshotHash,
+        },
         crossbeam_channel::unbounded,
         solana_entry::entry::create_ticks,
         solana_gossip::{
@@ -1435,8 +1439,6 @@ mod tests {
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
             snapshot_bank_utils::bank_to_full_snapshot_archive,
-            snapshot_config::{SnapshotConfig, SnapshotUsage},
-            snapshot_hash::SnapshotHash,
             snapshot_utils::build_incremental_snapshot_archive_path,
         },
         solana_signer::Signer,

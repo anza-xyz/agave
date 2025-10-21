@@ -36,6 +36,8 @@ use {
         hardened_unpack::{
             open_genesis_config, OpenGenesisConfigError, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         },
+        snapshot_config::SnapshotConfig,
+        snapshot_hash::StartingSnapshotHashes,
         SnapshotInterval,
     },
     anyhow::{anyhow, Context, Result},
@@ -126,9 +128,7 @@ use {
         runtime_config::RuntimeConfig,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils,
-        snapshot_config::SnapshotConfig,
         snapshot_controller::SnapshotController,
-        snapshot_hash::StartingSnapshotHashes,
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
     },
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,

@@ -21,8 +21,6 @@ use {
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfoGetter,
         },
-        snapshot_config::SnapshotConfig,
-        snapshot_hash::SnapshotHash,
         snapshot_package::{SnapshotKind, SnapshotPackage},
         snapshot_utils::{
             self, get_highest_bank_snapshot, get_highest_full_snapshot_archive_info,
@@ -33,7 +31,10 @@ use {
         },
         status_cache,
     },
-    agave_snapshots::{ArchiveFormat, SnapshotVersion},
+    agave_snapshots::{
+        snapshot_config::SnapshotConfig, snapshot_hash::SnapshotHash, ArchiveFormat,
+        SnapshotVersion,
+    },
     log::*,
     solana_accounts_db::{
         accounts_db::{AccountsDbConfig, AtomicAccountsFileId},
@@ -811,7 +812,6 @@ mod tests {
         crate::{
             bank::{tests::create_simple_test_bank, BankTestConfig},
             bank_forks::BankForks,
-            snapshot_config::SnapshotConfig,
             snapshot_utils::{
                 clean_orphaned_account_snapshot_dirs, create_tmp_accounts_dir_for_tests,
                 get_bank_snapshot_dir, get_bank_snapshots, get_highest_bank_snapshot,

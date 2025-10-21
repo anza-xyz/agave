@@ -1,6 +1,8 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    agave_snapshots::{hardened_unpack::open_genesis_config, SnapshotInterval},
+    agave_snapshots::{
+        hardened_unpack::open_genesis_config, snapshot_config::SnapshotConfig, SnapshotInterval,
+    },
     assert_matches::assert_matches,
     crossbeam_channel::{unbounded, Receiver},
     gag::BufferRedirect,
@@ -71,7 +73,6 @@ use {
         commitment::VOTE_THRESHOLD_SIZE,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils,
-        snapshot_config::SnapshotConfig,
         snapshot_package::SnapshotKind,
         snapshot_utils::{self, BANK_SNAPSHOTS_DIR},
     },

@@ -152,7 +152,10 @@ dependencies = [
  "lz4",
  "rand 0.8.5",
  "solana-accounts-db",
+ "solana-clock",
  "solana-genesis-config",
+ "solana-hash",
+ "solana-lattice-hash",
  "strum",
  "tar",
  "thiserror 2.0.17",
@@ -9995,6 +9998,7 @@ dependencies = [
 name = "solana-wen-restart"
 version = "3.1.0"
 dependencies = [
+ "agave-snapshots",
  "anyhow",
  "log",
  "prost",

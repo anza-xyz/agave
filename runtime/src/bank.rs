@@ -46,7 +46,6 @@ use {
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
         rent_collector::RentCollector,
         runtime_config::RuntimeConfig,
-        snapshot_hash::SnapshotHash,
         stake_account::StakeAccount,
         stake_weighted_timestamp::{
             calculate_stake_weighted_timestamp, MaxAllowableDrift,
@@ -60,6 +59,7 @@ use {
     agave_feature_set::{self as feature_set, raise_cpi_nesting_limit_to_8, FeatureSet},
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
+    agave_snapshots::snapshot_hash::SnapshotHash,
     agave_syscalls::{
         create_program_runtime_environment_v1, create_program_runtime_environment_v2,
     },

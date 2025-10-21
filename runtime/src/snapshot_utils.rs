@@ -12,15 +12,14 @@ use {
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfo,
             SnapshotArchiveInfoGetter,
         },
-        snapshot_config::SnapshotConfig,
-        snapshot_hash::SnapshotHash,
         snapshot_package::{SnapshotKind, SnapshotPackage},
         snapshot_utils::snapshot_storage_rebuilder::{
             get_slot_and_append_vec_id, SnapshotStorageRebuilder,
         },
     },
     agave_snapshots::{
-        hardened_unpack::UnpackError, streaming_unarchive_snapshot, ArchiveFormat, SnapshotVersion,
+        hardened_unpack::UnpackError, snapshot_config::SnapshotConfig, snapshot_hash::SnapshotHash,
+        streaming_unarchive_snapshot, ArchiveFormat, SnapshotVersion,
     },
     crossbeam_channel::{Receiver, Sender},
     log::*,
@@ -2544,11 +2543,13 @@ pub fn create_tmp_accounts_dir_for_tests() -> (TempDir, PathBuf) {
 mod tests {
     use {
         super::*,
-        crate::snapshot_config::{
-            DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
-            DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+        agave_snapshots::{
+            snapshot_config::{
+                DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+                DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+            },
+            ZstdConfig,
         },
-        agave_snapshots::ZstdConfig,
         assert_matches::assert_matches,
         bincode::{deserialize_from, serialize_into},
         solana_accounts_db::accounts_file::AccountsFileProvider,
