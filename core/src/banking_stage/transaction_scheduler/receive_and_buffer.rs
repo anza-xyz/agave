@@ -242,6 +242,11 @@ impl TransactionViewReceiveAndBuffer {
         // If outside holding window, do not parse.
         let should_parse = !matches!(decision, BufferedPacketsDecision::Forward);
 
+        let enable_static_instruction_limit = root_bank
+            .feature_set
+            .is_active(&agave_feature_set::static_instruction_limit::ID);
+        let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
+
         // Create temporary batches of transactions to be age-checked.
         let mut transaction_priority_ids = ArrayVec::<_, EXTRA_CAPACITY>::new();
         let lock_results: [_; EXTRA_CAPACITY] = core::array::from_fn(|_| Ok(()));
@@ -337,7 +342,13 @@ impl TransactionViewReceiveAndBuffer {
                 // Reserve free-space to copy packet into, run sanitization checks, and insert.
                 if let Some(transaction_id) =
                     container.try_insert_map_only_with_data(packet_data, |bytes| {
-                        match Self::try_handle_packet(bytes, root_bank, working_bank) {
+                        match Self::try_handle_packet(
+                            bytes,
+                            root_bank,
+                            working_bank,
+                            enable_static_instruction_limit,
+                            transaction_account_lock_limit,
+                        ) {
                             Ok(state) => Ok(state),
                             Err(PacketHandlingError::Sanitization) => {
                                 num_dropped_on_parsing_and_sanitization += 1;
@@ -392,8 +403,15 @@ impl TransactionViewReceiveAndBuffer {
         bytes: SharedBytes,
         root_bank: &Bank,
         working_bank: &Bank,
+        enable_static_instruction_limit: bool,
+        transaction_account_lock_limit: usize,
     ) -> Result<TransactionViewState, PacketHandlingError> {
-        let (view, deactivation_slot) = translate_to_runtime_view(bytes, root_bank)?;
+        let (view, deactivation_slot) = translate_to_runtime_view(
+            bytes,
+            root_bank,
+            enable_static_instruction_limit,
+            transaction_account_lock_limit,
+        )?;
         if validate_account_locks(
             view.account_keys(),
             root_bank.get_transaction_account_lock_limit(),
@@ -424,13 +442,13 @@ impl TransactionViewReceiveAndBuffer {
 pub(crate) fn translate_to_runtime_view<D: TransactionData>(
     data: D,
     bank: &Bank,
+    enable_static_instruction_limit: bool,
+    transaction_account_lock_limit: usize,
 ) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, u64), PacketHandlingError> {
     // Parsing and basic sanitization checks
-    let Ok(view) = SanitizedTransactionView::try_new_sanitized(
-        data,
-        bank.feature_set
-            .is_active(&agave_feature_set::static_instruction_limit::id()),
-    ) else {
+    let Ok(view) =
+        SanitizedTransactionView::try_new_sanitized(data, enable_static_instruction_limit)
+    else {
         return Err(PacketHandlingError::Sanitization);
     };
 
@@ -447,7 +465,7 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
         return Err(PacketHandlingError::Sanitization);
     }
 
-    if usize::from(view.total_num_accounts()) > bank.get_transaction_account_lock_limit() {
+    if usize::from(view.total_num_accounts()) > transaction_account_lock_limit {
         return Err(PacketHandlingError::LockValidation);
     }
 
