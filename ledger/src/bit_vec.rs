@@ -39,6 +39,15 @@ impl<const NUM_BITS: usize> Default for BitVec<NUM_BITS> {
     }
 }
 
+// Note: serde_bytes' default `Deserialize` would construct a variable-length buffer,
+// which violates `BitVec`'s invariant that its backing vector length (in words)
+// is exactly `NUM_WORDS`. Bounds checks and performance rely on this fixed size.
+//
+// `BitVec` is normally constructed via `Default`, which initializes with
+// `vec![0; Self::NUM_WORDS]`. This custom `Deserialize` preserves the invariant by
+// allocating exactly `NUM_WORDS` and populating from the serialized data, zero-filling
+// any missing words. This is required for the `SlotMetaV1` -> `SlotMetaV2` migration,
+// where `completed_data_indexes` was encoded as a variable-length `BTreeSet<u32>`.
 impl<'de, const NUM_BITS: usize> Deserialize<'de> for BitVec<NUM_BITS> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
