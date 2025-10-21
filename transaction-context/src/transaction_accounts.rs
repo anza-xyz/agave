@@ -22,7 +22,7 @@ const GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS: u64 = 9 * GUEST_REGION_SIZE;
 /// This struct is shared with programs. Do not alter its fields.
 #[repr(C)]
 #[derive(Debug, PartialEq)]
-struct SVMAccount {
+struct AccountSharedFields {
     key: Pubkey,
     owner: Pubkey,
     lamports: u64,
@@ -40,13 +40,13 @@ struct PrivateAccountFields {
 
 #[derive(Debug, PartialEq)]
 pub struct TransactionAccountView<'a> {
-    svm_account: &'a SVMAccount,
+    abi_account: &'a AccountSharedFields,
     private_fields: &'a PrivateAccountFields,
 }
 
 impl ReadableAccount for TransactionAccountView<'_> {
     fn lamports(&self) -> u64 {
-        self.svm_account.lamports
+        self.abi_account.lamports
     }
 
     fn data(&self) -> &[u8] {
@@ -54,7 +54,7 @@ impl ReadableAccount for TransactionAccountView<'_> {
     }
 
     fn owner(&self) -> &Pubkey {
-        &self.svm_account.owner
+        &self.abi_account.owner
     }
 
     fn executable(&self) -> bool {
@@ -84,12 +84,12 @@ impl PartialEq<AccountSharedData> for TransactionAccountView<'_> {
 }
 
 #[derive(Debug)]
-pub struct TransactionAccountMutView<'a> {
-    svm_account: &'a mut SVMAccount,
+pub struct TransactionAccountViewMut<'a> {
+    abi_account: &'a mut AccountSharedFields,
     private_fields: &'a mut PrivateAccountFields,
 }
 
-impl TransactionAccountMutView<'_> {
+impl TransactionAccountViewMut<'_> {
     fn data_mut(&mut self) -> &mut Vec<u8> {
         Arc::make_mut(&mut self.private_fields.payload)
     }
@@ -97,7 +97,7 @@ impl TransactionAccountMutView<'_> {
     pub(crate) fn resize(&mut self, new_len: usize, value: u8) {
         self.data_mut().resize(new_len, value);
         unsafe {
-            self.svm_account.payload.set_len(new_len as u64);
+            self.abi_account.payload.set_len(new_len as u64);
         }
     }
 
@@ -109,7 +109,7 @@ impl TransactionAccountMutView<'_> {
             // incoming slice and replace the buffer.
             self.private_fields.payload = Arc::new(new_data.to_vec());
             unsafe {
-                self.svm_account.payload.set_len(new_data.len() as u64);
+                self.abi_account.payload.set_len(new_data.len() as u64);
             }
             return;
         };
@@ -142,14 +142,14 @@ impl TransactionAccountMutView<'_> {
             data.set_len(0);
             ptr::copy_nonoverlapping(new_data.as_ptr(), data.as_mut_ptr(), new_len);
             data.set_len(new_len);
-            self.svm_account.payload.set_len(new_len as u64);
+            self.abi_account.payload.set_len(new_len as u64);
         };
     }
 
     pub(crate) fn extend_from_slice(&mut self, data: &[u8]) {
         self.data_mut().extend_from_slice(data);
         unsafe {
-            self.svm_account.payload.set_len(data.len() as u64);
+            self.abi_account.payload.set_len(data.len() as u64);
         }
     }
 
@@ -170,9 +170,9 @@ impl TransactionAccountMutView<'_> {
     }
 }
 
-impl ReadableAccount for TransactionAccountMutView<'_> {
+impl ReadableAccount for TransactionAccountViewMut<'_> {
     fn lamports(&self) -> u64 {
-        self.svm_account.lamports
+        self.abi_account.lamports
     }
 
     fn data(&self) -> &[u8] {
@@ -180,7 +180,7 @@ impl ReadableAccount for TransactionAccountMutView<'_> {
     }
 
     fn owner(&self) -> &Pubkey {
-        &self.svm_account.owner
+        &self.abi_account.owner
     }
 
     fn executable(&self) -> bool {
@@ -199,9 +199,9 @@ impl ReadableAccount for TransactionAccountMutView<'_> {
     }
 }
 
-impl WritableAccount for TransactionAccountMutView<'_> {
+impl WritableAccount for TransactionAccountViewMut<'_> {
     fn set_lamports(&mut self, lamports: u64) {
-        self.svm_account.lamports = lamports;
+        self.abi_account.lamports = lamports;
     }
 
     fn data_as_mut_slice(&mut self) -> &mut [u8] {
@@ -209,11 +209,11 @@ impl WritableAccount for TransactionAccountMutView<'_> {
     }
 
     fn set_owner(&mut self, owner: Pubkey) {
-        self.svm_account.owner = owner;
+        self.abi_account.owner = owner;
     }
 
     fn copy_into_owner_from_slice(&mut self, source: &[u8]) {
-        self.svm_account.owner.as_mut().copy_from_slice(source);
+        self.abi_account.owner.as_mut().copy_from_slice(source);
     }
 
     fn set_executable(&mut self, executable: bool) {
@@ -242,7 +242,7 @@ pub(crate) type DeconstructedTransactionAccounts =
 
 #[derive(Debug)]
 pub struct TransactionAccounts {
-    shared_account_fields: UnsafeCell<Box<[SVMAccount]>>,
+    shared_account_fields: UnsafeCell<Box<[AccountSharedFields]>>,
     private_account_fields: UnsafeCell<Box<[PrivateAccountFields]>>,
     borrow_counters: Box<[BorrowCounter]>,
     touched_flags: Box<[Cell<bool>]>,
@@ -260,7 +260,7 @@ impl TransactionAccounts {
             .enumerate()
             .map(|(idx, item)| {
                 (
-                    SVMAccount {
+                    AccountSharedFields {
                         key: item.0,
                         owner: *item.1.owner(),
                         lamports: item.1.lamports(),
@@ -277,7 +277,7 @@ impl TransactionAccounts {
                     },
                 )
             })
-            .collect::<(Vec<SVMAccount>, Vec<PrivateAccountFields>)>();
+            .collect::<(Vec<AccountSharedFields>, Vec<PrivateAccountFields>)>();
 
         TransactionAccounts {
             shared_account_fields: UnsafeCell::new(shared_accounts.into_boxed_slice()),
@@ -359,8 +359,8 @@ impl TransactionAccounts {
                 .unwrap()
         };
 
-        let account = TransactionAccountMutView {
-            svm_account,
+        let account = TransactionAccountViewMut {
+            abi_account: svm_account,
             private_fields,
         };
 
@@ -392,7 +392,7 @@ impl TransactionAccounts {
         };
 
         let account = TransactionAccountView {
-            svm_account,
+            abi_account: svm_account,
             private_fields,
         };
 
@@ -553,7 +553,7 @@ impl<'a> Deref for AccountRef<'a> {
 
 #[derive(Debug)]
 pub struct AccountRefMut<'a> {
-    account: TransactionAccountMutView<'a>,
+    account: TransactionAccountViewMut<'a>,
     borrow_counter: &'a BorrowCounter,
 }
 
@@ -564,7 +564,7 @@ impl Drop for AccountRefMut<'_> {
 }
 
 impl<'a> Deref for AccountRefMut<'a> {
-    type Target = TransactionAccountMutView<'a>;
+    type Target = TransactionAccountViewMut<'a>;
     fn deref(&self) -> &Self::Target {
         &self.account
     }
