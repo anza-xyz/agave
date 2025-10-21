@@ -449,27 +449,17 @@ mod tests {
 
     #[test]
     fn test_default_health_check_slot_distance_unchanged() {
-        assert_eq!(
-            *DEFAULT_HEALTH_CHECK_SLOT_DISTANCE, "128",
-            "DEFAULT_HEALTH_CHECK_SLOT_DISTANCE changed"
-        );
+        assert_eq!(*DEFAULT_HEALTH_CHECK_SLOT_DISTANCE, "128");
     }
 
     #[test]
     fn test_default_max_multiple_accounts_unchanged() {
-        assert_eq!(
-            *DEFAULT_MAX_MULTIPLE_ACCOUNTS, "100",
-            "DEFAULT_MAX_MULTIPLE_ACCOUNTS changed"
-        );
+        assert_eq!(*DEFAULT_MAX_MULTIPLE_ACCOUNTS, "100");
     }
 
     #[test]
     fn test_default_rpc_threads_unchanged() {
-        assert_eq!(
-            *DEFAULT_RPC_THREADS,
-            num_cpus::get().to_string(),
-            "DEFAULT_RPC_THREADS changed"
-        );
+        assert_eq!(*DEFAULT_RPC_THREADS, num_cpus::get().to_string());
     }
 
     #[test]
@@ -477,23 +467,16 @@ mod tests {
         assert_eq!(
             *DEFAULT_RPC_BLOCKING_THREADS,
             (1.max(num_cpus::get() / 4)).to_string(),
-            "DEFAULT_RPC_BLOCKING_THREADS changed"
         );
     }
 
     #[test]
     fn test_default_rpc_niceness_adj_unchanged() {
-        assert_eq!(
-            DEFAULT_RPC_NICENESS_ADJ, "0",
-            "DEFAULT_RPC_NICENESS_ADJ changed"
-        );
+        assert_eq!(DEFAULT_RPC_NICENESS_ADJ, "0");
     }
 
     #[test]
     fn test_default_rpc_max_request_body_size_unchanged() {
-        assert_eq!(
-            *DEFAULT_RPC_MAX_REQUEST_BODY_SIZE, "51200",
-            "DEFAULT_RPC_MAX_REQUEST_BODY_SIZE changed"
-        );
+        assert_eq!(*DEFAULT_RPC_MAX_REQUEST_BODY_SIZE, "51200");
     }
 }
