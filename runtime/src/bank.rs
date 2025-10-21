@@ -4036,6 +4036,26 @@ impl Bank {
         cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
     }
 
+    fn apply_simd_0339_invoke_cost_changes(&mut self) {
+        let simd_0268_active = self
+            .feature_set
+            .is_active(&raise_cpi_nesting_limit_to_8::id());
+        let simd_0339_active = self
+            .feature_set
+            .is_active(&increase_cpi_account_info_limit::id());
+        let compute_budget = self
+            .compute_budget()
+            .as_ref()
+            .unwrap_or(&ComputeBudget::new_with_defaults(
+                simd_0268_active,
+                simd_0339_active,
+            ))
+            .to_cost();
+
+        self.transaction_processor
+            .set_execution_cost(compute_budget);
+    }
+
     /// This is called from genesis and snapshot restore
     fn apply_activated_features(&mut self) {
         // Update active set of reserved account keys which are not allowed to be write locked
@@ -4068,6 +4088,13 @@ impl Bank {
             .is_active(&feature_set::raise_account_cu_limit::id())
         {
             self.apply_simd_0306_cost_tracker_changes();
+        }
+
+        if self
+            .feature_set
+            .is_active(&feature_set::increase_cpi_account_info_limit::id())
+        {
+            self.apply_simd_0339_invoke_cost_changes();
         }
 
         let (program_runtime_environment_v1, program_runtime_environment_v2) =
@@ -5280,6 +5307,9 @@ impl Bank {
 
         if new_feature_activations.contains(&feature_set::raise_account_cu_limit::id()) {
             self.apply_simd_0306_cost_tracker_changes();
+        }
+        if new_feature_activations.contains(&feature_set::increase_cpi_account_info_limit::id()) {
+            self.apply_simd_0339_invoke_cost_changes();
         }
     }
 
