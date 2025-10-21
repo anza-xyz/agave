@@ -10871,11 +10871,18 @@ fn test_is_in_slot_hashes_history() {
     assert!(!new_bank.is_in_slot_hashes_history(&0));
 }
 
-#[test_case(false; "informal_loaded_size")]
-#[test_case(true; "simd186_loaded_size")]
-fn test_feature_activation_loaded_programs_cache_preparation_phase(
+struct LoadedProgramsCachePrepTestContext {
+    bank: Arc<Bank>,
+    bank_forks: Arc<RwLock<BankForks>>,
+    genesis_config: GenesisConfig,
+    message: Message,
+    mint_keypair: Keypair,
+    program_keypair: Keypair,
+}
+
+fn prepare_loaded_programs_cache_prep_test(
     formalize_loaded_transaction_data_size: bool,
-) {
+) -> LoadedProgramsCachePrepTestContext {
     solana_logger::setup();
 
     // Bank Setup
@@ -10905,12 +10912,37 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase(
     // Compose message using the desired program.
     let instruction = Instruction::new_with_bytes(program_keypair.pubkey(), &[], Vec::new());
     let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
-    let binding = mint_keypair.insecure_clone();
-    let signers = vec![&binding];
 
     // Advance the bank so that the program becomes effective.
     goto_end_of_slot(root_bank.clone());
     let bank = new_from_parent_with_fork_next_slot(root_bank, bank_forks.as_ref());
+
+    LoadedProgramsCachePrepTestContext {
+        bank,
+        bank_forks,
+        genesis_config,
+        message,
+        mint_keypair,
+        program_keypair,
+    }
+}
+
+#[test_case(false; "informal_loaded_size")]
+#[test_case(true; "simd186_loaded_size")]
+fn test_feature_activation_loaded_programs_cache_preparation_phase(
+    formalize_loaded_transaction_data_size: bool,
+) {
+    let LoadedProgramsCachePrepTestContext {
+        bank,
+        bank_forks,
+        genesis_config,
+        message,
+        mint_keypair,
+        program_keypair,
+    } = prepare_loaded_programs_cache_prep_test(formalize_loaded_transaction_data_size);
+
+    let binding = mint_keypair.insecure_clone();
+    let signers = vec![&binding];
 
     // Load the program with the old environment.
     let transaction = Transaction::new(&signers, message.clone(), bank.last_blockhash());
@@ -10995,39 +11027,17 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase(
 
 #[test]
 fn test_feature_activation_loaded_programs_epoch_transition() {
-    solana_logger::setup();
+    let LoadedProgramsCachePrepTestContext {
+        bank,
+        bank_forks,
+        genesis_config,
+        message,
+        mint_keypair,
+        program_keypair: _,
+    } = prepare_loaded_programs_cache_prep_test(true);
 
-    // Bank Setup
-    let (mut genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-    genesis_config
-        .accounts
-        .remove(&feature_set::disable_fees_sysvar::id());
-    genesis_config
-        .accounts
-        .remove(&feature_set::reenable_sbpf_v0_execution::id());
-    let (root_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-
-    // Program Setup
-    let program_keypair = Keypair::new();
-    let program_data = include_bytes!("../../../programs/bpf_loader/test_elfs/out/noop_aligned.so");
-    let program_account = AccountSharedData::from(Account {
-        lamports: Rent::default().minimum_balance(program_data.len()).min(1),
-        data: program_data.to_vec(),
-        owner: bpf_loader::id(),
-        executable: true,
-        rent_epoch: 0,
-    });
-    root_bank.store_account(&program_keypair.pubkey(), &program_account);
-
-    // Compose message using the desired program.
-    let instruction = Instruction::new_with_bytes(program_keypair.pubkey(), &[], Vec::new());
-    let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
     let binding = mint_keypair.insecure_clone();
     let signers = vec![&binding];
-
-    // Advance the bank so that the program becomes effective.
-    goto_end_of_slot(root_bank.clone());
-    let bank = new_from_parent_with_fork_next_slot(root_bank, bank_forks.as_ref());
 
     // Load the program with the old environment.
     let transaction = Transaction::new(&signers, message.clone(), bank.last_blockhash());
@@ -11067,6 +11077,145 @@ fn test_feature_activation_loaded_programs_epoch_transition() {
     let bank = new_from_parent_with_fork_next_slot(bank, bank_forks.as_ref());
     let transaction = Transaction::new(&signers, message, bank.last_blockhash());
     assert!(bank.process_transaction(&transaction).is_ok());
+}
+
+#[test_case(false; "informal_loaded_size")]
+#[test_case(true; "simd186_loaded_size")]
+fn test_feature_activation_loaded_programs_cache_preparation_phase_stale_environment(
+    formalize_loaded_transaction_data_size: bool,
+) {
+    let LoadedProgramsCachePrepTestContext {
+        bank,
+        bank_forks,
+        genesis_config,
+        message,
+        mint_keypair,
+        program_keypair,
+    } = prepare_loaded_programs_cache_prep_test(formalize_loaded_transaction_data_size);
+
+    let binding = mint_keypair.insecure_clone();
+    let signers = vec![&binding];
+
+    // Load the program with the old environment.
+    let transaction = Transaction::new(&signers, message.clone(), bank.last_blockhash());
+    let result_without_feature_enabled = bank.process_transaction(&transaction);
+    assert_eq!(result_without_feature_enabled, Ok(()));
+
+    // Schedule feature activation to trigger a change of environment at the epoch boundary.
+    let feature_account_balance =
+        std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
+    bank.store_account(
+        &feature_set::disable_sbpf_v0_execution::id(),
+        &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
+    );
+
+    // Advance the bank to middle of epoch to start the recompilation phase.
+    goto_end_of_slot(bank.clone());
+    let bank = new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 16);
+    let current_env = bank
+        .transaction_processor
+        .global_program_cache
+        .read()
+        .unwrap()
+        .get_environments_for_epoch(0)
+        .program_runtime_v1;
+    let upcoming_env = bank
+        .transaction_processor
+        .global_program_cache
+        .read()
+        .unwrap()
+        .get_environments_for_epoch(1)
+        .program_runtime_v1;
+
+    // Capture the initial upcoming environment, bitmask, and recompilation queue length.
+    let initial_upcoming_env = bank
+        .transaction_processor
+        .global_program_cache
+        .read()
+        .unwrap()
+        .get_environments_for_epoch(1)
+        .program_runtime_v1;
+    let initial_bitmask = bank
+        .epoch_boundary_preparation
+        .last_seen_feature_set_bitmask;
+    let initial_programs_to_recompile_len = bank
+        .transaction_processor
+        .global_program_cache
+        .read()
+        .unwrap()
+        .programs_to_recompile
+        .len();
+
+    // Advance the bank to recompile the program.
+    {
+        let program_cache = bank
+            .transaction_processor
+            .global_program_cache
+            .read()
+            .unwrap();
+        let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
+        assert_eq!(slot_versions.len(), 1);
+        assert!(Arc::ptr_eq(
+            slot_versions[0].program.get_environment().unwrap(),
+            &current_env
+        ));
+    }
+    goto_end_of_slot(bank.clone());
+    let bank = new_from_parent_with_fork_next_slot(bank, bank_forks.as_ref());
+    {
+        let program_cache = bank
+            .transaction_processor
+            .global_program_cache
+            .write()
+            .unwrap();
+        let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
+        assert_eq!(slot_versions.len(), 2);
+        assert!(Arc::ptr_eq(
+            slot_versions[0].program.get_environment().unwrap(),
+            &upcoming_env
+        ));
+        assert!(Arc::ptr_eq(
+            slot_versions[1].program.get_environment().unwrap(),
+            &current_env
+        ));
+    }
+
+    // Activate another feature mid-epoch during recompilation.
+    // This should restart the recompilation phase.
+    bank.store_account(
+        &feature_set::reenable_sbpf_v0_execution::id(),
+        &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
+    );
+
+    // Advance to the next slot, which should detect staleness and recompute.
+    goto_end_of_slot(bank.clone());
+    let bank = new_from_parent_with_fork_next_slot(bank, bank_forks.as_ref());
+
+    // Verify the bitmask has changed.
+    let new_bitmask = bank
+        .epoch_boundary_preparation
+        .last_seen_feature_set_bitmask;
+    assert_ne!(initial_bitmask, new_bitmask);
+
+    // Verify the upcoming environment has been recomputed.
+    let new_upcoming_env = bank
+        .transaction_processor
+        .global_program_cache
+        .read()
+        .unwrap()
+        .get_environments_for_epoch(1)
+        .program_runtime_v1;
+    assert!(!Arc::ptr_eq(&initial_upcoming_env, &new_upcoming_env));
+
+    // Verify programs_to_recompile was reset and repopulated with the same length.
+    let programs_to_recompile_len = bank
+        .transaction_processor
+        .global_program_cache
+        .read()
+        .unwrap()
+        .programs_to_recompile
+        .len();
+    assert_eq!(programs_to_recompile_len, initial_programs_to_recompile_len);
 }
 
 #[test]
