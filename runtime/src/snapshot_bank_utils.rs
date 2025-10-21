@@ -1637,7 +1637,7 @@ mod tests {
     fn test_fastboot_versioning() {
         let genesis_config = GenesisConfig::default();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
-        let _bank = create_snapshot_dirs_for_tests(&genesis_config, &bank_snapshots_dir, 2, true);
+        let _bank = create_snapshot_dirs_for_tests(&genesis_config, &bank_snapshots_dir, 3, true);
 
         let snapshot_config = SnapshotConfig {
             bank_snapshots_dir: bank_snapshots_dir.as_ref().to_path_buf(),
@@ -1648,7 +1648,7 @@ mod tests {
 
         // Verify the snapshot is found with all files present
         let snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
-        assert_eq!(snapshot.slot, 2);
+        assert_eq!(snapshot.slot, 3);
 
         // Test 1: Modify the version in the fastboot version file to something newer
         // than current
@@ -1671,9 +1671,19 @@ mod tests {
             .join(snapshot_utils::SNAPSHOT_VERSION_FILENAME);
         fs::remove_file(complete_flag_file).unwrap();
 
-        // This will now find the previous entry in the directory, which is slot 1
+        // This will now find the previous entry in the directory, which is slot 2
         let snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
-        assert_eq!(snapshot.slot, 1);
+        assert_eq!(snapshot.slot, 2);
+
+        // Test 3: Remove the fastboot version file
+        let fastboot_version_file = snapshot
+            .snapshot_dir
+            .join(snapshot_utils::SNAPSHOT_FASTBOOT_VERSION_FILENAME);
+        fs::remove_file(fastboot_version_file).unwrap();
+
+        // The fastboot file is not found, no snapshot is found
+        let snapshot = get_highest_loadable_bank_snapshot(&snapshot_config);
+        assert!(snapshot.is_none());
     }
 
     #[test_case(false)]
@@ -2049,7 +2059,7 @@ mod tests {
     }
 
     /// Test that removing the obsolete accounts file causes fastboot to fail.
-    /// Fastboot requires obsolete accounts files in newer versions.
+    /// Fastboot requires obsolete accounts files as of Version 2.0.0.
     #[test]
     #[should_panic(expected = "failed to read obsolete accounts file")]
     fn test_fastboot_missing_obsolete_accounts() {
