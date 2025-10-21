@@ -17,7 +17,8 @@ pub(crate) static DEFAULT_RPC_THREADS: LazyLock<String> =
 pub(crate) static DEFAULT_RPC_BLOCKING_THREADS: LazyLock<String> =
     LazyLock::new(|| (1.max(num_cpus::get() / 4)).to_string());
 pub(crate) const DEFAULT_RPC_NICENESS_ADJ: &str = "0";
-pub(crate) const DEFAULT_RPC_MAX_REQUEST_BODY_SIZE: &str = "51200"; // solana_rpc::rpc::MAX_REQUEST_BODY_SIZE = 50 * (1 << 10) = 51200
+pub(crate) static DEFAULT_RPC_MAX_REQUEST_BODY_SIZE: LazyLock<String> =
+    LazyLock::new(|| solana_rpc::rpc::MAX_REQUEST_BODY_SIZE.to_string());
 
 impl FromClapArgMatches for JsonRpcConfig {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
@@ -166,7 +167,7 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .value_name("BYTES")
             .takes_value(true)
             .validator(is_parsable::<usize>)
-            .default_value(DEFAULT_RPC_MAX_REQUEST_BODY_SIZE)
+            .default_value(&DEFAULT_RPC_MAX_REQUEST_BODY_SIZE)
             .help("The maximum request body size accepted by rpc service"),
     ]
 }
@@ -487,6 +488,15 @@ mod tests {
         assert_eq!(
             DEFAULT_RPC_NICENESS_ADJ, "0",
             "DEFAULT_RPC_NICENESS_ADJ changed"
+        );
+    }
+
+    #[test]
+    fn test_default_rpc_max_request_body_size_unchanged() {
+        assert_eq!(
+            DEFAULT_RPC_MAX_REQUEST_BODY_SIZE.to_string(),
+            "51200",
+            "DEFAULT_RPC_MAX_REQUEST_BODY_SIZE changed"
         );
     }
 }
