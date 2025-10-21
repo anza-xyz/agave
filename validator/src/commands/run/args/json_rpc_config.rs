@@ -173,7 +173,7 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     #[cfg(not(target_os = "linux"))]
     use crate::commands::run::args::tests::verify_args_struct_by_command_run_is_error_with_identity_setup;
     use {
@@ -188,6 +188,18 @@ mod tests {
             num::NonZeroUsize,
         },
     };
+
+    pub fn default_json_rpc_config() -> JsonRpcConfig {
+        JsonRpcConfig {
+            health_check_slot_distance: DEFAULT_HEALTH_CHECK_SLOT_DISTANCE.parse().unwrap(),
+            max_multiple_accounts: Some(DEFAULT_MAX_MULTIPLE_ACCOUNTS.parse().unwrap()),
+            rpc_threads: DEFAULT_RPC_THREADS.parse().unwrap(),
+            rpc_blocking_threads: DEFAULT_RPC_BLOCKING_THREADS.parse().unwrap(),
+            rpc_niceness_adj: DEFAULT_RPC_NICENESS_ADJ.parse().unwrap(),
+            max_request_body_size: Some(DEFAULT_RPC_MAX_REQUEST_BODY_SIZE.parse().unwrap()),
+            ..JsonRpcConfig::default()
+        }
+    }
 
     #[test]
     fn verify_args_struct_by_command_run_with_enable_rpc_transaction_history() {

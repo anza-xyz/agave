@@ -1431,6 +1431,9 @@ mod tests {
             let entrypoints = vec![];
             let known_validators = None;
 
+            let json_rpc_config =
+                crate::commands::run::args::json_rpc_config::tests::default_json_rpc_config();
+
             RunArgs {
                 identity_keypair,
                 ledger_path,
@@ -1440,27 +1443,7 @@ mod tests {
                 socket_addr_space: SocketAddrSpace::Global,
                 rpc_bootstrap_config: RpcBootstrapConfig::default(),
                 blockstore_options: BlockstoreOptions::default(),
-                json_rpc_config: JsonRpcConfig {
-                    health_check_slot_distance: json_rpc_config::DEFAULT_HEALTH_CHECK_SLOT_DISTANCE
-                        .parse()
-                        .unwrap(),
-                    max_multiple_accounts: Some(
-                        json_rpc_config::DEFAULT_MAX_MULTIPLE_ACCOUNTS
-                            .parse()
-                            .unwrap(),
-                    ),
-                    rpc_threads: json_rpc_config::DEFAULT_RPC_THREADS.parse().unwrap(),
-                    rpc_blocking_threads: json_rpc_config::DEFAULT_RPC_BLOCKING_THREADS
-                        .parse()
-                        .unwrap(),
-                    rpc_niceness_adj: json_rpc_config::DEFAULT_RPC_NICENESS_ADJ.parse().unwrap(),
-                    max_request_body_size: Some(
-                        json_rpc_config::DEFAULT_RPC_MAX_REQUEST_BODY_SIZE
-                            .parse()
-                            .unwrap(),
-                    ),
-                    ..JsonRpcConfig::default()
-                },
+                json_rpc_config,
                 pub_sub_config: PubSubConfig {
                     worker_threads: 4,
                     notification_threads: None,
