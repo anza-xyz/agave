@@ -1453,6 +1453,7 @@ mod tests {
                     rpc_blocking_threads: json_rpc_config::DEFAULT_RPC_BLOCKING_THREADS
                         .parse()
                         .unwrap(),
+                    rpc_niceness_adj: json_rpc_config::DEFAULT_RPC_NICENESS_ADJ.parse().unwrap(),
                     max_request_body_size: Some(
                         json_rpc_config::DEFAULT_RPC_MAX_REQUEST_BODY_SIZE
                             .parse()

@@ -481,4 +481,12 @@ mod tests {
             "DEFAULT_RPC_BLOCKING_THREADS changed"
         );
     }
+
+    #[test]
+    fn test_default_rpc_niceness_adj_unchanged() {
+        assert_eq!(
+            DEFAULT_RPC_NICENESS_ADJ, "0",
+            "DEFAULT_RPC_NICENESS_ADJ changed"
+        );
+    }
 }
