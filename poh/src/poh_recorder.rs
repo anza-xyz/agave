@@ -381,7 +381,6 @@ impl PohRecorder {
         let (poh_entry, tick_lock_contention_us) = measure_us!({
             let mut poh_l = self.poh.lock().unwrap();
             poh_l.tick()
-            poh_entry
         });
         self.metrics.tick_lock_contention_us += tick_lock_contention_us;
 
