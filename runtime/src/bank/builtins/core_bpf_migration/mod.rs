@@ -2126,6 +2126,22 @@ pub(crate) mod tests {
         )
         .unwrap();
 
+        // Load the migrated program to the cache and run checks.
+        let entry = roundtrip_bank
+            .load_program(&bpf_loader_v2_program_address, false, upgrade_slot)
+            .unwrap();
+
+        let mut program_cache = roundtrip_bank
+            .transaction_processor
+            .global_program_cache
+            .write()
+            .unwrap();
+
+        program_cache.assign_program(bpf_loader_v2_program_address, entry);
+        // Release the lock on the program cache.
+        drop(program_cache);
+
+        // Run the post-upgrade program checks on the restored bank.
         test_context.run_program_checks(&roundtrip_bank, upgrade_slot);
         assert_eq!(bank, roundtrip_bank);
     }
