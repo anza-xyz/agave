@@ -6,7 +6,6 @@ use {
     solana_accounts_db::{file_creator, set_path_permissions, FileCreator},
     solana_genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
     std::{
-        collections::HashMap,
         fs::{self, File},
         io::{self, BufReader, Read},
         path::{
@@ -86,7 +85,7 @@ fn check_unpack_result(unpack_result: Result<()>, path: String) -> Result<()> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum UnpackPath<'a> {
+enum UnpackPath<'a> {
     Valid(&'a Path),
     Ignore,
     Invalid,
@@ -325,33 +324,9 @@ fn validate_inside_dst(dst: &Path, file_dst: &Path) -> Result<PathBuf> {
     Ok(canon_target)
 }
 
-/// Map from AppendVec file name to unpacked file system location
-pub type UnpackedAppendVecMap = HashMap<String, PathBuf>;
-
-/// Unpacks snapshot and collects AppendVec file names & paths
-pub fn unpack_snapshot<A: Read>(
-    archive: Archive<A>,
-    memlock_budget_size: usize,
-    ledger_dir: &Path,
-    account_paths: &[PathBuf],
-) -> Result<UnpackedAppendVecMap> {
-    let mut unpacked_append_vec_map = UnpackedAppendVecMap::new();
-    unpack_snapshot_with_processors(
-        archive,
-        memlock_budget_size,
-        ledger_dir,
-        account_paths,
-        |file, path| {
-            unpacked_append_vec_map.insert(file.to_string(), path.join("accounts").join(file));
-        },
-        |_| {},
-    )
-    .map(|_| unpacked_append_vec_map)
-}
-
 /// Unpacks snapshot from (potentially partial) `archive` and
 /// sends entry file paths through the `sender` channel
-pub fn streaming_unpack_snapshot<A: Read>(
+pub(super) fn streaming_unpack_snapshot<A: Read>(
     archive: Archive<A>,
     memlock_budget_size: usize,
     ledger_dir: &Path,
