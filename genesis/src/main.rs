@@ -3,11 +3,11 @@
 
 use {
     agave_feature_set::FEATURE_NAMES,
+    agave_snapshots::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     base64::{prelude::BASE64_STANDARD, Engine},
     clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches},
     itertools::Itertools,
     solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_accounts_db::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     solana_clap_utils::{
         input_parsers::{
             cluster_type_of, pubkey_of, pubkeys_of, unix_timestamp_from_rfc3339_datetime,

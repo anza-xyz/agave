@@ -370,8 +370,8 @@ fn test_bank_update_epoch_stakes() {
         assert_eq!(bank.epoch_stake_keys(), initial_epochs);
     }
 
-    for epoch in (initial_epochs.len() as Epoch)..MAX_LEADER_SCHEDULE_STAKES {
-        bank.update_epoch_stakes(epoch);
+    for epoch in (initial_epochs.len() as Epoch)..(MAX_LEADER_SCHEDULE_STAKES - 1) {
+        bank.update_epoch_stakes(dbg!(epoch));
         assert_eq!(bank.epoch_stakes.len() as Epoch, epoch + 1);
     }
 
@@ -379,8 +379,18 @@ fn test_bank_update_epoch_stakes() {
         bank.epoch_stake_key_info(),
         (
             0,
+            MAX_LEADER_SCHEDULE_STAKES - 2,
+            MAX_LEADER_SCHEDULE_STAKES as usize - 1,
+        )
+    );
+
+    bank.update_epoch_stakes(MAX_LEADER_SCHEDULE_STAKES - 1);
+    assert_eq!(
+        bank.epoch_stake_key_info(),
+        (
+            0,
             MAX_LEADER_SCHEDULE_STAKES - 1,
-            MAX_LEADER_SCHEDULE_STAKES as usize
+            MAX_LEADER_SCHEDULE_STAKES as usize,
         )
     );
 
@@ -388,19 +398,9 @@ fn test_bank_update_epoch_stakes() {
     assert_eq!(
         bank.epoch_stake_key_info(),
         (
-            0,
-            MAX_LEADER_SCHEDULE_STAKES,
-            MAX_LEADER_SCHEDULE_STAKES as usize + 1
-        )
-    );
-
-    bank.update_epoch_stakes(MAX_LEADER_SCHEDULE_STAKES + 1);
-    assert_eq!(
-        bank.epoch_stake_key_info(),
-        (
             1,
-            MAX_LEADER_SCHEDULE_STAKES + 1,
-            MAX_LEADER_SCHEDULE_STAKES as usize + 1
+            MAX_LEADER_SCHEDULE_STAKES,
+            MAX_LEADER_SCHEDULE_STAKES as usize,
         )
     );
 }
@@ -10933,14 +10933,14 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase(
         .global_program_cache
         .read()
         .unwrap()
-        .get_environments_for_epoch(0)
+        .get_environments_for_epoch(&bank.transaction_processor.epoch_boundary_preparation, 0)
         .program_runtime_v1;
     let upcoming_env = bank
         .transaction_processor
         .global_program_cache
         .read()
         .unwrap()
-        .get_environments_for_epoch(1)
+        .get_environments_for_epoch(&bank.transaction_processor.epoch_boundary_preparation, 1)
         .program_runtime_v1;
 
     // Advance the bank to recompile the program.
@@ -11051,12 +11051,19 @@ fn test_feature_activation_loaded_programs_epoch_transition() {
 
     {
         // Prune for rerooting and thus finishing the recompilation phase.
+        let upcoming_environments = bank
+            .transaction_processor
+            .epoch_boundary_preparation
+            .write()
+            .unwrap()
+            .reroot(bank.epoch());
+        assert!(upcoming_environments.is_some());
         let mut program_cache = bank
             .transaction_processor
             .global_program_cache
             .write()
             .unwrap();
-        program_cache.prune(bank.slot(), bank.epoch());
+        program_cache.prune(bank.slot(), upcoming_environments);
 
         // Unload all (which is only the entry with the new environment)
         program_cache.sort_and_unload(percentage::Percentage::from(0));

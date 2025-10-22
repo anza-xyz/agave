@@ -21,19 +21,20 @@ use {
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfoGetter,
         },
-        snapshot_config::SnapshotConfig,
-        snapshot_hash::SnapshotHash,
         snapshot_package::{SnapshotKind, SnapshotPackage},
         snapshot_utils::{
             self, get_highest_bank_snapshot, get_highest_full_snapshot_archive_info,
             get_highest_incremental_snapshot_archive_info, rebuild_storages_from_snapshot_dir,
-            verify_and_unarchive_snapshots, BankSnapshotInfo, SnapshotError, SnapshotVersion,
+            verify_and_unarchive_snapshots, BankSnapshotInfo, SnapshotError,
             StorageAndNextAccountsFileId, UnarchivedSnapshots, VerifyEpochStakesError,
             VerifySlotDeltasError, VerifySlotHistoryError,
         },
         status_cache,
     },
-    agave_snapshots::ArchiveFormat,
+    agave_snapshots::{
+        snapshot_config::SnapshotConfig, snapshot_hash::SnapshotHash, ArchiveFormat,
+        SnapshotVersion,
+    },
     log::*,
     solana_accounts_db::{
         accounts_db::{AccountsDbConfig, AtomicAccountsFileId},
@@ -811,7 +812,6 @@ mod tests {
         crate::{
             bank::{tests::create_simple_test_bank, BankTestConfig},
             bank_forks::BankForks,
-            snapshot_config::SnapshotConfig,
             snapshot_utils::{
                 clean_orphaned_account_snapshot_dirs, create_tmp_accounts_dir_for_tests,
                 get_bank_snapshot_dir, get_bank_snapshots, get_highest_bank_snapshot,
@@ -835,7 +835,7 @@ mod tests {
         solana_system_transaction as system_transaction,
         solana_transaction::sanitized::SanitizedTransaction,
         std::{
-            fs,
+            fs, slice,
             sync::{atomic::Ordering, Arc, RwLock},
         },
         test_case::test_case,
@@ -1445,7 +1445,7 @@ mod tests {
         )
         .unwrap();
         let deserialized_bank = bank_from_snapshot_archives(
-            &[accounts_dir.clone()],
+            slice::from_ref(&accounts_dir),
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
             Some(&incremental_snapshot_archive_info),

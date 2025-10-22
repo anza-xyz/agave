@@ -12,14 +12,15 @@ use {
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfo,
             SnapshotArchiveInfoGetter,
         },
-        snapshot_config::SnapshotConfig,
-        snapshot_hash::SnapshotHash,
         snapshot_package::{SnapshotKind, SnapshotPackage},
         snapshot_utils::snapshot_storage_rebuilder::{
             get_slot_and_append_vec_id, SnapshotStorageRebuilder,
         },
     },
-    agave_snapshots::{ArchiveFormat, ArchiveFormatDecompressor},
+    agave_snapshots::{
+        hardened_unpack::UnpackError, snapshot_config::SnapshotConfig, snapshot_hash::SnapshotHash,
+        streaming_unarchive_snapshot, ArchiveFormat, SnapshotVersion,
+    },
     crossbeam_channel::{Receiver, Sender},
     log::*,
     regex::Regex,
@@ -31,7 +32,6 @@ use {
             AccountStorageEntry, AccountsDbConfig, AccountsFileId, AtomicAccountsFileId,
         },
         accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
-        hardened_unpack::{self, UnpackError},
         utils::{move_and_async_delete_path, ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR},
     },
     solana_clock::{Epoch, Slot},
@@ -40,18 +40,17 @@ use {
     std::{
         cmp::Ordering,
         collections::{HashMap, HashSet},
-        fmt, fs,
-        io::{self, BufRead, BufReader, BufWriter, Error as IoError, Read, Seek, Write},
+        fs,
+        io::{self, BufReader, BufWriter, Error as IoError, Read, Seek, Write},
         mem,
-        num::{NonZeroU64, NonZeroUsize},
+        num::NonZeroUsize,
         ops::RangeInclusive,
         path::{Path, PathBuf},
         process::ExitStatus,
         str::FromStr,
         sync::{Arc, LazyLock},
-        thread::{Builder, JoinHandle},
     },
-    tar::{self, Archive},
+    tar,
     tempfile::TempDir,
     thiserror::Error,
 };
@@ -81,73 +80,15 @@ pub const BANK_SNAPSHOTS_DIR: &str = "snapshots";
 pub const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
 const MAX_SNAPSHOT_VERSION_FILE_SIZE: u64 = 8; // byte
 const SNAPSHOT_FASTBOOT_VERSION: Version = Version::new(1, 0, 0);
-const VERSION_STRING_V1_2_0: &str = "1.2.0";
 pub const TMP_SNAPSHOT_ARCHIVE_PREFIX: &str = "tmp-snapshot-archive-";
-pub const DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: NonZeroU64 =
-    NonZeroU64::new(100_000).unwrap();
-pub const DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: NonZeroU64 =
-    NonZeroU64::new(100).unwrap();
-pub const DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN: NonZeroUsize =
-    NonZeroUsize::new(2).unwrap();
-pub const DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN: NonZeroUsize =
-    NonZeroUsize::new(4).unwrap();
 pub const FULL_SNAPSHOT_ARCHIVE_FILENAME_REGEX: &str =
     r"^snapshot-(?P<slot>[[:digit:]]+)-(?P<hash>[[:alnum:]]+)\.(?P<ext>tar\.zst|tar\.lz4)$";
 pub const INCREMENTAL_SNAPSHOT_ARCHIVE_FILENAME_REGEX: &str = r"^incremental-snapshot-(?P<base>[[:digit:]]+)-(?P<slot>[[:digit:]]+)-(?P<hash>[[:alnum:]]+)\.(?P<ext>tar\.zst|tar\.lz4)$";
 
-// Allows scheduling a large number of reads such that temporary disk access delays
-// shouldn't block decompression (unless read bandwidth is saturated).
-const MAX_SNAPSHOT_READER_BUF_SIZE: u64 = 128 * 1024 * 1024;
 // Balance large and small files order in snapshot tar with bias towards small (4 small + 1 large),
 // such that during unpacking large writes are mixed with file metadata operations
 // and towards the end of archive (sizes equalize) writes are >256KiB / file.
 const INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO: (usize, usize) = (4, 1);
-
-#[derive(Copy, Clone, Default, Eq, PartialEq, Debug)]
-pub enum SnapshotVersion {
-    #[default]
-    V1_2_0,
-}
-
-impl fmt::Display for SnapshotVersion {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(From::from(*self))
-    }
-}
-
-impl From<SnapshotVersion> for &'static str {
-    fn from(snapshot_version: SnapshotVersion) -> &'static str {
-        match snapshot_version {
-            SnapshotVersion::V1_2_0 => VERSION_STRING_V1_2_0,
-        }
-    }
-}
-
-impl FromStr for SnapshotVersion {
-    type Err = &'static str;
-
-    fn from_str(version_string: &str) -> std::result::Result<Self, Self::Err> {
-        // Remove leading 'v' or 'V' from slice
-        let version_string = if version_string
-            .get(..1)
-            .is_some_and(|s| s.eq_ignore_ascii_case("v"))
-        {
-            &version_string[1..]
-        } else {
-            version_string
-        };
-        match version_string {
-            VERSION_STRING_V1_2_0 => Ok(SnapshotVersion::V1_2_0),
-            _ => Err("unsupported snapshot version"),
-        }
-    }
-}
-
-impl SnapshotVersion {
-    pub fn as_str(self) -> &'static str {
-        <&str as From<Self>>::from(self)
-    }
-}
 
 /// Information about a bank snapshot. Namely the slot of the bank, the path to the snapshot, and
 /// the kind of the snapshot.
@@ -1735,51 +1676,6 @@ pub fn verify_and_unarchive_snapshots(
     ))
 }
 
-/// Streams unpacked files across channel
-fn streaming_unarchive_snapshot(
-    file_sender: Sender<PathBuf>,
-    account_paths: Vec<PathBuf>,
-    ledger_dir: PathBuf,
-    snapshot_archive_path: PathBuf,
-    archive_format: ArchiveFormat,
-    memlock_budget_size: usize,
-) -> JoinHandle<Result<()>> {
-    Builder::new()
-        .name("solTarUnpack".to_string())
-        .spawn(move || {
-            let archive_size = fs::metadata(&snapshot_archive_path)?.len() as usize;
-            let read_write_budget_size = (memlock_budget_size / 2).min(archive_size);
-            let read_buf_size = MAX_SNAPSHOT_READER_BUF_SIZE.min(read_write_budget_size as u64);
-            let decompressor =
-                decompressed_tar_reader(archive_format, snapshot_archive_path, read_buf_size)?;
-            hardened_unpack::streaming_unpack_snapshot(
-                Archive::new(decompressor),
-                read_write_budget_size,
-                ledger_dir.as_path(),
-                &account_paths,
-                &file_sender,
-            )?;
-            Ok(())
-        })
-        .unwrap()
-}
-
-fn decompressed_tar_reader(
-    archive_format: ArchiveFormat,
-    archive_path: impl AsRef<Path>,
-    buf_size: u64,
-) -> Result<ArchiveFormatDecompressor<impl BufRead>> {
-    let buf_reader =
-        solana_accounts_db::large_file_buf_reader(archive_path.as_ref(), buf_size as usize)
-            .map_err(|err| {
-                io::Error::other(format!(
-                    "failed to open snapshot archive '{}': {err}",
-                    archive_path.as_ref().display(),
-                ))
-            })?;
-    Ok(ArchiveFormatDecompressor::new(archive_format, buf_reader)?)
-}
-
 /// Used to determine if a filename is structured like a version file, bank file, or storage file
 #[derive(PartialEq, Debug)]
 enum SnapshotFileKind {
@@ -2647,7 +2543,13 @@ pub fn create_tmp_accounts_dir_for_tests() -> (TempDir, PathBuf) {
 mod tests {
     use {
         super::*,
-        agave_snapshots::ZstdConfig,
+        agave_snapshots::{
+            snapshot_config::{
+                DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+                DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+            },
+            ZstdConfig,
+        },
         assert_matches::assert_matches,
         bincode::{deserialize_from, serialize_into},
         solana_accounts_db::accounts_file::AccountsFileProvider,

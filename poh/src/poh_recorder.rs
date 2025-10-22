@@ -180,7 +180,6 @@ pub struct PohRecorder {
     blockstore: Arc<Blockstore>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     ticks_per_slot: u64,
-    target_ns_per_tick: u64,
     metrics: PohRecorderMetrics,
     delay_leader_block_for_pending_fork: bool,
     last_reported_slot_for_pending_fork: Arc<Mutex<Slot>>,
@@ -245,10 +244,6 @@ impl PohRecorder {
             tick_number,
         )));
 
-        let target_ns_per_tick = PohService::target_ns_per_tick(
-            ticks_per_slot,
-            poh_config.target_tick_duration.as_nanos() as u64,
-        );
         let (working_bank_sender, working_bank_receiver) = unbounded();
         let (leader_first_tick_height, leader_last_tick_height, grace_ticks) =
             Self::compute_leader_slot_tick_heights(next_leader_slot, ticks_per_slot);
@@ -268,7 +263,6 @@ impl PohRecorder {
                 blockstore,
                 leader_schedule_cache: leader_schedule_cache.clone(),
                 ticks_per_slot,
-                target_ns_per_tick,
                 metrics: PohRecorderMetrics::default(),
                 delay_leader_block_for_pending_fork,
                 last_reported_slot_for_pending_fork: Arc::default(),
@@ -384,15 +378,9 @@ impl PohRecorder {
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn tick(&mut self) {
-        let ((poh_entry, target_time), tick_lock_contention_us) = measure_us!({
+        let (poh_entry, tick_lock_contention_us) = measure_us!({
             let mut poh_l = self.poh.lock().unwrap();
-            let poh_entry = poh_l.tick();
-            let target_time = if poh_entry.is_some() {
-                Some(poh_l.target_poh_time(self.target_ns_per_tick))
-            } else {
-                None
-            };
-            (poh_entry, target_time)
+            poh_l.tick()
         });
         self.metrics.tick_lock_contention_us += tick_lock_contention_us;
 
@@ -420,17 +408,6 @@ impl PohRecorder {
 
             let (_flush_res, flush_cache_and_tick_us) = measure_us!(self.flush_cache(true));
             self.metrics.flush_cache_tick_us += flush_cache_and_tick_us;
-
-            let (_, sleep_us) = measure_us!({
-                let target_time = target_time.unwrap();
-                // sleep is not accurate enough to get a predictable time.
-                // Kernel can not schedule the thread for a while.
-                while Instant::now() < target_time {
-                    // TODO: a caller could possibly desire to reset or record while we're spinning here
-                    std::hint::spin_loop();
-                }
-            });
-            self.metrics.total_sleep_us += sleep_us;
         }
     }
 

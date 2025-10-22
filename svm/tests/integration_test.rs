@@ -51,7 +51,7 @@ use {
     solana_transaction::{sanitized::SanitizedTransaction, Transaction},
     solana_transaction_context::TransactionReturnData,
     solana_transaction_error::TransactionError,
-    std::{collections::HashMap, num::NonZeroU32, sync::atomic::Ordering},
+    std::{collections::HashMap, num::NonZeroU32, slice, sync::atomic::Ordering},
     test_case::test_case,
 };
 
@@ -1683,7 +1683,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         let mut test_entry = common_test_entry.clone();
 
         let first_transaction = Transaction::new_signed_with_payer(
-            &[withdraw_instruction.clone()],
+            slice::from_ref(&withdraw_instruction),
             Some(&fee_payer),
             &[&fee_payer_keypair],
             Hash::default(),
@@ -1711,7 +1711,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         let mut test_entry = common_test_entry.clone();
 
         let first_transaction = Transaction::new_signed_with_payer(
-            &[withdraw_instruction.clone()],
+            slice::from_ref(&withdraw_instruction),
             Some(&fee_payer),
             &[&fee_payer_keypair],
             Hash::default(),
@@ -1750,7 +1750,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         let mut test_entry = common_test_entry.clone();
 
         let first_transaction = Transaction::new_signed_with_payer(
-            &[withdraw_instruction.clone()],
+            slice::from_ref(&withdraw_instruction),
             Some(&fee_payer),
             &[&fee_payer_keypair],
             Hash::default(),
@@ -1796,7 +1796,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         let mut test_entry = common_test_entry.clone();
 
         let first_transaction = Transaction::new_signed_with_payer(
-            &[withdraw_instruction.clone()],
+            slice::from_ref(&withdraw_instruction),
             Some(&fee_payer),
             &[&fee_payer_keypair],
             Hash::default(),
@@ -1846,7 +1846,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         test_entry.add_initial_account(nonce_pubkey, &fake_nonce_account);
 
         let first_transaction = Transaction::new_signed_with_payer(
-            &[successful_noop_instruction.clone()],
+            slice::from_ref(&successful_noop_instruction),
             Some(&fee_payer),
             &[&fee_payer_keypair],
             Hash::default(),
@@ -2719,15 +2719,19 @@ fn program_cache_stats() {
     let mut system_tx_usage = 0;
     let mut successful_transfers = 0;
 
-    test_entry.push_transaction(make_transaction(&[succesful_noop_instruction.clone()]));
+    test_entry.push_transaction(make_transaction(slice::from_ref(
+        &succesful_noop_instruction,
+    )));
     noop_tx_usage += 1;
 
-    test_entry.push_transaction(make_transaction(&[succesful_transfer_instruction.clone()]));
+    test_entry.push_transaction(make_transaction(slice::from_ref(
+        &succesful_transfer_instruction,
+    )));
     system_tx_usage += 1;
     successful_transfers += 1;
 
     test_entry.push_transaction_with_status(
-        make_transaction(&[failing_transfer_instruction.clone()]),
+        make_transaction(slice::from_ref(&failing_transfer_instruction)),
         ExecutionStatus::ExecutedFailed,
     );
     system_tx_usage += 1;
@@ -2771,7 +2775,7 @@ fn program_cache_stats() {
 
     // nor does discard
     test_entry.transaction_batch.push(TransactionBatchItem {
-        transaction: make_transaction(&[succesful_transfer_instruction.clone()]),
+        transaction: make_transaction(slice::from_ref(&succesful_transfer_instruction)),
         check_result: Err(TransactionError::BlockhashNotFound),
         asserts: ExecutionStatus::Discarded.into(),
     });
@@ -2847,7 +2851,7 @@ fn program_cache_stats() {
     test_entry.drop_expected_account(buffer_address);
 
     test_entry.push_transaction_with_status(
-        make_transaction(&[succesful_noop_instruction.clone()]),
+        make_transaction(slice::from_ref(&succesful_noop_instruction)),
         ExecutionStatus::ExecutedFailed,
     );
     noop_tx_usage += 1;
@@ -2882,7 +2886,7 @@ fn program_cache_stats() {
     };
 
     test_entry.push_transaction_with_status(
-        make_transaction(&[succesful_noop_instruction.clone()]),
+        make_transaction(slice::from_ref(&succesful_noop_instruction)),
         ExecutionStatus::ExecutedFailed,
     );
     noop_tx_usage += 1;

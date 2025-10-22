@@ -18,9 +18,24 @@ name = "agave_snapshots"
 
 [features]
 agave-unstable-api = []
-default = ["agave-unstable-api"]
 
 [dependencies]
+bzip2 = { workspace = true }
+crossbeam-channel = { workspace = true }
+log = { workspace = true }
 lz4 = { workspace = true }
+rand = { workspace = true }
+solana-accounts-db = { workspace = true }
+solana-clock = { workspace = true }
+solana-genesis-config = { workspace = true }
+solana-hash = { workspace = true }
+solana-lattice-hash = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
+tar = { workspace = true }
+thiserror = { workspace = true }
 zstd = { workspace = true }
+
+[dev-dependencies]
+assert_matches = { workspace = true }
+solana-logger = { workspace = true }
+tempfile = { workspace = true }

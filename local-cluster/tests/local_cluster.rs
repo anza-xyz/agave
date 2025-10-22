@@ -1,6 +1,8 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    agave_snapshots::SnapshotInterval,
+    agave_snapshots::{
+        hardened_unpack::open_genesis_config, snapshot_config::SnapshotConfig, SnapshotInterval,
+    },
     assert_matches::assert_matches,
     crossbeam_channel::{unbounded, Receiver},
     gag::BufferRedirect,
@@ -9,9 +11,7 @@ use {
     rand::seq::SliceRandom,
     serial_test::serial,
     solana_account::AccountSharedData,
-    solana_accounts_db::{
-        hardened_unpack::open_genesis_config, utils::create_accounts_run_and_snapshot_dirs,
-    },
+    solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
     solana_client_traits::AsyncClient,
     solana_clock::{
         self as clock, Slot, DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE,
@@ -73,7 +73,6 @@ use {
         commitment::VOTE_THRESHOLD_SIZE,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils,
-        snapshot_config::SnapshotConfig,
         snapshot_package::SnapshotKind,
         snapshot_utils::{self, BANK_SNAPSHOTS_DIR},
     },
@@ -1650,7 +1649,6 @@ fn test_no_voting() {
 
 #[test]
 #[serial]
-#[ignore]
 fn test_optimistic_confirmation_violation_detection() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 2 nodes
@@ -1670,13 +1668,14 @@ fn test_optimistic_confirmation_violation_detection() {
     // to form a cluster. The heavier validator is the second node.
     let node_to_restart = validator_keys[1].0.pubkey();
 
+    // WFSM as we require a OC slot > 50 within 100 seconds
+    let mut validator_config = ValidatorConfig::default_for_test();
+    validator_config.wait_for_supermajority = Some(0);
+
     let mut config = ClusterConfig {
         mint_lamports: DEFAULT_MINT_LAMPORTS + node_stakes.iter().sum::<u64>(),
         node_stakes: node_stakes.clone(),
-        validator_configs: make_identical_validator_configs(
-            &ValidatorConfig::default_for_test(),
-            node_stakes.len(),
-        ),
+        validator_configs: make_identical_validator_configs(&validator_config, node_stakes.len()),
         validator_keys: Some(validator_keys),
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
@@ -2064,13 +2063,12 @@ fn do_test_future_tower(cluster_mode: ClusterMode) {
         ClusterMode::MasterSlave => validators[1],
     };
 
+    let mut validator_config = ValidatorConfig::default_for_test();
+    validator_config.wait_for_supermajority = Some(0);
     let mut config = ClusterConfig {
         mint_lamports: DEFAULT_MINT_LAMPORTS + DEFAULT_NODE_STAKE * 100,
         node_stakes: node_stakes.clone(),
-        validator_configs: make_identical_validator_configs(
-            &ValidatorConfig::default_for_test(),
-            node_stakes.len(),
-        ),
+        validator_configs: make_identical_validator_configs(&validator_config, node_stakes.len()),
         validator_keys: Some(validator_keys),
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
@@ -2566,13 +2564,12 @@ fn test_restart_tower_rollback() {
 
     let b_pubkey = validator_keys[1].0.pubkey();
 
+    let mut validator_config = ValidatorConfig::default_for_test();
+    validator_config.wait_for_supermajority = Some(0);
     let mut config = ClusterConfig {
         mint_lamports: DEFAULT_MINT_LAMPORTS + DEFAULT_NODE_STAKE * 100,
         node_stakes: node_stakes.clone(),
-        validator_configs: make_identical_validator_configs(
-            &ValidatorConfig::default_for_test(),
-            node_stakes.len(),
-        ),
+        validator_configs: make_identical_validator_configs(&validator_config, node_stakes.len()),
         validator_keys: Some(validator_keys),
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
@@ -2708,6 +2705,7 @@ fn test_rpc_block_subscribe() {
     let node_stakes = vec![leader_stake, rpc_stake];
     let mut validator_config = ValidatorConfig::default_for_test();
     validator_config.enable_default_rpc_block_subscribe();
+    validator_config.wait_for_supermajority = Some(0);
 
     let validator_keys = [
         "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
@@ -2788,6 +2786,7 @@ fn test_oc_bad_signatures() {
     let node_stakes = vec![leader_stake, our_node_stake];
     let mut validator_config = ValidatorConfig {
         require_tower: true,
+        wait_for_supermajority: Some(0),
         ..ValidatorConfig::default_for_test()
     };
     validator_config.enable_default_rpc_block_subscribe();
@@ -2825,7 +2824,6 @@ fn test_oc_bad_signatures() {
     let client = cluster
         .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
         .unwrap();
-    let cluster_funding_keypair = cluster.funding_keypair.insecure_clone();
     let voter_thread_sleep_ms: usize = 100;
     let num_votes_simulated = Arc::new(AtomicUsize::new(0));
     let gossip_voter = cluster_tests::start_gossip_voter(
@@ -2868,7 +2866,7 @@ fn test_oc_bad_signatures() {
                 );
                 LocalCluster::send_transaction_with_retries(
                     &client,
-                    &[&cluster_funding_keypair, &bad_authorized_signer_keypair],
+                    &[&node_keypair, &bad_authorized_signer_keypair],
                     &mut vote_tx,
                     5,
                 )
@@ -3168,13 +3166,12 @@ fn run_test_load_program_accounts(scan_commitment: CommitmentConfig) {
         scan_client_receiver,
     );
 
+    let mut validator_config = ValidatorConfig::default_for_test();
+    validator_config.wait_for_supermajority = Some(0);
     let mut config = ClusterConfig {
         mint_lamports: DEFAULT_MINT_LAMPORTS + node_stakes.iter().sum::<u64>(),
         node_stakes: node_stakes.clone(),
-        validator_configs: make_identical_validator_configs(
-            &ValidatorConfig::default_for_test(),
-            node_stakes.len(),
-        ),
+        validator_configs: make_identical_validator_configs(&validator_config, node_stakes.len()),
         validator_keys: Some(validator_keys),
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
@@ -3317,6 +3314,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     default_config.fixed_leader_schedule = Some(FixedSchedule {
         leader_schedule: leader_schedule.clone(),
     });
+    default_config.wait_for_supermajority = Some(0);
     let mut validator_configs =
         make_identical_validator_configs(&default_config, node_stakes.len());
 
@@ -4445,7 +4443,8 @@ fn test_leader_failure_4() {
     // Cluster needs a supermajority to remain even after taking 1 node offline,
     // so the minimum number of nodes for this test is 4.
     let num_nodes = 4;
-    let validator_config = ValidatorConfig::default_for_test();
+    let mut validator_config = ValidatorConfig::default_for_test();
+    validator_config.wait_for_supermajority = Some(0);
     // Embed vote and stake account in genesis to avoid waiting for stake
     // activation and race conditions around accepting gossip votes, repairing
     // blocks, etc. before we advance through too many epochs.
@@ -4541,8 +4540,10 @@ fn test_slot_hash_expiry() {
 
     // We want B to not vote (we are trying to simulate its votes not landing until it gets to the
     // minority fork)
+    let mut validator_config = ValidatorConfig::default_for_test();
+    validator_config.wait_for_supermajority = Some(0);
     let mut validator_configs =
-        make_identical_validator_configs(&ValidatorConfig::default_for_test(), node_stakes.len());
+        make_identical_validator_configs(&validator_config, node_stakes.len());
     validator_configs[1].voting_disabled = true;
 
     let mut config = ClusterConfig {

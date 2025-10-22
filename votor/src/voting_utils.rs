@@ -176,14 +176,11 @@ fn generate_vote_tx(vote: &Vote, bank: &Bank, context: &mut VotingContext) -> Ge
             );
             return GenerateVoteTxResult::HotSpare;
         }
-        let bls_pubkey_serialized = match vote_state_view.bls_pubkey_compressed() {
-            None => {
-                panic!(
-                    "No BLS pubkey in vote account {}",
-                    context.identity_keypair.pubkey()
-                );
-            }
-            Some(key) => key,
+        let Some(bls_pubkey_serialized) = vote_state_view.bls_pubkey_compressed() else {
+            panic!(
+                "No BLS pubkey in vote account {}",
+                context.identity_keypair.pubkey()
+            );
         };
         bls_pubkey_in_vote_account =
             (bincode::deserialize::<BLSPubkeyCompressed>(&bls_pubkey_serialized).unwrap())

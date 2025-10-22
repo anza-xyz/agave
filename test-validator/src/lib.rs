@@ -1,14 +1,16 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     agave_feature_set::{alpenglow, raise_cpi_nesting_limit_to_8, FeatureSet, FEATURE_NAMES},
-    agave_snapshots::SnapshotInterval,
+    agave_snapshots::{
+        hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, snapshot_config::SnapshotConfig,
+        SnapshotInterval,
+    },
     base64::{prelude::BASE64_STANDARD, Engine},
     crossbeam_channel::Receiver,
     log::*,
     solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
     solana_accounts_db::{
         accounts_db::AccountsDbConfig, accounts_index::AccountsIndexConfig,
-        hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         utils::create_accounts_run_and_snapshot_dirs,
     },
     solana_cli_output::CliAccount,
@@ -50,7 +52,6 @@ use {
         bank_forks::BankForks,
         genesis_utils::{self, create_genesis_config_with_leader_ex_no_features},
         runtime_config::RuntimeConfig,
-        snapshot_config::SnapshotConfig,
         snapshot_utils::BANK_SNAPSHOTS_DIR,
     },
     solana_sdk_ids::address_lookup_table,

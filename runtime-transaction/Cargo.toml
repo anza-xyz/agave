@@ -17,6 +17,7 @@ crate-type = ["lib"]
 name = "solana_runtime_transaction"
 
 [features]
+agave-unstable-api = []
 dev-context-only-utils = ["solana-compute-budget-instruction/dev-context-only-utils"]
 
 [dependencies]
@@ -46,6 +47,7 @@ solana-compute-budget-interface = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
+solana-runtime-transaction = { path = ".", features = ["agave-unstable-api"] }
 solana-signer = { workspace = true }
 solana-system-interface = { workspace = true, features = ["bincode"] }
 solana-system-transaction = { workspace = true }

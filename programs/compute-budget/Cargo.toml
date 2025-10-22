@@ -16,5 +16,8 @@ targets = ["x86_64-unknown-linux-gnu"]
 crate-type = ["lib"]
 name = "solana_compute_budget_program"
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 solana-program-runtime = { workspace = true }

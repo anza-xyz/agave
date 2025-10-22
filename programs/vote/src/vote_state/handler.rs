@@ -644,6 +644,7 @@ pub enum VoteStateTargetVersion {
     // New vote state versions will be added here...
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
 enum TargetVoteState {
     V3(VoteStateV3),

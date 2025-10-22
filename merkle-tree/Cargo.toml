@@ -16,6 +16,9 @@ targets = ["x86_64-unknown-linux-gnu"]
 crate-type = ["lib"]
 name = "solana_merkle_tree"
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 fast-math = { workspace = true }
 solana-hash = { workspace = true }

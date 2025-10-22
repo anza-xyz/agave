@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 #![no_std]
 
 //! Messages passed between agave and an external pack process.
@@ -210,8 +219,6 @@ pub mod pack_message_flags {
 
 /// Message: [Worker -> Pack]
 /// Message from worker threads in response to a [`PackToWorkerMessage`].
-/// [`PackToWorkerMessage`] may have multiple response messages that
-/// will follow the order of transactions in the original message.
 #[repr(C)]
 pub struct WorkerToPackMessage {
     /// Offset and number of transactions in the batch.
@@ -228,6 +235,7 @@ pub struct WorkerToPackMessage {
     /// If `false`, the value of [`Self::responses`] is undefined.
     pub processed: bool,
     /// Response per transaction in the batch.
+    /// If [`Self::processed`] is false, this field is undefined.
     /// See [`TransactionResponseRegion`] for details.
     pub responses: TransactionResponseRegion,
 }

@@ -10,6 +10,7 @@ edition = "2021"
 publish = false
 
 [features]
+agave-unstable-api = []
 dummy-for-ci-check = []
 frozen-abi = []
 
