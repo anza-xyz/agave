@@ -722,7 +722,7 @@ mod tests {
 
     #[test]
     fn test_best_peer_3() {
-        solana_logger::setup_with_default("info");
+        agave_logger::setup_with_default("info");
         let cs = ClusterSlots::default();
         let pk1 = Pubkey::new_unique();
         let pk2 = Pubkey::new_unique();

@@ -97,7 +97,7 @@ fn expect_account_absent(rpc_client: &RpcClient, pubkey: Pubkey, absent_because:
 
 #[test]
 fn test_cli_program_deploy_non_upgradeable() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
@@ -301,7 +301,7 @@ fn test_cli_program_deploy_non_upgradeable() {
 
 #[test]
 fn test_cli_program_deploy_no_authority() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
@@ -403,7 +403,7 @@ fn test_cli_program_deploy_no_authority() {
 #[test_case(false, true; "Feature disabled, skip preflight")]
 #[test_case(false, false; "Feature disabled, don't skip preflight")]
 fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: bool) {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut program_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     program_path.push("tests");
@@ -522,7 +522,7 @@ fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: bool) {
 #[test_case(true; "Feature enabled")]
 #[test_case(false; "Feature disabled")]
 fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
@@ -687,7 +687,7 @@ fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
 
 #[test]
 fn test_cli_program_deploy_with_authority() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
@@ -1082,7 +1082,7 @@ fn test_cli_program_deploy_with_authority() {
 #[test_case(true; "Skip preflight")]
 #[test_case(false; "Dont skip preflight")]
 fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
@@ -1254,7 +1254,7 @@ fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
 
 #[test]
 fn test_cli_program_close_program() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
@@ -1366,7 +1366,7 @@ fn test_cli_program_close_program() {
 
 #[test]
 fn test_cli_program_extend_program() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
@@ -1547,7 +1547,7 @@ fn test_cli_program_extend_program() {
 
 #[test]
 fn test_cli_program_migrate_program() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
@@ -1625,7 +1625,7 @@ fn test_cli_program_migrate_program() {
 
 #[test]
 fn test_cli_program_write_buffer() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
@@ -2013,7 +2013,7 @@ fn test_cli_program_write_buffer() {
 #[test_case(true; "Feature enabled")]
 #[test_case(false; "Feature disabled")]
 fn test_cli_program_write_buffer_feature(enable_feature: bool) {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut program_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     program_path.push("tests");
@@ -2107,7 +2107,7 @@ fn test_cli_program_write_buffer_feature(enable_feature: bool) {
 
 #[test]
 fn test_cli_program_set_buffer_authority() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
@@ -2278,7 +2278,7 @@ fn test_cli_program_set_buffer_authority() {
 
 #[test]
 fn test_cli_program_mismatch_buffer_authority() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
@@ -2397,7 +2397,7 @@ fn test_cli_program_mismatch_buffer_authority() {
 #[test_case(true; "offline signer will be fee payer")]
 #[test_case(false; "online signer will be fee payer")]
 fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer: bool) {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
@@ -2594,7 +2594,7 @@ fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer:
 
 #[test]
 fn test_cli_program_show() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
@@ -2790,7 +2790,7 @@ fn test_cli_program_show() {
 
 #[test]
 fn test_cli_program_dump() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");

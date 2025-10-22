@@ -80,6 +80,7 @@ spl-generic-token = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { workspace = true }
 agave-syscalls = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
@@ -97,7 +98,6 @@ solana-ed25519-program = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-keypair = { workspace = true }
-solana-logger = { workspace = true }
 solana-native-token = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-binaries = { workspace = true }

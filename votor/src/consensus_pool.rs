@@ -1565,7 +1565,7 @@ mod tests {
 
     #[test]
     fn test_safe_to_notar() {
-        solana_logger::setup();
+        agave_logger::setup();
         let (validator_keypairs, mut pool, bank_forks) = create_initial_state();
         let bank = bank_forks.read().unwrap().root_bank();
         let (my_vote_key, _, _) =

@@ -234,7 +234,7 @@ mod tests {
         number_of_accounts_to_remove: usize,
         storage_access: StorageAccess,
     ) {
-        solana_logger::setup();
+        agave_logger::setup();
         let (storage, _temp_dirs) =
             create_storage_for_storage_reader(0, AccountsFileProvider::AppendVec, storage_access);
 

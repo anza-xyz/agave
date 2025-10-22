@@ -603,7 +603,7 @@ mod tests {
 
     #[test]
     fn test_valid_snapshot_accounts() {
-        solana_logger::setup();
+        agave_logger::setup();
         assert!(is_valid_snapshot_archive_entry(
             &["accounts", "0.0"],
             tar::EntryType::Regular

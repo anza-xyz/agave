@@ -1954,7 +1954,7 @@ mod tests {
 
     #[test]
     fn test_wen_restart_divergence_across_epoch_boundary() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let test_state = wen_restart_test_init(&ledger_path);
         let last_vote_slot = test_state.last_voted_fork_slots[0];
@@ -2128,7 +2128,7 @@ mod tests {
 
     #[test]
     fn test_wen_restart_initialize() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let test_state = wen_restart_test_init(&ledger_path);
         let last_vote_bankhash = Hash::new_unique();
@@ -2690,7 +2690,7 @@ mod tests {
 
     #[test]
     fn test_increment_and_write_wen_restart_records() {
-        solana_logger::setup();
+        agave_logger::setup();
         let my_dir = TempDir::new().unwrap();
         let mut wen_restart_proto_path = my_dir.path().to_path_buf();
         wen_restart_proto_path.push("wen_restart_status.proto");
@@ -2927,7 +2927,7 @@ mod tests {
 
     #[test]
     fn test_find_heaviest_fork_failures() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let exit = Arc::new(AtomicBool::new(false));
         let test_state = wen_restart_test_init(&ledger_path);
@@ -3194,7 +3194,7 @@ mod tests {
 
     #[test]
     fn test_generate_snapshot() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let test_state = wen_restart_test_init(&ledger_path);
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();

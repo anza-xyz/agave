@@ -46,6 +46,7 @@ members = [
     "lattice-hash",
     "ledger",
     "local-cluster",
+    "logger",
     "measure",
     "merkle-tree",
     "metrics",
@@ -186,6 +187,7 @@ agave-feature-set = { path = "feature-set", version = "=3.1.0", features = ["aga
 agave-fs = { path = "fs", version = "=3.1.0", features = ["agave-unstable-api"] }
 agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=3.1.0", features = ["agave-unstable-api"] }
 agave-io-uring = { path = "io-uring", version = "=3.1.0", features = ["agave-unstable-api"] }
+agave-logger = { path = "logger", version = "=3.1.0", features = ["agave-unstable-api"] }
 agave-precompiles = { path = "precompiles", version = "=3.1.0", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=3.1.0", features = ["agave-unstable-api"] }
 agave-scheduler-bindings = { path = "scheduler-bindings", version = "=3.1.0", features = ["agave-unstable-api"] }
@@ -462,7 +464,6 @@ solana-loader-v3-interface = "6.1.0"
 solana-loader-v4-interface = "3.1.0"
 solana-loader-v4-program = { path = "programs/loader-v4", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-local-cluster = { path = "local-cluster", version = "=3.1.0", features = ["agave-unstable-api"] }
-solana-logger = "3.0.0"
 solana-measure = { path = "measure", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-merkle-tree = { path = "merkle-tree", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-message = "3.0.1"

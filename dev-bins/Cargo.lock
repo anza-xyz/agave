@@ -115,6 +115,7 @@ name = "agave-ledger-tool"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-logger",
  "agave-reserved-account-keys",
  "agave-snapshots",
  "agave-syscalls",
@@ -159,7 +160,6 @@ dependencies = [
  "solana-keypair",
  "solana-ledger",
  "solana-loader-v3-interface",
- "solana-logger",
  "solana-measure",
  "solana-message",
  "solana-native-token",
@@ -192,6 +192,16 @@ dependencies = [
  "thiserror 2.0.17",
  "tikv-jemallocator",
  "tokio",
+]
+
+[[package]]
+name = "agave-logger"
+version = "3.1.0"
+dependencies = [
+ "env_logger",
+ "libc",
+ "log",
+ "signal-hook",
 ]
 
 [[package]]
@@ -345,6 +355,7 @@ dependencies = [
 name = "agave-votor"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "agave-votor-messages",
  "anyhow",
  "bincode",
@@ -375,7 +386,6 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
  "solana-measure",
  "solana-metrics",
  "solana-pubkey",
@@ -396,11 +406,11 @@ dependencies = [
 name = "agave-votor-messages"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "serde",
  "solana-bls-signatures",
  "solana-clock",
  "solana-hash",
- "solana-logger",
 ]
 
 [[package]]
@@ -6002,6 +6012,7 @@ name = "solana-banking-bench"
 version = "3.1.0"
 dependencies = [
  "agave-banking-stage-ingress-types",
+ "agave-logger",
  "assert_matches",
  "clap 3.2.25",
  "crossbeam-channel",
@@ -6015,7 +6026,6 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
  "solana-measure",
  "solana-message",
  "solana-perf",
@@ -6110,6 +6120,7 @@ name = "solana-bench-tps"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-logger",
  "chrono",
  "clap 2.34.0",
  "crossbeam-channel",
@@ -6139,7 +6150,6 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-local-cluster",
- "solana-logger",
  "solana-measure",
  "solana-message",
  "solana-metrics",
@@ -6843,6 +6853,7 @@ dependencies = [
 name = "solana-dos"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "bincode",
  "clap 3.2.25",
  "crossbeam-channel",
@@ -6860,7 +6871,6 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-local-cluster",
- "solana-logger",
  "solana-measure",
  "solana-message",
  "solana-net-utils",
@@ -6975,6 +6985,7 @@ dependencies = [
 name = "solana-faucet"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "bincode",
  "clap 2.34.0",
  "crossbeam-channel",
@@ -6986,7 +6997,6 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
- "solana-logger",
  "solana-message",
  "solana-metrics",
  "solana-net-utils",
@@ -7056,6 +7066,7 @@ name = "solana-genesis"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-logger",
  "agave-snapshots",
  "base64 0.22.1",
  "bincode",
@@ -7079,7 +7090,6 @@ dependencies = [
  "solana-keypair",
  "solana-ledger",
  "solana-loader-v3-interface",
- "solana-logger",
  "solana-native-token",
  "solana-poh-config",
  "solana-pubkey",
@@ -7161,6 +7171,7 @@ name = "solana-gossip"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-logger",
  "arrayvec",
  "assert_matches",
  "bincode",
@@ -7191,7 +7202,6 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
  "solana-measure",
  "solana-metrics",
  "solana-native-token",
@@ -7520,6 +7530,7 @@ dependencies = [
 name = "solana-local-cluster"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "agave-snapshots",
  "crossbeam-channel",
  "itertools 0.12.1",
@@ -7542,7 +7553,6 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
  "solana-message",
  "solana-native-token",
  "solana-net-utils",
@@ -7577,19 +7587,6 @@ dependencies = [
  "strum",
  "tempfile",
  "trees",
-]
-
-[[package]]
-name = "solana-logger"
-version = "3.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef7421d1092680d72065edbf5c7605856719b021bf5f173656c71febcdd5d003"
-dependencies = [
- "env_logger",
- "lazy_static",
- "libc",
- "log",
- "signal-hook",
 ]
 
 [[package]]
@@ -7946,6 +7943,7 @@ name = "solana-program-test"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-logger",
  "assert_matches",
  "async-trait",
  "base64 0.22.1",
@@ -7972,7 +7970,6 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-loader-v3-interface",
- "solana-logger",
  "solana-message",
  "solana-msg",
  "solana-native-token",
@@ -9097,7 +9094,6 @@ dependencies = [
  "solana-keypair",
  "solana-ledger",
  "solana-loader-v3-interface",
- "solana-logger",
  "solana-message",
  "solana-native-token",
  "solana-net-utils",

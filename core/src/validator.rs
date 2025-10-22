@@ -2905,7 +2905,7 @@ mod tests {
 
     #[test]
     fn validator_exit() {
-        solana_logger::setup();
+        agave_logger::setup();
         let leader_keypair = Keypair::new();
         let leader_node = Node::new_localhost_with_pubkey(&leader_keypair.pubkey());
 
@@ -2951,7 +2951,7 @@ mod tests {
 
     #[test]
     fn test_should_cleanup_blockstore_incorrect_shred_versions() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
@@ -3086,7 +3086,7 @@ mod tests {
 
     #[test]
     fn test_cleanup_blockstore_incorrect_shred_versions() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let validator_config = ValidatorConfig::default_for_test();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -3182,7 +3182,7 @@ mod tests {
 
     #[test]
     fn test_wait_for_supermajority() {
-        solana_logger::setup();
+        agave_logger::setup();
         let node_keypair = Arc::new(Keypair::new());
         let cluster_info = ClusterInfo::new(
             ContactInfo::new_localhost(&node_keypair.pubkey(), timestamp()),
@@ -3329,7 +3329,7 @@ mod tests {
 
     #[test]
     fn test_poh_speed() {
-        solana_logger::setup();
+        agave_logger::setup();
         let poh_config = PohConfig {
             target_tick_duration: target_tick_duration(),
             // make PoH rate really fast to cause the panic condition
@@ -3346,7 +3346,7 @@ mod tests {
 
     #[test]
     fn test_poh_speed_no_hashes_per_tick() {
-        solana_logger::setup();
+        agave_logger::setup();
         let poh_config = PohConfig {
             target_tick_duration: target_tick_duration(),
             hashes_per_tick: None,
