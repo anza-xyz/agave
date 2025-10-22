@@ -12,7 +12,7 @@ use {
     },
     crate::{
         banking_stage::{
-            consume_worker::{ConsumeWorker, CrossbeamConsumeWorkerChannels},
+            consume_worker::ConsumeWorker,
             transaction_scheduler::{
                 prio_graph_scheduler::PrioGraphScheduler,
                 scheduler_controller::{
@@ -75,6 +75,9 @@ mod vote_packet_receiver;
 conditional_vis_mod!(scheduler_messages, feature = "dev-context-only-utils", pub);
 pub mod transaction_scheduler;
 conditional_vis_mod!(unified_scheduler, feature = "dev-context-only-utils", pub, pub(crate));
+#[allow(dead_code)]
+#[cfg(unix)]
+mod progress_tracker;
 #[allow(dead_code)]
 #[cfg(unix)]
 mod tpu_to_pack;
@@ -484,16 +487,14 @@ impl BankingStage {
             let consume_worker = ConsumeWorker::new(
                 id,
                 exit.clone(),
-                CrossbeamConsumeWorkerChannels {
-                    receiver: work_receiver,
-                    sender: finished_work_sender.clone(),
-                },
+                work_receiver,
                 Consumer::new(
                     context.committer.clone(),
                     context.transaction_recorder.clone(),
                     QosService::new(id),
                     context.log_messages_bytes_limit,
                 ),
+                finished_work_sender.clone(),
                 context.poh_recorder.read().unwrap().shared_leader_state(),
             );
 

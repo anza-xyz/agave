@@ -94,26 +94,6 @@ fn serialize_stake_accounts_to_stake_format<S: Serializer>(
     SerdeStakeAccountsToStakeFormat::from(stakes.clone()).serialize(serializer)
 }
 
-impl From<Stakes<Stake>> for SerdeStakesToDelegationFormat {
-    fn from(stakes: Stakes<Stake>) -> Self {
-        let Stakes {
-            vote_accounts,
-            stake_delegations,
-            unused,
-            epoch,
-            stake_history,
-        } = stakes;
-
-        Self {
-            vote_accounts,
-            stake_delegations: SerdeStakeMapToDelegationFormat(stake_delegations),
-            unused,
-            epoch,
-            stake_history,
-        }
-    }
-}
-
 impl From<Stakes<StakeAccount>> for SerdeStakeAccountsToDelegationFormat {
     fn from(stakes: Stakes<StakeAccount>) -> Self {
         let Stakes {
@@ -156,16 +136,6 @@ impl From<Stakes<StakeAccount>> for SerdeStakeAccountsToStakeFormat {
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize)]
-struct SerdeStakesToDelegationFormat {
-    vote_accounts: VoteAccounts,
-    stake_delegations: SerdeStakeMapToDelegationFormat,
-    unused: u64,
-    epoch: Epoch,
-    stake_history: StakeHistory,
-}
-
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize)]
 struct SerdeStakeAccountsToDelegationFormat {
     vote_accounts: VoteAccounts,
     stake_delegations: SerdeStakeAccountMapToDelegationFormat,
@@ -182,21 +152,6 @@ struct SerdeStakeAccountsToStakeFormat {
     unused: u64,
     epoch: Epoch,
     stake_history: StakeHistory,
-}
-
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-struct SerdeStakeMapToDelegationFormat(ImHashMap<Pubkey, Stake>);
-impl Serialize for SerdeStakeMapToDelegationFormat {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut s = serializer.serialize_map(Some(self.0.len()))?;
-        for (pubkey, stake) in self.0.iter() {
-            s.serialize_entry(pubkey, &stake.delegation)?;
-        }
-        s.end()
-    }
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]

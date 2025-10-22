@@ -15,6 +15,9 @@ targets = ["x86_64-unknown-linux-gnu"]
 [lib]
 name = "solana_clap_utils"
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 chrono = { workspace = true, features = ["default"] }
 clap = "2.33.0"

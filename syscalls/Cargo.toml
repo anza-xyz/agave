@@ -14,6 +14,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
 default = ["metrics"]
+agave-unstable-api = []
 metrics = ["solana-program-runtime/metrics"]
 shuttle-test = [
     "solana-program-runtime/shuttle-test",

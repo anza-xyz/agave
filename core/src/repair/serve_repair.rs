@@ -665,7 +665,7 @@ impl ServeRepair {
         let socket_addr_space = *self.cluster_info.socket_addr_space();
         let root_bank = self.sharable_banks.root();
         let epoch_staked_nodes = root_bank.epoch_staked_nodes(root_bank.epoch());
-        let identity_keypair = self.cluster_info.keypair().clone();
+        let identity_keypair = self.cluster_info.keypair();
         let my_id = identity_keypair.pubkey();
 
         let max_buffered_packets = if !self.repair_whitelist.read().unwrap().is_empty() {
@@ -996,7 +996,7 @@ impl ServeRepair {
         stats: &mut ServeRepairStats,
         data_budget: &DataBudget,
     ) {
-        let identity_keypair = self.cluster_info.keypair().clone();
+        let identity_keypair = self.cluster_info.keypair();
         let mut pending_pings = Vec::default();
 
         for RepairRequestWithMeta {
@@ -1488,7 +1488,7 @@ mod tests {
             bank_forks,
             Arc::new(RwLock::new(HashSet::default())),
         );
-        let keypair = cluster_info.keypair().clone();
+        let keypair = cluster_info.keypair();
         let repair_peer_id = solana_pubkey::new_rand();
         let repair_request = ShredRepairType::Orphan(123);
 
@@ -1527,7 +1527,7 @@ mod tests {
         let cluster_info = Arc::new(new_test_cluster_info());
         let repair_peer_id = solana_pubkey::new_rand();
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
-        let keypair = cluster_info.keypair().clone();
+        let keypair = cluster_info.keypair();
 
         let mut bank = Bank::new_for_tests(&genesis_config);
         bank.feature_set = Arc::new(FeatureSet::all_enabled());
@@ -1574,7 +1574,7 @@ mod tests {
             bank_forks,
             Arc::new(RwLock::new(HashSet::default())),
         );
-        let keypair = cluster_info.keypair().clone();
+        let keypair = cluster_info.keypair();
         let repair_peer_id = solana_pubkey::new_rand();
 
         let slot = 50;
@@ -1889,7 +1889,7 @@ mod tests {
             bank_forks,
             Arc::new(RwLock::new(HashSet::default())),
         );
-        let identity_keypair = cluster_info.keypair().clone();
+        let identity_keypair = cluster_info.keypair();
         let mut outstanding_requests = OutstandingShredRepairs::default();
         let (repair_request_quic_sender, _) = tokio::sync::mpsc::channel(/*buffer:*/ 128);
         let rv = serve_repair.repair_request(
@@ -2192,7 +2192,7 @@ mod tests {
         let contact_info3 = ContactInfo::new_localhost(&solana_pubkey::new_rand(), timestamp());
         cluster_info.insert_info(contact_info2.clone());
         cluster_info.insert_info(contact_info3.clone());
-        let identity_keypair = cluster_info.keypair().clone();
+        let identity_keypair = cluster_info.keypair();
         let serve_repair = ServeRepair::new_for_test(
             cluster_info,
             bank_forks,

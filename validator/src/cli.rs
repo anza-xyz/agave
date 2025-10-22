@@ -1,12 +1,18 @@
 use {
     crate::commands,
-    agave_snapshots::DEFAULT_ARCHIVE_COMPRESSION,
-    clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches, SubCommand},
-    solana_accounts_db::{
-        accounts_db::{
-            DEFAULT_ACCOUNTS_SHRINK_OPTIMIZE_TOTAL_SPACE, DEFAULT_ACCOUNTS_SHRINK_RATIO,
-        },
+    agave_snapshots::{
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+        snapshot_config::{
+            DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
+            DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
+            DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+            DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+        },
+        SnapshotVersion, DEFAULT_ARCHIVE_COMPRESSION,
+    },
+    clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches, SubCommand},
+    solana_accounts_db::accounts_db::{
+        DEFAULT_ACCOUNTS_SHRINK_OPTIMIZE_TOTAL_SPACE, DEFAULT_ACCOUNTS_SHRINK_RATIO,
     },
     solana_clap_utils::{
         hidden_unless_forced,
@@ -25,12 +31,6 @@ use {
     solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,
     solana_rpc_client_api::request::{DELINQUENT_VALIDATOR_SLOT_DISTANCE, MAX_MULTIPLE_ACCOUNTS},
-    solana_runtime::snapshot_utils::{
-        SnapshotVersion, DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-        DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-        DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
-        DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
-    },
     solana_send_transaction_service::send_transaction_service::{self},
     solana_streamer::quic::{
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER,
@@ -287,10 +287,6 @@ pub struct DefaultArgs {
     pub rpc_threads: String,
     pub rpc_blocking_threads: String,
     pub rpc_niceness_adjustment: String,
-    pub rpc_bigtable_timeout: String,
-    pub rpc_bigtable_instance_name: String,
-    pub rpc_bigtable_app_profile_id: String,
-    pub rpc_bigtable_max_message_size: String,
     pub rpc_max_request_body_size: String,
 
     pub maximum_local_snapshot_age: String,
@@ -371,12 +367,6 @@ impl DefaultArgs {
             rpc_threads: num_cpus::get().to_string(),
             rpc_blocking_threads: 1.max(num_cpus::get() / 4).to_string(),
             rpc_niceness_adjustment: "0".to_string(),
-            rpc_bigtable_timeout: "30".to_string(),
-            rpc_bigtable_instance_name: solana_storage_bigtable::DEFAULT_INSTANCE_NAME.to_string(),
-            rpc_bigtable_app_profile_id: solana_storage_bigtable::DEFAULT_APP_PROFILE_ID
-                .to_string(),
-            rpc_bigtable_max_message_size: solana_storage_bigtable::DEFAULT_MAX_MESSAGE_SIZE
-                .to_string(),
             maximum_full_snapshot_archives_to_retain: DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN
                 .to_string(),
             maximum_incremental_snapshot_archives_to_retain:

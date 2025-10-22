@@ -76,40 +76,6 @@ struct SecondaryIndexStats {
 }
 
 #[derive(Debug, Default)]
-pub struct DashMapSecondaryIndexEntry {
-    account_keys: DashMap<Pubkey, ()>,
-}
-
-impl SecondaryIndexEntry for DashMapSecondaryIndexEntry {
-    fn insert_if_not_exists(&self, key: &Pubkey, inner_keys_count: &AtomicU64) {
-        if self.account_keys.get(key).is_none() {
-            self.account_keys.entry(*key).or_insert_with(|| {
-                inner_keys_count.fetch_add(1, Ordering::Relaxed);
-            });
-        }
-    }
-
-    fn remove_inner_key(&self, key: &Pubkey) -> bool {
-        self.account_keys.remove(key).is_some()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.account_keys.is_empty()
-    }
-
-    fn keys(&self) -> Vec<Pubkey> {
-        self.account_keys
-            .iter()
-            .map(|entry_ref| *entry_ref.key())
-            .collect()
-    }
-
-    fn len(&self) -> usize {
-        self.account_keys.len()
-    }
-}
-
-#[derive(Debug, Default)]
 pub struct RwLockSecondaryIndexEntry {
     account_keys: RwLock<HashSet<Pubkey>>,
 }

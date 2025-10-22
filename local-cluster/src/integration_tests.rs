@@ -16,7 +16,7 @@ use {
         local_cluster::{ClusterConfig, LocalCluster},
         validator_configs::*,
     },
-    agave_snapshots::SnapshotInterval,
+    agave_snapshots::{snapshot_config::SnapshotConfig, SnapshotInterval},
     log::*,
     solana_account::AccountSharedData,
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
@@ -39,7 +39,6 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_runtime::snapshot_config::SnapshotConfig,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_turbine::broadcast_stage::BroadcastStageType,
@@ -318,6 +317,7 @@ pub fn run_cluster_partition<C>(
     let turbine_disabled = Arc::new(AtomicBool::new(false));
     let mut validator_config = ValidatorConfig {
         turbine_disabled: turbine_disabled.clone(),
+        wait_for_supermajority: Some(0),
         ..ValidatorConfig::default_for_test()
     };
 
@@ -483,6 +483,7 @@ pub fn test_faulty_node(
     validator_configs[0].broadcast_stage_type = faulty_node_type;
     for config in &mut validator_configs {
         config.fixed_leader_schedule = Some(fixed_leader_schedule.clone());
+        config.wait_for_supermajority = Some(0);
     }
 
     let mut cluster_config = ClusterConfig {
