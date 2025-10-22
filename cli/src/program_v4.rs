@@ -1142,7 +1142,8 @@ pub async fn process_dump(
 /// sync-async-sync bridging. For better performance, consider using the async
 /// `process_deploy_program()` directly with a nonblocking RpcClient.
 #[deprecated(
-    note = "Consider using async process_deploy_program() with nonblocking RpcClient for better performance and resource usage"
+    note = "Consider using async process_deploy_program() with nonblocking RpcClient for better \
+            performance and resource usage"
 )]
 pub fn process_deploy_program_sync(
     rpc_client_blocking: Arc<solana_rpc_client::rpc_client::RpcClient>,
@@ -1188,7 +1189,8 @@ pub fn process_deploy_program_sync(
 /// sync-async-sync bridging. For better performance, consider using the async
 /// `process_dump()` directly with a nonblocking RpcClient.
 #[deprecated(
-    note = "Consider using async process_dump() with nonblocking RpcClient for better performance and resource usage"
+    note = "Consider using async process_dump() with nonblocking RpcClient for better performance \
+            and resource usage"
 )]
 pub fn process_dump_sync(
     rpc_client_blocking: Arc<solana_rpc_client::rpc_client::RpcClient>,

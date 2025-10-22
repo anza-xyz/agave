@@ -36,8 +36,7 @@ use {
     },
     solana_client::{
         connection_cache::ConnectionCache,
-        nonblocking::rpc_client::RpcClient,
-        nonblocking::tpu_client::TpuClient,
+        nonblocking::{rpc_client::RpcClient, tpu_client::TpuClient},
         send_and_confirm_transactions_in_parallel::{
             send_and_confirm_transactions_in_parallel_v2, SendAndConfirmConfigV2,
         },

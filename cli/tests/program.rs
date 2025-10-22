@@ -25,8 +25,9 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc::rpc::JsonRpcConfig,
-    solana_rpc_client::nonblocking::rpc_client::RpcClient,
-    solana_rpc_client::rpc_client::GetConfirmedSignaturesForAddress2Config,
+    solana_rpc_client::{
+        nonblocking::rpc_client::RpcClient, rpc_client::GetConfirmedSignaturesForAddress2Config,
+    },
     solana_rpc_client_api::config::RpcTransactionConfig,
     solana_rpc_client_nonce_utils::nonblocking::blockhash_query::BlockhashQuery,
     solana_sdk_ids::{bpf_loader_upgradeable, compute_budget, loader_v4},
