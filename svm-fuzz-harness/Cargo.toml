@@ -16,10 +16,9 @@ path = "bin/test_exec_instr.rs"
 required-features = ["fuzz"]
 
 [features]
-fuzz = ["dep:clap", "dep:prost", "dep:protosol", "dep:prost-build"]
-
-[features]
 agave-unstable-api = []
+dummy-for-ci-check = ["fuzz"]
+fuzz = ["dep:clap", "dep:prost", "dep:protosol", "dep:prost-build"]
 
 [dependencies]
 agave-feature-set = { workspace = true }
