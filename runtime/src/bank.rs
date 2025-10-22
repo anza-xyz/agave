@@ -5246,7 +5246,8 @@ impl Bank {
             Arc::new(reserved_keys)
         };
 
-        if new_feature_activations.contains(&feature_set::deprecate_rent_exemption_threshold::id()) {
+        if new_feature_activations.contains(&feature_set::deprecate_rent_exemption_threshold::id())
+        {
             self.rent_collector.rent.lamports_per_byte_year = 6960;
             self.rent_collector.rent.exemption_threshold = 1.0;
             self.update_rent();
