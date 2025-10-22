@@ -14,6 +14,7 @@ crate-type = ["lib"]
 name = "solana_bucket_map"
 
 [features]
+agave-unstable-api = []
 dev-context-only-utils = []
 
 [dependencies]
@@ -32,7 +33,7 @@ tempfile = { workspace = true }
 [dev-dependencies]
 fs_extra = { workspace = true }
 rayon = { workspace = true }
-solana-bucket-map = { path = ".", features = ["dev-context-only-utils"] }
+solana-bucket-map = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-logger = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 

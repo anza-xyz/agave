@@ -14,6 +14,7 @@ all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
 [features]
+agave-unstable-api = []
 bank-client = ["dep:solana-client-traits", "dep:solana-runtime"]
 dev-context-only-utils = []
 

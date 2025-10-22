@@ -68,7 +68,6 @@ pub mod vote_storage;
 mod consume_worker;
 mod vote_worker;
 conditional_vis_mod!(decision_maker, feature = "dev-context-only-utils", pub);
-mod immutable_deserialized_packet;
 mod latest_validator_vote_packet;
 mod leader_slot_timing_metrics;
 mod read_write_account_set;
@@ -76,6 +75,9 @@ mod vote_packet_receiver;
 conditional_vis_mod!(scheduler_messages, feature = "dev-context-only-utils", pub);
 pub mod transaction_scheduler;
 conditional_vis_mod!(unified_scheduler, feature = "dev-context-only-utils", pub, pub(crate));
+#[allow(dead_code)]
+#[cfg(unix)]
+mod progress_tracker;
 #[allow(dead_code)]
 #[cfg(unix)]
 mod tpu_to_pack;
@@ -493,7 +495,7 @@ impl BankingStage {
                     context.log_messages_bytes_limit,
                 ),
                 finished_work_sender.clone(),
-                context.poh_recorder.read().unwrap().shared_working_bank(),
+                context.poh_recorder.read().unwrap().shared_leader_state(),
             );
 
             worker_metrics.push(consume_worker.metrics_handle());
@@ -1067,7 +1069,7 @@ mod tests {
 
         let (record_sender, mut record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let pubkey = solana_pubkey::new_rand();
         let keypair2 = Keypair::new();
@@ -1078,7 +1080,7 @@ mod tests {
             system_transaction::transfer(&keypair2, &pubkey2, 1, genesis_config.hash()).into(),
         ];
 
-        let summary = recorder.record_transactions(bank.slot(), txs.clone());
+        let summary = recorder.record_transactions(bank.bank_id(), txs.clone());
         assert!(summary.result.is_ok());
         assert_eq!(
             record_receiver.try_recv().unwrap().transaction_batches,
@@ -1086,10 +1088,11 @@ mod tests {
         );
         assert!(record_receiver.try_recv().is_err());
 
-        // Once bank is set to a new bank (setting bank.slot() + 1 in record_transactions),
+        // Once bank is set to a new bank (setting bank id + 1 in record_transactions),
         // record_transactions should throw MaxHeightReached
-        let next_slot = bank.slot() + 1;
-        let RecordTransactionsSummary { result, .. } = recorder.record_transactions(next_slot, txs);
+        let next_bank_id = bank.bank_id() + 1;
+        let RecordTransactionsSummary { result, .. } =
+            recorder.record_transactions(next_bank_id, txs);
         assert_matches!(result, Err(PohRecorderError::MaxHeightReached));
         // Should receive nothing from PohRecorder b/c record failed
         assert!(record_receiver.try_recv().is_err());

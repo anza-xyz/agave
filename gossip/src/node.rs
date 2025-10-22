@@ -405,7 +405,6 @@ impl Node {
     }
 }
 
-#[cfg(feature = "agave-unstable-api")]
 mod multihoming {
     use {
         crate::{
@@ -519,5 +518,4 @@ mod multihoming {
     }
 }
 
-#[cfg(feature = "agave-unstable-api")]
 pub use multihoming::*;

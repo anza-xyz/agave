@@ -35,7 +35,6 @@ use {
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_accounts_db::{
         accounts::AccountAddressFilter,
-        accounts_db::DEFAULT_ACCOUNTS_SHRINK_RATIO,
         accounts_index::{
             AccountIndex, AccountSecondaryIndexes, IndexKey, ScanConfig, ScanError, ITER_BATCH_SIZE,
         },
@@ -119,7 +118,7 @@ use {
         vote_instruction,
         vote_state::{
             self, create_account_with_authorized, BlockTimestamp, VoteAuthorize, VoteInit,
-            VoteStateV3, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            VoteStateV4, VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
     },
     spl_generic_token::token,
@@ -371,8 +370,8 @@ fn test_bank_update_epoch_stakes() {
         assert_eq!(bank.epoch_stake_keys(), initial_epochs);
     }
 
-    for epoch in (initial_epochs.len() as Epoch)..MAX_LEADER_SCHEDULE_STAKES {
-        bank.update_epoch_stakes(epoch);
+    for epoch in (initial_epochs.len() as Epoch)..(MAX_LEADER_SCHEDULE_STAKES - 1) {
+        bank.update_epoch_stakes(dbg!(epoch));
         assert_eq!(bank.epoch_stakes.len() as Epoch, epoch + 1);
     }
 
@@ -380,8 +379,18 @@ fn test_bank_update_epoch_stakes() {
         bank.epoch_stake_key_info(),
         (
             0,
+            MAX_LEADER_SCHEDULE_STAKES - 2,
+            MAX_LEADER_SCHEDULE_STAKES as usize - 1,
+        )
+    );
+
+    bank.update_epoch_stakes(MAX_LEADER_SCHEDULE_STAKES - 1);
+    assert_eq!(
+        bank.epoch_stake_key_info(),
+        (
+            0,
             MAX_LEADER_SCHEDULE_STAKES - 1,
-            MAX_LEADER_SCHEDULE_STAKES as usize
+            MAX_LEADER_SCHEDULE_STAKES as usize,
         )
     );
 
@@ -389,19 +398,9 @@ fn test_bank_update_epoch_stakes() {
     assert_eq!(
         bank.epoch_stake_key_info(),
         (
-            0,
-            MAX_LEADER_SCHEDULE_STAKES,
-            MAX_LEADER_SCHEDULE_STAKES as usize + 1
-        )
-    );
-
-    bank.update_epoch_stakes(MAX_LEADER_SCHEDULE_STAKES + 1);
-    assert_eq!(
-        bank.epoch_stake_key_info(),
-        (
             1,
-            MAX_LEADER_SCHEDULE_STAKES + 1,
-            MAX_LEADER_SCHEDULE_STAKES as usize + 1
+            MAX_LEADER_SCHEDULE_STAKES,
+            MAX_LEADER_SCHEDULE_STAKES as usize,
         )
     );
 }
@@ -630,7 +629,7 @@ impl Bank {
             // in practice.
             let account = self.get_account_with_fixed_root(vote_pubkey)?;
             if account.owner() == &solana_vote_program
-                && VoteStateV3::deserialize(account.data()).is_ok()
+                && VoteStateV4::deserialize(account.data(), vote_pubkey).is_ok()
             {
                 vote_accounts_cache_miss_count.fetch_add(1, Relaxed);
             }
@@ -727,19 +726,19 @@ where
     bank0.store_account_and_update_capitalization(&stake_id, &stake_account);
 
     // generate some rewards
-    let mut vote_state = Some(vote_state::from(&vote_account).unwrap());
+    let mut vote_state = Some(VoteStateV4::deserialize(vote_account.data(), &vote_id).unwrap());
     for i in 0..MAX_LOCKOUT_HISTORY + 42 {
         if let Some(v) = vote_state.as_mut() {
             vote_state::process_slot_vote_unchecked(v, i as u64)
         }
-        let versioned = VoteStateVersions::V3(Box::new(vote_state.take().unwrap()));
-        vote_state::to(&versioned, &mut vote_account).unwrap();
+        let versioned = VoteStateVersions::V4(Box::new(vote_state.take().unwrap()));
+        vote_account.set_state(&versioned).unwrap();
         bank0.store_account_and_update_capitalization(&vote_id, &vote_account);
         match versioned {
-            VoteStateVersions::V3(v) => {
+            VoteStateVersions::V4(v) => {
                 vote_state = Some(*v);
             }
-            _ => panic!("Has to be of type Current"),
+            _ => panic!("Has to be of type V4"),
         };
     }
     bank0.store_account_and_update_capitalization(&vote_id, &vote_account);
@@ -877,19 +876,19 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
     bank.store_account_and_update_capitalization(&stake_id2, &stake_account2);
 
     // generate some rewards
-    let mut vote_state = Some(vote_state::from(&vote_account).unwrap());
+    let mut vote_state = Some(VoteStateV4::deserialize(vote_account.data(), &vote_id).unwrap());
     for i in 0..MAX_LOCKOUT_HISTORY + 42 {
         if let Some(v) = vote_state.as_mut() {
             vote_state::process_slot_vote_unchecked(v, i as u64)
         }
-        let versioned = VoteStateVersions::V3(Box::new(vote_state.take().unwrap()));
-        vote_state::to(&versioned, &mut vote_account).unwrap();
+        let versioned = VoteStateVersions::V4(Box::new(vote_state.take().unwrap()));
+        vote_account.set_state(&versioned).unwrap();
         bank.store_account_and_update_capitalization(&vote_id, &vote_account);
         match versioned {
-            VoteStateVersions::V3(v) => {
+            VoteStateVersions::V4(v) => {
                 vote_state = Some(*v);
             }
-            _ => panic!("Has to be of type Current"),
+            _ => panic!("Has to be of type V4"),
         };
     }
     bank.store_account_and_update_capitalization(&vote_id, &vote_account);
@@ -3199,7 +3198,7 @@ fn test_bank_vote_accounts() {
         },
         10,
         vote_instruction::CreateVoteAccountConfig {
-            space: VoteStateV3::size_of() as u64,
+            space: VoteStateV4::size_of() as u64,
             ..vote_instruction::CreateVoteAccountConfig::default()
         },
     );
@@ -3257,7 +3256,7 @@ fn test_bank_cloned_stake_delegations() {
 
     let (vote_balance, stake_balance) = {
         let rent = &bank.rent_collector().rent;
-        let vote_rent_exempt_reserve = rent.minimum_balance(VoteStateV3::size_of());
+        let vote_rent_exempt_reserve = rent.minimum_balance(VoteStateV4::size_of());
         let stake_rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
         let minimum_delegation = solana_stake_program::get_minimum_delegation(
             bank.feature_set
@@ -3281,7 +3280,7 @@ fn test_bank_cloned_stake_delegations() {
         },
         vote_balance,
         vote_instruction::CreateVoteAccountConfig {
-            space: VoteStateV3::size_of() as u64,
+            space: VoteStateV4::size_of() as u64,
             ..vote_instruction::CreateVoteAccountConfig::default()
         },
     );
@@ -3586,7 +3585,7 @@ fn test_add_builtin() {
         },
         1,
         vote_instruction::CreateVoteAccountConfig {
-            space: VoteStateV3::size_of() as u64,
+            space: VoteStateV4::size_of() as u64,
             ..vote_instruction::CreateVoteAccountConfig::default()
         },
     );
@@ -3633,7 +3632,7 @@ fn test_add_duplicate_static_program() {
         },
         1,
         vote_instruction::CreateVoteAccountConfig {
-            space: VoteStateV3::size_of() as u64,
+            space: VoteStateV4::size_of() as u64,
             ..vote_instruction::CreateVoteAccountConfig::default()
         },
     );
@@ -5387,36 +5386,6 @@ fn test_same_program_id_uses_unique_executable_accounts() {
     assert_eq!(1, bank.get_account(&program2_pubkey).unwrap().data().len());
 }
 
-fn get_shrink_account_size() -> usize {
-    let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000_000);
-
-    // Set root for bank 0, with caching disabled so we can get the size
-    // of the storage for this slot
-    let bank0 = Arc::new(Bank::new_with_config_for_tests(
-        &genesis_config,
-        BankTestConfig::default(),
-    ));
-    goto_end_of_slot(bank0.clone());
-    bank0.freeze();
-    bank0.squash();
-    add_root_and_flush_write_cache(&bank0);
-
-    let sizes = bank0
-        .rc
-        .accounts
-        .accounts_db
-        .sizes_of_accounts_in_storage_for_tests(0);
-
-    // Create an account such that it takes DEFAULT_ACCOUNTS_SHRINK_RATIO of the total account space for
-    // the slot, so when it gets pruned, the storage entry will become a shrink candidate.
-    let bank0_total_size: usize = sizes.into_iter().sum();
-    let pubkey0_size = (bank0_total_size as f64 / (1.0 - DEFAULT_ACCOUNTS_SHRINK_RATIO)).ceil();
-    assert!(
-        pubkey0_size / (pubkey0_size + bank0_total_size as f64) > DEFAULT_ACCOUNTS_SHRINK_RATIO
-    );
-    pubkey0_size as usize
-}
-
 #[test]
 fn test_clean_nonrooted() {
     solana_logger::setup();
@@ -5505,7 +5474,8 @@ fn test_shrink_candidate_slots_cached() {
         BankTestConfig::default(),
     ));
 
-    let pubkey0_size = get_shrink_account_size();
+    // Make pubkey0 large so any slot containing it is a candidate for shrinking
+    let pubkey0_size = 100_000;
 
     let account0 = AccountSharedData::new(1000, pubkey0_size, &Pubkey::new_unique());
     bank0.store_account(&pubkey0, &account0);
@@ -6270,17 +6240,11 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len(formalize_loaded_transaction_
             .read()
             .unwrap();
         let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
-        assert_eq!(slot_versions.len(), 2);
+        assert_eq!(slot_versions.len(), 1);
         assert_eq!(slot_versions[0].deployment_slot, bank.slot() - 1);
-        assert_eq!(slot_versions[0].effective_slot, bank.slot() - 1);
+        assert_eq!(slot_versions[0].effective_slot, bank.slot());
         assert!(matches!(
             slot_versions[0].program,
-            ProgramCacheEntryType::Closed,
-        ));
-        assert_eq!(slot_versions[1].deployment_slot, bank.slot() - 1);
-        assert_eq!(slot_versions[1].effective_slot, bank.slot());
-        assert!(matches!(
-            slot_versions[1].program,
             ProgramCacheEntryType::Loaded(_),
         ));
     }
@@ -7683,13 +7647,17 @@ fn test_store_scan_consistency_unrooted() {
 
 #[test]
 fn test_store_scan_consistency_root() {
+    let (pruned_banks_sender, pruned_banks_receiver) = unbounded();
+    let pruned_banks_request_handler = PrunedBanksRequestHandler {
+        pruned_banks_receiver,
+    };
     test_store_scan_consistency(
-        |bank0,
-         bank_to_scan_sender,
-         _scan_finished_receiver,
-         pubkeys_to_modify,
-         program_id,
-         starting_lamports| {
+        move |bank0,
+              bank_to_scan_sender,
+              _scan_finished_receiver,
+              pubkeys_to_modify,
+              program_id,
+              starting_lamports| {
             let mut current_bank = bank0.clone();
             let mut prev_bank = bank0;
             loop {
@@ -7722,9 +7690,13 @@ fn test_store_scan_consistency_root() {
                     &solana_pubkey::new_rand(),
                     slot,
                 ));
+
+                // Move purge here so that Bank::drop()->purge_slots() doesn't race
+                // with clean. Simulates the call from AccountsBackgroundService
+                pruned_banks_request_handler.handle_request(&current_bank);
             }
         },
-        None,
+        Some(Box::new(SendDroppedBankCallback::new(pruned_banks_sender))),
         AcceptableScanResults::NoFailure,
     );
 }
@@ -8342,7 +8314,7 @@ fn test_vote_epoch_panic() {
         },
         1_000_000_000,
         vote_instruction::CreateVoteAccountConfig {
-            space: VoteStateV3::size_of() as u64,
+            space: VoteStateV4::size_of() as u64,
             ..vote_instruction::CreateVoteAccountConfig::default()
         },
     ));
@@ -10961,14 +10933,14 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase(
         .global_program_cache
         .read()
         .unwrap()
-        .get_environments_for_epoch(0)
+        .get_environments_for_epoch(&bank.transaction_processor.epoch_boundary_preparation, 0)
         .program_runtime_v1;
     let upcoming_env = bank
         .transaction_processor
         .global_program_cache
         .read()
         .unwrap()
-        .get_environments_for_epoch(1)
+        .get_environments_for_epoch(&bank.transaction_processor.epoch_boundary_preparation, 1)
         .program_runtime_v1;
 
     // Advance the bank to recompile the program.
@@ -11079,12 +11051,19 @@ fn test_feature_activation_loaded_programs_epoch_transition() {
 
     {
         // Prune for rerooting and thus finishing the recompilation phase.
+        let upcoming_environments = bank
+            .transaction_processor
+            .epoch_boundary_preparation
+            .write()
+            .unwrap()
+            .reroot(bank.epoch());
+        assert!(upcoming_environments.is_some());
         let mut program_cache = bank
             .transaction_processor
             .global_program_cache
             .write()
             .unwrap();
-        program_cache.prune(bank.slot(), bank.epoch());
+        program_cache.prune(bank.slot(), upcoming_environments);
 
         // Unload all (which is only the entry with the new environment)
         program_cache.sort_and_unload(percentage::Percentage::from(0));

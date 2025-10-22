@@ -913,6 +913,14 @@ impl AccountStorageEntry {
         self.alive_bytes.load(Ordering::Acquire)
     }
 
+    /// Returns the accounts that were marked obsolete as of the passed in slot
+    /// or earlier. Returned data includes the slots that the accounts were marked
+    /// obsolete at
+    pub fn obsolete_accounts_for_snapshots(&self, slot: Slot) -> ObsoleteAccounts {
+        self.obsolete_accounts_read_lock()
+            .obsolete_accounts_for_snapshots(slot)
+    }
+
     /// Locks obsolete accounts with a read lock and returns the the accounts with the guard
     pub(crate) fn obsolete_accounts_read_lock(&self) -> RwLockReadGuard<ObsoleteAccounts> {
         self.obsolete_accounts.read().unwrap()
@@ -7354,19 +7362,6 @@ impl AccountsDb {
             assert!(self.load_without_fixed_root(&ancestors, &pubkey).is_none());
             self.store_for_tests((slot, [(&pubkey, &account)].as_slice()));
         }
-    }
-
-    pub fn sizes_of_accounts_in_storage_for_tests(&self, slot: Slot) -> Vec<usize> {
-        let mut sizes = Vec::default();
-        if let Some(storage) = self.storage.get_slot_storage_entry(slot) {
-            storage
-                .accounts
-                .scan_accounts_stored_meta(|account| {
-                    sizes.push(account.stored_size());
-                })
-                .expect("must scan accounts storage");
-        }
-        sizes
     }
 
     // With obsolete accounts marked, obsolete references are marked in the storage

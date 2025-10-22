@@ -11,6 +11,7 @@ edition = { workspace = true }
 
 [features]
 default = ["remote-wallet-hidraw"]
+agave-unstable-api = []
 remote-wallet-hidraw = ["solana-remote-wallet/linux-static-hidraw"]
 remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 

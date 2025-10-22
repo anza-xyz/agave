@@ -383,7 +383,7 @@ impl Consumer {
 
         let (record_transactions_summary, record_us) = measure_us!(self
             .transaction_recorder
-            .record_transactions(bank.slot(), processed_transactions));
+            .record_transactions(bank.bank_id(), processed_transactions));
         execute_and_commit_timings.record_us = record_us;
 
         let RecordTransactionsSummary {
@@ -562,6 +562,7 @@ mod tests {
         solana_transaction_status::{TransactionStatusMeta, VersionedTransactionWithStatusMeta},
         std::{
             borrow::Cow,
+            slice,
             sync::{
                 atomic::{AtomicBool, AtomicU64},
                 Arc,
@@ -578,7 +579,7 @@ mod tests {
 
         let (record_sender, mut record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(
@@ -658,7 +659,7 @@ mod tests {
 
         let (record_sender, mut record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(
@@ -691,7 +692,7 @@ mod tests {
         record_receiver.shutdown();
 
         let record = record_receiver.drain().next().unwrap();
-        assert_eq!(record.slot, bank.slot());
+        assert_eq!(record.bank_id, bank.bank_id());
         assert_eq!(record.transaction_batches.len(), 1);
         let transaction_batch = record.transaction_batches[0].clone();
         assert_eq!(transaction_batch.len(), 1);
@@ -777,7 +778,7 @@ mod tests {
         let (record_sender, mut record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
 
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         while bank.tick_height() != bank.max_tick_height() - 1 {
             bank.register_default_tick_for_test();
@@ -840,7 +841,7 @@ mod tests {
 
         let (record_sender, mut record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(
@@ -901,7 +902,7 @@ mod tests {
 
         let (record_sender, mut record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(
@@ -1070,7 +1071,7 @@ mod tests {
 
         let (record_sender, mut record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(
@@ -1397,7 +1398,7 @@ mod tests {
         let blockstore = Arc::new(blockstore);
         let (record_sender, mut record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let shreds = entries_to_test_shreds(
             &entries,
@@ -1521,7 +1522,7 @@ mod tests {
 
         let (record_sender, mut record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let shreds = entries_to_test_shreds(
             &entries,
@@ -1558,7 +1559,7 @@ mod tests {
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         let consumer_output =
-            consumer.process_and_record_transactions(&bank, &[sanitized_tx.clone()]);
+            consumer.process_and_record_transactions(&bank, slice::from_ref(&sanitized_tx));
         let CommitTransactionDetails::Committed {
             compute_units,
             loaded_accounts_data_size,

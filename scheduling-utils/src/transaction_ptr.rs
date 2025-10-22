@@ -1,6 +1,7 @@
 use {
-    agave_scheduler_bindings::SharableTransactionRegion,
-    agave_transaction_view::transaction_data::TransactionData, core::ptr::NonNull,
+    agave_scheduler_bindings::{SharableTransactionBatchRegion, SharableTransactionRegion},
+    agave_transaction_view::transaction_data::TransactionData,
+    core::ptr::NonNull,
     rts_alloc::Allocator,
 };
 
@@ -58,5 +59,52 @@ impl TransactionPtr {
     /// - Inner `ptr` must not have been previously freed.
     pub unsafe fn free(self, allocator: &Allocator) {
         unsafe { allocator.free(self.ptr) }
+    }
+}
+
+/// A batch of transaction pointers that can be iterated over.
+pub struct TransactionPtrBatch<'a> {
+    ptr: NonNull<SharableTransactionRegion>,
+    num_transactions: usize,
+    allocator: &'a Allocator,
+}
+
+impl<'a> TransactionPtrBatch<'a> {
+    /// # Safety
+    /// - [`SharableTransactionBatchRegion`] must reference a valid offset and length
+    ///   within the `allocator`.
+    /// - ALL [`SharableTransactionRegion`]  within the batch must be valid.
+    ///   See [`TransactionPtr::from_sharable_transaction_region`] for details.
+    pub unsafe fn from_sharable_transaction_batch_region(
+        sharable_transaction_batch_region: &SharableTransactionBatchRegion,
+        allocator: &'a Allocator,
+    ) -> Self {
+        let ptr = allocator
+            .ptr_from_offset(sharable_transaction_batch_region.transactions_offset)
+            .cast();
+
+        Self {
+            ptr,
+            num_transactions: usize::from(sharable_transaction_batch_region.num_transactions),
+            allocator,
+        }
+    }
+
+    /// Iterator returning [`TransactionPtr`] for each transaction in the batch.
+    pub fn iter(&'a self) -> impl Iterator<Item = TransactionPtr> + 'a {
+        (0..self.num_transactions)
+            .map(|idx| unsafe { self.ptr.add(idx) })
+            .map(|ptr| unsafe {
+                TransactionPtr::from_sharable_transaction_region(ptr.as_ref(), self.allocator)
+            })
+    }
+
+    /// Free all transactions in the batch, then free the batch itself.
+    pub fn free(self) {
+        for transaction_ptr in self.iter() {
+            unsafe { transaction_ptr.free(self.allocator) }
+        }
+
+        unsafe { self.allocator.free(self.ptr.cast()) }
     }
 }

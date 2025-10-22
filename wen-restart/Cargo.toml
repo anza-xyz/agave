@@ -16,7 +16,11 @@ targets = ["x86_64-unknown-linux-gnu"]
 [lib]
 name = "solana_wen_restart"
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
+agave-snapshots = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
 prost = { workspace = true }
@@ -45,11 +49,11 @@ prost-build = { workspace = true }
 protobuf-src = { workspace = true }
 
 [dev-dependencies]
+agave-snapshots = { workspace = true }
 assert_matches = { workspace = true }
 crossbeam-channel = { workspace = true }
 rand = { workspace = true }
 serial_test = { workspace = true }
-solana-accounts-db = { workspace = true }
 solana-entry = { workspace = true }
 solana-keypair = { workspace = true }
 solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }

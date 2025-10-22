@@ -14,7 +14,7 @@ crate-type = ["cdylib"]
 [dependencies]
 array-bytes = { workspace = true }
 solana-msg = { workspace = true }
-solana-poseidon = { workspace = true }
+solana-poseidon = { workspace = true, features = ["agave-unstable-api"] }
 solana-program-entrypoint = { workspace = true }
 
 [lints]

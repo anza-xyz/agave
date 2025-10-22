@@ -8,6 +8,7 @@ use {
         transaction_balances::compile_collected_balances,
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
+    agave_snapshots::snapshot_config::SnapshotConfig,
     chrono_humanize::{Accuracy, HumanTime, Tense},
     crossbeam_channel::Sender,
     itertools::Itertools,
@@ -37,7 +38,6 @@ use {
         installed_scheduler_pool::BankWithScheduler,
         prioritization_fee_cache::PrioritizationFeeCache,
         runtime_config::RuntimeConfig,
-        snapshot_config::SnapshotConfig,
         snapshot_controller::SnapshotController,
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
         vote_sender_types::ReplayVoteSender,
@@ -2392,7 +2392,7 @@ pub mod tests {
         solana_vote::{vote_account::VoteAccount, vote_transaction},
         solana_vote_program::{
             self,
-            vote_state::{TowerSync, VoteStateV3, VoteStateVersions, MAX_LOCKOUT_HISTORY},
+            vote_state::{TowerSync, VoteStateV4, VoteStateVersions, MAX_LOCKOUT_HISTORY},
         },
         std::{collections::BTreeSet, slice, sync::RwLock},
         test_case::{test_case, test_matrix},
@@ -4839,15 +4839,15 @@ pub mod tests {
             roots_stakes
                 .into_iter()
                 .map(|(root, stake)| {
-                    let mut vote_state = VoteStateV3::default();
+                    let mut vote_state = VoteStateV4::default();
                     vote_state.root_slot = Some(root);
                     let mut vote_account = AccountSharedData::new(
                         1,
-                        VoteStateV3::size_of(),
+                        VoteStateV4::size_of(),
                         &solana_vote_program::id(),
                     );
-                    let versioned = VoteStateVersions::new_v3(vote_state);
-                    VoteStateV3::serialize(&versioned, vote_account.data_as_mut_slice()).unwrap();
+                    let versioned = VoteStateVersions::new_v4(vote_state);
+                    VoteStateV4::serialize(&versioned, vote_account.data_as_mut_slice()).unwrap();
                     (
                         solana_pubkey::new_rand(),
                         (stake, VoteAccount::try_from(vote_account).unwrap()),

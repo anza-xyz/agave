@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 #![deny(clippy::arithmetic_side_effects)]
 #![deny(clippy::indexing_slicing)]
 
@@ -1550,7 +1559,14 @@ fn execute<'a, 'b: 'a>(
                 Err(Box::new(error) as Box<dyn std::error::Error>)
             }
             ProgramResult::Err(mut error) => {
-                if !matches!(error, EbpfError::SyscallError(_)) {
+                // Don't clean me up!!
+                // This feature is active on all networks, but we still toggle
+                // it off during fuzzing.
+                if invoke_context
+                    .get_feature_set()
+                    .deplete_cu_meter_on_vm_failure
+                    && !matches!(error, EbpfError::SyscallError(_))
+                {
                     // when an exception is thrown during the execution of a
                     // Basic Block (e.g., a null memory dereference or other
                     // faults), determining the exact number of CUs consumed

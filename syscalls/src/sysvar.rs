@@ -241,10 +241,7 @@ declare_builtin_function!(
         let cache = invoke_context.get_sysvar_cache();
 
         // "`2` if the sysvar data is not present in the Sysvar Cache."
-        let sysvar_buf = match cache.sysvar_id_to_buffer(sysvar_id) {
-            None => return Ok(SYSVAR_NOT_FOUND),
-            Some(ref sysvar_buf) => sysvar_buf,
-        };
+        let Some(ref sysvar_buf) = cache.sysvar_id_to_buffer(sysvar_id) else { return Ok(SYSVAR_NOT_FOUND) };
 
         // "`1` if `offset + length` is greater than the length of the sysvar data."
         if let Some(sysvar_slice) = sysvar_buf.get(offset as usize..offset_length as usize) {
