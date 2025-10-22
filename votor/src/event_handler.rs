@@ -122,18 +122,6 @@ impl EventHandler {
         Votor::wait_for_migration_or_exit(&exit, &start);
         info!("{}: Event loop starting", local_context.my_pubkey);
 
-        // Check for set identity
-        if let Err(e) = Self::handle_set_identity(&mut local_context.my_pubkey, &ctx, &mut vctx) {
-            error!(
-                "Unable to load new vote history when attempting to change identity from {} to {} \
-                 on voting loop startup, Exiting: {}",
-                vctx.vote_history.node_pubkey,
-                ctx.cluster_info.id(),
-                e
-            );
-            return Err(EventLoopError::SetIdentityError(e));
-        }
-
         while !exit.load(Ordering::Relaxed) {
             let mut receive_event_time = Measure::start("receive_event");
             let event = match event_receiver.recv_timeout(Duration::from_secs(1)) {
