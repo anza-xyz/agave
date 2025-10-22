@@ -52,7 +52,7 @@ pub(crate) struct ConsensusPoolContext {
     pub(crate) event_sender: VotorEventSender,
     pub(crate) commitment_sender: Sender<CommitmentAggregationData>,
 
-    delta_standstill: Duration,
+    pub(crate) delta_standstill: Duration,
 }
 
 pub(crate) struct ConsensusPoolService {
