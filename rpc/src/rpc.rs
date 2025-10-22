@@ -7,6 +7,7 @@ use {
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         parsed_token_accounts::*, rpc_cache::LargestAccountsCache, rpc_health::*,
     },
+    agave_snapshots::snapshot_config::SnapshotConfig,
     base64::{prelude::BASE64_STANDARD, Engine},
     bincode::{config::Options, serialize},
     crossbeam_channel::{unbounded, Receiver, Sender},
@@ -69,7 +70,6 @@ use {
         commitment::{BlockCommitmentArray, BlockCommitmentCache},
         non_circulating_supply::{calculate_non_circulating_supply, NonCirculatingSupply},
         prioritization_fee_cache::PrioritizationFeeCache,
-        snapshot_config::SnapshotConfig,
         snapshot_utils,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
@@ -4527,7 +4527,7 @@ pub mod tests {
         jsonrpc_core::{futures, ErrorCode, MetaIoHandler, Output, Response, Value},
         jsonrpc_core_client::transports::local,
         serde::de::DeserializeOwned,
-        solana_account::{Account, WritableAccount},
+        solana_account::{state_traits::StateMut, Account, WritableAccount},
         solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         solana_address_lookup_table_interface::{
             self as address_lookup_table,
@@ -4588,10 +4588,10 @@ pub mod tests {
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
             TransactionDetails,
         },
-        solana_vote_interface::state::VoteStateV3,
+        solana_vote_interface::state::VoteStateV4,
         solana_vote_program::{
             vote_instruction,
-            vote_state::{self, TowerSync, VoteInit, VoteStateVersions, MAX_LOCKOUT_HISTORY},
+            vote_state::{TowerSync, VoteInit, VoteStateVersions, MAX_LOCKOUT_HISTORY},
         },
         spl_pod::optional_keys::OptionalNonZeroPubkey,
         spl_token_2022_interface::{
@@ -5041,14 +5041,14 @@ pub mod tests {
             bank
         }
 
-        fn store_vote_account(&self, vote_pubkey: &Pubkey, vote_state: VoteStateV3) {
+        fn store_vote_account(&self, vote_pubkey: &Pubkey, vote_state: VoteStateV4) {
             let bank = self.working_bank();
-            let versioned = VoteStateVersions::new_v3(vote_state);
-            let space = VoteStateV3::size_of();
+            let versioned = VoteStateVersions::new_v4(vote_state);
+            let space = VoteStateV4::size_of();
             let balance = bank.get_minimum_balance_for_rent_exemption(space);
             let mut vote_account =
                 AccountSharedData::new(balance, space, &solana_vote_program::id());
-            vote_state::to(&versioned, &mut vote_account).unwrap();
+            vote_account.set_state(&versioned).unwrap();
             bank.store_account(vote_pubkey, &vote_account);
         }
 
@@ -7699,7 +7699,8 @@ pub mod tests {
 
         // Create a vote account with no stake.
         let alice_vote_keypair = Keypair::new();
-        let alice_vote_state = VoteStateV3::new(
+        let alice_vote_state = VoteStateV4::new(
+            &alice_vote_keypair.pubkey(),
             &VoteInit {
                 node_pubkey: mint_keypair.pubkey(),
                 authorized_voter: alice_vote_keypair.pubkey(),

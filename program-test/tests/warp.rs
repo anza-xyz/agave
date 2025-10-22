@@ -28,7 +28,7 @@ use {
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
     solana_vote_program::vote_state,
-    std::convert::TryInto,
+    std::{convert::TryInto, slice},
 };
 
 // Use a big number to be sure that we get the right error
@@ -70,7 +70,7 @@ async fn clock_sysvar_updated_from_warp() {
 
     // Fail transaction
     let transaction = Transaction::new_signed_with_payer(
-        &[instruction.clone()],
+        slice::from_ref(&instruction),
         Some(&context.payer.pubkey()),
         &[&context.payer],
         context.last_blockhash,

@@ -1,7 +1,11 @@
 use {
-    crate::commands::{FromClapArgMatches, Result},
-    clap::{value_t, ArgMatches},
+    crate::{
+        cli::DefaultArgs,
+        commands::{FromClapArgMatches, Result},
+    },
+    clap::{value_t, Arg, ArgMatches},
     solana_accounts_db::accounts_index::AccountSecondaryIndexes,
+    solana_clap_utils::input_validators::is_parsable,
     solana_rpc::rpc::{JsonRpcConfig, RpcBigtableConfig},
 };
 
@@ -43,6 +47,118 @@ impl FromClapArgMatches for JsonRpcConfig {
             disable_health_check: false,
         })
     }
+}
+
+pub(crate) fn args<'a>(default_args: &DefaultArgs) -> Vec<Arg<'_, 'a>> {
+    vec![
+        Arg::with_name("enable_rpc_transaction_history")
+            .long("enable-rpc-transaction-history")
+            .takes_value(false)
+            .help(
+                "Enable historical transaction info over JSON RPC, including the \
+                 'getConfirmedBlock' API. This will cause an increase in disk usage and IOPS",
+            ),
+        Arg::with_name("enable_rpc_bigtable_ledger_storage")
+            .long("enable-rpc-bigtable-ledger-storage")
+            .requires("enable_rpc_transaction_history")
+            .takes_value(false)
+            .help(
+                "Fetch historical transaction info from a BigTable instance as a fallback to \
+                 local ledger data",
+            ),
+        Arg::with_name("enable_extended_tx_metadata_storage")
+            .long("enable-extended-tx-metadata-storage")
+            .requires("enable_rpc_transaction_history")
+            .takes_value(false)
+            .help(
+                "Include CPI inner instructions, logs, and return data in the historical \
+                 transaction info stored",
+            ),
+        Arg::with_name("rpc_faucet_addr")
+            .long("rpc-faucet-address")
+            .value_name("HOST:PORT")
+            .takes_value(true)
+            .validator(solana_net_utils::is_host_port)
+            .help("Enable the JSON RPC 'requestAirdrop' API with this faucet address."),
+        Arg::with_name("health_check_slot_distance")
+            .long("health-check-slot-distance")
+            .value_name("SLOT_DISTANCE")
+            .takes_value(true)
+            .default_value(&default_args.health_check_slot_distance)
+            .help(
+                "Report this validator as healthy if its latest replayed optimistically confirmed \
+                 slot is within the specified number of slots from the cluster's latest \
+                 optimistically confirmed slot",
+            ),
+        Arg::with_name("skip_preflight_health_check")
+            .long("skip-preflight-health-check")
+            .takes_value(false)
+            .help("Skip health check when running a preflight check"),
+        Arg::with_name("rpc_max_multiple_accounts")
+            .long("rpc-max-multiple-accounts")
+            .value_name("MAX ACCOUNTS")
+            .takes_value(true)
+            .default_value(&default_args.rpc_max_multiple_accounts)
+            .help(
+                "Override the default maximum accounts accepted by the getMultipleAccounts JSON \
+                 RPC method",
+            ),
+        Arg::with_name("rpc_threads")
+            .long("rpc-threads")
+            .value_name("NUMBER")
+            .validator(is_parsable::<usize>)
+            .takes_value(true)
+            .default_value(&default_args.rpc_threads)
+            .help("Number of threads to use for servicing RPC requests"),
+        Arg::with_name("rpc_blocking_threads")
+            .long("rpc-blocking-threads")
+            .value_name("NUMBER")
+            .validator(is_parsable::<usize>)
+            .validator(|value| {
+                value
+                    .parse::<u64>()
+                    .map_err(|err| format!("error parsing '{value}': {err}"))
+                    .and_then(|threads| {
+                        if threads > 0 {
+                            Ok(())
+                        } else {
+                            Err("value must be >= 1".to_string())
+                        }
+                    })
+            })
+            .takes_value(true)
+            .default_value(&default_args.rpc_blocking_threads)
+            .help(
+                "Number of blocking threads to use for servicing CPU bound RPC requests (eg \
+                 getMultipleAccounts)",
+            ),
+        Arg::with_name("rpc_niceness_adj")
+            .long("rpc-niceness-adjustment")
+            .value_name("ADJUSTMENT")
+            .takes_value(true)
+            .validator(solana_perf::thread::is_niceness_adjustment_valid)
+            .default_value(&default_args.rpc_niceness_adjustment)
+            .help(
+                "Add this value to niceness of RPC threads. Negative value increases priority, \
+                 positive value decreases priority.",
+            ),
+        Arg::with_name("full_rpc_api")
+            .long("full-rpc-api")
+            .takes_value(false)
+            .help("Expose RPC methods for querying chain state and transaction history"),
+        Arg::with_name("rpc_scan_and_fix_roots")
+            .long("rpc-scan-and-fix-roots")
+            .takes_value(false)
+            .requires("enable_rpc_transaction_history")
+            .help("Verifies blockstore roots on boot and fixes any gaps"),
+        Arg::with_name("rpc_max_request_body_size")
+            .long("rpc-max-request-body-size")
+            .value_name("BYTES")
+            .takes_value(true)
+            .validator(is_parsable::<usize>)
+            .default_value(&default_args.rpc_max_request_body_size)
+            .help("The maximum request body size accepted by rpc service"),
+    ]
 }
 
 #[cfg(test)]

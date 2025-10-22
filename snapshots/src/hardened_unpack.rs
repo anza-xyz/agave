@@ -1,12 +1,11 @@
 use {
-    crate::file_io::{file_creator, set_path_permissions, FileCreator},
     bzip2::bufread::BzDecoder,
     crossbeam_channel::Sender,
     log::*,
     rand::{thread_rng, Rng},
+    solana_accounts_db::{file_creator, set_path_permissions, FileCreator},
     solana_genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
     std::{
-        collections::HashMap,
         fs::{self, File},
         io::{self, BufReader, Read},
         path::{
@@ -29,6 +28,8 @@ pub enum UnpackError {
     Io(#[from] std::io::Error),
     #[error("Archive error: {0}")]
     Archive(String),
+    #[error("Unpacking '{1}' failed: {0}")]
+    Unpack(Box<UnpackError>, PathBuf),
 }
 
 pub type Result<T> = std::result::Result<T, UnpackError>;
@@ -65,6 +66,7 @@ fn checked_total_size_sum(total_size: u64, entry_size: u64, limit_size: u64) -> 
     Ok(total_size)
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 fn checked_total_count_increment(total_count: u64, limit_count: u64) -> Result<u64> {
     let total_count = total_count + 1;
     if total_count > limit_count {
@@ -85,14 +87,15 @@ fn check_unpack_result(unpack_result: Result<()>, path: String) -> Result<()> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum UnpackPath<'a> {
+enum UnpackPath<'a> {
     Valid(&'a Path),
     Ignore,
     Invalid,
 }
 
-fn unpack_archive<'a, A, C, D>(
-    mut archive: Archive<A>,
+#[allow(clippy::arithmetic_side_effects)]
+fn unpack_archive<'a, C, D>(
+    input: impl Read,
     memlock_budget_size: usize,
     apparent_limit_size: u64,
     actual_limit_size: u64,
@@ -101,7 +104,6 @@ fn unpack_archive<'a, A, C, D>(
     file_path_processor: D, // processes file paths after writing
 ) -> Result<()>
 where
-    A: Read,
     C: FnMut(&[&str], tar::EntryType) -> UnpackPath<'a>,
     D: FnMut(PathBuf),
 {
@@ -118,6 +120,7 @@ where
         (memlock_budget_size.min(actual_limit_size as usize)).min(MAX_UNPACK_WRITE_BUF_SIZE);
     let mut files_creator = file_creator(buf_size, file_path_processor)?;
 
+    let mut archive = Archive::new(input);
     for entry in archive.entries()? {
         let entry = entry?;
         let path = entry.path()?;
@@ -323,41 +326,17 @@ fn validate_inside_dst(dst: &Path, file_dst: &Path) -> Result<PathBuf> {
     Ok(canon_target)
 }
 
-/// Map from AppendVec file name to unpacked file system location
-pub type UnpackedAppendVecMap = HashMap<String, PathBuf>;
-
-/// Unpacks snapshot and collects AppendVec file names & paths
-pub fn unpack_snapshot<A: Read>(
-    archive: Archive<A>,
-    memlock_budget_size: usize,
-    ledger_dir: &Path,
-    account_paths: &[PathBuf],
-) -> Result<UnpackedAppendVecMap> {
-    let mut unpacked_append_vec_map = UnpackedAppendVecMap::new();
-    unpack_snapshot_with_processors(
-        archive,
-        memlock_budget_size,
-        ledger_dir,
-        account_paths,
-        |file, path| {
-            unpacked_append_vec_map.insert(file.to_string(), path.join("accounts").join(file));
-        },
-        |_| {},
-    )
-    .map(|_| unpacked_append_vec_map)
-}
-
 /// Unpacks snapshot from (potentially partial) `archive` and
 /// sends entry file paths through the `sender` channel
-pub fn streaming_unpack_snapshot<A: Read>(
-    archive: Archive<A>,
+pub(super) fn streaming_unpack_snapshot(
+    input: impl Read,
     memlock_budget_size: usize,
     ledger_dir: &Path,
     account_paths: &[PathBuf],
     sender: &Sender<PathBuf>,
 ) -> Result<()> {
     unpack_snapshot_with_processors(
-        archive,
+        input,
         memlock_budget_size,
         ledger_dir,
         account_paths,
@@ -374,8 +353,8 @@ pub fn streaming_unpack_snapshot<A: Read>(
     )
 }
 
-fn unpack_snapshot_with_processors<A, F, G>(
-    archive: Archive<A>,
+fn unpack_snapshot_with_processors<F, G>(
+    input: impl Read,
     memlock_budget_size: usize,
     ledger_dir: &Path,
     account_paths: &[PathBuf],
@@ -383,14 +362,13 @@ fn unpack_snapshot_with_processors<A, F, G>(
     file_path_processor: G,
 ) -> Result<()>
 where
-    A: Read,
     F: FnMut(&str, &Path),
     G: FnMut(PathBuf),
 {
     assert!(!account_paths.is_empty());
 
     unpack_archive(
-        archive,
+        input,
         memlock_budget_size,
         MAX_SNAPSHOT_ARCHIVE_UNPACKED_APPARENT_SIZE,
         MAX_SNAPSHOT_ARCHIVE_UNPACKED_ACTUAL_SIZE,
@@ -433,6 +411,7 @@ fn all_digits(v: &str) -> bool {
     true
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 fn like_storage(v: &str) -> bool {
     let mut periods = 0;
     let mut saw_numbers = false;
@@ -512,8 +491,7 @@ pub fn unpack_genesis_archive(
     fs::create_dir_all(destination_dir)?;
     let tar_bz2 = File::open(archive_filename)?;
     let tar = BzDecoder::new(BufReader::new(tar_bz2));
-    let archive = Archive::new(tar);
-    unpack_genesis(archive, destination_dir, max_genesis_archive_unpacked_size)?;
+    unpack_genesis(tar, destination_dir, max_genesis_archive_unpacked_size)?;
     info!(
         "Extracted {:?} in {:?}",
         archive_filename,
@@ -522,13 +500,13 @@ pub fn unpack_genesis_archive(
     Ok(())
 }
 
-fn unpack_genesis<A: Read>(
-    archive: Archive<A>,
+fn unpack_genesis(
+    input: impl Read,
     unpack_dir: &Path,
     max_genesis_archive_unpacked_size: u64,
 ) -> Result<()> {
     unpack_archive(
-        archive,
+        input,
         0, /* don't provide memlock budget (forces sync IO), since genesis archives are small */
         max_genesis_archive_unpacked_size,
         max_genesis_archive_unpacked_size,
@@ -792,14 +770,12 @@ mod tests {
 
     fn with_finalize_and_unpack<C>(archive: tar::Builder<Vec<u8>>, checker: C) -> Result<()>
     where
-        C: Fn(Archive<BufReader<&[u8]>>, &Path) -> Result<()>,
+        C: Fn(&[u8], &Path) -> Result<()>,
     {
         let data = archive.into_inner().unwrap();
-        let reader = BufReader::new(&data[..]);
-        let archive = Archive::new(reader);
         let temp_dir = tempfile::TempDir::new().unwrap();
 
-        checker(archive, temp_dir.path())?;
+        checker(data.as_slice(), temp_dir.path())?;
         // Check that there is no bad permissions preventing deletion.
         let result = temp_dir.close();
         assert_matches!(result, Ok(()));
@@ -951,7 +927,8 @@ mod tests {
 
         let mut archive = Builder::new(Vec::new());
         archive.append(&header, data).unwrap();
-        with_finalize_and_unpack(archive, |mut unpacking_archive, path| {
+        with_finalize_and_unpack(archive, |data, path| {
+            let mut unpacking_archive = Archive::new(BufReader::new(data));
             for entry in unpacking_archive.entries()? {
                 if !entry?.unpack_in(path)? {
                     return Err(UnpackError::Archive("failed!".to_string()));

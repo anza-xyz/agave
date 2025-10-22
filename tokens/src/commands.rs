@@ -1316,6 +1316,7 @@ mod tests {
         solana_streamer::socket::SocketAddrSpace,
         solana_test_validator::TestValidator,
         solana_transaction_status::TransactionConfirmationStatus,
+        std::slice,
     };
 
     fn one_signer_message(client: &RpcClient) -> Message {
@@ -2324,7 +2325,7 @@ mod tests {
         build_messages(
             &client,
             &mut db,
-            &[allocation.clone()],
+            slice::from_ref(&allocation),
             &args,
             Arc::new(AtomicBool::new(false)),
             &mut messages,
@@ -2443,7 +2444,7 @@ mod tests {
         send_messages(
             &client,
             &mut db,
-            &[allocation.clone()],
+            slice::from_ref(&allocation),
             &args,
             Arc::new(AtomicBool::new(false)),
             vec![message.clone()],

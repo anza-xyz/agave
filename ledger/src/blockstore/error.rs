@@ -1,8 +1,6 @@
 //! The error that can be produced from Blockstore operations.
 
-use {
-    log::*, solana_accounts_db::hardened_unpack::UnpackError, solana_clock::Slot, thiserror::Error,
-};
+use {agave_snapshots::hardened_unpack::UnpackError, log::*, solana_clock::Slot, thiserror::Error};
 
 #[derive(Error, Debug)]
 pub enum BlockstoreError {
@@ -26,8 +24,6 @@ pub enum BlockstoreError {
     SlotCleanedUp,
     #[error("unpack error: {0}")]
     UnpackError(#[from] UnpackError),
-    #[error("unable to set open file descriptor limit")]
-    UnableToSetOpenFileDescriptorLimit,
     #[error("transaction status slot mismatch")]
     TransactionStatusSlotMismatch,
     #[error("empty epoch stakes")]

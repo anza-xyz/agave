@@ -24,6 +24,7 @@ use {
         transaction_address_lookup_table_scanner::scan_transaction,
     },
     agave_feature_set::FeatureSet,
+    agave_snapshots::hardened_unpack::unpack_genesis_archive,
     assert_matches::debug_assert_matches,
     bincode::{deserialize, serialize},
     crossbeam_channel::{bounded, Receiver, Sender, TrySendError},
@@ -34,7 +35,6 @@ use {
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     rocksdb::{DBRawIterator, LiveFile},
     solana_account::ReadableAccount,
-    solana_accounts_db::hardened_unpack::unpack_genesis_archive,
     solana_address_lookup_table_interface::state::AddressLookupTable,
     solana_clock::{Slot, UnixTimestamp, DEFAULT_TICKS_PER_SECOND},
     solana_entry::entry::{create_ticks, Entry},
@@ -382,8 +382,6 @@ impl Blockstore {
     fn do_open(ledger_path: &Path, options: BlockstoreOptions) -> Result<Blockstore> {
         fs::create_dir_all(ledger_path)?;
         let blockstore_path = ledger_path.join(BLOCKSTORE_DIRECTORY_ROCKS_LEVEL);
-
-        adjust_ulimit_nofile(options.enforce_ulimit_nofile)?;
 
         // Open the database
         let mut measure = Measure::start("blockstore open");
@@ -4810,7 +4808,6 @@ pub fn create_new_ledger(
     let blockstore = Blockstore::open_with_options(
         ledger_path,
         BlockstoreOptions {
-            enforce_ulimit_nofile: false,
             column_options: column_options.clone(),
             ..BlockstoreOptions::default()
         },
@@ -5213,58 +5210,6 @@ pub fn make_chaining_slot_entries(
     slots_shreds_and_entries
 }
 
-#[cfg(not(unix))]
-fn adjust_ulimit_nofile(_enforce_ulimit_nofile: bool) -> Result<()> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn adjust_ulimit_nofile(enforce_ulimit_nofile: bool) -> Result<()> {
-    // Rocks DB likes to have many open files.  The default open file descriptor limit is
-    // usually not enough
-    // AppendVecs and disk Account Index are also heavy users of mmapped files.
-    // This should be kept in sync with published validator instructions.
-    // https://docs.anza.xyz/operations/guides/validator-start#system-tuning
-    let desired_nofile = 1_000_000;
-
-    fn get_nofile() -> libc::rlimit {
-        let mut nofile = libc::rlimit {
-            rlim_cur: 0,
-            rlim_max: 0,
-        };
-        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut nofile) } != 0 {
-            warn!("getrlimit(RLIMIT_NOFILE) failed");
-        }
-        nofile
-    }
-
-    let mut nofile = get_nofile();
-    let current = nofile.rlim_cur;
-    if current < desired_nofile {
-        nofile.rlim_cur = desired_nofile;
-        if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &nofile) } != 0 {
-            error!(
-                "Unable to increase the maximum open file descriptor limit to {} from {}",
-                nofile.rlim_cur, current,
-            );
-
-            if cfg!(target_os = "macos") {
-                error!(
-                    "On mac OS you may need to run |sudo launchctl limit maxfiles \
-                     {desired_nofile} {desired_nofile}| first",
-                );
-            }
-            if enforce_ulimit_nofile {
-                return Err(BlockstoreError::UnableToSetOpenFileDescriptorLimit);
-            }
-        }
-
-        nofile = get_nofile();
-    }
-    info!("Maximum open file descriptors: {}", nofile.rlim_cur);
-    Ok(())
-}
-
 #[cfg(test)]
 pub mod tests {
     use {
@@ -5274,14 +5219,14 @@ pub mod tests {
             leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule},
             shred::{max_ticks_per_n_shreds, MAX_DATA_SHREDS_PER_SLOT},
         },
+        agave_snapshots::hardened_unpack::{
+            open_genesis_config, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+        },
         assert_matches::assert_matches,
         bincode::{serialize, Options},
         crossbeam_channel::unbounded,
         rand::{seq::SliceRandom, thread_rng},
         solana_account_decoder::parse_token::UiTokenAmount,
-        solana_accounts_db::hardened_unpack::{
-            open_genesis_config, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
-        },
         solana_clock::{DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT},
         solana_entry::entry::{next_entry, next_entry_mut},
         solana_hash::Hash,
@@ -7805,7 +7750,7 @@ pub mod tests {
                     .chain(
                         completed_data_end_indexes[i..=j]
                             .windows(2)
-                            .map(|end_indexes| (end_indexes[0] + 1..end_indexes[1] + 1)),
+                            .map(|end_indexes| end_indexes[0] + 1..end_indexes[1] + 1),
                     )
                     .collect::<Vec<_>>();
 

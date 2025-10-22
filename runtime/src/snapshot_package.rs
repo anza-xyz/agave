@@ -1,10 +1,8 @@
 #[cfg(feature = "dev-context-only-utils")]
 use solana_hash::Hash;
 use {
-    crate::{
-        bank::{Bank, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
-        snapshot_hash::SnapshotHash,
-    },
+    crate::bank::{Bank, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
+    agave_snapshots::snapshot_hash::SnapshotHash,
     solana_accounts_db::accounts_db::AccountStorageEntry,
     solana_clock::Slot,
     std::{

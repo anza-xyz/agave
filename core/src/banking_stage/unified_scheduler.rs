@@ -33,14 +33,21 @@ use {
         decision_maker::{BufferedPacketsDecision, DecisionMaker, DecisionMakerWrapper},
         transaction_scheduler::receive_and_buffer::calculate_priority_and_cost,
     },
-    crate::{
-        banking_stage::immutable_deserialized_packet::ImmutableDeserializedPacket,
-        banking_trace::Channels,
-    },
+    crate::banking_trace::Channels,
     agave_banking_stage_ingress_types::BankingPacketBatch,
+    solana_clock::Slot,
+    solana_message::{v0::LoadedAddresses, SimpleAddressLoader},
     solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
-    solana_runtime::bank_forks::BankForks,
-    solana_runtime_transaction::transaction_meta::StaticMeta,
+    solana_runtime::{bank::Bank, bank_forks::BankForks},
+    solana_runtime_transaction::{
+        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
+    },
+    solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup,
+    solana_transaction::{
+        sanitized::{MessageHash, SanitizedTransaction},
+        versioned::{sanitized::SanitizedVersionedTransaction, VersionedTransaction},
+    },
+    solana_transaction_error::AddressLoaderError,
     solana_unified_scheduler_pool::{BankingStageHelper, DefaultSchedulerPool},
     std::{
         num::NonZeroUsize,
@@ -85,43 +92,43 @@ pub(crate) fn ensure_banking_stage_setup(
             for batch in batches.iter() {
                 // over-provision nevertheless some of packets could be invalid.
                 let task_id_base = helper.generate_task_ids(batch.len());
-                let packets = batch.iter().enumerate().filter_map(|(index, pkt)| {
-                    if !pkt.meta().discard() {
-                        let pkt_size = pkt.meta().size;
-                        let pkt = ImmutableDeserializedPacket::new(pkt).ok()?;
-                        Some((pkt, index, pkt_size))
-                    } else {
-                        None
-                    }
-                });
+                let tasks = batch.iter().enumerate().filter_map(|(i, packet)| {
+                    // Deserialize & sanitize.
+                    let tx: VersionedTransaction = packet.deserialize_slice(..).ok()?;
+                    let tx = SanitizedVersionedTransaction::try_from(tx).ok()?;
 
-                for (packet, packet_index, packet_size) in packets {
-                    let Some((transaction, _deactivation_slot)) = packet
-                        .build_sanitized_transaction(
-                            bank.vote_only_bank(),
-                            &bank,
-                            bank.get_reserved_account_keys(),
-                        )
-                    else {
-                        continue;
-                    };
+                    // Resolve to runtime transaction.
+                    let tx = RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
+                        tx,
+                        MessageHash::Compute,
+                        Some(packet.meta().is_simple_vote_tx()),
+                    )
+                    .ok()?;
 
-                    let Ok(compute_budget_limits) = transaction
+                    // WARN: Ignoring deactivation slot here can lead to the production of invalid
+                    // blocks. Currently, this code is not used in prod.
+                    let (loaded_addresses, _deactivation_slot) =
+                        resolve_addresses_with_deactivation(&tx, &bank).ok()?;
+                    let tx = RuntimeTransaction::<SanitizedTransaction>::try_from(
+                        tx,
+                        SimpleAddressLoader::Enabled(loaded_addresses),
+                        bank.get_reserved_account_keys(),
+                    )
+                    .ok()?;
+
+                    // Determine priority.
+                    let compute_budget_limits = tx
                         .compute_budget_instruction_details()
                         .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set)
-                    else {
-                        continue;
-                    };
+                        .ok()?;
+                    let (priority, _cost) =
+                        calculate_priority_and_cost(&tx, &compute_budget_limits.into(), &bank);
+                    let task_id = BankingStageHelper::new_task_id(task_id_base + i, priority);
 
-                    let (priority, _cost) = calculate_priority_and_cost(
-                        &transaction,
-                        &compute_budget_limits.into(),
-                        &bank,
-                    );
-                    let task_id =
-                        BankingStageHelper::new_task_id(task_id_base + packet_index, priority);
+                    Some(helper.create_new_task(tx, task_id, packet.meta().size))
+                });
 
-                    let task = helper.create_new_task(transaction, task_id, packet_size);
+                for task in tasks {
                     helper.send_new_task(task);
                 }
             }
@@ -135,4 +142,20 @@ pub(crate) fn ensure_banking_stage_setup(
         transaction_recorder,
         banking_stage_monitor,
     );
+}
+
+fn resolve_addresses_with_deactivation(
+    transaction: &SanitizedVersionedTransaction,
+    bank: &Bank,
+) -> Result<(LoadedAddresses, Slot), AddressLoaderError> {
+    let Some(address_table_lookups) = transaction.get_message().message.address_table_lookups()
+    else {
+        return Ok((LoadedAddresses::default(), Slot::MAX));
+    };
+
+    bank.load_addresses_from_ref(
+        address_table_lookups
+            .iter()
+            .map(SVMMessageAddressTableLookup::from),
+    )
 }

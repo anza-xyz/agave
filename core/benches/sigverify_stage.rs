@@ -1,10 +1,9 @@
-#![feature(test)]
 #![allow(clippy::arithmetic_side_effects)]
 
 extern crate solana_core;
-extern crate test;
 
 use {
+    bencher::{benchmark_main, Bencher, TDynBenchFn, TestDesc, TestDescAndFn, TestFn},
     crossbeam_channel::unbounded,
     log::*,
     rand::{
@@ -25,9 +24,24 @@ use {
     },
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
-    std::time::{Duration, Instant},
-    test::Bencher,
+    std::{
+        borrow::Cow,
+        hint::black_box,
+        time::{Duration, Instant},
+    },
 };
+
+/// Orphan rules workaround that allows for implementation of `TDynBenchFn`.
+struct Bench<T>(T);
+
+impl<T> TDynBenchFn for Bench<T>
+where
+    T: Fn(&mut Bencher) + Send,
+{
+    fn run(&self, harness: &mut Bencher) {
+        (self.0)(harness)
+    }
+}
 
 fn run_bench_packet_discard(num_ips: usize, bencher: &mut Bencher) {
     solana_logger::setup();
@@ -70,17 +84,14 @@ fn run_bench_packet_discard(num_ips: usize, bencher: &mut Bencher) {
     });
 }
 
-#[bench]
 fn bench_packet_discard_many_senders(bencher: &mut Bencher) {
     run_bench_packet_discard(1000, bencher);
 }
 
-#[bench]
 fn bench_packet_discard_single_sender(bencher: &mut Bencher) {
     run_bench_packet_discard(1, bencher);
 }
 
-#[bench]
 fn bench_packet_discard_mixed_senders(bencher: &mut Bencher) {
     const SIZE: usize = 30 * 1000;
     const CHUNK_SIZE: usize = 1024;
@@ -141,12 +152,10 @@ fn gen_batches(use_same_tx: bool) -> Vec<PacketBatch> {
     }
 }
 
-#[bench]
 fn bench_sigverify_stage_with_same_tx(bencher: &mut Bencher) {
     bench_sigverify_stage(bencher, true)
 }
 
-#[bench]
 fn bench_sigverify_stage_without_same_tx(bencher: &mut Bencher) {
     bench_sigverify_stage(bencher, false)
 }
@@ -179,7 +188,7 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
         loop {
             if let Ok(verifieds) = verified_r.recv_timeout(Duration::from_millis(10)) {
                 received += verifieds.iter().map(|batch| batch.len()).sum::<usize>();
-                test::black_box(verifieds);
+                black_box(verifieds);
                 if received >= expected {
                     break;
                 }
@@ -258,22 +267,68 @@ fn bench_shrink_sigverify_stage_core(bencher: &mut Bencher, discard_factor: i32)
     );
 }
 
-macro_rules! GEN_SHRINK_SIGVERIFY_BENCH {
-    ($i:ident, $n:literal) => {
-        #[bench]
-        fn $i(bencher: &mut Bencher) {
-            bench_shrink_sigverify_stage_core(bencher, $n);
-        }
-    };
+/// Benchmark cases for the [`bench_shrink_sigverify_stage_core`] where values represent discard factor.
+const BENCH_CASES_SHRINK_SIGVERIFY_STAGE_CORE: &[i32] = &[0, 10, 20, 30, 40, 50, 60, 70, 80, 90];
+
+fn benches() -> Vec<TestDescAndFn> {
+    let mut benches = vec![
+        TestDescAndFn {
+            desc: TestDesc {
+                name: Cow::from("bench_packet_discard_many_senders"),
+                ignore: false,
+            },
+            testfn: TestFn::StaticBenchFn(bench_packet_discard_many_senders),
+        },
+        TestDescAndFn {
+            desc: TestDesc {
+                name: Cow::from("bench_packet_discard_single_sender"),
+                ignore: false,
+            },
+            testfn: TestFn::StaticBenchFn(bench_packet_discard_single_sender),
+        },
+        TestDescAndFn {
+            desc: TestDesc {
+                name: Cow::from("bench_packet_discard_mixed_senders"),
+                ignore: false,
+            },
+            testfn: TestFn::StaticBenchFn(bench_packet_discard_mixed_senders),
+        },
+        TestDescAndFn {
+            desc: TestDesc {
+                name: Cow::from("bench_sigverify_stage_with_same_tx"),
+                ignore: false,
+            },
+            testfn: TestFn::StaticBenchFn(bench_sigverify_stage_with_same_tx),
+        },
+        TestDescAndFn {
+            desc: TestDesc {
+                name: Cow::from("bench_sigverify_stage_without_same_tx"),
+                ignore: false,
+            },
+            testfn: TestFn::StaticBenchFn(bench_sigverify_stage_without_same_tx),
+        },
+    ];
+
+    BENCH_CASES_SHRINK_SIGVERIFY_STAGE_CORE
+        .iter()
+        .enumerate()
+        .for_each(|(i, &discard_factor)| {
+            let name = format!(
+                "{i:?}-bench_shrink_sigverify_stage_core - discard_factor: {discard_factor:?}"
+            );
+
+            benches.push(TestDescAndFn {
+                desc: TestDesc {
+                    name: Cow::from(name),
+                    ignore: false,
+                },
+                testfn: TestFn::DynBenchFn(Box::new(Bench(move |b: &mut Bencher| {
+                    bench_shrink_sigverify_stage_core(b, discard_factor);
+                }))),
+            });
+        });
+
+    benches
 }
 
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_0, 0);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_10, 10);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_20, 20);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_30, 30);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_40, 40);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_50, 50);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_60, 60);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_70, 70);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_80, 80);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_90, 90);
+benchmark_main!(benches);

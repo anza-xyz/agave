@@ -1,11 +1,15 @@
 use {
     crate::LEDGER_TOOL_DIRECTORY,
+    agave_snapshots::{
+        hardened_unpack::open_genesis_config,
+        snapshot_config::{SnapshotConfig, SnapshotUsage},
+        snapshot_hash::StartingSnapshotHashes,
+    },
     clap::{value_t, value_t_or_exit, values_t_or_exit, ArgMatches},
     crossbeam_channel::unbounded,
     log::*,
-    solana_accounts_db::{
-        hardened_unpack::open_genesis_config,
-        utils::{create_all_accounts_run_and_snapshot_dirs, move_and_async_delete_path_contents},
+    solana_accounts_db::utils::{
+        create_all_accounts_run_and_snapshot_dirs, move_and_async_delete_path_contents,
     },
     solana_clock::Slot,
     solana_core::validator::BlockVerificationMethod,
@@ -32,9 +36,7 @@ use {
         },
         bank_forks::BankForks,
         prioritization_fee_cache::PrioritizationFeeCache,
-        snapshot_config::{SnapshotConfig, SnapshotUsage},
         snapshot_controller::SnapshotController,
-        snapshot_hash::StartingSnapshotHashes,
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs, BANK_SNAPSHOTS_DIR},
     },
     solana_transaction::versioned::VersionedTransaction,
@@ -436,14 +438,12 @@ pub fn open_blockstore(
         .value_of("wal_recovery_mode")
         .map(BlockstoreRecoveryMode::from);
     let force_update_to_open = matches.is_present("force_update_to_open");
-    let enforce_ulimit_nofile = !matches.is_present("ignore_ulimit_nofile_error");
 
     match Blockstore::open_with_options(
         ledger_path,
         BlockstoreOptions {
             access_type: access_type.clone(),
             recovery_mode: wal_recovery_mode.clone(),
-            enforce_ulimit_nofile,
             ..BlockstoreOptions::default()
         },
     ) {
@@ -517,7 +517,6 @@ fn open_blockstore_with_temporary_primary_access(
             BlockstoreOptions {
                 access_type: AccessType::PrimaryForMaintenance,
                 recovery_mode: wal_recovery_mode.clone(),
-                enforce_ulimit_nofile: true,
                 ..BlockstoreOptions::default()
             },
         )?;
@@ -531,7 +530,6 @@ fn open_blockstore_with_temporary_primary_access(
         BlockstoreOptions {
             access_type: original_access_type,
             recovery_mode: wal_recovery_mode,
-            enforce_ulimit_nofile: true,
             ..BlockstoreOptions::default()
         },
     )

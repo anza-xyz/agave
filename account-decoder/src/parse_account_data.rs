@@ -147,7 +147,7 @@ pub fn parse_account_data_v3(
         )?,
         ParsableAccount::Stake => serde_json::to_value(parse_stake(data)?)?,
         ParsableAccount::Sysvar => serde_json::to_value(parse_sysvar(data, pubkey)?)?,
-        ParsableAccount::Vote => serde_json::to_value(parse_vote(data)?)?,
+        ParsableAccount::Vote => serde_json::to_value(parse_vote(data, pubkey)?)?,
     };
     Ok(ParsedAccount {
         program: format!("{program_name:?}").to_kebab_case(),
@@ -166,7 +166,7 @@ mod test {
         },
         solana_vote_interface::{
             program::id as vote_program_id,
-            state::{VoteStateV3, VoteStateVersions},
+            state::{VoteStateV4, VoteStateVersions},
         },
     };
 
@@ -177,10 +177,10 @@ mod test {
         let data = vec![0; 4];
         assert!(parse_account_data_v3(&account_pubkey, &other_program, &data, None).is_err());
 
-        let vote_state = VoteStateV3::default();
-        let mut vote_account_data: Vec<u8> = vec![0; VoteStateV3::size_of()];
-        let versioned = VoteStateVersions::new_v3(vote_state);
-        VoteStateV3::serialize(&versioned, &mut vote_account_data).unwrap();
+        let vote_state = VoteStateV4::default();
+        let mut vote_account_data: Vec<u8> = vec![0; VoteStateV4::size_of()];
+        let versioned = VoteStateVersions::new_v4(vote_state);
+        VoteStateV4::serialize(&versioned, &mut vote_account_data).unwrap();
         let parsed = parse_account_data_v3(
             &account_pubkey,
             &vote_program_id(),
@@ -189,7 +189,7 @@ mod test {
         )
         .unwrap();
         assert_eq!(parsed.program, "vote".to_string());
-        assert_eq!(parsed.space, VoteStateV3::size_of() as u64);
+        assert_eq!(parsed.space, VoteStateV4::size_of() as u64);
 
         let nonce_data = Versions::new(State::Initialized(Data::default()));
         let nonce_account_data = bincode::serialize(&nonce_data).unwrap();

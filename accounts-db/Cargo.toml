@@ -17,6 +17,7 @@ crate-type = ["lib"]
 name = "solana_accounts_db"
 
 [features]
+agave-unstable-api = []
 dev-context-only-utils = [
     "dep:qualifier_attr",
     "dep:solana-keypair",
@@ -41,7 +42,6 @@ blake3 = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
 bytemuck = { workspace = true }
 bytemuck_derive = { workspace = true }
-bzip2 = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
 indexmap = { workspace = true }
@@ -101,7 +101,6 @@ solana-transaction-error = { workspace = true }
 solana-vote-program = { workspace = true, optional = true }
 spl-generic-token = { workspace = true }
 static_assertions = { workspace = true }
-tar = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 
@@ -118,7 +117,7 @@ memoffset = { workspace = true }
 rand_chacha = { workspace = true }
 serde_bytes = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-accounts-db = { path = ".", features = ["dev-context-only-utils"] }
+solana-accounts-db = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-compute-budget = { workspace = true }
 solana-instruction = { workspace = true }
 solana-logger = { workspace = true }

@@ -1,5 +1,12 @@
-#[cfg(feature = "agave-unstable-api")]
-use qualifier_attr::qualifiers;
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 use {
     solana_bincode::limited_deserialize,
     solana_bpf_loader_program::{deploy_program, execute},
@@ -24,8 +31,7 @@ use {
     std::{cell::RefCell, rc::Rc},
 };
 
-#[cfg_attr(feature = "agave-unstable-api", qualifiers(pub))]
-const DEFAULT_COMPUTE_UNITS: u64 = 2_000;
+pub const DEFAULT_COMPUTE_UNITS: u64 = 2_000;
 
 pub fn get_state(data: &[u8]) -> Result<&LoaderV4State, InstructionError> {
     unsafe {

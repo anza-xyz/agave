@@ -59,7 +59,7 @@ use {
     solana_transaction_status::{
         EncodableWithMeta, EncodedConfirmedTransactionWithStatusMeta, UiTransactionEncoding,
     },
-    solana_vote_program::vote_state::VoteStateV3,
+    solana_vote_program::vote_state::VoteStateV4,
     std::{
         collections::{BTreeMap, HashMap, HashSet, VecDeque},
         fmt,
@@ -2352,7 +2352,7 @@ impl RentLengthValue {
             Self::Nonce => NonceState::size(),
             Self::Stake => StakeStateV2::size_of(),
             Self::System => 0,
-            Self::Vote => VoteStateV3::size_of(),
+            Self::Vote => VoteStateV4::size_of(),
             Self::Bytes(l) => *l,
         }
     }

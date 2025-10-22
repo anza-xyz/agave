@@ -30,8 +30,6 @@ use {
 
 /// Trait defining the interface for vote state operations.
 pub trait VoteStateHandle {
-    fn is_uninitialized(&self) -> bool;
-
     fn authorized_withdrawer(&self) -> &Pubkey;
 
     fn set_authorized_withdrawer(&mut self, authorized_withdrawer: Pubkey);
@@ -60,6 +58,8 @@ pub trait VoteStateHandle {
     fn node_pubkey(&self) -> &Pubkey;
 
     fn set_node_pubkey(&mut self, node_pubkey: Pubkey);
+
+    fn set_block_revenue_collector(&mut self, collector: Pubkey);
 
     fn votes(&self) -> &VecDeque<LandedVote>;
 
@@ -248,10 +248,6 @@ pub trait VoteStateHandle {
 }
 
 impl VoteStateHandle for VoteStateV3 {
-    fn is_uninitialized(&self) -> bool {
-        self.authorized_voters.is_empty()
-    }
-
     fn authorized_withdrawer(&self) -> &Pubkey {
         &self.authorized_withdrawer
     }
@@ -353,6 +349,10 @@ impl VoteStateHandle for VoteStateV3 {
         self.node_pubkey = node_pubkey;
     }
 
+    fn set_block_revenue_collector(&mut self, _collector: Pubkey) {
+        // No-op for v3: field does not exist.
+    }
+
     fn votes(&self) -> &VecDeque<LandedVote> {
         &self.votes
     }
@@ -435,11 +435,6 @@ impl VoteStateHandle for VoteStateV3 {
 }
 
 impl VoteStateHandle for VoteStateV4 {
-    fn is_uninitialized(&self) -> bool {
-        // As per SIMD-0185, v4 is always initialized.
-        false
-    }
-
     fn authorized_withdrawer(&self) -> &Pubkey {
         &self.authorized_withdrawer
     }
@@ -514,6 +509,10 @@ impl VoteStateHandle for VoteStateV4 {
 
     fn set_node_pubkey(&mut self, node_pubkey: Pubkey) {
         self.node_pubkey = node_pubkey;
+    }
+
+    fn set_block_revenue_collector(&mut self, collector: Pubkey) {
+        self.block_revenue_collector = collector;
     }
 
     fn votes(&self) -> &VecDeque<LandedVote> {
@@ -645,6 +644,7 @@ pub enum VoteStateTargetVersion {
     // New vote state versions will be added here...
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
 enum TargetVoteState {
     V3(VoteStateV3),
@@ -663,13 +663,6 @@ pub struct VoteStateHandler {
 }
 
 impl VoteStateHandle for VoteStateHandler {
-    fn is_uninitialized(&self) -> bool {
-        match &self.target_state {
-            TargetVoteState::V3(v3) => v3.is_uninitialized(),
-            TargetVoteState::V4(v4) => v4.is_uninitialized(),
-        }
-    }
-
     fn authorized_withdrawer(&self) -> &Pubkey {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.authorized_withdrawer(),
@@ -746,6 +739,13 @@ impl VoteStateHandle for VoteStateHandler {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_node_pubkey(node_pubkey),
             TargetVoteState::V4(v4) => v4.set_node_pubkey(node_pubkey),
+        }
+    }
+
+    fn set_block_revenue_collector(&mut self, collector: Pubkey) {
+        match &mut self.target_state {
+            TargetVoteState::V3(v3) => v3.set_block_revenue_collector(collector),
+            TargetVoteState::V4(v4) => v4.set_block_revenue_collector(collector),
         }
     }
 
@@ -852,26 +852,6 @@ impl VoteStateHandle for VoteStateHandler {
 }
 
 impl VoteStateHandler {
-    /// Create a new handler for the provided target version by deserializing
-    /// the vote state and converting it to the target.
-    pub fn deserialize_and_convert(
-        vote_account: &BorrowedInstructionAccount,
-        target_version: VoteStateTargetVersion,
-    ) -> Result<Self, InstructionError> {
-        let target_state = match target_version {
-            VoteStateTargetVersion::V3 => {
-                let vote_state = VoteStateV3::deserialize(vote_account.get_data())?;
-                TargetVoteState::V3(vote_state)
-            }
-            VoteStateTargetVersion::V4 => {
-                let vote_state =
-                    VoteStateV4::deserialize(vote_account.get_data(), vote_account.get_key())?;
-                TargetVoteState::V4(vote_state)
-            }
-        };
-        Ok(Self { target_state })
-    }
-
     pub fn init_vote_account_state(
         vote_account: &mut BorrowedInstructionAccount,
         vote_init: &VoteInit,
@@ -921,15 +901,13 @@ impl VoteStateHandler {
         }
     }
 
-    #[cfg(test)]
-    pub fn new_v3(vote_state: VoteStateV3) -> Self {
+    pub(crate) fn new_v3(vote_state: VoteStateV3) -> Self {
         Self {
             target_state: TargetVoteState::V3(vote_state),
         }
     }
 
-    #[cfg(test)]
-    pub fn new_v4(vote_state: VoteStateV4) -> Self {
+    pub(crate) fn new_v4(vote_state: VoteStateV4) -> Self {
         Self {
             target_state: TargetVoteState::V4(vote_state),
         }
@@ -983,6 +961,53 @@ impl VoteStateHandler {
 // Computes the vote latency for vote on voted_for_slot where the vote itself landed in current_slot
 pub(crate) fn compute_vote_latency(voted_for_slot: Slot, current_slot: Slot) -> u8 {
     std::cmp::min(current_slot.saturating_sub(voted_for_slot), u8::MAX as u64) as u8
+}
+
+pub(crate) fn try_convert_to_vote_state_v4(
+    versioned: VoteStateVersions,
+    vote_pubkey: &Pubkey,
+) -> Result<VoteStateV4, InstructionError> {
+    match versioned {
+        VoteStateVersions::V0_23_5(_) => {
+            // V0_23_5 not supported.
+            Err(InstructionError::UninitializedAccount)
+        }
+        VoteStateVersions::V1_14_11(state) => Ok(VoteStateV4 {
+            node_pubkey: state.node_pubkey,
+            authorized_withdrawer: state.authorized_withdrawer,
+            inflation_rewards_collector: *vote_pubkey,
+            block_revenue_collector: state.node_pubkey,
+            inflation_rewards_commission_bps: u16::from(state.commission).saturating_mul(100),
+            block_revenue_commission_bps: 10_000u16,
+            pending_delegator_rewards: 0,
+            bls_pubkey_compressed: None,
+            votes: landed_votes_from_lockouts(state.votes),
+            root_slot: state.root_slot,
+            authorized_voters: state.authorized_voters.clone(),
+            epoch_credits: state.epoch_credits,
+            last_timestamp: state.last_timestamp,
+        }),
+        VoteStateVersions::V3(state) => Ok(VoteStateV4 {
+            node_pubkey: state.node_pubkey,
+            authorized_withdrawer: state.authorized_withdrawer,
+            inflation_rewards_collector: *vote_pubkey,
+            block_revenue_collector: state.node_pubkey,
+            inflation_rewards_commission_bps: u16::from(state.commission).saturating_mul(100),
+            block_revenue_commission_bps: 10_000u16,
+            pending_delegator_rewards: 0,
+            bls_pubkey_compressed: None,
+            votes: state.votes,
+            root_slot: state.root_slot,
+            authorized_voters: state.authorized_voters,
+            epoch_credits: state.epoch_credits,
+            last_timestamp: state.last_timestamp,
+        }),
+        VoteStateVersions::V4(state) => Ok(*state),
+    }
+}
+
+fn landed_votes_from_lockouts(lockouts: VecDeque<Lockout>) -> VecDeque<LandedVote> {
+    lockouts.into_iter().map(|lockout| lockout.into()).collect()
 }
 
 #[allow(clippy::arithmetic_side_effects)]
@@ -1977,8 +2002,6 @@ mod tests {
         let epoch_credits = vec![(5, 200, 100)];
         let root_slot = Some(50);
 
-        let rent = Rent::default();
-
         // Helper to verify v4 defaults per SIMD-0185.
         let verify_v4_defaults = |v4_state: &VoteStateV4, expected_commission_bps: u16| {
             assert_eq!(
@@ -1993,28 +2016,6 @@ mod tests {
             );
             assert_eq!(v4_state.pending_delegator_rewards, 0);
             assert_eq!(v4_state.bls_pubkey_compressed, None);
-        };
-
-        // Helper to deserialize and convert vote state through handler.
-        let deserialize_and_convert = |versioned: VoteStateVersions, space: usize| -> VoteStateV4 {
-            let vote_account =
-                AccountSharedData::new_data(rent.minimum_balance(space), &versioned, &id())
-                    .unwrap();
-
-            let transaction_context =
-                mock_transaction_context(vote_pubkey, vote_account, rent.clone());
-            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
-            let vote_account_borrowed = instruction_context
-                .try_borrow_instruction_account(0)
-                .unwrap();
-
-            let handler = VoteStateHandler::deserialize_and_convert(
-                &vote_account_borrowed,
-                VoteStateTargetVersion::V4,
-            )
-            .unwrap();
-
-            handler.as_ref_v4().clone()
         };
 
         // V0_23_5
@@ -2036,7 +2037,7 @@ mod tests {
             };
 
             let versioned = VoteStateVersions::V1_14_11(Box::new(vote_state_v2.clone()));
-            let vote_state_v4 = deserialize_and_convert(versioned, VoteState1_14_11::size_of());
+            let vote_state_v4 = try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
 
             // Compare fields that were already present in V1_14_11.
             assert_eq!(vote_state_v4.node_pubkey, node_pubkey);
@@ -2075,7 +2076,7 @@ mod tests {
             vote_state_v3.root_slot = root_slot;
 
             let versioned = VoteStateVersions::V3(Box::new(vote_state_v3.clone()));
-            let vote_state_v4 = deserialize_and_convert(versioned, VoteStateV3::size_of());
+            let vote_state_v4 = try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
 
             // Compare fields that were already present in V3.
             assert_eq!(vote_state_v4.node_pubkey, node_pubkey);
@@ -2117,7 +2118,7 @@ mod tests {
             }
 
             let versioned = VoteStateVersions::V4(Box::new(initial_vote_state_v4.clone()));
-            let vote_state_v4 = deserialize_and_convert(versioned, VoteStateV4::size_of());
+            let vote_state_v4 = try_convert_to_vote_state_v4(versioned, &vote_pubkey).unwrap();
 
             // Should be an exact copy.
             assert_eq!(vote_state_v4, initial_vote_state_v4);
