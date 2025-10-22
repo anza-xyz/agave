@@ -134,7 +134,12 @@ use {
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_shred_version::compute_shred_version,
     solana_signer::Signer,
-    solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace, streamer::StakedNodes},
+    solana_streamer::{
+        nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
+        quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
+        socket::SocketAddrSpace,
+        streamer::StakedNodes,
+    },
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{
         DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
@@ -562,36 +567,45 @@ pub struct ValidatorTpuConfig {
     /// Controls if to enable UDP for TPU tansactions.
     pub tpu_enable_udp: bool,
     /// QUIC server config for regular TPU
-    pub tpu_quic_server_config: QuicServerParams,
+    pub tpu_quic_server_config: SwQosQuicStreamerConfig,
     /// QUIC server config for TPU forward
-    pub tpu_fwd_quic_server_config: QuicServerParams,
+    pub tpu_fwd_quic_server_config: SwQosQuicStreamerConfig,
     /// QUIC server config for Vote
-    pub vote_quic_server_config: QuicServerParams,
+    pub vote_quic_server_config: SimpleQosQuicStreamerConfig,
 }
 
 impl ValidatorTpuConfig {
     /// A convenient function to build a ValidatorTpuConfig for testing with good
     /// default.
     pub fn new_for_tests(tpu_enable_udp: bool) -> Self {
-        let tpu_quic_server_config = QuicServerParams {
-            max_connections_per_ipaddr_per_min: 32,
-            accumulator_channel_size: 100_000, // smaller channel size for faster test
-            ..Default::default()
+        let tpu_quic_server_config = SwQosQuicStreamerConfig {
+            quic_streamer_config: QuicStreamerConfig {
+                max_connections_per_ipaddr_per_min: 32,
+                coalesce_channel_size: 100_000, // smaller channel size for faster test
+                ..Default::default()
+            },
+            qos_config: SwQosConfig::default(),
         };
 
-        let tpu_fwd_quic_server_config = QuicServerParams {
-            max_connections_per_ipaddr_per_min: 32,
-            max_unstaked_connections: 0,
-            accumulator_channel_size: 100_000, // smaller channel size for faster test
-            ..Default::default()
+        let tpu_fwd_quic_server_config = SwQosQuicStreamerConfig {
+            quic_streamer_config: QuicStreamerConfig {
+                max_connections_per_ipaddr_per_min: 32,
+                max_unstaked_connections: 0,
+                coalesce_channel_size: 100_000, // smaller channel size for faster test
+                ..Default::default()
+            },
+            qos_config: SwQosConfig::default(),
         };
 
         // vote and tpu_fwd share the same characteristics -- disallow non-staked connections:
-        let vote_quic_server_config = QuicServerParams {
-            max_connections_per_ipaddr_per_min: 32,
-            max_unstaked_connections: 0,
-            coalesce_channel_size: 100_000, // smaller channel size for faster test
-            ..Default::default()
+        let vote_quic_server_config = SimpleQosQuicStreamerConfig {
+            quic_streamer_config: QuicStreamerConfig {
+                max_connections_per_ipaddr_per_min: 32,
+                max_unstaked_connections: 0,
+                coalesce_channel_size: 100_000, // smaller channel size for faster test
+                ..Default::default()
+            },
+            qos_config: SimpleQosConfig::default(),
         };
 
         ValidatorTpuConfig {

@@ -61,7 +61,12 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{runtime_config::RuntimeConfig, snapshot_utils},
     solana_signer::Signer,
-    solana_streamer::quic::QuicServerParams,
+    solana_streamer::{
+        nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
+        quic::{
+            QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig,
+        },
+    },
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_turbine::{
         broadcast_stage::BroadcastStageType,
@@ -943,33 +948,44 @@ pub fn execute(
     // the one pushed by bootstrap.
     node.info.hot_swap_pubkey(identity_keypair.pubkey());
 
-    let tpu_quic_server_config = QuicServerParams {
-        max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
-        max_staked_connections: tpu_max_staked_connections.try_into().unwrap(),
-        max_unstaked_connections: tpu_max_unstaked_connections.try_into().unwrap(),
-        max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-        num_threads: tpu_transaction_receive_threads,
-        max_streams_per_ms,
-        ..Default::default()
+    let tpu_quic_server_config = SwQosQuicStreamerConfig {
+        quic_streamer_config: QuicStreamerConfig {
+            max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
+            max_staked_connections: tpu_max_staked_connections.try_into().unwrap(),
+            max_unstaked_connections: tpu_max_unstaked_connections.try_into().unwrap(),
+            max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+            coalesce: tpu_coalesce,
+            num_threads: tpu_transaction_receive_threads,
+            ..Default::default()
+        },
+        qos_config: SwQosConfig { max_streams_per_ms },
     };
 
-    let tpu_fwd_quic_server_config = QuicServerParams {
-        max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
-        max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
-        max_unstaked_connections: tpu_max_fwd_unstaked_connections.try_into().unwrap(),
-        max_streams_per_ms,
-        max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-        num_threads: tpu_transaction_forward_receive_threads,
-        ..Default::default()
+    let tpu_fwd_quic_server_config = SwQosQuicStreamerConfig {
+        quic_streamer_config: QuicStreamerConfig {
+            max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
+            max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
+            max_unstaked_connections: tpu_max_fwd_unstaked_connections.try_into().unwrap(),
+            max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+            coalesce: tpu_coalesce,
+            num_threads: tpu_transaction_forward_receive_threads,
+            ..Default::default()
+        },
+        qos_config: SwQosConfig { max_streams_per_ms },
     };
 
-    let vote_quic_server_config = QuicServerParams {
-        max_connections_per_peer: 1,
-        max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
-        max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-        num_threads: tpu_vote_transaction_receive_threads,
-        max_streams_per_second: MAX_VOTES_PER_SECOND,
-        ..Default::default()
+    let vote_quic_server_config = SimpleQosQuicStreamerConfig {
+        quic_streamer_config: QuicStreamerConfig {
+            max_connections_per_peer: 1,
+            max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
+            max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+            coalesce: tpu_coalesce,
+            num_threads: tpu_vote_transaction_receive_threads,
+            ..Default::default()
+        },
+        qos_config: SimpleQosConfig {
+            max_streams_per_second: MAX_VOTES_PER_SECOND,
+        },
     };
 
     let validator = match Validator::new(

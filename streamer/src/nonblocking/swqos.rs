@@ -14,7 +14,7 @@ use {
                 STREAM_THROTTLING_INTERVAL_MS,
             },
         },
-        quic::StreamerStats,
+        quic::{StreamerStats, DEFAULT_MAX_STREAMS_PER_MS},
         streamer::StakedNodes,
     },
     percentage::Percentage,
@@ -37,6 +37,19 @@ use {
     tokio::sync::{Mutex, MutexGuard},
     tokio_util::sync::CancellationToken,
 };
+
+#[derive(Clone)]
+pub struct SwQosConfig {
+    pub max_streams_per_ms: u64,
+}
+
+impl Default for SwQosConfig {
+    fn default() -> Self {
+        SwQosConfig {
+            max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
+        }
+    }
+}
 
 pub struct SwQos {
     max_staked_connections: usize,
@@ -75,7 +88,7 @@ impl ConnectionContext for SwQosConnectionContext {
 
 impl SwQos {
     pub fn new(
-        max_streams_per_ms: u64,
+        qos_config: SwQosConfig,
         max_staked_connections: usize,
         max_unstaked_connections: usize,
         max_connections_per_peer: usize,
@@ -90,7 +103,7 @@ impl SwQos {
             staked_stream_load_ema: Arc::new(StakedStreamLoadEMA::new(
                 stats.clone(),
                 max_unstaked_connections,
-                max_streams_per_ms,
+                qos_config.max_streams_per_ms,
             )),
             stats,
             staked_nodes,

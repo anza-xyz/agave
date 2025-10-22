@@ -16,9 +16,10 @@ use {
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_streamer::{
+        nonblocking::swqos::SwQosConfig,
         packet::PacketBatchRecycler,
         quic::{
-            spawn_server_with_cancel, QuicServerParams, DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER,
+            spawn_server_with_cancel, QuicStreamerConfig, DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER,
             DEFAULT_MAX_STAKED_CONNECTIONS,
         },
         streamer::{receiver, PacketBatchReceiver, StakedNodes, StreamerReceiveStats},
@@ -262,7 +263,7 @@ fn main() -> Result<()> {
         let stats = Arc::new(StreamerReceiveStats::new("bench-vote-test"));
 
         if let Some(quic_params) = &quic_params {
-            let quic_server_params = QuicServerParams {
+            let quic_server_params = QuicStreamerConfig {
                 max_connections_per_ipaddr_per_min: max_connections_per_ipaddr_per_min
                     .try_into()
                     .unwrap(),
@@ -271,6 +272,7 @@ fn main() -> Result<()> {
                 max_unstaked_connections: 0,
                 ..Default::default()
             };
+            let qos_config = SwQosConfig::default();
             let (s_reader, r_reader) = unbounded();
             read_channels.push(r_reader);
 
@@ -282,6 +284,7 @@ fn main() -> Result<()> {
                 s_reader,
                 quic_params.staked_nodes.clone(),
                 quic_server_params,
+                qos_config,
                 cancel.clone(),
             )
             .unwrap();

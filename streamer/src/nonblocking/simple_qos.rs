@@ -11,7 +11,7 @@ use {
                 throttle_stream, ConnectionStreamCounter, STREAM_THROTTLING_INTERVAL,
             },
         },
-        quic::StreamerStats,
+        quic::{StreamerStats, DEFAULT_MAX_STREAMS_PER_MS},
         streamer::StakedNodes,
     },
     quinn::Connection,
@@ -27,6 +27,19 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
+#[derive(Clone)]
+pub struct SimpleQosConfig {
+    pub max_streams_per_second: u64,
+}
+
+impl Default for SimpleQosConfig {
+    fn default() -> Self {
+        SimpleQosConfig {
+            max_streams_per_second: DEFAULT_MAX_STREAMS_PER_MS * 1000,
+        }
+    }
+}
+
 pub struct SimpleQos {
     max_streams_per_second: u64,
     max_staked_connections: usize,
@@ -38,7 +51,7 @@ pub struct SimpleQos {
 
 impl SimpleQos {
     pub fn new(
-        max_streams_per_second: u64,
+        qos_config: SimpleQosConfig,
         max_connections_per_peer: usize,
         max_staked_connections: usize,
         stats: Arc<StreamerStats>,
@@ -46,7 +59,7 @@ impl SimpleQos {
         cancel: CancellationToken,
     ) -> Self {
         Self {
-            max_streams_per_second,
+            max_streams_per_second: qos_config.max_streams_per_second,
             max_connections_per_peer,
             max_staked_connections,
             stats,
