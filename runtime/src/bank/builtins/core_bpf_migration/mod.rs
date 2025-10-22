@@ -189,7 +189,9 @@ impl Bank {
                 program_runtime_environments.program_runtime_v1.clone(),
                 program_id,
                 &bpf_loader_upgradeable::id(),
-                data_len,
+                // The size of the program cache entry is the size of the program account
+                // + size of the program data account.
+                UpgradeableLoaderState::size_of_program().saturating_add(data_len),
                 elf,
                 self.slot,
             )?;
@@ -718,7 +720,10 @@ pub(crate) mod tests {
                 .unwrap();
 
             // The target program entry should be updated.
-            assert_eq!(target_entry.account_size, program_data_account.data().len());
+            assert_eq!(
+                target_entry.account_size,
+                program_account.data().len() + program_data_account.data().len()
+            );
             assert_eq!(target_entry.deployment_slot, migration_or_upgrade_slot);
             assert_eq!(target_entry.effective_slot, migration_or_upgrade_slot + 1);
 
