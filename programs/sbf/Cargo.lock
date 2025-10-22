@@ -2508,7 +2508,7 @@ version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68a7f542ee6b35af73b06abc0dad1c1bae89964e4e253bc4b587b91c9637867b"
 dependencies = [
- "cfg-if 1.0.3",
+ "cfg-if 1.0.4",
  "dashmap",
  "futures 0.3.31",
  "futures-timer",
