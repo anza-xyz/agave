@@ -1,6 +1,7 @@
 use {
     crate::rpc_subscriptions::{NotificationEntry, RpcNotification, TimestampedNotificationEntry},
     dashmap::{mapref::entry::Entry as DashEntry, DashMap},
+    serde::{Deserialize, Serialize},
     solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_clock::Slot,
     solana_commitment_config::CommitmentConfig,

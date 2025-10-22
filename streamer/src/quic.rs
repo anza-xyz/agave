@@ -24,10 +24,11 @@ use {
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc, Mutex, RwLock,
         },
-        thread,
+        thread::{self},
         time::Duration,
     },
     tokio::runtime::Runtime,
+    tokio_util::sync::CancellationToken,
 };
 
 // allow multiple connections for NAT and any open/close overlap
@@ -90,6 +91,10 @@ pub(crate) fn configure_server(
     let quic_server_config = QuicServerConfig::try_from(server_tls_config)?;
 
     let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
+
+    // disable path migration as we do not expect TPU clients to be on a mobile device
+    server_config.migration(false);
+
     let config = Arc::get_mut(&mut server_config.transport).unwrap();
 
     // QUIC_MAX_CONCURRENT_STREAMS doubled, which was found to improve reliability
@@ -115,7 +120,7 @@ pub(crate) fn configure_server(
     Ok((server_config, cert_chain_pem))
 }
 
-pub fn rt(name: String, num_threads: NonZeroUsize) -> Runtime {
+fn rt(name: String, num_threads: NonZeroUsize) -> Runtime {
     tokio::runtime::Builder::new_multi_thread()
         .thread_name(name)
         .worker_threads(num_threads.get())
@@ -152,12 +157,11 @@ impl NotifyKeyUpdate for EndpointKeyUpdater {
 pub struct StreamerStats {
     pub(crate) total_connections: AtomicUsize,
     pub(crate) total_new_connections: AtomicUsize,
-    pub(crate) total_streams: AtomicUsize,
+    pub(crate) active_streams: AtomicUsize,
     pub(crate) total_new_streams: AtomicUsize,
     pub(crate) invalid_stream_size: AtomicUsize,
     pub(crate) total_packets_allocated: AtomicUsize,
     pub(crate) total_packet_batches_allocated: AtomicUsize,
-    pub(crate) total_chunks_received: AtomicUsize,
     pub(crate) total_staked_chunks_received: AtomicUsize,
     pub(crate) total_unstaked_chunks_received: AtomicUsize,
     pub(crate) total_packet_batch_send_err: AtomicUsize,
@@ -174,7 +178,8 @@ pub struct StreamerStats {
     pub(crate) total_chunks_processed_by_batcher: AtomicUsize,
     pub(crate) total_stream_read_errors: AtomicUsize,
     pub(crate) total_stream_read_timeouts: AtomicUsize,
-    pub(crate) num_evictions: AtomicUsize,
+    pub(crate) num_evictions_staked: AtomicUsize,
+    pub(crate) num_evictions_unstaked: AtomicUsize,
     pub(crate) connection_added_from_staked_peer: AtomicUsize,
     pub(crate) connection_added_from_unstaked_peer: AtomicUsize,
     pub(crate) connection_add_failed: AtomicUsize,
@@ -211,6 +216,8 @@ pub struct StreamerStats {
     pub(crate) connection_rate_limiter_length: AtomicUsize,
     // All connections in various states such as Incoming, Connecting, Connection
     pub(crate) open_connections: AtomicUsize,
+    pub(crate) open_staked_connections: AtomicUsize,
+    pub(crate) open_unstaked_connections: AtomicUsize,
     pub(crate) refused_connections_too_many_open_connections: AtomicUsize,
     pub(crate) outstanding_incoming_connection_attempts: AtomicUsize,
     pub(crate) total_incoming_connection_attempts: AtomicUsize,
@@ -235,7 +242,7 @@ impl StreamerStats {
             ),
             (
                 "active_streams",
-                self.total_streams.load(Ordering::Relaxed),
+                self.active_streams.load(Ordering::Relaxed),
                 i64
             ),
             (
@@ -249,8 +256,13 @@ impl StreamerStats {
                 i64
             ),
             (
-                "evictions",
-                self.num_evictions.swap(0, Ordering::Relaxed),
+                "evictions_staked",
+                self.num_evictions_staked.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "evictions_unstaked",
+                self.num_evictions_unstaked.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
@@ -425,11 +437,6 @@ impl StreamerStats {
                 i64
             ),
             (
-                "chunks_received",
-                self.total_chunks_received.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
                 "staked_chunks_received",
                 self.total_staked_chunks_received.swap(0, Ordering::Relaxed),
                 i64
@@ -573,6 +580,16 @@ impl StreamerStats {
                 i64
             ),
             (
+                "open_staked_connections",
+                self.open_staked_connections.load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "open_unstaked_connections",
+                self.open_unstaked_connections.load(Ordering::Relaxed),
+                i64
+            ),
+            (
                 "refused_connections_too_many_open_connections",
                 self.refused_connections_too_many_open_connections
                     .swap(0, Ordering::Relaxed),
@@ -582,20 +599,22 @@ impl StreamerStats {
     }
 }
 
-pub fn spawn_server(
+#[deprecated(since = "3.0.0", note = "Use spawn_server_with_cancel instead")]
+pub fn spawn_server_multi(
     thread_name: &'static str,
     metrics_name: &'static str,
-    socket: UdpSocket,
+    sockets: Vec<UdpSocket>,
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     exit: Arc<AtomicBool>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicServerParams,
 ) -> Result<SpawnServerResult, QuicServerError> {
-    spawn_server_multi(
+    #[allow(deprecated)]
+    spawn_server(
         thread_name,
         metrics_name,
-        vec![socket],
+        sockets,
         keypair,
         packet_sender,
         exit,
@@ -633,10 +652,11 @@ impl Default for QuicServerParams {
     }
 }
 
-#[cfg(feature = "dev-context-only-utils")]
 impl QuicServerParams {
+    #[cfg(feature = "dev-context-only-utils")]
     pub const DEFAULT_NUM_SERVER_THREADS_FOR_TEST: NonZeroUsize = NonZeroUsize::new(8).unwrap();
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn default_for_tests() -> Self {
         // Shrink the channel size to avoid a massive allocation for tests
         Self {
@@ -645,29 +665,69 @@ impl QuicServerParams {
             ..Self::default()
         }
     }
+
+    pub(crate) fn max_concurrent_connections(&self) -> usize {
+        let conns = self.max_staked_connections + self.max_unstaked_connections;
+        conns + conns / 4
+    }
 }
 
-pub fn spawn_server_multi(
+#[deprecated(since = "3.1.0", note = "Use spawn_server_with_cancel instead")]
+pub fn spawn_server(
     thread_name: &'static str,
     metrics_name: &'static str,
-    sockets: Vec<UdpSocket>,
+    sockets: impl IntoIterator<Item = UdpSocket>,
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     exit: Arc<AtomicBool>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicServerParams,
 ) -> Result<SpawnServerResult, QuicServerError> {
+    let cancel = CancellationToken::new();
+    thread::spawn({
+        let cancel = cancel.clone();
+        move || loop {
+            if exit.load(Ordering::Relaxed) {
+                cancel.cancel();
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    });
+    spawn_server_with_cancel(
+        thread_name,
+        metrics_name,
+        sockets,
+        keypair,
+        packet_sender,
+        staked_nodes,
+        quic_server_params,
+        cancel,
+    )
+}
+
+/// Spawns a tokio runtime and a streamer instance inside it.
+pub fn spawn_server_with_cancel(
+    thread_name: &'static str,
+    metrics_name: &'static str,
+    sockets: impl IntoIterator<Item = UdpSocket>,
+    keypair: &Keypair,
+    packet_sender: Sender<PacketBatch>,
+    staked_nodes: Arc<RwLock<StakedNodes>>,
+    quic_server_params: QuicServerParams,
+    cancel: CancellationToken,
+) -> Result<SpawnServerResult, QuicServerError> {
     let runtime = rt(format!("{thread_name}Rt"), quic_server_params.num_threads);
     let result = {
         let _guard = runtime.enter();
-        crate::nonblocking::quic::spawn_server_multi(
+        crate::nonblocking::quic::spawn_server_with_cancel(
             metrics_name,
             sockets,
             keypair,
             packet_sender,
-            exit,
             staked_nodes,
             quic_server_params,
+            cancel,
         )
     }?;
     let handle = thread::Builder::new()
@@ -707,59 +767,59 @@ mod test {
 
     fn setup_quic_server() -> (
         std::thread::JoinHandle<()>,
-        Arc<AtomicBool>,
         crossbeam_channel::Receiver<PacketBatch>,
         SocketAddr,
+        CancellationToken,
     ) {
         let s = bind_to_localhost_unique().expect("should bind");
-        let exit = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        let cancel = CancellationToken::new();
         let SpawnServerResult {
             endpoints: _,
             thread: t,
             key_updater: _,
-        } = spawn_server(
+        } = spawn_server_with_cancel(
             "solQuicTest",
             "quic_streamer_test",
-            s,
+            [s],
             &keypair,
             sender,
-            exit.clone(),
             staked_nodes,
             QuicServerParams::default_for_tests(),
+            cancel.clone(),
         )
         .unwrap();
-        (t, exit, receiver, server_address)
+        (t, receiver, server_address, cancel)
     }
 
     #[test]
     fn test_quic_server_exit() {
-        let (t, exit, _receiver, _server_address) = setup_quic_server();
-        exit.store(true, Ordering::Relaxed);
+        let (t, _receiver, _server_address, cancel) = setup_quic_server();
+        cancel.cancel();
         t.join().unwrap();
     }
 
     #[test]
     fn test_quic_timeout() {
         solana_logger::setup();
-        let (t, exit, receiver, server_address) = setup_quic_server();
+        let (t, receiver, server_address, cancel) = setup_quic_server();
         let runtime = rt_for_test();
         runtime.block_on(check_timeout(receiver, server_address));
-        exit.store(true, Ordering::Relaxed);
+        cancel.cancel();
         t.join().unwrap();
     }
 
     #[test]
     fn test_quic_server_block_multiple_connections() {
         solana_logger::setup();
-        let (t, exit, _receiver, server_address) = setup_quic_server();
+        let (t, _receiver, server_address, cancel) = setup_quic_server();
 
         let runtime = rt_for_test();
         runtime.block_on(check_block_multiple_connections(server_address));
-        exit.store(true, Ordering::Relaxed);
+        cancel.cancel();
         t.join().unwrap();
     }
 
@@ -767,44 +827,44 @@ mod test {
     fn test_quic_server_multiple_streams() {
         solana_logger::setup();
         let s = bind_to_localhost_unique().expect("should bind");
-        let exit = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        let cancel = CancellationToken::new();
         let SpawnServerResult {
             endpoints: _,
             thread: t,
             key_updater: _,
-        } = spawn_server(
+        } = spawn_server_with_cancel(
             "solQuicTest",
             "quic_streamer_test",
-            s,
+            [s],
             &keypair,
             sender,
-            exit.clone(),
             staked_nodes,
             QuicServerParams {
                 max_connections_per_peer: 2,
                 ..QuicServerParams::default_for_tests()
             },
+            cancel.clone(),
         )
         .unwrap();
 
         let runtime = rt_for_test();
         runtime.block_on(check_multiple_streams(receiver, server_address, None));
-        exit.store(true, Ordering::Relaxed);
+        cancel.cancel();
         t.join().unwrap();
     }
 
     #[test]
     fn test_quic_server_multiple_writes() {
         solana_logger::setup();
-        let (t, exit, receiver, server_address) = setup_quic_server();
+        let (t, receiver, server_address, cancel) = setup_quic_server();
 
         let runtime = rt_for_test();
         runtime.block_on(check_multiple_writes(receiver, server_address, None));
-        exit.store(true, Ordering::Relaxed);
+        cancel.cancel();
         t.join().unwrap();
     }
 
@@ -812,33 +872,33 @@ mod test {
     fn test_quic_server_unstaked_node_connect_failure() {
         solana_logger::setup();
         let s = bind_to_localhost_unique().expect("should bind");
-        let exit = Arc::new(AtomicBool::new(false));
         let (sender, _) = unbounded();
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        let cancel = CancellationToken::new();
         let SpawnServerResult {
             endpoints: _,
             thread: t,
             key_updater: _,
-        } = spawn_server(
+        } = spawn_server_with_cancel(
             "solQuicTest",
             "quic_streamer_test",
-            s,
+            [s],
             &keypair,
             sender,
-            exit.clone(),
             staked_nodes,
             QuicServerParams {
                 max_unstaked_connections: 0,
                 ..QuicServerParams::default_for_tests()
             },
+            cancel.clone(),
         )
         .unwrap();
 
         let runtime = rt_for_test();
         runtime.block_on(check_unstaked_node_connect_failure(server_address));
-        exit.store(true, Ordering::Relaxed);
+        cancel.cancel();
         t.join().unwrap();
     }
 }

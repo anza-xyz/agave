@@ -4,8 +4,9 @@
 use {
     agave_banking_stage_ingress_types::BankingPacketBatch,
     solana_core::{
+        banking_stage::transaction_scheduler::scheduler_controller::SchedulerConfig,
         banking_trace::Channels,
-        validator::{BlockProductionMethod, TransactionStructure},
+        validator::{BlockProductionMethod, SchedulerPacing},
     },
     solana_vote::vote_transaction::new_tower_sync_transaction,
     solana_vote_program::vote_state::TowerSync,
@@ -137,14 +138,13 @@ fn bench_banking(
     bencher: &mut Bencher,
     tx_type: TransactionType,
     block_production_method: BlockProductionMethod,
-    transaction_struct: TransactionStructure,
 ) {
     solana_logger::setup();
-    let num_threads = BankingStage::num_threads() as usize;
+    let num_threads = BankingStage::default_num_workers();
     //   a multiple of packet chunk duplicates to avoid races
     const CHUNKS: usize = 8;
     const PACKETS_PER_BATCH: usize = 192;
-    let txes = PACKETS_PER_BATCH * num_threads * CHUNKS;
+    let txes = PACKETS_PER_BATCH * num_threads.get() * CHUNKS;
     let mint_total = 1_000_000_000_000;
     let GenesisConfigInfo {
         mut genesis_config,
@@ -177,7 +177,7 @@ fn bench_banking(
         .unwrap()
         .set_limits(u64::MAX, u64::MAX, u64::MAX);
 
-    debug!("threads: {} txs: {}", num_threads, txes);
+    debug!("threads: {num_threads} txs: {txes}");
 
     let transactions = match tx_type {
         TransactionType::Accounts | TransactionType::AccountsAndVotes => {
@@ -232,22 +232,25 @@ fn bench_banking(
     let blockstore = Arc::new(
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger"),
     );
-    let (exit, poh_recorder, transaction_recorder, poh_service, signal_receiver) =
+    let (exit, poh_recorder, _poh_controller, transaction_recorder, poh_service, signal_receiver) =
         create_test_recorder(bank.clone(), blockstore, None, None);
     let (s, _r) = unbounded();
-    let _banking_stage = BankingStage::new(
+    let _banking_stage = BankingStage::new_num_threads(
         block_production_method,
-        transaction_struct,
-        &poh_recorder,
+        poh_recorder.clone(),
         transaction_recorder,
         non_vote_receiver,
         tpu_vote_receiver,
         gossip_vote_receiver,
+        num_threads,
+        SchedulerConfig {
+            scheduler_pacing: SchedulerPacing::Disabled,
+        },
         None,
         s,
         None,
         bank_forks,
-        &Arc::new(PrioritizationFeeCache::new(0u64)),
+        Arc::new(PrioritizationFeeCache::new(0u64)),
     );
 
     let chunk_len = verified.len() / CHUNKS;
@@ -314,7 +317,6 @@ fn bench_banking_stage_multi_accounts(bencher: &mut Bencher) {
         bencher,
         TransactionType::Accounts,
         BlockProductionMethod::CentralScheduler,
-        TransactionStructure::Sdk,
     );
 }
 
@@ -324,7 +326,6 @@ fn bench_banking_stage_multi_programs(bencher: &mut Bencher) {
         bencher,
         TransactionType::Programs,
         BlockProductionMethod::CentralScheduler,
-        TransactionStructure::Sdk,
     );
 }
 
@@ -334,7 +335,6 @@ fn bench_banking_stage_multi_accounts_with_voting(bencher: &mut Bencher) {
         bencher,
         TransactionType::AccountsAndVotes,
         BlockProductionMethod::CentralScheduler,
-        TransactionStructure::Sdk,
     );
 }
 
@@ -344,47 +344,6 @@ fn bench_banking_stage_multi_programs_with_voting(bencher: &mut Bencher) {
         bencher,
         TransactionType::ProgramsAndVotes,
         BlockProductionMethod::CentralScheduler,
-        TransactionStructure::Sdk,
-    );
-}
-
-#[bench]
-fn bench_banking_stage_multi_accounts_view(bencher: &mut Bencher) {
-    bench_banking(
-        bencher,
-        TransactionType::Accounts,
-        BlockProductionMethod::CentralScheduler,
-        TransactionStructure::View,
-    );
-}
-
-#[bench]
-fn bench_banking_stage_multi_programs_view(bencher: &mut Bencher) {
-    bench_banking(
-        bencher,
-        TransactionType::Programs,
-        BlockProductionMethod::CentralScheduler,
-        TransactionStructure::View,
-    );
-}
-
-#[bench]
-fn bench_banking_stage_multi_accounts_with_voting_view(bencher: &mut Bencher) {
-    bench_banking(
-        bencher,
-        TransactionType::AccountsAndVotes,
-        BlockProductionMethod::CentralScheduler,
-        TransactionStructure::View,
-    );
-}
-
-#[bench]
-fn bench_banking_stage_multi_programs_with_voting_view(bencher: &mut Bencher) {
-    bench_banking(
-        bencher,
-        TransactionType::ProgramsAndVotes,
-        BlockProductionMethod::CentralScheduler,
-        TransactionStructure::View,
     );
 }
 

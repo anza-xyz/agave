@@ -4,6 +4,7 @@ use {
     crate::{
         bank::{Bank, BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankRc},
         epoch_stakes::VersionedEpochStakes,
+        rent_collector::RentCollector,
         runtime_config::RuntimeConfig,
         snapshot_utils::{SnapshotError, StorageAndNextAccountsFileId},
         stake_account::StakeAccount,
@@ -16,15 +17,15 @@ use {
         accounts::Accounts,
         accounts_db::{
             AccountStorageEntry, AccountsDb, AccountsDbConfig, AccountsFileId,
-            AtomicAccountsFileId, DuplicatesLtHash, IndexGenerationInfo,
+            AtomicAccountsFileId, IndexGenerationInfo,
         },
         accounts_file::{AccountsFile, StorageAccess},
         accounts_hash::AccountsLtHash,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::AncestorsForSerialization,
         blockhash_queue::BlockhashQueue,
+        ObsoleteAccounts,
     },
-    solana_builtins::prototype::BuiltinPrototype,
     solana_clock::{Epoch, Slot, UnixTimestamp},
     solana_epoch_schedule::EpochSchedule,
     solana_fee_calculator::{FeeCalculator, FeeRateGovernor},
@@ -35,7 +36,6 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
-    solana_rent_collector::RentCollector,
     solana_serde::default_on_eof,
     solana_stake_interface::state::Delegation,
     std::{
@@ -48,19 +48,24 @@ use {
             atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc,
         },
-        thread::Builder,
         time::Instant,
     },
     storage::SerializableStorage,
     types::SerdeAccountsLtHash,
 };
 
+mod obsolete_accounts;
+mod status_cache;
 mod storage;
 mod tests;
 mod types;
 mod utils;
 
-pub(crate) use storage::{SerializableAccountStorageEntry, SerializedAccountsFileId};
+pub(crate) use {
+    obsolete_accounts::SerdeObsoleteAccountsMap,
+    status_cache::{deserialize_status_cache, serialize_status_cache},
+    storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
+};
 
 const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
 
@@ -340,8 +345,14 @@ impl<T> SnapshotAccountsDbFields<T> {
                 // There must not be any overlap in the slots of storages between the full snapshot and the incremental snapshot
                 incremental_snapshot_storages
                     .iter()
-                    .all(|storage_entry| !full_snapshot_storages.contains_key(storage_entry.0)).then_some(()).ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::InvalidData, "Snapshots are incompatible: There are storages for the same slot in both the full snapshot and the incremental snapshot!")
+                    .all(|storage_entry| !full_snapshot_storages.contains_key(storage_entry.0))
+                    .then_some(())
+                    .ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Snapshots are incompatible: There are storages for the same slot in \
+                             both the full snapshot and the incremental snapshot!",
+                        )
                     })?;
 
                 let mut combined_storages = full_snapshot_storages;
@@ -360,7 +371,18 @@ impl<T> SnapshotAccountsDbFields<T> {
     }
 }
 
-fn deserialize_from<R, T>(reader: R) -> bincode::Result<T>
+pub(crate) fn serialize_into<W, T>(writer: W, value: &T) -> bincode::Result<()>
+where
+    W: Write,
+    T: Serialize,
+{
+    bincode::options()
+        .with_fixint_encoding()
+        .with_limit(MAX_STREAM_SIZE)
+        .serialize_into(writer, value)
+}
+
+pub(crate) fn deserialize_from<R, T>(reader: R) -> bincode::Result<T>
 where
     R: Read,
     T: DeserializeOwned,
@@ -435,9 +457,7 @@ where
     let deserializable_bank = deserialize_from::<_, DeserializableVersionedBank>(&mut stream)?;
     if !deserializable_bank.unused_epoch_stakes.is_empty() {
         return Err(Box::new(bincode::ErrorKind::Custom(
-            "Expected deserialized bank's unused_epoch_stakes field \
-             to be empty"
-                .to_string(),
+            "Expected deserialized bank's unused_epoch_stakes field to be empty".to_string(),
         )));
     }
     let mut bank_fields = BankFieldsToDeserialize::from(deserializable_bank);
@@ -447,7 +467,7 @@ where
     // Process extra fields
     let ExtraFieldsToDeserialize {
         lamports_per_signature,
-        _obsolete_incremental_snapshot_persistence: _incremental_snapshot_persistence,
+        _obsolete_incremental_snapshot_persistence,
         _obsolete_epoch_accounts_hash,
         versioned_epoch_stakes,
         accounts_lt_hash,
@@ -462,24 +482,6 @@ where
         .into();
 
     Ok((bank_fields, accounts_db_fields))
-}
-
-/// used by tests to compare contents of serialized bank fields
-/// serialized format is not deterministic - likely due to randomness in structs like hashmaps
-#[cfg(feature = "dev-context-only-utils")]
-pub(crate) fn compare_two_serialized_banks(
-    path1: impl AsRef<Path>,
-    path2: impl AsRef<Path>,
-) -> std::result::Result<bool, Error> {
-    use std::fs::File;
-    let file1 = File::open(path1)?;
-    let mut stream1 = BufReader::new(file1);
-    let file2 = File::open(path2)?;
-    let mut stream2 = BufReader::new(file2);
-
-    let fields1 = deserialize_bank_fields(&mut stream1)?;
-    let fields2 = deserialize_bank_fields(&mut stream2)?;
-    Ok(fields1 == fields2)
 }
 
 /// Get snapshot storage lengths from accounts_db_fields
@@ -547,7 +549,9 @@ pub(crate) fn fields_from_streams(
 /// This struct contains side-info while reconstructing the bank from streams
 #[derive(Debug)]
 pub struct BankFromStreamsInfo {
-    pub duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
+    /// The accounts lt hash calculated during index generation.
+    /// Will be used when verifying accounts, after rebuilding a Bank.
+    pub calculated_accounts_lt_hash: AccountsLtHash,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -559,10 +563,9 @@ pub(crate) fn bank_from_streams<R>(
     genesis_config: &GenesisConfig,
     runtime_config: &RuntimeConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
-    additional_builtins: Option<&[BuiltinPrototype]>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: Option<AccountsDbConfig>,
+    accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> std::result::Result<(Bank, BankFromStreamsInfo), Error>
@@ -578,7 +581,6 @@ where
         account_paths,
         storage_and_next_append_vec_id,
         debug_keys,
-        additional_builtins,
         limit_load_slot_count_from_snapshot,
         verify_index,
         accounts_db_config,
@@ -588,7 +590,7 @@ where
     Ok((
         bank,
         BankFromStreamsInfo {
-            duplicates_lt_hash: info.duplicates_lt_hash,
+            calculated_accounts_lt_hash: info.calculated_accounts_lt_hash,
         },
     ))
 }
@@ -803,7 +805,9 @@ impl solana_frozen_abi::abi_example::TransparentAsHelper for SerializableAccount
 /// This struct contains side-info while reconstructing the bank from fields
 #[derive(Debug)]
 pub(crate) struct ReconstructedBankInfo {
-    pub(crate) duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
+    /// The accounts lt hash calculated during index generation.
+    /// Will be used when verifying accounts, after rebuilding a Bank.
+    pub(crate) calculated_accounts_lt_hash: AccountsLtHash,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -815,10 +819,9 @@ pub(crate) fn reconstruct_bank_from_fields<E>(
     account_paths: &[PathBuf],
     storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
-    additional_builtins: Option<&[BuiltinPrototype]>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: Option<AccountsDbConfig>,
+    accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> Result<(Bank, ReconstructedBankInfo), Error>
@@ -841,16 +844,12 @@ where
     let bank_rc = BankRc::new(Accounts::new(Arc::new(accounts_db)));
     let runtime_config = Arc::new(runtime_config.clone());
 
-    // if limit_load_slot_count_from_snapshot is set, then we need to side-step some correctness checks beneath this call
-    let debug_do_not_add_builtins = limit_load_slot_count_from_snapshot.is_some();
-    let bank = Bank::new_from_fields(
+    let bank = Bank::new_from_snapshot(
         bank_rc,
         genesis_config,
         runtime_config,
         bank_fields,
         debug_keys,
-        additional_builtins,
-        debug_do_not_add_builtins,
         reconstructed_accounts_db_info.accounts_data_len,
     );
 
@@ -858,7 +857,7 @@ where
     Ok((
         bank,
         ReconstructedBankInfo {
-            duplicates_lt_hash: reconstructed_accounts_db_info.duplicates_lt_hash,
+            calculated_accounts_lt_hash: reconstructed_accounts_db_info.calculated_accounts_lt_hash,
         },
     ))
 }
@@ -867,15 +866,34 @@ pub(crate) fn reconstruct_single_storage(
     slot: &Slot,
     append_vec_path: &Path,
     current_len: usize,
-    append_vec_id: AccountsFileId,
+    id: AccountsFileId,
     storage_access: StorageAccess,
+    obsolete_accounts: Option<(ObsoleteAccounts, AccountsFileId, usize)>,
 ) -> Result<Arc<AccountStorageEntry>, SnapshotError> {
+    // When restoring from an archive, obsolete accounts will always be `None`
+    // When restoring from fastboot, obsolete accounts will be 'Some' if the storage contained
+    // accounts marked obsolete at the time the snapshot was taken.
+    let (current_len, obsolete_accounts) = if let Some(obsolete_accounts) = obsolete_accounts {
+        let updated_len = current_len + obsolete_accounts.2;
+        if obsolete_accounts.1 != id {
+            return Err(SnapshotError::MismatchedAccountsFileId(
+                id,
+                obsolete_accounts.1,
+            ));
+        }
+
+        (updated_len, obsolete_accounts.0)
+    } else {
+        (current_len, ObsoleteAccounts::default())
+    };
+
     let accounts_file =
         AccountsFile::new_for_startup(append_vec_path, current_len, storage_access)?;
     Ok(Arc::new(AccountStorageEntry::new_existing(
         *slot,
-        append_vec_id,
+        id,
         accounts_file,
+        obsolete_accounts,
     )))
 }
 
@@ -974,15 +992,18 @@ pub(crate) fn remap_and_reconstruct_single_storage(
         current_len,
         remapped_append_vec_id,
         storage_access,
+        None,
     )?;
     Ok(storage)
 }
 
 /// This struct contains side-info while reconstructing the accounts DB from fields.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug)]
 pub struct ReconstructedAccountsDbInfo {
     pub accounts_data_len: u64,
-    pub duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
+    /// The accounts lt hash calculated during index generation.
+    /// Will be used when verifying accounts, after rebuilding a Bank.
+    pub calculated_accounts_lt_hash: AccountsLtHash,
     pub bank_hash_stats: BankHashStats,
 }
 
@@ -993,7 +1014,7 @@ fn reconstruct_accountsdb_from_fields<E>(
     storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: Option<AccountsDbConfig>,
+    accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> Result<(AccountsDb, ReconstructedAccountsDbInfo), Error>
@@ -1048,38 +1069,19 @@ where
         .write_version
         .fetch_add(snapshot_version, Ordering::Release);
 
-    let mut measure_notify = Measure::start("accounts_notify");
-
-    let accounts_db = Arc::new(accounts_db);
-    let accounts_db_clone = accounts_db.clone();
-    let handle = Builder::new()
-        .name("solNfyAccRestor".to_string())
-        .spawn(move || {
-            accounts_db_clone.notify_account_restore_from_snapshot();
-        })
-        .unwrap();
-
     info!("Building accounts index...");
     let start = Instant::now();
     let IndexGenerationInfo {
         accounts_data_len,
-        duplicates_lt_hash,
+        calculated_accounts_lt_hash,
     } = accounts_db.generate_index(limit_load_slot_count_from_snapshot, verify_index);
     info!("Building accounts index... Done in {:?}", start.elapsed());
 
-    handle.join().unwrap();
-    measure_notify.stop();
-
-    datapoint_info!(
-        "reconstruct_accountsdb_from_fields()",
-        ("accountsdb-notify-at-start-us", measure_notify.as_us(), i64),
-    );
-
     Ok((
-        Arc::try_unwrap(accounts_db).unwrap(),
+        accounts_db,
         ReconstructedAccountsDbInfo {
             accounts_data_len,
-            duplicates_lt_hash,
+            calculated_accounts_lt_hash,
             bank_hash_stats: snapshot_bank_hash_info.stats,
         },
     ))

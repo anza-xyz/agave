@@ -1,5 +1,5 @@
 use {
-    serde_derive::{Deserialize, Serialize},
+    serde::{Deserialize, Serialize},
     solana_hash::Hash,
     solana_keypair::signable::Signable,
     solana_pubkey::Pubkey,

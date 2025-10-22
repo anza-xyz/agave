@@ -1,11 +1,11 @@
 use {
     crate::LEDGER_TOOL_DIRECTORY,
+    agave_snapshots::hardened_unpack::open_genesis_config,
     clap::{value_t, value_t_or_exit, values_t_or_exit, ArgMatches},
     crossbeam_channel::unbounded,
     log::*,
-    solana_accounts_db::{
-        hardened_unpack::open_genesis_config,
-        utils::{create_all_accounts_run_and_snapshot_dirs, move_and_async_delete_path_contents},
+    solana_accounts_db::utils::{
+        create_all_accounts_run_and_snapshot_dirs, move_and_async_delete_path_contents,
     },
     solana_clock::Slot,
     solana_core::validator::BlockVerificationMethod,
@@ -35,7 +35,7 @@ use {
         snapshot_config::{SnapshotConfig, SnapshotUsage},
         snapshot_controller::SnapshotController,
         snapshot_hash::StartingSnapshotHashes,
-        snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
+        snapshot_utils::{self, clean_orphaned_account_snapshot_dirs, BANK_SNAPSHOTS_DIR},
     },
     solana_transaction::versioned::VersionedTransaction,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
@@ -129,26 +129,28 @@ pub fn load_and_process_ledger(
     process_options: ProcessOptions,
     transaction_status_sender: Option<TransactionStatusSender>,
 ) -> Result<LoadAndProcessLedgerOutput, LoadAndProcessLedgerError> {
-    let bank_snapshots_dir = if blockstore.is_primary_access() {
-        blockstore.ledger_path().join("snapshot")
-    } else {
-        blockstore
-            .ledger_path()
-            .join(LEDGER_TOOL_DIRECTORY)
-            .join("snapshot")
-    };
-
     let mut starting_slot = 0; // default start check with genesis
     let snapshot_config = {
-        let full_snapshot_archives_dir = value_t!(arg_matches, "snapshots", String)
-            .ok()
+        let snapshots_dir = arg_matches
+            .value_of("snapshots")
             .map(PathBuf::from)
             .unwrap_or_else(|| blockstore.ledger_path().to_path_buf());
-        let incremental_snapshot_archives_dir =
-            value_t!(arg_matches, "incremental_snapshot_archive_path", String)
-                .ok()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| full_snapshot_archives_dir.clone());
+        let bank_snapshots_dir = if blockstore.is_primary_access() {
+            snapshots_dir.join(BANK_SNAPSHOTS_DIR)
+        } else {
+            blockstore
+                .ledger_path()
+                .join(LEDGER_TOOL_DIRECTORY)
+                .join(BANK_SNAPSHOTS_DIR)
+        };
+        let full_snapshot_archives_dir = arg_matches
+            .value_of("full_snapshot_archive_path")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| snapshots_dir.clone());
+        let incremental_snapshot_archives_dir = arg_matches
+            .value_of("incremental_snapshot_archive_path")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| snapshots_dir.clone());
         if let Some(full_snapshot_slot) =
             snapshot_utils::get_highest_full_snapshot_archive_slot(&full_snapshot_archives_dir)
         {
@@ -170,7 +172,7 @@ pub fn load_and_process_ledger(
             usage,
             full_snapshot_archives_dir,
             incremental_snapshot_archives_dir,
-            bank_snapshots_dir: bank_snapshots_dir.clone(),
+            bank_snapshots_dir,
             ..SnapshotConfig::default()
         }
     };
@@ -256,11 +258,14 @@ pub fn load_and_process_ledger(
     );
     info!("{measure_clean_account_paths}");
 
-    snapshot_utils::purge_incomplete_bank_snapshots(&bank_snapshots_dir);
+    snapshot_utils::purge_incomplete_bank_snapshots(&snapshot_config.bank_snapshots_dir);
 
     info!("Cleaning contents of account snapshot paths: {account_snapshot_paths:?}");
-    clean_orphaned_account_snapshot_dirs(&bank_snapshots_dir, &account_snapshot_paths)
-        .map_err(LoadAndProcessLedgerError::CleanOrphanedAccountSnapshotDirectories)?;
+    clean_orphaned_account_snapshot_dirs(
+        &snapshot_config.bank_snapshots_dir,
+        &account_snapshot_paths,
+    )
+    .map_err(LoadAndProcessLedgerError::CleanOrphanedAccountSnapshotDirectories)?;
 
     let geyser_plugin_active = arg_matches.is_present("geyser_plugin_config");
     let (accounts_update_notifier, transaction_notifier) = if geyser_plugin_active {
@@ -431,14 +436,12 @@ pub fn open_blockstore(
         .value_of("wal_recovery_mode")
         .map(BlockstoreRecoveryMode::from);
     let force_update_to_open = matches.is_present("force_update_to_open");
-    let enforce_ulimit_nofile = !matches.is_present("ignore_ulimit_nofile_error");
 
     match Blockstore::open_with_options(
         ledger_path,
         BlockstoreOptions {
             access_type: access_type.clone(),
             recovery_mode: wal_recovery_mode.clone(),
-            enforce_ulimit_nofile,
             ..BlockstoreOptions::default()
         },
     ) {
@@ -512,7 +515,6 @@ fn open_blockstore_with_temporary_primary_access(
             BlockstoreOptions {
                 access_type: AccessType::PrimaryForMaintenance,
                 recovery_mode: wal_recovery_mode.clone(),
-                enforce_ulimit_nofile: true,
                 ..BlockstoreOptions::default()
             },
         )?;
@@ -526,7 +528,6 @@ fn open_blockstore_with_temporary_primary_access(
         BlockstoreOptions {
             access_type: original_access_type,
             recovery_mode: wal_recovery_mode,
-            enforce_ulimit_nofile: true,
             ..BlockstoreOptions::default()
         },
     )

@@ -1,82 +1,9 @@
 use {
-    crate::{
-        accounts_db::{AccountStorageEntry, AccountsDb},
-        accounts_update_notifier_interface::AccountsUpdateNotifierInterface,
-    },
-    solana_account::AccountSharedData,
-    solana_clock::Slot,
-    solana_measure::meas_dur,
-    solana_metrics::*,
-    solana_pubkey::Pubkey,
-    solana_transaction::sanitized::SanitizedTransaction,
-    std::{
-        cmp::Reverse,
-        ops::AddAssign,
-        time::{Duration, Instant},
-    },
+    crate::accounts_db::AccountsDb, solana_account::AccountSharedData, solana_clock::Slot,
+    solana_pubkey::Pubkey, solana_transaction::sanitized::SanitizedTransaction,
 };
 
-#[derive(Default)]
-pub struct GeyserPluginNotifyAtSnapshotRestoreStats {
-    pub notified_accounts: usize,
-    pub elapsed_notifying: Duration,
-    pub total_pure_notify: Duration,
-}
-
-impl GeyserPluginNotifyAtSnapshotRestoreStats {
-    pub fn report(&self) {
-        datapoint_info!(
-            "accountsdb_plugin_notify_account_restore_from_snapshot_summary",
-            ("notified_accounts", self.notified_accounts, i64),
-            (
-                "elapsed_notifying_us",
-                self.elapsed_notifying.as_micros(),
-                i64
-            ),
-            (
-                "total_pure_notify_us",
-                self.total_pure_notify.as_micros(),
-                i64
-            ),
-        );
-    }
-}
-
-impl AddAssign for GeyserPluginNotifyAtSnapshotRestoreStats {
-    fn add_assign(&mut self, other: Self) {
-        self.notified_accounts += other.notified_accounts;
-        self.elapsed_notifying += other.elapsed_notifying;
-        self.total_pure_notify += other.total_pure_notify;
-    }
-}
-
 impl AccountsDb {
-    /// Notify the plugins of account data when AccountsDb is restored from a snapshot.
-    ///
-    /// Since accounts may have multiple versions in different slots, plugins must handle
-    /// deduplication by inspected the slot and write version of each account notification.
-    pub fn notify_account_restore_from_snapshot(&self) {
-        let Some(accounts_update_notifier) = &self.accounts_update_notifier else {
-            return;
-        };
-
-        let mut notify_stats = GeyserPluginNotifyAtSnapshotRestoreStats::default();
-        if accounts_update_notifier.snapshot_notifications_enabled() {
-            let mut slots = self.storage.all_slots();
-            slots.sort_unstable_by_key(|&slot| Reverse(slot));
-            slots
-                .into_iter()
-                .filter_map(|slot| self.storage.get_slot_storage_entry(slot))
-                .map(|storage| {
-                    Self::notify_accounts_in_storage(accounts_update_notifier.as_ref(), &storage)
-                })
-                .for_each(|stats| notify_stats += stats);
-        }
-
-        accounts_update_notifier.notify_end_of_restore_from_snapshot();
-        notify_stats.report();
-    }
-
     pub fn notify_account_at_accounts_update(
         &self,
         slot: Slot,
@@ -95,45 +22,17 @@ impl AccountsDb {
             );
         }
     }
-
-    fn notify_accounts_in_storage(
-        notifier: &dyn AccountsUpdateNotifierInterface,
-        storage: &AccountStorageEntry,
-    ) -> GeyserPluginNotifyAtSnapshotRestoreStats {
-        let mut pure_notify_time = Duration::ZERO;
-        let mut i = 0;
-        let notifying_start = Instant::now();
-        storage
-            .accounts
-            .scan_accounts_for_geyser(|account| {
-                i += 1;
-                // later entries in the same slot are more recent and override earlier accounts for the same pubkey
-                // We can pass an incrementing number here for write_version in the future, if the storage does not have a write_version.
-                // As long as all accounts for this slot are in 1 append vec that can be iterated oldest to newest.
-                let (_, notify_dur) = meas_dur!(notifier.notify_account_restore_from_snapshot(
-                    storage.slot(),
-                    i as u64,
-                    &account
-                ));
-                pure_notify_time += notify_dur;
-            })
-            .expect("must scan accounts storage");
-        let notifying_time = notifying_start.elapsed();
-
-        GeyserPluginNotifyAtSnapshotRestoreStats {
-            notified_accounts: i,
-            elapsed_notifying: notifying_time,
-            total_pure_notify: pure_notify_time,
-        }
-    }
 }
 
 #[cfg(test)]
 pub mod tests {
     use {
         super::*,
-        crate::accounts_update_notifier_interface::{
-            AccountForGeyser, AccountsUpdateNotifier, AccountsUpdateNotifierInterface,
+        crate::{
+            accounts_db::{AccountsDbConfig, MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING},
+            accounts_update_notifier_interface::{
+                AccountForGeyser, AccountsUpdateNotifier, AccountsUpdateNotifierInterface,
+            },
         },
         dashmap::DashMap,
         solana_account::ReadableAccount as _,
@@ -141,6 +40,7 @@ pub mod tests {
             atomic::{AtomicBool, Ordering},
             Arc,
         },
+        test_case::test_case,
     };
 
     impl AccountsDb {
@@ -195,9 +95,18 @@ pub mod tests {
         }
     }
 
-    #[test]
-    fn test_notify_account_restore_from_snapshot() {
-        let mut accounts = AccountsDb::new_single_for_tests();
+    #[test_case(MarkObsoleteAccounts::Enabled)]
+    #[test_case(MarkObsoleteAccounts::Disabled)]
+    fn test_notify_account_restore_from_snapshot(mark_obsolete_accounts: MarkObsoleteAccounts) {
+        let mut accounts_db = AccountsDb::new_with_config(
+            Vec::new(),
+            AccountsDbConfig {
+                mark_obsolete_accounts,
+                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+            },
+            None,
+            Arc::default(),
+        );
         let key1 = Pubkey::new_unique();
         let key2 = Pubkey::new_unique();
         let account = AccountSharedData::new(1, 0, &Pubkey::default());
@@ -206,31 +115,48 @@ pub mod tests {
         // Need to add root and flush write cache for each slot to ensure accounts are written
         // to correct slots. Cache flush can skip writes if accounts have already been written to
         // a newer slot
-        accounts.store_for_tests(0, &[(&key1, &account)]);
-        accounts.add_root_and_flush_write_cache(0);
-        accounts.store_for_tests(1, &[(&key1, &account)]);
-        accounts.add_root_and_flush_write_cache(1);
+        let slot0 = 0;
+        let storage0 = accounts_db.create_and_insert_store(slot0, /*size*/ 4_096, "");
+        storage0
+            .accounts
+            .write_accounts(&(slot0, [(&key1, &account)].as_slice()), /*skip*/ 0);
+
+        let slot1 = 1;
+        let storage1 = accounts_db.create_and_insert_store(slot1, /*size*/ 4_096, "");
+        storage1
+            .accounts
+            .write_accounts(&(slot1, [(&key1, &account)].as_slice()), /*skip*/ 0);
 
         // Account with key2 is updated in a single slot, should get notified once
-        accounts.store_for_tests(2, &[(&key2, &account)]);
-        accounts.add_root_and_flush_write_cache(2);
+        let slot2 = 2;
+        let storage2 = accounts_db.create_and_insert_store(slot2, /*size*/ 4_096, "");
+        storage2
+            .accounts
+            .write_accounts(&(slot2, [(&key2, &account)].as_slice()), /*skip*/ 0);
 
         // Do the notification
         let notifier = GeyserTestPlugin::default();
         let notifier = Arc::new(notifier);
-        accounts.set_geyser_plugin_notifier(Some(notifier.clone()));
-        accounts.notify_account_restore_from_snapshot();
+        accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
+        accounts_db.generate_index(None, false);
 
         // Ensure key1 was notified twice in different slots
         {
             let notified_key1 = notifier.accounts_notified.get(&key1).unwrap();
             assert_eq!(notified_key1.len(), 2);
-            let (slot, write_version, _account) = &notified_key1[0];
-            assert_eq!(*slot, 1);
-            assert_eq!(*write_version, 1);
-            let (slot, write_version, _account) = &notified_key1[1];
-            assert_eq!(*slot, 0);
-            assert_eq!(*write_version, 1);
+
+            // Since index generation goes through storages in parallel, there's not a
+            // deterministic order for which slots will notify first.
+            // So, we sort the accounts_notified values to ensure we can assert correctly.
+            let mut notified_key1_values = notified_key1.value().clone();
+            notified_key1_values.sort_unstable_by_key(|k| k.0);
+
+            let (slot, write_version, _account) = &notified_key1_values[0];
+            assert_eq!(*slot, slot0);
+            assert_eq!(*write_version, 0);
+            let (slot, write_version, _account) = &notified_key1_values[1];
+            assert_eq!(*slot, slot1);
+            assert_eq!(*write_version, 0);
         }
 
         // Ensure key2 was notified once
@@ -238,8 +164,8 @@ pub mod tests {
             let notified_key2 = notifier.accounts_notified.get(&key2).unwrap();
             assert_eq!(notified_key2.len(), 1);
             let (slot, write_version, _account) = &notified_key2[0];
-            assert_eq!(*slot, 2);
-            assert_eq!(*write_version, 1);
+            assert_eq!(*slot, slot2);
+            assert_eq!(*write_version, 0);
         }
 
         // Ensure we were notified that startup is done
@@ -263,24 +189,24 @@ pub mod tests {
         let account1 =
             AccountSharedData::new(account1_lamports1, 1, AccountSharedData::default().owner());
         let slot0 = 0;
-        accounts.store_cached((slot0, &[(&key1, &account1)][..]));
+        accounts.store_for_tests((slot0, &[(&key1, &account1)][..]));
 
         let key2 = solana_pubkey::new_rand();
         let account2_lamports: u64 = 200;
         let account2 =
             AccountSharedData::new(account2_lamports, 1, AccountSharedData::default().owner());
-        accounts.store_cached((slot0, &[(&key2, &account2)][..]));
+        accounts.store_for_tests((slot0, &[(&key2, &account2)][..]));
 
         let account1_lamports2 = 2;
         let slot1 = 1;
         let account1 = AccountSharedData::new(account1_lamports2, 1, account1.owner());
-        accounts.store_cached((slot1, &[(&key1, &account1)][..]));
+        accounts.store_for_tests((slot1, &[(&key1, &account1)][..]));
 
         let key3 = solana_pubkey::new_rand();
         let account3_lamports: u64 = 300;
         let account3 =
             AccountSharedData::new(account3_lamports, 1, AccountSharedData::default().owner());
-        accounts.store_cached((slot1, &[(&key3, &account3)][..]));
+        accounts.store_for_tests((slot1, &[(&key3, &account3)][..]));
 
         assert_eq!(notifier.accounts_notified.get(&key1).unwrap().len(), 2);
         assert_eq!(

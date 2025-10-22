@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 #[deprecated(
@@ -11,7 +20,6 @@ pub mod config;
 pub mod epoch_rewards;
 #[deprecated(since = "2.2.0")]
 pub mod points;
-pub mod stake_instruction;
 pub mod stake_state;
 
 pub fn add_genesis_accounts(genesis_config: &mut GenesisConfig) -> u64 {

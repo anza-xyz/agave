@@ -1,6 +1,7 @@
 use {
     crate::crds_data::sanitize_wallclock,
     itertools::Itertools,
+    serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_ledger::{
         blockstore::BlockstoreError,
@@ -457,7 +458,7 @@ pub(crate) mod tests {
             &entries,
             is_last_in_slot,
             // chained_merkle_root
-            Some(Hash::new_from_array(rng.gen())),
+            Hash::new_from_array(rng.gen()),
             next_shred_index,
             next_code_index, // next_code_index
             &ReedSolomonCache::default(),
@@ -1102,7 +1103,7 @@ pub(crate) mod tests {
             new_rand_coding_shreds(&mut rng, next_shred_index, 10, &shredder, &leader)[0].clone();
         let mut data_shred_different_retransmitter_payload = data_shred.clone().into_payload();
         shred::layout::set_retransmitter_signature(
-            &mut data_shred_different_retransmitter_payload,
+            &mut data_shred_different_retransmitter_payload.as_mut(),
             &Signature::new_unique(),
         )
         .unwrap();
@@ -1110,7 +1111,7 @@ pub(crate) mod tests {
             Shred::new_from_serialized_shred(data_shred_different_retransmitter_payload).unwrap();
         let mut coding_shred_different_retransmitter_payload = coding_shred.clone().into_payload();
         shred::layout::set_retransmitter_signature(
-            &mut coding_shred_different_retransmitter_payload,
+            &mut coding_shred_different_retransmitter_payload.as_mut(),
             &Signature::new_unique(),
         )
         .unwrap();

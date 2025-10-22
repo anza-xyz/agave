@@ -61,7 +61,7 @@ cfg_if::cfg_if! {
                 policy,
                 thread_priority::ThreadPriority::Crossplatform((priority).try_into().expect("Priority value outside of OS-supported range")),
             ) {
-                panic!("Can not set thread priority, OS error {:?}", e);
+                panic!("Can not set thread priority, OS error {e:?}");
             }
         }
         pub fn parse_policy(policy: &str) -> ThreadSchedulePolicy {

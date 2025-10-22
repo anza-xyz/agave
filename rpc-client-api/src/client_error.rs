@@ -1,10 +1,12 @@
-pub use reqwest;
 use {
     crate::{request, response},
-    solana_signer::SignerError,
-    solana_transaction_error::{TransactionError, TransportError},
+    solana_transaction_error::TransportError,
     std::io,
     thiserror::Error as ThisError,
+};
+pub use {
+    anyhow::Error as AnyhowError, reqwest, serde_json::error::Error as SerdeJsonError,
+    solana_signer::SignerError, solana_transaction_error::TransactionError,
 };
 
 #[derive(ThisError, Debug)]
@@ -15,11 +17,11 @@ pub enum ErrorKind {
     #[error(transparent)]
     Reqwest(#[from] reqwest::Error),
     #[error("Middleware: {0}")]
-    Middleware(anyhow::Error),
+    Middleware(AnyhowError),
     #[error(transparent)]
     RpcError(#[from] request::RpcError),
     #[error(transparent)]
-    SerdeJson(#[from] serde_json::error::Error),
+    SerdeJson(#[from] SerdeJsonError),
     #[error(transparent)]
     SigningError(#[from] SignerError),
     #[error(transparent)]

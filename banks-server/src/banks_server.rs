@@ -174,6 +174,8 @@ fn simulate_transaction(
         Some(false), // is_simple_vote_tx
         bank,
         bank.get_reserved_account_keys(),
+        bank.feature_set
+            .is_active(&agave_feature_set::static_instruction_limit::id()),
     ) {
         Err(err) => {
             return BanksTransactionResultWithSimulation {
@@ -191,6 +193,11 @@ fn simulate_transaction(
         loaded_accounts_data_size,
         return_data,
         inner_instructions,
+        fee: _,
+        pre_balances: _,
+        post_balances: _,
+        pre_token_balances: _,
+        post_token_balances: _,
     } = bank.simulate_transaction_unchecked(&sanitized_transaction, true);
 
     let simulation_details = TransactionSimulationDetails {

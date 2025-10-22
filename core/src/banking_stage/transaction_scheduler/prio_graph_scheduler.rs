@@ -7,7 +7,6 @@ use {
             SchedulingCommon, TransactionSchedulingError, TransactionSchedulingInfo,
         },
         scheduler_error::SchedulerError,
-        thread_aware_account_locks::{ThreadAwareAccountLocks, ThreadId, ThreadSet, TryLockError},
     },
     crate::banking_stage::{
         consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
@@ -17,6 +16,9 @@ use {
             scheduler_common::select_thread, transaction_priority_id::TransactionPriorityId,
             transaction_state::TransactionState, transaction_state_container::StateContainer,
         },
+    },
+    agave_scheduling_utils::thread_aware_account_locks::{
+        ThreadAwareAccountLocks, ThreadId, ThreadSet, TryLockError,
     },
     crossbeam_channel::{Receiver, Sender},
     prio_graph::{AccessKind, GraphNode, PrioGraph},
@@ -108,9 +110,19 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
     fn schedule<S: StateContainer<Tx>>(
         &mut self,
         container: &mut S,
+        budget: u64,
         pre_graph_filter: impl Fn(&[&Tx], &mut [bool]),
         pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     ) -> Result<SchedulingSummary, SchedulerError> {
+        // Subtract any in-flight compute units from the budget.
+        let mut budget = budget.saturating_sub(
+            self.common
+                .in_flight_tracker
+                .cus_in_flight_per_thread()
+                .iter()
+                .sum(),
+        );
+
         let starting_queue_size = container.queue_size();
         let starting_buffer_size = container.buffer_size();
 
@@ -209,7 +221,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
         let mut num_sent = Saturating::<usize>(0);
         let mut num_unschedulable_conflicts: usize = 0;
         let mut num_unschedulable_threads: usize = 0;
-        while num_scanned < self.config.max_scanned_transactions_per_scheduling_pass {
+        while budget > 0 && num_scanned < self.config.max_scanned_transactions_per_scheduling_pass {
             // If nothing is in the main-queue of the `PrioGraph` then there's nothing left to schedule.
             if self.prio_graph.is_empty() {
                 break;
@@ -265,6 +277,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
                             max_age,
                             cost,
                         );
+                        budget = budget.saturating_sub(cost);
 
                         // If target batch size is reached, send only this batch.
                         if self.common.batches.transactions()[thread_id].len()
@@ -568,7 +581,12 @@ mod tests {
 
         drop(work_receivers); // explicitly drop receivers
         assert_matches!(
-            scheduler.schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter),
+            scheduler.schedule(
+                &mut container,
+                u64::MAX, // no budget
+                test_pre_graph_filter,
+                test_pre_lock_filter
+            ),
             Err(SchedulerError::DisconnectedSendChannel(_))
         );
     }
@@ -582,11 +600,36 @@ mod tests {
         ]);
 
         let scheduling_summary = scheduler
-            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .schedule(
+                &mut container,
+                u64::MAX, // no budget
+                test_pre_graph_filter,
+                test_pre_lock_filter,
+            )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
         assert_eq!(scheduling_summary.num_unschedulable_conflicts, 0);
         assert_eq!(collect_work(&work_receivers[0]).1, vec![vec![1, 0]]);
+    }
+
+    #[test]
+    fn test_schedule_budget() {
+        let (mut scheduler, _work_receivers, _finished_work_sender) = create_test_frame(1);
+        let mut container = create_container([
+            (&Keypair::new(), &[Pubkey::new_unique()], 1, 1),
+            (&Keypair::new(), &[Pubkey::new_unique()], 2, 2),
+        ]);
+
+        let scheduling_summary = scheduler
+            .schedule(
+                &mut container,
+                0, // zero budget. nothing should be scheduled
+                test_pre_graph_filter,
+                test_pre_lock_filter,
+            )
+            .unwrap();
+        assert_eq!(scheduling_summary.num_scheduled, 0);
+        assert_eq!(scheduling_summary.num_unschedulable_conflicts, 0);
     }
 
     #[test]
@@ -599,7 +642,12 @@ mod tests {
         ]);
 
         let scheduling_summary = scheduler
-            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .schedule(
+                &mut container,
+                u64::MAX, // no budget
+                test_pre_graph_filter,
+                test_pre_lock_filter,
+            )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
         assert_eq!(scheduling_summary.num_unschedulable_conflicts, 0);
@@ -616,7 +664,12 @@ mod tests {
 
         // expect 4 full batches to be scheduled
         let scheduling_summary = scheduler
-            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .schedule(
+                &mut container,
+                u64::MAX, // no budget
+                test_pre_graph_filter,
+                test_pre_lock_filter,
+            )
             .unwrap();
         assert_eq!(
             scheduling_summary.num_scheduled,
@@ -638,7 +691,12 @@ mod tests {
             create_container((0..4).map(|i| (Keypair::new(), [Pubkey::new_unique()], 1, i)));
 
         let scheduling_summary = scheduler
-            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .schedule(
+                &mut container,
+                u64::MAX, // no budget
+                test_pre_graph_filter,
+                test_pre_lock_filter,
+            )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 4);
         assert_eq!(scheduling_summary.num_unschedulable_conflicts, 0);
@@ -679,7 +737,12 @@ mod tests {
         // not have knowledge of the joining at transaction [4] until after [0] and [1]
         // have been scheduled.
         let scheduling_summary = scheduler
-            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .schedule(
+                &mut container,
+                u64::MAX, // no budget
+                test_pre_graph_filter,
+                test_pre_lock_filter,
+            )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 4);
         assert_eq!(scheduling_summary.num_unschedulable_conflicts, 2);
@@ -689,7 +752,12 @@ mod tests {
 
         // Cannot schedule even on next pass because of lock conflicts
         let scheduling_summary = scheduler
-            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .schedule(
+                &mut container,
+                u64::MAX, // no budget
+                test_pre_graph_filter,
+                test_pre_lock_filter,
+            )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 0);
         assert_eq!(scheduling_summary.num_unschedulable_conflicts, 2);
@@ -703,7 +771,12 @@ mod tests {
             .unwrap();
         scheduler.receive_completed(&mut container).unwrap();
         let scheduling_summary = scheduler
-            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .schedule(
+                &mut container,
+                u64::MAX, // no budget
+                test_pre_graph_filter,
+                test_pre_lock_filter,
+            )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
         assert_eq!(scheduling_summary.num_unschedulable_conflicts, 0);
@@ -726,7 +799,12 @@ mod tests {
         let mut container = create_container_with_capacity(capacity, txs);
 
         let scheduling_summary = scheduler
-            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .schedule(
+                &mut container,
+                u64::MAX, // no budget
+                test_pre_graph_filter,
+                test_pre_lock_filter,
+            )
             .unwrap();
         // for each pass, it'd schedule no more than configured max_scanned_transactions_per_scheduling_pass
         let expected_num_scheduled = std::cmp::min(

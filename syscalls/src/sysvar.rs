@@ -1,9 +1,9 @@
 use {
     super::*, crate::translate_mut,
-    solana_program_runtime::execution_budget::SVMTransactionExecutionCost,
+    solana_program_runtime::execution_budget::SVMTransactionExecutionCost, solana_sbpf::ebpf,
 };
 
-fn get_sysvar<T: std::fmt::Debug + Sysvar + SysvarId + Clone>(
+fn get_sysvar<T: std::fmt::Debug + SysvarSerialize + Clone>(
     sysvar: Result<Arc<T>, InstructionError>,
     var_addr: u64,
     check_aligned: bool,
@@ -17,13 +17,21 @@ fn get_sysvar<T: std::fmt::Debug + Sysvar + SysvarId + Clone>(
             .sysvar_base_cost
             .saturating_add(size_of::<T>() as u64),
     )?;
+
+    if var_addr >= ebpf::MM_INPUT_START
+        && invoke_context
+            .get_feature_set()
+            .stricter_abi_and_runtime_constraints
+    {
+        return Err(SyscallError::InvalidPointer.into());
+    }
     translate_mut!(
         memory_mapping,
         check_aligned,
         let var: &mut T = map(var_addr)?;
     );
 
-    // this clone looks unecessary now, but it exists to zero out trailing alignment bytes
+    // this clone looks unnecessary now, but it exists to zero out trailing alignment bytes
     // it is unclear whether this should ever matter
     // but there are tests using MemoryMapping that expect to see this
     // we preserve the previous behavior out of an abundance of caution
@@ -203,6 +211,13 @@ declare_builtin_function!(
                 .saturating_add(std::cmp::max(sysvar_buf_cost, mem_op_base_cost)),
         )?;
 
+        if var_addr >= ebpf::MM_INPUT_START
+            && invoke_context
+                .get_feature_set()
+                .stricter_abi_and_runtime_constraints
+        {
+            return Err(SyscallError::InvalidPointer.into());
+        }
         // Abort: "Not all bytes in VM memory range `[var_addr, var_addr + length)` are writable."
         translate_mut!(
             memory_mapping,
@@ -226,10 +241,7 @@ declare_builtin_function!(
         let cache = invoke_context.get_sysvar_cache();
 
         // "`2` if the sysvar data is not present in the Sysvar Cache."
-        let sysvar_buf = match cache.sysvar_id_to_buffer(sysvar_id) {
-            None => return Ok(SYSVAR_NOT_FOUND),
-            Some(ref sysvar_buf) => sysvar_buf,
-        };
+        let Some(ref sysvar_buf) = cache.sysvar_id_to_buffer(sysvar_id) else { return Ok(SYSVAR_NOT_FOUND) };
 
         // "`1` if `offset + length` is greater than the length of the sysvar data."
         if let Some(sysvar_slice) = sysvar_buf.get(offset as usize..offset_length as usize) {

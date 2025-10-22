@@ -194,12 +194,6 @@ pub fn load_bank_forks(
                 exit,
             )
             .map_err(BankForksUtilsError::ProcessBlockstoreFromGenesis)?;
-            bank_forks
-                .read()
-                .unwrap()
-                .root_bank()
-                .set_initial_accounts_hash_verification_completed();
-
             (bank_forks, None)
         };
 
@@ -276,13 +270,12 @@ fn bank_forks_from_snapshot(
     };
 
     let bank = if let Some(fastboot_snapshot) = fastboot_snapshot {
-        let (bank, _) = snapshot_bank_utils::bank_from_snapshot_dir(
+        snapshot_bank_utils::bank_from_snapshot_dir(
             &account_paths,
             &fastboot_snapshot,
             genesis_config,
             &process_options.runtime_config,
             process_options.debug_keys.clone(),
-            None,
             process_options.limit_load_slot_count_from_snapshot,
             process_options.verify_index,
             process_options.accounts_db_config.clone(),
@@ -292,8 +285,7 @@ fn bank_forks_from_snapshot(
         .map_err(|err| BankForksUtilsError::BankFromSnapshotsDirectory {
             source: err,
             path: fastboot_snapshot.snapshot_path(),
-        })?;
-        bank
+        })?
     } else {
         // Given that we are going to boot from an archive, the append vecs held in the snapshot dirs for fast-boot should
         // be released.  They will be released by the account_background_service anyway.  But in the case of the account_paths
@@ -301,7 +293,7 @@ fn bank_forks_from_snapshot(
         // the archives, causing the out-of-memory problem.  So, purge the snapshot dirs upfront before loading from the archive.
         snapshot_utils::purge_all_bank_snapshots(&snapshot_config.bank_snapshots_dir);
 
-        let (bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
+        snapshot_bank_utils::bank_from_snapshot_archives(
             &account_paths,
             &snapshot_config.bank_snapshots_dir,
             &full_snapshot_archive_info,
@@ -309,7 +301,6 @@ fn bank_forks_from_snapshot(
             genesis_config,
             &process_options.runtime_config,
             process_options.debug_keys.clone(),
-            None,
             process_options.limit_load_slot_count_from_snapshot,
             process_options.accounts_db_skip_shrink,
             process_options.accounts_db_force_initial_clean,
@@ -325,8 +316,7 @@ fn bank_forks_from_snapshot(
                 .as_ref()
                 .map(|archive| archive.path().display().to_string())
                 .unwrap_or("none".to_string()),
-        })?;
-        bank
+        })?
     };
 
     // We must inform accounts-db of the latest full snapshot slot, which is used by the background

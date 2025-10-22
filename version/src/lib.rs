@@ -1,10 +1,18 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 
-extern crate serde_derive;
 pub use self::legacy::{LegacyVersion1, LegacyVersion2};
 use {
     rand::{thread_rng, Rng},
-    serde_derive::{Deserialize, Serialize},
+    serde::{Deserialize, Serialize},
     solana_sanitize::Sanitize,
     solana_serde_varint as serde_varint,
     std::{convert::TryInto, fmt},
@@ -16,7 +24,7 @@ extern crate solana_frozen_abi_macro;
 mod legacy;
 
 #[derive(Debug, Eq, PartialEq)]
-enum ClientId {
+pub enum ClientId {
     SolanaLabs,
     JitoLabs,
     Firedancer,
@@ -45,7 +53,7 @@ impl Version {
         semver::Version::new(self.major as u64, self.minor as u64, self.patch as u64)
     }
 
-    fn client(&self) -> ClientId {
+    pub fn client(&self) -> ClientId {
         ClientId::from(self.client)
     }
 }

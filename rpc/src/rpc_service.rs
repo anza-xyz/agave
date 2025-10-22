@@ -9,6 +9,7 @@ use {
         rpc_cache::LargestAccountsCache,
         rpc_health::*,
     },
+    agave_snapshots::SnapshotInterval,
     crossbeam_channel::unbounded,
     jsonrpc_core::{futures::prelude::*, MetaIoHandler},
     jsonrpc_http_server::{
@@ -16,30 +17,29 @@ use {
         RequestMiddlewareAction, ServerBuilder,
     },
     regex::Regex,
-    solana_client::connection_cache::{ConnectionCache, Protocol},
+    solana_cli_output::display::build_balance_message,
+    solana_client::{
+        client_option::ClientOption,
+        connection_cache::{ConnectionCache, Protocol},
+    },
     solana_genesis_config::DEFAULT_GENESIS_DOWNLOAD_PATH,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
-    solana_keypair::Keypair,
     solana_ledger::{
         bigtable_upload::ConfirmedBlockUploadConfig,
         bigtable_upload_service::BigTableUploadService, blockstore::Blockstore,
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_metrics::inc_new_counter_info,
-    solana_native_token::lamports_to_sol,
     solana_perf::thread::renice_this_thread,
     solana_poh::poh_recorder::PohRecorder,
     solana_quic_definitions::NotifyKeyUpdate,
     solana_runtime::{
-        bank::Bank,
-        bank_forks::BankForks,
-        commitment::BlockCommitmentCache,
+        bank::Bank, bank_forks::BankForks, commitment::BlockCommitmentCache,
         non_circulating_supply::calculate_non_circulating_supply,
         prioritization_fee_cache::PrioritizationFeeCache,
-        snapshot_archive_info::SnapshotArchiveInfoGetter,
-        snapshot_config::SnapshotConfig,
-        snapshot_utils::{self, SnapshotInterval},
+        snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
+        snapshot_utils,
     },
     solana_send_transaction_service::{
         send_transaction_service::{self, SendTransactionService},
@@ -48,7 +48,7 @@ use {
     solana_storage_bigtable::CredentialType,
     solana_validator_exit::Exit,
     std::{
-        net::{SocketAddr, UdpSocket},
+        net::SocketAddr,
         path::{Path, PathBuf},
         pin::Pin,
         sync::{
@@ -59,11 +59,10 @@ use {
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
-    tokio::runtime::{Builder as TokioBuilder, Handle as RuntimeHandle, Runtime as TokioRuntime},
+    tokio::runtime::{Builder as TokioBuilder, Runtime as TokioRuntime},
     tokio_util::{
         bytes::Bytes,
         codec::{BytesCodec, FramedRead},
-        sync::CancellationToken,
     },
 };
 
@@ -434,14 +433,14 @@ async fn handle_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> Option<
             let bank = bank_forks.read().unwrap().root_bank();
             let supply_result = calculate_circulating_supply_async(&bank).await;
             match supply_result {
-                Ok(supply) => Some(format!("{}", lamports_to_sol(supply))),
+                Ok(supply) => Some(build_balance_message(supply, false, false)),
                 Err(_) => None,
             }
         }
         "/v0/total-supply" => {
             let bank = bank_forks.read().unwrap().root_bank();
             let total_supply = bank.capitalization();
-            Some(format!("{}", lamports_to_sol(total_supply)))
+            Some(build_balance_message(total_supply, false, false))
         }
         _ => None,
     }
@@ -483,7 +482,6 @@ pub struct JsonRpcServiceConfig<'a> {
     pub validator_exit: Arc<RwLock<Exit>>,
     pub exit: Arc<AtomicBool>,
     pub override_health_check: Arc<AtomicBool>,
-    pub startup_verification_complete: Arc<AtomicBool>,
     pub optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
     pub send_transaction_service_config: send_transaction_service::Config,
     pub max_slots: Arc<MaxSlots>,
@@ -491,17 +489,6 @@ pub struct JsonRpcServiceConfig<'a> {
     pub max_complete_transaction_status_slot: Arc<AtomicU64>,
     pub prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     pub client_option: ClientOption<'a>,
-}
-
-/// [`ClientOption`] enum represents the available client types for TPU
-/// communication:
-/// * [`ConnectionCacheClient`]: Uses a shared [`ConnectionCache`] to manage
-///   connections efficiently.
-/// * [`TpuClientNextClient`]: Relies on the `tpu-client-next` crate and
-///   requires a reference to a [`Keypair`].
-pub enum ClientOption<'a> {
-    ConnectionCache(Arc<ConnectionCache>),
-    TpuClientNext(&'a Keypair, UdpSocket, RuntimeHandle, CancellationToken),
 }
 
 impl JsonRpcService {
@@ -545,7 +532,6 @@ impl JsonRpcService {
                     config.validator_exit,
                     config.exit,
                     config.override_health_check,
-                    config.startup_verification_complete,
                     config.optimistically_confirmed_bank,
                     config.send_transaction_service_config,
                     config.max_slots,
@@ -595,7 +581,6 @@ impl JsonRpcService {
                     config.validator_exit,
                     config.exit,
                     config.override_health_check,
-                    config.startup_verification_complete,
                     config.optimistically_confirmed_bank,
                     config.send_transaction_service_config,
                     config.max_slots,
@@ -625,7 +610,6 @@ impl JsonRpcService {
         validator_exit: Arc<RwLock<Exit>>,
         exit: Arc<AtomicBool>,
         override_health_check: Arc<AtomicBool>,
-        startup_verification_complete: Arc<AtomicBool>,
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
         send_transaction_service_config: send_transaction_service::Config,
         max_slots: Arc<MaxSlots>,
@@ -672,7 +656,6 @@ impl JsonRpcService {
             validator_exit,
             exit,
             override_health_check,
-            startup_verification_complete,
             optimistically_confirmed_bank,
             send_transaction_service_config,
             max_slots,
@@ -706,7 +689,6 @@ impl JsonRpcService {
         validator_exit: Arc<RwLock<Exit>>,
         exit: Arc<AtomicBool>,
         override_health_check: Arc<AtomicBool>,
-        startup_verification_complete: Arc<AtomicBool>,
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
         send_transaction_service_config: send_transaction_service::Config,
         max_slots: Arc<MaxSlots>,
@@ -725,7 +707,6 @@ impl JsonRpcService {
             Arc::clone(&blockstore),
             config.health_check_slot_distance,
             override_health_check,
-            startup_verification_complete,
         ));
 
         let largest_accounts_cache = Arc::new(RwLock::new(LargestAccountsCache::new(
@@ -956,7 +937,8 @@ mod tests {
     use {
         super::*,
         crate::rpc::{create_validator_exit, tests::new_test_cluster_info},
-        solana_genesis_config::{ClusterType, DEFAULT_GENESIS_ARCHIVE},
+        solana_cluster_type::ClusterType,
+        solana_genesis_config::DEFAULT_GENESIS_ARCHIVE,
         solana_ledger::{
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             get_tmp_ledger_path_auto_delete,
@@ -1009,7 +991,6 @@ mod tests {
             validator_exit,
             exit,
             Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(true)),
             optimistically_confirmed_bank,
             send_transaction_service::Config {
                 retry_rate_ms: 1000,

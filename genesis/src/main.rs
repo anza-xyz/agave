@@ -3,11 +3,11 @@
 
 use {
     agave_feature_set::FEATURE_NAMES,
+    agave_snapshots::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     base64::{prelude::BASE64_STANDARD, Engine},
     clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches},
     itertools::Itertools,
     solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_accounts_db::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     solana_clap_utils::{
         input_parsers::{
             cluster_type_of, pubkey_of, pubkeys_of, unix_timestamp_from_rfc3339_datetime,
@@ -18,6 +18,7 @@ use {
         },
     },
     solana_clock as clock,
+    solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
     solana_entry::poh::compute_hashes_per_tick,
     solana_epoch_schedule::EpochSchedule,
@@ -27,12 +28,12 @@ use {
         genesis_accounts::add_genesis_accounts, Base64Account, StakedValidatorAccountInfo,
         ValidatorAccountsFile,
     },
-    solana_genesis_config::{ClusterType, GenesisConfig},
+    solana_genesis_config::GenesisConfig,
     solana_inflation::Inflation,
     solana_keypair::{read_keypair_file, Keypair},
     solana_ledger::{blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions},
     solana_loader_v3_interface::state::UpgradeableLoaderState,
-    solana_native_token::sol_to_lamports,
+    solana_native_token::LAMPORTS_PER_SOL,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -42,7 +43,7 @@ use {
     solana_signer::Signer,
     solana_stake_interface::state::StakeStateV2,
     solana_stake_program::stake_state,
-    solana_vote_program::vote_state::{self, VoteStateV3},
+    solana_vote_program::vote_state::{self, VoteStateV4},
     std::{
         collections::HashMap,
         error,
@@ -65,7 +66,7 @@ fn pubkey_from_str(key_str: &str) -> Result<Pubkey, Box<dyn error::Error>> {
     Pubkey::from_str(key_str).or_else(|_| {
         let bytes: Vec<u8> = serde_json::from_str(key_str)?;
         let keypair =
-            Keypair::from_bytes(&bytes).map_err(|e| std::io::Error::other(e.to_string()))?;
+            Keypair::try_from(bytes.as_ref()).map_err(|e| std::io::Error::other(e.to_string()))?;
         Ok(keypair.pubkey())
     })
 }
@@ -253,7 +254,7 @@ fn add_validator_accounts(
             identity_pubkey,
             identity_pubkey,
             commission,
-            VoteStateV3::get_rent_exempt_reserve(rent).max(1),
+            rent.minimum_balance(VoteStateV4::size_of()).max(1),
         );
 
         genesis_config.add_account(
@@ -273,11 +274,10 @@ fn add_validator_accounts(
 
 fn rent_exempt_check(stake_lamports: u64, exempt: u64) -> io::Result<()> {
     if stake_lamports < exempt {
-        Err(io::Error::other(
-            format!(
-                "error: insufficient validator stake lamports: {stake_lamports} for rent exemption, requires {exempt}"
-            ),
-        ))
+        Err(io::Error::other(format!(
+            "error: insufficient validator stake lamports: {stake_lamports} for rent exemption, \
+             requires {exempt}"
+        )))
     } else {
         Ok(())
     }
@@ -313,11 +313,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     };
 
     // vote account
-    let default_bootstrap_validator_lamports = &sol_to_lamports(500.0)
-        .max(VoteStateV3::get_rent_exempt_reserve(&rent))
+    let default_bootstrap_validator_lamports = &(500 * LAMPORTS_PER_SOL)
+        .max(rent.minimum_balance(VoteStateV4::size_of()))
         .to_string();
     // stake account
-    let default_bootstrap_validator_stake_lamports = &sol_to_lamports(0.5)
+    let default_bootstrap_validator_stake_lamports = &(LAMPORTS_PER_SOL / 2)
         .max(rent.minimum_balance(StakeStateV2::size_of()))
         .to_string();
 
@@ -335,7 +335,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .value_name("RFC3339 DATE TIME")
                 .validator(is_rfc3339_datetime)
                 .takes_value(true)
-                .help("Time when the bootstrap validator will start the cluster [default: current system time]"),
+                .help(
+                    "Time when the bootstrap validator will start the cluster [default: current \
+                     system time]",
+                ),
         )
         .arg(
             Arg::with_name("bootstrap_validator")
@@ -411,8 +414,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .takes_value(true)
                 .default_value(default_target_lamports_per_signature)
                 .help(
-                    "The cost in lamports that the cluster will charge for signature \
-                     verification when the cluster is operating at target-signatures-per-slot",
+                    "The cost in lamports that the cluster will charge for signature verification \
+                     when the cluster is operating at target-signatures-per-slot",
                 ),
         )
         .arg(
@@ -422,8 +425,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .takes_value(true)
                 .default_value(default_lamports_per_byte_year)
                 .help(
-                    "The cost in lamports that the cluster will charge per byte per year \
-                     for accounts with data",
+                    "The cost in lamports that the cluster will charge per byte per year for \
+                     accounts with data",
                 ),
         )
         .arg(
@@ -433,8 +436,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .takes_value(true)
                 .default_value(default_rent_exemption_threshold)
                 .help(
-                    "amount of time (in years) the balance has to include rent for \
-                     to qualify as rent exempted account",
+                    "amount of time (in years) the balance has to include rent for to qualify as \
+                     rent exempted account",
                 ),
         )
         .arg(
@@ -471,10 +474,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .takes_value(true)
                 .default_value(default_target_signatures_per_slot)
                 .help(
-                    "Used to estimate the desired processing capacity of the cluster. \
-                    When the latest slot processes fewer/greater signatures than this \
-                    value, the lamports-per-signature fee will decrease/increase for \
-                    the next slot. A value of 0 disables signature-based fee adjustments",
+                    "Used to estimate the desired processing capacity of the cluster. When the \
+                     latest slot processes fewer/greater signatures than this value, the \
+                     lamports-per-signature fee will decrease/increase for the next slot. A value \
+                     of 0 disables signature-based fee adjustments",
                 ),
         )
         .arg(
@@ -491,10 +494,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .takes_value(true)
                 .default_value("auto")
                 .help(
-                    "How many PoH hashes to roll before emitting the next tick. \
-                     If \"auto\", determine based on --target-tick-duration \
-                     and the hash rate of this computer. If \"sleep\", for development \
-                     sleep for --target-tick-duration instead of hashing",
+                    "How many PoH hashes to roll before emitting the next tick. If \"auto\", \
+                     determine based on --target-tick-duration and the hash rate of this \
+                     computer. If \"sleep\", for development sleep for --target-tick-duration \
+                     instead of hashing",
                 ),
         )
         .arg(
@@ -517,8 +520,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             Arg::with_name("enable_warmup_epochs")
                 .long("enable-warmup-epochs")
                 .help(
-                    "When enabled epochs start short and will grow. \
-                     Useful for warming up stake quickly during development"
+                    "When enabled epochs start short and will grow. Useful for warming up stake \
+                     quickly during development",
                 ),
         )
         .arg(
@@ -535,7 +538,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .value_name("FILENAME")
                 .takes_value(true)
                 .multiple(true)
-                .help("The location of a file containing a list of identity, vote, and stake pubkeys and balances for validator accounts to bake into genesis")
+                .help(
+                    "The location of a file containing a list of identity, vote, and stake \
+                     pubkeys and balances for validator accounts to bake into genesis",
+                ),
         )
         .arg(
             Arg::with_name("cluster_type")
@@ -543,9 +549,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .possible_values(&ClusterType::STRINGS)
                 .takes_value(true)
                 .default_value(default_cluster_type)
-                .help(
-                    "Selects the features that will be enabled for the cluster"
-                ),
+                .help("Selects the features that will be enabled for the cluster"),
         )
         .arg(
             Arg::with_name("deactivate_feature")
@@ -554,7 +558,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .value_name("FEATURE_PUBKEY")
                 .validator(is_pubkey)
                 .multiple(true)
-                .help("Deactivate this feature in genesis. Compatible with --cluster-type development"),
+                .help(
+                    "Deactivate this feature in genesis. Compatible with --cluster-type \
+                     development",
+                ),
         )
         .arg(
             Arg::with_name("max_genesis_archive_unpacked_size")
@@ -562,9 +569,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .value_name("NUMBER")
                 .takes_value(true)
                 .default_value(&default_genesis_archive_unpacked_size)
-                .help(
-                    "maximum total uncompressed file size of created genesis archive",
-                ),
+                .help("maximum total uncompressed file size of created genesis archive"),
         )
         .arg(
             Arg::with_name("bpf_program")
@@ -582,7 +587,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .takes_value(true)
                 .number_of_values(4)
                 .multiple(true)
-                .help("Install an upgradeable SBF program at the given address with the given upgrade authority (or \"none\")"),
+                .help(
+                    "Install an upgradeable SBF program at the given address with the given \
+                     upgrade authority (or \"none\")",
+                ),
         )
         .arg(
             Arg::with_name("inflation")
@@ -601,9 +609,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .global(true)
                 .validator(is_url_or_moniker)
                 .help(
-                    "URL for Solana's JSON RPC or moniker (or their first letter): \
-                    [mainnet-beta, testnet, devnet, localhost]. Used for cloning \
-                    feature sets",
+                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet-beta, \
+                     testnet, devnet, localhost]. Used for cloning feature sets",
                 ),
         )
         .get_matches();
@@ -703,7 +710,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     );
 
     let mut genesis_config = GenesisConfig {
-        native_instruction_processors: vec![],
         ticks_per_slot,
         poh_config,
         fee_rate_governor,
@@ -1168,27 +1174,29 @@ mod tests {
 
     #[test]
     fn test_genesis_account_struct_compatibility() {
-        let yaml_string_pubkey = "---
-98frSc8R8toHoS3tQ1xWSvHCvGEADRM9hAm5qmUKjSDX:
-  balance: 4
-  owner: Gw6S9CPzR8jHku1QQMdiqcmUKjC2dhJ3gzagWduA6PGw
-  data:
-  executable: true
-88frSc8R8toHoS3tQ1xWSvHCvGEADRM9hAm5qmUKjSDX:
-  balance: 3
-  owner: Gw7S9CPzR8jHku1QQMdiqcmUKjC2dhJ3gzagWduA6PGw
-  data: ~
-  executable: true
-6s36rsNPDfRSvzwek7Ly3mQu9jUMwgqBhjePZMV6Acp4:
-  balance: 2
-  owner: DBC5d45LUHTCrq42ZmCdzc8A8ufwTaiYsL9pZY7KU6TR
-  data: aGVsbG8=
-  executable: false
-8Y98svZv5sPHhQiPqZvqA5Z5djQ8hieodscvb61RskMJ:
-  balance: 1
-  owner: DSknYr8cPucRbx2VyssZ7Yx3iiRqNGD38VqVahkUvgV1
-  data: aGVsbG8gd29ybGQ=
-  executable: true";
+        #[rustfmt::skip]
+        let yaml_string_pubkey =
+            "---\
+             \n98frSc8R8toHoS3tQ1xWSvHCvGEADRM9hAm5qmUKjSDX:\
+             \n  balance: 4\
+             \n  owner: Gw6S9CPzR8jHku1QQMdiqcmUKjC2dhJ3gzagWduA6PGw\
+             \n  data:\
+             \n  executable: true\
+             \n88frSc8R8toHoS3tQ1xWSvHCvGEADRM9hAm5qmUKjSDX:\
+             \n  balance: 3\
+             \n  owner: Gw7S9CPzR8jHku1QQMdiqcmUKjC2dhJ3gzagWduA6PGw\
+             \n  data: ~\
+             \n  executable: true\
+             \n6s36rsNPDfRSvzwek7Ly3mQu9jUMwgqBhjePZMV6Acp4:\
+             \n  balance: 2\
+             \n  owner: DBC5d45LUHTCrq42ZmCdzc8A8ufwTaiYsL9pZY7KU6TR\
+             \n  data: aGVsbG8=\
+             \n  executable: false\
+             \n8Y98svZv5sPHhQiPqZvqA5Z5djQ8hieodscvb61RskMJ:\
+             \n  balance: 1\
+             \n  owner: DSknYr8cPucRbx2VyssZ7Yx3iiRqNGD38VqVahkUvgV1\
+             \n  data: aGVsbG8gd29ybGQ=\
+             \n  executable: true";
 
         let tmpfile = tempfile::NamedTempFile::new().unwrap();
         let path = tmpfile.path();
@@ -1201,22 +1209,30 @@ mod tests {
 
         assert_eq!(genesis_config.accounts.len(), 4);
 
-        let yaml_string_keypair = "---
-\"[17,12,234,59,35,246,168,6,64,36,169,164,219,96,253,79,238,202,164,160,195,89,9,96,179,117,255,239,32,64,124,66,233,130,19,107,172,54,86,32,119,148,4,39,199,40,122,230,249,47,150,168,163,159,83,233,97,18,25,238,103,25,253,108]\":
-  balance: 20
-  owner: 9ZfsP6Um1KU8d5gNzTsEbSJxanKYp5EPF36qUu4FJqgp
-  data: Y2F0IGRvZw==
-  executable: true
-\"[36,246,244,43,37,214,110,50,134,148,148,8,205,82,233,67,223,245,122,5,149,232,213,125,244,182,26,29,56,224,70,45,42,163,71,62,222,33,229,54,73,136,53,174,128,103,247,235,222,27,219,129,180,77,225,174,220,74,201,123,97,155,159,234]\":
-  balance: 15
-  owner: F9dmtjJPi8vfLu1EJN4KkyoGdXGmVfSAhxz35Qo9RDCJ
-  data: bW9ua2V5IGVsZXBoYW50
-  executable: false
-\"[103,27,132,107,42,149,72,113,24,138,225,109,209,31,158,6,26,11,8,76,24,128,131,215,156,80,251,114,103,220,111,235,56,22,87,5,209,56,53,12,224,170,10,66,82,42,11,138,51,76,120,27,166,200,237,16,200,31,23,5,57,22,131,221]\":
-  balance: 30
-  owner: AwAR5mAbNPbvQ4CvMeBxwWE8caigQoMC2chkWAbh2b9V
-  data: Y29tYSBtb2Nh
-  executable: true";
+        #[rustfmt::skip]
+        let yaml_string_keypair =
+            "---\
+             \n\"[17,12,234,59,35,246,168,6,64,36,169,164,219,96,253,79,238,202,164,160,195,89,9,\
+             96,179,117,255,239,32,64,124,66,233,130,19,107,172,54,86,32,119,148,4,39,199,40,122,\
+             230,249,47,150,168,163,159,83,233,97,18,25,238,103,25,253,108]\":\
+             \n  balance: 20\
+             \n  owner: 9ZfsP6Um1KU8d5gNzTsEbSJxanKYp5EPF36qUu4FJqgp\
+             \n  data: Y2F0IGRvZw==\
+             \n  executable: true\
+             \n\"[36,246,244,43,37,214,110,50,134,148,148,8,205,82,233,67,223,245,122,5,149,232,\
+             213,125,244,182,26,29,56,224,70,45,42,163,71,62,222,33,229,54,73,136,53,174,128,103,\
+             247,235,222,27,219,129,180,77,225,174,220,74,201,123,97,155,159,234]\":\
+             \n  balance: 15\
+             \n  owner: F9dmtjJPi8vfLu1EJN4KkyoGdXGmVfSAhxz35Qo9RDCJ\
+             \n  data: bW9ua2V5IGVsZXBoYW50\
+             \n  executable: false\
+             \n\"[103,27,132,107,42,149,72,113,24,138,225,109,209,31,158,6,26,11,8,76,24,128,131,\
+             215,156,80,251,114,103,220,111,235,56,22,87,5,209,56,53,12,224,170,10,66,82,42,11,138,\
+             51,76,120,27,166,200,237,16,200,31,23,5,57,22,131,221]\":\
+             \n  balance: 30
+             \n  owner: AwAR5mAbNPbvQ4CvMeBxwWE8caigQoMC2chkWAbh2b9V
+             \n  data: Y29tYSBtb2Nh
+             \n  executable: true";
 
         let tmpfile = tempfile::NamedTempFile::new().unwrap();
         let path = tmpfile.path();
@@ -1306,10 +1322,10 @@ mod tests {
                 // check vote account
                 let vote_pk = b64_account.vote_account.parse().unwrap();
                 let vote_data = genesis_config.accounts[&vote_pk].data.clone();
-                let vote_state = VoteStateV3::deserialize(&vote_data).unwrap();
+                let vote_state = VoteStateV4::deserialize(&vote_data, &vote_pk).unwrap();
                 assert_eq!(vote_state.node_pubkey, identity_pk);
                 assert_eq!(vote_state.authorized_withdrawer, identity_pk);
-                let authorized_voters = vote_state.authorized_voters();
+                let authorized_voters = &vote_state.authorized_voters;
                 assert_eq!(authorized_voters.first().unwrap().1, &identity_pk);
 
                 // check stake account

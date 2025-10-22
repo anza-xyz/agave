@@ -11,7 +11,7 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_connection_cache::connection_cache::NewConnectionConfig,
     solana_core::validator::ValidatorConfig,
-    solana_faucet::faucet::run_local_faucet,
+    solana_faucet::faucet::run_local_faucet_for_tests,
     solana_fee_calculator::FeeRateGovernor,
     solana_keypair::Keypair,
     solana_local_cluster::{
@@ -41,7 +41,6 @@ fn program_account(program_data: &[u8]) -> AccountSharedData {
 }
 
 fn test_bench_tps_local_cluster(config: Config) {
-    let native_instruction_processors = vec![];
     let additional_accounts = vec![(
         spl_instruction_padding_interface::ID,
         program_account(include_bytes!("fixtures/spl_instruction_padding.so")),
@@ -51,7 +50,11 @@ fn test_bench_tps_local_cluster(config: Config) {
 
     let faucet_keypair = Keypair::new();
     let faucet_pubkey = faucet_keypair.pubkey();
-    let faucet_addr = run_local_faucet(faucet_keypair, None);
+    let faucet_addr = run_local_faucet_for_tests(
+        faucet_keypair,
+        None, /* per_time_cap */
+        0,    /* port */
+    );
 
     const NUM_NODES: usize = 1;
     let cluster = LocalCluster::new(
@@ -68,7 +71,6 @@ fn test_bench_tps_local_cluster(config: Config) {
                 },
                 NUM_NODES,
             ),
-            native_instruction_processors,
             additional_accounts,
             ..ClusterConfig::default()
         },
@@ -109,8 +111,11 @@ fn test_bench_tps_test_validator(config: Config) {
 
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
-
-    let faucet_addr = run_local_faucet(mint_keypair, None);
+    let faucet_addr = run_local_faucet_for_tests(
+        mint_keypair,
+        None, /* per_time_cap */
+        0,    /* port */
+    );
 
     let test_validator = TestValidatorGenesis::default()
         .fee_rate_governor(FeeRateGovernor::new(0, 0))

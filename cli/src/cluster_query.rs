@@ -11,7 +11,7 @@ use {
     console::style,
     crossbeam_channel::unbounded,
     serde::{Deserialize, Serialize},
-    solana_account::{from_account, state_traits::StateMut},
+    solana_account::{from_account, state_traits::StateMut, Account},
     solana_clap_utils::{
         compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
         input_parsers::*,
@@ -31,7 +31,6 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
     solana_message::Message,
-    solana_native_token::lamports_to_sol,
     solana_nonce::state::State as NonceState,
     solana_pubkey::Pubkey,
     solana_pubsub_client::pubsub_client::PubsubClient,
@@ -59,7 +58,7 @@ use {
     solana_transaction_status::{
         EncodableWithMeta, EncodedConfirmedTransactionWithStatusMeta, UiTransactionEncoding,
     },
-    solana_vote_program::vote_state::VoteStateV3,
+    solana_vote_program::vote_state::VoteStateV4,
     std::{
         collections::{BTreeMap, HashMap, HashSet, VecDeque},
         fmt,
@@ -106,8 +105,8 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                         .multiple(true)
                         .index(1)
                         .help(
-                            "A list of accounts which if provided the fee response will represent\
-                            the fee to land a transaction with those accounts as writable",
+                            "A list of accounts which if provided the fee response will represent \
+                             the fee to land a transaction with those accounts as writable",
                         ),
                 )
                 .arg(
@@ -302,8 +301,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                 .about("Stream transaction logs")
                 .arg(pubkey!(
                     Arg::with_name("address").index(1).value_name("ADDRESS"),
-                    "Account to monitor \
-                    [default: monitor all transactions except for votes]."
+                    "Account to monitor [default: monitor all transactions except for votes]."
                 ))
                 .arg(
                     Arg::with_name("include_votes")
@@ -328,8 +326,8 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                         .long("slot-limit")
                         .takes_value(true)
                         .help(
-                            "Limit results to this many slots from the end of the epoch \
-                            [default: full epoch]",
+                            "Limit results to this many slots from the end of the epoch [default: \
+                             full epoch]",
                         ),
                 ),
         )
@@ -352,8 +350,8 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                         .index(1)
                         .value_name("VALIDATOR_ACCOUNT_PUBKEYS")
                         .multiple(true),
-                    "Only show stake accounts delegated to the provided pubkeys. \
-                    Accepts both vote and identity pubkeys."
+                    "Only show stake accounts delegated to the provided pubkeys. Accepts both \
+                     vote and identity pubkeys."
                 ))
                 .arg(pubkey!(
                     Arg::with_name("withdraw_authority")
@@ -1413,7 +1411,10 @@ pub fn process_supply(
 
 pub fn process_total_supply(rpc_client: &RpcClient, _config: &CliConfig) -> ProcessResult {
     let supply = rpc_client.supply()?.value;
-    Ok(format!("{} SOL", lamports_to_sol(supply.total)))
+    Ok(format!(
+        "{} SOL",
+        build_balance_message(supply.total, false, false)
+    ))
 }
 
 pub fn process_get_transaction_count(rpc_client: &RpcClient, _config: &CliConfig) -> ProcessResult {
@@ -1838,8 +1839,7 @@ pub fn process_show_stakes(
 
             if !pubkeys.is_empty() {
                 return Err(CliError::RpcRequestError(format!(
-                    "Failed to retrieve matching vote account for {:?}.",
-                    pubkeys
+                    "Failed to retrieve matching vote account for {pubkeys:?}."
                 ))
                 .into());
             }
@@ -1886,7 +1886,7 @@ pub fn process_show_stakes(
     }
 
     let all_stake_accounts = rpc_client
-        .get_program_accounts_with_config(&stake::program::id(), program_accounts_config)?;
+        .get_program_ui_accounts_with_config(&stake::program::id(), program_accounts_config)?;
     let stake_history_account = rpc_client.get_account(&stake_history::id())?;
     let clock_account = rpc_client.get_account(&sysvar::clock::id())?;
     let clock: Clock = from_account(&clock_account).ok_or_else(|| {
@@ -1902,7 +1902,11 @@ pub fn process_show_stakes(
     stake_account_progress_bar.finish_and_clear();
 
     let mut stake_accounts: Vec<CliKeyedStakeState> = vec![];
-    for (stake_pubkey, stake_account) in all_stake_accounts {
+    for (stake_pubkey, stake_ui_account) in all_stake_accounts {
+        let stake_account: Account = stake_ui_account.decode().expect(
+            "It should be impossible at this point for the account data not to be decodable. \
+             Ensure that the account was fetched using a binary encoding.",
+        );
         if let Ok(stake_state) = stake_account.state() {
             match stake_state {
                 StakeStateV2::Initialized(_) => {
@@ -2262,7 +2266,7 @@ impl RentLengthValue {
             Self::Nonce => NonceState::size(),
             Self::Stake => StakeStateV2::size_of(),
             Self::System => 0,
-            Self::Vote => VoteStateV3::size_of(),
+            Self::Vote => VoteStateV4::size_of(),
             Self::Bytes(l) => *l,
         }
     }
@@ -2295,7 +2299,10 @@ pub fn process_calculate_rent(
     use_lamports_unit: bool,
 ) -> ProcessResult {
     if data_length > MAX_PERMITTED_DATA_LENGTH.try_into().unwrap() {
-        eprintln!("Warning: Maximum account size is {MAX_PERMITTED_DATA_LENGTH} bytes, {data_length} provided");
+        eprintln!(
+            "Warning: Maximum account size is {MAX_PERMITTED_DATA_LENGTH} bytes, {data_length} \
+             provided"
+        );
     }
     let rent_account = rpc_client.get_account(&sysvar::rent::id())?;
     let rent: Rent = rent_account.deserialize_data()?;

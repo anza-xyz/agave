@@ -8,7 +8,7 @@ use {
         restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
     },
     rand::Rng,
-    serde::de::{Deserialize, Deserializer},
+    serde::{de::Deserializer, Deserialize, Serialize},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::{self, Pubkey},
@@ -16,7 +16,7 @@ use {
     solana_time_utils::timestamp,
     solana_transaction::Transaction,
     solana_vote::vote_parser,
-    std::{cmp::Ordering, collections::BTreeSet},
+    std::collections::BTreeSet,
 };
 
 pub(crate) const MAX_WALLCLOCK: u64 = 1_000_000_000_000_000;
@@ -444,43 +444,6 @@ pub(crate) struct NodeInstance {
     token: u64,     // Randomly generated value at node instantiation.
 }
 
-impl NodeInstance {
-    #[cfg(test)]
-    pub(crate) fn new<R>(rng: &mut R, from: Pubkey, now: u64) -> Self
-    where
-        R: Rng + rand::CryptoRng,
-    {
-        Self {
-            from,
-            wallclock: now,
-            timestamp: now,
-            token: rng.gen(),
-        }
-    }
-
-    #[cfg(test)]
-    // Clones the value with an updated wallclock.
-    pub(crate) fn with_wallclock(&self, wallclock: u64) -> Self {
-        Self { wallclock, ..*self }
-    }
-
-    // Returns None if tokens are the same or other is not a node-instance from
-    // the same owner. Otherwise returns true if self has more recent timestamp
-    // than other, and so overrides it.
-    pub(crate) fn overrides(&self, other: &NodeInstance) -> Option<bool> {
-        if self.token == other.token || self.from != other.from {
-            return None;
-        }
-        match self.timestamp.cmp(&other.timestamp) {
-            Ordering::Less => Some(false),
-            Ordering::Greater => Some(true),
-            // Ties should be broken in a deterministic way across the cluster,
-            // so that nodes propagate the same value through gossip.
-            Ordering::Equal => Some(other.token < self.token),
-        }
-    }
-}
-
 impl Sanitize for NodeInstance {
     fn sanitize(&self) -> Result<(), SanitizeError> {
         sanitize_wallclock(self.wallclock)?;
@@ -588,122 +551,5 @@ mod test {
             &keypair,
         );
         assert_eq!(item.sanitize(), Err(SanitizeError::ValueOutOfBounds));
-    }
-
-    #[test]
-    fn test_node_instance_crds_label() {
-        fn make_crds_value(node: NodeInstance) -> CrdsValue {
-            CrdsValue::new_unsigned(CrdsData::NodeInstance(node))
-        }
-        let mut rng = rand::thread_rng();
-        let now = timestamp();
-        let pubkey = Pubkey::new_unique();
-        let node = NodeInstance::new(&mut rng, pubkey, now);
-        assert_eq!(
-            make_crds_value(node.clone()).label(),
-            make_crds_value(node.with_wallclock(now + 8)).label()
-        );
-        let other = NodeInstance {
-            from: Pubkey::new_unique(),
-            ..node
-        };
-        assert_ne!(
-            make_crds_value(node.clone()).label(),
-            make_crds_value(other).label()
-        );
-        let other = NodeInstance {
-            wallclock: now + 8,
-            ..node
-        };
-        assert_eq!(
-            make_crds_value(node.clone()).label(),
-            make_crds_value(other).label()
-        );
-        let other = NodeInstance {
-            timestamp: now + 8,
-            ..node
-        };
-        assert_eq!(
-            make_crds_value(node.clone()).label(),
-            make_crds_value(other).label()
-        );
-        let other = NodeInstance {
-            token: rng.gen(),
-            ..node
-        };
-        assert_eq!(
-            make_crds_value(node).label(),
-            make_crds_value(other).label()
-        );
-    }
-
-    #[test]
-    fn test_check_duplicate_instance() {
-        let now = timestamp();
-        let mut rng = rand::thread_rng();
-        let pubkey = Pubkey::new_unique();
-        let node = NodeInstance::new(&mut rng, pubkey, now);
-        // Same token is not a duplicate.
-        let other = NodeInstance {
-            from: pubkey,
-            wallclock: now + 1,
-            timestamp: now + 1,
-            token: node.token,
-        };
-        assert_eq!(node.overrides(&other), None);
-        assert_eq!(other.overrides(&node), None);
-        // Older timestamp is not a duplicate.
-        let other = NodeInstance {
-            from: pubkey,
-            wallclock: now + 1,
-            timestamp: now - 1,
-            token: rng.gen(),
-        };
-        assert_eq!(node.overrides(&other), Some(true));
-        assert_eq!(other.overrides(&node), Some(false));
-        // Updated wallclock is not a duplicate.
-        let other = node.with_wallclock(now + 8);
-        assert_eq!(
-            other,
-            NodeInstance {
-                from: pubkey,
-                wallclock: now + 8,
-                timestamp: now,
-                token: node.token,
-            }
-        );
-        assert_eq!(node.overrides(&other), None);
-        assert_eq!(other.overrides(&node), None);
-        // Duplicate instance; tied timestamp.
-        for _ in 0..10 {
-            let other = NodeInstance {
-                from: pubkey,
-                wallclock: 0,
-                timestamp: now,
-                token: rng.gen(),
-            };
-            assert_eq!(node.overrides(&other), Some(other.token < node.token));
-            assert_eq!(other.overrides(&node), Some(node.token < other.token));
-        }
-        // Duplicate instance; more recent timestamp.
-        for _ in 0..10 {
-            let other = NodeInstance {
-                from: pubkey,
-                wallclock: 0,
-                timestamp: now + 1,
-                token: rng.gen(),
-            };
-            assert_eq!(node.overrides(&other), Some(false));
-            assert_eq!(other.overrides(&node), Some(true));
-        }
-        // Different pubkey is not a duplicate.
-        let other = NodeInstance {
-            from: Pubkey::new_unique(),
-            wallclock: now + 1,
-            timestamp: now + 1,
-            token: rng.gen(),
-        };
-        assert_eq!(node.overrides(&other), None);
-        assert_eq!(other.overrides(&node), None);
     }
 }

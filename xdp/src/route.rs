@@ -247,6 +247,6 @@ mod tests {
     fn test_router() {
         let router = Router::new().unwrap();
         let next_hop = router.route("1.1.1.1".parse().unwrap()).unwrap();
-        eprintln!("{:?}", next_hop);
+        eprintln!("{next_hop:?}");
     }
 }

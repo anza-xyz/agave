@@ -35,7 +35,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
-        bank_forks::{BankForks, SharableBank},
+        bank_forks::{BankForks, SharableBanks},
     },
     solana_streamer::sendmmsg::{batch_send, SendPktsError},
     solana_time_utils::timestamp,
@@ -420,7 +420,7 @@ impl RepairServiceChannels {
 }
 
 struct RepairTracker {
-    root_bank: SharableBank,
+    sharable_banks: SharableBanks,
     repair_weight: RepairWeight,
     serve_repair: ServeRepair,
     repair_metrics: RepairMetrics,
@@ -693,7 +693,7 @@ impl RepairService {
             popular_pruned_forks_sender,
         } = repair_channels;
         let RepairTracker {
-            root_bank,
+            sharable_banks,
             repair_weight,
             serve_repair,
             repair_metrics,
@@ -701,7 +701,7 @@ impl RepairService {
             popular_pruned_forks_requests,
             outstanding_repairs,
         } = repair_tracker;
-        let root_bank = root_bank.load();
+        let root_bank = sharable_banks.root();
 
         Self::update_weighting_heuristic(
             blockstore,
@@ -751,15 +751,15 @@ impl RepairService {
         repair_info: RepairInfo,
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
     ) {
-        let root_bank = repair_info.bank_forks.read().unwrap().sharable_root_bank();
-        let root_bank_slot = root_bank.load().slot();
+        let sharable_banks = repair_info.bank_forks.read().unwrap().sharable_banks();
+        let root_bank_slot = sharable_banks.root().slot();
         let mut repair_tracker = RepairTracker {
-            root_bank,
+            sharable_banks,
             repair_weight: RepairWeight::new(root_bank_slot),
             serve_repair: {
                 ServeRepair::new(
                     repair_info.cluster_info.clone(),
-                    repair_info.bank_forks.read().unwrap().sharable_root_bank(),
+                    repair_info.bank_forks.read().unwrap().sharable_banks(),
                     repair_info.repair_whitelist.clone(),
                     Box::new(StandardRepairHandler::new(blockstore.clone())),
                 )
@@ -1641,13 +1641,13 @@ mod test {
         let bank_forks = BankForks::new_rw_arc(bank);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let cluster_slots = ClusterSlots::default();
+        let cluster_slots = ClusterSlots::default_for_tests();
         let cluster_info = Arc::new(new_test_cluster_info());
-        let identity_keypair = cluster_info.keypair().clone();
+        let identity_keypair = cluster_info.keypair();
         let serve_repair = {
             ServeRepair::new(
                 cluster_info,
-                bank_forks.read().unwrap().sharable_root_bank(),
+                bank_forks.read().unwrap().sharable_banks(),
                 Arc::new(RwLock::new(HashSet::default())),
                 Box::new(StandardRepairHandler::new(blockstore.clone())),
             )
@@ -1749,7 +1749,7 @@ mod test {
         let serve_repair = {
             ServeRepair::new(
                 cluster_info.clone(),
-                bank_forks.read().unwrap().sharable_root_bank(),
+                bank_forks.read().unwrap().sharable_banks(),
                 Arc::new(RwLock::new(HashSet::default())),
                 Box::new(StandardRepairHandler::new(blockstore)),
             )
@@ -1759,7 +1759,7 @@ mod test {
         // Signal that this peer has confirmed the dead slot, and is thus
         // a valid target for repair
         let dead_slot = 9;
-        let cluster_slots = ClusterSlots::default();
+        let cluster_slots = ClusterSlots::default_for_tests();
         cluster_slots.fake_epoch_info_for_tests(HashMap::from([(*valid_repair_peer.pubkey(), 42)]));
         cluster_slots.insert_node_id(dead_slot, *valid_repair_peer.pubkey());
         cluster_info.insert_info(valid_repair_peer);

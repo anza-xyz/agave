@@ -2,6 +2,7 @@
 
 use {
     crate::snapshot_utils::create_tmp_accounts_dir_for_tests,
+    agave_snapshots::SnapshotInterval,
     crossbeam_channel::unbounded,
     itertools::Itertools,
     log::{info, trace},
@@ -25,7 +26,7 @@ use {
         snapshot_bank_utils,
         snapshot_config::SnapshotConfig,
         snapshot_controller::SnapshotController,
-        snapshot_utils::{self, SnapshotInterval},
+        snapshot_utils,
         status_cache::MAX_CACHE_ENTRIES,
     },
     solana_sha256_hasher::hashv,
@@ -83,7 +84,6 @@ impl SnapshotTestConfig {
             vec![accounts_dir.clone()],
         );
         bank0.freeze();
-        bank0.set_initial_accounts_hash_verification_completed();
         let bank_forks_arc = BankForks::new_rw_arc(bank0);
 
         let snapshot_config = SnapshotConfig {
@@ -128,7 +128,7 @@ fn restore_from_snapshot(
     let full_snapshot_archive_info =
         FullSnapshotArchiveInfo::new_from_path(full_snapshot_archive_path).unwrap();
 
-    let (deserialized_bank, _timing) = snapshot_bank_utils::bank_from_snapshot_archives(
+    let deserialized_bank = snapshot_bank_utils::bank_from_snapshot_archives(
         account_paths,
         &snapshot_config.bank_snapshots_dir,
         &full_snapshot_archive_info,
@@ -137,16 +137,14 @@ fn restore_from_snapshot(
         &RuntimeConfig::default(),
         None,
         None,
-        None,
         false,
         false,
         false,
-        Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+        ACCOUNTS_DB_CONFIG_FOR_TESTING,
         None,
         Arc::default(),
     )
     .unwrap();
-    deserialized_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
 
     let bank = old_bank_forks.get(deserialized_bank.slot()).unwrap();
     assert_eq!(bank.as_ref(), &deserialized_bank);
@@ -202,8 +200,7 @@ where
             bank_forks
                 .write()
                 .unwrap()
-                .set_root(bank.slot(), Some(&snapshot_controller), None)
-                .unwrap();
+                .set_root(bank.slot(), Some(&snapshot_controller), None);
             snapshot_request_handler.handle_snapshot_requests(0);
         }
     }
@@ -298,11 +295,11 @@ fn test_slots_to_snapshot() {
                 .read()
                 .unwrap()
                 .prune_program_cache(current_bank.slot());
-            bank_forks
-                .write()
-                .unwrap()
-                .set_root(current_bank.slot(), Some(&snapshot_controller), None)
-                .unwrap();
+            bank_forks.write().unwrap().set_root(
+                current_bank.slot(),
+                Some(&snapshot_controller),
+                None,
+            );
         }
 
         let num_old_slots = num_set_roots * *add_root_interval - MAX_CACHE_ENTRIES + 1;
@@ -442,8 +439,7 @@ fn test_bank_forks_incremental_snapshot() {
             bank_forks
                 .write()
                 .unwrap()
-                .set_root(bank.slot(), Some(&snapshot_controller), None)
-                .unwrap();
+                .set_root(bank.slot(), Some(&snapshot_controller), None);
             snapshot_request_handler.handle_snapshot_requests(0);
         }
 
@@ -542,15 +538,13 @@ fn restore_from_snapshots_and_check_banks_are_equal(
         &RuntimeConfig::default(),
         None,
         None,
-        None,
         false,
         false,
         false,
-        Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+        ACCOUNTS_DB_CONFIG_FOR_TESTING,
         None,
         Arc::default(),
     )?;
-    deserialized_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
 
     assert_eq!(bank, &deserialized_bank);
 
@@ -682,8 +676,7 @@ fn test_snapshots_with_background_services() {
             bank_forks
                 .write()
                 .unwrap()
-                .set_root(slot, Some(&snapshot_controller), None)
-                .unwrap();
+                .set_root(slot, Some(&snapshot_controller), None);
         }
 
         // If a snapshot should be taken this slot, wait for it to complete
@@ -737,16 +730,14 @@ fn test_snapshots_with_background_services() {
         &RuntimeConfig::default(),
         None,
         None,
-        None,
         false,
         false,
         false,
-        Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+        ACCOUNTS_DB_CONFIG_FOR_TESTING,
         None,
         exit.clone(),
     )
     .unwrap();
-    deserialized_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
 
     assert_eq!(
         deserialized_bank.slot(),

@@ -7,7 +7,6 @@ use {
             select_thread, SchedulingCommon, TransactionSchedulingError, TransactionSchedulingInfo,
         },
         scheduler_error::SchedulerError,
-        thread_aware_account_locks::{ThreadAwareAccountLocks, ThreadId, ThreadSet, TryLockError},
         transaction_priority_id::TransactionPriorityId,
         transaction_state::TransactionState,
         transaction_state_container::StateContainer,
@@ -16,6 +15,9 @@ use {
         consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
         read_write_account_set::ReadWriteAccountSet,
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
+    },
+    agave_scheduling_utils::thread_aware_account_locks::{
+        ThreadAwareAccountLocks, ThreadId, ThreadSet, TryLockError,
     },
     crossbeam_channel::{Receiver, Sender},
     solana_cost_model::block_cost_limits::MAX_BLOCK_UNITS,
@@ -74,9 +76,19 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
     fn schedule<S: StateContainer<Tx>>(
         &mut self,
         container: &mut S,
+        budget: u64,
         _pre_graph_filter: impl Fn(&[&Tx], &mut [bool]),
         pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     ) -> Result<SchedulingSummary, SchedulerError> {
+        // Subtract any in-flight compute units from the budget.
+        let mut budget = budget.saturating_sub(
+            self.common
+                .in_flight_tracker
+                .cus_in_flight_per_thread()
+                .iter()
+                .sum(),
+        );
+
         let starting_queue_size = container.queue_size();
         let starting_buffer_size = container.buffer_size();
 
@@ -112,7 +124,8 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
         let mut num_unschedulable_conflicts: usize = 0;
         let mut num_unschedulable_threads: usize = 0;
 
-        while num_scanned < self.config.max_scanned_transactions_per_scheduling_pass
+        while budget > 0
+            && num_scanned < self.config.max_scanned_transactions_per_scheduling_pass
             && !schedulable_threads.is_empty()
             && !container.is_empty()
         {
@@ -180,6 +193,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                         max_age,
                         cost,
                     );
+                    budget = budget.saturating_sub(cost);
 
                     // If target batch size is reached, send all the batches
                     if self.common.batches.transactions()[thread_id].len()
@@ -409,7 +423,12 @@ mod test {
 
         drop(work_receivers); // explicitly drop receivers
         assert_matches!(
-            scheduler.schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter),
+            scheduler.schedule(
+                &mut container,
+                u64::MAX, // no budget
+                test_pre_graph_filter,
+                test_pre_lock_filter
+            ),
             Err(SchedulerError::DisconnectedSendChannel(_))
         );
     }
@@ -424,11 +443,37 @@ mod test {
         ]);
 
         let scheduling_summary = scheduler
-            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .schedule(
+                &mut container,
+                u64::MAX, // no budget
+                test_pre_graph_filter,
+                test_pre_lock_filter,
+            )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
         assert_eq!(scheduling_summary.num_unschedulable_conflicts, 0);
         assert_eq!(collect_work(&work_receivers[0]).1, vec![vec![1, 0]]);
+    }
+
+    #[test]
+    fn test_schedule_budget() {
+        let (mut scheduler, _work_receivers, _finished_work_sender) =
+            create_test_frame(1, GreedySchedulerConfig::default());
+        let mut container = create_container([
+            (&Keypair::new(), &[Pubkey::new_unique()], 1, 1),
+            (&Keypair::new(), &[Pubkey::new_unique()], 2, 2),
+        ]);
+
+        let scheduling_summary = scheduler
+            .schedule(
+                &mut container,
+                0, // zero budget
+                test_pre_graph_filter,
+                test_pre_lock_filter,
+            )
+            .unwrap();
+        assert_eq!(scheduling_summary.num_scheduled, 0);
+        assert_eq!(scheduling_summary.num_unschedulable_conflicts, 0);
     }
 
     #[test]
@@ -446,7 +491,12 @@ mod test {
         ]);
 
         let scheduling_summary = scheduler
-            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .schedule(
+                &mut container,
+                u64::MAX, // no budget
+                test_pre_graph_filter,
+                test_pre_lock_filter,
+            )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 1);
         assert_eq!(scheduling_summary.num_unschedulable_conflicts, 0);
@@ -468,7 +518,12 @@ mod test {
         ]);
 
         let scheduling_summary = scheduler
-            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .schedule(
+                &mut container,
+                u64::MAX, // no budget
+                test_pre_graph_filter,
+                test_pre_lock_filter,
+            )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 1);
         assert_eq!(scheduling_summary.num_unschedulable_conflicts, 0);
@@ -490,7 +545,12 @@ mod test {
         ]);
 
         let scheduling_summary = scheduler
-            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .schedule(
+                &mut container,
+                u64::MAX, // no budget
+                test_pre_graph_filter,
+                test_pre_lock_filter,
+            )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
         assert_eq!(scheduling_summary.num_unschedulable_conflicts, 0);
@@ -508,7 +568,12 @@ mod test {
         ]);
 
         let scheduling_summary = scheduler
-            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .schedule(
+                &mut container,
+                u64::MAX, // no budget
+                test_pre_graph_filter,
+                test_pre_lock_filter,
+            )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
         assert_eq!(scheduling_summary.num_unschedulable_conflicts, 0);
@@ -523,7 +588,12 @@ mod test {
             create_container((0..4).map(|i| (Keypair::new(), [Pubkey::new_unique()], 1, i)));
 
         let scheduling_summary = scheduler
-            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .schedule(
+                &mut container,
+                u64::MAX, // no budget
+                test_pre_graph_filter,
+                test_pre_lock_filter,
+            )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 4);
         assert_eq!(scheduling_summary.num_unschedulable_conflicts, 0);
@@ -559,7 +629,12 @@ mod test {
         ]);
 
         let scheduling_summary = scheduler
-            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .schedule(
+                &mut container,
+                u64::MAX, // no budget
+                test_pre_graph_filter,
+                test_pre_lock_filter,
+            )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 3);
         assert_eq!(scheduling_summary.num_unschedulable_conflicts, 1);
@@ -591,7 +666,12 @@ mod test {
         ]);
 
         let scheduling_summary = scheduler
-            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .schedule(
+                &mut container,
+                u64::MAX, // no budget
+                test_pre_graph_filter,
+                test_pre_lock_filter,
+            )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 3);
         assert_eq!(scheduling_summary.num_unschedulable_threads, 3);

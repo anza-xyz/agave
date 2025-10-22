@@ -23,17 +23,21 @@ frozen-abi = [
     "dep:solana-frozen-abi-macro",
     "solana-runtime/frozen-abi",
 ]
+agave-unstable-api = []
 
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
+agave-snapshots = { workspace = true }
 anyhow = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
 bitflags = { workspace = true, features = ["serde"] }
+bytes = { workspace = true }
 bzip2 = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }
 chrono-humanize = { workspace = true }
+conditional-mod = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
 eager = { workspace = true }
@@ -41,7 +45,6 @@ fs_extra = { workspace = true }
 futures = { workspace = true }
 itertools = { workspace = true }
 lazy-lru = { workspace = true }
-libc = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
 mockall = { workspace = true }
@@ -81,6 +84,7 @@ solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true }
+solana-nohash-hasher = { workspace = true }
 solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
@@ -99,11 +103,11 @@ solana-storage-bigtable = { workspace = true }
 solana-storage-proto = { workspace = true }
 solana-streamer = { workspace = true }
 solana-svm = { workspace = true }
+solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-time-utils = { workspace = true }
-solana-timings = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
@@ -119,6 +123,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-stream = { workspace = true }
 trees = { workspace = true }
+wincode = { workspace = true }
 
 [dependencies.rocksdb]
 # Avoid the vendored bzip2 within rocksdb-sys that can cause linker conflicts
@@ -133,7 +138,7 @@ criterion = { workspace = true }
 proptest = { workspace = true }
 solana-account-decoder = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-ledger = { path = ".", features = ["dev-context-only-utils"] }
+solana-ledger = { path = ".", features = ["dev-context-only-utils", "agave-unstable-api"] }
 solana-logger = { workspace = true }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 solana-perf = { workspace = true, features = ["dev-context-only-utils"] }

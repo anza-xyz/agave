@@ -2,6 +2,7 @@ use {
     crate::cluster_info_metrics::should_report_message_signature,
     lru::LruCache,
     rand::{CryptoRng, Rng},
+    serde::{Deserialize, Serialize},
     serde_big_array::BigArray,
     siphasher::sip::SipHasher24,
     solana_hash::Hash,

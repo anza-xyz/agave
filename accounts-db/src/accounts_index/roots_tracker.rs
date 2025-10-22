@@ -1,4 +1,4 @@
-use {crate::rolling_bit_field::RollingBitField, solana_clock::Slot};
+use crate::rolling_bit_field::RollingBitField;
 
 #[derive(Debug)]
 pub struct RootsTracker {
@@ -23,9 +23,5 @@ impl RootsTracker {
         Self {
             alive_roots: RollingBitField::new(max_width),
         }
-    }
-
-    pub fn min_alive_root(&self) -> Option<Slot> {
-        self.alive_roots.min()
     }
 }

@@ -1,9 +1,9 @@
 [package]
 name = "solana-local-cluster"
-description = "Blockchain, Rebuilt for Scale"
 documentation = "https://docs.rs/solana-local-cluster"
 version = { workspace = true }
 authors = { workspace = true }
+description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
@@ -13,9 +13,11 @@ edition = { workspace = true }
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-dev-context-only-utils = []
+agave-unstable-api = []
+dev-context-only-utils = ["solana-core/dev-context-only-utils"]
 
 [dependencies]
+agave-snapshots = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
@@ -26,6 +28,7 @@ solana-accounts-db = { workspace = true }
 solana-client = { workspace = true }
 solana-client-traits = { workspace = true }
 solana-clock = { workspace = true }
+solana-cluster-type = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-core = { workspace = true }
 solana-entry = { workspace = true }
@@ -41,9 +44,11 @@ solana-message = { workspace = true }
 solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-poh-config = { workspace = true }
+solana-program-binaries = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
 solana-quic-client = { workspace = true }
+solana-rent = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
@@ -78,5 +83,5 @@ serial_test = { workspace = true }
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }
 solana-download-utils = { workspace = true }
 solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
-solana-local-cluster = { path = ".", features = ["dev-context-only-utils"] }
+solana-local-cluster = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }

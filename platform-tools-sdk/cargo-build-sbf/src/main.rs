@@ -6,10 +6,11 @@ use {
     crate::{
         post_processing::post_process,
         toolchain::{
-            corrupted_toolchain, generate_toolchain_name, get_base_rust_version, install_tools,
-            DEFAULT_PLATFORM_TOOLS_VERSION,
+            corrupted_toolchain, generate_toolchain_name, get_base_rust_version,
+            install_and_link_tools, install_tools, rust_target_triple,
+            validate_platform_tools_version, DEFAULT_PLATFORM_TOOLS_VERSION,
         },
-        utils::{rust_target_triple, spawn},
+        utils::spawn,
     },
     cargo_metadata::camino::Utf8PathBuf,
     clap::{crate_description, crate_name, crate_version, Arg},
@@ -48,6 +49,7 @@ pub struct Config<'a> {
     arch: &'a str,
     optimize_size: bool,
     lto: bool,
+    install_only: bool,
 }
 
 impl Default for Config<'_> {
@@ -81,12 +83,13 @@ impl Default for Config<'_> {
             arch: "v0",
             optimize_size: false,
             lto: false,
+            install_only: false,
         }
     }
 }
 
 pub fn is_version_string(arg: &str) -> Result<(), String> {
-    let semver_re = Regex::new(r"^v?[0-9]+\.[0-9]+(\.[0-9]+)?").unwrap();
+    let semver_re = Regex::new(r"^v?[0-9]+\.[0-9]+(\.[0-9]+)?$").unwrap();
     if semver_re.is_match(arg) {
         return Ok(());
     }
@@ -120,22 +123,6 @@ fn home_dir() -> PathBuf {
     )
 }
 
-fn semver_version(version: &str) -> String {
-    let starts_with_v = version.starts_with('v');
-    let dots = version.as_bytes().iter().fold(
-        0,
-        |n: u32, c| if *c == b'.' { n.saturating_add(1) } else { n },
-    );
-    match (dots, starts_with_v) {
-        (0, false) => format!("{version}.0.0"),
-        (0, true) => format!("{}.0.0", &version[1..]),
-        (1, false) => format!("{version}.0"),
-        (1, true) => format!("{}.0", &version[1..]),
-        (_, false) => version.to_string(),
-        (_, true) => version[1..].to_string(),
-    }
-}
-
 fn prepare_environment(
     config: &Config,
     package: Option<&cargo_metadata::Package>,
@@ -155,7 +142,7 @@ fn prepare_environment(
         exit(1);
     });
 
-    install_tools(config, package, metadata)
+    install_and_link_tools(config, package, metadata)
 }
 
 fn invoke_cargo(config: &Config, validated_toolchain_version: String) {
@@ -453,6 +440,17 @@ fn main() {
                 .help("Download and install platform-tools even when existing tools are located"),
         )
         .arg(
+            Arg::new("install_only")
+                .long("install-only")
+                .takes_value(false)
+                .conflicts_with("skip_tools_install")
+                .help(
+                    "Download and install platform-tools, without building a program. May be used \
+                     together with `--force-tools-install` to override an existing installation. \
+                     To choose a specific version, use `--install-only --tools-version v1.51`",
+                ),
+        )
+        .arg(
             Arg::new("skip_tools_install")
                 .long("skip-tools-install")
                 .takes_value(false)
@@ -631,11 +629,71 @@ fn main() {
         arch: matches.value_of("arch").unwrap(),
         optimize_size: matches.is_present("optimize_size"),
         lto: matches.is_present("lto"),
+        install_only: matches.is_present("install_only"),
     };
     let manifest_path: Option<PathBuf> = matches.value_of_t("manifest_path").ok();
     if config.verbose {
         debug!("{config:?}");
         debug!("manifest_path: {manifest_path:?}");
     }
+
+    if config.install_only {
+        let platform_tools_version = validate_platform_tools_version(
+            config
+                .platform_tools_version
+                .unwrap_or(DEFAULT_PLATFORM_TOOLS_VERSION),
+            DEFAULT_PLATFORM_TOOLS_VERSION,
+        );
+        install_tools(&config, &platform_tools_version, true);
+        return;
+    }
+
     build_solana(config, manifest_path);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_version_string_valid_versions() {
+        // Test valid versions that should pass validation
+        assert!(is_version_string("1.2.3").is_ok());
+        assert!(is_version_string("v2.1.0").is_ok());
+        assert!(is_version_string("1.32").is_ok());
+        assert!(is_version_string("v1.32").is_ok());
+        assert!(is_version_string("0.1").is_ok());
+        assert!(is_version_string("v0.1").is_ok());
+        assert!(is_version_string("10.20.30").is_ok());
+        assert!(is_version_string("v10.20.30").is_ok());
+    }
+
+    #[test]
+    fn test_is_version_string_invalid_versions() {
+        // Test invalid versions that should fail validation
+        assert!(is_version_string("1.2.3abc").is_err());
+        assert!(is_version_string("v2.1.0-extra").is_err());
+        assert!(is_version_string("abc1.2.3").is_err());
+        assert!(is_version_string("1").is_err());
+        assert!(is_version_string("v1").is_err());
+        assert!(is_version_string("1.2.3.4.5").is_err());
+        assert!(is_version_string("").is_err());
+        assert!(is_version_string("v").is_err());
+        assert!(is_version_string("1.").is_err());
+        assert!(is_version_string("v1.").is_err());
+        assert!(is_version_string(".1.2").is_err());
+        assert!(is_version_string("1.2.3-beta").is_err());
+        assert!(is_version_string("v1.2.3+build").is_err());
+    }
+
+    #[test]
+    fn test_is_version_string_error_message() {
+        // Test that error message is descriptive
+        let result = is_version_string("invalid");
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err();
+        assert!(error_msg.contains("version string may start with 'v'"));
+        assert!(error_msg.contains("major and minor version numbers"));
+        assert!(error_msg.contains("separated by a dot"));
+    }
 }

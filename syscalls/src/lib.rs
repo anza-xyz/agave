@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 pub use self::{
     cpi::{SyscallInvokeSignedC, SyscallInvokeSignedRust},
     logging::{
@@ -10,29 +19,28 @@ pub use self::{
         SyscallGetSysvar,
     },
 };
+use solana_program_runtime::memory::translate_vm_slice;
 #[allow(deprecated)]
 use {
     crate::mem_ops::is_nonoverlapping,
-    solana_account_info::AccountInfo,
     solana_big_mod_exp::{big_mod_exp, BigModExpParams},
     solana_blake3_hasher as blake3,
     solana_bn254::prelude::{
-        alt_bn128_addition, alt_bn128_multiplication, alt_bn128_multiplication_128,
-        alt_bn128_pairing, AltBn128Error, ALT_BN128_ADDITION_OUTPUT_LEN,
-        ALT_BN128_MULTIPLICATION_OUTPUT_LEN, ALT_BN128_PAIRING_ELEMENT_LEN,
-        ALT_BN128_PAIRING_OUTPUT_LEN,
+        alt_bn128_addition, alt_bn128_multiplication, alt_bn128_pairing,
+        ALT_BN128_ADDITION_OUTPUT_LEN, ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
+        ALT_BN128_PAIRING_ELEMENT_LEN, ALT_BN128_PAIRING_OUTPUT_LEN,
     },
     solana_cpi::MAX_RETURN_DATA,
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta, ProcessedSiblingInstruction},
-    solana_keccak_hasher as keccak,
-    solana_log_collector::{ic_logger_msg, ic_msg},
-    solana_poseidon as poseidon,
-    solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, SUCCESS},
+    solana_keccak_hasher as keccak, solana_poseidon as poseidon,
+    solana_program_entrypoint::{BPF_ALIGN_OF_U128, SUCCESS},
     solana_program_runtime::{
+        cpi::CpiError,
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::InvokeContext,
-        stable_log,
+        memory::MemoryTranslationError,
+        stable_log, translate_inner, translate_slice_inner, translate_type_inner,
     },
     solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN, PUBKEY_BYTES},
     solana_sbpf::{
@@ -41,20 +49,17 @@ use {
         program::{BuiltinProgram, SBPFVersion},
         vm::Config,
     },
-    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, native_loader},
     solana_secp256k1_recover::{
         Secp256k1RecoverError, SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH,
     },
     solana_sha256_hasher::Hasher,
     solana_svm_feature_set::SVMFeatureSet,
-    solana_sysvar::Sysvar,
-    solana_sysvar_id::SysvarId,
-    solana_timings::ExecuteTimings,
-    solana_transaction_context::IndexOfAccount,
-    solana_type_overrides::sync::Arc,
+    solana_svm_log_collector::{ic_logger_msg, ic_msg},
+    solana_svm_type_overrides::sync::Arc,
+    solana_sysvar::SysvarSerialize,
+    solana_transaction_context::vm_slice::VmSlice,
     std::{
         alloc::Layout,
-        marker::PhantomData,
         mem::{align_of, size_of},
         slice::from_raw_parts_mut,
         str::{from_utf8, Utf8Error},
@@ -66,9 +71,6 @@ mod cpi;
 mod logging;
 mod mem_ops;
 mod sysvar;
-
-/// Maximum signers
-const MAX_SIGNERS: usize = 16;
 
 /// Error definitions
 #[derive(Debug, ThisError, PartialEq, Eq)]
@@ -124,6 +126,48 @@ pub enum SyscallError {
     InvalidPointer,
     #[error("Arithmetic overflow")]
     ArithmeticOverflow,
+}
+
+impl From<MemoryTranslationError> for SyscallError {
+    fn from(error: MemoryTranslationError) -> Self {
+        match error {
+            MemoryTranslationError::UnalignedPointer => SyscallError::UnalignedPointer,
+            MemoryTranslationError::InvalidLength => SyscallError::InvalidLength,
+        }
+    }
+}
+
+impl From<CpiError> for SyscallError {
+    fn from(error: CpiError) -> Self {
+        match error {
+            CpiError::InvalidPointer => SyscallError::InvalidPointer,
+            CpiError::TooManySigners => SyscallError::TooManySigners,
+            CpiError::BadSeeds(e) => SyscallError::BadSeeds(e),
+            CpiError::InvalidLength => SyscallError::InvalidLength,
+            CpiError::MaxInstructionAccountsExceeded {
+                num_accounts,
+                max_accounts,
+            } => SyscallError::MaxInstructionAccountsExceeded {
+                num_accounts,
+                max_accounts,
+            },
+            CpiError::MaxInstructionDataLenExceeded {
+                data_len,
+                max_data_len,
+            } => SyscallError::MaxInstructionDataLenExceeded {
+                data_len,
+                max_data_len,
+            },
+            CpiError::MaxInstructionAccountInfosExceeded {
+                num_account_infos,
+                max_account_infos,
+            } => SyscallError::MaxInstructionAccountInfosExceeded {
+                num_account_infos,
+                max_account_infos,
+            },
+            CpiError::ProgramNotSupported(pubkey) => SyscallError::ProgramNotSupported(pubkey),
+        }
+    }
 }
 
 type Error = Box<dyn std::error::Error>;
@@ -225,60 +269,6 @@ impl HasherImpl for Keccak256Hasher {
     }
 }
 
-// The VmSlice class is used for cases when you need a slice that is stored in the BPF
-// interpreter's virtual address space. Because this source code can be compiled with
-// addresses of different bit depths, we cannot assume that the 64-bit BPF interpreter's
-// pointer sizes can be mapped to physical pointer sizes. In particular, if you need a
-// slice-of-slices in the virtual space, the inner slices will be different sizes in a
-// 32-bit app build than in the 64-bit virtual space. Therefore instead of a slice-of-slices,
-// you should implement a slice-of-VmSlices, which can then use VmSlice::translate() to
-// map to the physical address.
-// This class must consist only of 16 bytes: a u64 ptr and a u64 len, to match the 64-bit
-// implementation of a slice in Rust. The PhantomData entry takes up 0 bytes.
-
-#[repr(C)]
-pub struct VmSlice<T> {
-    ptr: u64,
-    len: u64,
-    resource_type: PhantomData<T>,
-}
-
-impl<T> VmSlice<T> {
-    pub fn new(ptr: u64, len: u64) -> Self {
-        VmSlice {
-            ptr,
-            len,
-            resource_type: PhantomData,
-        }
-    }
-
-    pub fn ptr(&self) -> u64 {
-        self.ptr
-    }
-    pub fn len(&self) -> u64 {
-        self.len
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    /// Adjust the length of the vector. This is unchecked, and it assumes that the pointer
-    /// points to valid memory of the correct length after vm-translation.
-    pub fn resize(&mut self, len: u64) {
-        self.len = len;
-    }
-
-    /// Returns a slice using a mapped physical address
-    pub fn translate<'a>(
-        &self,
-        memory_mapping: &'a MemoryMapping,
-        check_aligned: bool,
-    ) -> Result<&'a [T], Error> {
-        translate_slice::<T>(memory_mapping, self.ptr, self.len, check_aligned)
-    }
-}
-
 fn consume_compute_meter(invoke_context: &InvokeContext, amount: u64) -> Result<(), Error> {
     invoke_context.consume_checked(amount)?;
     Ok(())
@@ -338,7 +328,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         enable_stack_frame_gaps: true,
         instruction_meter_checkpoint_distance: 10000,
         enable_instruction_meter: true,
-        enable_instruction_tracing: debugging_features,
+        enable_register_tracing: debugging_features,
         enable_symbol_and_section_labels: debugging_features,
         reject_broken_elfs: reject_deployment_of_broken_elfs,
         noop_instruction_rate: 256,
@@ -539,7 +529,7 @@ pub fn create_program_runtime_environment_v2<'a>(
         enable_stack_frame_gaps: false,
         instruction_meter_checkpoint_distance: 10000,
         enable_instruction_meter: true,
-        enable_instruction_tracing: debugging_features,
+        enable_register_tracing: debugging_features,
         enable_symbol_and_section_labels: debugging_features,
         reject_broken_elfs: true,
         noop_instruction_rate: 256,
@@ -550,63 +540,6 @@ pub fn create_program_runtime_environment_v2<'a>(
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };
     BuiltinProgram::new_loader(config)
-}
-
-fn address_is_aligned<T>(address: u64) -> bool {
-    (address as *mut T as usize)
-        .checked_rem(align_of::<T>())
-        .map(|rem| rem == 0)
-        .expect("T to be non-zero aligned")
-}
-
-// Do not use this directly
-#[macro_export]
-macro_rules! translate_inner {
-    ($memory_mapping:expr, $map:ident, $access_type:expr, $vm_addr:expr, $len:expr $(,)?) => {
-        Result::<u64, Error>::from(
-            $memory_mapping
-                .$map($access_type, $vm_addr, $len)
-                .map_err(|err| err.into()),
-        )
-    };
-}
-// Do not use this directly
-#[macro_export]
-macro_rules! translate_type_inner {
-    ($memory_mapping:expr, $access_type:expr, $vm_addr:expr, $T:ty, $check_aligned:expr $(,)?) => {{
-        let host_addr = translate_inner!(
-            $memory_mapping,
-            map,
-            $access_type,
-            $vm_addr,
-            size_of::<$T>() as u64
-        )?;
-        if !$check_aligned {
-            Ok(unsafe { std::mem::transmute::<u64, &mut $T>(host_addr) })
-        } else if !address_is_aligned::<$T>(host_addr) {
-            Err(SyscallError::UnalignedPointer.into())
-        } else {
-            Ok(unsafe { &mut *(host_addr as *mut $T) })
-        }
-    }};
-}
-// Do not use this directly
-#[macro_export]
-macro_rules! translate_slice_inner {
-    ($memory_mapping:expr, $access_type:expr, $vm_addr:expr, $len:expr, $T:ty, $check_aligned:expr $(,)?) => {{
-        if $len == 0 {
-            return Ok(&mut []);
-        }
-        let total_size = $len.saturating_mul(size_of::<$T>() as u64);
-        if isize::try_from(total_size).is_err() {
-            return Err(SyscallError::InvalidLength.into());
-        }
-        let host_addr = translate_inner!($memory_mapping, map, $access_type, $vm_addr, total_size)?;
-        if $check_aligned && !address_is_aligned::<$T>(host_addr) {
-            return Err(SyscallError::UnalignedPointer.into());
-        }
-        Ok(unsafe { from_raw_parts_mut(host_addr as *mut $T, $len as usize) })
-    }};
 }
 
 fn translate_type<'a, T>(
@@ -860,7 +793,7 @@ fn translate_and_check_program_address_inputs<'a>(
             if untranslated_seed.len() > MAX_SEED_LEN as u64 {
                 return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
             }
-            untranslated_seed.translate(memory_mapping, check_aligned)
+            translate_vm_slice(untranslated_seed, memory_mapping, check_aligned)
         })
         .collect::<Result<Vec<_>, Error>>()?;
     let program_id = translate_type::<Pubkey>(memory_mapping, program_id_addr, check_aligned)?;
@@ -1462,7 +1395,7 @@ declare_builtin_function!(
         let program_id = *transaction_context
             .get_current_instruction_context()
             .and_then(|instruction_context| {
-                instruction_context.get_last_program_key(transaction_context)
+                instruction_context.get_program_key()
             })?;
 
         transaction_context.set_return_data(program_id, return_data)?;
@@ -1582,19 +1515,12 @@ declare_builtin_function!(
                 let _ = result_header;
 
                 *program_id = *instruction_context
-                    .get_last_program_key(invoke_context.transaction_context)?;
+                    .get_program_key()?;
                 data.clone_from_slice(instruction_context.get_instruction_data());
                 let account_metas = (0..instruction_context.get_number_of_instruction_accounts())
                     .map(|instruction_account_index| {
                         Ok(AccountMeta {
-                            pubkey: *invoke_context
-                                .transaction_context
-                                .get_key_of_account_at_index(
-                                    instruction_context
-                                        .get_index_of_instruction_account_in_transaction(
-                                            instruction_account_index,
-                                        )?,
-                                )?,
+                            pubkey: *instruction_context.get_key_of_instruction_account(instruction_account_index)?,
                             is_signer: instruction_context
                                 .is_instruction_account_signer(instruction_account_index)?,
                             is_writable: instruction_context
@@ -1694,42 +1620,14 @@ declare_builtin_function!(
 
         let calculation = match group_op {
             ALT_BN128_ADD => alt_bn128_addition,
-            ALT_BN128_MUL => {
-                let fix_alt_bn128_multiplication_input_length = invoke_context
-                    .get_feature_set()
-                    .fix_alt_bn128_multiplication_input_length;
-                if fix_alt_bn128_multiplication_input_length {
-                    alt_bn128_multiplication
-                } else {
-                    alt_bn128_multiplication_128
-                }
-            }
+            ALT_BN128_MUL => alt_bn128_multiplication,
             ALT_BN128_PAIRING => alt_bn128_pairing,
             _ => {
                 return Err(SyscallError::InvalidAttribute.into());
             }
         };
 
-        let simplify_alt_bn128_syscall_error_codes = invoke_context
-            .get_feature_set()
-            .simplify_alt_bn128_syscall_error_codes;
-
-        let result_point = match calculation(input) {
-            Ok(result_point) => result_point,
-            Err(e) => {
-                return if simplify_alt_bn128_syscall_error_codes {
-                    Ok(1)
-                } else {
-                    Ok(e.into())
-                };
-            }
-        };
-
-        // This can never happen and should be removed when the
-        // simplify_alt_bn128_syscall_error_codes feature gets activated
-        if result_point.len() != output && !simplify_alt_bn128_syscall_error_codes {
-            return Ok(AltBn128Error::SliceOutOfBounds.into());
-        }
+        let Ok(result_point) = calculation(input) else { return Ok(1) };
 
         call_result.copy_from_slice(&result_point);
         Ok(SUCCESS)
@@ -1858,22 +1756,13 @@ declare_builtin_function!(
         )?;
         let inputs = inputs
             .iter()
-            .map(|input| input.translate(memory_mapping, invoke_context.get_check_aligned()))
+            .map(|input| {
+                translate_vm_slice(input, memory_mapping, invoke_context.get_check_aligned())
+            })
             .collect::<Result<Vec<_>, Error>>()?;
 
-        let simplify_alt_bn128_syscall_error_codes = invoke_context
-            .get_feature_set()
-            .simplify_alt_bn128_syscall_error_codes;
-
-        let hash = match poseidon::hashv(parameters, endianness, inputs.as_slice()) {
-            Ok(hash) => hash,
-            Err(e) => {
-                return if simplify_alt_bn128_syscall_error_codes {
-                    Ok(1)
-                } else {
-                    Ok(e.into())
-                };
-            }
+        let Ok(hash) = poseidon::hashv(parameters, endianness, inputs.as_slice()) else {
+            return Ok(1);
         };
         hash_result.copy_from_slice(&hash.to_bytes());
 
@@ -1954,69 +1843,35 @@ declare_builtin_function!(
             invoke_context.get_check_aligned(),
         )?;
 
-        let simplify_alt_bn128_syscall_error_codes = invoke_context
-            .get_feature_set()
-            .simplify_alt_bn128_syscall_error_codes;
-
         match op {
             ALT_BN128_G1_COMPRESS => {
-                let result_point = match alt_bn128_g1_compress(input) {
-                    Ok(result_point) => result_point,
-                    Err(e) => {
-                        return if simplify_alt_bn128_syscall_error_codes {
-                            Ok(1)
-                        } else {
-                            Ok(e.into())
-                        };
-                    }
+                let Ok(result_point) = alt_bn128_g1_compress(input) else {
+                    return Ok(1);
                 };
                 call_result.copy_from_slice(&result_point);
-                Ok(SUCCESS)
             }
             ALT_BN128_G1_DECOMPRESS => {
-                let result_point = match alt_bn128_g1_decompress(input) {
-                    Ok(result_point) => result_point,
-                    Err(e) => {
-                        return if simplify_alt_bn128_syscall_error_codes {
-                            Ok(1)
-                        } else {
-                            Ok(e.into())
-                        };
-                    }
+                let Ok(result_point) = alt_bn128_g1_decompress(input) else {
+                    return Ok(1);
                 };
                 call_result.copy_from_slice(&result_point);
-                Ok(SUCCESS)
             }
             ALT_BN128_G2_COMPRESS => {
-                let result_point = match alt_bn128_g2_compress(input) {
-                    Ok(result_point) => result_point,
-                    Err(e) => {
-                        return if simplify_alt_bn128_syscall_error_codes {
-                            Ok(1)
-                        } else {
-                            Ok(e.into())
-                        };
-                    }
+                let Ok(result_point) = alt_bn128_g2_compress(input) else {
+                    return Ok(1);
                 };
                 call_result.copy_from_slice(&result_point);
-                Ok(SUCCESS)
             }
             ALT_BN128_G2_DECOMPRESS => {
-                let result_point = match alt_bn128_g2_decompress(input) {
-                    Ok(result_point) => result_point,
-                    Err(e) => {
-                        return if simplify_alt_bn128_syscall_error_codes {
-                            Ok(1)
-                        } else {
-                            Ok(e.into())
-                        };
-                    }
+                let Ok(result_point) = alt_bn128_g2_decompress(input) else {
+                    return Ok(1);
                 };
                 call_result.copy_from_slice(&result_point);
-                Ok(SUCCESS)
             }
-            _ => Err(SyscallError::InvalidAttribute.into()),
+            _ => return Err(SyscallError::InvalidAttribute.into()),
         }
+
+        Ok(SUCCESS)
     }
 );
 
@@ -2065,7 +1920,7 @@ declare_builtin_function!(
             )?;
 
             for val in vals.iter() {
-                let bytes = val.translate(memory_mapping, invoke_context.get_check_aligned())?;
+                let bytes = translate_vm_slice(val, memory_mapping, invoke_context.get_check_aligned())?;
                 let cost = compute_cost.mem_op_base_cost.max(
                     hash_byte_cost.saturating_mul(
                         val.len()
@@ -2161,6 +2016,7 @@ mod tests {
         assert_matches::assert_matches,
         core::slice,
         solana_account::{create_account_shared_data_for_test, AccountSharedData},
+        solana_account_info::AccountInfo,
         solana_clock::Clock,
         solana_epoch_rewards::EpochRewards,
         solana_epoch_schedule::EpochSchedule,
@@ -2172,6 +2028,7 @@ mod tests {
         solana_program_runtime::{
             execution_budget::MAX_HEAP_FRAME_BYTES,
             invoke_context::{BpfAllocator, InvokeContext, SyscallContext},
+            memory::address_is_aligned,
             with_mock_invoke_context,
         },
         solana_sbpf::{
@@ -2182,12 +2039,15 @@ mod tests {
             program::SBPFVersion,
             vm::Config,
         },
-        solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, sysvar},
+        solana_sdk_ids::{
+            bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, native_loader, sysvar,
+        },
         solana_sha256_hasher::hashv,
         solana_slot_hashes::{self as slot_hashes, SlotHashes},
         solana_stable_layout::stable_instruction::StableInstruction,
-        solana_sysvar::stake_history::{self, StakeHistory, StakeHistoryEntry},
-        solana_transaction_context::InstructionAccount,
+        solana_stake_interface::stake_history::{self, StakeHistory, StakeHistoryEntry},
+        solana_sysvar_id::SysvarId,
+        solana_transaction_context::{IndexOfAccount, InstructionAccount},
         std::{
             hash::{DefaultHasher, Hash, Hasher},
             mem,
@@ -2221,9 +2081,8 @@ mod tests {
             with_mock_invoke_context!($invoke_context, transaction_context, transaction_accounts);
             $invoke_context
                 .transaction_context
-                .get_next_instruction_context_mut()
-                .unwrap()
-                .configure(vec![0, 1], vec![], &[]);
+                .configure_next_instruction_for_tests(1, vec![], vec![])
+                .unwrap();
             $invoke_context.push().unwrap();
         };
     }
@@ -2627,7 +2486,6 @@ mod tests {
                 .set_syscall_context(SyscallContext {
                     allocator: BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
                     accounts_metadata: Vec::new(),
-                    trace_log: Vec::new(),
                 })
                 .unwrap();
             let config = Config {
@@ -4437,26 +4295,28 @@ mod tests {
             while stack_height
                 <= invoke_context
                     .transaction_context
-                    .get_instruction_context_stack_height()
+                    .get_instruction_stack_height()
             {
                 invoke_context.transaction_context.pop().unwrap();
             }
             if stack_height
                 > invoke_context
                     .transaction_context
-                    .get_instruction_context_stack_height()
+                    .get_instruction_stack_height()
             {
                 let instruction_accounts = vec![InstructionAccount::new(
                     index_in_trace.saturating_add(1) as IndexOfAccount,
-                    0,
                     false,
                     false,
                 )];
                 invoke_context
                     .transaction_context
-                    .get_next_instruction_context_mut()
-                    .unwrap()
-                    .configure(vec![0], instruction_accounts, &[index_in_trace as u8]);
+                    .configure_next_instruction_for_tests(
+                        0,
+                        instruction_accounts,
+                        vec![index_in_trace as u8],
+                    )
+                    .unwrap();
                 invoke_context.transaction_context.push().unwrap();
             }
         }

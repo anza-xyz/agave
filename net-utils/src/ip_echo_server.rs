@@ -1,7 +1,7 @@
 use {
     crate::{bind_to_unspecified, HEADER_LENGTH, IP_ECHO_SERVER_RESPONSE_LENGTH},
     log::*,
-    serde_derive::{Deserialize, Serialize},
+    serde::{Deserialize, Serialize},
     solana_serde::default_on_eof,
     std::{
         io,

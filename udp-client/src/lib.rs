@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 #![allow(clippy::arithmetic_side_effects)]
 
 pub mod nonblocking;
@@ -16,11 +25,9 @@ use {
         connection_cache_stats::ConnectionCacheStats,
     },
     solana_keypair::Keypair,
-    solana_net_utils::sockets::{
-        bind_with_any_port_with_config, SocketConfiguration as SocketConfig,
-    },
+    solana_net_utils::sockets::{self, SocketConfiguration},
     std::{
-        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+        net::{SocketAddr, UdpSocket},
         sync::Arc,
     },
 };
@@ -65,13 +72,23 @@ pub struct UdpConfig {
 
 impl NewConnectionConfig for UdpConfig {
     fn new() -> Result<Self, ClientError> {
-        let socket = bind_with_any_port_with_config(
-            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-            SocketConfig::default(),
+        // Use UNSPECIFIED for production validators to bind to all interfaces
+        // Use LOCALHOST only in dev/test context to avoid port conflicts in CI
+        #[cfg(not(feature = "dev-context-only-utils"))]
+        let bind_ip = std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
+        #[cfg(feature = "dev-context-only-utils")]
+        let bind_ip = std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+
+        // This will bind to random ports, but VALIDATOR_PORT_RANGE is outside
+        // of the range for CI tests when this is running in CI
+        let socket = sockets::bind_in_range_with_config(
+            bind_ip,
+            solana_net_utils::VALIDATOR_PORT_RANGE,
+            SocketConfiguration::default(),
         )
         .map_err(Into::<ClientError>::into)?;
         Ok(Self {
-            udp_socket: Arc::new(socket),
+            udp_socket: Arc::new(socket.1),
         })
     }
 }

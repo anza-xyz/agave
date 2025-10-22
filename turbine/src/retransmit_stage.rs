@@ -4,10 +4,11 @@ use {
     crate::{
         addr_cache::AddrCache,
         cluster_nodes::{self, ClusterNodes, ClusterNodesCache, Error, MAX_NUM_TURBINE_HOPS},
-        xdp::{XdpSender, XdpShredPayload},
+        xdp::XdpSender,
     },
+    agave_votor::event::VotorEvent,
     bytes::Bytes,
-    crossbeam_channel::{Receiver, RecvError, TryRecvError},
+    crossbeam_channel::{Receiver, RecvError, Sender, TryRecvError},
     lru::LruCache,
     rand::Rng,
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
@@ -120,6 +121,7 @@ impl RetransmitStats {
         working_bank: &Bank,
         cluster_info: &ClusterInfo,
         cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
+        is_xdp: bool,
     ) {
         const SUBMIT_CADENCE: Duration = Duration::from_secs(2);
         if self.since.elapsed() < SUBMIT_CADENCE {
@@ -130,6 +132,7 @@ impl RetransmitStats {
             .submit_metrics("cluster_nodes_retransmit", timestamp());
         datapoint_info!(
             "retransmit-stage",
+            "is_xdp" => is_xdp.to_string(),
             ("total_time", self.total_time, i64),
             ("epoch_fetch", self.epoch_fetch, i64),
             ("epoch_cache_update", self.epoch_cache_update, i64),
@@ -163,7 +166,7 @@ impl RetransmitStats {
                 i64
             ),
         );
-        // slot_stats are submited at a different cadence.
+        // slot_stats are submitted at a different cadence.
         let old = std::mem::replace(self, Self::new(Instant::now()));
         self.slot_stats = old.slot_stats;
     }
@@ -217,6 +220,58 @@ impl<const K: usize> ShredDeduper<K> {
 enum RetransmitSocket<'a> {
     Socket(&'a UdpSocket),
     Xdp(&'a XdpSender),
+    Multihomed {
+        sockets: &'a [UdpSocket],
+        interface_offset: usize,
+        sockets_per_interface: usize,
+        thread_index: usize,
+    },
+}
+
+impl<'a> RetransmitSocket<'a> {
+    pub fn new(
+        thread_index: usize,
+        retransmit_sockets: &'a [UdpSocket],
+        xdp_sender: Option<&'a XdpSender>,
+        cluster_info: &'a ClusterInfo,
+    ) -> Self {
+        if let Some(xdp_sender) = xdp_sender {
+            RetransmitSocket::Xdp(xdp_sender)
+        } else if cluster_info.bind_ip_addrs().multihoming_enabled() {
+            let sockets_per_interface =
+                retransmit_sockets.len() / cluster_info.bind_ip_addrs().len();
+            let active_index = cluster_info.bind_ip_addrs().active_index();
+            let interface_offset = sockets_per_interface.saturating_mul(active_index);
+
+            RetransmitSocket::Multihomed {
+                sockets: retransmit_sockets,
+                interface_offset,
+                sockets_per_interface,
+                thread_index,
+            }
+        } else {
+            let socket: &UdpSocket = &retransmit_sockets[thread_index % retransmit_sockets.len()];
+            RetransmitSocket::Socket(socket)
+        }
+    }
+
+    pub fn get_socket(&self) -> &'a UdpSocket {
+        match self {
+            RetransmitSocket::Socket(socket) => socket,
+            RetransmitSocket::Multihomed {
+                sockets,
+                interface_offset,
+                sockets_per_interface,
+                thread_index,
+            } => {
+                let socket_index = interface_offset + (thread_index % sockets_per_interface);
+                &sockets[socket_index]
+            }
+            RetransmitSocket::Xdp(_) => {
+                unreachable!("get_socket() should not be called for XDP variants")
+            }
+        }
+    }
 }
 
 /// The number of shreds to pull from the retransmit_receiver at a time.
@@ -242,6 +297,7 @@ fn retransmit(
     rpc_subscriptions: Option<&RpcSubscriptions>,
     slot_status_notifier: Option<&SlotStatusNotifier>,
     shred_buf: &mut Vec<Vec<shred::Payload>>,
+    votor_event_sender: Option<&Sender<VotorEvent>>,
 ) -> Result<(), RecvError> {
     // Try to receive shreds from the channel without blocking. If the channel
     // is empty precompute turbine trees speculatively. If no cache updates are
@@ -342,12 +398,8 @@ fn retransmit(
         )
     };
 
-    let retransmit_socket = |index| {
-        let socket = xdp_sender.map(RetransmitSocket::Xdp).unwrap_or_else(|| {
-            RetransmitSocket::Socket(&retransmit_sockets[index % retransmit_sockets.len()])
-        });
-        socket
-    };
+    let retransmit_socket =
+        |index: usize| RetransmitSocket::new(index, retransmit_sockets, xdp_sender, cluster_info);
 
     let slot_stats = if num_shreds < PAR_ITER_MIN_NUM_SHREDS {
         stats.num_small_batches += 1;
@@ -380,10 +432,17 @@ fn retransmit(
         addr_cache,
         rpc_subscriptions,
         slot_status_notifier,
+        votor_event_sender,
     );
     timer_start.stop();
     stats.total_time += timer_start.as_us();
-    stats.maybe_submit(&root_bank, &working_bank, cluster_info, cluster_nodes_cache);
+    stats.maybe_submit(
+        &root_bank,
+        &working_bank,
+        cluster_info,
+        cluster_nodes_cache,
+        xdp_sender.is_some(),
+    );
     Ok(())
 }
 
@@ -420,7 +479,7 @@ fn retransmit_shred(
     let num_addrs = addrs.len();
     let num_nodes = match cluster_nodes::get_broadcast_protocol(&key) {
         Protocol::QUIC => {
-            let shred = Bytes::from(shred::Payload::unwrap_or_clone(shred));
+            let shred = shred.bytes;
             addrs
                 .iter()
                 .filter_map(|&addr| quic_endpoint_sender.try_send((addr, shred.clone())).ok())
@@ -430,11 +489,7 @@ fn retransmit_shred(
             RetransmitSocket::Xdp(sender) => {
                 let mut sent = num_addrs;
                 if num_addrs > 0 {
-                    if let Err(e) = sender.try_send(
-                        key.index() as usize,
-                        addrs.to_vec(),
-                        XdpShredPayload::Owned(shred),
-                    ) {
+                    if let Err(e) = sender.try_send(key.index() as usize, addrs.to_vec(), shred) {
                         log::warn!("xdp channel full: {e:?}");
                         stats
                             .num_shreds_dropped_xdp_full
@@ -444,16 +499,19 @@ fn retransmit_shred(
                 }
                 sent
             }
-            RetransmitSocket::Socket(socket) => match multi_target_send(socket, shred, &addrs) {
-                Ok(()) => num_addrs,
-                Err(SendPktsError::IoError(ioerr, num_failed)) => {
-                    error!(
-                        "retransmit_to multi_target_send error: {ioerr:?}, \
-                         {num_failed}/{num_addrs} packets failed"
-                    );
-                    num_addrs - num_failed
+            RetransmitSocket::Socket(_) | RetransmitSocket::Multihomed { .. } => {
+                let socket = socket.get_socket();
+                match multi_target_send(socket, shred, &addrs) {
+                    Ok(()) => num_addrs,
+                    Err(SendPktsError::IoError(ioerr, num_failed)) => {
+                        error!(
+                            "retransmit_to multi_target_send error: {ioerr:?}, \
+                             {num_failed}/{num_addrs} packets failed"
+                        );
+                        num_addrs - num_failed
+                    }
                 }
-            },
+            }
         },
     };
     retransmit_time.stop();
@@ -593,6 +651,7 @@ impl RetransmitStage {
         rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
         slot_status_notifier: Option<SlotStatusNotifier>,
         xdp_sender: Option<XdpSender>,
+        votor_event_sender: Option<Sender<VotorEvent>>,
     ) -> Self {
         let cluster_nodes_cache = ClusterNodesCache::<RetransmitStage>::new(
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
@@ -634,6 +693,7 @@ impl RetransmitStage {
                         rpc_subscriptions.as_deref(),
                         slot_status_notifier.as_ref(),
                         &mut shred_buf,
+                        votor_event_sender.as_ref(),
                     )
                     .is_ok()
                     {}
@@ -717,6 +777,7 @@ impl RetransmitStats {
         addr_cache: &mut AddrCache,
         rpc_subscriptions: Option<&RpcSubscriptions>,
         slot_status_notifier: Option<&SlotStatusNotifier>,
+        votor_event_sender: Option<&Sender<VotorEvent>>,
     ) {
         for (slot, mut slot_stats) in feed {
             addr_cache.record(slot, &mut slot_stats);
@@ -728,6 +789,7 @@ impl RetransmitStats {
                             slot_stats.outset,
                             rpc_subscriptions,
                             slot_status_notifier,
+                            votor_event_sender,
                         );
                     }
                     self.slot_stats.put(slot, slot_stats);
@@ -821,6 +883,7 @@ fn notify_subscribers(
     timestamp: u64, // When the first shred in the slot was received.
     rpc_subscriptions: Option<&RpcSubscriptions>,
     slot_status_notifier: Option<&SlotStatusNotifier>,
+    votor_event_sender: Option<&Sender<VotorEvent>>,
 ) {
     if let Some(rpc_subscriptions) = rpc_subscriptions {
         let slot_update = SlotUpdate::FirstShredReceived { slot, timestamp };
@@ -832,6 +895,14 @@ fn notify_subscribers(
             .read()
             .unwrap()
             .notify_first_shred_received(slot);
+    }
+    if let Some(votor_event_sender) = votor_event_sender {
+        if let Err(err) = votor_event_sender.send(VotorEvent::FirstShred(slot)) {
+            warn!(
+                "Sending {:?} failed as channel became disconnected.  Ignoring.",
+                err.into_inner()
+            );
+        }
     }
 }
 
@@ -853,7 +924,7 @@ mod tests {
         bs58::decode(KEYPAIR)
             .into_vec()
             .as_deref()
-            .map(Keypair::from_bytes)
+            .map(Keypair::try_from)
             .unwrap()
             .unwrap()
     }
@@ -870,7 +941,7 @@ mod tests {
                 &entries,
                 true,
                 // chained_merkle_root
-                Some(Hash::new_from_array(rand::thread_rng().gen())),
+                Hash::new_from_array(rand::thread_rng().gen()),
                 0,
                 code_index,
                 &rsc,
@@ -906,7 +977,7 @@ mod tests {
         // first shred passed through
         assert!(
             !shred_deduper.dedup(shred_dup.id(), shred_dup.payload(), MAX_DUPLICATE_COUNT),
-            "First time seeing shred X with differnt parent slot (3 instead of 4) => Not dup \
+            "First time seeing shred X with different parent slot (3 instead of 4) => Not dup \
              because common header is unique & shred ID only seen once"
         );
         // then blocked

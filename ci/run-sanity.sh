@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 source multinode-demo/common.sh
 
 if [[ -z $CI ]]; then
-  # Build eargerly if needed for local development. Otherwise, odd timing error occurs...
+  # Build eagerly if needed for local development. Otherwise, odd timing error occurs...
   $solana_keygen --version
   $solana_genesis --version
   $solana_faucet --version

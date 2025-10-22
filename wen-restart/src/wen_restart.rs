@@ -46,8 +46,8 @@ use {
         },
     },
     solana_shred_version::compute_shred_version,
+    solana_svm_timings::ExecuteTimings,
     solana_time_utils::timestamp,
-    solana_timings::ExecuteTimings,
     solana_vote::vote_transaction::VoteTransaction,
     std::{
         collections::{HashMap, HashSet},
@@ -515,18 +515,6 @@ pub(crate) fn generate_snapshot(
     while abs_status.is_running() {
         std::thread::yield_now();
     }
-    // Similar to waiting for ABS to stop, we also wait for the initial startup
-    // verification to complete.  The startup verification runs in the background
-    // and verifies the snapshot's accounts are correct.  We only want a
-    // single accounts hash calculation to run at a time, and since snapshot
-    // creation below will calculate the accounts hash, we wait for the startup
-    // verification to complete before proceeding.
-    new_root_bank
-        .rc
-        .accounts
-        .accounts_db
-        .verify_accounts_hash_in_bg
-        .join_background_thread();
 
     let snapshot_config = snapshot_controller.snapshot_config();
     let mut directory = &snapshot_config.full_snapshot_archives_dir;
@@ -1421,8 +1409,8 @@ pub(crate) fn write_wen_restart_records(
 mod tests {
     use {
         crate::wen_restart::{tests::wen_restart_proto::LastVotedForkSlotsAggregateFinal, *},
+        agave_snapshots::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         crossbeam_channel::unbounded,
-        solana_accounts_db::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         solana_entry::entry::create_ticks,
         solana_gossip::{
             cluster_info::ClusterInfo,

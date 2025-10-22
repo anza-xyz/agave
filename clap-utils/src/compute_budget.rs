@@ -6,7 +6,8 @@ use {
 pub const COMPUTE_UNIT_PRICE_ARG: ArgConstant<'static> = ArgConstant {
     name: "compute_unit_price",
     long: "--with-compute-unit-price",
-    help: "Set compute unit price for transaction, in increments of 0.000001 lamports per compute unit.",
+    help: "Set compute unit price for transaction, in increments of 0.000001 lamports per compute \
+           unit.",
 };
 
 pub const COMPUTE_UNIT_LIMIT_ARG: ArgConstant<'static> = ArgConstant {
@@ -43,4 +44,6 @@ pub enum ComputeUnitLimit {
     Static(u32),
     /// Simulate the transaction to find out the compute unit usage
     Simulated,
+    /// Simulate the transaction and add a small percentage to account for potential drift
+    SimulatedWithExtraPercentage(u8),
 }

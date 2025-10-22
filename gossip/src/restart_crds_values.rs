@@ -3,6 +3,7 @@ use {
     bv::BitVec,
     itertools::Itertools,
     rand::Rng,
+    serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,

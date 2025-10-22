@@ -4,7 +4,7 @@ use {
         account_storage::stored_account_info::StoredAccountInfo,
         accounts_db::{
             AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount, ScanAccountStorageData,
-            ScanStorageResult,
+            ScanStorageResult, UpdateIndexThreadSelection,
         },
         accounts_index::{IndexKey, ScanConfig, ScanError, ScanOrder, ScanResult},
         ancestors::Ancestors,
@@ -24,7 +24,7 @@ use {
         message_address_table_lookup::SVMMessageAddressTableLookup, svm_message::SVMMessage,
     },
     solana_transaction::sanitized::SanitizedTransaction,
-    solana_transaction_context::TransactionAccount,
+    solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
     solana_transaction_error::TransactionResult as Result,
     std::{
         cmp::Reverse,
@@ -242,7 +242,7 @@ impl Accounts {
         &self,
         slot: Slot,
         program_id: Option<&Pubkey>,
-    ) -> Vec<TransactionAccount> {
+    ) -> Vec<KeyedAccountSharedData> {
         self.scan_slot(slot, |stored_account| {
             program_id
                 .map(|program_id| program_id == stored_account.owner())
@@ -307,7 +307,7 @@ impl Accounts {
     }
 
     fn load_while_filtering<F: Fn(&AccountSharedData) -> bool>(
-        collector: &mut Vec<TransactionAccount>,
+        collector: &mut Vec<KeyedAccountSharedData>,
         some_account_tuple: Option<(&Pubkey, AccountSharedData, Slot)>,
         filter: F,
     ) {
@@ -325,7 +325,7 @@ impl Accounts {
         bank_id: BankId,
         program_id: &Pubkey,
         config: &ScanConfig,
-    ) -> ScanResult<Vec<TransactionAccount>> {
+    ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         let mut collector = Vec::new();
         self.accounts_db
             .scan_accounts(
@@ -348,7 +348,7 @@ impl Accounts {
         program_id: &Pubkey,
         filter: F,
         config: &ScanConfig,
-    ) -> ScanResult<Vec<TransactionAccount>> {
+    ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         let mut collector = Vec::new();
         self.accounts_db
             .scan_accounts(
@@ -388,9 +388,9 @@ impl Accounts {
     }
 
     fn maybe_abort_scan(
-        result: ScanResult<Vec<TransactionAccount>>,
+        result: ScanResult<Vec<KeyedAccountSharedData>>,
         config: &ScanConfig,
-    ) -> ScanResult<Vec<TransactionAccount>> {
+    ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         if config.is_aborted() {
             ScanResult::Err(ScanError::Aborted(
                 "The accumulated scan results exceeded the limit".to_string(),
@@ -408,7 +408,7 @@ impl Accounts {
         filter: F,
         config: &ScanConfig,
         byte_limit_for_scan: Option<usize>,
-    ) -> ScanResult<Vec<TransactionAccount>> {
+    ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         let sum = AtomicUsize::default();
         let config = config.recreate_with_abort();
         let mut collector = Vec::new();
@@ -546,18 +546,36 @@ impl Accounts {
         }
     }
 
-    /// Store the accounts into the DB
-    pub fn store_cached<'a>(
+    /// Store `accounts` into the DB
+    ///
+    /// This version updates the accounts index sequentially,
+    /// using the same thread that calls the fn itself.
+    pub fn store_accounts_seq<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
     ) {
-        self.accounts_db
-            .store_cached_inline_update_index(accounts, transactions);
+        self.accounts_db.store_accounts_unfrozen(
+            accounts,
+            transactions,
+            UpdateIndexThreadSelection::Inline,
+        );
     }
 
-    pub fn store_accounts_cached<'a>(&self, accounts: impl StorableAccounts<'a>) {
-        self.accounts_db.store_cached(accounts)
+    /// Store `accounts` into the DB
+    ///
+    /// This version updates the accounts index in parallel,
+    /// using the foreground AccountsDb thread pool.
+    pub fn store_accounts_par<'a>(
+        &self,
+        accounts: impl StorableAccounts<'a>,
+        transactions: Option<&'a [&'a SanitizedTransaction]>,
+    ) {
+        self.accounts_db.store_accounts_unfrozen(
+            accounts,
+            transactions,
+            UpdateIndexThreadSelection::PoolWithThreshold,
+        );
     }
 
     /// Add a slot to root.  Root slots cannot be purged
@@ -1120,7 +1138,8 @@ mod tests {
 
     impl Accounts {
         pub fn store_for_tests(&self, slot: Slot, pubkey: &Pubkey, account: &AccountSharedData) {
-            self.accounts_db.store_for_tests(slot, &[(pubkey, account)])
+            self.accounts_db
+                .store_for_tests((slot, [(pubkey, account)].as_slice()))
         }
 
         /// useful to adapt tests written prior to introduction of the write cache
@@ -1225,13 +1244,14 @@ mod tests {
         let pubkey = Pubkey::new_unique();
         let account_data = AccountSharedData::new(1, 0, &Pubkey::default());
         let accounts_db = Arc::new(AccountsDb::new_single_for_tests());
-        accounts_db.store_for_tests(
+        accounts_db.store_for_tests((
             0,
-            &[
+            [
                 (&Pubkey::default(), &account_data),
                 (&pubkey, &account_data),
-            ],
-        );
+            ]
+            .as_slice(),
+        ));
 
         let r_tx = sanitized_tx_from_metas(vec![AccountMeta {
             pubkey,
@@ -1339,7 +1359,7 @@ mod tests {
         /* This test assumes pubkey0 < pubkey1 < pubkey2.
          * But the keys created with new_unique() does not guarantee this
          * order because of the endianness.  new_unique() calls add 1 at each
-         * key generaration as the little endian integer.  A pubkey stores its
+         * key generation as the little endian integer.  A pubkey stores its
          * value in a 32-byte array bytes, and its eq-partial trait considers
          * the lower-address bytes more significant, which is the big-endian
          * order.

@@ -3,10 +3,7 @@ mod utils;
 use {
     criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput},
     solana_core::banking_stage::transaction_scheduler::{
-        receive_and_buffer::{
-            ReceiveAndBuffer, SanitizedTransactionReceiveAndBuffer, TransactionViewReceiveAndBuffer,
-        },
-        scheduler_metrics::{SchedulerCountMetrics, SchedulerTimingMetrics},
+        receive_and_buffer::{ReceiveAndBuffer, TransactionViewReceiveAndBuffer},
         transaction_state_container::StateContainer,
     },
     std::time::{Duration, Instant},
@@ -41,8 +38,6 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + utils::ReceiveAndBufferCreator
             let mut total: Duration = std::time::Duration::ZERO;
             for _ in 0..iters {
                 // Setup
-                let mut count_metrics = SchedulerCountMetrics::default();
-                let mut timing_metrics = SchedulerTimingMetrics::default();
                 {
                     if sender.send(txs.clone()).is_err() {
                         panic!("Unexpectedly dropped receiver!");
@@ -54,13 +49,9 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + utils::ReceiveAndBufferCreator
 
                 let start = Instant::now();
                 {
-                    let res = receive_and_buffer.receive_and_buffer_packets(
-                        &mut container,
-                        &mut timing_metrics,
-                        &mut count_metrics,
-                        &decision,
-                    );
-                    assert!(res.unwrap() == num_txs && !container.is_empty());
+                    let res =
+                        receive_and_buffer.receive_and_buffer_packets(&mut container, &decision);
+                    assert!(res.unwrap().num_received == num_txs && !container.is_empty());
                     black_box(&container);
                 }
                 total = total.saturating_add(start.elapsed());
@@ -69,23 +60,6 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + utils::ReceiveAndBufferCreator
         })
     });
     group.finish();
-}
-
-fn bench_sanitized_transaction_receive_and_buffer(c: &mut Criterion) {
-    bench_receive_and_buffer::<SanitizedTransactionReceiveAndBuffer>(
-        c,
-        "sanitized_transaction_max_instructions",
-        utils::MAX_INSTRUCTIONS_PER_TRANSACTION,
-        0.0,
-        true,
-    );
-    bench_receive_and_buffer::<SanitizedTransactionReceiveAndBuffer>(
-        c,
-        "sanitized_transaction_min_instructions",
-        1,
-        0.0,
-        true,
-    );
 }
 
 fn bench_transaction_view_receive_and_buffer(c: &mut Criterion) {
@@ -105,9 +79,5 @@ fn bench_transaction_view_receive_and_buffer(c: &mut Criterion) {
     );
 }
 
-criterion_group!(
-    benches,
-    bench_sanitized_transaction_receive_and_buffer,
-    bench_transaction_view_receive_and_buffer
-);
+criterion_group!(benches, bench_transaction_view_receive_and_buffer);
 criterion_main!(benches);

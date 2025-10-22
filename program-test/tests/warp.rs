@@ -19,18 +19,16 @@ use {
     solana_signer::Signer,
     solana_stake_interface::{
         instruction as stake_instruction,
+        stake_history::StakeHistory,
         state::{StakeActivationStatus, StakeStateV2},
+        sysvar::stake_history,
     },
     solana_stake_program::stake_state,
-    solana_sysvar::{
-        clock,
-        stake_history::{self, StakeHistory},
-        Sysvar,
-    },
+    solana_sysvar::{clock, SysvarSerialize},
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
     solana_vote_program::vote_state,
-    std::convert::TryInto,
+    std::{convert::TryInto, slice},
 };
 
 // Use a big number to be sure that we get the right error
@@ -72,7 +70,7 @@ async fn clock_sysvar_updated_from_warp() {
 
     // Fail transaction
     let transaction = Transaction::new_signed_with_payer(
-        &[instruction.clone()],
+        slice::from_ref(&instruction),
         Some(&context.payer.pubkey()),
         &[&context.payer],
         context.last_blockhash,

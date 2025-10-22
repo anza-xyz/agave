@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 #![allow(clippy::arithmetic_side_effects)]
 
 pub use {
@@ -24,6 +33,7 @@ use {
     },
     agave_reserved_account_keys::ReservedAccountKeys,
     base64::{prelude::BASE64_STANDARD, Engine},
+    serde::{Deserialize, Serialize},
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
@@ -42,9 +52,6 @@ use {
     std::collections::HashSet,
     thiserror::Error,
 };
-
-#[macro_use]
-extern crate serde_derive;
 
 pub mod extract_memos;
 pub mod parse_accounts;

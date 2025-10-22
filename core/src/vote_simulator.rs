@@ -14,7 +14,7 @@ use {
         repair::cluster_slot_state_verifier::{
             DuplicateConfirmedSlots, DuplicateSlotsTracker, EpochSlotsFrozenSlots,
         },
-        replay_stage::{HeaviestForkFailures, ReplayStage},
+        replay_stage::{HeaviestForkFailures, ReplayStage, TowerBFTStructures},
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
     crossbeam_channel::unbounded,
@@ -44,8 +44,8 @@ pub struct VoteSimulator {
     pub vote_pubkeys: Vec<Pubkey>,
     pub bank_forks: Arc<RwLock<BankForks>>,
     pub progress: ProgressMap,
-    pub heaviest_subtree_fork_choice: HeaviestSubtreeForkChoice,
     pub latest_validator_votes_for_frozen_banks: LatestValidatorVotesForFrozenBanks,
+    pub tbft_structs: TowerBFTStructures,
 }
 
 impl VoteSimulator {
@@ -64,8 +64,14 @@ impl VoteSimulator {
             vote_pubkeys,
             bank_forks,
             progress,
-            heaviest_subtree_fork_choice,
             latest_validator_votes_for_frozen_banks: LatestValidatorVotesForFrozenBanks::default(),
+            tbft_structs: TowerBFTStructures {
+                heaviest_subtree_fork_choice,
+                duplicate_slots_tracker: DuplicateSlotsTracker::default(),
+                duplicate_confirmed_slots: DuplicateConfirmedSlots::default(),
+                unfrozen_gossip_verified_vote_hashes: UnfrozenGossipVerifiedVoteHashes::default(),
+                epoch_slots_frozen_slots: EpochSlotsFrozenSlots::default(),
+            },
         }
     }
 
@@ -151,10 +157,12 @@ impl VoteSimulator {
                     .get_fork_stats_mut(new_bank.slot())
                     .expect("All frozen banks must exist in the Progress map")
                     .bank_hash = Some(new_bank.hash());
-                self.heaviest_subtree_fork_choice.add_new_leaf_slot(
-                    (new_bank.slot(), new_bank.hash()),
-                    Some((new_bank.parent_slot(), new_bank.parent_hash())),
-                );
+                self.tbft_structs
+                    .heaviest_subtree_fork_choice
+                    .add_new_leaf_slot(
+                        (new_bank.slot(), new_bank.hash()),
+                        Some((new_bank.parent_slot(), new_bank.parent_hash())),
+                    );
             }
 
             walk.forward();
@@ -184,9 +192,9 @@ impl VoteSimulator {
             tower,
             &mut self.progress,
             &VoteTracker::default(),
-            &ClusterSlots::default(),
+            &ClusterSlots::default_for_tests(),
             &self.bank_forks,
-            &mut self.heaviest_subtree_fork_choice,
+            &mut self.tbft_structs.heaviest_subtree_fork_choice,
             &mut self.latest_validator_votes_for_frozen_banks,
         );
 
@@ -210,7 +218,7 @@ impl VoteSimulator {
             &self.progress,
             tower,
             &self.latest_validator_votes_for_frozen_banks,
-            &self.heaviest_subtree_fork_choice,
+            &self.tbft_structs.heaviest_subtree_fork_choice,
         );
 
         // Make sure this slot isn't locked out or failing threshold
@@ -235,16 +243,11 @@ impl VoteSimulator {
             &mut self.progress,
             None, // snapshot_controller
             None,
-            &mut self.heaviest_subtree_fork_choice,
-            &mut DuplicateSlotsTracker::default(),
-            &mut DuplicateConfirmedSlots::default(),
-            &mut UnfrozenGossipVerifiedVoteHashes::default(),
             &mut true,
             &mut Vec::new(),
-            &mut EpochSlotsFrozenSlots::default(),
             &drop_bank_sender,
+            &mut self.tbft_structs,
         )
-        .unwrap()
     }
 
     pub fn create_and_vote_new_branch(

@@ -58,9 +58,7 @@ pub(crate) fn command<'a>() -> App<'a, 'a> {
                 .validator(is_parsable::<usize>)
                 .value_name("MINUTES")
                 .default_value(DEFAULT_MIN_IDLE_TIME)
-                .help(
-                    "Minimum time that the validator should not be leader before restarting",
-                ),
+                .help("Minimum time that the validator should not be leader before restarting"),
         )
         .arg(
             Arg::with_name("identity")
@@ -90,7 +88,8 @@ pub(crate) fn command<'a>() -> App<'a, 'a> {
                 .help("Skip health check"),
         )
         .after_help(
-            "Note: If this command exits with a non-zero status then this not a good time for a restart",
+            "Note: If this command exits with a non-zero status then this not a good time for a \
+             restart",
         )
 }
 
@@ -218,9 +217,9 @@ pub fn wait_for_restart_window(
                 }
                 if !leader_schedule.is_empty() && upcoming_idle_windows.is_empty() {
                     return Err(format!(
-                        "Validator has no idle window of at least {} slots. Largest idle window \
-                       for epoch {} is {} slots",
-                        min_idle_slots, epoch_info.epoch, max_idle_window
+                        "Validator has no idle window of at least {min_idle_slots} slots. Largest \
+                         idle window for epoch {} is {max_idle_window} slots",
+                        epoch_info.epoch,
                     )
                     .into());
                 }
@@ -274,7 +273,7 @@ pub fn wait_for_restart_window(
                                     }
                                     None => format!(
                                         "Validator will be leader soon. Next leader slot is \
-                                       {next_leader_slot}"
+                                         {next_leader_slot}"
                                     ),
                                 })
                             }

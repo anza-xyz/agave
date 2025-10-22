@@ -1,16 +1,20 @@
 [package]
 name = "solana-turbine"
-description = "Blockchain, Rebuilt for Scale"
 documentation = "https://docs.rs/solana-turbine"
 version = { workspace = true }
 authors = { workspace = true }
+description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 agave-feature-set = { workspace = true }
+agave-votor = { workspace = true }
 agave-xdp = { workspace = true }
 bincode = { workspace = true }
 bytes = { workspace = true }
@@ -31,11 +35,12 @@ solana-entry = { workspace = true }
 solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
-solana-ledger = { workspace = true }
+solana-ledger = { workspace = true, features = ["agave-unstable-api"] }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true }
+solana-nohash-hasher = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
 solana-pubkey = { workspace = true }
@@ -54,6 +59,7 @@ solana-transaction-error = { workspace = true }
 static_assertions = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+wincode = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 caps = { workspace = true }
@@ -62,12 +68,14 @@ caps = { workspace = true }
 assert_matches = { workspace = true }
 bencher = { workspace = true }
 bs58 = { workspace = true }
+conditional-mod = { workspace = true }
 solana-genesis-config = { workspace = true }
-solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
+solana-ledger = { workspace = true, features = ["agave-unstable-api","dev-context-only-utils"] }
 solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-signature = { workspace = true, features = ["rand"] }
 solana-transaction = { workspace = true }
+solana-turbine = { path = ".", features = ["agave-unstable-api"] }
 test-case = { workspace = true }
 
 [[bench]]

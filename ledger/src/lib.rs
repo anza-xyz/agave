@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 #![recursion_limit = "2048"]
@@ -26,7 +35,7 @@ pub mod leader_schedule_cache;
 pub mod leader_schedule_utils;
 pub mod next_slots_iterator;
 pub mod rooted_slot_iterator;
-pub mod shred;
+conditional_mod::conditional_vis_mod!(shred, feature="agave-unstable-api", pub,pub(crate));
 mod shredder;
 pub mod sigverify_shreds;
 pub mod slot_stats;
@@ -50,7 +59,7 @@ extern crate solana_frozen_abi_macro;
 
 #[doc(hidden)]
 pub mod macro_reexports {
-    pub use solana_accounts_db::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE;
+    pub use agave_snapshots::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE;
 }
 
 mod wire_format_tests;

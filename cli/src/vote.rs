@@ -26,12 +26,11 @@ use {
         offline::*,
     },
     solana_cli_output::{
-        return_signers_with_config, CliEpochVotingHistory, CliLandedVote, CliVoteAccount,
-        ReturnSignersConfig,
+        display::build_balance_message, return_signers_with_config, CliEpochVotingHistory,
+        CliLandedVote, CliVoteAccount, ReturnSignersConfig,
     },
     solana_commitment_config::CommitmentConfig,
     solana_message::Message,
-    solana_native_token::lamports_to_sol,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
@@ -42,9 +41,7 @@ use {
     solana_vote_program::{
         vote_error::VoteError,
         vote_instruction::{self, withdraw, CreateVoteAccountConfig},
-        vote_state::{
-            VoteAuthorize, VoteInit, VoteState, VoteStateVersions, VOTE_CREDITS_MAXIMUM_PER_SLOT,
-        },
+        vote_state::{VoteAuthorize, VoteInit, VoteStateV4, VOTE_CREDITS_MAXIMUM_PER_SLOT},
     },
     std::rc::Rc,
 };
@@ -371,8 +368,8 @@ impl VoteSubCommands for App<'_, '_> {
                         .default_value_if("with_rewards", None, "1")
                         .requires("with_rewards")
                         .help(
-                            "Display rewards for NUM recent epochs, max 10 \
-                            [default: latest epoch only]",
+                            "Display rewards for NUM recent epochs, max 10 [default: latest epoch \
+                             only]",
                         ),
                 ),
         )
@@ -829,13 +826,13 @@ pub fn process_create_vote_account(
     )?;
 
     let required_balance = rpc_client
-        .get_minimum_balance_for_rent_exemption(VoteState::size_of())?
+        .get_minimum_balance_for_rent_exemption(VoteStateV4::size_of())?
         .max(1);
     let amount = SpendAmount::Some(required_balance);
 
     let fee_payer = config.signers[fee_payer];
     let nonce_authority = config.signers[nonce_authority];
-    let space = VoteStateVersions::vote_state_size_of(true) as u64;
+    let space = VoteStateV4::size_of() as u64;
 
     let compute_unit_limit = match blockhash_query {
         BlockhashQuery::None(_) | BlockhashQuery::FeeCalculator(_, _) => ComputeUnitLimit::Default,
@@ -976,7 +973,7 @@ pub fn process_vote_authorize(
             if let Some(vote_state) = vote_state {
                 let current_epoch = rpc_client.get_epoch_info()?.epoch;
                 let current_authorized_voter = vote_state
-                    .authorized_voters()
+                    .authorized_voters
                     .get_authorized_voter(current_epoch)
                     .ok_or_else(|| {
                         CliError::RpcRequestError(
@@ -1261,7 +1258,7 @@ pub(crate) fn get_vote_account(
     rpc_client: &RpcClient,
     vote_account_pubkey: &Pubkey,
     commitment_config: CommitmentConfig,
-) -> Result<(Account, VoteState), Box<dyn std::error::Error>> {
+) -> Result<(Account, VoteStateV4), Box<dyn std::error::Error>> {
     let vote_account = rpc_client
         .get_account_with_commitment(vote_account_pubkey, commitment_config)?
         .value
@@ -1275,11 +1272,12 @@ pub(crate) fn get_vote_account(
         ))
         .into());
     }
-    let vote_state = VoteState::deserialize(&vote_account.data).map_err(|_| {
-        CliError::RpcRequestError(
-            "Account data could not be deserialized to vote state".to_string(),
-        )
-    })?;
+    let vote_state =
+        VoteStateV4::deserialize(&vote_account.data, vote_account_pubkey).map_err(|_| {
+            CliError::RpcRequestError(
+                "Account data could not be deserialized to vote state".to_string(),
+            )
+        })?;
 
     Ok((vote_account, vote_state))
 }
@@ -1307,7 +1305,7 @@ pub fn process_show_vote_account(
         for vote in &vote_state.votes {
             votes.push(vote.into());
         }
-        for (epoch, credits, prev_credits) in vote_state.epoch_credits().iter().copied() {
+        for (epoch, credits, prev_credits) in vote_state.epoch_credits.iter().copied() {
             let credits_earned = credits.saturating_sub(prev_credits);
             let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
             let is_tvc_active = tvc_activation_epoch.map(|e| epoch >= e).unwrap_or_default();
@@ -1346,10 +1344,10 @@ pub fn process_show_vote_account(
     let vote_account_data = CliVoteAccount {
         account_balance: vote_account.lamports,
         validator_identity: vote_state.node_pubkey.to_string(),
-        authorized_voters: vote_state.authorized_voters().into(),
+        authorized_voters: (&vote_state.authorized_voters).into(),
         authorized_withdrawer: vote_state.authorized_withdrawer.to_string(),
         credits: vote_state.credits(),
-        commission: vote_state.commission,
+        commission: (vote_state.inflation_rewards_commission_bps / 100) as u8,
         root_slot: vote_state.root_slot,
         recent_timestamp: vote_state.last_timestamp.clone(),
         votes,
@@ -1357,6 +1355,14 @@ pub fn process_show_vote_account(
         use_lamports_unit,
         use_csv,
         epoch_rewards,
+        inflation_rewards_commission_bps: vote_state.inflation_rewards_commission_bps,
+        inflation_rewards_collector: vote_state.inflation_rewards_collector.to_string(),
+        block_revenue_collector: vote_state.block_revenue_collector.to_string(),
+        block_revenue_commission_bps: vote_state.block_revenue_commission_bps,
+        pending_delegator_rewards: vote_state.pending_delegator_rewards,
+        bls_pubkey_compressed: vote_state
+            .bls_pubkey_compressed
+            .map(|bytes| bs58::encode(bytes).into_string()),
     };
 
     Ok(config.output_format.formatted_string(&vote_account_data))
@@ -1429,14 +1435,14 @@ pub fn process_withdraw_from_vote_account(
     if !sign_only {
         let current_balance = rpc_client.get_balance(vote_account_pubkey)?;
         let minimum_balance =
-            rpc_client.get_minimum_balance_for_rent_exemption(VoteState::size_of())?;
+            rpc_client.get_minimum_balance_for_rent_exemption(VoteStateV4::size_of())?;
         if let SpendAmount::Some(withdraw_amount) = withdraw_amount {
             let balance_remaining = current_balance.saturating_sub(withdraw_amount);
             if balance_remaining < minimum_balance && balance_remaining != 0 {
                 return Err(CliError::BadParameter(format!(
                     "Withdraw amount too large. The vote account balance must be at least {} SOL \
                      to remain rent exempt",
-                    lamports_to_sol(minimum_balance)
+                    build_balance_message(minimum_balance, false, false)
                 ))
                 .into());
             }

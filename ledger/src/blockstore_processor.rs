@@ -30,7 +30,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{Bank, PreCommitResult, TransactionBalancesSet},
-        bank_forks::{BankForks, SetRootError},
+        bank_forks::BankForks,
         bank_utils,
         commitment::VOTE_THRESHOLD_SIZE,
         dependency_tracker::DependencyTracker,
@@ -51,8 +51,8 @@ use {
         transaction_processing_result::ProcessedTransaction,
         transaction_processor::ExecutionRecordingConfig,
     },
+    solana_svm_timings::{report_execute_timings, ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
-    solana_timings::{report_execute_timings, ExecuteTimingType, ExecuteTimings},
     solana_transaction::{
         sanitized::SanitizedTransaction, versioned::VersionedTransaction,
         TransactionVerificationMode,
@@ -525,8 +525,10 @@ fn schedule_batches_for_execution(
         // to unlock.
         // scheduling is skipped if we have already detected an error in this loop
         let indexes = starting_index..starting_index + transactions.len();
+        // Widening usize index to OrderedTaskId (= u128) won't ever fail.
+        let task_ids = indexes.map(|i| i.try_into().unwrap());
         first_err = first_err.and_then(|()| {
-            bank.schedule_transaction_executions(transactions.into_iter().zip_eq(indexes))
+            bank.schedule_transaction_executions(transactions.into_iter().zip_eq(task_ids))
         });
     }
     first_err
@@ -816,9 +818,6 @@ pub enum BlockstoreProcessorError {
     #[error("root bank with mismatched capitalization at {0}")]
     RootBankWithMismatchedCapitalization(Slot),
 
-    #[error("set root error {0}")]
-    SetRootError(#[from] SetRootError),
-
     #[error("incomplete final fec set")]
     IncompleteFinalFecSet,
 
@@ -843,7 +842,7 @@ pub struct ProcessOptions {
     pub allow_dead_slots: bool,
     pub accounts_db_skip_shrink: bool,
     pub accounts_db_force_initial_clean: bool,
-    pub accounts_db_config: Option<AccountsDbConfig>,
+    pub accounts_db_config: AccountsDbConfig,
     pub verify_index: bool,
     pub runtime_config: RuntimeConfig,
     /// true if after processing the contents of the blockstore at startup, we should run an accounts hash calc
@@ -900,13 +899,11 @@ pub(crate) fn process_blockstore_for_bank_0(
     exit: Arc<AtomicBool>,
 ) -> result::Result<Arc<RwLock<BankForks>>, BlockstoreProcessorError> {
     // Setup bank for slot 0
-    let bank0 = Bank::new_with_paths(
+    let bank0 = Bank::new_from_genesis(
         genesis_config,
         Arc::new(opts.runtime_config.clone()),
         account_paths,
         opts.debug_keys.clone(),
-        None,
-        false,
         opts.accounts_db_config.clone(),
         accounts_update_notifier,
         None,
@@ -1056,7 +1053,7 @@ pub fn process_blockstore_from_root(
 /// Verify that a segment of entries has the correct number of ticks and hashes
 fn verify_ticks(
     bank: &Bank,
-    entries: &[Entry],
+    mut entries: &[Entry],
     slot_full: bool,
     tick_hash_count: &mut u64,
 ) -> std::result::Result<(), BlockError> {
@@ -1083,6 +1080,35 @@ fn verify_ticks(
         if !slot_full {
             warn!("Slot: {} was not marked full", bank.slot());
             return Err(BlockError::InvalidLastTick);
+        }
+    }
+
+    if let Some(first_alpenglow_slot) = bank
+        .feature_set
+        .activated_slot(&agave_feature_set::alpenglow::id())
+    {
+        if bank.parent_slot() >= first_alpenglow_slot {
+            // If both the parent and the bank slot are in an epoch post alpenglow activation,
+            // no tick verification is needed
+            return Ok(());
+        }
+
+        // If the bank is in the alpenglow epoch, but the parent is from an epoch
+        // where the feature flag is not active, we must verify ticks that correspond
+        // to the epoch in which PoH is active. This verification is criticial, as otherwise
+        // a leader could jump the gun and publish a block in the alpenglow epoch without waiting
+        // the appropriate time as determined by PoH in the prior epoch.
+        if bank.slot() >= first_alpenglow_slot && next_bank_tick_height == max_bank_tick_height {
+            if entries.is_empty() {
+                // This shouldn't happen, but good to double check
+                error!("Processing empty entries in verify_ticks()");
+                return Ok(());
+            }
+            // last entry must be a tick, as verified by the `has_trailing_entry`
+            // check above. Because in Alpenglow the last tick does not have any
+            // hashing guarantees, we pass everything but that last tick to the
+            // entry verification.
+            entries = &entries[..entries.len() - 1];
         }
     }
 
@@ -1786,6 +1812,7 @@ fn process_next_slots(
                     .unwrap(),
                 *next_slot,
             );
+            set_alpenglow_ticks(&next_bank);
             trace!(
                 "New bank for slot {}, parent slot is {}",
                 next_slot,
@@ -1798,6 +1825,71 @@ fn process_next_slots(
     // Reverse sort by slot, so the next slot to be processed can be popped
     pending_slots.sort_by(|a, b| b.1.slot().cmp(&a.1.slot()));
     Ok(())
+}
+
+/// Set alpenglow bank tick height.
+///
+/// For alpenglow banks this tick height is `max_tick_height` - 1, for a bank on the epoch boundary
+/// of feature activation, we need ticks_per_slot for each slot between the parent and epoch boundary
+/// and one extra tick for the alpenglow bank
+pub fn set_alpenglow_ticks(bank: &Bank) {
+    let Some(first_alpenglow_slot) = bank
+        .feature_set
+        .activated_slot(&agave_feature_set::alpenglow::id())
+    else {
+        return;
+    };
+
+    let Some(alpenglow_ticks) = calculate_alpenglow_ticks(
+        bank.slot(),
+        first_alpenglow_slot,
+        bank.parent_slot(),
+        bank.ticks_per_slot(),
+    ) else {
+        return;
+    };
+
+    info!(
+        "Alpenglow: Setting tick height for slot {} to {}",
+        bank.slot(),
+        bank.max_tick_height() - alpenglow_ticks
+    );
+    bank.set_tick_height(bank.max_tick_height() - alpenglow_ticks);
+}
+
+/// Calculates how many ticks are needed for a block at `slot` with parent `parent_slot`
+///
+/// If both `parent_slot` and `slot` are greater than or equal to `first_alpenglow_slot`, then
+/// only 1 tick is needed. This tick has no hashing guarantees, it is simply used as a signal
+/// for the end of the block.
+///
+/// If both `parent_slot` and `slot` are less than `first_alpenglow_slot`, we need the
+/// appropriate amount of PoH ticks, indicated by a None return value.
+///
+/// If `parent_slot` is less than `first_alpenglow_slot` and `slot` is greater than or equal
+/// to `first_alpenglow_slot` (A block that "straddles" the activation epoch boundary) then:
+///
+/// 1. All slots between `parent_slot` and `first_alpenglow_slot` need to have `ticks_per_slot` ticks
+/// 2. One extra tick for the actual alpenglow slot
+/// 3. There are no ticks for any skipped alpenglow slots
+fn calculate_alpenglow_ticks(
+    slot: Slot,
+    first_alpenglow_slot: Slot,
+    parent_slot: Slot,
+    ticks_per_slot: u64,
+) -> Option<u64> {
+    // Slots before alpenglow shouldn't have alpenglow ticks
+    if slot < first_alpenglow_slot {
+        return None;
+    }
+
+    let alpenglow_ticks = if parent_slot < first_alpenglow_slot && slot >= first_alpenglow_slot {
+        (first_alpenglow_slot - parent_slot - 1) * ticks_per_slot + 1
+    } else {
+        1
+    };
+
+    Some(alpenglow_ticks)
 }
 
 /// Starting with the root slot corresponding to `start_slot_meta`, iteratively
@@ -1979,7 +2071,7 @@ fn load_frozen_forks(
                 let _ = bank_forks
                     .write()
                     .unwrap()
-                    .set_root(root, snapshot_controller, None)?;
+                    .set_root(root, snapshot_controller, None);
                 m.stop();
                 set_root_us += m.as_us();
 
@@ -2300,7 +2392,7 @@ pub mod tests {
         solana_vote::{vote_account::VoteAccount, vote_transaction},
         solana_vote_program::{
             self,
-            vote_state::{TowerSync, VoteStateV3, VoteStateVersions, MAX_LOCKOUT_HISTORY},
+            vote_state::{TowerSync, VoteStateV4, VoteStateVersions, MAX_LOCKOUT_HISTORY},
         },
         std::{collections::BTreeSet, slice, sync::RwLock},
         test_case::{test_case, test_matrix},
@@ -3426,7 +3518,7 @@ pub mod tests {
                 InstructionError::ProgramFailedToCompile,
                 InstructionError::Immutable,
                 InstructionError::IncorrectAuthority,
-                InstructionError::BorshIoError("error".to_string()),
+                InstructionError::BorshIoError,
                 InstructionError::AccountNotRentExempt,
                 InstructionError::InvalidAccountOwner,
                 InstructionError::ArithmeticOverflow,
@@ -3472,10 +3564,11 @@ pub mod tests {
         declare_process_instruction!(MockBuiltinErr, 1, |invoke_context| {
             let instruction_errors = get_instruction_errors();
 
-            let err = invoke_context
+            let instruction_context = invoke_context
                 .transaction_context
                 .get_current_instruction_context()
-                .expect("Failed to get instruction context")
+                .expect("Failed to get instruction context");
+            let err = instruction_context
                 .get_instruction_data()
                 .first()
                 .expect("Failed to get instruction data");
@@ -4188,7 +4281,7 @@ pub mod tests {
             &mut ExecuteTimings::default(),
         )
         .unwrap();
-        bank_forks.write().unwrap().set_root(1, None, None).unwrap();
+        bank_forks.write().unwrap().set_root(1, None, None);
 
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank1);
 
@@ -4746,15 +4839,15 @@ pub mod tests {
             roots_stakes
                 .into_iter()
                 .map(|(root, stake)| {
-                    let mut vote_state = VoteStateV3::default();
+                    let mut vote_state = VoteStateV4::default();
                     vote_state.root_slot = Some(root);
                     let mut vote_account = AccountSharedData::new(
                         1,
-                        VoteStateV3::size_of(),
+                        VoteStateV4::size_of(),
                         &solana_vote_program::id(),
                     );
-                    let versioned = VoteStateVersions::new_current(vote_state);
-                    VoteStateV3::serialize(&versioned, vote_account.data_as_mut_slice()).unwrap();
+                    let versioned = VoteStateVersions::new_v4(vote_state);
+                    VoteStateV4::serialize(&versioned, vote_account.data_as_mut_slice()).unwrap();
                     (
                         solana_pubkey::new_rand(),
                         (stake, VoteAccount::try_from(vote_account).unwrap()),
@@ -5351,5 +5444,61 @@ pub mod tests {
         );
         // Adding another None will noop (even though the block is already full)
         assert!(check_block_cost_limits(&bank, &tx_costs[0..1]).is_ok());
+    }
+
+    #[test]
+    fn test_calculate_alpenglow_ticks() {
+        let first_alpenglow_slot = 10;
+        let ticks_per_slot = 2;
+
+        // Slots before alpenglow don't have alpenglow ticks
+        let slot = 9;
+        let parent_slot = 8;
+        assert!(
+            calculate_alpenglow_ticks(slot, first_alpenglow_slot, parent_slot, ticks_per_slot)
+                .is_none()
+        );
+
+        // First alpenglow slot should only have 1 tick
+        let slot = first_alpenglow_slot;
+        let parent_slot = first_alpenglow_slot - 1;
+        assert_eq!(
+            calculate_alpenglow_ticks(slot, first_alpenglow_slot, parent_slot, ticks_per_slot)
+                .unwrap(),
+            1
+        );
+
+        // First alpenglow slot with skipped non-alpenglow slots
+        // need to have `ticks_per_slot` ticks per skipped slot and
+        // then one additional tick for the first alpenglow slot
+        let slot = first_alpenglow_slot;
+        let num_skipped_slots = 3;
+        let parent_slot = first_alpenglow_slot - num_skipped_slots - 1;
+        assert_eq!(
+            calculate_alpenglow_ticks(slot, first_alpenglow_slot, parent_slot, ticks_per_slot)
+                .unwrap(),
+            num_skipped_slots * ticks_per_slot + 1
+        );
+
+        // Skipped alpenglow slots don't need any additional ticks
+        let slot = first_alpenglow_slot + 2;
+        let parent_slot = first_alpenglow_slot;
+        assert_eq!(
+            calculate_alpenglow_ticks(slot, first_alpenglow_slot, parent_slot, ticks_per_slot)
+                .unwrap(),
+            1
+        );
+
+        // Skipped alpenglow slots along skipped non-alpenglow slots
+        // need to have `ticks_per_slot` ticks per skipped non-alpenglow
+        // slot only and then one additional tick for the alpenglow slot
+        let slot = first_alpenglow_slot + 2;
+        let num_skipped_non_alpenglow_slots = 4;
+        let parent_slot = first_alpenglow_slot - num_skipped_non_alpenglow_slots - 1;
+        assert_eq!(
+            calculate_alpenglow_ticks(slot, first_alpenglow_slot, parent_slot, ticks_per_slot)
+                .unwrap(),
+            num_skipped_non_alpenglow_slots * ticks_per_slot + 1
+        );
     }
 }

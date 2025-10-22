@@ -16,6 +16,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 name = "solana_perf"
 
 [features]
+agave-unstable-api = []
 dev-context-only-utils = [
     "dep:solana-clock",
     "dep:solana-keypair",
@@ -67,6 +68,7 @@ solana-system-interface = { workspace = true, optional = true }
 solana-system-transaction = { workspace = true, optional = true }
 solana-time-utils = { workspace = true }
 solana-transaction = { workspace = true, optional = true }
+solana-transaction-context = { workspace = true }
 solana-vote = { workspace = true, optional = true }
 solana-vote-program = { workspace = true, optional = true }
 
@@ -80,7 +82,7 @@ assert_matches = { workspace = true }
 bencher = { workspace = true }
 rand_chacha = { workspace = true }
 solana-logger = { workspace = true }
-solana-perf = { path = ".", features = ["dev-context-only-utils"] }
+solana-perf = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dev-dependencies]

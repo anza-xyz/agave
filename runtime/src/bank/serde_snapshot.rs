@@ -22,10 +22,10 @@ mod tests {
                 ACCOUNTS_DB_CONFIG_FOR_TESTING,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
+            ObsoleteAccounts,
         },
         solana_epoch_schedule::EpochSchedule,
         solana_genesis_config::create_genesis_config,
-        solana_nohash_hasher::BuildNoHashHasher,
         solana_pubkey::Pubkey,
         solana_stake_interface::state::Stake,
         std::{
@@ -33,7 +33,7 @@ mod tests {
             mem,
             ops::RangeFull,
             path::Path,
-            sync::{atomic::Ordering, Arc},
+            sync::{atomic::Ordering, Arc, OnceLock},
         },
         tempfile::TempDir,
         test_case::{test_case, test_matrix},
@@ -46,10 +46,7 @@ mod tests {
         storage_access: StorageAccess,
     ) -> Result<StorageAndNextAccountsFileId, AccountsFileError> {
         let storage_entries = accounts_db.get_storages(RangeFull).0;
-        let storage: AccountStorageMap = AccountStorageMap::with_capacity_and_hasher(
-            storage_entries.len(),
-            BuildNoHashHasher::default(),
-        );
+        let storage: AccountStorageMap = AccountStorageMap::with_capacity(storage_entries.len());
         let mut next_append_vec_id = 0;
         for storage_entry in storage_entries.into_iter() {
             // Copy file to new directory
@@ -68,6 +65,7 @@ mod tests {
                 storage_entry.slot(),
                 storage_entry.id(),
                 accounts_file,
+                ObsoleteAccounts::default(),
             );
             next_append_vec_id = next_append_vec_id.max(new_storage_entry.id());
             storage.insert(new_storage_entry.slot(), Arc::new(new_storage_entry));
@@ -160,9 +158,8 @@ mod tests {
             &RuntimeConfig::default(),
             None,
             None,
-            None,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -207,6 +204,7 @@ mod tests {
                 total_stake: 42,
                 node_id_to_vote_accounts: Arc::<NodeIdToVoteAccounts>::default(),
                 epoch_authorized_voters: Arc::<EpochAuthorizedVoters>::default(),
+                bls_pubkey_to_rank_map: OnceLock::new(),
             },
         );
         assert_eq!(bank.epoch_stakes.len(), 3);
@@ -246,9 +244,8 @@ mod tests {
             &RuntimeConfig::default(),
             None,
             None,
-            None,
             false,
-            Some(solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -294,7 +291,7 @@ mod tests {
         .unwrap();
 
         // Deserialize
-        let (dbank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
+        let dbank = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],
             bank_snapshots_dir.path(),
             &snapshot_archive_info,
@@ -303,11 +300,10 @@ mod tests {
             &RuntimeConfig::default(),
             None,
             None,
-            None,
             false,
             false,
             false,
-            Some(solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -352,9 +348,9 @@ mod tests {
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "CCsPFzrwkgWmiYh25nwNvBSRdgiUW45Rh6jGh1XGcNZt")
+            frozen_abi(digest = "HxmFy4D1VFmq91rp4PDAMsunMnwxqdeQ2CNyaNkStnEw")
         )]
-        #[derive(Serialize)]
+        #[derive(serde::Serialize)]
         pub struct BankAbiTestWrapper {
             #[serde(serialize_with = "wrapper")]
             bank: PhantomData<Bank>,

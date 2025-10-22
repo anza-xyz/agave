@@ -14,7 +14,10 @@ use {
     solana_metrics::*,
     solana_pubkey::Pubkey,
     solana_transaction::sanitized::SanitizedTransaction,
-    std::sync::{Arc, RwLock},
+    std::{
+        sync::{Arc, RwLock},
+        time::Instant,
+    },
 };
 #[derive(Debug)]
 pub(crate) struct AccountsUpdateNotifierImpl {
@@ -46,27 +49,29 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
         write_version: u64,
         account: &AccountForGeyser<'_>,
     ) {
-        let mut measure_all = Measure::start("geyser-plugin-notify-account-restore-all");
-        let mut measure_copy = Measure::start("geyser-plugin-copy-stored-account-info");
+        // Since the counter increment calls (below) are at Debug log level,
+        // do not get the time (Instant::now()) unless logging is at Debug level.
+        // With ~1 billion accounts on mnb, this is a non-negligible amount of work.
+        let start = log_enabled!(Level::Debug).then(Instant::now);
 
         let mut account = self.accountinfo_from_account_for_geyser(account);
         account.write_version = write_version;
-        measure_copy.stop();
+        let time_copy = log_enabled!(Level::Debug).then(|| start.unwrap().elapsed());
+
+        self.notify_plugins_of_account_update(account, slot, true);
+
+        let time_all = log_enabled!(Level::Debug).then(|| start.unwrap().elapsed());
 
         inc_new_counter_debug!(
             "geyser-plugin-copy-stored-account-info-us",
-            measure_copy.as_us() as usize,
+            time_copy.unwrap().as_micros() as usize,
             100000,
             100000
         );
 
-        self.notify_plugins_of_account_update(account, slot, true);
-
-        measure_all.stop();
-
         inc_new_counter_debug!(
             "geyser-plugin-notify-account-restore-all-us",
-            measure_all.as_us() as usize,
+            time_all.unwrap().as_micros() as usize,
             100000,
             100000
         );

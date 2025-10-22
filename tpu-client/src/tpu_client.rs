@@ -10,14 +10,12 @@ use {
             ConnectionCache, ConnectionManager, ConnectionPool, NewConnectionConfig,
         },
     },
-    solana_net_utils::bind_to_unspecified,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signature::Signature,
     solana_transaction::{versioned::VersionedTransaction, Transaction},
     solana_transaction_error::{TransportError, TransportResult},
     std::{
         collections::VecDeque,
-        net::UdpSocket,
         sync::{Arc, RwLock},
     },
 };
@@ -74,8 +72,6 @@ pub struct TpuClient<
     M, // ConnectionManager
     C, // NewConnectionConfig
 > {
-    _deprecated: UdpSocket, // TpuClient now uses the connection_cache to choose a send_socket
-    //todo: get rid of this field
     rpc_client: Arc<RpcClient>,
     tpu_client: Arc<NonblockingTpuClient<P, M, C>>,
 }
@@ -114,7 +110,7 @@ where
         transaction: &Transaction,
     ) -> TransportResult<()> {
         let wire_transaction =
-            bincode::serialize(&transaction).expect("should serialize transaction");
+            Arc::new(bincode::serialize(&transaction).expect("should serialize transaction"));
 
         let leaders = self
             .tpu_client
@@ -191,7 +187,6 @@ where
             tokio::task::block_in_place(|| rpc_client.runtime().block_on(create_tpu_client))?;
 
         Ok(Self {
-            _deprecated: bind_to_unspecified().unwrap(),
             rpc_client,
             tpu_client: Arc::new(tpu_client),
         })
@@ -214,7 +209,6 @@ where
             tokio::task::block_in_place(|| rpc_client.runtime().block_on(create_tpu_client))?;
 
         Ok(Self {
-            _deprecated: bind_to_unspecified().unwrap(),
             rpc_client,
             tpu_client: Arc::new(tpu_client),
         })

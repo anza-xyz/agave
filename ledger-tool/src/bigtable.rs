@@ -393,10 +393,10 @@ async fn shreds(
             .make_merkle_shreds_from_entries(
                 &keypair,
                 &entries,
-                true, // last_in_slot
-                None, // chained_merkle_root
-                0,    // next_shred_index
-                0,    // next_code_index
+                true,            // last_in_slot
+                Hash::default(), // chained_merkle_root
+                0,               // next_shred_index
+                0,               // next_code_index
                 &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             )
@@ -1182,9 +1182,9 @@ impl BigTableSubCommand for App<'_, '_> {
                                 .validator(is_slot)
                                 .default_value("1000")
                                 .help(
-                                    "Number of transaction signatures to query at once. \
-                                     Smaller: more responsive/lower throughput. \
-                                     Larger: less responsive/higher throughput",
+                                    "Number of transaction signatures to query at once. Smaller: \
+                                     more responsive/lower throughput. Larger: less \
+                                     responsive/higher throughput",
                                 ),
                         )
                         .arg(

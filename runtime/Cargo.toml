@@ -17,8 +17,10 @@ crate-type = ["lib"]
 name = "solana_runtime"
 
 [features]
+agave-unstable-api = []
 dev-context-only-utils = [
     "dep:solana-system-program",
+    "solana-accounts-db/dev-context-only-utils",
     "solana-svm/dev-context-only-utils",
     "solana-runtime-transaction/dev-context-only-utils",
     "solana-vote/dev-context-only-utils",
@@ -28,16 +30,17 @@ frozen-abi = [
     "dep:solana-frozen-abi-macro",
     "solana-account/frozen-abi",
     "solana-accounts-db/frozen-abi",
+    "solana-bls-signatures/frozen-abi",
     "solana-compute-budget/frozen-abi",
     "solana-cost-model/frozen-abi",
     "solana-epoch-schedule/frozen-abi",
     "solana-hard-forks/frozen-abi",
     "solana-inflation/frozen-abi",
     "solana-instruction/frozen-abi",
+    "solana-instruction-error/frozen-abi",
     "solana-perf/frozen-abi",
     "solana-program-runtime/frozen-abi",
     "solana-rent/frozen-abi",
-    "solana-rent-collector/frozen-abi",
     "solana-stake-interface/frozen-abi",
     "solana-svm/frozen-abi",
     "solana-transaction-error/frozen-abi",
@@ -45,12 +48,15 @@ frozen-abi = [
     "solana-vote/frozen-abi",
     "solana-vote-program/frozen-abi",
 ]
+shuttle-test = ["dep:shuttle"]
 
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-precompiles = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
+agave-snapshots = { workspace = true }
 agave-syscalls = { workspace = true }
+agave-votor-messages = { workspace = true }
 ahash = { workspace = true }
 aquamarine = { workspace = true }
 arc-swap = { workspace = true }
@@ -62,7 +68,7 @@ blake3 = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
 bytemuck = { workspace = true }
 crossbeam-channel = { workspace = true }
-dashmap = { workspace = true, features = ["rayon", "raw-api"] }
+dashmap = { workspace = true, features = ["rayon", "raw-api", "serde"] }
 dir-diff = { workspace = true }
 fnv = { workspace = true }
 im = { workspace = true, features = ["rayon", "serde"] }
@@ -82,19 +88,22 @@ qualifier_attr = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
 regex = { workspace = true }
+semver = { workspace = true }
 serde = { workspace = true, features = ["rc"] }
-serde_derive = { workspace = true }
 serde_json = { workspace = true }
 serde_with = { workspace = true }
+shuttle = { workspace = true, optional = true }
 solana-account = { workspace = true }
 solana-account-info = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
+solana-bls-signatures = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-bucket-map = { workspace = true }
 solana-builtins = { workspace = true }
 solana-client-traits = { workspace = true }
 solana-clock = { workspace = true }
+solana-cluster-type = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
@@ -105,7 +114,7 @@ solana-ed25519-program = { workspace = true }
 solana-epoch-info = { workspace = true }
 solana-epoch-rewards-hasher = { workspace = true }
 solana-epoch-schedule = { workspace = true }
-solana-feature-gate-interface = { workspace = true }
+solana-feature-gate-interface = { workspace = true, features = ["bincode"] }
 solana-fee = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-fee-structure = { workspace = true, features = ["serde"] }
@@ -139,7 +148,6 @@ solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true }
-solana-rent-collector = { workspace = true, features = ["serde"] }
 solana-reward-info = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sdk-ids = { workspace = true }
@@ -155,6 +163,7 @@ solana-stake-interface = { workspace = true }
 solana-stake-program = { workspace = true }
 solana-svm = { workspace = true }
 solana-svm-callback = { workspace = true }
+solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-system-program = { workspace = true, optional = true }
@@ -162,7 +171,6 @@ solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-time-utils = { workspace = true }
-solana-timings = { workspace = true }
 solana-transaction = { workspace = true, features = ["verify"] }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
@@ -191,18 +199,23 @@ rand0-7 = { package = "rand", version = "0.7" }
 rand_chacha = { workspace = true }
 solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }
 solana-builtins = { workspace = true, features = ["dev-context-only-utils"] }
+solana-instruction-error = { workspace = true }
 solana-logger = { workspace = true }
+solana-program-binaries = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-runtime = { path = ".", features = ["dev-context-only-utils"] }
+solana-runtime = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime-transaction = { workspace = true, features = [
     "dev-context-only-utils",
 ] }
 solana-sdk-ids = { workspace = true }
+solana-secp256k1-program = { workspace = true, features = ["bincode"] }
 solana-signature = { workspace = true, features = ["std"] }
+solana-stake-interface = { workspace = true, features = ["sysvar"] }
 solana-svm = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-context = { workspace = true, features = [
     "dev-context-only-utils",
 ] }
+solana-vote-program = { workspace = true, features = ["dev-context-only-utils"] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 

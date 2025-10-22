@@ -5,7 +5,7 @@ use {
         cli::{process_command, request_and_confirm_airdrop, CliCommand, CliConfig},
     },
     solana_commitment_config::CommitmentConfig,
-    solana_faucet::faucet::run_local_faucet,
+    solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
     solana_keypair::{keypair_from_seed, Keypair},
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
@@ -21,7 +21,7 @@ fn test_publish(compute_unit_price: Option<u64>) {
 
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
-    let faucet_addr = run_local_faucet(mint_keypair, None);
+    let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair);
     let test_validator =
         TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
 

@@ -1,16 +1,50 @@
 use {
     serde::{Deserialize, Deserializer, Serialize, Serializer},
-    solana_account_decoder_client_types::{token::UiTokenAmount, UiAccount},
     solana_clock::{Epoch, Slot, UnixTimestamp},
-    solana_fee_calculator::{FeeCalculator, FeeRateGovernor},
     solana_inflation::Inflation,
-    solana_transaction_error::TransactionResult as Result,
-    solana_transaction_status_client_types::{
-        ConfirmedTransactionStatusWithSignature, TransactionConfirmationStatus, UiConfirmedBlock,
-        UiInnerInstructions, UiTransactionError, UiTransactionReturnData,
-    },
+    solana_transaction_status_client_types::ConfirmedTransactionStatusWithSignature,
     std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr},
     thiserror::Error,
+};
+// we re-export types that are part of the public API,
+// and recursively re-export types that are part of those types' public APIs
+pub use {
+    serde_json::Value, // used in ParsedInstruction
+    solana_account_decoder_client_types::{
+        token::UiTokenAmount,
+        ParsedAccount, // used in UiAccountData
+        UiAccount,
+        UiAccountData,     // used in UiAccount
+        UiAccountEncoding, // used in UiAccountData
+    },
+    solana_fee_calculator::{FeeCalculator, FeeRateGovernor},
+    solana_reward_info::RewardType,    // used in Reward
+    solana_transaction as transaction, // used in EncodedTransaction (may as well re-export the whole crate)
+    solana_transaction_error::{TransactionError, TransactionResult},
+    solana_transaction_status_client_types::{
+        option_serializer::OptionSerializer, // used in UiTransactionStatusMeta
+        EncodedTransaction,                  // used in EncodedTransactionWithStatusMeta
+        EncodedTransactionWithStatusMeta,    // used in UiConfirmedBlock
+        ParsedAccount as TransactionParsedAccount, // used in UiAccountsList
+        ParsedInstruction,                   // used in UiParsedInstruction
+        Reward,                              // used in Rewards
+        Rewards,                             // used in UiConfirmedBlock
+        TransactionBinaryEncoding,           // used in EncodedTransaction
+        TransactionConfirmationStatus,
+        UiAccountsList,        // used in EncodedTransaction
+        UiCompiledInstruction, // used in UiInstruction
+        UiConfirmedBlock,
+        UiInnerInstructions,
+        UiInstruction, // used in UiInnerInstructions
+        UiLoadedAddresses,
+        UiParsedInstruction,           // used in UiInstruction
+        UiPartiallyDecodedInstruction, // used in UiParsedInstruction
+        UiReturnDataEncoding,          // used in UiTransactionReturnData
+        UiTransactionError,
+        UiTransactionReturnData,
+        UiTransactionStatusMeta, // used in EncodedTransactionWithStatusMeta
+        UiTransactionTokenBalance,
+    },
 };
 
 /// Wrapper for rpc return types of methods that provide responses both with and without context.
@@ -391,10 +425,10 @@ pub struct RpcVoteAccountInfo {
 #[serde(rename_all = "camelCase")]
 pub struct RpcSignatureConfirmation {
     pub confirmations: usize,
-    pub status: Result<()>,
+    pub status: TransactionResult<()>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcSimulateTransactionResult {
     pub err: Option<UiTransactionError>,
@@ -405,6 +439,12 @@ pub struct RpcSimulateTransactionResult {
     pub return_data: Option<UiTransactionReturnData>,
     pub inner_instructions: Option<Vec<UiInnerInstructions>>,
     pub replacement_blockhash: Option<RpcBlockhash>,
+    pub fee: Option<u64>,
+    pub pre_balances: Option<Vec<u64>>,
+    pub post_balances: Option<Vec<u64>>,
+    pub pre_token_balances: Option<Vec<UiTransactionTokenBalance>>,
+    pub post_token_balances: Option<Vec<UiTransactionTokenBalance>>,
+    pub loaded_addresses: Option<UiLoadedAddresses>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]

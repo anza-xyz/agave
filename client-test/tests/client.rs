@@ -5,7 +5,7 @@ use {
     solana_commitment_config::{CommitmentConfig, CommitmentLevel},
     solana_keypair::Keypair,
     solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path_auto_delete},
-    solana_native_token::sol_to_lamports,
+    solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_pubsub_client::{nonblocking, pubsub_client::PubsubClient},
     solana_rpc::{
@@ -47,7 +47,7 @@ use {
         time::{Duration, Instant},
     },
     systemstat::Ipv4Addr,
-    tungstenite::connect,
+    tungstenite::{client::IntoClientRequest, connect},
 };
 
 fn pubsub_addr() -> SocketAddr {
@@ -80,7 +80,7 @@ fn test_rpc_client() {
 
     let blockhash = client.get_latest_blockhash().unwrap();
 
-    let tx = system_transaction::transfer(&alice, &bob_pubkey, sol_to_lamports(20.0), blockhash);
+    let tx = system_transaction::transfer(&alice, &bob_pubkey, 20 * LAMPORTS_PER_SOL, blockhash);
     let signature = client.send_transaction(&tx).unwrap();
 
     let mut confirmed_tx = false;
@@ -106,14 +106,14 @@ fn test_rpc_client() {
             .get_balance_with_commitment(&bob_pubkey, CommitmentConfig::processed())
             .unwrap()
             .value,
-        sol_to_lamports(20.0)
+        20 * LAMPORTS_PER_SOL
     );
     assert_eq!(
         client
             .get_balance_with_commitment(&alice.pubkey(), CommitmentConfig::processed())
             .unwrap()
             .value,
-        original_alice_balance - sol_to_lamports(20.0)
+        original_alice_balance - 20 * LAMPORTS_PER_SOL
     );
 }
 
@@ -154,7 +154,7 @@ fn test_account_subscription() {
         min_context_slot: None,
     });
     let (mut client, receiver) = PubsubClient::account_subscribe(
-        &format!("ws://0.0.0.0:{}/", pubsub_addr.port()),
+        format!("ws://0.0.0.0:{}/", pubsub_addr.port()),
         &bob.pubkey(),
         config,
     )
@@ -271,7 +271,7 @@ fn test_block_subscription() {
 
     // setup PubsubClient
     let (mut client, receiver) = PubsubClient::block_subscribe(
-        &format!("ws://0.0.0.0:{}/", pubsub_addr.port()),
+        format!("ws://0.0.0.0:{}/", pubsub_addr.port()),
         RpcBlockSubscribeFilter::All,
         Some(RpcBlockSubscribeConfig {
             commitment: Some(CommitmentConfig {
@@ -355,7 +355,7 @@ fn test_program_subscription() {
 
     let program_id = Pubkey::new_unique();
     let (mut client, receiver) = PubsubClient::program_subscribe(
-        &format!("ws://0.0.0.0:{}/", pubsub_addr.port()),
+        format!("ws://0.0.0.0:{}/", pubsub_addr.port()),
         &program_id,
         config,
     )
@@ -434,7 +434,7 @@ fn test_root_subscription() {
     check_server_is_ready_or_panic(&pubsub_addr, 10, Duration::from_millis(300));
 
     let (mut client, receiver) =
-        PubsubClient::root_subscribe(&format!("ws://0.0.0.0:{}/", pubsub_addr.port())).unwrap();
+        PubsubClient::root_subscribe(format!("ws://0.0.0.0:{}/", pubsub_addr.port())).unwrap();
 
     let roots = vec![1, 2, 3];
     subscriptions.notify_roots(roots.clone());
@@ -482,8 +482,11 @@ fn test_slot_subscription() {
 
     check_server_is_ready_or_panic(&pubsub_addr, 10, Duration::from_millis(300));
 
-    let (mut client, receiver) =
-        PubsubClient::slot_subscribe(&format!("ws://0.0.0.0:{}/", pubsub_addr.port())).unwrap();
+    let client_request = format!("ws://0.0.0.0:{}/", pubsub_addr.port())
+        .into_client_request()
+        .map_err(Box::new)
+        .unwrap();
+    let (mut client, receiver) = PubsubClient::slot_subscribe(client_request).unwrap();
 
     let mut errors: Vec<(SlotInfo, SlotInfo)> = Vec::new();
 

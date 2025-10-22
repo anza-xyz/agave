@@ -10,6 +10,10 @@ use {
     solana_program_error::{ProgramError, ProgramResult},
     solana_pubkey::Pubkey,
     solana_sdk_ids::sysvar,
+    solana_stake_interface::{
+        stake_history::{StakeHistory, StakeHistoryGetEntry},
+        sysvar::stake_history::StakeHistorySysvar,
+    },
     solana_sysvar::{
         clock::Clock,
         epoch_rewards::EpochRewards,
@@ -17,8 +21,7 @@ use {
         rent::Rent,
         slot_hashes::{PodSlotHashes, SlotHashes},
         slot_history::SlotHistory,
-        stake_history::{StakeHistory, StakeHistoryGetEntry, StakeHistorySysvar},
-        Sysvar,
+        Sysvar, SysvarSerialize,
     },
 };
 
@@ -26,7 +29,7 @@ use {
 #[cfg(target_os = "solana")]
 fn sol_get_sysvar_handler<T>(dst: &mut [u8], offset: u64, length: u64) -> Result<(), ProgramError>
 where
-    T: Sysvar,
+    T: SysvarSerialize,
 {
     let sysvar_id = &T::id() as *const _ as *const u8;
     let var_addr = dst as *mut _ as *mut u8;
@@ -44,7 +47,7 @@ where
 // Double-helper arrangement is easier to write to a mutable slice.
 fn sol_get_sysvar<T>() -> Result<T, ProgramError>
 where
-    T: Sysvar,
+    T: SysvarSerialize,
 {
     #[cfg(target_os = "solana")]
     {
@@ -203,6 +206,16 @@ pub fn process_instruction(
                 let pod_slot_hashes = PodSlotHashes::fetch()?;
                 assert!(pod_slot_hashes.get(/* slot */ &0)?.is_some());
             }
+
+            Ok(())
+        }
+        Some(&4) => {
+            // Attempt to store the result in the input region instead of the stack or heap
+            unsafe {
+                solana_define_syscall::definitions::sol_get_epoch_rewards_sysvar(
+                    accounts[2].data.borrow_mut().as_mut_ptr(),
+                )
+            };
 
             Ok(())
         }

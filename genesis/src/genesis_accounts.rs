@@ -3,7 +3,8 @@ use {
         stakes::{create_and_add_stakes, StakerInfo},
         unlocks::UnlockInfo,
     },
-    solana_genesis_config::{ClusterType, GenesisConfig},
+    solana_cluster_type::ClusterType,
+    solana_genesis_config::GenesisConfig,
     solana_native_token::LAMPORTS_PER_SOL,
 };
 
@@ -228,7 +229,7 @@ fn add_stakes(
         .sum::<u64>()
 }
 
-/// Add acounts that should be present in genesis; skip for development clusters
+/// Add accounts that should be present in genesis; skip for development clusters
 pub fn add_genesis_accounts(genesis_config: &mut GenesisConfig, mut issued_lamports: u64) {
     if genesis_config.cluster_type == ClusterType::Development {
         return;

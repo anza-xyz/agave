@@ -20,7 +20,7 @@ use {
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     dashmap::{mapref::entry::Entry::Occupied, DashMap},
     solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
-    solana_genesis_config::ClusterType,
+    solana_cluster_type::ClusterType,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, ping_pong::Pong},
     solana_keypair::{signable::Signable, Keypair},
     solana_ledger::blockstore::Blockstore,
@@ -190,7 +190,6 @@ impl AncestorHashesService {
                         ancestor_hashes_response_quic_receiver,
                         PacketFlags::REPAIR,
                         response_sender,
-                        Recycler::default(),
                         exit,
                     )
                 })
@@ -258,7 +257,7 @@ impl AncestorHashesService {
                 let mut stats = AncestorHashesResponsesStats::default();
                 let mut packet_threshold = DynamicPacketToProcessThreshold::default();
                 while !exit.load(Ordering::Relaxed) {
-                    let keypair = cluster_info.keypair().clone();
+                    let keypair = cluster_info.keypair();
                     let result = Self::process_new_packets_from_channel(
                         &ancestor_hashes_request_statuses,
                         &response_receiver,
@@ -606,7 +605,7 @@ impl AncestorHashesService {
         let serve_repair = {
             ServeRepair::new(
                 repair_info.cluster_info.clone(),
-                repair_info.bank_forks.read().unwrap().sharable_root_bank(),
+                repair_info.bank_forks.read().unwrap().sharable_banks(),
                 repair_info.repair_whitelist.clone(),
                 Box::new(StandardRepairHandler::new(blockstore)),
             )
@@ -723,7 +722,7 @@ impl AncestorHashesService {
         // Keep around the last second of requests in the throttler.
         request_throttle.retain(|request_time| *request_time > (timestamp() - 1000));
 
-        let identity_keypair: &Keypair = &repair_info.cluster_info.keypair().clone();
+        let identity_keypair: &Keypair = &repair_info.cluster_info.keypair();
 
         let number_of_allowed_requests =
             MAX_ANCESTOR_HASHES_SLOT_REQUESTS_PER_SECOND.saturating_sub(request_throttle.len());
@@ -1175,7 +1174,7 @@ mod test {
     #[test]
     fn test_ancestor_hashes_service_find_epoch_slots_frozen_dead_slots() {
         let vote_simulator = VoteSimulator::new(3);
-        let cluster_slots = ClusterSlots::default();
+        let cluster_slots = ClusterSlots::default_for_tests();
         let mut dead_slot_pool = HashSet::new();
         let mut repairable_dead_slot_pool = HashSet::new();
         let root_bank = vote_simulator.bank_forks.read().unwrap().root_bank();
@@ -1272,11 +1271,7 @@ mod test {
             let responder_serve_repair = {
                 ServeRepair::new(
                     Arc::new(cluster_info),
-                    vote_simulator
-                        .bank_forks
-                        .read()
-                        .unwrap()
-                        .sharable_root_bank(),
+                    vote_simulator.bank_forks.read().unwrap().sharable_banks(),
                     Arc::<RwLock<HashSet<_>>>::default(), // repair whitelist
                     Box::new(StandardRepairHandler::new(blockstore.clone())),
                 )
@@ -1383,7 +1378,7 @@ mod test {
             let requester_serve_repair = {
                 ServeRepair::new(
                     requester_cluster_info.clone(),
-                    bank_forks.read().unwrap().sharable_root_bank(),
+                    bank_forks.read().unwrap().sharable_banks(),
                     repair_whitelist.clone(),
                     Box::new(StandardRepairHandler::new(blockstore)),
                 )
@@ -1392,7 +1387,7 @@ mod test {
             let repair_info = RepairInfo {
                 bank_forks,
                 cluster_info: requester_cluster_info,
-                cluster_slots: Arc::new(ClusterSlots::default()),
+                cluster_slots: Arc::new(ClusterSlots::default_for_tests()),
                 epoch_schedule,
                 ancestor_duplicate_slots_sender,
                 repair_validators: None,
@@ -1919,7 +1914,7 @@ mod test {
         {
             let mut w_bank_forks = bank_forks.write().unwrap();
             w_bank_forks.insert(new_root_bank);
-            w_bank_forks.set_root(new_root_slot, None, None).unwrap();
+            w_bank_forks.set_root(new_root_slot, None, None);
         }
         popular_pruned_slot_pool.insert(dead_duplicate_confirmed_slot);
         assert!(!dead_slot_pool.is_empty());

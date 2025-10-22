@@ -1,6 +1,6 @@
 use {
     crate::compute_commit,
-    serde_derive::{Deserialize, Serialize},
+    serde::{Deserialize, Serialize},
     solana_sanitize::Sanitize,
     std::{convert::TryInto, fmt},
 };

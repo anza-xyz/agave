@@ -8,7 +8,7 @@ use {
     arrayvec::ArrayVec,
     bincode::serialize,
     rand::Rng,
-    serde::de::{Deserialize, Deserializer},
+    serde::{de::Deserializer, Deserialize, Serialize},
     solana_hash::Hash,
     solana_keypair::{signable::Signable, Keypair},
     solana_packet::PACKET_DATA_SIZE,
@@ -208,12 +208,6 @@ impl CrdsValue {
             .unwrap()
             .unwrap()
     }
-
-    /// Returns true if, regardless of prunes, this crds-value
-    /// should be pushed to the receiving node.
-    pub(crate) fn should_force_push(&self, peer: &Pubkey) -> bool {
-        matches!(self.data, CrdsData::NodeInstance(_)) && &self.pubkey() == peer
-    }
 }
 
 // Manual implementation of Deserialize for CrdsValue in order to populate
@@ -247,7 +241,7 @@ impl<'de> Deserialize<'de> for CrdsValue {
 mod test {
     use {
         super::*,
-        crate::crds_data::{LowestSlot, NodeInstance, Vote},
+        crate::crds_data::{LowestSlot, Vote},
         bincode::deserialize,
         rand0_7::{Rng, SeedableRng},
         rand_chacha0_2::ChaChaRng,
@@ -341,26 +335,6 @@ mod test {
     }
 
     #[test]
-    fn test_should_force_push() {
-        let mut rng = rand::thread_rng();
-        let pubkey = Pubkey::new_unique();
-        assert!(
-            !CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_rand(
-                &mut rng,
-                Some(pubkey)
-            )))
-            .should_force_push(&pubkey)
-        );
-        let node = CrdsValue::new_unsigned(CrdsData::NodeInstance(NodeInstance::new(
-            &mut rng,
-            pubkey,
-            timestamp(),
-        )));
-        assert!(node.should_force_push(&pubkey));
-        assert!(!node.should_force_push(&Pubkey::new_unique()));
-    }
-
-    #[test]
     fn test_serialize_round_trip() {
         let mut rng = ChaChaRng::from_seed(
             bs58::decode("4nHgVgCvVaHnsrg4dYggtvWYYgV3JbeyiRBWupPMt3EG")
@@ -371,7 +345,7 @@ mod test {
         );
         let values: Vec<CrdsValue> = vec![
             {
-                let keypair = Keypair::generate(&mut rng);
+                let keypair = Keypair::new_from_array(rng.gen());
                 let lockouts: [Lockout; 4] = [
                     Lockout::new_with_confirmation_count(302_388_991, 11),
                     Lockout::new_with_confirmation_count(302_388_995, 7),
@@ -387,11 +361,11 @@ mod test {
                 };
                 let vote = new_tower_sync_transaction(
                     tower_sync,
-                    Hash::new_from_array(rng.gen()), // blockhash
-                    &keypair,                        // node_keypair
-                    &Keypair::generate(&mut rng),    // vote_keypair
-                    &Keypair::generate(&mut rng),    // authorized_voter_keypair
-                    None,                            // switch_proof_hash
+                    Hash::new_from_array(rng.gen()),     // blockhash
+                    &keypair,                            // node_keypair
+                    &Keypair::new_from_array(rng.gen()), // vote_keypair
+                    &Keypair::new_from_array(rng.gen()), // authorized_voter_keypair
+                    None,                                // switch_proof_hash
                 );
                 let vote = Vote::new(
                     keypair.pubkey(),
@@ -402,7 +376,7 @@ mod test {
                 CrdsValue::new(CrdsData::Vote(5, vote), &keypair)
             },
             {
-                let keypair = Keypair::generate(&mut rng);
+                let keypair = Keypair::new_from_array(rng.gen());
                 let lockouts: [Lockout; 3] = [
                     Lockout::new_with_confirmation_count(302_410_500, 9),
                     Lockout::new_with_confirmation_count(302_410_505, 5),
@@ -417,11 +391,11 @@ mod test {
                 };
                 let vote = new_tower_sync_transaction(
                     tower_sync,
-                    Hash::new_from_array(rng.gen()), // blockhash
-                    &keypair,                        // node_keypair
-                    &Keypair::generate(&mut rng),    // vote_keypair
-                    &Keypair::generate(&mut rng),    // authorized_voter_keypair
-                    None,                            // switch_proof_hash
+                    Hash::new_from_array(rng.gen()),     // blockhash
+                    &keypair,                            // node_keypair
+                    &Keypair::new_from_array(rng.gen()), // vote_keypair
+                    &Keypair::new_from_array(rng.gen()), // authorized_voter_keypair
+                    None,                                // switch_proof_hash
                 );
                 let vote = Vote::new(
                     keypair.pubkey(),
@@ -436,7 +410,7 @@ mod test {
         // Serialized bytes are fixed and should never change.
         assert_eq!(
             solana_sha256_hasher::hash(&bytes),
-            Hash::from_str("7gtcoafccWE964njbs2bA1QuVFeV34RaoY781yLx2A8N").unwrap()
+            Hash::from_str("BTg284TRo5S5PpbA9YZaab5rKeoLNAj7arwadvG6XVLT").unwrap()
         );
         // serialize -> deserialize should round trip.
         assert_eq!(

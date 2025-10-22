@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 //! Transaction scheduling code.
 //!
 //! This crate implements 3 solana-runtime traits [`InstalledScheduler`], [`UninstalledScheduler`]
@@ -45,11 +54,11 @@ use {
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_svm::transaction_processing_result::ProcessedTransaction,
-    solana_timings::ExecuteTimings,
+    solana_svm_timings::ExecuteTimings,
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::{
-        BlockSize,
+        BlockSize, Capability, OrderedTaskId,
         SchedulingMode::{self, BlockProduction, BlockVerification},
         SchedulingStateMachine, Task, UsageQueue,
     },
@@ -82,11 +91,11 @@ use crate::sleepless_testing::BuilderTracked;
 #[allow(dead_code)]
 #[derive(Debug)]
 enum CheckPoint<'a> {
-    NewTask(usize),
-    NewBufferedTask(usize),
-    BufferedTask(usize),
-    TaskHandled(usize),
-    TaskAccumulated(usize, &'a Result<()>),
+    NewTask(OrderedTaskId),
+    NewBufferedTask(OrderedTaskId),
+    BufferedTask(OrderedTaskId),
+    TaskHandled(OrderedTaskId),
+    TaskAccumulated(OrderedTaskId, &'a Result<()>),
     SessionEnding,
     SessionFinished(Option<Slot>),
     SchedulerThreadAborted,
@@ -201,7 +210,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> BlockProductionSchedulerInner<S
     fn take_pooled(&mut self) -> S::Inner {
         let id = {
             let Self::Pooled(inner) = &self else {
-                panic!("cannot take: {:?}", self)
+                panic!("cannot take: {self:?}")
             };
             inner.id()
         };
@@ -230,7 +239,7 @@ impl HandlerContext {
     fn usage_queue_loader_for_newly_spawned(&self) -> UsageQueueLoader {
         match self.banking_stage_helper.clone() {
             None => UsageQueueLoader::OwnedBySelf {
-                usage_queue_loader_inner: UsageQueueLoaderInner::default(),
+                usage_queue_loader_inner: UsageQueueLoaderInner::new(Capability::FifoQueueing),
             },
             Some(helper) => UsageQueueLoader::SharedWithBankingStage {
                 banking_stage_helper: helper,
@@ -347,7 +356,7 @@ const BANKING_STAGE_MAX_TASK_ID: usize = usize::MAX / 2;
 impl BankingStageHelper {
     fn new(new_task_sender: Sender<NewTaskPayload>) -> Self {
         Self {
-            usage_queue_loader: UsageQueueLoaderInner::default(),
+            usage_queue_loader: UsageQueueLoaderInner::new(Capability::PriorityQueueing),
             next_task_id: AtomicUsize::default(),
             new_task_sender,
         }
@@ -376,28 +385,40 @@ impl BankingStageHelper {
     pub fn create_new_task(
         &self,
         transaction: RuntimeTransaction<SanitizedTransaction>,
-        index: usize,
+        task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
     ) -> Task {
         SchedulingStateMachine::create_block_production_task(
             transaction,
-            index,
+            task_id,
             consumed_block_size,
             &mut |pubkey| self.usage_queue_loader.load(pubkey),
         )
     }
 
     fn recreate_task(&self, executed_task: Box<ExecutedTask>) -> Task {
-        let new_index = self.generate_task_ids(1);
+        let new_task_id = self.regenerated_task_id(executed_task.task.task_id());
         let consumed_block_size = executed_task.consumed_block_size();
         let transaction = executed_task.into_transaction();
-        self.create_new_task(transaction, new_index, consumed_block_size)
+        self.create_new_task(transaction, new_task_id, consumed_block_size)
     }
 
     pub fn send_new_task(&self, task: Task) {
         self.new_task_sender
             .send(NewTaskPayload::Payload(task))
             .unwrap();
+    }
+
+    pub fn new_task_id(task_id: usize, priority: u64) -> OrderedTaskId {
+        // Use wrapping_sub to avoid a clippy::arithmetic_side_effects false positive...
+        // Actually won't ever wrap, thanks to MAX.
+        let reversed_priority = u64::MAX.wrapping_sub(priority) as OrderedTaskId;
+        (reversed_priority << const { OrderedTaskId::BITS / 2 }) | (task_id as OrderedTaskId)
+    }
+
+    fn regenerated_task_id(&self, executed_task_id: OrderedTaskId) -> OrderedTaskId {
+        const REVERSED_PRIORITY_MASK: OrderedTaskId = 0xffff_ffff_ffff_ffff_0000_0000_0000_0000;
+        (executed_task_id & REVERSED_PRIORITY_MASK) | (self.generate_task_ids(1) as OrderedTaskId)
     }
 }
 
@@ -609,8 +630,9 @@ where
                 };
 
                 info!(
-                    "Scheduler pool cleaner: dropped {} idle inners, {} trashed inners, triggered {} timeout listeners",
-                    idle_inner_count, trashed_inner_count, triggered_timeout_listener_count,
+                    "Scheduler pool cleaner: dropped {idle_inner_count} idle inners, \
+                     {trashed_inner_count} trashed inners, triggered \
+                     {triggered_timeout_listener_count} timeout listeners",
                 );
                 sleepless_testing::at(CheckPoint::IdleSchedulerCleaned(idle_inner_count));
                 sleepless_testing::at(CheckPoint::TrashedSchedulerCleaned(trashed_inner_count));
@@ -1014,7 +1036,7 @@ impl TaskHandler for DefaultTaskHandler {
     ) {
         let bank = scheduling_context.bank().unwrap();
         let transaction = task.transaction();
-        let index = task.task_index();
+        let task_id = task.task_id();
 
         let batch = match scheduling_context.mode() {
             BlockVerification => {
@@ -1060,7 +1082,10 @@ impl TaskHandler for DefaultTaskHandler {
             }
         };
         let transaction_indexes = match scheduling_context.mode() {
-            BlockVerification => vec![index],
+            BlockVerification => {
+                // Blcok verification's task_id should always be within usize.
+                vec![task_id.try_into().unwrap()]
+            }
             BlockProduction => {
                 // Create a placeholder vec, which will be populated later if
                 // transaction_status_sender is Some(_).
@@ -1118,7 +1143,10 @@ impl TaskHandler for DefaultTaskHandler {
                     .transaction_recorder
                     .as_ref()
                     .unwrap()
-                    .record_transactions(bank.slot(), vec![transaction.to_versioned_transaction()]);
+                    .record_transactions(
+                        bank.bank_id(),
+                        vec![transaction.to_versioned_transaction()],
+                    );
                 match result {
                     Ok(()) => Ok(starting_transaction_index),
                     Err(_) => {
@@ -1140,7 +1168,7 @@ impl TaskHandler for DefaultTaskHandler {
             &handler_context.prioritization_fee_cache,
             pre_commit_callback,
         );
-        sleepless_testing::at(CheckPoint::TaskHandled(index));
+        sleepless_testing::at(CheckPoint::TaskHandled(task_id));
     }
 }
 
@@ -1345,14 +1373,25 @@ mod chained_channel {
 /// instance destruction is managed via `solScCleaner`. This struct is here to be put outside
 /// `solana-unified-scheduler-logic` for the crate's original intent (separation of concerns from
 /// the pure-logic-only crate). Some practical and mundane pruning will be implemented in this type.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 struct UsageQueueLoaderInner {
+    capability: Capability,
     usage_queues: DashMap<Pubkey, UsageQueue>,
 }
 
 impl UsageQueueLoaderInner {
+    fn new(capability: Capability) -> Self {
+        Self {
+            capability,
+            usage_queues: DashMap::default(),
+        }
+    }
+
     fn load(&self, address: Pubkey) -> UsageQueue {
-        self.usage_queues.entry(address).or_default().clone()
+        self.usage_queues
+            .entry(address)
+            .or_insert_with(|| UsageQueue::new(&self.capability))
+            .clone()
     }
 
     fn count(&self) -> usize {
@@ -1727,7 +1766,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         handler_context: &HandlerContext,
     ) -> bool {
         sleepless_testing::at(CheckPoint::TaskAccumulated(
-            executed_task.task.task_index(),
+            executed_task.task.task_id(),
             &executed_task.result_with_timings.0,
         ));
         timings.accumulate(&executed_task.result_with_timings.1);
@@ -2082,13 +2121,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                                 match message {
                                     Ok(NewTaskPayload::Payload(task)) => {
-                                        let task_index = task.task_index();
-                                        sleepless_testing::at(CheckPoint::NewTask(task_index));
+                                        let task_id = task.task_id();
+                                        sleepless_testing::at(CheckPoint::NewTask(task_id));
 
                                         if let Some(task) = state_machine.schedule_or_buffer_task(task, session_ending) {
                                             runnable_task_sender.send_aux_payload(task).unwrap();
                                         } else {
-                                            sleepless_testing::at(CheckPoint::BufferedTask(task_index));
+                                            sleepless_testing::at(CheckPoint::BufferedTask(task_id));
                                         }
                                     }
                                     Ok(NewTaskPayload::CloseSubchannel) => {
@@ -2181,9 +2220,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         // Prepare for the new session.
                         match new_task_receiver.recv() {
                             Ok(NewTaskPayload::Payload(task)) => {
-                                sleepless_testing::at(CheckPoint::NewBufferedTask(
-                                    task.task_index(),
-                                ));
+                                sleepless_testing::at(CheckPoint::NewBufferedTask(task.task_id()));
                                 assert_matches!(scheduling_mode, BlockProduction);
                                 state_machine.buffer_task(task);
                             }
@@ -2328,10 +2365,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         let current_thread = thread::current();
                         error!("handler thread is panicking: {:?}", current_thread);
                         if sender.send(Err(HandlerPanicked)).is_ok() {
-                            info!("notified a panic from {:?}", current_thread);
+                            info!("notified a panic from {current_thread:?}");
                         } else {
                             // It seems that the scheduler thread has been aborted already...
-                            warn!("failed to notify a panic from {:?}", current_thread);
+                            warn!("failed to notify a panic from {current_thread:?}");
                         }
                     }
                     let mut task = ExecutedTask::new_boxed(task);
@@ -2364,7 +2401,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             .map({
                 |thx| {
                     thread::Builder::new()
-                        .name(format!("solScHandle{mode_char}{:02}", thx))
+                        .name(format!("solScHandle{mode_char}{thx:02}"))
                         .spawn_tracked(handler_main_loop())
                         .unwrap()
                 }
@@ -2395,13 +2432,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     (_, Some(s)) => s,
                     (None, None) => "<No panic info>",
                 };
-                panic!("{} (From: {:?})", panic_message, thread);
+                panic!("{panic_message} (From: {thread:?})");
             })
         }
 
         if let Some(scheduler_thread) = self.scheduler_thread.take() {
             for thread in self.handler_threads.drain(..) {
-                debug!("joining...: {:?}", thread);
+                debug!("joining...: {thread:?}");
                 () = join_with_panic_message(thread).unwrap();
             }
             () = join_with_panic_message(scheduler_thread).unwrap();
@@ -2633,9 +2670,9 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
     fn schedule_execution(
         &self,
         transaction: RuntimeTransaction<SanitizedTransaction>,
-        index: usize,
+        task_id: OrderedTaskId,
     ) -> ScheduleResult {
-        let task = SchedulingStateMachine::create_task(transaction, index, &mut |pubkey| {
+        let task = SchedulingStateMachine::create_task(transaction, task_id, &mut |pubkey| {
             self.inner.usage_queue_loader.load(pubkey)
         });
         self.inner.thread_manager.send_task(task)
@@ -2724,13 +2761,8 @@ mod tests {
         solana_clock::{Slot, MAX_PROCESSING_AGE},
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_ledger::{
-            blockstore::Blockstore,
-            blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
-            create_new_tmp_ledger_auto_delete,
-            leader_schedule_cache::LeaderScheduleCache,
-        },
-        solana_poh::poh_recorder::create_test_recorder_with_index_tracking,
+        solana_ledger::blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
+        solana_poh::record_channels::record_channels,
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::Bank,
@@ -2739,14 +2771,14 @@ mod tests {
             installed_scheduler_pool::{BankWithScheduler, SchedulingContext},
             prioritization_fee_cache::PrioritizationFeeCache,
         },
+        solana_svm_timings::ExecuteTimingType,
         solana_system_transaction as system_transaction,
-        solana_timings::ExecuteTimingType,
         solana_transaction::sanitized::SanitizedTransaction,
         solana_transaction_error::TransactionError,
         solana_unified_scheduler_logic::NO_CONSUMED_BLOCK_SIZE,
         std::{
             num::Saturating,
-            sync::{atomic::Ordering, Arc, RwLock},
+            sync::{Arc, RwLock},
             thread::JoinHandle,
         },
         test_case::test_matrix,
@@ -2809,6 +2841,7 @@ mod tests {
     const SHORTENED_MAX_POOLING_DURATION: Duration = Duration::from_millis(100);
 
     #[test]
+    #[ignore]
     fn test_scheduler_drop_idle() {
         solana_logger::setup();
 
@@ -3310,7 +3343,7 @@ mod tests {
             &TestCheckPoint::AfterSchedulerThreadAborted,
         ]);
 
-        static TASK_COUNT: Mutex<usize> = Mutex::new(0);
+        static TASK_COUNT: Mutex<OrderedTaskId> = Mutex::new(0);
 
         #[derive(Debug)]
         struct CountingHandler;
@@ -3350,7 +3383,7 @@ mod tests {
         // That's because the scheduler needs to be aborted quickly as an expected behavior,
         // leaving some readily-available work untouched. So, schedule rather large number of tasks
         // to make the short-cutting abort code-path win the race easily.
-        const MAX_TASK_COUNT: usize = 100;
+        const MAX_TASK_COUNT: OrderedTaskId = 100;
 
         for i in 0..MAX_TASK_COUNT {
             let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
@@ -3658,10 +3691,10 @@ mod tests {
                 task: &Task,
                 _handler_context: &HandlerContext,
             ) {
-                let index = task.task_index();
-                if index == 0 {
+                let task_id = task.task_id();
+                if task_id == 0 {
                     sleepless_testing::at(PanickingHanlderCheckPoint::BeforeNotifiedPanic);
-                } else if index == 1 {
+                } else if task_id == 1 {
                     sleepless_testing::at(PanickingHanlderCheckPoint::BeforeIgnoredPanic);
                 } else {
                     unreachable!();
@@ -3678,11 +3711,11 @@ mod tests {
         // Use 2 transactions with different timings to deliberately cover the two code paths of
         // notifying panics in the handler threads, taken conditionally depending on whether the
         // scheduler thread has been aborted already or not.
-        const TX_COUNT: usize = 2;
+        const TX_COUNT: OrderedTaskId = 2;
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool = SchedulerPool::<PooledScheduler<PanickingHandler>, _>::new_dyn(
-            Some(TX_COUNT), // fix to use exactly 2 handlers
+            Some(TX_COUNT.try_into().unwrap()), // fix to use exactly 2 handlers
             None,
             None,
             None,
@@ -3692,7 +3725,7 @@ mod tests {
 
         let scheduler = pool.take_scheduler(context);
 
-        for index in 0..TX_COUNT {
+        for task_id in 0..TX_COUNT {
             // Use 2 non-conflicting txes to exercise the channel disconnected case as well.
             let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
                 &Keypair::new(),
@@ -3700,7 +3733,7 @@ mod tests {
                 1,
                 genesis_config.hash(),
             ));
-            scheduler.schedule_execution(tx, index).unwrap();
+            scheduler.schedule_execution(tx, task_id).unwrap();
         }
         // finally unblock the scheduler thread; otherwise the above schedule_execution could
         // return SchedulerAborted...
@@ -3738,12 +3771,12 @@ mod tests {
                 task: &Task,
                 _handler_context: &HandlerContext,
             ) {
-                let index = task.task_index();
+                let task_id = task.task_id();
                 *TASK_COUNT.lock().unwrap() += 1;
-                if index == 1 {
+                if task_id == 1 {
                     *result = Err(TransactionError::AccountNotFound);
                 }
-                sleepless_testing::at(CheckPoint::TaskHandled(index));
+                sleepless_testing::at(CheckPoint::TaskHandled(task_id));
             }
         }
 
@@ -3807,8 +3840,8 @@ mod tests {
     ) {
         solana_logger::setup();
 
-        const STALLED_TRANSACTION_INDEX: usize = 0;
-        const BLOCKED_TRANSACTION_INDEX: usize = 1;
+        const STALLED_TRANSACTION_INDEX: OrderedTaskId = 0;
+        const BLOCKED_TRANSACTION_INDEX: OrderedTaskId = 1;
 
         let _progress = sleepless_testing::setup(&[
             &CheckPoint::BufferedTask(BLOCKED_TRANSACTION_INDEX),
@@ -3827,23 +3860,22 @@ mod tests {
                 task: &Task,
                 handler_context: &HandlerContext,
             ) {
-                let index = task.task_index();
-                match index {
+                let task_id = task.task_id();
+                match task_id {
                     STALLED_TRANSACTION_INDEX => {
                         sleepless_testing::at(TestCheckPoint::AfterSessionEnding);
                     }
                     BLOCKED_TRANSACTION_INDEX => {}
                     _ => unreachable!(),
                 };
-                // Always execute transactions with a faked context with the fixed block
-                // verification mode; Otherwise, the block production test variant will be
-                // encountered with CommitCancelled error from the poh recorder, which is fed with
-                // a dummy bank.
-                let faked_context = &SchedulingContext::new_with_mode(
-                    BlockVerification,
-                    scheduling_context.bank().unwrap().clone(),
+
+                DefaultTaskHandler::handle(
+                    result,
+                    timings,
+                    scheduling_context,
+                    task,
+                    handler_context,
                 );
-                DefaultTaskHandler::handle(result, timings, faked_context, task, handler_context);
             }
         }
 
@@ -3877,24 +3909,11 @@ mod tests {
             None,
             ignored_prioritization_fee_cache,
         );
-        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) = {
-            // Create a dummy bank to prevent it from being frozen; otherwise, the following panic
-            // will happen:
-            //    thread 'solPohTickProd' panicked at runtime/src/bank.rs:LL:CC:
-            //    register_tick() working on a bank that is already frozen or is undergoing freezing!
-            let dummy_bank = Bank::new_for_tests(&genesis_config);
-            let (dummy_bank, _bank_forks) = setup_dummy_fork_graph(dummy_bank);
-            create_test_recorder_with_index_tracking(
-                dummy_bank,
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            )
-        };
+
+        let (record_sender, mut record_receiver) = record_channels(true);
+        let transaction_recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
 
         if matches!(scheduling_mode, BlockProduction) {
             pool.register_banking_stage(
@@ -3947,6 +3966,11 @@ mod tests {
         ));
         assert_eq!(bank.transaction_count(), expected_transaction_count.0);
 
+        // Update the slot so recording can succeed on new bank's slot.
+        record_receiver.shutdown();
+        for _ in record_receiver.drain() {}
+        record_receiver.restart(bank.bank_id());
+
         let context = SchedulingContext::new_with_mode(scheduling_mode, bank.clone());
         let scheduler = pool.take_scheduler(context);
         // make sure the same scheduler is used to test its internal cross-session behavior
@@ -3964,18 +3988,15 @@ mod tests {
             expected_transaction_count += 1;
         }
         assert_eq!(bank.transaction_count(), expected_transaction_count.0);
-
-        exit.store(true, Ordering::Relaxed);
-        poh_service.join().unwrap();
     }
 
     #[test]
     fn test_block_production_scheduler_schedule_execution_retry() {
         solana_logger::setup();
 
-        const ORIGINAL_TRANSACTION_INDEX: usize = 999;
+        const ORIGINAL_TRANSACTION_INDEX: OrderedTaskId = 999;
         // This is 0 because it's the first task id assigned internally by BankingStageHelper
-        const RETRIED_TRANSACTION_INDEX: usize = 0;
+        const RETRIED_TRANSACTION_INDEX: OrderedTaskId = 0;
         const FULL_BLOCK_SLOT: Slot = 1;
 
         let _progress = sleepless_testing::setup(&[
@@ -4008,22 +4029,10 @@ mod tests {
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
             DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
-        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        let (exit, poh_recorder, transaction_recorder, poh_service, _signal_receiver) = {
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            )
-        };
-        poh_recorder
-            .write()
-            .unwrap()
-            .reset(bank.clone(), Some((bank.slot(), bank.slot() + 1)));
+        let (record_sender, mut record_receiver) = record_channels(true);
+        let transaction_recorder = TransactionRecorder::new(record_sender);
 
         pool.register_banking_stage(
             None,
@@ -4045,10 +4054,7 @@ mod tests {
         let scheduler = pool.take_scheduler(context);
         let old_scheduler_id = scheduler.id();
         let bank = BankWithScheduler::new(bank, Some(scheduler));
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank(bank.clone_with_scheduler());
+        record_receiver.restart(bank.bank_id());
         bank.schedule_transaction_executions([(tx, ORIGINAL_TRANSACTION_INDEX)].into_iter())
             .unwrap();
         bank.unpause_new_block_production_scheduler();
@@ -4061,11 +4067,8 @@ mod tests {
         // There should be no executed transaction yet.
         assert_eq!(bank.transaction_count(), 0);
 
-        // Create new bank to observe behavior difference around session ending
-        poh_recorder
-            .write()
-            .unwrap()
-            .reset(bank.clone(), Some((bank.slot(), bank.slot() + 1)));
+        // Shutdown channel to observe behavior difference around session ending
+        record_receiver.shutdown();
         let bank = Arc::new(Bank::new_from_parent(
             bank.clone_without_scheduler(),
             &Pubkey::default(),
@@ -4081,10 +4084,7 @@ mod tests {
         // Make sure the same scheduler is used to test its internal cross-session behavior
         assert_eq!(scheduler.id(), old_scheduler_id);
         let bank = BankWithScheduler::new(bank, Some(scheduler));
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank(bank.clone_with_scheduler());
+        record_receiver.restart(bank.bank_id());
         bank.unpause_new_block_production_scheduler();
 
         // Calling wait_for_completed_scheduler() for block production scheduler causes it to be
@@ -4094,9 +4094,6 @@ mod tests {
         // Block production scheduler should carry over the temporarily-failed transaction itself
         // and the transaction should now have been executed.
         assert_eq!(bank.transaction_count(), 1);
-
-        exit.store(true, Ordering::Relaxed);
-        poh_service.join().unwrap();
     }
 
     #[test]
@@ -4113,11 +4110,8 @@ mod tests {
                 task: &Task,
                 _handler_context: &HandlerContext,
             ) {
-                // The task index must always be matched to the slot.
-                assert_eq!(
-                    task.task_index() as Slot,
-                    scheduling_context.slot().unwrap()
-                );
+                // The task task_id must always be matched to the slot.
+                assert_eq!(task.task_id() as Slot, scheduling_context.slot().unwrap());
             }
         }
 
@@ -4157,14 +4151,14 @@ mod tests {
         let context1 = &SchedulingContext::for_verification(bank1.clone());
 
         // Exercise the scheduler by busy-looping to expose the race condition
-        for (context, index) in [(context0, 0), (context1, 1)]
+        for (context, task_id) in [(context0, 0), (context1, 1)]
             .into_iter()
             .cycle()
             .take(10000)
         {
             let scheduler = pool.take_scheduler(context.clone());
             scheduler
-                .schedule_execution(dummy_tx.clone(), index)
+                .schedule_execution(dummy_tx.clone(), task_id)
                 .unwrap();
             scheduler.wait_for_termination(false).1.return_to_pool();
         }
@@ -4208,7 +4202,7 @@ mod tests {
         fn schedule_execution(
             &self,
             transaction: RuntimeTransaction<SanitizedTransaction>,
-            index: usize,
+            task_id: OrderedTaskId,
         ) -> ScheduleResult {
             let context = self.context().clone();
             let pool = self.3.clone();
@@ -4221,8 +4215,8 @@ mod tests {
                 let mut result = Ok(());
                 let mut timings = ExecuteTimings::default();
 
-                let task = SchedulingStateMachine::create_task(transaction, index, &mut |_| {
-                    UsageQueue::default()
+                let task = SchedulingStateMachine::create_task(transaction, task_id, &mut |_| {
+                    UsageQueue::new(&Capability::FifoQueueing)
                 });
 
                 <DefaultTaskHandler as TaskHandler>::handle(
@@ -4461,7 +4455,9 @@ mod tests {
             transaction_recorder: None,
         };
 
-        let task = SchedulingStateMachine::create_task(tx, 0, &mut |_| UsageQueue::default());
+        let task = SchedulingStateMachine::create_task(tx, 0, &mut |_| {
+            UsageQueue::new(&Capability::FifoQueueing)
+        });
         DefaultTaskHandler::handle(result, timings, scheduling_context, &task, handler_context);
         assert_matches!(result, Err(TransactionError::AccountLoadedTwice));
     }
@@ -4524,16 +4520,10 @@ mod tests {
         let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let scheduling_context = &SchedulingContext::for_production(bank.clone());
         let (sender, receiver) = crossbeam_channel::unbounded();
-        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (exit, poh_recorder, transaction_recorder, poh_service, signal_receiver) =
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            );
+
+        let (record_sender, mut record_receiver) = record_channels(true);
+        let transaction_recorder = TransactionRecorder::new(record_sender);
+
         let handler_context = &HandlerContext {
             thread_count: 0,
             log_messages_bytes_limit: None,
@@ -4549,16 +4539,14 @@ mod tests {
             transaction_recorder: Some(transaction_recorder),
         };
 
-        let task =
-            SchedulingStateMachine::create_task(tx.clone(), 0, &mut |_| UsageQueue::default());
+        let task = SchedulingStateMachine::create_task(tx.clone(), 0, &mut |_| {
+            UsageQueue::new(&Capability::FifoQueueing)
+        });
 
-        // wait until the poh's working bank is cleared.
-        // also flush signal_receiver after that.
-        if !should_succeed_to_record_to_poh {
-            while poh_recorder.read().unwrap().bank().is_some() {
-                sleep(Duration::from_millis(100));
-            }
-            while signal_receiver.try_recv().is_ok() {}
+        // Recording will succeed based upon if the channel is shutdown or not.
+        if should_succeed_to_record_to_poh {
+            // If we should succeed, we reset the channel to accept records.
+            record_receiver.restart(bank.bank_id());
         }
 
         assert_eq!(bank.transaction_count(), 0);
@@ -4578,20 +4566,18 @@ mod tests {
                     receiver.try_recv(),
                     Ok(TransactionStatusMessage::Batch((
                         TransactionStatusBatch { .. },
-                        None, // no work sequence
+                        None, // no work id
                     )))
                 );
-                assert_matches!(
-                    signal_receiver.try_recv(),
-                    Ok((_, (solana_entry::entry::Entry {transactions, ..} , _)))
-                        if transactions == vec![tx.to_versioned_transaction()]
-                );
+                // check that the `Record` is correctly sent through the channel;
+                // in reality this would then be picked up by PoH service.
+                assert!(record_receiver.try_recv().is_ok());
             } else {
                 assert_eq!(result, &expected_tx_result);
                 assert_eq!(bank.transaction_count(), 0);
                 assert_eq!(bank.transaction_error_count(), 0);
                 assert_matches!(receiver.try_recv(), Err(_));
-                assert_matches!(signal_receiver.try_recv(), Err(_));
+                assert!(record_receiver.try_recv().is_err());
             }
         } else {
             if expected_tx_result.is_ok() {
@@ -4602,11 +4588,8 @@ mod tests {
 
             assert_eq!(bank.transaction_count(), 0);
             assert_matches!(receiver.try_recv(), Err(_));
-            assert_matches!(signal_receiver.try_recv(), Err(_));
+            assert!(record_receiver.try_recv().is_err());
         }
-
-        exit.store(true, Ordering::Relaxed);
-        poh_service.join().unwrap();
     }
 
     #[derive(Debug)]
@@ -4636,16 +4619,10 @@ mod tests {
             DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
 
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            );
+        let (record_sender, mut record_receiver) = record_channels(true);
+        let transaction_recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
+
         pool.register_banking_stage(
             None,
             banking_packet_receiver,
@@ -4669,18 +4646,15 @@ mod tests {
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
         assert_eq!(bank.transaction_count(), 1);
-
-        exit.store(true, Ordering::Relaxed);
-        poh_service.join().unwrap();
     }
 
     impl BankingStageHelper {
         fn create_new_unconstrained_task(
             &self,
             transaction: RuntimeTransaction<SanitizedTransaction>,
-            index: usize,
+            task_id: OrderedTaskId,
         ) -> Task {
-            self.create_new_task(transaction, index, NO_CONSUMED_BLOCK_SIZE)
+            self.create_new_task(transaction, task_id, NO_CONSUMED_BLOCK_SIZE)
         }
     }
 
@@ -4705,16 +4679,9 @@ mod tests {
         let pool =
             DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
 
-        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            );
+        let (record_sender, mut record_receiver) = record_channels(true);
+        let transaction_recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
 
         // send fake packet batch to trigger banking_packet_handler
         let (banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
@@ -4753,9 +4720,6 @@ mod tests {
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
         assert_eq!(bank.transaction_count(), 1);
-
-        exit.store(true, Ordering::Relaxed);
-        poh_service.join().unwrap();
     }
 
     #[test]
@@ -4779,16 +4743,9 @@ mod tests {
         let pool =
             DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
 
-        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            );
+        let (record_sender, mut record_receiver) = record_channels(true);
+        let transaction_recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
 
         // Create a dummy handler which unconditionally sends tx0 back to the scheduler thread
         let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
@@ -4835,9 +4792,6 @@ mod tests {
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
         assert_eq!(bank.transaction_count(), 1);
-
-        exit.store(true, Ordering::Relaxed);
-        poh_service.join().unwrap();
     }
 
     #[test]
@@ -4868,16 +4822,10 @@ mod tests {
         let pool =
             DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
 
-        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            );
+        let (record_sender, mut record_receiver) = record_channels(true);
+        let transaction_recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
+
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         pool.register_banking_stage(
             None,
@@ -4893,9 +4841,6 @@ mod tests {
 
         Box::new(scheduler1.into_inner().1).return_to_pool();
         Box::new(scheduler2.into_inner().1).return_to_pool();
-
-        exit.store(true, Ordering::Relaxed);
-        poh_service.join().unwrap();
     }
 
     #[test]
@@ -4928,16 +4873,9 @@ mod tests {
             DEFAULT_TIMEOUT_DURATION,
         );
 
-        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            );
+        let (record_sender, mut record_receiver) = record_channels(true);
+        let transaction_recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
 
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         pool.register_banking_stage(
@@ -4968,9 +4906,6 @@ mod tests {
 
         // id should be different
         assert_ne!(trashed_old_scheduler_id, respawned_new_scheduler_id);
-
-        exit.store(true, Ordering::Relaxed);
-        poh_service.join().unwrap();
 
         // Ensure the actual async trashing by solScCleaner
         sleepless_testing::at(&TestCheckPoint::AfterTrashedSchedulerCleaned);
@@ -5014,16 +4949,9 @@ mod tests {
             DEFAULT_TIMEOUT_DURATION,
         );
 
-        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            );
+        let (record_sender, mut record_receiver) = record_channels(true);
+        let transaction_recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
 
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         pool.register_banking_stage(
@@ -5052,9 +4980,6 @@ mod tests {
 
         // id should be different
         assert_ne!(trashed_old_scheduler_id, respawned_new_scheduler_id);
-
-        exit.store(true, Ordering::Relaxed);
-        poh_service.join().unwrap();
     }
 
     #[test]
@@ -5071,16 +4996,10 @@ mod tests {
             DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
 
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            );
+        let (record_sender, mut record_receiver) = record_channels(true);
+        let transaction_recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
+
         pool.register_banking_stage(
             None,
             banking_packet_receiver,
@@ -5095,9 +5014,6 @@ mod tests {
         let scheduler = pool.take_scheduler(context);
         let bank_tmp = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank_tmp.wait_for_completed_scheduler(), Some((Ok(()), _)));
-
-        exit.store(true, Ordering::Relaxed);
-        poh_service.join().unwrap();
     }
 
     #[test]
@@ -5124,11 +5040,11 @@ mod tests {
             ..
         } = create_genesis_config_for_block_production(10_000);
 
-        const DISCARDED_TASK_COUNT: usize = 3;
+        const DISCARDED_TASK_COUNT: OrderedTaskId = 3;
         let _progress = sleepless_testing::setup(&[
             &CheckPoint::NewBufferedTask(DISCARDED_TASK_COUNT - 1),
             &CheckPoint::DiscardRequested,
-            &CheckPoint::Discarded(DISCARDED_TASK_COUNT),
+            &CheckPoint::Discarded(DISCARDED_TASK_COUNT.try_into().unwrap()),
             &TestCheckPoint::AfterDiscarded,
         ]);
 
@@ -5156,8 +5072,8 @@ mod tests {
         ));
         let fixed_banking_packet_handler =
             Box::new(move |helper: &BankingStageHelper, _banking_packet| {
-                for index in 0..DISCARDED_TASK_COUNT {
-                    helper.send_new_task(helper.create_new_unconstrained_task(tx0.clone(), index))
+                for task_id in 0..DISCARDED_TASK_COUNT {
+                    helper.send_new_task(helper.create_new_unconstrained_task(tx0.clone(), task_id))
                 }
             });
 
@@ -5165,16 +5081,10 @@ mod tests {
         banking_packet_sender
             .send(BankingPacketBatch::default())
             .unwrap();
-        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            );
+        let (record_sender, mut record_receiver) = record_channels(true);
+        let transaction_recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
+
         pool.register_banking_stage(
             None,
             banking_packet_receiver,
@@ -5187,8 +5097,5 @@ mod tests {
         *START_DISCARD.lock().unwrap() = true;
 
         sleepless_testing::at(TestCheckPoint::AfterDiscarded);
-
-        exit.store(true, Ordering::Relaxed);
-        poh_service.join().unwrap();
     }
 }

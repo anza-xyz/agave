@@ -3,14 +3,14 @@ use {
     itertools::Itertools,
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    std::{collections::HashMap, ops::Index, sync::Arc},
+    std::{collections::HashMap, ops::Index},
 };
 
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct LeaderSchedule {
     slot_leaders: Vec<Pubkey>,
     // Inverted index from pubkeys to indices where they are the leader.
-    leader_slots_map: HashMap<Pubkey, Arc<Vec<usize>>>,
+    leader_slots_map: HashMap<Pubkey, Vec<usize>>,
 }
 
 impl LeaderSchedule {
@@ -36,15 +36,12 @@ impl LeaderSchedule {
         }
     }
 
-    fn invert_slot_leaders(slot_leaders: &[Pubkey]) -> HashMap<Pubkey, Arc<Vec<usize>>> {
+    fn invert_slot_leaders(slot_leaders: &[Pubkey]) -> HashMap<Pubkey, Vec<usize>> {
         slot_leaders
             .iter()
             .enumerate()
             .map(|(i, pk)| (*pk, i))
             .into_group_map()
-            .into_iter()
-            .map(|(k, v)| (k, Arc::new(v)))
-            .collect()
     }
 
     pub fn get_slot_leaders(&self) -> &[Pubkey] {
@@ -57,7 +54,7 @@ impl LeaderScheduleVariant for LeaderSchedule {
         &self.slot_leaders
     }
 
-    fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Arc<Vec<usize>>> {
+    fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Vec<usize>> {
         &self.leader_slots_map
     }
 }
@@ -163,5 +160,42 @@ mod tests {
 
         assert_eq!(leaders1, leaders1_expected);
         assert_eq!(leaders2, leaders2_expected);
+    }
+
+    #[test]
+    fn test_invert_slot_leaders() {
+        let alice_pubkey = solana_pubkey::new_rand();
+        let bob_pubkey = solana_pubkey::new_rand();
+        let victor_pubkey = solana_pubkey::new_rand();
+        let peggy_pubkey = solana_pubkey::new_rand();
+
+        let leaders = &[
+            alice_pubkey,
+            victor_pubkey,
+            alice_pubkey,
+            bob_pubkey,
+            peggy_pubkey,
+            alice_pubkey,
+            peggy_pubkey,
+            victor_pubkey,
+        ];
+
+        let grouped_slot_leaders = LeaderSchedule::invert_slot_leaders(leaders);
+        assert_eq!(
+            grouped_slot_leaders.get(&alice_pubkey).unwrap().as_slice(),
+            &[0, 2, 5],
+        );
+        assert_eq!(
+            grouped_slot_leaders.get(&bob_pubkey).unwrap().as_slice(),
+            &[3],
+        );
+        assert_eq!(
+            grouped_slot_leaders.get(&victor_pubkey).unwrap().as_slice(),
+            &[1, 7],
+        );
+        assert_eq!(
+            grouped_slot_leaders.get(&peggy_pubkey).unwrap().as_slice(),
+            &[4, 6],
+        );
     }
 }

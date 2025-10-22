@@ -28,11 +28,26 @@ use {
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     solana_transaction_error::TransactionError,
-    std::{num::Saturating, sync::Arc},
+    std::num::Saturating,
 };
 
 /// Consumer will create chunks of transactions from buffer with up to this size.
 pub const TARGET_NUM_TRANSACTIONS_PER_BATCH: usize = 64;
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RetryableIndex {
+    pub index: usize,
+    pub immediately_retryable: bool,
+}
+
+impl RetryableIndex {
+    pub fn new(index: usize, immediately_retryable: bool) -> Self {
+        Self {
+            index,
+            immediately_retryable,
+        }
+    }
+}
 
 pub struct ProcessTransactionBatchOutput {
     // The number of transactions filtered out by the cost model
@@ -48,7 +63,7 @@ pub struct ExecuteAndCommitTransactionsOutput {
     pub(crate) transaction_counts: LeaderProcessedTransactionCounts,
     // Transactions that either were not executed, or were executed and failed to be committed due
     // to the block ending.
-    pub(crate) retryable_transaction_indexes: Vec<usize>,
+    pub(crate) retryable_transaction_indexes: Vec<RetryableIndex>,
     // A result that indicates whether transactions were successfully
     // committed into the Poh stream.
     pub commit_transactions_result: Result<Vec<CommitTransactionDetails>, PohRecorderError>,
@@ -94,7 +109,7 @@ impl Consumer {
 
     pub fn process_and_record_transactions(
         &self,
-        bank: &Arc<Bank>,
+        bank: &Bank,
         txs: &[impl TransactionWithMeta],
     ) -> ProcessTransactionBatchOutput {
         let mut error_counters = TransactionErrorMetrics::default();
@@ -124,7 +139,7 @@ impl Consumer {
 
     pub fn process_and_record_aged_transactions(
         &self,
-        bank: &Arc<Bank>,
+        bank: &Bank,
         txs: &[impl TransactionWithMeta],
         max_ages: &[MaxAge],
     ) -> ProcessTransactionBatchOutput {
@@ -159,7 +174,7 @@ impl Consumer {
 
     fn process_and_record_transactions_with_pre_results(
         &self,
-        bank: &Arc<Bank>,
+        bank: &Bank,
         txs: &[impl TransactionWithMeta],
         pre_results: impl Iterator<Item = Result<(), TransactionError>>,
     ) -> ProcessTransactionBatchOutput {
@@ -227,7 +242,7 @@ impl Consumer {
 
     fn execute_and_commit_transactions_locked(
         &self,
-        bank: &Arc<Bank>,
+        bank: &Bank,
         batch: &TransactionBatch<impl TransactionWithMeta>,
     ) -> ExecuteAndCommitTransactionsOutput {
         let transaction_status_sender_enabled = self.committer.transaction_status_sender_enabled();
@@ -256,23 +271,39 @@ impl Consumer {
                 // following are retryable errors
                 Err(TransactionError::AccountInUse) => {
                     error_counters.account_in_use += 1;
-                    Some(index)
+                    // locking failure due to vote conflict or jito - immediately retry.
+                    Some(RetryableIndex {
+                        index,
+                        immediately_retryable: true,
+                    })
                 }
                 Err(TransactionError::WouldExceedMaxBlockCostLimit) => {
                     error_counters.would_exceed_max_block_cost_limit += 1;
-                    Some(index)
+                    Some(RetryableIndex {
+                        index,
+                        immediately_retryable: false,
+                    })
                 }
                 Err(TransactionError::WouldExceedMaxVoteCostLimit) => {
                     error_counters.would_exceed_max_vote_cost_limit += 1;
-                    Some(index)
+                    Some(RetryableIndex {
+                        index,
+                        immediately_retryable: false,
+                    })
                 }
                 Err(TransactionError::WouldExceedMaxAccountCostLimit) => {
                     error_counters.would_exceed_max_account_cost_limit += 1;
-                    Some(index)
+                    Some(RetryableIndex {
+                        index,
+                        immediately_retryable: false,
+                    })
                 }
                 Err(TransactionError::WouldExceedAccountDataBlockLimit) => {
                     error_counters.would_exceed_account_data_block_limit += 1;
-                    Some(index)
+                    Some(RetryableIndex {
+                        index,
+                        immediately_retryable: false,
+                    })
                 }
                 // following are non-retryable errors
                 Err(TransactionError::TooManyAccountLocks) => {
@@ -352,7 +383,7 @@ impl Consumer {
 
         let (record_transactions_summary, record_us) = measure_us!(self
             .transaction_recorder
-            .record_transactions(bank.slot(), processed_transactions));
+            .record_transactions(bank.bank_id(), processed_transactions));
         execute_and_commit_timings.record_us = record_us;
 
         let RecordTransactionsSummary {
@@ -369,7 +400,12 @@ impl Consumer {
 
         if let Err(recorder_err) = record_transactions_result {
             retryable_transaction_indexes.extend(processing_results.iter().enumerate().filter_map(
-                |(index, processing_result)| processing_result.was_processed().then_some(index),
+                |(index, processing_result)| {
+                    processing_result.was_processed().then_some(RetryableIndex {
+                        index,
+                        immediately_retryable: true, // recording errors are always immediately retryable
+                    })
+                },
             ));
 
             // retryable indexes are expected to be sorted - in this case the
@@ -483,11 +519,9 @@ impl Consumer {
 mod tests {
     use {
         super::*,
-        crate::banking_stage::tests::{
-            create_slow_genesis_config, sanitize_transactions, simulate_poh,
-        },
+        crate::banking_stage::tests::{create_slow_genesis_config, sanitize_transactions},
         agave_reserved_account_keys::ReservedAccountKeys,
-        crossbeam_channel::{unbounded, Receiver},
+        crossbeam_channel::unbounded,
         solana_account::{state_traits::StateMut, AccountSharedData},
         solana_address_lookup_table_interface::{
             self as address_lookup_table,
@@ -507,7 +541,6 @@ mod tests {
                 GenesisConfigInfo,
             },
             get_tmp_ledger_path_auto_delete,
-            leader_schedule_cache::LeaderScheduleCache,
         },
         solana_message::{
             v0::{self, MessageAddressTableLookup},
@@ -515,8 +548,7 @@ mod tests {
         },
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_nonce_account::verify_nonce_account,
-        solana_poh::poh_recorder::{PohRecorder, Record},
-        solana_poh_config::PohConfig,
+        solana_poh::record_channels::record_channels,
         solana_pubkey::Pubkey,
         solana_rpc::transaction_status_service::TransactionStatusService,
         solana_runtime::prioritization_fee_cache::PrioritizationFeeCache,
@@ -530,45 +562,24 @@ mod tests {
         solana_transaction_status::{TransactionStatusMeta, VersionedTransactionWithStatusMeta},
         std::{
             borrow::Cow,
+            slice,
             sync::{
-                atomic::{AtomicBool, AtomicU64, Ordering},
-                RwLock,
+                atomic::{AtomicBool, AtomicU64},
+                Arc,
             },
-            thread::{Builder, JoinHandle},
-            time::Duration,
         },
         test_case::test_case,
     };
 
-    fn execute_transactions_with_dummy_poh_service(
+    fn execute_transactions_for_test(
         bank: Arc<Bank>,
         transactions: Vec<Transaction>,
     ) -> ProcessTransactionBatchOutput {
         let transactions = sanitize_transactions(transactions);
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path())
-            .expect("Expected to be able to open database ledger");
-        let (poh_recorder, _entry_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
-        let (record_sender, record_receiver) = unbounded();
-        let recorder = TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
-        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank_for_test(bank.clone());
-
-        let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
+        let (record_sender, mut record_receiver) = record_channels(false);
+        let recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(
@@ -577,17 +588,7 @@ mod tests {
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
-        let process_transactions_summary =
-            consumer.process_and_record_transactions(&bank, &transactions);
-
-        poh_recorder
-            .read()
-            .unwrap()
-            .is_exited
-            .store(true, Ordering::Relaxed);
-        let _ = poh_simulator.join();
-
-        process_transactions_summary
+        consumer.process_and_record_transactions(&bank, &transactions)
     }
 
     fn generate_new_address_lookup_table(
@@ -656,30 +657,10 @@ mod tests {
             genesis_config.hash(),
         )]);
 
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path())
-            .expect("Expected to be able to open database ledger");
-        let (poh_recorder, entry_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
-        let (record_sender, record_receiver) = unbounded();
-        let recorder = TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
-        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+        let (record_sender, mut record_receiver) = record_channels(false);
+        let recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
 
-        let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
-
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank_for_test(bank.clone());
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(
             None,
@@ -707,27 +688,14 @@ mod tests {
         );
         assert!(commit_transactions_result.is_ok());
 
-        // Tick up to max tick height
-        while poh_recorder.read().unwrap().tick_height() != bank.max_tick_height() {
-            poh_recorder.write().unwrap().tick();
-        }
+        // When poh is near end of slot, it will be shutdown.
+        record_receiver.shutdown();
 
-        let mut done = false;
-        // read entries until I find mine, might be ticks...
-        while let Ok((_bank, (entry, _tick_height))) = entry_receiver.recv() {
-            if !entry.is_tick() {
-                trace!("got entry");
-                assert_eq!(entry.transactions.len(), transactions.len());
-                assert_eq!(bank.get_balance(&pubkey), 1);
-                done = true;
-            }
-            if done {
-                break;
-            }
-        }
-        trace!("done ticking");
-
-        assert!(done);
+        let record = record_receiver.drain().next().unwrap();
+        assert_eq!(record.bank_id, bank.bank_id());
+        assert_eq!(record.transaction_batches.len(), 1);
+        let transaction_batch = record.transaction_batches[0].clone();
+        assert_eq!(transaction_batch.len(), 1);
 
         let transactions = sanitize_transactions(vec![system_transaction::transfer(
             &mint_keypair,
@@ -754,18 +722,17 @@ mod tests {
                 processed_with_successful_result_count: 1,
             }
         );
-        assert_eq!(retryable_transaction_indexes, vec![0]);
+        assert_eq!(
+            retryable_transaction_indexes,
+            vec![RetryableIndex {
+                index: 0,
+                immediately_retryable: true
+            }]
+        );
         assert_matches!(
             commit_transactions_result,
             Err(PohRecorderError::MaxHeightReached)
         );
-
-        poh_recorder
-            .read()
-            .unwrap()
-            .is_exited
-            .store(true, Ordering::Relaxed);
-        let _ = poh_simulator.join();
 
         assert_eq!(bank.get_balance(&pubkey), 1);
     }
@@ -808,68 +775,13 @@ mod tests {
             nonce_hash,
         )]);
 
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path())
-            .expect("Expected to be able to open database ledger");
-        let (poh_recorder, entry_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::new(false)),
-        );
-        let (record_sender, record_receiver) = unbounded();
-        let recorder = TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
-        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+        let (record_sender, mut record_receiver) = record_channels(false);
+        let recorder = TransactionRecorder::new(record_sender);
 
-        fn poh_tick_before_returning_record_response(
-            record_receiver: Receiver<Record>,
-            poh_recorder: Arc<RwLock<PohRecorder>>,
-        ) -> JoinHandle<()> {
-            let is_exited = poh_recorder.read().unwrap().is_exited.clone();
-            let tick_producer = Builder::new()
-                .name("solana-simulate_poh".to_string())
-                .spawn(move || loop {
-                    let timeout = Duration::from_millis(10);
-                    let record = record_receiver.recv_timeout(timeout);
-                    if let Ok(record) = record {
-                        let record_response = poh_recorder.write().unwrap().record(
-                            record.slot,
-                            record.mixins,
-                            record.transaction_batches,
-                        );
-                        poh_recorder.write().unwrap().tick();
-                        if record.sender.send(record_response).is_err() {
-                            panic!("Error returning mixin hash");
-                        }
-                    }
-                    if is_exited.load(Ordering::Relaxed) {
-                        break;
-                    }
-                });
-            tick_producer.unwrap()
-        }
+        record_receiver.restart(bank.bank_id());
 
-        // Simulate a race condition by setting up poh to do the last tick
-        // right before returning the transaction record response so that
-        // bank blockhash queue is updated before transactions are
-        // committed.
-        let poh_simulator =
-            poh_tick_before_returning_record_response(record_receiver, poh_recorder.clone());
-
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank_for_test(bank.clone());
-
-        // Tick up to max tick height - 1 so that only one tick remains
-        // before recording transactions to poh
-        while poh_recorder.read().unwrap().tick_height() != bank.max_tick_height() - 1 {
-            poh_recorder.write().unwrap().tick();
+        while bank.tick_height() != bank.max_tick_height() - 1 {
+            bank.register_default_tick_for_test();
         }
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
@@ -897,30 +809,7 @@ mod tests {
             }
         );
         assert!(commit_transactions_result.is_ok());
-
-        // Ensure that poh did the last tick after recording transactions
-        assert_eq!(
-            poh_recorder.read().unwrap().tick_height(),
-            bank.max_tick_height()
-        );
-
-        let mut done = false;
-        // read entries until I find mine, might be ticks...
-        while let Ok((_bank, (entry, _tick_height))) = entry_receiver.recv() {
-            if !entry.is_tick() {
-                assert_eq!(entry.transactions.len(), transactions.len());
-                done = true;
-                break;
-            }
-        }
-        assert!(done);
-
-        poh_recorder
-            .read()
-            .unwrap()
-            .is_exited
-            .store(true, Ordering::Relaxed);
-        let _ = poh_simulator.join();
+        bank.register_default_tick_for_test();
 
         // check that the nonce was advanced to the current bank's last blockhash
         // rather than the current bank's blockhash as would occur had the update
@@ -950,30 +839,10 @@ mod tests {
             sanitize_transactions(vec![tx])
         };
 
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path())
-            .expect("Expected to be able to open database ledger");
-        let (poh_recorder, _entry_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
-        let (record_sender, record_receiver) = unbounded();
-        let recorder = TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
-        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+        let (record_sender, mut record_receiver) = record_channels(false);
+        let recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
 
-        let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
-
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank_for_test(bank.clone());
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(
             None,
@@ -1010,13 +879,6 @@ mod tests {
                 1
             ])
         );
-
-        poh_recorder
-            .read()
-            .unwrap()
-            .is_exited
-            .store(true, Ordering::Relaxed);
-        let _ = poh_simulator.join();
     }
 
     #[test_case(false; "old")]
@@ -1038,30 +900,10 @@ mod tests {
         let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let pubkey = solana_pubkey::new_rand();
 
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path())
-            .expect("Expected to be able to open database ledger");
-        let (poh_recorder, _entry_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
-        let (record_sender, record_receiver) = unbounded();
-        let recorder = TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
-        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+        let (record_sender, mut record_receiver) = record_channels(false);
+        let recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
 
-        let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
-
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank_for_test(bank.clone());
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(
             None,
@@ -1148,7 +990,10 @@ mod tests {
             commit_transactions_result.get(1),
             Some(CommitTransactionDetails::NotCommitted(_))
         );
-        assert_eq!(retryable_transaction_indexes, vec![1]);
+        assert_eq!(
+            retryable_transaction_indexes,
+            vec![RetryableIndex::new(1, true)]
+        );
 
         let expected_block_cost = {
             let (actual_programs_execution_cost, actual_loaded_accounts_data_size_cost) =
@@ -1157,6 +1002,7 @@ mod tests {
                         compute_units,
                         loaded_accounts_data_size,
                         result: _,
+                        fee_payer_post_balance: _,
                     } => (
                         *compute_units,
                         CostModel::calculate_loaded_accounts_data_size_cost(
@@ -1180,13 +1026,6 @@ mod tests {
 
         assert_eq!(get_block_cost(), expected_block_cost);
         assert_eq!(get_tx_count(), 2);
-
-        poh_recorder
-            .read()
-            .unwrap()
-            .is_exited
-            .store(true, Ordering::Relaxed);
-        let _ = poh_simulator.join();
     }
 
     #[test_case(false, false; "old::locked")]
@@ -1230,30 +1069,9 @@ mod tests {
             use_duplicate_transaction
         );
 
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path())
-            .expect("Expected to be able to open database ledger");
-        let (poh_recorder, _entry_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
-        let (record_sender, record_receiver) = unbounded();
-        let recorder = TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
-        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
-
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank_for_test(bank.clone());
-
-        let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
+        let (record_sender, mut record_receiver) = record_channels(false);
+        let recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(
@@ -1280,13 +1098,6 @@ mod tests {
         let process_transactions_batch_output =
             consumer.process_and_record_transactions(&bank, &transactions);
 
-        poh_recorder
-            .read()
-            .unwrap()
-            .is_exited
-            .store(true, Ordering::Relaxed);
-        let _ = poh_simulator.join();
-
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
             retryable_transaction_indexes,
@@ -1306,9 +1117,12 @@ mod tests {
 
         // with simd3, duplicate transactions are not retryable
         if relax_intrabatch_account_locks && use_duplicate_transaction {
-            assert_eq!(retryable_transaction_indexes, Vec::<usize>::new());
+            assert_eq!(retryable_transaction_indexes, Vec::<_>::new());
         } else {
-            assert_eq!(retryable_transaction_indexes, vec![1]);
+            assert_eq!(
+                retryable_transaction_indexes,
+                vec![RetryableIndex::new(1, true)]
+            );
         }
     }
 
@@ -1340,7 +1154,7 @@ mod tests {
         let ProcessTransactionBatchOutput {
             execute_and_commit_transactions_output,
             ..
-        } = execute_transactions_with_dummy_poh_service(bank, transactions);
+        } = execute_transactions_for_test(bank, transactions);
 
         // All the transactions should have been replayed
         assert_eq!(
@@ -1364,7 +1178,9 @@ mod tests {
 
         assert_eq!(
             execute_and_commit_transactions_output.retryable_transaction_indexes,
-            (1..transactions_len - 1).collect::<Vec<usize>>()
+            (1..transactions_len - 1)
+                .map(|index| RetryableIndex::new(index, true))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1415,7 +1231,7 @@ mod tests {
         let ProcessTransactionBatchOutput {
             execute_and_commit_transactions_output,
             ..
-        } = execute_transactions_with_dummy_poh_service(bank, transactions);
+        } = execute_transactions_for_test(bank, transactions);
 
         // If SIMD-83 is enabled *and* the transactions are distinct, all are executed.
         // In the three other cases, only one is executed. In all four cases, all are attempted.
@@ -1450,12 +1266,14 @@ mod tests {
         if relax_intrabatch_account_locks {
             assert_eq!(
                 execute_and_commit_transactions_output.retryable_transaction_indexes,
-                Vec::<usize>::new()
+                Vec::<_>::new()
             );
         } else {
             assert_eq!(
                 execute_and_commit_transactions_output.retryable_transaction_indexes,
-                (1..transactions_len).collect::<Vec<usize>>()
+                (1..transactions_len)
+                    .map(|index| RetryableIndex::new(index, true))
+                    .collect::<Vec<_>>()
             );
         }
     }
@@ -1479,27 +1297,10 @@ mod tests {
             genesis_config.hash(),
         )]);
 
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path())
-            .expect("Expected to be able to open database ledger");
-        let (poh_recorder, _entry_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
-
         // Poh Recorder has no working bank, so should throw MaxHeightReached error on
         // record
-        let (record_sender, record_receiver) = unbounded();
-        let recorder = TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
-
-        let poh_simulator = simulate_poh(record_receiver, &Arc::new(RwLock::new(poh_recorder)));
+        let (record_sender, _record_receiver) = record_channels(false);
+        let recorder = TransactionRecorder::new(record_sender);
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(
@@ -1543,14 +1344,13 @@ mod tests {
         execute_and_commit_transactions_output
             .retryable_transaction_indexes
             .sort_unstable();
-        let expected: Vec<usize> = (0..transactions.len()).collect();
+        let expected: Vec<_> = (0..transactions.len())
+            .map(|index| RetryableIndex::new(index, true))
+            .collect();
         assert_eq!(
             execute_and_commit_transactions_output.retryable_transaction_indexes,
             expected
         );
-
-        recorder.is_exited.store(true, Ordering::Relaxed);
-        let _ = poh_simulator.join();
     }
 
     #[test]
@@ -1560,7 +1360,7 @@ mod tests {
             mut genesis_config,
             mint_keypair,
             ..
-        } = create_slow_genesis_config(solana_native_token::sol_to_lamports(1000.0));
+        } = create_slow_genesis_config(solana_native_token::LAMPORTS_PER_SOL * 1000);
         genesis_config.rent.lamports_per_byte_year = 50;
         genesis_config.rent.exemption_threshold = 2.0;
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
@@ -1596,27 +1396,9 @@ mod tests {
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
         let blockstore = Arc::new(blockstore);
-        let (poh_recorder, _entry_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            blockstore.clone(),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
-        let (record_sender, record_receiver) = unbounded();
-        let recorder = TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
-        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
-
-        let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
-
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank_for_test(bank.clone());
+        let (record_sender, mut record_receiver) = record_channels(false);
+        let recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
 
         let shreds = entries_to_test_shreds(
             &entries,
@@ -1677,13 +1459,6 @@ mod tests {
             ),
         ];
         assert_eq!(actual_tx_results, expected_tx_results);
-
-        poh_recorder
-            .read()
-            .unwrap()
-            .is_exited
-            .store(true, Ordering::Relaxed);
-        let _ = poh_simulator.join();
     }
 
     #[test]
@@ -1730,6 +1505,8 @@ mod tests {
             Some(false),
             bank.as_ref(),
             &ReservedAccountKeys::empty_key_set(),
+            bank.feature_set
+                .is_active(&agave_feature_set::static_instruction_limit::id()),
         )
         .unwrap();
 
@@ -1742,27 +1519,10 @@ mod tests {
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
         let blockstore = Arc::new(blockstore);
-        let (poh_recorder, _entry_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            blockstore.clone(),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
-        let (record_sender, record_receiver) = unbounded();
-        let recorder = TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
-        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
-        let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
-
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank_for_test(bank.clone());
+        let (record_sender, mut record_receiver) = record_channels(false);
+        let recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
 
         let shreds = entries_to_test_shreds(
             &entries,
@@ -1799,11 +1559,12 @@ mod tests {
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         let consumer_output =
-            consumer.process_and_record_transactions(&bank, &[sanitized_tx.clone()]);
+            consumer.process_and_record_transactions(&bank, slice::from_ref(&sanitized_tx));
         let CommitTransactionDetails::Committed {
             compute_units,
             loaded_accounts_data_size,
             result: _,
+            fee_payer_post_balance: _,
         } = consumer_output
             .execute_and_commit_transactions_output
             .commit_transactions_result
@@ -1843,11 +1604,5 @@ mod tests {
                 ..TransactionStatusMeta::default()
             }
         );
-        poh_recorder
-            .read()
-            .unwrap()
-            .is_exited
-            .store(true, Ordering::Relaxed);
-        let _ = poh_simulator.join();
     }
 }

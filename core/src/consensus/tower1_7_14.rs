@@ -1,5 +1,6 @@
 use {
     crate::consensus::{BlockhashStatus, Result, SwitchForkDecision, TowerError},
+    serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
@@ -10,7 +11,7 @@ use {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "FCocsqtauW2QfMz2hXDd5DCwJBw9NBFoq3CokeiDLMqv")
+    frozen_abi(digest = "FJeuD6UBJe9D8s6iWwianu6KcnJxSozHxDpPQMTrkNJK")
 )]
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Tower1_7_14 {
@@ -41,7 +42,7 @@ pub struct Tower1_7_14 {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "2bgXEjDjQqkHrXtffNA6jusFLNt4rJBMVEsRctYABnn1")
+    frozen_abi(digest = "8ASxminStCjs2Xcx2b6arJQBENyMV3H62zSoTvsLqFqP")
 )]
 #[derive(Default, Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct SavedTower1_7_14 {

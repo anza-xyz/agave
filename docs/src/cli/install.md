@@ -227,21 +227,14 @@ above.
 ### Building from Source
 
 After installing the prerequisites, proceed with building Solana from source,
-navigate to
-[Solana's GitHub releases page](https://github.com/anza-xyz/agave/releases/latest),
+navigate to the
+[Agave GitHub releases page](https://github.com/anza-xyz/agave/releases/latest),
 and download the **Source Code** archive. Extract the code and build the
 binaries with:
 
 ```bash
 ./scripts/cargo-install-all.sh .
 export PATH=$PWD/bin:$PATH
-```
-
-You can then run the following command to obtain the same result as with
-prebuilt binaries:
-
-```bash
-agave-install init
 ```
 
 ## Use Homebrew
@@ -253,7 +246,7 @@ your MacOS or Linux machine.
 
 - Follow instructions at: https://formulae.brew.sh/formula/solana
 
-[Homebrew formulae](https://github.com/Homebrew/homebrew-core/blob/HEAD/Formula/solana.rb)
+[Homebrew formulae](https://github.com/Homebrew/homebrew-core/blob/HEAD/Formula/s/solana.rb)
 is updated after each `solana` release, however it is possible that the Homebrew
 version is outdated.
 

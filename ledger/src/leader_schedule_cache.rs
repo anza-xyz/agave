@@ -12,7 +12,10 @@ use {
     solana_runtime::bank::Bank,
     std::{
         collections::{hash_map::Entry, HashMap, VecDeque},
-        sync::{Arc, RwLock},
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc, RwLock,
+        },
     },
 };
 
@@ -31,7 +34,7 @@ pub struct LeaderScheduleCache {
     // Map from an epoch to a leader schedule for that epoch
     pub cached_schedules: RwLock<CachedSchedules>,
     epoch_schedule: EpochSchedule,
-    max_epoch: RwLock<Epoch>,
+    max_epoch: AtomicU64,
     max_schedules: CacheCapacity,
     fixed_schedule: Option<Arc<FixedSchedule>>,
 }
@@ -45,7 +48,7 @@ impl LeaderScheduleCache {
         let cache = Self {
             cached_schedules: RwLock::new((HashMap::new(), VecDeque::new())),
             epoch_schedule,
-            max_epoch: RwLock::new(0),
+            max_epoch: AtomicU64::new(0),
             max_schedules: CacheCapacity::default(),
             fixed_schedule: None,
         };
@@ -78,13 +81,8 @@ impl LeaderScheduleCache {
         let new_max_epoch = self
             .epoch_schedule
             .get_leader_schedule_epoch(root_bank.slot());
-        let old_max_epoch = {
-            let mut max_epoch = self.max_epoch.write().unwrap();
-            let old_max_epoch = *max_epoch;
-            *max_epoch = new_max_epoch;
-            assert!(new_max_epoch >= old_max_epoch);
-            old_max_epoch
-        };
+        let old_max_epoch = self.max_epoch.swap(new_max_epoch, Ordering::AcqRel);
+        assert!(new_max_epoch >= old_max_epoch);
 
         // Calculate the epoch as soon as it's rooted
         if new_max_epoch > old_max_epoch {
@@ -113,7 +111,7 @@ impl LeaderScheduleCache {
         max_slot_range: u64,
     ) -> Option<(Slot, Slot)> {
         let (epoch, start_index) = bank.get_epoch_and_slot_index(current_slot + 1);
-        let max_epoch = *self.max_epoch.read().unwrap();
+        let max_epoch = self.max_epoch.load(Ordering::Acquire);
         if epoch > max_epoch {
             debug!(
                 "Requested next leader in slot: {} of unconfirmed epoch: {}",
@@ -122,15 +120,20 @@ impl LeaderScheduleCache {
             );
             return None;
         }
-        // Slots after current_slot where pubkey is the leader.
-        let mut schedule = (epoch..=max_epoch)
+        // Collect leader schedules first so they stay alive for the iterator chain
+        let schedules: Vec<_> = (epoch..=max_epoch)
             .map(|epoch| self.get_epoch_schedule_else_compute(epoch, bank))
             .while_some()
             .zip(epoch..)
+            .collect();
+
+        // Slots after current_slot where pubkey is the leader.
+        let mut schedule = schedules
+            .iter()
             .flat_map(|(leader_schedule, k)| {
-                let offset = if k == epoch { start_index as usize } else { 0 };
-                let num_slots = bank.get_slots_in_epoch(k) as usize;
-                let first_slot = bank.epoch_schedule().get_first_slot_in_epoch(k);
+                let offset = if *k == epoch { start_index as usize } else { 0 };
+                let num_slots = bank.get_slots_in_epoch(*k) as usize;
+                let first_slot = bank.epoch_schedule().get_first_slot_in_epoch(*k);
                 leader_schedule
                     .get_leader_upcoming_slots(pubkey, offset)
                     .take_while(move |i| *i < num_slots)
@@ -175,7 +178,7 @@ impl LeaderScheduleCache {
         let cache_result = self.slot_leader_at_no_compute(slot);
         // Forbid asking for slots in an unconfirmed epoch
         let bank_epoch = self.epoch_schedule.get_epoch_and_slot_index(slot).0;
-        if bank_epoch > *self.max_epoch.read().unwrap() {
+        if bank_epoch > self.max_epoch.load(Ordering::Acquire) {
             debug!("Requested leader in slot: {slot} of unconfirmed epoch: {bank_epoch}");
             return None;
         }
@@ -582,7 +585,7 @@ mod tests {
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let cache = LeaderScheduleCache::new_from_bank(&bank);
 
-        assert_eq!(*cache.max_epoch.read().unwrap(), 1);
+        assert_eq!(cache.max_epoch.load(Ordering::Acquire), 1);
 
         // Asking for the leader for the last slot in epoch 1 is ok b/c
         // epoch 1 is confirmed
@@ -599,7 +602,7 @@ mod tests {
 
         // Set root for a slot in epoch 1, so that epoch 2 is now confirmed
         cache.set_root(&bank2);
-        assert_eq!(*cache.max_epoch.read().unwrap(), 2);
+        assert_eq!(cache.max_epoch.load(Ordering::Acquire), 2);
         assert!(cache.slot_leader_at(96, Some(&bank2)).is_some());
         assert_eq!(bank2.get_epoch_and_slot_index(223).0, 2);
         assert!(cache.slot_leader_at(223, Some(&bank2)).is_some());

@@ -27,100 +27,96 @@ pub fn process_instruction(
         unsafe { std::slice::from_raw_parts_mut(data, data_len.wrapping_add(100)) }
     };
 
-    match instruction_data[0] {
-        0 => {
-            // memcmp overlaps begining
-            #[allow(clippy::manual_memcpy)]
-            for i in 0..90 {
-                buf[i] = too_early(8)[i];
-            }
+    unsafe {
+        match instruction_data[0] {
+            0 => {
+                // memcmp overlaps begining
+                #[allow(clippy::manual_memcpy)]
+                for i in 0..90 {
+                    buf[i] = too_early(8)[i];
+                }
 
-            sol_memcmp(too_early(8), &buf, 90);
-        }
-        1 => {
-            // memcmp overlaps begining
-            #[allow(clippy::manual_memcpy)]
-            for i in 0..12 {
-                buf[i] = too_early(9)[i];
+                sol_memcmp(too_early(8), &buf, 90);
             }
+            1 => {
+                // memcmp overlaps begining
+                #[allow(clippy::manual_memcpy)]
+                for i in 0..12 {
+                    buf[i] = too_early(9)[i];
+                }
 
-            sol_memcmp(&buf, too_early(9), 12);
-        }
-        2 => {
-            // memset overlaps begin of account area
-            sol_memset(too_early(2), 3, 3);
-        }
-        3 => {
-            // memcpy src overlaps begin of account
-            sol_memcpy(&mut buf, too_early(3), 10);
-        }
-        4 => {
-            // memmov src overlaps begin of account
-            unsafe { sol_memmove(buf.as_mut_ptr(), too_early(3).as_ptr(), 10) };
-        }
-        5 => {
-            // memcpy dst overlaps begin of account
-            sol_memcpy(too_early(3), &buf, 10);
-        }
-        6 => {
-            // memmov dst overlaps begin of account
-            unsafe { sol_memmove(too_early(3).as_mut_ptr(), buf.as_ptr(), 10) };
-        }
-        7 => {
-            // memmove dst overlaps begin of account, reverse order
-            unsafe { sol_memmove(too_early(0).as_mut_ptr(), too_early(3).as_ptr(), 10) };
-        }
-        8 => {
-            // memcmp overlaps end
-            sol_memcmp(&buf, &data[data_len.saturating_sub(8)..], 16);
-        }
-        9 => {
-            // memcmp overlaps end
-            sol_memcmp(&data[data_len.saturating_sub(7)..], &buf, 15);
-        }
-        10 => {
-            // memset overlaps end of account
-            sol_memset(&mut data[data_len.saturating_sub(2)..], 0, 3);
-        }
-        11 => {
-            // memcpy src overlaps end of account
-            sol_memcpy(&mut buf, &data[data_len.saturating_sub(3)..], 10);
-        }
-        12 => {
-            // memmov src overlaps end of account
-            unsafe {
+                sol_memcmp(&buf, too_early(9), 12);
+            }
+            2 => {
+                // memset overlaps begin of account area
+                sol_memset(too_early(2), 3, 3);
+            }
+            3 => {
+                // memcpy src overlaps begin of account
+                sol_memcpy(&mut buf, too_early(3), 10);
+            }
+            4 => {
+                // memmov src overlaps begin of account
+                sol_memmove(buf.as_mut_ptr(), too_early(3).as_ptr(), 10);
+            }
+            5 => {
+                // memcpy dst overlaps begin of account
+                sol_memcpy(too_early(3), &buf, 10);
+            }
+            6 => {
+                // memmov dst overlaps begin of account
+                sol_memmove(too_early(3).as_mut_ptr(), buf.as_ptr(), 10);
+            }
+            7 => {
+                // memmove dst overlaps begin of account, reverse order
+                sol_memmove(too_early(0).as_mut_ptr(), too_early(3).as_ptr(), 10);
+            }
+            8 => {
+                // memcmp overlaps end
+                sol_memcmp(&buf, &data[data_len.saturating_sub(8)..], 16);
+            }
+            9 => {
+                // memcmp overlaps end
+                sol_memcmp(&data[data_len.saturating_sub(7)..], &buf, 15);
+            }
+            10 => {
+                // memset overlaps end of account
+                sol_memset(&mut data[data_len.saturating_sub(2)..], 0, 3);
+            }
+            11 => {
+                // memcpy src overlaps end of account
+                sol_memcpy(&mut buf, &data[data_len.saturating_sub(3)..], 10);
+            }
+            12 => {
+                // memmov src overlaps end of account
                 sol_memmove(
                     buf.as_mut_ptr(),
                     data[data_len.saturating_sub(3)..].as_ptr(),
                     10,
-                )
-            };
-        }
-        13 => {
-            // memcpy dst overlaps end of account
-            sol_memcpy(&mut data[data_len.saturating_sub(3)..], &buf, 10);
-        }
-        14 => {
-            // memmov dst overlaps end of account
-            unsafe {
+                );
+            }
+            13 => {
+                // memcpy dst overlaps end of account
+                sol_memcpy(&mut data[data_len.saturating_sub(3)..], &buf, 10);
+            }
+            14 => {
+                // memmov dst overlaps end of account
                 sol_memmove(
                     data[data_len.saturating_sub(3)..].as_mut_ptr(),
                     buf.as_ptr(),
                     10,
-                )
-            };
-        }
-        15 => {
-            // memmove dst overlaps end of account, reverse order
-            unsafe {
+                );
+            }
+            15 => {
+                // memmove dst overlaps end of account, reverse order
                 sol_memmove(
                     data[data_len..].as_mut_ptr(),
                     data[data_len.saturating_sub(3)..].as_mut_ptr(),
                     10,
-                )
-            };
+                );
+            }
+            _ => {}
         }
-        _ => {}
     }
 
     Ok(())

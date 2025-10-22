@@ -14,13 +14,16 @@ use {
     },
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccountKeys,
+    agave_snapshots::{
+        ArchiveFormat, SnapshotVersion, DEFAULT_ARCHIVE_COMPRESSION, SUPPORTED_ARCHIVE_COMPRESSION,
+    },
     clap::{
         crate_description, crate_name, value_t, value_t_or_exit, values_t_or_exit, App,
         AppSettings, Arg, ArgMatches, SubCommand,
     },
     dashmap::DashMap,
     log::*,
-    serde_derive::Serialize,
+    serde::Serialize,
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount},
     solana_accounts_db::accounts_index::{ScanConfig, ScanOrder},
     solana_clap_utils::{
@@ -30,16 +33,18 @@ use {
             is_within_range,
         },
     },
-    solana_cli_output::{CliAccount, OutputFormat},
+    solana_cli_output::{display::build_balance_message, CliAccount, OutputFormat},
     solana_clock::{Epoch, Slot},
+    solana_cluster_type::ClusterType,
     solana_core::{
         banking_simulation::{BankingSimulator, BankingTraceEvents},
+        resource_limits::adjust_nofile_limit,
         system_monitor_service::{SystemMonitorService, SystemMonitorStatsReportConfig},
         validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
     },
     solana_cost_model::{cost_model::CostModel, cost_tracker::CostTracker},
+    solana_entry::entry::create_ticks,
     solana_feature_gate_interface::{self as feature, Feature},
-    solana_genesis_config::ClusterType,
     solana_inflation::Inflation,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_ledger::{
@@ -51,7 +56,7 @@ use {
     },
     solana_measure::{measure::Measure, measure_time},
     solana_message::SimpleAddressLoader,
-    solana_native_token::{lamports_to_sol, sol_to_lamports, Sol},
+    solana_native_token::{Sol, LAMPORTS_PER_SOL},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
@@ -61,13 +66,10 @@ use {
         },
         bank_forks::BankForks,
         inflation_rewards::points::{InflationPointCalculationEvent, PointValue},
+        installed_scheduler_pool::BankWithScheduler,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils,
         snapshot_minimizer::SnapshotMinimizer,
-        snapshot_utils::{
-            ArchiveFormat, SnapshotVersion, DEFAULT_ARCHIVE_COMPRESSION,
-            SUPPORTED_ARCHIVE_COMPRESSION,
-        },
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_shred_version::compute_shred_version,
@@ -80,7 +82,7 @@ use {
     solana_vote::vote_state_view::VoteStateView,
     solana_vote_program::{
         self,
-        vote_state::{self, VoteStateV3},
+        vote_state::{self, VoteStateV4},
     },
     std::{
         collections::{HashMap, HashSet},
@@ -281,7 +283,7 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
                         format!(
                             "\nvotes: {}, stake: {:.1} SOL ({:.1}%)",
                             votes,
-                            lamports_to_sol(*stake),
+                            build_balance_message(*stake, false, false),
                             *stake as f64 / *total_stake as f64 * 100.,
                         )
                     } else {
@@ -377,7 +379,7 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
                 r#"  "last vote {}"[shape=box,label="Latest validator vote: {}\nstake: {} SOL\nroot slot: {}\n{}"];"#,
                 node_pubkey,
                 node_pubkey,
-                lamports_to_sol(*stake),
+                build_balance_message(*stake, false, false),
                 vote_state_view.root_slot().unwrap_or(0),
                 vote_history,
             ));
@@ -399,7 +401,7 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
         dot.push(format!(
             r#"    "..."[label="...\nvotes: {}, stake: {:.1} SOL {:.1}%"];"#,
             absent_votes,
-            lamports_to_sol(absent_stake),
+            build_balance_message(absent_stake, false, false),
             absent_stake as f64 / lowest_total_stake as f64 * 100.,
         ));
     }
@@ -470,6 +472,7 @@ fn compute_slot_cost(
                     None,
                     SimpleAddressLoader::Disabled,
                     &reserved_account_keys.active,
+                    feature_set.is_active(&agave_feature_set::static_instruction_limit::id()),
                 )
                 .map_err(|err| {
                     warn!("Failed to compute cost of transaction: {err:?}");
@@ -512,6 +515,7 @@ fn minimize_bank_for_snapshot(
     bank: &Bank,
     snapshot_slot: Slot,
     ending_slot: Slot,
+    should_recalculate_accounts_lt_hash: bool,
 ) -> bool {
     let ((transaction_account_set, possibly_incomplete), transaction_accounts_measure) = measure_time!(
         blockstore.get_accounts_used_in_range(bank, snapshot_slot, ending_slot),
@@ -520,7 +524,12 @@ fn minimize_bank_for_snapshot(
     let total_accounts_len = transaction_account_set.len();
     info!("Added {total_accounts_len} accounts from transactions. {transaction_accounts_measure}");
 
-    SnapshotMinimizer::minimize(bank, snapshot_slot, transaction_account_set);
+    SnapshotMinimizer::minimize(
+        bank,
+        snapshot_slot,
+        transaction_account_set,
+        should_recalculate_accounts_lt_hash,
+    );
     possibly_incomplete
 }
 
@@ -935,10 +944,10 @@ fn main() {
         .help("Print account data in specified format when printing account contents.");
 
     let rent = Rent::default();
-    let default_bootstrap_validator_lamports = &sol_to_lamports(500.0)
-        .max(VoteStateV3::get_rent_exempt_reserve(&rent))
+    let default_bootstrap_validator_lamports = &(500 * LAMPORTS_PER_SOL)
+        .max(rent.minimum_balance(VoteStateV4::size_of()))
         .to_string();
-    let default_bootstrap_validator_stake_lamports = &sol_to_lamports(0.5)
+    let default_bootstrap_validator_stake_lamports = &(LAMPORTS_PER_SOL / 2)
         .max(rent.minimum_balance(StakeStateV2::size_of()))
         .to_string();
     let default_graph_vote_account_mode = GraphVoteAccountMode::default();
@@ -993,9 +1002,9 @@ fn main() {
                 .takes_value(false)
                 .global(true)
                 .help(
-                    "Allow opening the blockstore to succeed even if the desired open file \
-                     descriptor limit cannot be configured. Use with caution as some commands may \
-                     run fine with a reduced file descriptor limit while others will not",
+                    "Allow the command to continue even if the desired open file descriptor limit \
+                     cannot be configured. Use with caution as some commands may run fine with a \
+                     a reduced file descriptor limit while others may fail in nonobvious ways",
                 ),
         )
         .arg(
@@ -1310,8 +1319,8 @@ fn main() {
                         .value_name("DIR")
                         .takes_value(true)
                         .help(
-                            "Output directory for the snapshot \
-                             [default: --snapshot-archive-path if present else --ledger directory]",
+                            "Output directory for the snapshot [default: --snapshot-archive-path \
+                             if present else --ledger directory]",
                         ),
                 )
                 .arg(
@@ -1462,6 +1471,21 @@ fn main() {
                         .takes_value(true)
                         .value_name("ENDING_SLOT")
                         .help("Ending slot for minimized snapshot creation"),
+                )
+                .arg(
+                    Arg::with_name("recalculate_accounts_lt_hash")
+                        .long("recalculate-accounts-lt-hash")
+                        .takes_value(false)
+                        .help("Recalculate the accounts lt hash for minimized snapshots")
+                        .long_help(
+                            "Recalculate the accounts lt hash for minimized snapshots. Without \
+                             this flag, loading the minimized snapshot will fail startup accounts \
+                             verification because the accounts lt hash will not match due to the \
+                             pruned account state. If not recalculating the accounts lt hash, \
+                             pass `--accounts-db-skip-initial-hash-calculation` to `leder-tool \
+                             verify` in order to bypass this check.",
+                        )
+                        .requires("minimized"),
                 )
                 .arg(
                     Arg::with_name("snapshot_archive_format")
@@ -1670,6 +1694,12 @@ fn main() {
     let ledger_path = PathBuf::from(value_t_or_exit!(matches, "ledger_path", String));
     let verbose_level = matches.occurrences_of("verbose");
 
+    let enforce_nofile_limit = !matches.is_present("ignore_ulimit_nofile_error");
+    adjust_nofile_limit(enforce_nofile_limit).unwrap_or_else(|err| {
+        eprintln!("Error: {err:?}");
+        exit(1);
+    });
+
     // Name the rayon global thread pool
     rayon::ThreadPoolBuilder::new()
         .thread_name(|i| format!("solRayonGlob{i:02}"))
@@ -1756,7 +1786,7 @@ fn main() {
                     create_new_ledger(
                         &output_directory,
                         &genesis_config,
-                        solana_accounts_db::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+                        agave_snapshots::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
                         LedgerColumnOptions::default(),
                     )
                     .unwrap_or_else(|err| {
@@ -2135,18 +2165,6 @@ fn main() {
                     // possibility.
                     accounts_background_service.join().unwrap();
 
-                    // Similar to waiting for ABS to stop, we also wait for the initial startup
-                    // verification to complete. The startup verification runs in the background
-                    // and verifies the snapshot's accounts hashes are correct. We only want a
-                    // single accounts hash calculation to run at a time, and since snapshot
-                    // creation below will calculate the accounts hash, we wait for the startup
-                    // verification to complete before proceeding.
-                    bank.rc
-                        .accounts
-                        .accounts_db
-                        .verify_accounts_hash_in_bg
-                        .join_background_thread();
-
                     let child_bank_required = rent_burn_percentage.is_ok()
                         || hashes_per_tick.is_some()
                         || remove_stake_accounts
@@ -2321,7 +2339,7 @@ fn main() {
                                 identity_pubkey,
                                 identity_pubkey,
                                 100,
-                                VoteStateV3::get_rent_exempt_reserve(&rent).max(1),
+                                rent.minimum_balance(VoteStateV4::size_of()).max(1),
                             );
 
                             bank.store_account(
@@ -2360,7 +2378,16 @@ fn main() {
                     }
 
                     if child_bank_required {
-                        bank.fill_bank_with_ticks_for_tests();
+                        let num_ticks_per_slot = bank.ticks_per_slot();
+                        let num_hashes_per_tick = bank.hashes_per_tick().unwrap_or(0);
+                        let parent_blockhash = bank.last_blockhash();
+                        let tick_entries =
+                            create_ticks(num_ticks_per_slot, num_hashes_per_tick, parent_blockhash);
+
+                        let scheduler = BankWithScheduler::no_scheduler_available();
+                        tick_entries.iter().for_each(|tick_entry| {
+                            bank.register_tick(&tick_entry.hash, &scheduler);
+                        });
                     }
 
                     let pre_capitalization = bank.capitalization();
@@ -2410,6 +2437,7 @@ fn main() {
                             &bank,
                             snapshot_slot,
                             ending_slot.unwrap(),
+                            arg_matches.is_present("recalculate_accounts_lt_hash"),
                         )
                     } else {
                         false
@@ -2564,20 +2592,14 @@ fn main() {
                         "block_production_method",
                         BlockProductionMethod
                     );
-                    let transaction_struct =
-                        value_t_or_exit!(arg_matches, "transaction_struct", TransactionStructure);
 
-                    info!(
-                        "Using: block-production-method: {block_production_method} \
-                         transaction-structure: {transaction_struct}"
-                    );
+                    info!("Using: block-production-method: {block_production_method}");
 
                     match simulator.start(
                         genesis_config,
                         bank_forks,
                         blockstore,
                         block_production_method,
-                        transaction_struct,
                     ) {
                         Ok(()) => println!("Ok"),
                         Err(error) => {

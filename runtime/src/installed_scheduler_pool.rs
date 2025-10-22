@@ -27,10 +27,10 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_timings::ExecuteTimings,
+    solana_svm_timings::ExecuteTimings,
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    solana_unified_scheduler_logic::SchedulingMode,
+    solana_unified_scheduler_logic::{OrderedTaskId, SchedulingMode},
     std::{
         fmt::{self, Debug},
         mem,
@@ -177,7 +177,7 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     fn schedule_execution(
         &self,
         transaction: RuntimeTransaction<SanitizedTransaction>,
-        index: usize,
+        task_id: OrderedTaskId,
     ) -> ScheduleResult;
 
     /// Return the error which caused the scheduler to abort.
@@ -513,18 +513,18 @@ impl BankWithScheduler {
     /// wait_for_termination()-ed or the unified scheduler is disabled in the first place).
     pub fn schedule_transaction_executions(
         &self,
-        transactions_with_indexes: impl ExactSizeIterator<
-            Item = (RuntimeTransaction<SanitizedTransaction>, usize),
+        transaction_with_task_ids: impl ExactSizeIterator<
+            Item = (RuntimeTransaction<SanitizedTransaction>, OrderedTaskId),
         >,
     ) -> Result<()> {
         trace!(
             "schedule_transaction_executions(): {} txs",
-            transactions_with_indexes.len()
+            transaction_with_task_ids.len()
         );
 
         let schedule_result: ScheduleResult = self.inner.with_active_scheduler(|scheduler| {
-            for (sanitized_transaction, index) in transactions_with_indexes {
-                scheduler.schedule_execution(sanitized_transaction, index)?;
+            for (sanitized_transaction, task_id) in transaction_with_task_ids {
+                scheduler.schedule_execution(sanitized_transaction, task_id)?;
             }
             Ok(())
         });
@@ -614,11 +614,12 @@ impl BankWithSchedulerInner {
                 // unconditional context construction for verification is okay here.
                 let context = SchedulingContext::for_verification(self.bank.clone());
                 let mut scheduler = self.scheduler.write().unwrap();
-                trace!("with_active_scheduler: {:?}", scheduler);
+                trace!("with_active_scheduler: {scheduler:?}");
                 scheduler.transition_from_stale_to_active(|pool, result_with_timings| {
                     let scheduler = pool.take_resumed_scheduler(context, result_with_timings);
                     info!(
-                        "with_active_scheduler: bank (slot: {}) got active, taking scheduler (id: {})",
+                        "with_active_scheduler: bank (slot: {}) got active, taking scheduler (id: \
+                         {})",
                         self.bank.slot(),
                         scheduler.id(),
                     );
@@ -674,7 +675,7 @@ impl BankWithSchedulerInner {
                 );
                 (pool, result_with_timings)
             });
-            trace!("timeout_listener: {:?}", scheduler);
+            trace!("timeout_listener: {scheduler:?}");
         })
     }
 
@@ -738,17 +739,15 @@ impl BankWithSchedulerInner {
             SchedulerStatus::Unavailable => (true, None),
         };
         debug!(
-            "wait_for_scheduler_termination(slot: {}, reason: {:?}): noop: {:?}, result: {:?} at {:?}...",
+            "wait_for_scheduler_termination(slot: {}, reason: {:?}): noop: {:?}, result: {:?} at \
+             {:?}...",
             bank.slot(),
             reason,
             was_noop,
             result_with_timings.as_ref().map(|(result, _)| result),
             thread::current(),
         );
-        trace!(
-            "wait_for_scheduler_termination(result_with_timings: {:?})",
-            result_with_timings,
-        );
+        trace!("wait_for_scheduler_termination(result_with_timings: {result_with_timings:?})",);
 
         result_with_timings
     }
@@ -756,7 +755,8 @@ impl BankWithSchedulerInner {
     fn drop_scheduler(&self) {
         if thread::panicking() {
             error!(
-                "BankWithSchedulerInner::drop_scheduler(): slot: {} skipping due to already panicking...",
+                "BankWithSchedulerInner::drop_scheduler(): slot: {} skipping due to already \
+                 panicking...",
                 self.bank.slot(),
             );
             return;
@@ -768,7 +768,8 @@ impl BankWithSchedulerInner {
             .map(|(result, _timings)| result)
         {
             warn!(
-                "BankWithSchedulerInner::drop_scheduler(): slot: {} discarding error from scheduler: {:?}",
+                "BankWithSchedulerInner::drop_scheduler(): slot: {} discarding error from \
+                 scheduler: {:?}",
                 self.bank.slot(),
                 err,
             );

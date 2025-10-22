@@ -17,7 +17,7 @@ use {
             layout::{get_shred, resign_packet},
             wire::is_retransmitter_signed_variant,
         },
-        sigverify_shreds::{verify_shreds_gpu, LruCache},
+        sigverify_shreds::{verify_shreds_gpu, LruCache, SlotPubkeys},
     },
     solana_perf::{
         self,
@@ -30,7 +30,6 @@ use {
     solana_signer::Signer,
     solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     std::{
-        collections::HashMap,
         num::NonZeroUsize,
         sync::{
             atomic::{AtomicUsize, Ordering},
@@ -106,7 +105,7 @@ pub fn spawn_shred_sigverify(
             }
             // We can't store the keypair outside the loop
             // because the identity might be hot swapped.
-            let keypair: Arc<Keypair> = cluster_info.keypair().clone();
+            let keypair = cluster_info.keypair();
             match run_shred_sigverify(
                 &thread_pool,
                 &keypair,
@@ -254,7 +253,7 @@ fn run_shred_sigverify<const K: usize>(
             } else {
                 // Share the payload between the retransmit-stage and the
                 // window-service.
-                Either::Left(shred::Payload::from(Arc::new(shred)))
+                Either::Left(shred::Payload::from(shred))
             }
         });
     // Repaired shreds are not retransmitted.
@@ -400,9 +399,8 @@ fn verify_packets(
     packets: &mut [PacketBatch],
     cache: &RwLock<LruCache>,
 ) {
-    let leader_slots: HashMap<Slot, Pubkey> =
+    let leader_slots: SlotPubkeys =
         get_slot_leaders(self_pubkey, packets, leader_schedule_cache, working_bank)
-            .into_iter()
             .filter_map(|(slot, pubkey)| Some((slot, pubkey?)))
             .chain(std::iter::once((Slot::MAX, Pubkey::default())))
             .collect();
@@ -410,39 +408,32 @@ fn verify_packets(
     solana_perf::sigverify::mark_disabled(packets, &out);
 }
 
-// Returns pubkey of leaders for shred slots refrenced in the packets.
+// Returns pubkey of leaders for shred slots referenced in the packets.
 // Marks packets as discard if:
 //   - fails to deserialize the shred slot.
 //   - slot leader is unknown.
 //   - slot leader is the node itself (circular transmission).
-fn get_slot_leaders(
-    self_pubkey: &Pubkey,
-    batches: &mut [PacketBatch],
-    leader_schedule_cache: &LeaderScheduleCache,
-    bank: &Bank,
-) -> HashMap<Slot, Option<Pubkey>> {
-    let mut leaders = HashMap::<Slot, Option<Pubkey>>::new();
+fn get_slot_leaders<'a>(
+    self_pubkey: &'a Pubkey,
+    batches: &'a mut [PacketBatch],
+    leader_schedule_cache: &'a LeaderScheduleCache,
+    bank: &'a Bank,
+) -> impl Iterator<Item = (Slot, Option<Pubkey>)> + 'a {
     batches
         .iter_mut()
         .flat_map(|batch| batch.iter_mut())
         .filter(|packet| !packet.meta().discard())
-        .filter(|packet| {
+        .filter_map(move |mut packet| {
             let shred = shred::layout::get_shred(packet.as_ref());
-            let Some(slot) = shred.and_then(shred::layout::get_slot) else {
-                return true;
-            };
-            leaders
-                .entry(slot)
-                .or_insert_with(|| {
-                    // Discard the shred if the slot leader is the node itself.
-                    leader_schedule_cache
-                        .slot_leader_at(slot, Some(bank))
-                        .filter(|leader| leader != self_pubkey)
-                })
-                .is_none()
+            let slot = shred.and_then(shred::layout::get_slot)?;
+            let leader = leader_schedule_cache
+                .slot_leader_at(slot, Some(bank))
+                .filter(|leader| leader != self_pubkey);
+            if leader.is_none() {
+                packet.meta_mut().set_discard(true);
+            }
+            Some((slot, leader))
         })
-        .for_each(|mut packet| packet.meta_mut().set_discard(true));
-    leaders
 }
 
 fn count_discards(packets: &[PacketBatch]) -> usize {
@@ -608,7 +599,7 @@ mod tests {
             &leader_keypair,
             &entries,
             true,
-            Some(Hash::new_unique()),
+            Hash::new_unique(),
             0,
             0,
             &ReedSolomonCache::default(),
@@ -618,7 +609,7 @@ mod tests {
             &wrong_keypair,
             &entries,
             true,
-            Some(Hash::new_unique()),
+            Hash::new_unique(),
             0,
             0,
             &ReedSolomonCache::default(),
@@ -671,8 +662,7 @@ mod tests {
             let bank_forks = bank_forks.read().unwrap();
             (bank_forks.working_bank(), bank_forks.root_bank())
         };
-
-        let chained_merkle_root = Some(Hash::new_from_array(rng.gen()));
+        let chained_merkle_root = Hash::new_from_array(rng.gen());
 
         let shredder = Shredder::new(root_bank.slot(), root_bank.parent_slot(), 0, 0).unwrap();
         let entries = vec![Entry::new(&Hash::default(), 0, vec![])];

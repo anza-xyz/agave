@@ -57,10 +57,10 @@ fn broadcast_shreds_bench(b: &mut Bencher) {
     let data_shreds = shredder.make_merkle_shreds_from_entries(
         &leader_keypair,
         &entries,
-        true, // is_last_in_slot
-        None, // chained_merkle_root
-        0,    // next_shred_index
-        0,    // next_code_index
+        true,            // is_last_in_slot
+        Hash::default(), // chained_merkle_root
+        0,               // next_shred_index
+        0,               // next_code_index
         &ReedSolomonCache::default(),
         &mut ProcessShredsStats::default(),
     );
@@ -85,7 +85,7 @@ fn broadcast_shreds_bench(b: &mut Bencher) {
         let shreds = shreds.clone();
         broadcast_shreds(
             socket,
-            shreds,
+            &shreds,
             &cluster_nodes_cache,
             &last_datapoint,
             &mut TransmitShredsStats::default(),

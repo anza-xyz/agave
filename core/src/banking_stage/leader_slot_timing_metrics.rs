@@ -1,6 +1,6 @@
 use {
     solana_clock::Slot, solana_poh::transaction_recorder::RecordTransactionsTimings,
-    solana_timings::ExecuteTimings, std::time::Instant,
+    solana_svm_timings::ExecuteTimings, std::time::Instant,
 };
 
 #[derive(Default, Debug)]
@@ -77,9 +77,9 @@ pub(crate) struct LeaderSlotTimingMetrics {
 }
 
 impl LeaderSlotTimingMetrics {
-    pub(crate) fn new(bank_creation_time: &Instant) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            outer_loop_timings: OuterLoopTimings::new(bank_creation_time),
+            outer_loop_timings: OuterLoopTimings::new(),
             process_buffered_packets_timings: ProcessBufferedPacketsTimings::default(),
             consume_buffered_packets_timings: ConsumeBufferedPacketsTimings::default(),
             process_packets_timings: ProcessPacketsTimings::default(),
@@ -104,9 +104,6 @@ impl LeaderSlotTimingMetrics {
 pub(crate) struct OuterLoopTimings {
     pub bank_detected_time: Instant,
 
-    // Delay from when the bank was created to when this thread detected it
-    pub bank_detected_delay_us: u64,
-
     // Time spent processing buffered packets
     pub process_buffered_packets_us: u64,
 
@@ -122,10 +119,9 @@ pub(crate) struct OuterLoopTimings {
 }
 
 impl OuterLoopTimings {
-    fn new(bank_creation_time: &Instant) -> Self {
+    fn new() -> Self {
         Self {
             bank_detected_time: Instant::now(),
-            bank_detected_delay_us: bank_creation_time.elapsed().as_micros() as u64,
             process_buffered_packets_us: 0,
             receive_and_buffer_packets_us: 0,
             receive_and_buffer_packets_invoked_count: 0,
@@ -148,12 +144,6 @@ impl OuterLoopTimings {
                 self.bank_detected_to_slot_end_detected_us,
                 i64
             ),
-            (
-                "bank_creation_to_slot_end_detected_us",
-                self.bank_detected_to_slot_end_detected_us + self.bank_detected_delay_us,
-                i64
-            ),
-            ("bank_detected_delay_us", self.bank_detected_delay_us, i64),
             (
                 "process_buffered_packets_us",
                 self.process_buffered_packets_us,

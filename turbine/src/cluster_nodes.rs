@@ -47,9 +47,6 @@ thread_local! {
 const DATA_PLANE_FANOUT: usize = 200;
 pub(crate) const MAX_NUM_TURBINE_HOPS: usize = 4;
 
-// Limit number of nodes per IP address.
-const MAX_NUM_NODES_PER_IP_ADDRESS: usize = 10;
-
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Loopback from slot leader: {leader}, shred: {shred:?}")]
@@ -398,10 +395,13 @@ fn cmp_nodes_stake(a: &Node, b: &Node) -> Ordering {
         })
 }
 
-// Dedups socket addresses so that if there are 2 nodes in the cluster with the
-// same TVU socket-addr, we only send shreds to one of them.
-// Additionally limits number of nodes at the same IP address to
-// MAX_NUM_NODES_PER_IP_ADDRESS.
+/// If set > 1 it allows the nodes to run behind a NAT.
+/// This usecase is currently not supported.
+const MAX_NUM_NODES_PER_IP_ADDRESS: usize = 1;
+
+/// Dedups socket addresses so that if there are 2 nodes in the cluster with the
+/// same TVU socket-addr, we only send shreds to one of them.
+/// Additionally limits number of nodes at the same IP address to 1
 fn dedup_tvu_addrs(nodes: &mut Vec<Node>) {
     const TVU_PROTOCOLS: [Protocol; 2] = [Protocol::UDP, Protocol::QUIC];
     let capacity = nodes.len().saturating_mul(2);
@@ -916,7 +916,7 @@ mod tests {
             5, // root
             34, 52, 8, // 1st layer
             // 2nd layar
-            44, 18, 2, // 1st neigborhood
+            44, 18, 2, // 1st neighborhood
             42, 47, 46, // 2nd
             11, 26, 28, // 3rd
             // 3rd layer

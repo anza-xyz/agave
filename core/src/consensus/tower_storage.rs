@@ -3,6 +3,7 @@ use {
         tower1_14_11::Tower1_14_11, tower1_7_14::SavedTower1_7_14, Result, Tower, TowerError,
         TowerVersions,
     },
+    serde::{Deserialize, Serialize},
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_signer::Signer,
@@ -78,7 +79,7 @@ impl From<SavedTower1_7_14> for SavedTowerVersions {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "GqJW8vVvSkSZwTJE6x6MFFhi7kcU6mqst8PF7493h2hk")
+    frozen_abi(digest = "8T1GVMzNNWcHRQwyzPhFj5nErdazaBe3ZGKQdY7T89Zo")
 )]
 #[derive(Default, Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct SavedTower {
@@ -219,155 +220,6 @@ impl TowerStorage for FileTowerStorage {
     }
 }
 
-pub struct EtcdTowerStorage {
-    client: tokio::sync::Mutex<etcd_client::Client>,
-    instance_id: [u8; 8],
-    runtime: tokio::runtime::Runtime,
-}
-
-pub struct EtcdTlsConfig {
-    pub domain_name: String,
-    pub ca_certificate: Vec<u8>,
-    pub identity_certificate: Vec<u8>,
-    pub identity_private_key: Vec<u8>,
-}
-
-impl EtcdTowerStorage {
-    pub fn new<E: AsRef<str>, S: AsRef<[E]>>(
-        endpoints: S,
-        tls_config: Option<EtcdTlsConfig>,
-    ) -> Result<Self> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_io()
-            .enable_time()
-            .build()
-            .unwrap();
-
-        let client = runtime
-            .block_on(etcd_client::Client::connect(
-                endpoints,
-                tls_config.map(|tls_config| {
-                    etcd_client::ConnectOptions::default().with_tls(
-                        etcd_client::TlsOptions::new()
-                            .domain_name(tls_config.domain_name)
-                            .ca_certificate(etcd_client::Certificate::from_pem(
-                                tls_config.ca_certificate,
-                            ))
-                            .identity(etcd_client::Identity::from_pem(
-                                tls_config.identity_certificate,
-                                tls_config.identity_private_key,
-                            )),
-                    )
-                }),
-            ))
-            .map_err(Self::etdc_to_tower_error)?;
-
-        Ok(Self {
-            client: tokio::sync::Mutex::new(client),
-            instance_id: solana_time_utils::timestamp().to_le_bytes(),
-            runtime,
-        })
-    }
-
-    fn get_keys(node_pubkey: &Pubkey) -> (String, String) {
-        let instance_key = format!("{node_pubkey}/instance");
-        let tower_key = format!("{node_pubkey}/tower");
-        (instance_key, tower_key)
-    }
-
-    fn etdc_to_tower_error(error: etcd_client::Error) -> TowerError {
-        TowerError::IoError(io::Error::other(error.to_string()))
-    }
-}
-
-impl TowerStorage for EtcdTowerStorage {
-    fn load(&self, node_pubkey: &Pubkey) -> Result<Tower> {
-        let (instance_key, tower_key) = Self::get_keys(node_pubkey);
-
-        let txn = etcd_client::Txn::new().and_then(vec![etcd_client::TxnOp::put(
-            instance_key.clone(),
-            self.instance_id,
-            None,
-        )]);
-        self.runtime
-            .block_on(async { self.client.lock().await.txn(txn).await })
-            .map_err(|err| {
-                error!("Failed to acquire etcd instance lock: {err}");
-                Self::etdc_to_tower_error(err)
-            })?;
-
-        let txn = etcd_client::Txn::new()
-            .when(vec![etcd_client::Compare::value(
-                instance_key,
-                etcd_client::CompareOp::Equal,
-                self.instance_id,
-            )])
-            .and_then(vec![etcd_client::TxnOp::get(tower_key, None)]);
-
-        let response = self
-            .runtime
-            .block_on(async { self.client.lock().await.txn(txn).await })
-            .map_err(|err| {
-                error!("Failed to read etcd saved tower: {err}");
-                Self::etdc_to_tower_error(err)
-            })?;
-
-        if !response.succeeded() {
-            return Err(TowerError::IoError(io::Error::other(format!(
-                "Lost etcd instance lock for {node_pubkey}"
-            ))));
-        }
-
-        for op_response in response.op_responses() {
-            if let etcd_client::TxnOpResponse::Get(get_response) = op_response {
-                if let Some(kv) = get_response.kvs().first() {
-                    return bincode::deserialize_from(kv.value())
-                        .map_err(|e| e.into())
-                        .and_then(|t: SavedTowerVersions| t.try_into_tower(node_pubkey));
-                }
-            }
-        }
-
-        // Should never happen...
-        Err(TowerError::IoError(io::Error::other(
-            "Saved tower response missing".to_string(),
-        )))
-    }
-
-    fn store(&self, saved_tower: &SavedTowerVersions) -> Result<()> {
-        let (instance_key, tower_key) = Self::get_keys(&saved_tower.pubkey());
-
-        let txn = etcd_client::Txn::new()
-            .when(vec![etcd_client::Compare::value(
-                instance_key,
-                etcd_client::CompareOp::Equal,
-                self.instance_id,
-            )])
-            .and_then(vec![etcd_client::TxnOp::put(
-                tower_key,
-                bincode::serialize(&saved_tower)?,
-                None,
-            )]);
-
-        let response = self
-            .runtime
-            .block_on(async { self.client.lock().await.txn(txn).await })
-            .map_err(|err| {
-                error!("Failed to write etcd saved tower: {err}");
-                err
-            })
-            .map_err(Self::etdc_to_tower_error)?;
-
-        if !response.succeeded() {
-            return Err(TowerError::IoError(io::Error::other(format!(
-                "Lost etcd instance lock for {}",
-                saved_tower.pubkey()
-            ))));
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 pub mod test {
     use {
@@ -380,7 +232,7 @@ pub mod test {
         solana_keypair::Keypair,
         solana_vote::vote_transaction::VoteTransaction,
         solana_vote_program::vote_state::{
-            BlockTimestamp, LandedVote, Vote, VoteState, VoteState1_14_11, MAX_LOCKOUT_HISTORY,
+            BlockTimestamp, Lockout, Vote, VoteState1_14_11, MAX_LOCKOUT_HISTORY,
         },
         tempfile::TempDir,
     };
@@ -390,10 +242,10 @@ pub mod test {
         let tower_path = TempDir::new().unwrap();
         let identity_keypair = Keypair::new();
         let node_pubkey = identity_keypair.pubkey();
-        let mut vote_state = VoteState::default();
+        let mut vote_state = VoteState1_14_11::default();
         vote_state
             .votes
-            .resize(MAX_LOCKOUT_HISTORY, LandedVote::default());
+            .resize(MAX_LOCKOUT_HISTORY, Lockout::default());
         vote_state.root_slot = Some(1);
 
         let vote = Vote::new(vec![1, 2, 3, 4], Hash::default());
@@ -403,7 +255,7 @@ pub mod test {
             node_pubkey,
             threshold_depth: 10,
             threshold_size: 0.9,
-            vote_state: VoteState1_14_11::from(vote_state),
+            vote_state,
             last_vote: vote.clone(),
             last_timestamp: BlockTimestamp::default(),
             last_vote_tx_blockhash: BlockhashStatus::Uninitialized,

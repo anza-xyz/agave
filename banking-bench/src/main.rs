@@ -9,9 +9,12 @@ use {
     rayon::prelude::*,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_core::{
-        banking_stage::{update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage},
+        banking_stage::{
+            transaction_scheduler::scheduler_controller::SchedulerConfig,
+            update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage,
+        },
         banking_trace::{BankingTracer, Channels, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT},
-        validator::{BlockProductionMethod, TransactionStructure},
+        validator::{BlockProductionMethod, SchedulerPacing, TransactionStructure},
     },
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -36,6 +39,7 @@ use {
     solana_time_utils::timestamp,
     solana_transaction::Transaction,
     std::{
+        num::NonZeroUsize,
         sync::{atomic::Ordering, Arc, RwLock},
         thread::sleep,
         time::{Duration, Instant},
@@ -288,18 +292,19 @@ fn main() {
                 .help(BlockProductionMethod::cli_message()),
         )
         .arg(
+            Arg::with_name("block_production_num_workers")
+                .long("block-production-num-workers")
+                .takes_value(true)
+                .value_name("NUMBER")
+                .help("Number of worker threads to use for block production"),
+        )
+        .arg(
             Arg::with_name("transaction_struct")
                 .long("transaction-structure")
                 .value_name("STRUCT")
                 .takes_value(true)
                 .possible_values(TransactionStructure::cli_names())
                 .help(TransactionStructure::cli_message()),
-        )
-        .arg(
-            Arg::new("num_banking_threads")
-                .long("num-banking-threads")
-                .takes_value(true)
-                .help("Number of threads to use in the banking stage"),
         )
         .arg(
             Arg::new("simulate_mint")
@@ -319,12 +324,9 @@ fn main() {
     let block_production_method = matches
         .value_of_t::<BlockProductionMethod>("block_production_method")
         .unwrap_or_default();
-    let transaction_struct = matches
-        .value_of_t::<TransactionStructure>("transaction_struct")
-        .unwrap_or_default();
-    let num_banking_threads = matches
-        .value_of_t::<u32>("num_banking_threads")
-        .unwrap_or_else(|_| BankingStage::num_threads());
+    let block_production_num_workers = matches
+        .value_of_t::<NonZeroUsize>("block_production_num_workers")
+        .unwrap_or_else(|_| BankingStage::default_num_workers());
     //   a multiple of packet chunk duplicates to avoid races
     let num_chunks = matches.value_of_t::<usize>("num_chunks").unwrap_or(16);
     let packets_per_batch = matches
@@ -333,7 +335,7 @@ fn main() {
     let iterations = matches.value_of_t::<usize>("iterations").unwrap_or(1000);
     let batches_per_iteration = matches
         .value_of_t::<usize>("batches_per_iteration")
-        .unwrap_or(BankingStage::num_threads() as usize);
+        .unwrap_or(BankingStage::default_num_workers().get());
     let write_lock_contention = matches
         .value_of_t::<WriteLockContention>("write_lock_contention")
         .unwrap_or(WriteLockContention::None);
@@ -375,10 +377,7 @@ fn main() {
         .iter()
         .map(|packets_for_single_iteration| packets_for_single_iteration.transactions.len() as u64)
         .sum();
-    info!(
-        "threads: {} txs: {}",
-        num_banking_threads, total_num_transactions
-    );
+    info!("worker threads: {block_production_num_workers} txs: {total_num_transactions}");
 
     // fund all the accounts
     all_packets.iter().for_each(|packets_for_single_iteration| {
@@ -431,13 +430,19 @@ fn main() {
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger"),
     );
     let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-    let (exit, poh_recorder, transaction_recorder, poh_service, signal_receiver) =
-        create_test_recorder(
-            bank.clone(),
-            blockstore.clone(),
-            None,
-            Some(leader_schedule_cache),
-        );
+    let (
+        exit,
+        poh_recorder,
+        mut poh_controller,
+        transaction_recorder,
+        poh_service,
+        signal_receiver,
+    ) = create_test_recorder(
+        bank.clone(),
+        blockstore.clone(),
+        None,
+        Some(leader_schedule_cache),
+    );
     let (banking_tracer, tracer_thread) =
         BankingTracer::new(matches.is_present("trace_banking").then_some((
             &blockstore.banking_trace_path(),
@@ -456,18 +461,20 @@ fn main() {
     } = banking_tracer.create_channels(false);
     let banking_stage = BankingStage::new_num_threads(
         block_production_method,
-        transaction_struct,
-        &poh_recorder,
+        poh_recorder.clone(),
         transaction_recorder,
         non_vote_receiver,
         tpu_vote_receiver,
         gossip_vote_receiver,
-        num_banking_threads,
+        block_production_num_workers,
+        SchedulerConfig {
+            scheduler_pacing: SchedulerPacing::Disabled,
+        },
         None,
         replay_vote_sender,
         None,
         bank_forks.clone(),
-        &prioritization_fee_cache,
+        prioritization_fee_cache,
     );
 
     // This is so that the signal_receiver does not go out of scope after the closure.
@@ -481,7 +488,7 @@ fn main() {
     let collector = solana_pubkey::new_rand();
     let mut total_sent = 0;
     for current_iteration_index in 0..iterations {
-        trace!("RUNNING ITERATION {}", current_iteration_index);
+        trace!("RUNNING ITERATION {current_iteration_index}");
         let now = Instant::now();
         let mut sent = 0;
 
@@ -530,10 +537,9 @@ fn main() {
             tx_total_us += now.elapsed().as_micros() as u64;
 
             let mut poh_time = Measure::start("poh_time");
-            poh_recorder
-                .write()
-                .unwrap()
-                .reset(bank.clone(), Some((bank.slot(), bank.slot() + 1)));
+            poh_controller
+                .reset_sync(bank.clone(), Some((bank.slot(), bank.slot() + 1)))
+                .unwrap();
             poh_time.stop();
 
             let mut new_bank_time = Measure::start("new_bank");
@@ -548,7 +554,7 @@ fn main() {
             assert_matches!(poh_recorder.read().unwrap().bank(), None);
             update_bank_forks_and_poh_recorder_for_new_tpu_bank(
                 &bank_forks,
-                &poh_recorder,
+                &mut poh_controller,
                 new_bank,
             );
             bank = bank_forks.read().unwrap().working_bank_with_scheduler();
@@ -590,10 +596,18 @@ fn main() {
         .unwrap()
         .working_bank()
         .transaction_count();
-    debug!("processed: {} base: {}", txs_processed, base_tx_count);
+    debug!("processed: {txs_processed} base: {base_tx_count}");
 
-    eprintln!("[total_sent: {}, base_tx_count: {}, txs_processed: {}, txs_landed: {}, total_us: {}, tx_total_us: {}]",
-            total_sent, base_tx_count, txs_processed, (txs_processed - base_tx_count), total_us, tx_total_us);
+    eprintln!(
+        "[total_sent: {}, base_tx_count: {}, txs_processed: {}, txs_landed: {}, total_us: {}, \
+         tx_total_us: {}]",
+        total_sent,
+        base_tx_count,
+        txs_processed,
+        (txs_processed - base_tx_count),
+        total_us,
+        tx_total_us
+    );
 
     eprintln!(
         "{{'name': 'banking_bench_total', 'median': '{:.2}'}}",

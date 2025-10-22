@@ -37,6 +37,14 @@ fn test_secp256k1_recover() {
 /// secp256k1_recover allows malleable signatures
 fn test_secp256k1_recover_malleability() {
     let message = b"hello world";
+    #[cfg(target_os = "solana")]
+    let message_hash = {
+        use sha3::Digest;
+        let mut hasher = sha3::Keccak256::default();
+        hasher.update(message);
+        solana_hash::Hash::new_from_array(hasher.finalize().into())
+    };
+    #[cfg(not(target_os = "solana"))]
     let message_hash = {
         let mut hasher = solana_keccak_hasher::Hasher::default();
         hasher.hash(message);
@@ -70,11 +78,15 @@ fn test_secp256k1_recover_malleability() {
     let alt_recovery_id = alt_recovery_id.serialize();
 
     let recovered_pubkey =
-        secp256k1_recover(&message_hash.0, recovery_id, &signature_bytes[..]).unwrap();
+        secp256k1_recover(message_hash.as_bytes(), recovery_id, &signature_bytes[..]).unwrap();
     assert_eq!(recovered_pubkey.to_bytes(), pubkey_bytes);
 
-    let alt_recovered_pubkey =
-        secp256k1_recover(&message_hash.0, alt_recovery_id, &alt_signature_bytes[..]).unwrap();
+    let alt_recovered_pubkey = secp256k1_recover(
+        message_hash.as_bytes(),
+        alt_recovery_id,
+        &alt_signature_bytes[..],
+    )
+    .unwrap();
     assert_eq!(alt_recovered_pubkey.to_bytes(), pubkey_bytes);
 }
 

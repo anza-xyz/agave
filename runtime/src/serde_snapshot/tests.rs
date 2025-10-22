@@ -18,15 +18,15 @@ mod serde_snapshot_tests {
             account_storage_reader::AccountStorageReader,
             accounts::Accounts,
             accounts_db::{
-                get_temp_accounts_paths, test_utils::create_test_accounts, AccountStorageEntry,
-                AccountsDb, AtomicAccountsFileId,
+                get_temp_accounts_paths, AccountStorageEntry, AccountsDb, AccountsDbConfig,
+                AtomicAccountsFileId, MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
             ancestors::Ancestors,
+            ObsoleteAccounts,
         },
         solana_clock::Slot,
         solana_epoch_schedule::EpochSchedule,
-        solana_nohash_hasher::BuildNoHashHasher,
         solana_pubkey::Pubkey,
         std::{
             fs::File,
@@ -39,7 +39,7 @@ mod serde_snapshot_tests {
             },
         },
         tempfile::TempDir,
-        test_case::test_case,
+        test_case::{test_case, test_matrix},
     };
 
     fn linear_ancestors(end_slot: u64) -> Ancestors {
@@ -54,6 +54,7 @@ mod serde_snapshot_tests {
         stream: &mut BufReader<R>,
         account_paths: &[PathBuf],
         storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
+        accounts_db_config: AccountsDbConfig,
     ) -> Result<AccountsDb, Error>
     where
         R: Read,
@@ -70,7 +71,7 @@ mod serde_snapshot_tests {
             storage_and_next_append_vec_id,
             None,
             false,
-            Some(solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            accounts_db_config,
             None,
             Arc::default(),
         )
@@ -81,11 +82,17 @@ mod serde_snapshot_tests {
         stream: &mut BufReader<R>,
         account_paths: &[PathBuf],
         storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
+        accounts_db_config: AccountsDbConfig,
     ) -> Result<AccountsDb, Error>
     where
         R: Read,
     {
-        context_accountsdb_from_stream::<R>(stream, account_paths, storage_and_next_append_vec_id)
+        context_accountsdb_from_stream::<R>(
+            stream,
+            account_paths,
+            storage_and_next_append_vec_id,
+            accounts_db_config,
+        )
     }
 
     fn accountsdb_to_stream<W>(
@@ -117,10 +124,7 @@ mod serde_snapshot_tests {
         storage_access: StorageAccess,
     ) -> Result<StorageAndNextAccountsFileId, AccountsFileError> {
         let storage_entries = accounts_db.get_storages(RangeFull).0;
-        let storage: AccountStorageMap = AccountStorageMap::with_capacity_and_hasher(
-            storage_entries.len(),
-            BuildNoHashHasher::default(),
-        );
+        let storage: AccountStorageMap = AccountStorageMap::with_capacity(storage_entries.len());
         let mut next_append_vec_id = 0;
         for storage_entry in storage_entries.into_iter() {
             // Copy file to new directory
@@ -137,6 +141,7 @@ mod serde_snapshot_tests {
                 storage_entry.slot(),
                 storage_entry.id(),
                 accounts_file,
+                ObsoleteAccounts::default(),
             );
             next_append_vec_id = next_append_vec_id.max(new_storage_entry.id());
             storage.insert(new_storage_entry.slot(), Arc::new(new_storage_entry));
@@ -152,6 +157,7 @@ mod serde_snapshot_tests {
         accounts: &AccountsDb,
         slot: Slot,
         storage_access: StorageAccess,
+        accounts_db_config: AccountsDbConfig,
     ) -> AccountsDb {
         let mut writer = Cursor::new(vec![]);
         let snapshot_storages = accounts.get_storages(..=slot).0;
@@ -170,8 +176,13 @@ mod serde_snapshot_tests {
         // Simulate obtaining a copy of the AppendVecs from a tarball
         let storage_and_next_append_vec_id =
             copy_append_vecs(accounts, copied_accounts.path(), storage_access).unwrap();
-        let mut accounts_db =
-            accountsdb_from_stream(&mut reader, &[], storage_and_next_append_vec_id).unwrap();
+        let mut accounts_db = accountsdb_from_stream(
+            &mut reader,
+            &[],
+            storage_and_next_append_vec_id,
+            accounts_db_config,
+        )
+        .unwrap();
 
         // The append vecs will be used from `copied_accounts` directly by the new AccountsDb so keep
         // its TempDir alive
@@ -205,8 +216,13 @@ mod serde_snapshot_tests {
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         let slot = 0;
-        let mut pubkeys: Vec<Pubkey> = vec![];
-        create_test_accounts(&accounts, &mut pubkeys, 100, slot);
+        let pubkeys: Vec<_> = std::iter::repeat_with(solana_pubkey::new_rand)
+            .take(100)
+            .collect();
+        for (i, pubkey) in pubkeys.iter().enumerate() {
+            let account = AccountSharedData::new(i as u64 + 1, 0, &Pubkey::default());
+            accounts.store_accounts_seq((slot, [(pubkey, &account)].as_slice()), None);
+        }
         check_accounts_local(&accounts, &pubkeys, 100);
         accounts.accounts_db.add_root_and_flush_write_cache(slot);
         let accounts_hash = accounts
@@ -240,6 +256,7 @@ mod serde_snapshot_tests {
                 &mut reader,
                 &daccounts_paths,
                 storage_and_next_append_vec_id,
+                ACCOUNTS_DB_CONFIG_FOR_TESTING,
             )
             .unwrap(),
         ));
@@ -259,7 +276,7 @@ mod serde_snapshot_tests {
         let db = AccountsDb::new_single_for_tests();
         let key = solana_pubkey::new_rand();
         let account0 = AccountSharedData::new(1, 0, &key);
-        db.store_for_tests(unrooted_slot, &[(&key, &account0)]);
+        db.store_for_tests((unrooted_slot, [(&key, &account0)].as_slice()));
 
         // Purge the slot
         db.remove_unrooted_slots(&[(unrooted_slot, unrooted_bank_id)]);
@@ -267,11 +284,16 @@ mod serde_snapshot_tests {
         // Add a new root
         let key2 = solana_pubkey::new_rand();
         let new_root = unrooted_slot + 1;
-        db.store_for_tests(new_root, &[(&key2, &account0)]);
+        db.store_for_tests((new_root, [(&key2, &account0)].as_slice()));
         db.add_root_and_flush_write_cache(new_root);
 
         // Simulate reconstruction from snapshot
-        let db = reconstruct_accounts_db_via_serialization(&db, new_root, storage_access);
+        let db = reconstruct_accounts_db_via_serialization(
+            &db,
+            new_root,
+            storage_access,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        );
 
         // Check root account exists
         db.assert_load_account(new_root, key2, 1);
@@ -283,12 +305,27 @@ mod serde_snapshot_tests {
             .is_none());
     }
 
-    #[test_case(StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_accounts_db_serialize1(storage_access: StorageAccess) {
+    #[test_matrix(
+        [StorageAccess::File, StorageAccess::Mmap],
+        [MarkObsoleteAccounts::Enabled, MarkObsoleteAccounts::Disabled],
+        [MarkObsoleteAccounts::Enabled, MarkObsoleteAccounts::Disabled]
+    )]
+    fn test_accounts_db_serialize1(
+        storage_access: StorageAccess,
+        mark_obsolete_accounts_initial: MarkObsoleteAccounts,
+        mark_obsolete_accounts_restore: MarkObsoleteAccounts,
+    ) {
         for pass in 0..2 {
             solana_logger::setup();
-            let accounts = AccountsDb::new_single_for_tests();
+            let accounts = AccountsDb::new_with_config(
+                Vec::new(),
+                AccountsDbConfig {
+                    mark_obsolete_accounts: mark_obsolete_accounts_initial,
+                    ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+                },
+                None,
+                Arc::default(),
+            );
             let mut pubkeys: Vec<Pubkey> = vec![];
 
             // Create 100 accounts in slot 0
@@ -318,7 +355,7 @@ mod serde_snapshot_tests {
             // Overwrite account 30 from slot 0 with lamports=0 into slot 1.
             // Slot 1 should now have 10 + 1 = 11 accounts
             let account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
-            accounts.store_for_tests(latest_slot, &[(&pubkeys[30], &account)]);
+            accounts.store_for_tests((latest_slot, [(&pubkeys[30], &account)].as_slice()));
 
             // Create 10 new accounts in slot 1, should now have 11 + 10 = 21
             // accounts
@@ -337,7 +374,7 @@ mod serde_snapshot_tests {
             // Overwrite account 31 from slot 0 with lamports=0 into slot 2.
             // Slot 2 should now have 20 + 1 = 21 accounts
             let account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
-            accounts.store_for_tests(latest_slot, &[(&pubkeys[31], &account)]);
+            accounts.store_for_tests((latest_slot, [(&pubkeys[31], &account)].as_slice()));
 
             // Create 10 new accounts in slot 2. Slot 2 should now have
             // 21 + 10 = 31 accounts
@@ -358,8 +395,16 @@ mod serde_snapshot_tests {
             accounts.check_storage(1, 11, 21);
             accounts.check_storage(2, 31, 31);
 
-            let daccounts =
-                reconstruct_accounts_db_via_serialization(&accounts, latest_slot, storage_access);
+            let accounts_db_config = AccountsDbConfig {
+                mark_obsolete_accounts: mark_obsolete_accounts_restore,
+                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+            };
+            let daccounts = reconstruct_accounts_db_via_serialization(
+                &accounts,
+                latest_slot,
+                storage_access,
+                accounts_db_config,
+            );
 
             assert_eq!(
                 daccounts.write_version.load(Ordering::Acquire),
@@ -371,8 +416,23 @@ mod serde_snapshot_tests {
             // Don't check the first 35 accounts which have not been modified on slot 0
             daccounts.check_accounts(&pubkeys[35..], 0, 65, 37);
             daccounts.check_accounts(&pubkeys1, 1, 10, 1);
-            daccounts.check_storage(0, 100, 100);
-            daccounts.check_storage(1, 21, 21);
+
+            // If accounts are marked obsolete at initial save time, then the accounts will be
+            // shrunk during snapshot archive
+            if mark_obsolete_accounts_initial == MarkObsoleteAccounts::Enabled {
+                daccounts.check_storage(0, 78, 78);
+                daccounts.check_storage(1, 11, 11);
+            // If accounts are marked obsolete at restore time, then the accounts will be marked
+            // obsolete and cleaned during snapshot restore but not removed from the storages until
+            // the next shrink
+            } else if mark_obsolete_accounts_restore == MarkObsoleteAccounts::Enabled {
+                daccounts.check_storage(0, 78, 100);
+                daccounts.check_storage(1, 11, 21);
+            } else {
+                daccounts.check_storage(0, 100, 100);
+                daccounts.check_storage(1, 21, 21);
+            }
+
             daccounts.check_storage(2, 31, 31);
 
             assert_eq!(
@@ -402,12 +462,12 @@ mod serde_snapshot_tests {
         let accounts = AccountsDb::new_single_for_tests();
 
         let mut current_slot = 1;
-        accounts.store_for_tests(current_slot, &[(&pubkey, &account)]);
+        accounts.store_for_tests((current_slot, [(&pubkey, &account)].as_slice()));
         accounts.add_root(current_slot);
 
         current_slot += 1;
-        accounts.store_for_tests(current_slot, &[(&pubkey, &zero_lamport_account)]);
-        accounts.store_for_tests(current_slot, &[(&pubkey2, &account2)]);
+        accounts.store_for_tests((current_slot, [(&pubkey, &zero_lamport_account)].as_slice()));
+        accounts.store_for_tests((current_slot, [(&pubkey2, &account2)].as_slice()));
 
         accounts.add_root_and_flush_write_cache(current_slot);
 
@@ -419,8 +479,12 @@ mod serde_snapshot_tests {
 
         accounts.print_accounts_stats("accounts_post_purge");
 
-        let accounts =
-            reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access);
+        let accounts = reconstruct_accounts_db_via_serialization(
+            &accounts,
+            current_slot,
+            storage_access,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        );
 
         accounts.print_accounts_stats("reconstructed");
 
@@ -452,21 +516,27 @@ mod serde_snapshot_tests {
         let accounts = AccountsDb::new_single_for_tests();
 
         let mut current_slot = 1;
-        accounts.store_for_tests(current_slot, &[(&pubkey, &account)]);
-        accounts.store_for_tests(current_slot, &[(&purged_pubkey1, &account2)]);
+        accounts.store_for_tests((current_slot, [(&pubkey, &account)].as_slice()));
+        accounts.store_for_tests((current_slot, [(&purged_pubkey1, &account2)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
 
         current_slot += 1;
-        accounts.store_for_tests(current_slot, &[(&purged_pubkey1, &zero_lamport_account)]);
-        accounts.store_for_tests(current_slot, &[(&purged_pubkey2, &account3)]);
+        accounts.store_for_tests((
+            current_slot,
+            [(&purged_pubkey1, &zero_lamport_account)].as_slice(),
+        ));
+        accounts.store_for_tests((current_slot, [(&purged_pubkey2, &account3)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
 
         current_slot += 1;
-        accounts.store_for_tests(current_slot, &[(&purged_pubkey2, &zero_lamport_account)]);
+        accounts.store_for_tests((
+            current_slot,
+            [(&purged_pubkey2, &zero_lamport_account)].as_slice(),
+        ));
         accounts.add_root_and_flush_write_cache(current_slot);
 
         current_slot += 1;
-        accounts.store_for_tests(current_slot, &[(&dummy_pubkey, &dummy_account)]);
+        accounts.store_for_tests((current_slot, [(&dummy_pubkey, &dummy_account)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
 
         accounts.print_accounts_stats("pre_f");
@@ -491,8 +561,17 @@ mod serde_snapshot_tests {
     fn test_accounts_purge_chained_purge_before_snapshot_restore(storage_access: StorageAccess) {
         solana_logger::setup();
         with_chained_zero_lamport_accounts(|accounts, current_slot| {
+            // If there is no latest full snapshot, zero lamport accounts can be cleaned and
+            // removed immediately. Set latest full snapshot slot to zero to avoid cleaning
+            // zero lamport accounts
+            accounts.set_latest_full_snapshot_slot(0);
             accounts.clean_accounts_for_tests();
-            reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access)
+            reconstruct_accounts_db_via_serialization(
+                &accounts,
+                current_slot,
+                storage_access,
+                ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            )
         });
     }
 
@@ -501,11 +580,21 @@ mod serde_snapshot_tests {
     fn test_accounts_purge_chained_purge_after_snapshot_restore(storage_access: StorageAccess) {
         solana_logger::setup();
         with_chained_zero_lamport_accounts(|accounts, current_slot| {
-            let accounts =
-                reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access);
+            let accounts = reconstruct_accounts_db_via_serialization(
+                &accounts,
+                current_slot,
+                storage_access,
+                ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            );
             accounts.print_accounts_stats("after_reconstruct");
+            accounts.set_latest_full_snapshot_slot(0);
             accounts.clean_accounts_for_tests();
-            reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access)
+            reconstruct_accounts_db_via_serialization(
+                &accounts,
+                current_slot,
+                storage_access,
+                ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            )
         });
     }
 
@@ -535,34 +624,45 @@ mod serde_snapshot_tests {
         // create intermediate updates to purged_pubkey1 so that
         // generate_index must add slots as root last at once
         current_slot += 1;
-        accounts.store_for_tests(current_slot, &[(&pubkey, &account)]);
-        accounts.store_for_tests(current_slot, &[(&purged_pubkey1, &account2)]);
+        accounts.store_for_tests((current_slot, [(&pubkey, &account)].as_slice()));
+        accounts.store_for_tests((current_slot, [(&purged_pubkey1, &account2)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
 
         current_slot += 1;
-        accounts.store_for_tests(current_slot, &[(&purged_pubkey1, &account2)]);
+        accounts.store_for_tests((current_slot, [(&purged_pubkey1, &account2)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
 
         current_slot += 1;
-        accounts.store_for_tests(current_slot, &[(&purged_pubkey1, &account2)]);
+        accounts.store_for_tests((current_slot, [(&purged_pubkey1, &account2)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
 
         current_slot += 1;
-        accounts.store_for_tests(current_slot, &[(&purged_pubkey1, &zero_lamport_account)]);
-        accounts.store_for_tests(current_slot, &[(&purged_pubkey2, &account3)]);
+        accounts.store_for_tests((
+            current_slot,
+            [(&purged_pubkey1, &zero_lamport_account)].as_slice(),
+        ));
+        accounts.store_for_tests((current_slot, [(&purged_pubkey2, &account3)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
 
         current_slot += 1;
-        accounts.store_for_tests(current_slot, &[(&purged_pubkey2, &zero_lamport_account)]);
+        accounts.store_for_tests((
+            current_slot,
+            [(&purged_pubkey2, &zero_lamport_account)].as_slice(),
+        ));
         accounts.add_root_and_flush_write_cache(current_slot);
 
         current_slot += 1;
-        accounts.store_for_tests(current_slot, &[(&dummy_pubkey, &dummy_account)]);
+        accounts.store_for_tests((current_slot, [(&dummy_pubkey, &dummy_account)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
 
         accounts.print_count_and_status("before reconstruct");
-        let accounts =
-            reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access);
+        let accounts = reconstruct_accounts_db_via_serialization(
+            &accounts,
+            current_slot,
+            storage_access,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        );
+        accounts.set_latest_full_snapshot_slot(0);
         accounts.print_count_and_status("before purge zero");
         accounts.clean_accounts_for_tests();
         accounts.print_count_and_status("after purge zero");
@@ -595,37 +695,38 @@ mod serde_snapshot_tests {
         let mut current_slot = 0;
         let accounts = AccountsDb::new_single_for_tests();
 
+        accounts.set_latest_full_snapshot_slot(0);
+
         // A: Initialize AccountsDb with pubkey1 and pubkey2
         current_slot += 1;
-        accounts.store_for_tests(current_slot, &[(&pubkey1, &account)]);
-        accounts.store_for_tests(current_slot, &[(&pubkey2, &account)]);
+        accounts.store_for_tests((current_slot, [(&pubkey1, &account)].as_slice()));
+        accounts.store_for_tests((current_slot, [(&pubkey2, &account)].as_slice()));
         accounts.add_root(current_slot);
 
         // B: Test multiple updates to pubkey1 in a single slot/storage
         current_slot += 1;
         assert_eq!(0, accounts.alive_account_count_in_slot(current_slot));
         accounts.add_root_and_flush_write_cache(current_slot - 1);
-        assert_eq!(1, accounts.ref_count_for_pubkey(&pubkey1));
-        accounts.store_for_tests(current_slot, &[(&pubkey1, &account2)]);
-        accounts.store_for_tests(current_slot, &[(&pubkey1, &account2)]);
+        accounts.assert_ref_count(&pubkey1, 1);
+        accounts.store_for_tests((current_slot, [(&pubkey1, &account2)].as_slice()));
+        accounts.store_for_tests((current_slot, [(&pubkey1, &account2)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
         assert_eq!(1, accounts.alive_account_count_in_slot(current_slot));
         // Stores to same pubkey, same slot only count once towards the
-        // ref count
-        assert_eq!(2, accounts.ref_count_for_pubkey(&pubkey1));
+        accounts.assert_ref_count(&pubkey1, 2);
 
         // C: Yet more update to trigger lazy clean of step A
         current_slot += 1;
-        assert_eq!(2, accounts.ref_count_for_pubkey(&pubkey1));
-        accounts.store_for_tests(current_slot, &[(&pubkey1, &account3)]);
+        accounts.assert_ref_count(&pubkey1, 2);
+        accounts.store_for_tests((current_slot, [(&pubkey1, &account3)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
-        assert_eq!(3, accounts.ref_count_for_pubkey(&pubkey1));
+        accounts.assert_ref_count(&pubkey1, 3);
         accounts.add_root_and_flush_write_cache(current_slot);
 
         // D: Make pubkey1 0-lamport; also triggers clean of step B
         current_slot += 1;
-        assert_eq!(3, accounts.ref_count_for_pubkey(&pubkey1));
-        accounts.store_for_tests(current_slot, &[(&pubkey1, &zero_lamport_account)]);
+        accounts.assert_ref_count(&pubkey1, 3);
+        accounts.store_for_tests((current_slot, [(&pubkey1, &zero_lamport_account)].as_slice()));
         accounts.add_root_and_flush_write_cache(current_slot);
         // had to be a root to flush, but clean won't work as this test expects if it is a root
         // so, remove the root from alive_roots, then restore it after clean
@@ -645,17 +746,14 @@ mod serde_snapshot_tests {
             .alive_roots
             .insert(current_slot);
 
-        assert_eq!(
-            // Removed one reference from the dead slot (reference only counted once
-            // even though there were two stores to the pubkey in that slot)
-            3, /* == 3 - 1 + 1 */
-            accounts.ref_count_for_pubkey(&pubkey1)
-        );
+        // Removed one reference from the dead slot (reference only counted once
+        // even though there were two stores to the pubkey in that slot)
+        accounts.assert_ref_count(&pubkey1, 3);
         accounts.add_root(current_slot);
 
         // E: Avoid missing bank hash error
         current_slot += 1;
-        accounts.store_for_tests(current_slot, &[(&dummy_pubkey, &dummy_account)]);
+        accounts.store_for_tests((current_slot, [(&dummy_pubkey, &dummy_account)].as_slice()));
         accounts.add_root(current_slot);
 
         accounts.assert_load_account(current_slot, pubkey1, zero_lamport);
@@ -668,11 +766,18 @@ mod serde_snapshot_tests {
         // So, prevent that from happening by introducing refcount
         ((current_slot - 1)..=current_slot).for_each(|slot| accounts.flush_root_write_cache(slot));
         accounts.clean_accounts_for_tests();
-        let accounts =
-            reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access);
+        let accounts = reconstruct_accounts_db_via_serialization(
+            &accounts,
+            current_slot,
+            storage_access,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        );
+
+        // Set snapshot to zero to avoid cleaning zero-lamport pubkey1
+        accounts.set_latest_full_snapshot_slot(0);
         accounts.clean_accounts_for_tests();
 
-        info!("pubkey: {}", pubkey1);
+        info!("pubkey: {pubkey1}");
         accounts.print_accounts_stats("pre_clean");
         accounts.assert_load_account(current_slot, pubkey1, zero_lamport);
         accounts.assert_load_account(current_slot, pubkey2, old_lamport);
@@ -680,11 +785,14 @@ mod serde_snapshot_tests {
 
         // F: Finally, make Step A cleanable
         current_slot += 1;
-        accounts.store_for_tests(current_slot, &[(&pubkey2, &account)]);
+        accounts.store_for_tests((current_slot, [(&pubkey2, &account)].as_slice()));
         accounts.add_root(current_slot);
 
         // Do clean
         accounts.flush_root_write_cache(current_slot);
+
+        // Make zero-lamport pubkey1 cleanable by setting the latest snapshot slot
+        accounts.set_latest_full_snapshot_slot(current_slot);
         accounts.clean_accounts_for_tests();
 
         // 2nd clean needed to clean-up pubkey1
@@ -719,7 +827,7 @@ mod serde_snapshot_tests {
 
             current_slot += 1;
             for pubkey in &pubkeys {
-                accounts.store_for_tests(current_slot, &[(pubkey, &account)]);
+                accounts.store_for_tests((current_slot, [(pubkey, &account)].as_slice()));
             }
             let shrink_slot = current_slot;
             accounts.add_root_and_flush_write_cache(current_slot);
@@ -729,7 +837,7 @@ mod serde_snapshot_tests {
             let updated_pubkeys = &pubkeys[0..pubkey_count - pubkey_count_after_shrink];
 
             for pubkey in updated_pubkeys {
-                accounts.store_for_tests(current_slot, &[(pubkey, &account)]);
+                accounts.store_for_tests((current_slot, [(pubkey, &account)].as_slice()));
             }
             accounts.add_root_and_flush_write_cache(current_slot);
 
@@ -755,8 +863,12 @@ mod serde_snapshot_tests {
 
             let accounts_lt_hash_pre = accounts
                 .calculate_accounts_lt_hash_at_startup_from_index(&no_ancestors, current_slot);
-            let accounts =
-                reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access);
+            let accounts = reconstruct_accounts_db_via_serialization(
+                &accounts,
+                current_slot,
+                storage_access,
+                ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            );
             let accounts_lt_hash_post = accounts
                 .calculate_accounts_lt_hash_at_startup_from_index(&no_ancestors, current_slot);
             assert_eq!(accounts_lt_hash_pre, accounts_lt_hash_post);

@@ -8,13 +8,13 @@ use {
     bincode::{deserialize, serialize, serialized_size},
     crossbeam_channel::{unbounded, Sender},
     log::*,
-    serde_derive::{Deserialize, Serialize},
+    serde::{Deserialize, Serialize},
+    solana_cli_output::display::build_balance_message,
     solana_hash::Hash,
     solana_instruction::Instruction,
     solana_keypair::Keypair,
     solana_message::Message,
     solana_metrics::datapoint_info,
-    solana_native_token::lamports_to_sol,
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
@@ -67,10 +67,10 @@ pub enum FaucetError {
     NoDataReceived,
 
     #[error("request too large; req: ◎{0}, cap: ◎{1}")]
-    PerRequestCapExceeded(f64, f64),
+    PerRequestCapExceeded(String, String),
 
     #[error("limit reached; req: ◎{0}, to: {1}, current: ◎{2}, cap: ◎{3}")]
-    PerTimeCapExceeded(f64, String, f64, f64),
+    PerTimeCapExceeded(String, String, String, String),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -124,10 +124,10 @@ impl Faucet {
         if let Some((per_request_cap, per_time_cap)) = per_request_cap.zip(per_time_cap) {
             if per_time_cap < per_request_cap {
                 warn!(
-                    "per_time_cap {} SOL < per_request_cap {} SOL; \
-                    maximum single requests will fail",
-                    lamports_to_sol(per_time_cap),
-                    lamports_to_sol(per_request_cap),
+                    "per_time_cap {} SOL < per_request_cap {} SOL; maximum single requests will \
+                     fail",
+                    build_balance_message(per_time_cap, false, false),
+                    build_balance_message(per_request_cap, false, false),
                 );
             }
         }
@@ -152,10 +152,10 @@ impl Faucet {
         if let Some(cap) = self.per_time_cap {
             if new_total > cap {
                 return Err(FaucetError::PerTimeCapExceeded(
-                    lamports_to_sol(request_amount),
+                    build_balance_message(request_amount, false, false),
                     to.to_string(),
-                    lamports_to_sol(new_total),
-                    lamports_to_sol(cap),
+                    build_balance_message(new_total, false, false),
+                    build_balance_message(cap, false, false),
                 ));
             }
         }
@@ -176,7 +176,7 @@ impl Faucet {
         req: FaucetRequest,
         ip: IpAddr,
     ) -> Result<FaucetTransaction, FaucetError> {
-        trace!("build_airdrop_transaction: {:?}", req);
+        trace!("build_airdrop_transaction: {req:?}");
         match req {
             FaucetRequest::GetAirdrop {
                 lamports,
@@ -186,7 +186,7 @@ impl Faucet {
                 let mint_pubkey = self.faucet_keypair.pubkey();
                 info!(
                     "Requesting airdrop of {} SOL to {:?}",
-                    lamports_to_sol(lamports),
+                    build_balance_message(lamports, false, false),
                     to
                 );
 
@@ -195,8 +195,8 @@ impl Faucet {
                         let memo = format!(
                             "{}",
                             FaucetError::PerRequestCapExceeded(
-                                lamports_to_sol(lamports),
-                                lamports_to_sol(cap),
+                                build_balance_message(lamports, false, false),
+                                build_balance_message(cap, false, false),
                             )
                         );
                         let memo_instruction = Instruction {
@@ -235,7 +235,7 @@ impl Faucet {
     ) -> Result<Vec<u8>, FaucetError> {
         let req: FaucetRequest = deserialize(bytes)?;
 
-        info!("Airdrop transaction requested...{:?}", req);
+        info!("Airdrop transaction requested...{req:?}");
         let res = self.build_airdrop_transaction(req, ip);
         match res {
             Ok(tx) => {
@@ -245,7 +245,7 @@ impl Faucet {
                         tx
                     }
                     FaucetTransaction::Memo((tx, memo)) => {
-                        warn!("Memo transaction returned: {}", memo);
+                        warn!("Memo transaction returned: {memo}");
                         tx
                     }
                 };
@@ -258,7 +258,7 @@ impl Faucet {
                 Ok(response_vec_with_length)
             }
             Err(err) => {
-                warn!("Airdrop transaction failed: {}", err);
+                warn!("Airdrop transaction failed: {err}");
                 Err(err)
             }
         }
@@ -278,8 +278,8 @@ pub fn request_airdrop_transaction(
     blockhash: Hash,
 ) -> Result<Transaction, FaucetError> {
     info!(
-        "request_airdrop_transaction: faucet_addr={} id={} lamports={} blockhash={}",
-        faucet_addr, id, lamports, blockhash
+        "request_airdrop_transaction: faucet_addr={faucet_addr} id={id} lamports={lamports} \
+         blockhash={blockhash}"
     );
 
     let mut stream = TcpStream::connect_timeout(faucet_addr, Duration::new(3, 0))?;
@@ -295,10 +295,7 @@ pub fn request_airdrop_transaction(
     // Read length of transaction
     let mut buffer = [0; 2];
     stream.read_exact(&mut buffer).map_err(|err| {
-        info!(
-            "request_airdrop_transaction: buffer length read_exact error: {:?}",
-            err
-        );
+        info!("request_airdrop_transaction: buffer length read_exact error: {err:?}");
         err
     })?;
     let transaction_length = u16::from_le_bytes(buffer) as usize;
@@ -311,10 +308,7 @@ pub fn request_airdrop_transaction(
     // Read the transaction
     let mut buffer = vec![0; transaction_length];
     stream.read_exact(&mut buffer).map_err(|err| {
-        info!(
-            "request_airdrop_transaction: buffer read_exact error: {:?}",
-            err
-        );
+        info!("request_airdrop_transaction: buffer read_exact error: {err:?}");
         err
     })?;
 
@@ -322,6 +316,7 @@ pub fn request_airdrop_transaction(
     Ok(transaction)
 }
 
+#[deprecated(since = "3.1.0", note = "use `run_local_faucet_with_config` instead")]
 pub fn run_local_faucet_with_port(
     faucet_keypair: Keypair,
     sender: Sender<Result<SocketAddr, String>>,
@@ -343,9 +338,84 @@ pub fn run_local_faucet_with_port(
     });
 }
 
+/// Configuration for running a local faucet server.
+#[cfg(feature = "dev-context-only-utils")]
+pub struct LocalFaucetConfig {
+    pub keypair: Keypair,
+    pub address: Ipv4Addr,
+    pub port: u16,
+    pub time_input: Option<u64>,
+    pub per_time_cap: Option<u64>,
+    pub per_request_cap: Option<u64>,
+}
+
+/// Runs a local faucet server with the specified configuration.
+///
+/// # Arguments
+/// * `sender` - Channel to report the bound socket address or startup errors
+/// * `config` - Faucet configuration (use `config.port = 0` for random open port)
+#[cfg(feature = "dev-context-only-utils")]
+pub fn run_local_faucet_with_config(
+    sender: Sender<Result<SocketAddr, String>>,
+    config: LocalFaucetConfig,
+) {
+    thread::spawn(move || {
+        let faucet_addr = socketaddr!(config.address, config.port);
+        let faucet = Arc::new(Mutex::new(Faucet::new(
+            config.keypair,
+            config.time_input,
+            config.per_time_cap,
+            config.per_request_cap,
+        )));
+        let runtime = Runtime::new().unwrap();
+        runtime.block_on(run_faucet(faucet, faucet_addr, Some(sender)));
+    });
+}
+
+/// For integration tests and benchmarks.
+///
+/// Listens on `LOCALHOST` with a random open port (unless port is provided) and reports to Sender.
+#[cfg(feature = "dev-context-only-utils")]
+pub fn run_local_faucet_for_tests(
+    keypair: Keypair,
+    per_time_cap: Option<u64>,
+    port: u16,
+) -> SocketAddr {
+    let (sender, receiver) = unbounded();
+    run_local_faucet_with_config(
+        sender,
+        LocalFaucetConfig {
+            keypair,
+            address: Ipv4Addr::LOCALHOST,
+            port,
+            time_input: None,
+            per_time_cap,
+            per_request_cap: None,
+        },
+    );
+    receiver
+        .recv()
+        .expect("run_local_faucet_for_tests")
+        .expect("faucet_addr")
+}
+
+/// For tests only.
+///
+/// Listens on `LOCALHOST` with unique, non-overlapping port and reports to Sender.
+#[cfg(feature = "dev-context-only-utils")]
+pub fn run_local_faucet_with_unique_port_for_tests(keypair: Keypair) -> SocketAddr {
+    run_local_faucet_for_tests(
+        keypair,
+        None, /* per_time_cap */
+        solana_net_utils::sockets::unique_port_range_for_tests(1).start,
+    )
+}
+
 // For integration tests. Listens on random open port and reports port to Sender.
+#[deprecated(since = "3.1.0", note = "use `run_local_faucet_for_tests` instead")]
 pub fn run_local_faucet(faucet_keypair: Keypair, per_time_cap: Option<u64>) -> SocketAddr {
     let (sender, receiver) = unbounded();
+    #[allow(deprecated)]
     run_local_faucet_with_port(faucet_keypair, sender, None, per_time_cap, None, 0);
     receiver
         .recv()
@@ -360,25 +430,29 @@ pub async fn run_faucet(
 ) {
     let listener = TcpListener::bind(&faucet_addr).await;
     if let Some(sender) = sender {
-        sender.send(
-            listener.as_ref().map(|listener| listener.local_addr().unwrap())
-                .map_err(|err| {
-                    format!(
-                        "Unable to bind faucet to {faucet_addr:?}, check the address is not already in use: {err}"
-                    )
-                })
+        sender
+            .send(
+                listener
+                    .as_ref()
+                    .map(|listener| listener.local_addr().unwrap())
+                    .map_err(|err| {
+                        format!(
+                            "Unable to bind faucet to {faucet_addr:?}, check the address is not \
+                             already in use: {err}"
+                        )
+                    }),
             )
             .unwrap();
     }
 
     let listener = match listener {
         Err(err) => {
-            error!("Faucet failed to start: {}", err);
+            error!("Faucet failed to start: {err}");
             return;
         }
         Ok(listener) => listener,
     };
-    info!("Faucet started. Listening on: {}", faucet_addr);
+    info!("Faucet started. Listening on: {faucet_addr}");
     info!(
         "Faucet account address: {}",
         faucet.lock().unwrap().faucet_keypair.pubkey()
@@ -390,11 +464,11 @@ pub async fn run_faucet(
             Ok((stream, _)) => {
                 tokio::spawn(async move {
                     if let Err(e) = process(stream, faucet).await {
-                        info!("failed to process request; error = {:?}", e);
+                        info!("failed to process request; error = {e:?}");
                     }
                 });
             }
-            Err(e) => debug!("failed to accept socket; error = {:?}", e),
+            Err(e) => debug!("failed to accept socket; error = {e:?}"),
         }
     }
 }
@@ -413,7 +487,7 @@ async fn process(
         .unwrap() as usize
     ];
     while stream.read_exact(&mut request).await.is_ok() {
-        trace!("{:?}", request);
+        trace!("{request:?}");
 
         let response = {
             match stream.peer_addr() {
@@ -423,15 +497,15 @@ async fn process(
                 }
                 Ok(peer_addr) => {
                     let ip = peer_addr.ip();
-                    info!("Request IP: {:?}", ip);
+                    info!("Request IP: {ip:?}");
 
                     match faucet.lock().unwrap().process_faucet_request(&request, ip) {
                         Ok(response_bytes) => {
-                            trace!("Airdrop response_bytes: {:?}", response_bytes);
+                            trace!("Airdrop response_bytes: {response_bytes:?}");
                             response_bytes
                         }
                         Err(e) => {
-                            info!("Error in request: {}", e);
+                            info!("Error in request: {e}");
                             ERROR_RESPONSE.to_vec()
                         }
                     }

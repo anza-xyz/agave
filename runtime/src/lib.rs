@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 
@@ -18,6 +27,8 @@ pub mod loader_utils;
 pub mod non_circulating_supply;
 pub mod prioritization_fee;
 pub mod prioritization_fee_cache;
+mod read_optimized_dashmap;
+pub mod rent_collector;
 pub mod runtime_config;
 pub mod serde_snapshot;
 pub mod snapshot_archive_info;
@@ -39,8 +50,6 @@ pub mod vote_sender_types;
 
 #[macro_use]
 extern crate solana_metrics;
-#[macro_use]
-extern crate serde_derive;
 
 #[cfg_attr(feature = "frozen-abi", macro_use)]
 #[cfg(feature = "frozen-abi")]

@@ -10,7 +10,7 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_net_utils::bind_to_unspecified,
+    solana_net_utils::sockets::bind_to_localhost_unique,
     solana_pubkey::Pubkey,
     solana_pubsub_client::nonblocking::pubsub_client::PubsubClient,
     solana_rent::Rent,
@@ -290,7 +290,7 @@ fn test_rpc_subscriptions() {
     let test_validator =
         TestValidator::with_no_fees_udp(alice.pubkey(), None, SocketAddrSpace::Unspecified);
 
-    let transactions_socket = bind_to_unspecified().unwrap();
+    let transactions_socket = bind_to_localhost_unique().unwrap();
     transactions_socket.connect(test_validator.tpu()).unwrap();
 
     let rpc_client = RpcClient::new(test_validator.rpc_url());
@@ -503,7 +503,10 @@ fn run_tpu_send_transaction(tpu_use_quic: bool) {
         CommitmentConfig::processed(),
     ));
     let connection_cache = if tpu_use_quic {
-        ConnectionCache::new_quic("connection_cache_test", DEFAULT_TPU_CONNECTION_POOL_SIZE)
+        ConnectionCache::new_quic_for_tests(
+            "connection_cache_test",
+            DEFAULT_TPU_CONNECTION_POOL_SIZE,
+        )
     } else {
         ConnectionCache::with_udp("connection_cache_test", DEFAULT_TPU_CONNECTION_POOL_SIZE)
     };

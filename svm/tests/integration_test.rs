@@ -7,10 +7,9 @@ use {
         program_data_size, register_builtins, MockBankCallback, MockForkGraph, EXECUTION_EPOCH,
         EXECUTION_SLOT, WALLCLOCK_TIME,
     },
-    agave_feature_set::{self as feature_set, raise_cpi_nesting_limit_to_8, FeatureSet},
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount, PROGRAM_OWNERS},
     solana_clock::Slot,
-    solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
+    solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_fee_structure::FeeDetails,
     solana_hash::Hash,
@@ -23,9 +22,11 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_nonce::{self as nonce, state::DurableNonce},
     solana_program_entrypoint::MAX_PERMITTED_DATA_INCREASE,
-    solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
+    solana_program_runtime::execution_budget::{
+        SVMTransactionExecutionAndFeeBudgetLimits, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+    },
     solana_pubkey::Pubkey,
-    solana_sdk_ids::{bpf_loader_upgradeable, native_loader},
+    solana_sdk_ids::{bpf_loader_upgradeable, compute_budget, native_loader},
     solana_signer::Signer,
     solana_svm::{
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
@@ -41,20 +42,59 @@ use {
             TransactionProcessingEnvironment,
         },
     },
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_feature_set::SVMFeatureSet,
+    solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
+    solana_svm_type_overrides::sync::{Arc, RwLock},
     solana_system_interface::{instruction as system_instruction, program as system_program},
     solana_system_transaction as system_transaction,
     solana_sysvar::rent::Rent,
     solana_transaction::{sanitized::SanitizedTransaction, Transaction},
     solana_transaction_context::TransactionReturnData,
     solana_transaction_error::TransactionError,
-    solana_type_overrides::sync::{Arc, RwLock},
-    std::collections::HashMap,
+    std::{collections::HashMap, num::NonZeroU32, slice, sync::atomic::Ordering},
     test_case::test_case,
 };
 
 // This module contains the implementation of TransactionProcessingCallback
 mod mock_bank;
+
+// Local implementation of compute budget processing for tests.
+fn process_test_compute_budget_instructions<'a>(
+    instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)> + Clone,
+) -> Result<ComputeBudgetLimits, TransactionError> {
+    let mut loaded_accounts_data_size_limit = None;
+
+    // Scan for compute budget instructions.
+    // Only key on `SetLoadedAccountsDataSizeLimit`.
+    for (program_id, instruction) in instructions {
+        if *program_id == compute_budget::id()
+            && instruction.data.len() >= 5
+            && instruction.data[0] == 4
+        {
+            let size = u32::from_le_bytes([
+                instruction.data[1],
+                instruction.data[2],
+                instruction.data[3],
+                instruction.data[4],
+            ]);
+            loaded_accounts_data_size_limit = Some(size);
+        }
+    }
+
+    let loaded_accounts_bytes =
+        if let Some(requested_loaded_accounts_data_size_limit) = loaded_accounts_data_size_limit {
+            NonZeroU32::new(requested_loaded_accounts_data_size_limit)
+                .ok_or(TransactionError::InvalidLoadedAccountsDataSizeLimit)?
+        } else {
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES
+        }
+        .min(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+
+    Ok(ComputeBudgetLimits {
+        loaded_accounts_bytes,
+        ..Default::default()
+    })
+}
 
 const DEPLOYMENT_SLOT: u64 = 0;
 const LAMPORTS_PER_SIGNATURE: u64 = 5000;
@@ -114,10 +154,9 @@ impl SvmTestEnvironment<'_> {
             ..Default::default()
         };
 
-        let feature_set = test_entry.feature_set();
         let processing_environment = TransactionProcessingEnvironment {
             blockhash: LAST_BLOCKHASH,
-            feature_set: feature_set.runtime_features(),
+            feature_set: test_entry.feature_set,
             blockhash_lamports_per_signature: LAMPORTS_PER_SIGNATURE,
             ..TransactionProcessingEnvironment::default()
         };
@@ -264,7 +303,7 @@ impl SvmTestEnvironment<'_> {
                 let programs_modified_by_tx = &executed_tx.programs_modified_by_tx;
                 if executed_tx.was_successful() && !programs_modified_by_tx.is_empty() {
                     self.batch_processor
-                        .program_cache
+                        .global_program_cache
                         .write()
                         .unwrap()
                         .merge(programs_modified_by_tx);
@@ -278,7 +317,7 @@ impl SvmTestEnvironment<'_> {
     pub fn is_program_blocked(&self, program_id: &Pubkey) -> bool {
         let (_, program_cache_entry) = self
             .batch_processor
-            .program_cache
+            .global_program_cache
             .read()
             .unwrap()
             .get_flattened_entries_for_tests()
@@ -296,10 +335,10 @@ impl SvmTestEnvironment<'_> {
 }
 
 // container for a transaction batch and all data needed to run and verify it against svm
-#[derive(Clone, Default, Debug)]
+#[derive(Clone)]
 pub struct SvmTestEntry {
-    // features are enabled by default; these will be disabled
-    pub disabled_features: Vec<Pubkey>,
+    // features configuration for this test
+    pub feature_set: SVMFeatureSet,
 
     // until LoaderV4 is live on mainnet, we default to omitting it, but can also test it
     pub with_loader_v4: bool,
@@ -315,6 +354,19 @@ pub struct SvmTestEntry {
 
     // expected final account states, checked after transaction execution
     pub final_accounts: AccountsMap,
+}
+
+impl Default for SvmTestEntry {
+    fn default() -> Self {
+        Self {
+            feature_set: SVMFeatureSet::all_enabled(),
+            with_loader_v4: false,
+            initial_programs: Vec::new(),
+            initial_accounts: HashMap::new(),
+            transaction_batch: Vec::new(),
+            final_accounts: HashMap::new(),
+        }
+    }
 }
 
 impl SvmTestEntry {
@@ -448,9 +500,8 @@ impl SvmTestEntry {
             .map(|item| {
                 let message = SanitizedTransaction::from_transaction_for_tests(item.transaction);
                 let check_result = item.check_result.map(|tx_details| {
-                    let compute_budget_limits = process_compute_budget_instructions(
+                    let compute_budget_limits = process_test_compute_budget_instructions(
                         SVMMessage::program_instructions_iter(&message),
-                        &self.feature_set(),
                     );
                     let signature_count = message
                         .num_transaction_signatures()
@@ -465,8 +516,7 @@ impl SvmTestEntry {
                                 signature_count.saturating_mul(LAMPORTS_PER_SIGNATURE),
                                 v.get_prioritization_fee(),
                             ),
-                            self.feature_set()
-                                .is_active(&raise_cpi_nesting_limit_to_8::id()),
+                            self.feature_set.raise_cpi_nesting_limit_to_8,
                         )
                     });
                     CheckedTransactionDetails::new(tx_details.nonce, compute_budget)
@@ -484,16 +534,6 @@ impl SvmTestEntry {
             .cloned()
             .map(|item| item.asserts)
             .collect()
-    }
-
-    // internal helper to map our feature list to a FeatureSet
-    fn feature_set(&self) -> FeatureSet {
-        let mut feature_set = FeatureSet::all_enabled();
-        for feature_id in &self.disabled_features {
-            feature_set.deactivate(feature_id);
-        }
-
-        feature_set
     }
 }
 
@@ -1643,7 +1683,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         let mut test_entry = common_test_entry.clone();
 
         let first_transaction = Transaction::new_signed_with_payer(
-            &[withdraw_instruction.clone()],
+            slice::from_ref(&withdraw_instruction),
             Some(&fee_payer),
             &[&fee_payer_keypair],
             Hash::default(),
@@ -1671,7 +1711,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         let mut test_entry = common_test_entry.clone();
 
         let first_transaction = Transaction::new_signed_with_payer(
-            &[withdraw_instruction.clone()],
+            slice::from_ref(&withdraw_instruction),
             Some(&fee_payer),
             &[&fee_payer_keypair],
             Hash::default(),
@@ -1710,7 +1750,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         let mut test_entry = common_test_entry.clone();
 
         let first_transaction = Transaction::new_signed_with_payer(
-            &[withdraw_instruction.clone()],
+            slice::from_ref(&withdraw_instruction),
             Some(&fee_payer),
             &[&fee_payer_keypair],
             Hash::default(),
@@ -1756,7 +1796,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         let mut test_entry = common_test_entry.clone();
 
         let first_transaction = Transaction::new_signed_with_payer(
-            &[withdraw_instruction.clone()],
+            slice::from_ref(&withdraw_instruction),
             Some(&fee_payer),
             &[&fee_payer_keypair],
             Hash::default(),
@@ -1806,7 +1846,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         test_entry.add_initial_account(nonce_pubkey, &fake_nonce_account);
 
         let first_transaction = Transaction::new_signed_with_payer(
-            &[successful_noop_instruction.clone()],
+            slice::from_ref(&successful_noop_instruction),
             Some(&fee_payer),
             &[&fee_payer_keypair],
             Hash::default(),
@@ -2204,8 +2244,8 @@ fn simd83_account_reallocate(formalize_loaded_transaction_data_size: bool) -> Ve
     common_test_entry.add_initial_program(program_name);
     if !formalize_loaded_transaction_data_size {
         common_test_entry
-            .disabled_features
-            .push(feature_set::formalize_loaded_transaction_data_size::id());
+            .feature_set
+            .formalize_loaded_transaction_data_size = false;
     }
 
     let fee_payer_keypair = Keypair::new();
@@ -2313,16 +2353,10 @@ fn svm_integration(test_entries: Vec<SvmTestEntry>) {
     }
 }
 
-#[test_case(true; "remove accounts executable flag check")]
-#[test_case(false; "don't remove accounts executable flag check")]
-fn program_cache_create_account(remove_accounts_executable_flag_checks: bool) {
+#[test]
+fn program_cache_create_account() {
     for loader_id in PROGRAM_OWNERS {
         let mut test_entry = SvmTestEntry::with_loader_v4();
-        if !remove_accounts_executable_flag_checks {
-            test_entry
-                .disabled_features
-                .push(feature_set::remove_accounts_executable_flag_checks::id());
-        }
 
         let fee_payer_keypair = Keypair::new();
         let fee_payer = fee_payer_keypair.pubkey();
@@ -2357,15 +2391,10 @@ fn program_cache_create_account(remove_accounts_executable_flag_checks: bool) {
             Hash::default(),
         );
 
-        // fails at load-time for executable flag if feature is disabled
-        // if feature is enabled fails at execution
-        let expected_status = if remove_accounts_executable_flag_checks {
-            ExecutionStatus::ExecutedFailed
-        } else {
-            ExecutionStatus::ProcessedFailed
-        };
-
-        test_entry.push_transaction_with_status(invoke_transaction.clone(), expected_status);
+        test_entry.push_transaction_with_status(
+            invoke_transaction.clone(),
+            ExecutionStatus::ExecutedFailed,
+        );
         test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
 
         let mut env = SvmTestEnvironment::create(test_entry);
@@ -2379,7 +2408,8 @@ fn program_cache_create_account(remove_accounts_executable_flag_checks: bool) {
             ..SvmTestEntry::default()
         };
 
-        test_entry.push_transaction_with_status(invoke_transaction, expected_status);
+        test_entry
+            .push_transaction_with_status(invoke_transaction, ExecutionStatus::ExecutedFailed);
         test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
 
         // test in different entry same slot
@@ -2628,6 +2658,262 @@ fn program_cache_loaderv3_buffer_swap(invoke_changed_program: bool) {
     assert!(env.is_program_blocked(&target));
 }
 
+#[test]
+fn program_cache_stats() {
+    let mut test_entry = SvmTestEntry::default();
+
+    let program_name = "hello-solana";
+    let noop_program = program_address(program_name);
+
+    let fee_payer_keypair = Keypair::new();
+    let fee_payer = fee_payer_keypair.pubkey();
+
+    let mut fee_payer_data = AccountSharedData::default();
+    fee_payer_data.set_lamports(LAMPORTS_PER_SOL * 100);
+    test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+    test_entry
+        .initial_programs
+        .push((program_name.to_string(), DEPLOYMENT_SLOT, Some(fee_payer)));
+
+    let missing_program = Pubkey::new_unique();
+
+    // set up a future upgrade after the first batch
+    let buffer_address = Pubkey::new_unique();
+    {
+        let mut data = bincode::serialize(&UpgradeableLoaderState::Buffer {
+            authority_address: Some(fee_payer),
+        })
+        .unwrap();
+        let mut program_bytecode = load_program(program_name.to_string());
+        data.append(&mut program_bytecode);
+
+        let buffer_account = AccountSharedData::create(
+            LAMPORTS_PER_SOL,
+            data,
+            bpf_loader_upgradeable::id(),
+            true,
+            u64::MAX,
+        );
+
+        test_entry.add_initial_account(buffer_address, &buffer_account);
+    }
+
+    let make_transaction = |instructions: &[Instruction]| {
+        Transaction::new_signed_with_payer(
+            instructions,
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            Hash::default(),
+        )
+    };
+
+    let succesful_noop_instruction = Instruction::new_with_bytes(noop_program, &[], vec![]);
+    let succesful_transfer_instruction =
+        system_instruction::transfer(&fee_payer, &Pubkey::new_unique(), LAMPORTS_PER_SOL);
+    let failing_transfer_instruction =
+        system_instruction::transfer(&fee_payer, &Pubkey::new_unique(), LAMPORTS_PER_SOL * 1000);
+    let fee_only_noop_instruction = Instruction::new_with_bytes(missing_program, &[], vec![]);
+
+    let mut noop_tx_usage = 0;
+    let mut system_tx_usage = 0;
+    let mut successful_transfers = 0;
+
+    test_entry.push_transaction(make_transaction(slice::from_ref(
+        &succesful_noop_instruction,
+    )));
+    noop_tx_usage += 1;
+
+    test_entry.push_transaction(make_transaction(slice::from_ref(
+        &succesful_transfer_instruction,
+    )));
+    system_tx_usage += 1;
+    successful_transfers += 1;
+
+    test_entry.push_transaction_with_status(
+        make_transaction(slice::from_ref(&failing_transfer_instruction)),
+        ExecutionStatus::ExecutedFailed,
+    );
+    system_tx_usage += 1;
+
+    test_entry.push_transaction(make_transaction(&[
+        succesful_noop_instruction.clone(),
+        succesful_noop_instruction.clone(),
+        succesful_transfer_instruction.clone(),
+        succesful_transfer_instruction.clone(),
+        succesful_noop_instruction.clone(),
+    ]));
+    noop_tx_usage += 1;
+    system_tx_usage += 1;
+    successful_transfers += 2;
+
+    test_entry.push_transaction_with_status(
+        make_transaction(&[
+            failing_transfer_instruction.clone(),
+            succesful_noop_instruction.clone(),
+            succesful_transfer_instruction.clone(),
+        ]),
+        ExecutionStatus::ExecutedFailed,
+    );
+    noop_tx_usage += 1;
+    system_tx_usage += 1;
+
+    // load failure/fee-only does not touch the program cache
+    test_entry.push_transaction_with_status(
+        make_transaction(&[
+            succesful_noop_instruction.clone(),
+            fee_only_noop_instruction.clone(),
+        ]),
+        ExecutionStatus::ProcessedFailed,
+    );
+
+    test_entry.decrease_expected_lamports(
+        &fee_payer,
+        LAMPORTS_PER_SIGNATURE * test_entry.transaction_batch.len() as u64
+            + LAMPORTS_PER_SOL * successful_transfers,
+    );
+
+    // nor does discard
+    test_entry.transaction_batch.push(TransactionBatchItem {
+        transaction: make_transaction(slice::from_ref(&succesful_transfer_instruction)),
+        check_result: Err(TransactionError::BlockhashNotFound),
+        asserts: ExecutionStatus::Discarded.into(),
+    });
+
+    let mut env = SvmTestEnvironment::create(test_entry);
+    env.execute();
+
+    // check all usage stats are as we expect
+    let global_program_cache = env
+        .batch_processor
+        .global_program_cache
+        .read()
+        .unwrap()
+        .get_flattened_entries_for_tests()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>();
+
+    let (_, noop_entry) = global_program_cache
+        .iter()
+        .find(|(pubkey, _)| *pubkey == noop_program)
+        .unwrap();
+
+    assert_eq!(
+        noop_entry.tx_usage_counter.load(Ordering::Relaxed),
+        noop_tx_usage,
+        "noop_tx_usage matches"
+    );
+
+    let (_, system_entry) = global_program_cache
+        .iter()
+        .find(|(pubkey, _)| *pubkey == system_program::id())
+        .unwrap();
+
+    assert_eq!(
+        system_entry.tx_usage_counter.load(Ordering::Relaxed),
+        system_tx_usage,
+        "system_tx_usage matches"
+    );
+
+    assert!(
+        !global_program_cache
+            .iter()
+            .any(|(pubkey, _)| *pubkey == missing_program),
+        "missing_program is missing"
+    );
+
+    // set up the second batch
+    let mut test_entry = SvmTestEntry {
+        initial_accounts: env.test_entry.final_accounts.clone(),
+        final_accounts: env.test_entry.final_accounts.clone(),
+        ..SvmTestEntry::default()
+    };
+
+    // upgrade the program. this blocks execution but does not create a tombstone
+    // the main thing we are testing is the tx counter is ported across upgrades
+    //
+    // note the upgrade transaction actually counts as a usage, per the existing rules
+    // the program cache must load the program because it has no idea if it will be used for cpi
+    test_entry.push_transaction(Transaction::new_signed_with_payer(
+        &[loaderv3_instruction::upgrade(
+            &noop_program,
+            &buffer_address,
+            &fee_payer,
+            &Pubkey::new_unique(),
+        )],
+        Some(&fee_payer),
+        &[&fee_payer_keypair],
+        Hash::default(),
+    ));
+    noop_tx_usage += 1;
+
+    test_entry.drop_expected_account(buffer_address);
+
+    test_entry.push_transaction_with_status(
+        make_transaction(slice::from_ref(&succesful_noop_instruction)),
+        ExecutionStatus::ExecutedFailed,
+    );
+    noop_tx_usage += 1;
+
+    test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
+
+    env.test_entry = test_entry;
+    env.execute();
+
+    let (_, noop_entry) = env
+        .batch_processor
+        .global_program_cache
+        .read()
+        .unwrap()
+        .get_flattened_entries_for_tests()
+        .into_iter()
+        .rev()
+        .find(|(pubkey, _)| *pubkey == noop_program)
+        .unwrap();
+
+    assert_eq!(
+        noop_entry.tx_usage_counter.load(Ordering::Relaxed),
+        noop_tx_usage,
+        "noop_tx_usage matches"
+    );
+
+    // third batch, this creates a delayed visibility tombstone
+    let mut test_entry = SvmTestEntry {
+        initial_accounts: env.test_entry.final_accounts.clone(),
+        final_accounts: env.test_entry.final_accounts.clone(),
+        ..SvmTestEntry::default()
+    };
+
+    test_entry.push_transaction_with_status(
+        make_transaction(slice::from_ref(&succesful_noop_instruction)),
+        ExecutionStatus::ExecutedFailed,
+    );
+    noop_tx_usage += 1;
+
+    test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
+
+    env.test_entry = test_entry;
+    env.execute();
+
+    let (_, noop_entry) = env
+        .batch_processor
+        .global_program_cache
+        .read()
+        .unwrap()
+        .get_flattened_entries_for_tests()
+        .into_iter()
+        .rev()
+        .find(|(pubkey, _)| *pubkey == noop_program)
+        .unwrap();
+
+    assert_eq!(
+        noop_entry.tx_usage_counter.load(Ordering::Relaxed),
+        noop_tx_usage,
+        "noop_tx_usage matches"
+    );
+}
+
 #[derive(Clone, PartialEq, Eq)]
 enum Inspect<'a> {
     LiveRead(&'a AccountSharedData),
@@ -2668,8 +2954,8 @@ fn svm_inspect_nonce_load_failure(
 
     if !formalize_loaded_transaction_data_size {
         test_entry
-            .disabled_features
-            .push(feature_set::formalize_loaded_transaction_data_size::id());
+            .feature_set
+            .formalize_loaded_transaction_data_size = false;
     }
 
     let fee_payer_keypair = Keypair::new();
@@ -3003,17 +3289,12 @@ mod balance_collector {
         super::*,
         rand0_7::prelude::*,
         solana_program_pack::Pack,
-        solana_sdk_ids::bpf_loader,
         spl_generic_token::token_2022,
         spl_token_interface::state::{
             Account as TokenAccount, AccountState as TokenAccountState, Mint,
         },
         test_case::test_case,
     };
-
-    // this could be part of mock_bank but so far nothing but this uses it
-    static SPL_TOKEN_BYTES: &[u8] =
-        include_bytes!("../../program-test/src/programs/spl_token-3.5.0.so");
 
     const STARTING_BALANCE: u64 = LAMPORTS_PER_SOL * 100;
 
@@ -3135,13 +3416,10 @@ mod balance_collector {
             u64::MAX,
         );
 
-        let spl_token = AccountSharedData::create(
-            LAMPORTS_PER_SOL,
-            SPL_TOKEN_BYTES.to_vec(),
-            bpf_loader::id(),
-            true,
-            u64::MAX,
-        );
+        let (_, spl_token) =
+            solana_program_binaries::by_id(&spl_token_interface::id(), &Rent::default())
+                .unwrap()
+                .swap_remove(0);
 
         for _ in 0..100 {
             let mut test_entry = SvmTestEntry::default();

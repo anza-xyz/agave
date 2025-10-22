@@ -12,6 +12,9 @@ edition = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 thiserror = { workspace = true }
 

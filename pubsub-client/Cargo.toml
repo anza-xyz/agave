@@ -12,6 +12,9 @@ edition = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 crossbeam-channel = { workspace = true }
 futures-util = { workspace = true }
@@ -19,7 +22,6 @@ http = { workspace = true }
 log = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
-serde_derive = { workspace = true }
 serde_json = { workspace = true }
 solana-account-decoder-client-types = { workspace = true }
 solana-clock = { workspace = true }

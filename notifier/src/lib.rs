@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 /// To activate Slack, Discord, PagerDuty and/or Telegram notifications, define these environment variables
 /// before using the `Notifier`
 /// ```bash
@@ -112,7 +121,7 @@ impl Default for Notifier {
 
 impl Notifier {
     pub fn new(env_prefix: &str) -> Self {
-        info!("Initializing {}Notifier", env_prefix);
+        info!("Initializing {env_prefix}Notifier");
 
         let mut notifiers = vec![];
 
@@ -143,10 +152,9 @@ impl Notifier {
         if let Ok(log_level) = env::var(format!("{env_prefix}LOG_NOTIFIER_LEVEL")) {
             match Level::from_str(&log_level) {
                 Ok(level) => notifiers.push(NotificationChannel::Log(level)),
-                Err(e) => warn!(
-                    "could not parse specified log notifier level string ({}): {}",
-                    log_level, e
-                ),
+                Err(e) => {
+                    warn!("could not parse specified log notifier level string ({log_level}): {e}")
+                }
             }
         }
 
@@ -170,14 +178,14 @@ impl Notifier {
                         // Discord rate limiting is aggressive, limit to 1 message a second
                         sleep(Duration::from_millis(1000));
 
-                        info!("Sending {}", line);
+                        info!("Sending {line}");
                         let data = json!({ "content": line });
 
                         loop {
                             let response = self.client.post(webhook).json(&data).send();
 
                             if let Err(err) = response {
-                                warn!("Failed to send Discord message: \"{}\": {:?}", line, err);
+                                warn!("Failed to send Discord message: \"{line}\": {err:?}");
                                 break;
                             } else if let Ok(response) = response {
                                 info!("response status: {}", response.status());
@@ -195,7 +203,7 @@ impl Notifier {
                 NotificationChannel::Slack(webhook) => {
                     let data = json!({ "text": msg });
                     if let Err(err) = self.client.post(webhook).json(&data).send() {
-                        warn!("Failed to send Slack message: {:?}", err);
+                        warn!("Failed to send Slack message: {err:?}");
                     }
                 }
                 NotificationChannel::PagerDuty(routing_key) => {
@@ -212,7 +220,7 @@ impl Notifier {
                     let url = "https://events.pagerduty.com/v2/enqueue";
 
                     if let Err(err) = self.client.post(url).json(&data).send() {
-                        warn!("Failed to send PagerDuty alert: {:?}", err);
+                        warn!("Failed to send PagerDuty alert: {err:?}");
                     }
                 }
 
@@ -221,7 +229,7 @@ impl Notifier {
                     let url = format!("https://api.telegram.org/bot{bot_token}/sendMessage");
 
                     if let Err(err) = self.client.post(url).json(&data).send() {
-                        warn!("Failed to send Telegram message: {:?}", err);
+                        warn!("Failed to send Telegram message: {err:?}");
                     }
                 }
 
@@ -236,11 +244,11 @@ impl Notifier {
                     );
                     let params = [("To", to), ("From", from), ("Body", &msg.to_string())];
                     if let Err(err) = self.client.post(url).form(&params).send() {
-                        warn!("Failed to send Twilio message: {:?}", err);
+                        warn!("Failed to send Twilio message: {err:?}");
                     }
                 }
                 NotificationChannel::Log(level) => {
-                    log!(*level, "{}", msg)
+                    log!(*level, "{msg}")
                 }
             }
         }

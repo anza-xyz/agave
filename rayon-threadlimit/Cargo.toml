@@ -2,7 +2,6 @@
 name = "solana-rayon-threadlimit"
 description = "solana-rayon-threadlimit"
 documentation = "https://docs.rs/solana-rayon-threadlimit"
-readme = "../README.md"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
@@ -13,6 +12,12 @@ edition = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 log = { workspace = true }
 num_cpus = { workspace = true }
+
+[dev-dependencies]
+solana-rayon-threadlimit = { path = ".", features = ["agave-unstable-api"] }

@@ -5,10 +5,10 @@ use {
         test_utils::check_ready,
     },
     solana_commitment_config::CommitmentConfig,
-    solana_faucet::faucet::run_local_faucet,
+    solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
     solana_fee_structure::FeeStructure,
     solana_keypair::Keypair,
-    solana_native_token::sol_to_lamports,
+    solana_native_token::LAMPORTS_PER_SOL,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
@@ -24,7 +24,7 @@ fn test_ping(compute_unit_price: Option<u64>) {
     let fee = FeeStructure::default().get_max_fee(1, 0);
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
-    let faucet_addr = run_local_faucet(mint_keypair, None);
+    let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair);
     let test_validator = TestValidator::with_custom_fees(
         mint_pubkey,
         fee,
@@ -42,9 +42,8 @@ fn test_ping(compute_unit_price: Option<u64>) {
     config.json_rpc_url = test_validator.rpc_url();
     config.signers = vec![&default_signer];
 
-    request_and_confirm_airdrop(&rpc_client, &config, &signer_pubkey, sol_to_lamports(1.0))
-        .unwrap();
-    check_balance!(sol_to_lamports(1.0), &rpc_client, &signer_pubkey);
+    request_and_confirm_airdrop(&rpc_client, &config, &signer_pubkey, LAMPORTS_PER_SOL).unwrap();
+    check_balance!(LAMPORTS_PER_SOL, &rpc_client, &signer_pubkey);
     check_ready(&rpc_client);
 
     let count = 5;

@@ -17,10 +17,7 @@ use {
     },
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
-    solana_net_utils::{
-        sockets::{bind_in_range_with_config, SocketConfiguration as SocketConfig},
-        VALIDATOR_PORT_RANGE,
-    },
+    solana_net_utils::sockets,
     solana_quic_definitions::{
         QUIC_CONNECTION_HANDSHAKE_TIMEOUT, QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS,
     },
@@ -32,7 +29,7 @@ use {
     },
     solana_transaction_error::TransportResult,
     std::{
-        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+        net::{SocketAddr, UdpSocket},
         sync::{atomic::Ordering, Arc},
         thread,
     },
@@ -81,11 +78,12 @@ impl QuicLazyInitializedEndpoint {
         let mut endpoint = if let Some(endpoint) = &self.client_endpoint {
             endpoint.clone()
         } else {
-            let config = SocketConfig::default();
-            let client_socket = bind_in_range_with_config(
-                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                VALIDATOR_PORT_RANGE,
-                config,
+            // This will bind to random ports, but VALIDATOR_PORT_RANGE is outside
+            // of the range for CI tests when this is running in CI
+            let client_socket = sockets::bind_in_range_with_config(
+                std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+                solana_net_utils::VALIDATOR_PORT_RANGE,
+                sockets::SocketConfiguration::default(),
             )
             .expect("QuicLazyInitializedEndpoint::create_endpoint bind_in_range")
             .1;
@@ -296,7 +294,8 @@ impl QuicClient {
                             match conn {
                                 Ok(conn) => {
                                     info!(
-                                        "Made 0rtt connection to {} with id {} try_count {}, last_connection_id: {}, last_error: {:?}",
+                                        "Made 0rtt connection to {} with id {} try_count {}, \
+                                         last_connection_id: {}, last_error: {:?}",
                                         self.addr,
                                         conn.stable_id(),
                                         connection_try_count,
@@ -330,7 +329,8 @@ impl QuicClient {
                             Ok(conn) => {
                                 *conn_guard = Some(conn.clone());
                                 info!(
-                                    "Made connection to {} id {} try_count {}, from connection cache warming?: {}",
+                                    "Made connection to {} id {} try_count {}, from connection \
+                                     cache warming?: {}",
                                     self.addr,
                                     conn.connection.stable_id(),
                                     connection_try_count,
@@ -340,8 +340,13 @@ impl QuicClient {
                                 conn.connection.clone()
                             }
                             Err(err) => {
-                                info!("Cannot make connection to {}, error {:}, from connection cache warming?: {}",
-                                    self.addr, err, data.is_empty());
+                                info!(
+                                    "Cannot make connection to {}, error {:}, from connection \
+                                     cache warming?: {}",
+                                    self.addr,
+                                    err,
+                                    data.is_empty()
+                                );
                                 return Err(err);
                             }
                         }
@@ -396,7 +401,8 @@ impl QuicClient {
                         .prepare_connection_us
                         .fetch_add(measure_prepare_connection.as_us(), Ordering::Relaxed);
                     trace!(
-                        "Succcessfully sent to {} with id {}, thread: {:?}, data len: {}, send_packet_us: {} prepare_connection_us: {}",
+                        "Succcessfully sent to {} with id {}, thread: {:?}, data len: {}, \
+                         send_packet_us: {} prepare_connection_us: {}",
                         self.addr,
                         connection.stable_id(),
                         thread::current().id(),

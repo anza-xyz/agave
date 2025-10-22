@@ -9,6 +9,7 @@ use {
         pausable::*, permanent_delegate::*, reallocate::*, scaled_ui_amount::*, token_group::*,
         token_metadata::*, transfer_fee::*, transfer_hook::*,
     },
+    serde::{Deserialize, Serialize},
     serde_json::{json, Map, Value},
     solana_account_decoder::{
         parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,

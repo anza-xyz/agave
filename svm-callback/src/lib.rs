@@ -1,6 +1,15 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 use {
-    solana_account::AccountSharedData, solana_precompile_error::PrecompileError,
-    solana_pubkey::Pubkey,
+    solana_account::AccountSharedData, solana_clock::Slot,
+    solana_precompile_error::PrecompileError, solana_pubkey::Pubkey,
 };
 
 /// Callback used by InvokeContext in SVM
@@ -33,22 +42,9 @@ pub trait InvokeContextCallback {
 
 /// Runtime callbacks for transaction processing.
 pub trait TransactionProcessingCallback: InvokeContextCallback {
-    fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize>;
-
-    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData>;
-
-    fn add_builtin_account(&self, _name: &str, _program_id: &Pubkey) {}
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)>;
 
     fn inspect_account(&self, _address: &Pubkey, _account_state: AccountState, _is_writable: bool) {
-    }
-
-    #[deprecated(
-        since = "2.3.0",
-        note = "Use `get_epoch_stake_for_vote_account` on the `InvokeContextCallback` trait \
-                instead"
-    )]
-    fn get_current_epoch_vote_account_stake(&self, vote_address: &Pubkey) -> u64 {
-        Self::get_epoch_stake_for_vote_account(self, vote_address)
     }
 }
 

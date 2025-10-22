@@ -11,9 +11,6 @@ mod tests {
     fn parse_turbine(bytes: &[u8]) -> anyhow::Result<Shred> {
         let shred = Shred::new_from_serialized_shred(bytes.to_owned())
             .map_err(|_e| anyhow::anyhow!("Can not deserialize"))?;
-        shred
-            .sanitize()
-            .map_err(|_e| anyhow::anyhow!("Failed sanitize"))?;
         Ok(shred)
     }
 

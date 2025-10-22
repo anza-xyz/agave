@@ -37,7 +37,7 @@ pub const DEFAULT_TEST_QUEUE_CAPACITY_ITEMS: usize = 100;
 pub const DEFAULT_QUEUE_CAPACITY_BYTES: usize = 256 * 1024 * 1024;
 pub const DEFAULT_WORKER_THREADS: usize = 1;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PubSubConfig {
     pub enable_block_subscription: bool,
     pub enable_vote_subscription: bool,
@@ -87,7 +87,6 @@ impl PubSubService {
         pubsub_addr: SocketAddr,
     ) -> (Trigger, Self) {
         let subscription_control = subscriptions.control().clone();
-        info!("rpc_pubsub bound to {pubsub_addr:?}");
 
         let (trigger, tripwire) = Tripwire::new();
         let thread_hdl = Builder::new()
@@ -448,7 +447,19 @@ async fn listen(
     subscription_control: SubscriptionControl,
     mut tripwire: Tripwire,
 ) -> io::Result<()> {
-    let listener = tokio::net::TcpListener::bind(&listen_address).await?;
+    let listener = match tokio::net::TcpListener::bind(&listen_address).await {
+        Ok(listener) => {
+            info!("rpc_pubsub listening on {listen_address:?}");
+            listener
+        }
+        Err(e) => {
+            error!(
+                "failed to bind rpc_pubsub listener on {listen_address:?}: {e}. Hint: is the port \
+                 already in use?"
+            );
+            return Err(e);
+        }
+    };
     let counter = TokenCounter::new("rpc_pubsub_connections");
     loop {
         select! {

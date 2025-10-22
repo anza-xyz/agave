@@ -1,7 +1,13 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 #![allow(clippy::arithmetic_side_effects)]
-
-#[macro_use]
-extern crate serde_derive;
 
 pub mod parse_account_data;
 pub mod parse_address_lookup_table;
@@ -22,6 +28,7 @@ pub use solana_account_decoder_client_types::{
 use {
     crate::parse_account_data::{parse_account_data_v3, AccountAdditionalDataV3},
     base64::{prelude::BASE64_STANDARD, Engine},
+    serde::{Deserialize, Serialize},
     solana_account::ReadableAccount,
     solana_fee_calculator::FeeCalculator,
     solana_pubkey::Pubkey,

@@ -1,0 +1,18 @@
+[package]
+name = "agave-scheduler-bindings"
+description = "Agave scheduler-binding message types for external pack process integration"
+documentation = "https://docs.rs/agave-scheduler-bindings"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+
+[lints]
+workspace = true

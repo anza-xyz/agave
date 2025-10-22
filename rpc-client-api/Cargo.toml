@@ -12,13 +12,15 @@ edition = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 anyhow = { workspace = true }
 jsonrpc-core = { workspace = true }
 reqwest = { workspace = true, default-features = false, features = ["rustls-tls"] }
 reqwest-middleware = { workspace = true }
 serde = { workspace = true }
-serde_derive = { workspace = true }
 serde_json = { workspace = true }
 solana-account-decoder-client-types = { workspace = true }
 solana-clock = { workspace = true }

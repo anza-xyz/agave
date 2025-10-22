@@ -1,9 +1,9 @@
 [package]
 name = "agave-ledger-tool"
-description = "Blockchain, Rebuilt for Scale"
 documentation = "https://docs.rs/agave-ledger-tool"
 version = { workspace = true }
 authors = { workspace = true }
+description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
@@ -13,11 +13,13 @@ edition = { workspace = true }
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
+agave-unstable-api = []
 dev-context-only-utils = []
 
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
+agave-snapshots = { workspace = true }
 agave-syscalls = { workspace = true }
 bs58 = { workspace = true }
 chrono = { workspace = true, features = ["default"] }
@@ -35,7 +37,6 @@ rayon = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
-serde_derive = { workspace = true }
 serde_json = { workspace = true }
 solana-account  = { workspace = true }
 solana-account-decoder = { workspace = true }
@@ -44,6 +45,7 @@ solana-bpf-loader-program = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-output = { workspace = true }
 solana-clock = { workspace = true }
+solana-cluster-type = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }
 solana-cost-model = { workspace = true }
@@ -56,10 +58,9 @@ solana-hash = { workspace = true }
 solana-inflation = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
-solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
+solana-ledger = { workspace = true, features = ["dev-context-only-utils", "agave-unstable-api"] }
 solana-loader-v3-interface = { workspace = true }
-solana-log-collector = { workspace = true }
-solana-logger = "=2.3.1"
+solana-logger = "=3.0.0"
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-native-token = { workspace = true }
@@ -69,7 +70,7 @@ solana-rent = { workspace = true }
 solana-rpc = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime-transaction = { workspace = true }
-solana-sbpf = { workspace = true, features = ["debugger"] }
+solana-sbpf = { workspace = true, features = ["debugger", "jit"] }
 solana-sdk-ids = { workspace = true }
 solana-shred-version = { workspace = true }
 solana-signature = { workspace = true }
@@ -79,11 +80,12 @@ solana-storage-bigtable = { workspace = true }
 solana-streamer = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
+solana-svm-log-collector = { workspace = true }
+solana-svm-type-overrides = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-status = { workspace = true }
-solana-type-overrides = { workspace = true }
 solana-unified-scheduler-pool = { workspace = true }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
