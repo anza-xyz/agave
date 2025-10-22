@@ -11072,7 +11072,18 @@ name = "solana-svm-feature-set"
 version = "3.1.0"
 
 [[package]]
-name = "solana-svm-fuzz-harness"
+name = "solana-svm-log-collector"
+version = "3.1.0"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "solana-svm-measure"
+version = "3.1.0"
+
+[[package]]
+name = "solana-svm-test-harness"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
@@ -11107,17 +11118,6 @@ dependencies = [
  "solana-transaction-context",
  "thiserror 2.0.17",
 ]
-
-[[package]]
-name = "solana-svm-log-collector"
-version = "3.1.0"
-dependencies = [
- "log",
-]
-
-[[package]]
-name = "solana-svm-measure"
-version = "3.1.0"
 
 [[package]]
 name = "solana-svm-timings"

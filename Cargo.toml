@@ -104,9 +104,9 @@ members = [
     "svm",
     "svm-callback",
     "svm-feature-set",
-    "svm-fuzz-harness",
     "svm-log-collector",
     "svm-measure",
+    "svm-test-harness",
     "svm-timings",
     "svm-transaction",
     "svm-type-overrides",
@@ -532,9 +532,9 @@ solana-streamer = { path = "streamer", version = "=3.1.0", features = ["agave-un
 solana-svm = { path = "svm", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-svm-callback = { path = "svm-callback", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-svm-feature-set = { path = "svm-feature-set", version = "=3.1.0", features = ["agave-unstable-api"] }
-solana-svm-fuzz-harness = { path = "svm-fuzz-harness", version = "=3.1.0" }
 solana-svm-log-collector = { path = "svm-log-collector", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-svm-measure = { path = "svm-measure", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-svm-test-harness = { path = "svm-test-harness", version = "=3.1.0" }
 solana-svm-timings = { path = "svm-timings", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-svm-transaction = { path = "svm-transaction", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-svm-type-overrides = { path = "svm-type-overrides", version = "=3.1.0", features = ["agave-unstable-api"] }
