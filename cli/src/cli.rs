@@ -33,8 +33,7 @@ use {
     solana_transaction_error::TransactionError,
     solana_vote_program::vote_state::VoteAuthorize,
     std::{
-        collections::HashMap, error, io::stdout, rc::Rc, str::FromStr, sync::Arc,
-        time::Duration,
+        collections::HashMap, error, io::stdout, rc::Rc, str::FromStr, sync::Arc, time::Duration,
     },
     thiserror::Error,
 };

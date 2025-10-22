@@ -1133,6 +1133,88 @@ pub async fn process_dump(
     }
 }
 
+/// Synchronous wrapper for process_deploy_program
+/// Use this when calling from a blocking context within an async runtime
+/// Accepts a blocking RpcClient and converts it internally to nonblocking
+///
+/// # Performance Note
+/// This function creates a new RpcClient on each call and has overhead from
+/// sync-async-sync bridging. For better performance, consider using the async
+/// `process_deploy_program()` directly with a nonblocking RpcClient.
+#[deprecated(
+    note = "Consider using async process_deploy_program() with nonblocking RpcClient for better performance and resource usage"
+)]
+pub fn process_deploy_program_sync(
+    rpc_client_blocking: Arc<solana_rpc_client::rpc_client::RpcClient>,
+    config: &CliConfig<'_>,
+    additional_cli_config: &AdditionalCliConfig,
+    program_address: &Pubkey,
+    buffer_address: Option<&Pubkey>,
+    upload_signer_index: Option<&SignerIndex>,
+    auth_signer_index: &SignerIndex,
+    program_data: &[u8],
+    upload_range: Range<Option<usize>>,
+) -> ProcessResult {
+    tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async {
+            // Convert blocking RpcClient to nonblocking
+            let rpc_client_nonblocking = Arc::new(RpcClient::new_with_commitment(
+                rpc_client_blocking.url(),
+                rpc_client_blocking.commitment(),
+            ));
+
+            process_deploy_program(
+                rpc_client_nonblocking,
+                config,
+                additional_cli_config,
+                program_address,
+                buffer_address,
+                upload_signer_index,
+                auth_signer_index,
+                program_data,
+                upload_range,
+            )
+            .await
+        })
+    })
+}
+
+/// Synchronous wrapper for process_dump
+/// Use this when calling from a blocking context within an async runtime
+/// Accepts a blocking RpcClient and converts it internally to nonblocking
+///
+/// # Performance Note
+/// This function creates a new RpcClient on each call and has overhead from
+/// sync-async-sync bridging. For better performance, consider using the async
+/// `process_dump()` directly with a nonblocking RpcClient.
+#[deprecated(
+    note = "Consider using async process_dump() with nonblocking RpcClient for better performance and resource usage"
+)]
+pub fn process_dump_sync(
+    rpc_client_blocking: Arc<solana_rpc_client::rpc_client::RpcClient>,
+    config: &CliConfig<'_>,
+    account_pubkey: Option<Pubkey>,
+    output_location: &str,
+) -> ProcessResult {
+    tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async {
+            // Convert blocking RpcClient to nonblocking
+            let rpc_client_nonblocking = Arc::new(RpcClient::new_with_commitment(
+                rpc_client_blocking.url(),
+                rpc_client_blocking.commitment(),
+            ));
+
+            process_dump(
+                rpc_client_nonblocking,
+                config,
+                account_pubkey,
+                output_location,
+            )
+            .await
+        })
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn send_messages(
     rpc_client: Arc<RpcClient>,
