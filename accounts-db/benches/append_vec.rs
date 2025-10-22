@@ -30,11 +30,11 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 /// After the account is appended, the internal `current_len` is updated.
 fn append_account(
     vec: &AppendVec,
-    pubkey: Pubkey,
+    pubkey: &Pubkey,
     account: &AccountSharedData,
 ) -> Option<StoredAccountsInfo> {
     let slot_ignored = Slot::MAX;
-    let accounts = [(&pubkey, account)];
+    let accounts = [(pubkey, account)];
     let slice = &accounts[..];
     let storable_accounts = (slot_ignored, slice);
     vec.append_accounts(&storable_accounts, 0)
@@ -44,8 +44,8 @@ fn append_vec_append(bencher: &mut Bencher, storage_access: StorageAccess) {
     let path = get_append_vec_path("bench_append");
     let vec = AppendVec::new(&path.path, true, 64 * 1024, storage_access);
     bencher.iter(|| {
-        let (meta, account) = create_test_account(0);
-        if append_account(&vec, meta, &account).is_none() {
+        let (pubkey, account) = create_test_account(0);
+        if append_account(&vec, &pubkey, &account).is_none() {
             vec.reset();
         }
     });
@@ -65,7 +65,7 @@ fn add_test_accounts(vec: &AppendVec, size: usize) -> Vec<(usize, usize)> {
     (0..size)
         .filter_map(|sample| {
             let (pubkey, account) = create_test_account(sample);
-            append_account(vec, pubkey, &account).map(|info| (sample, info.offsets[0]))
+            append_account(vec, &pubkey, &account).map(|info| (sample, info.offsets[0]))
         })
         .collect()
 }
@@ -135,7 +135,7 @@ fn append_vec_concurrent_append_read(bencher: &mut Bencher, storage_access: Stor
     spawn(move || loop {
         let sample = indexes1.lock().unwrap().len();
         let (pubkey, account) = create_test_account(sample);
-        if let Some(info) = append_account(&vec1, pubkey, &account) {
+        if let Some(info) = append_account(&vec1, &pubkey, &account) {
             indexes1.lock().unwrap().push((sample, info.offsets[0]))
         } else {
             break;
@@ -195,7 +195,7 @@ fn append_vec_concurrent_read_append(bencher: &mut Bencher, storage_access: Stor
     bencher.iter(|| {
         let sample: usize = thread_rng().gen_range(0..256);
         let (pubkey, account) = create_test_account(sample);
-        if let Some(info) = append_account(&vec, pubkey, &account) {
+        if let Some(info) = append_account(&vec, &pubkey, &account) {
             indexes.lock().unwrap().push((sample, info.offsets[0]))
         }
     });
