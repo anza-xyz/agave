@@ -9,6 +9,7 @@
 #include <sol/assert.h>
 #include <sol/deserialize.h>
 #include <sol/return_data.h>
+#include <solana_sdk.h>
 
 static const uint8_t TEST_SUCCESS = 1;
 static const uint8_t TEST_PRIVILEGE_ESCALATION_SIGNER = 2;
@@ -47,6 +48,9 @@ static const uint8_t TEST_MAX_ACCOUNT_INFOS_EXCEEDED = 49;
 static const uint8_t TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_SIMD_0339 = 50;
 static const uint8_t TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_INCREASE_CPI_INFO_BEFORE_SIMD_0339 = 51;
 static const uint8_t TEST_MAX_ACCOUNT_INFOS_EXCEEDED_BEFORE_INCREASE_CPI_INFO_BEFORE_SIMD_0339 = 52;
+static const uint8_t TEST_CU_USAGE_MINIMUM = 53;
+static const uint8_t TEST_CU_USAGE_BASELINE = 54;
+static const uint8_t TEST_CU_USAGE_MAX = 55;
 
 static const int MINT_INDEX = 0;
 static const int ARGUMENT_INDEX = 1;
@@ -62,6 +66,7 @@ static const int FROM_INDEX = 10;
 static const int ED25519_PROGRAM_INDEX = 11;
 static const int INVOKE_PROGRAM_INDEX = 12;
 static const int UNEXECUTABLE_PROGRAM_INDEX = 13;
+static const int NOOP_PROGRAM_INDEX = 14;
 
 uint64_t do_nested_invokes(uint64_t num_nested_invokes,
                            SolAccountInfo *accounts, uint64_t num_accounts) {
@@ -95,7 +100,7 @@ uint64_t do_nested_invokes(uint64_t num_nested_invokes,
 extern uint64_t entrypoint(const uint8_t *input) {
   sol_log("invoke C program");
 
-  SolAccountInfo accounts[14];
+  SolAccountInfo accounts[15];
   SolParameters params = (SolParameters){.ka = accounts};
 
   if (!sol_deserialize(input, &params, SOL_ARRAY_SIZE(accounts))) {
@@ -892,7 +897,115 @@ extern uint64_t entrypoint(const uint8_t *input) {
     sol_invoke(&instruction, account_info_acc, params.ka_num);
     break;
   }
+  case TEST_CU_USAGE_MINIMUM:
+  {
+    sol_log("Test minimum cost of a CPI invocation with 1 account meta and 1 account info");
 
+    uint64_t accounts_len = 1;
+    SolAccountMeta arguments[] = {
+      {accounts[NOOP_PROGRAM_INDEX].key, false, false},
+    };
+
+    uint64_t account_infos_len = 1;
+    SolAccountInfo *account_infos = sol_calloc(account_infos_len, sizeof(SolAccountInfo));
+    sol_assert(0 != account_infos);
+    account_infos[0] = accounts[NOOP_PROGRAM_INDEX];
+
+    uint8_t data[] = {};
+    const SolInstruction instruction = {
+      accounts[NOOP_PROGRAM_INDEX].key,
+      arguments, accounts_len,
+      data, SOL_ARRAY_SIZE(data)
+    };
+
+    const SolSignerSeeds signers_seeds[] = {};
+    uint64_t remaining = sol_remaining_compute_units();
+    sol_assert(SUCCESS == sol_invoke_signed(
+                          &instruction,
+                          account_infos, account_infos_len,
+                          signers_seeds, SOL_ARRAY_SIZE(signers_seeds)));
+
+    uint64_t used = remaining - sol_remaining_compute_units();
+
+    sol_assert(used == 1066);
+    break;
+  }
+  case TEST_CU_USAGE_BASELINE:
+  {
+    sol_log("Test CPI with 255 account metas and 64 account infos");
+
+    uint64_t accounts_len = 255;
+    SolAccountMeta *arguments = sol_calloc(accounts_len, sizeof(SolAccountMeta));
+    sol_assert(0 != arguments);
+
+    for (uint64_t i = 0; i < accounts_len; i++) {
+      arguments[i] = (SolAccountMeta){ accounts[NOOP_PROGRAM_INDEX].key, false, false };
+    }
+
+    uint64_t account_infos_len = 64;
+    SolAccountInfo *account_infos = sol_calloc(account_infos_len, sizeof(SolAccountInfo));
+    sol_assert(0 != account_infos);
+    for (uint64_t i = 0; i < account_infos_len; i++) {
+      account_infos[i] = accounts[NOOP_PROGRAM_INDEX];
+    }
+
+    uint8_t data[] = {};
+    const SolInstruction instruction = {
+      accounts[NOOP_PROGRAM_INDEX].key,
+      arguments, accounts_len,
+      data, SOL_ARRAY_SIZE(data)
+    };
+    const SolSignerSeeds signers_seeds[] = {};
+    uint64_t before = sol_remaining_compute_units();
+    sol_assert(SUCCESS == sol_invoke_signed(
+                          &instruction,
+                          account_infos, account_infos_len,
+                          signers_seeds, SOL_ARRAY_SIZE(signers_seeds)));
+    uint64_t used = before - sol_remaining_compute_units();
+
+    sol_assert(used == 1120);
+    break;
+  }
+    case TEST_CU_USAGE_MAX:
+  {
+    sol_log("Test CPI with 255 account metas and 255 account infos");
+
+    uint64_t accounts_len = 255;
+    SolAccountMeta *arguments = sol_calloc(accounts_len, sizeof(SolAccountMeta));
+    sol_assert(0 != arguments);
+
+    for (uint64_t i = 0; i < accounts_len; i++) {
+      arguments[i] = (SolAccountMeta){ accounts[NOOP_PROGRAM_INDEX].key, false, false };
+    }
+
+    uint64_t account_infos_len = 255;
+    SolAccountInfo *account_infos = sol_calloc(account_infos_len, sizeof(SolAccountInfo));
+    sol_assert(0 != account_infos);
+    for (uint64_t i = 0; i < account_infos_len; i++) {
+      account_infos[i] = accounts[NOOP_PROGRAM_INDEX];
+    }
+
+    uint8_t data[] = {};
+
+    const SolInstruction instruction = {
+      accounts[NOOP_PROGRAM_INDEX].key,
+      arguments, accounts_len,
+      data, SOL_ARRAY_SIZE(data)
+    };
+
+    const SolSignerSeeds signers_seeds[] = {};
+
+    uint64_t before = sol_remaining_compute_units();
+    sol_assert(SUCCESS == sol_invoke_signed(
+                          &instruction,
+                          account_infos, account_infos_len,
+                          signers_seeds, SOL_ARRAY_SIZE(signers_seeds)));
+    uint64_t used = before - sol_remaining_compute_units();
+    
+    //previous test of 1120 + ((225-64)*80)/250 = 1181 rounded down, which is the extra CU usage for the extra account infos
+    sol_assert(used == 1181);
+    break;
+  }
   default:
     sol_panic();
   }

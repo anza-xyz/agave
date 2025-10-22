@@ -691,6 +691,10 @@ fn test_program_sbf_invoke_sanity() {
         let account = AccountSharedData::new(1, 0, &bpf_loader::id());
         bank.store_account(&unexecutable_program_keypair.pubkey(), &account);
 
+        let noop_program_keypair = Keypair::new();
+        let account = AccountSharedData::new(42, 5, &noop_program_id);
+        bank.store_account(&noop_program_keypair.pubkey(), &account);
+
         let (derived_key1, bump_seed1) =
             Pubkey::find_program_address(&[b"You pass butter"], &invoke_program_id);
         let (derived_key2, bump_seed2) =
@@ -714,6 +718,7 @@ fn test_program_sbf_invoke_sanity() {
             AccountMeta::new_readonly(solana_sdk_ids::ed25519_program::id(), false),
             AccountMeta::new_readonly(invoke_program_id, false),
             AccountMeta::new_readonly(unexecutable_program_keypair.pubkey(), false),
+            AccountMeta::new_readonly(noop_program_id, false),
         ];
 
         let do_invoke = |test: u8, additional_instructions: &[Instruction], bank: &Bank| {
@@ -876,6 +881,28 @@ fn test_program_sbf_invoke_sanity() {
             &[invoked_program_id.clone()],
             &bank,
         );
+
+        do_invoke_success(
+            TEST_CU_USAGE_MINIMUM,
+            &[],
+            &[noop_program_id.clone()],
+            &bank,
+        );
+
+        do_invoke_success(
+            TEST_CU_USAGE_BASELINE,
+            &[],
+            &[noop_program_id.clone()],
+            &bank,
+        );
+
+        do_invoke_success(
+            TEST_CU_USAGE_MAX,
+            &[],
+            &[noop_program_id.clone()],
+            &bank,
+        );
+
 
         let bank = bank_with_feature_deactivated(
             &bank_forks,

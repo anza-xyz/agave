@@ -14,6 +14,7 @@ use {
         syscalls::{
             MAX_CPI_ACCOUNT_INFOS, MAX_CPI_INSTRUCTION_ACCOUNTS, MAX_CPI_INSTRUCTION_DATA_LEN,
         },
+        compute_units::sol_remaining_compute_units,
     },
     solana_program_entrypoint::{ProgramResult, MAX_PERMITTED_DATA_INCREASE},
     solana_program_error::ProgramError,
@@ -1544,6 +1545,95 @@ fn process_instruction<'a>(
                 &[account0, account1, account2],
             )
             .unwrap();
+        }
+        TEST_CU_USAGE_MINIMUM => {
+            msg!("Test minimum cost of a CPI invocation with 1 account meta and 1 account info");
+
+            let account_infos: Vec<AccountInfo<'_>> = vec![accounts[NOOP_PROGRAM_INDEX].clone()];
+
+            let account_metas: Vec<(&Pubkey, bool, bool)> = vec![
+                (accounts[NOOP_PROGRAM_INDEX].key, false, false),
+            ];
+
+            let instruction = create_instruction(
+                *accounts[NOOP_PROGRAM_INDEX].key, 
+                &account_metas,                    
+                vec![],                            
+            );
+
+            let before_cpi = sol_remaining_compute_units();
+            invoke_signed(&instruction, &account_infos, &[])?; 
+            let after_cpi = sol_remaining_compute_units();
+            let cu_used = before_cpi - after_cpi;
+
+            assert_eq!(cu_used, 1755); 
+        }
+        TEST_CU_USAGE_BASELINE => {
+            msg!("Test minimum cost of a CPI invocation with up to 255 account metas and 64 account infos");
+
+            let mut selected_indices: Vec<usize> = vec![NOOP_PROGRAM_INDEX];
+
+            while selected_indices.len() < 64 {
+                selected_indices.push(selected_indices[0]);
+            }
+
+            let account_infos: Vec<AccountInfo<'_>> = selected_indices
+                .iter()
+                .map(|&i| accounts[i].clone())
+                .collect();
+
+            let mut account_metas: Vec<(&Pubkey, bool, bool)> = Vec::with_capacity(255);
+            account_metas.push((accounts[NOOP_PROGRAM_INDEX].key, false, false));
+
+            while account_metas.len() < 255 {
+                account_metas.push((accounts[NOOP_PROGRAM_INDEX].key, false, false));
+            }
+
+            let instruction = create_instruction(
+                *accounts[NOOP_PROGRAM_INDEX].key,
+                &account_metas,
+                vec![],
+            );
+
+            let before_cpi = sol_remaining_compute_units();
+            invoke_signed(&instruction, &account_infos, &[])?; 
+            let after_cpi = sol_remaining_compute_units();
+            let cu_used = before_cpi - after_cpi;
+
+            assert_eq!(cu_used, 44735);
+        }
+        TEST_CU_USAGE_MAX => {
+            msg!("Test minimum cost of a CPI invocation with up to 255 account metas and 255 account infos");
+            //this is currently using 64 account infos due to heap memmory running out
+            let mut selected_indices: Vec<usize> = vec![NOOP_PROGRAM_INDEX];
+            while selected_indices.len() < 64 {
+                    selected_indices.push(selected_indices[0]);
+            }
+
+            let account_infos: Vec<AccountInfo<'_>> = selected_indices
+                .iter()
+                .map(|&i| accounts[i].clone())
+                .collect();
+
+            let mut account_metas: Vec<(&Pubkey, bool, bool)> = Vec::with_capacity(255);
+
+            while account_metas.len() < 255 {
+                account_metas.push((accounts[NOOP_PROGRAM_INDEX].key, false, false));
+            }
+
+            let instruction = create_instruction(
+                *accounts[NOOP_PROGRAM_INDEX].key,
+                &account_metas,
+                vec![],
+            );
+
+            let before_cpi = sol_remaining_compute_units();
+            invoke_signed(&instruction, &account_infos, &[])?;
+            let after_cpi = sol_remaining_compute_units();
+            let cu_used = before_cpi - after_cpi;
+
+            // previous test + 61
+            assert_eq!(cu_used, 44735);
         }
         _ => panic!("unexpected program data"),
     }
