@@ -1001,7 +1001,6 @@ extern uint64_t entrypoint(const uint8_t *input) {
                           account_infos, account_infos_len,
                           signers_seeds, SOL_ARRAY_SIZE(signers_seeds)));
     uint64_t used = before - sol_remaining_compute_units();
-    
     //previous test of 1120 + ((225-64)*80)/250 = 1181 rounded down, which is the extra CU usage for the extra account infos
     sol_assert(used == 1181);
     break;
