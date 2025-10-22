@@ -1,6 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    agave_snapshots::{snapshot_config::SnapshotConfig, SnapshotInterval},
+    agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig, SnapshotInterval},
     assert_matches::assert_matches,
     crossbeam_channel::{unbounded, Receiver},
     gag::BufferRedirect,
@@ -69,11 +69,8 @@ use {
         response::RpcSignatureResult,
     },
     solana_runtime::{
-        commitment::VOTE_THRESHOLD_SIZE,
-        snapshot_archive_info::SnapshotArchiveInfoGetter,
-        snapshot_bank_utils,
-        snapshot_package::SnapshotKind,
-        snapshot_utils::{self, BANK_SNAPSHOTS_DIR},
+        commitment::VOTE_THRESHOLD_SIZE, snapshot_archive_info::SnapshotArchiveInfoGetter,
+        snapshot_bank_utils, snapshot_package::SnapshotKind, snapshot_utils,
     },
     solana_signer::Signer,
     solana_stake_interface::{self as stake, state::NEW_WARMUP_COOLDOWN_RATE},
@@ -937,8 +934,8 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
     let copy_files_with_remote = |from: &Path, to: &Path| {
         copy_files(from, to);
-        let remote_from = snapshot_utils::build_snapshot_archives_remote_dir(from);
-        let remote_to = snapshot_utils::build_snapshot_archives_remote_dir(to);
+        let remote_from = snapshot_paths::build_snapshot_archives_remote_dir(from);
+        let remote_to = snapshot_paths::build_snapshot_archives_remote_dir(to);
         let _ = fs::create_dir_all(&remote_from);
         let _ = fs::create_dir_all(&remote_to);
         copy_files(&remote_from, &remote_to);
@@ -946,7 +943,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
     let delete_files_with_remote = |from: &Path| {
         delete_files(from);
-        let remote_dir = snapshot_utils::build_snapshot_archives_remote_dir(from);
+        let remote_dir = snapshot_paths::build_snapshot_archives_remote_dir(from);
         let _ = fs::create_dir_all(&remote_dir);
         delete_files(&remote_dir);
     };
@@ -1278,7 +1275,7 @@ fn test_snapshot_restart_tower() {
     );
 
     // Copy archive to validator's snapshot output directory
-    let validator_archive_path = snapshot_utils::build_full_snapshot_archive_path(
+    let validator_archive_path = snapshot_paths::build_full_snapshot_archive_path(
         validator_snapshot_test_config
             .full_snapshot_archives_dir
             .keep(),
@@ -1348,7 +1345,7 @@ fn test_snapshots_blockstore_floor() {
     };
 
     // Copy archive to validator's snapshot output directory
-    let validator_archive_path = snapshot_utils::build_full_snapshot_archive_path(
+    let validator_archive_path = snapshot_paths::build_full_snapshot_archive_path(
         validator_snapshot_test_config
             .full_snapshot_archives_dir
             .keep(),
@@ -2320,7 +2317,7 @@ fn test_run_test_load_program_accounts_root() {
 fn create_simple_snapshot_config(ledger_path: &Path) -> SnapshotConfig {
     SnapshotConfig {
         full_snapshot_archives_dir: ledger_path.to_path_buf(),
-        bank_snapshots_dir: ledger_path.join(BANK_SNAPSHOTS_DIR),
+        bank_snapshots_dir: ledger_path.join(snapshot_paths::BANK_SNAPSHOTS_DIR),
         ..SnapshotConfig::default()
     }
 }

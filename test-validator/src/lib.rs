@@ -1,7 +1,9 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     agave_feature_set::{alpenglow, raise_cpi_nesting_limit_to_8, FeatureSet, FEATURE_NAMES},
-    agave_snapshots::{snapshot_config::SnapshotConfig, SnapshotInterval},
+    agave_snapshots::{
+        paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig, SnapshotInterval,
+    },
     base64::{prelude::BASE64_STANDARD, Engine},
     crossbeam_channel::Receiver,
     log::*,
@@ -50,7 +52,6 @@ use {
         bank_forks::BankForks,
         genesis_utils::{self, create_genesis_config_with_leader_ex_no_features},
         runtime_config::RuntimeConfig,
-        snapshot_utils::BANK_SNAPSHOTS_DIR,
     },
     solana_sdk_ids::address_lookup_table,
     solana_signer::Signer,
