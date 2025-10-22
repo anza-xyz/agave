@@ -253,4 +253,9 @@ mod tests {
             expected_args,
         );
     }
+
+    #[test]
+    fn test_default_rpc_pubsub_max_active_subscriptions_unchanged() {
+        assert_eq!(*DEFAULT_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS, "1000000");
+    }
 }
