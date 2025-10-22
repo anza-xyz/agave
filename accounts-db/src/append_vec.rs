@@ -910,7 +910,7 @@ impl AppendVec {
     pub fn get_account_test(
         &self,
         offset: usize,
-    ) -> Option<(StoredMeta, solana_account::AccountSharedData)> {
+    ) -> Option<(Pubkey, solana_account::AccountSharedData)> {
         let data_len = self.get_account_data_lens(&[offset]);
         let sizes: usize = data_len
             .iter()
@@ -923,8 +923,8 @@ impl AppendVec {
                 r2.as_ref().unwrap()
             ));
             assert_eq!(sizes, r_callback.stored_size());
-            let meta = r_callback.meta().clone();
-            Some((meta, r_callback.to_account_shared_data()))
+            let pubkey = r_callback.meta().pubkey;
+            Some((pubkey, r_callback.to_account_shared_data()))
         });
         if result.is_none() {
             assert!(self
@@ -1361,9 +1361,9 @@ pub mod tests {
     };
 
     impl AppendVec {
-        fn append_account_test(&self, data: &(StoredMeta, AccountSharedData)) -> Option<usize> {
+        fn append_account_test(&self, data: &(Pubkey, AccountSharedData)) -> Option<usize> {
             let slot_ignored = Slot::MAX;
-            let accounts = [(&data.0.pubkey, &data.1)];
+            let accounts = [(&data.0, &data.1)];
             let slice = &accounts[..];
             let storable_accounts = (slot_ignored, slice);
 
