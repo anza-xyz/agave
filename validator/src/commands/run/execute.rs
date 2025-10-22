@@ -8,6 +8,7 @@ use {
     },
     agave_snapshots::{
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+        paths::BANK_SNAPSHOTS_DIR,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
         ArchiveFormat, SnapshotInterval, SnapshotVersion,
     },
@@ -57,10 +58,7 @@ use {
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
     solana_pubkey::Pubkey,
-    solana_runtime::{
-        runtime_config::RuntimeConfig,
-        snapshot_utils::{self, BANK_SNAPSHOTS_DIR},
-    },
+    solana_runtime::{runtime_config::RuntimeConfig, snapshot_utils},
     solana_signer::Signer,
     solana_streamer::quic::{QuicServerParams, DEFAULT_TPU_COALESCE},
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,

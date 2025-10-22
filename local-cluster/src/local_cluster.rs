@@ -5,7 +5,7 @@ use {
         integration_tests::DEFAULT_NODE_STAKE,
         validator_configs::*,
     },
-    agave_snapshots::snapshot_config::SnapshotConfig,
+    agave_snapshots::{paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig},
     itertools::izip,
     log::*,
     solana_account::{Account, AccountSharedData, ReadableAccount},
@@ -35,12 +35,9 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_runtime::{
-        genesis_utils::{
-            create_genesis_config_with_vote_accounts_and_cluster_type, GenesisConfigInfo,
-            ValidatorVoteKeypairs,
-        },
-        snapshot_utils::BANK_SNAPSHOTS_DIR,
+    solana_runtime::genesis_utils::{
+        create_genesis_config_with_vote_accounts_and_cluster_type, GenesisConfigInfo,
+        ValidatorVoteKeypairs,
     },
     solana_signer::{signers::Signers, Signer},
     solana_stake_interface::{
