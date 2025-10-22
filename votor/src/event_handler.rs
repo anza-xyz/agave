@@ -4,7 +4,7 @@ use {
     crate::{
         commitment::{update_commitment_cache, CommitmentType},
         event::{CompletedBlock, VotorEvent, VotorEventReceiver},
-        root_utils::{self, RootContext},
+        root_utils::{self, RootContext, SetRootError},
         timer_manager::TimerManager,
         vote_history::{VoteHistory, VoteHistoryError},
         voting_service::BLSOp,
@@ -66,6 +66,9 @@ enum EventLoopError {
 
     #[error("Set identity error")]
     SetIdentityError(#[from] VoteHistoryError),
+
+    #[error("Set root error: {0}")]
+    RootingError(#[from] SetRootError),
 }
 
 pub(crate) struct EventHandler {
@@ -85,10 +88,12 @@ impl EventHandler {
         let t_event_handler = Builder::new()
             .name("solVotorEventLoop".to_string())
             .spawn(move || {
+                info!("EventHandler has started");
                 if let Err(e) = Self::event_loop(ctx) {
-                    info!("Event loop exited: {e:?}. Shutting down");
                     exit.store(true, Ordering::Relaxed);
+                    error!("EventHandler exited with error: {e}");
                 }
+                info!("EventHandler has stopped");
             })
             .unwrap();
 
@@ -250,7 +255,7 @@ impl EventHandler {
                     pending_blocks,
                     finalized_blocks,
                     received_shred,
-                );
+                )?;
                 if let Some((ready_slot, parent_block)) =
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)
                 {
@@ -374,7 +379,7 @@ impl EventHandler {
                     pending_blocks,
                     finalized_blocks,
                     received_shred,
-                );
+                )?;
                 if let Some((slot, block)) =
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)
                 {
@@ -708,7 +713,7 @@ impl EventHandler {
         pending_blocks: &mut PendingBlocks,
         finalized_blocks: &mut BTreeSet<Block>,
         received_shred: &mut BTreeSet<Slot>,
-    ) {
+    ) -> Result<(), EventLoopError> {
         let bank_forks_r = ctx.bank_forks.read().unwrap();
         let old_root = bank_forks_r.root();
         let Some(new_root) = finalized_blocks
@@ -724,7 +729,7 @@ impl EventHandler {
             .max()
         else {
             // No rootable banks
-            return;
+            return Ok(());
         };
         drop(bank_forks_r);
         root_utils::set_root(
@@ -736,7 +741,8 @@ impl EventHandler {
             pending_blocks,
             finalized_blocks,
             received_shred,
-        );
+        )
+        .map_err(EventLoopError::RootingError)
     }
 
     pub(crate) fn join(self) -> thread::Result<()> {
