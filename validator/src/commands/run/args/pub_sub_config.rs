@@ -268,4 +268,9 @@ mod tests {
     fn test_default_rpc_pubsub_queue_capacity_bytes_unchanged() {
         assert_eq!(*DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_BYTES, "268435456");
     }
+
+    #[test]
+    fn test_default_rpc_pubsub_worker_threads_unchanged() {
+        assert_eq!(DEFAULT_RPC_PUBSUB_WORKER_THREADS, "4");
+    }
 }
