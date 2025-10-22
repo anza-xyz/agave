@@ -832,7 +832,7 @@ mod tests {
 
     #[test]
     fn test_bank_forks_different_set_root() {
-        solana_logger::setup();
+        agave_logger::setup();
         let leader_keypair = Keypair::new();
         let GenesisConfigInfo {
             mut genesis_config,

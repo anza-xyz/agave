@@ -16,12 +16,12 @@ targets = ["x86_64-unknown-linux-gnu"]
 agave-unstable-api = []
 
 [dependencies]
+agave-logger = { workspace = true }
 clap = { version = "3.1.5", features = ["cargo"] }
 log = { workspace = true }
 num_cpus = { workspace = true }
 rayon = { workspace = true }
 solana-entry = { workspace = true }
-solana-logger = { workspace = true }
 solana-measure = { workspace = true }
 solana-perf = { workspace = true }
 solana-sha256-hasher = { workspace = true }

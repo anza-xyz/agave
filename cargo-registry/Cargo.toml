@@ -20,6 +20,7 @@ remote-wallet-hidraw = ["solana-remote-wallet/linux-static-hidraw"]
 remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 
 [dependencies]
+agave-logger = { workspace = true }
 clap = { workspace = true }
 flate2 = { workspace = true }
 hex = { workspace = true }
@@ -34,7 +35,6 @@ solana-cli-config = { workspace = true }
 solana-cli-output = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-keypair = { workspace = true }
-solana-logger = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-remote-wallet = { workspace = true }
 solana-rpc-client = { workspace = true, features = ["default"] }

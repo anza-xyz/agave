@@ -1,5 +1,5 @@
 //! The `logger` module configures `env_logger`
-
+#![cfg(feature = "agave-unstable-api")]
 use std::{
     env,
     sync::{Arc, LazyLock, RwLock},

@@ -41,7 +41,7 @@ tokio = { workspace = true, features = ["full"] }
 url = { workspace = true }
 
 [dev-dependencies]
-solana-logger = { workspace = true }
+agave-logger = { workspace = true }
 solana-net-utils = { path = ".", features = ["agave-unstable-api"] }
 
 [lints]

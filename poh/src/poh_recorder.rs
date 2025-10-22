@@ -1522,7 +1522,7 @@ mod tests {
 
     #[test]
     fn test_reset_to_new_value() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
@@ -1605,7 +1605,7 @@ mod tests {
 
     #[test]
     fn test_poh_recorder_record_sets_start_slot() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
@@ -1693,7 +1693,7 @@ mod tests {
 
     #[test]
     fn test_reached_leader_tick() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         // Setup genesis.
         let GenesisConfigInfo {
@@ -1871,7 +1871,7 @@ mod tests {
 
     #[test]
     fn test_reached_leader_slot() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())

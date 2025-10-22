@@ -1,10 +1,10 @@
 use {
+    agave_logger::redirect_stderr_to_file,
     clap::{crate_name, Parser},
     crossbeam_channel::bounded,
     log::*,
     solana_core::banking_trace::BankingTracer,
     solana_keypair::read_keypair_file,
-    solana_logger::redirect_stderr_to_file,
     solana_net_utils::sockets::{bind_in_range_with_config, SocketConfiguration as SocketConfig},
     solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_signer::Signer,
@@ -32,7 +32,7 @@ use {
 const DEFAULT_CHANNEL_SIZE: usize = 100_000;
 
 pub fn main() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let args = Cli::parse();
     let solana_version = solana_version::version!();

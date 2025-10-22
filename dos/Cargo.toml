@@ -20,6 +20,7 @@ dummy-for-ci-check = []
 frozen-abi = []
 
 [dependencies]
+agave-logger = { workspace = true }
 bincode = { workspace = true }
 clap = { version = "3.1.5", features = ["derive", "cargo"] }
 crossbeam-channel = { workspace = true }
@@ -35,7 +36,6 @@ solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
-solana-logger = "=3.0.0"
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-net-utils = { workspace = true }

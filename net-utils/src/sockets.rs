@@ -450,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_bind_two_in_range_with_offset() {
-        solana_logger::setup();
+        agave_logger::setup();
         let config = SocketConfiguration::default();
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let offset = 6;
@@ -486,7 +486,7 @@ mod tests {
 
     #[test]
     fn test_get_public_ip_addr_none() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let (pr_s, pr_e) = localhost_port_range_for_tests();
         let config = SocketConfiguration::default();
@@ -515,7 +515,7 @@ mod tests {
 
     #[test]
     fn test_get_public_ip_addr_reachable() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let port_range = localhost_port_range_for_tests();
         let config = SocketConfiguration::default();
@@ -555,7 +555,7 @@ mod tests {
 
     #[test]
     fn test_verify_ports_tcp_unreachable() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let port_range = localhost_port_range_for_tests();
         let config = SocketConfiguration::default();
@@ -578,7 +578,7 @@ mod tests {
 
     #[test]
     fn test_verify_ports_udp_unreachable() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let port_range = unique_port_range_for_tests(2);
         let config = SocketConfiguration::default();
@@ -604,7 +604,7 @@ mod tests {
 
     #[test]
     fn test_verify_many_ports_reachable() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let config = SocketConfiguration::default();
         let mut tcp_listeners = vec![];
@@ -657,7 +657,7 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn test_verify_udp_multiple_ips_reachable() {
-        solana_logger::setup();
+        agave_logger::setup();
         let config = SocketConfiguration::default();
         let ip_a = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let ip_b = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));

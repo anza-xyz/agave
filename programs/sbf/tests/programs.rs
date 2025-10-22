@@ -154,7 +154,7 @@ const LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST: u32 = 64 * 1024 * 1024;
 #[test]
 #[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 fn test_program_sbf_sanity() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut programs = Vec::new();
     #[cfg(feature = "sbf_c")]
@@ -262,7 +262,7 @@ fn test_program_sbf_sanity() {
 #[test]
 #[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 fn test_program_sbf_loader_deprecated() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut programs = Vec::new();
     #[cfg(feature = "sbf_c")]
@@ -305,7 +305,7 @@ fn test_program_sbf_loader_deprecated() {
 #[should_panic(expected = "called `Result::unwrap()` on an `Err` value: \
                            TransactionError(InstructionError(0, InvalidAccountData))")]
 fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -342,7 +342,7 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_duplicate_accounts() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut programs = Vec::new();
     #[cfg(feature = "sbf_c")]
@@ -449,7 +449,7 @@ fn test_program_sbf_duplicate_accounts() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_error_handling() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut programs = Vec::new();
     #[cfg(feature = "sbf_c")]
@@ -561,7 +561,7 @@ fn test_program_sbf_error_handling() {
 #[test]
 #[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 fn test_return_data_and_log_data_syscall() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut programs = Vec::new();
     #[cfg(feature = "sbf_c")]
@@ -619,7 +619,7 @@ fn test_return_data_and_log_data_syscall() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_invoke_sanity() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     #[derive(Debug)]
     #[allow(dead_code)]
@@ -1297,7 +1297,7 @@ fn test_program_sbf_caller_has_access_to_cpi_program() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_ro_modify() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -1354,7 +1354,7 @@ fn test_program_sbf_ro_modify() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_call_depth() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -1392,7 +1392,7 @@ fn test_program_sbf_call_depth() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_compute_budget() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -1427,7 +1427,7 @@ fn test_program_sbf_compute_budget() {
 
 #[test]
 fn assert_instruction_count() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut programs = Vec::new();
     #[cfg(feature = "sbf_c")]
@@ -1523,7 +1523,7 @@ fn assert_instruction_count() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_instruction_introspection() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -1587,7 +1587,7 @@ fn test_program_sbf_instruction_introspection() {
 #[allow(clippy::arithmetic_side_effects)]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_len: usize) {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -1688,7 +1688,7 @@ fn test_program_sbf_invoke_stable_genesis_and_bank() {
     // assert that the resulting bank hash matches with the expected value.
     // The assert check is commented out by default. Please refer to the last few lines
     // of the test to enable the assertion.
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -1864,7 +1864,7 @@ fn test_program_sbf_invoke_stable_genesis_and_bank() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_invoke_in_same_tx_as_deployment() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -1943,7 +1943,7 @@ fn test_program_sbf_invoke_in_same_tx_as_deployment() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_invoke_in_same_tx_as_redeployment() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -2049,7 +2049,7 @@ fn test_program_sbf_invoke_in_same_tx_as_redeployment() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_invoke_in_same_tx_as_undeployment() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -2129,7 +2129,7 @@ fn test_program_sbf_invoke_in_same_tx_as_undeployment() {
 #[test]
 #[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 fn test_program_sbf_disguised_as_sbf_loader() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut programs = Vec::new();
     #[cfg(feature = "sbf_c")]
@@ -2175,7 +2175,7 @@ fn test_program_sbf_disguised_as_sbf_loader() {
 #[cfg(feature = "sbf_c")]
 fn test_program_reads_from_program_account() {
     use solana_loader_v4_interface::state as loader_v4_state;
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -2209,7 +2209,7 @@ fn test_program_reads_from_program_account() {
 #[test]
 #[cfg(feature = "sbf_c")]
 fn test_program_sbf_c_dup() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -2245,7 +2245,7 @@ fn test_program_sbf_c_dup() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_upgrade() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -2330,7 +2330,7 @@ fn test_program_sbf_upgrade() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_upgrade_via_cpi() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -2445,7 +2445,7 @@ fn test_program_sbf_upgrade_via_cpi() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_ro_account_modify() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -2507,7 +2507,7 @@ fn test_program_sbf_ro_account_modify() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_realloc() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     const START_BALANCE: u64 = 100_000_000_000;
 
@@ -2930,7 +2930,7 @@ fn test_program_sbf_realloc() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_realloc_invoke() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     const START_BALANCE: u64 = 100_000_000_000;
 
@@ -3555,7 +3555,7 @@ fn test_program_sbf_realloc_invoke() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_processed_inner_instruction() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -3634,7 +3634,7 @@ fn test_program_sbf_processed_inner_instruction() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_fees() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let congestion_multiplier = 1;
 
@@ -3744,7 +3744,7 @@ fn test_program_fees() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_inner_instruction_alignment_checks() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -3782,7 +3782,7 @@ fn test_program_sbf_inner_instruction_alignment_checks() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_cpi_account_ownership_writability() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     for stricter_abi_and_runtime_constraints in [false, true] {
         let GenesisConfigInfo {
@@ -3978,7 +3978,7 @@ fn test_cpi_account_ownership_writability() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_cpi_account_data_updates() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     for (deprecated_callee, deprecated_caller, stricter_abi_and_runtime_constraints) in
         [false, true].into_iter().flat_map(move |z| {
@@ -4241,7 +4241,7 @@ fn test_cpi_account_data_updates() {
 #[test]
 #[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 fn test_cpi_invalid_account_info_pointers() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -4329,7 +4329,7 @@ fn test_cpi_invalid_account_info_pointers() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_deplete_cost_meter_with_access_violation() {
-    solana_logger::setup();
+    agave_logger::setup();
     let GenesisConfigInfo {
         genesis_config,
         mint_keypair,
@@ -4387,7 +4387,7 @@ fn test_deplete_cost_meter_with_access_violation() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_program_sbf_deplete_cost_meter_with_divide_by_zero() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -4432,7 +4432,7 @@ fn test_program_sbf_deplete_cost_meter_with_divide_by_zero() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_deny_access_beyond_current_length() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -4500,7 +4500,7 @@ fn test_deny_access_beyond_current_length() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_deny_executable_write() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -4555,7 +4555,7 @@ fn test_deny_executable_write() {
 #[test]
 fn test_update_callee_account() {
     // Test that fn update_callee_account() works and we are updating the callee account on CPI.
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -4828,7 +4828,7 @@ fn test_update_callee_account() {
 
 #[test]
 fn test_account_info_in_account() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -4900,7 +4900,7 @@ fn test_account_info_in_account() {
 
 #[test]
 fn test_account_info_rc_in_account() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -4993,7 +4993,7 @@ fn test_account_info_rc_in_account() {
 #[test]
 fn test_clone_account_data() {
     // Test cloning account data works as expect with
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -5131,7 +5131,7 @@ fn test_clone_account_data() {
 
 #[test]
 fn test_stack_heap_zeroed() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -5199,7 +5199,7 @@ fn test_stack_heap_zeroed() {
 fn test_function_call_args() {
     // This function tests edge compiler edge cases when calling functions with more than five
     // arguments and passing by value arguments with more than 16 bytes.
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -5341,7 +5341,7 @@ fn test_function_call_args() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_mem_syscalls_overlap_account_begin_or_end() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     for stricter_abi_and_runtime_constraints in [false, true] {
         let GenesisConfigInfo {

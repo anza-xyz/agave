@@ -25,6 +25,7 @@ dev-context-only-utils = []
 
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
+agave-logger = { workspace = true }
 bytes = { workspace = true }
 clap = { version = "4.5.31", features = ["cargo", "derive", "error-context"] }
 crossbeam-channel = { workspace = true }
@@ -53,7 +54,6 @@ solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-core = { workspace = true }
 solana-keypair = { workspace = true }
-solana-logger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }

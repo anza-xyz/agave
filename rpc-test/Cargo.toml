@@ -39,13 +39,13 @@ solana-transaction-status = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
+agave-logger = { workspace = true }
 solana-client = { workspace = true, features = ["dev-context-only-utils"] }
 solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
-solana-logger = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-signature = { workspace = true }

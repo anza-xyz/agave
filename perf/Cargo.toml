@@ -78,10 +78,10 @@ libc = { workspace = true }
 nix = { workspace = true, features = ["user"] }
 
 [dev-dependencies]
+agave-logger = { workspace = true }
 assert_matches = { workspace = true }
 bencher = { workspace = true }
 rand_chacha = { workspace = true }
-solana-logger = { workspace = true }
 solana-perf = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
 

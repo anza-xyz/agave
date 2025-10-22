@@ -6,6 +6,7 @@ use {
         commands::{run::args::RunArgs, FromClapArgMatches},
         ledger_lockfile, lock_ledger,
     },
+    agave_logger::redirect_stderr_to_file,
     agave_snapshots::{
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
@@ -52,7 +53,6 @@ use {
         blockstore_cleanup_service::{DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS},
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
-    solana_logger::redirect_stderr_to_file,
     solana_net_utils::multihomed_sockets::BindIpAddrs,
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,

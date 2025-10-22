@@ -204,7 +204,7 @@ pub mod tests {
 
     #[test]
     fn test_invalid_offsets() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let mut instruction_data = vec![0u8; DATA_START];
         let offsets = Ed25519SignatureOffsets::default();
@@ -337,7 +337,7 @@ pub mod tests {
 
     #[test]
     fn test_ed25519() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
         let message_arr = b"hello";
@@ -375,7 +375,7 @@ pub mod tests {
 
     #[test]
     fn test_offsets_to_ed25519_instruction() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
         let messages: [&[u8]; 3] = [b"hello", b"IBRL", b"goodbye"];
@@ -444,7 +444,7 @@ pub mod tests {
 
     #[test]
     fn test_ed25519_malleability() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         // sig created via ed25519_dalek: both pass
         let privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());

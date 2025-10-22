@@ -305,7 +305,7 @@ pub fn run_cluster_partition<C>(
     ticks_per_slot: Option<u64>,
     additional_accounts: Vec<(Pubkey, AccountSharedData)>,
 ) {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     info!("PARTITION_TEST!");
     let num_nodes = partitions.len();
     let node_stakes: Vec<_> = partitions

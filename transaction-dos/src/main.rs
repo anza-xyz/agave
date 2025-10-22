@@ -427,7 +427,7 @@ fn run_transactions_dos(
 }
 
 fn main() {
-    solana_logger::setup_with_default_filter();
+    agave_logger::setup_with_default_filter();
     let matches = App::new(crate_name!())
         .about(crate_description!())
         .version(solana_version::version!())
@@ -678,7 +678,7 @@ pub mod test {
 
     #[test]
     fn test_tx_size() {
-        solana_logger::setup();
+        agave_logger::setup();
         let keypair = Keypair::new();
         let num_instructions = 20;
         let program_id = Pubkey::new_unique();
@@ -706,7 +706,7 @@ pub mod test {
     #[test]
     #[ignore]
     fn test_transaction_dos() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let validator_config = ValidatorConfig::default_for_test();
         let num_nodes = 1;

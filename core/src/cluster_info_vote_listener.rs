@@ -767,7 +767,7 @@ mod tests {
 
     #[test]
     fn test_max_vote_tx_fits() {
-        solana_logger::setup();
+        agave_logger::setup();
         let node_keypair = Keypair::new();
         let vote_keypair = Keypair::new();
         let tower_sync = TowerSync::new_from_slot(MAX_LOCKOUT_HISTORY as u64, Hash::default());
@@ -1503,7 +1503,7 @@ mod tests {
 
     #[test]
     fn test_verify_votes_empty() {
-        solana_logger::setup();
+        agave_logger::setup();
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);

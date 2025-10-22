@@ -62,13 +62,13 @@ solana-vote-interface = { workspace = true, features = ["bincode"] }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { workspace = true }
 assert_matches = { workspace = true }
 criterion = { workspace = true }
 solana-account = { workspace = true }
 solana-clock = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-instruction = { workspace = true }
-solana-logger = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true }

@@ -2647,7 +2647,7 @@ mod tests {
 
     #[test]
     fn test_handle_pull() {
-        solana_logger::setup();
+        agave_logger::setup();
         let cluster_info = Arc::new({
             let keypair = Arc::new(Keypair::new());
             let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
@@ -3690,7 +3690,7 @@ mod tests {
 
     #[test]
     fn test_push_restart_heaviest_fork() {
-        solana_logger::setup();
+        agave_logger::setup();
         let keypair = Arc::new(Keypair::new());
         let pubkey = keypair.pubkey();
         let contact_info = ContactInfo::new_localhost(&pubkey, 0);
@@ -3764,7 +3764,7 @@ mod tests {
 
     #[test]
     fn test_contact_trace() {
-        solana_logger::setup();
+        agave_logger::setup();
         let keypair43 = Arc::new(
             Keypair::try_from(
                 [

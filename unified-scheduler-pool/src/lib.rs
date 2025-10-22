@@ -2808,7 +2808,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_pool_new() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
@@ -2824,7 +2824,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_spawn() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
@@ -2843,7 +2843,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_scheduler_drop_idle() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let _progress = sleepless_testing::setup(&[
             &TestCheckPoint::BeforeIdleSchedulerCleaned,
@@ -2907,7 +2907,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_drop_overgrown() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let _progress = sleepless_testing::setup(&[
             &TestCheckPoint::BeforeTrashedSchedulerCleaned,
@@ -2981,7 +2981,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_drop_stale() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let _progress = sleepless_testing::setup(&[
             &TestCheckPoint::BeforeTimeoutListenerTriggered,
@@ -3027,7 +3027,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_active_after_stale() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let _progress = sleepless_testing::setup(&[
             &TestCheckPoint::BeforeTimeoutListenerTriggered,
@@ -3117,7 +3117,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_pause_after_stale() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let _progress = sleepless_testing::setup(&[
             &TestCheckPoint::BeforeTimeoutListenerTriggered,
@@ -3162,7 +3162,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_remain_stale_after_error() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let _progress = sleepless_testing::setup(&[
             &TestCheckPoint::BeforeTimeoutListenerTriggered,
@@ -3250,7 +3250,7 @@ mod tests {
     }
 
     fn do_test_scheduler_drop_abort(abort_case: AbortCase) {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let _progress = sleepless_testing::setup(match abort_case {
             AbortCase::Unhandled => &[
@@ -3334,7 +3334,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_drop_short_circuiting() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let _progress = sleepless_testing::setup(&[
             &TestCheckPoint::BeforeThreadManagerDrop,
@@ -3405,7 +3405,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_pool_filo() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
@@ -3434,7 +3434,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_pool_context_drop_unless_reinitialized() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
@@ -3453,7 +3453,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_pool_context_replace() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
@@ -3476,7 +3476,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_pool_install_into_bank_forks() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let bank = Bank::default_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -3489,7 +3489,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_install_into_bank() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
@@ -3530,7 +3530,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_schedule_execution_success() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let GenesisConfigInfo {
             genesis_config,
@@ -3559,7 +3559,7 @@ mod tests {
     }
 
     fn do_test_scheduler_schedule_execution_failure(extra_tx_after_failure: bool) {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let _progress = sleepless_testing::setup(&[
             &CheckPoint::TaskHandled(0),
@@ -3664,7 +3664,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "This panic should be propagated. (From: ")]
     fn test_scheduler_schedule_execution_panic() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         #[derive(Debug)]
         enum PanickingHanlderCheckPoint {
@@ -3749,7 +3749,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_execution_failure_short_circuiting() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let _progress = sleepless_testing::setup(&[
             &TestCheckPoint::BeforeNewTask,
@@ -3838,7 +3838,7 @@ mod tests {
     fn test_scheduler_schedule_execution_blocked_at_session_ending(
         scheduling_mode: SchedulingMode,
     ) {
-        solana_logger::setup();
+        agave_logger::setup();
 
         const STALLED_TRANSACTION_INDEX: OrderedTaskId = 0;
         const BLOCKED_TRANSACTION_INDEX: OrderedTaskId = 1;
@@ -3992,7 +3992,7 @@ mod tests {
 
     #[test]
     fn test_block_production_scheduler_schedule_execution_retry() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         const ORIGINAL_TRANSACTION_INDEX: OrderedTaskId = 999;
         // This is 0 because it's the first task id assigned internally by BankingStageHelper
@@ -4098,7 +4098,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_mismatched_scheduling_context_race() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         #[derive(Debug)]
         struct TaskAndContextChecker;
@@ -4330,7 +4330,7 @@ mod tests {
     fn do_test_scheduler_schedule_execution_recent_blockhash_edge_case<
         const TRIGGER_RACE_CONDITION: bool,
     >() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let GenesisConfigInfo {
             genesis_config,
@@ -4418,7 +4418,7 @@ mod tests {
     // See comment in SchedulingStateMachine::create_task() for the justification of this test
     #[test]
     fn test_enfoced_get_account_locks_validation() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let GenesisConfigInfo {
             genesis_config,
@@ -4473,7 +4473,7 @@ mod tests {
         [false, true]
     )]
     fn test_task_handler_poh_recording(tx_result: TxResult, should_succeed_to_record_to_poh: bool) {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let GenesisConfigInfo {
             genesis_config,
@@ -4603,7 +4603,7 @@ mod tests {
 
     #[test]
     fn test_block_production_scheduler_schedule_execution_success() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let GenesisConfigInfo {
             genesis_config,
@@ -4660,7 +4660,7 @@ mod tests {
 
     #[test]
     fn test_block_production_scheduler_buffering_on_spawn() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let _progress = sleepless_testing::setup(&[
             &CheckPoint::NewBufferedTask(17),
@@ -4724,7 +4724,7 @@ mod tests {
 
     #[test]
     fn test_block_production_scheduler_buffering_before_new_session() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let _progress = sleepless_testing::setup(&[
             &CheckPoint::NewBufferedTask(18),
@@ -4797,7 +4797,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "register_banking_stage() isn't called yet")]
     fn test_block_production_scheduler_take_without_registering() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
@@ -4811,7 +4811,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "cannot take: Taken(0)")]
     fn test_block_production_scheduler_double_take_without_returning() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let GenesisConfigInfo { genesis_config, .. } =
             create_genesis_config_for_block_production(10_000);
@@ -4845,7 +4845,7 @@ mod tests {
 
     #[test]
     fn test_block_production_scheduler_drop_overgrown_on_returning() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let GenesisConfigInfo { genesis_config, .. } =
             create_genesis_config_for_block_production(10_000);
@@ -4922,7 +4922,7 @@ mod tests {
             }
         }
 
-        solana_logger::setup();
+        agave_logger::setup();
 
         let GenesisConfigInfo { genesis_config, .. } =
             create_genesis_config_for_block_production(10_000);
@@ -4984,7 +4984,7 @@ mod tests {
 
     #[test]
     fn test_block_production_scheduler_return_block_verification_scheduler_while_pooled() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let GenesisConfigInfo { genesis_config, .. } =
             create_genesis_config_for_block_production(10_000);
@@ -5032,7 +5032,7 @@ mod tests {
             }
         }
 
-        solana_logger::setup();
+        agave_logger::setup();
 
         let GenesisConfigInfo {
             genesis_config,

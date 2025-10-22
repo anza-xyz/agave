@@ -57,7 +57,7 @@ fn pubsub_addr() -> SocketAddr {
 
 #[test]
 fn test_rpc_client() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let alice = Keypair::new();
     let test_validator =

@@ -44,12 +44,12 @@ unwrap_none = { workspace = true }
 vec_extract_if_polyfill = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { workspace = true }
 assert_matches = { workspace = true }
 solana-clock = { workspace = true }
 solana-entry = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
-solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-system-transaction = { workspace = true }
 test-case = { workspace = true }

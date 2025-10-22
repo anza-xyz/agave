@@ -20,6 +20,7 @@ frozen-abi = []
 
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
+agave-logger = { workspace = true }
 assert_matches = { workspace = true }
 clap = { version = "3.1.8", features = ["derive", "cargo"] }
 crossbeam-channel = { workspace = true }
@@ -33,7 +34,6 @@ solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
-solana-logger = { workspace = true }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-perf = { workspace = true }

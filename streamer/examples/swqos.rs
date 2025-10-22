@@ -85,7 +85,7 @@ struct Cli {
 // number of threads as in fn default_num_tpu_transaction_forward_receive_threads
 #[tokio::main(flavor = "multi_thread", worker_threads = 16)]
 async fn main() -> anyhow::Result<()> {
-    solana_logger::setup();
+    agave_logger::setup();
     let cli = Cli::parse();
     let socket = bind_to_with_config(
         cli.bind_to.ip(),
