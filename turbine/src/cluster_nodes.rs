@@ -795,13 +795,16 @@ mod tests {
 
     #[test_case(true /* chacha8 */)]
     #[test_case(false /* chacha20 */)]
-    fn test_chacha_both_variants_distribution(use_cha_cha_8: bool) {
+    /// Test that we provide a complete coverage
+    /// of all the nodes with weighted shuffles
+    fn test_complete_cluster_coverage(use_cha_cha_8: bool) {
         let fanout = 10;
         let mut rng = rand::thread_rng();
 
-        let (nodes, stakes, cluster_info) = make_test_cluster(&mut rng, 20, Some((0, 1)));
-        let slot_leader = nodes[0].pubkey();
+        let (_nodes, stakes, cluster_info) = make_test_cluster(&mut rng, 20, Some((0, 1)));
+        let slot_leader = cluster_info.id();
 
+        // create a test cluster
         let cluster_nodes = new_cluster_nodes::<BroadcastStage>(
             &cluster_info,
             ClusterType::Development,
@@ -826,21 +829,22 @@ mod tests {
             .unwrap();
 
         let mut weighted_shuffle = cluster_nodes.weighted_shuffle.clone();
-        let mut chacha_rng = TurbineRng::new_seeded(slot_leader, &shred.id(), use_cha_cha_8);
+        let mut chacha_rng = TurbineRng::new_seeded(&slot_leader, &shred.id(), use_cha_cha_8);
 
         let shuffled_nodes: Vec<&Node> = weighted_shuffle
             .shuffle(&mut chacha_rng)
             .map(|i| &cluster_nodes.nodes[i])
             .collect();
 
-        let mut covered: HashSet<Pubkey> = HashSet::new();
-        let mut queue = VecDeque::from([
-            *shuffled_nodes[0].pubkey(), /* leader has the shred to retransmit first */
-        ]);
+        // Slot leader obviously has the shred
+        let mut covered: HashSet<Pubkey> = HashSet::from([slot_leader]);
+        // The root node has the shred sent to it initially
+        let mut queue = VecDeque::from([*shuffled_nodes[0].pubkey()]);
 
+        // traverse the turbine tree using the queue of nodes to visit (BFS)
         while let Some(addr) = queue.pop_front() {
             if !covered.insert(addr) {
-                continue; // skip already processed
+                panic!("Should not send to already covered nodes, instead sending to {addr}");
             }
             let (_, peers) = get_retransmit_peers(
                 fanout,
@@ -848,8 +852,9 @@ mod tests {
                 shuffled_nodes.clone(),
             );
 
+            // visit all child nodes
             for peer in peers {
-                println!("{} is child of {addr}", peer.pubkey());
+                trace!("{} is child of {addr}", peer.pubkey());
                 queue.push_back(*peer.pubkey());
                 if stakes[peer.pubkey()] == 0 {
                     continue; // no check of retransmit parents for unstaked nodes
@@ -862,8 +867,9 @@ mod tests {
                     use_cha_cha_8,
                 );
                 peer_cluster_nodes.pubkey = *peer.pubkey();
+                // check that the parent computed by the child matches actual parent.
                 let parent = peer_cluster_nodes
-                    .get_retransmit_parent(slot_leader, &shred.id(), fanout)
+                    .get_retransmit_parent(&slot_leader, &shred.id(), fanout)
                     .unwrap();
 
                 assert_eq!(
@@ -875,16 +881,9 @@ mod tests {
             }
         }
 
-        // filter out unstaked nodes, without contact_info and leader (it can't retransmit to itself)
-        let staked_nodes: HashSet<_> = cluster_nodes
-            .nodes
-            .iter()
-            .filter(|n| n.stake > 0 && n.contact_info().is_some() && n.pubkey() != slot_leader)
-            .map(|n| *n.pubkey())
-            .collect();
-
-        let crosscheck: Vec<_> = staked_nodes.difference(&covered).collect();
-        assert!(crosscheck.is_empty(), "all nodes should be covered");
+        // Convert cluster_nodes into hashset of pubkeys
+        let all_nodes: HashSet<_> = cluster_nodes.nodes.iter().map(|n| *n.pubkey()).collect();
+        assert_eq!(all_nodes, covered, "All nodes must be covered");
     }
 
     #[test]
