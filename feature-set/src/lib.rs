@@ -169,7 +169,6 @@ impl FeatureSet {
             provide_instruction_data_offset_in_vm_r2: self
                 .is_active(&provide_instruction_data_offset_in_vm_r2::id()),
             vote_state_v4: self.is_active(&vote_state_v4::id()),
-            deprecate_rent_exemption_threshold: self.is_active(&deprecate_rent_exemption_threshold::id()),
         }
     }
 }
