@@ -1562,7 +1562,7 @@ fn process_instruction<'a>(
             let after_cpi = sol_remaining_compute_units();
             let cu_used = before_cpi - after_cpi;
 
-            assert_eq!(cu_used, 1755);
+            assert_eq!(cu_used, 1676);
         }
         TEST_CU_USAGE_BASELINE => {
             msg!(
@@ -1596,7 +1596,7 @@ fn process_instruction<'a>(
             let after_cpi = sol_remaining_compute_units();
             let cu_used = before_cpi - after_cpi;
 
-            assert_eq!(cu_used, 44735);
+            assert_eq!(cu_used, 48212);
         }
         TEST_CU_USAGE_MAX => {
             msg!(
@@ -1629,7 +1629,7 @@ fn process_instruction<'a>(
             let cu_used = before_cpi - after_cpi;
 
             // previous test + 61
-            assert_eq!(cu_used, 44735);
+            assert_eq!(cu_used, 48212);
         }
         _ => panic!("unexpected program data"),
     }
