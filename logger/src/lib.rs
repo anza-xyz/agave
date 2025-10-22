@@ -1,18 +1,13 @@
 //! The `logger` module configures `env_logger`
 
-use {
-    lazy_static::lazy_static,
-    std::{
-        env,
-        sync::{Arc, RwLock},
-        thread::JoinHandle,
-    },
+use std::{
+    env,
+    sync::{Arc, LazyLock, RwLock},
+    thread::JoinHandle,
 };
 
-lazy_static! {
-    static ref LOGGER: Arc<RwLock<env_logger::Logger>> =
-        Arc::new(RwLock::new(env_logger::Logger::from_default_env()));
-}
+static LOGGER: LazyLock<Arc<RwLock<env_logger::Logger>>> =
+    LazyLock::new(|| Arc::new(RwLock::new(env_logger::Logger::from_default_env())));
 
 pub const DEFAULT_FILTER: &str = "solana=info,agave=info";
 

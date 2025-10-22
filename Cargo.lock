@@ -9093,7 +9093,6 @@ name = "solana-logger"
 version = "2.3.1"
 dependencies = [
  "env_logger",
- "lazy_static",
  "libc",
  "log",
  "signal-hook",
