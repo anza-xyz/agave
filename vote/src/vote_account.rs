@@ -145,10 +145,7 @@ impl VoteAccounts {
 
                 for (stake, vote_account) in self.vote_accounts.values() {
                     if *stake != 0 {
-                        staked_nodes
-                            .entry(*vote_account.node_pubkey())
-                            .and_modify(|total_stake| *total_stake += stake)
-                            .or_insert(*stake);
+                        *staked_nodes.entry(*vote_account.node_pubkey()).or_default() += *stake;
                     }
                 }
 
