@@ -490,10 +490,10 @@ pub(crate) mod tests {
             },
             runtime_config::RuntimeConfig,
             snapshot_bank_utils::{bank_from_snapshot_archives, bank_to_full_snapshot_archive},
-            snapshot_config::SnapshotConfig,
             snapshot_utils::create_tmp_accounts_dir_for_tests,
         },
         agave_feature_set::FeatureSet,
+        agave_snapshots::snapshot_config::SnapshotConfig,
         assert_matches::assert_matches,
         solana_account::{
             state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount,
