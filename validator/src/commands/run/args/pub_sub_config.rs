@@ -263,4 +263,9 @@ mod tests {
     fn test_default_rpc_pubsub_queue_capacity_items_unchanged() {
         assert_eq!(*DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS, "10000000");
     }
+
+    #[test]
+    fn test_default_rpc_pubsub_queue_capacity_bytes_unchanged() {
+        assert_eq!(*DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_BYTES, "268435456");
+    }
 }
