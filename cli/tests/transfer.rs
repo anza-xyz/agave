@@ -7,6 +7,7 @@ use {
         test_utils::check_ready,
     },
     solana_cli_output::{parse_sign_only_reply_string, OutputFormat},
+    solana_client::nonblocking::blockhash_query::Source,
     solana_commitment_config::CommitmentConfig,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
@@ -16,8 +17,8 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_nonce::state::State as NonceState,
     solana_pubkey::Pubkey,
-    solana_rpc_client::rpc_client::RpcClient,
-    solana_rpc_client_nonce_utils::blockhash_query::{self, BlockhashQuery},
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
+    solana_rpc_client_nonce_utils::nonblocking::blockhash_query::{self, BlockhashQuery},
     solana_signer::{null_signer::NullSigner, Signer},
     solana_stake_interface as stake,
     solana_streamer::socket::SocketAddrSpace,
@@ -59,6 +60,7 @@ async fn test_transfer(skip_preflight: bool) {
     let recipient_pubkey = Pubkey::from([1u8; 32]);
 
     request_and_confirm_airdrop(&rpc_client, &config, &sender_pubkey, 5 * LAMPORTS_PER_SOL)
+        .await
         .unwrap();
     check_balance!(5 * LAMPORTS_PER_SOL, &rpc_client, &sender_pubkey);
     check_balance!(0, &rpc_client, &recipient_pubkey);
@@ -74,7 +76,7 @@ async fn test_transfer(skip_preflight: bool) {
         dump_transaction_message: false,
         allow_unfunded_recipient: true,
         no_wait: false,
-        blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
+        blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
         nonce_account: None,
         nonce_authority: 0,
         memo: None,
@@ -100,7 +102,7 @@ async fn test_transfer(skip_preflight: bool) {
         dump_transaction_message: false,
         allow_unfunded_recipient: true,
         no_wait: false,
-        blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
+        blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
         nonce_account: None,
         nonce_authority: 0,
         memo: None,
@@ -125,11 +127,13 @@ async fn test_transfer(skip_preflight: bool) {
     process_command(&offline).await.unwrap_err();
 
     let offline_pubkey = offline.signers[0].pubkey();
-    request_and_confirm_airdrop(&rpc_client, &offline, &offline_pubkey, LAMPORTS_PER_SOL).unwrap();
+    request_and_confirm_airdrop(&rpc_client, &offline, &offline_pubkey, LAMPORTS_PER_SOL)
+        .await
+        .unwrap();
     check_balance!(LAMPORTS_PER_SOL, &rpc_client, &offline_pubkey);
 
     // Offline transfer
-    let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let blockhash = rpc_client.get_latest_blockhash().await.unwrap();
     offline.command = CliCommand::Transfer {
         amount: SpendAmount::Some(LAMPORTS_PER_SOL / 2),
         to: recipient_pubkey,
@@ -138,7 +142,7 @@ async fn test_transfer(skip_preflight: bool) {
         dump_transaction_message: false,
         allow_unfunded_recipient: true,
         no_wait: false,
-        blockhash_query: BlockhashQuery::None(blockhash),
+        blockhash_query: BlockhashQuery::Static(blockhash),
         nonce_account: None,
         nonce_authority: 0,
         memo: None,
@@ -161,7 +165,7 @@ async fn test_transfer(skip_preflight: bool) {
         dump_transaction_message: false,
         allow_unfunded_recipient: true,
         no_wait: false,
-        blockhash_query: BlockhashQuery::FeeCalculator(blockhash_query::Source::Cluster, blockhash),
+        blockhash_query: BlockhashQuery::Validated(Source::Cluster, blockhash),
         nonce_account: None,
         nonce_authority: 0,
         memo: None,
@@ -182,6 +186,7 @@ async fn test_transfer(skip_preflight: bool) {
     let nonce_account = keypair_from_seed(&[3u8; 32]).unwrap();
     let minimum_nonce_balance = rpc_client
         .get_minimum_balance_for_rent_exemption(NonceState::size())
+        .await
         .unwrap();
     config.signers = vec![&default_signer, &nonce_account];
     config.command = CliCommand::CreateNonceAccount {
@@ -200,11 +205,12 @@ async fn test_transfer(skip_preflight: bool) {
     );
 
     // Fetch nonce hash
-    let nonce_hash = solana_rpc_client_nonce_utils::get_account_with_commitment(
+    let nonce_hash = solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
         &rpc_client,
         &nonce_account.pubkey(),
         CommitmentConfig::processed(),
     )
+    .await
     .and_then(|ref a| solana_rpc_client_nonce_utils::data_from_account(a))
     .unwrap()
     .blockhash();
@@ -219,8 +225,8 @@ async fn test_transfer(skip_preflight: bool) {
         dump_transaction_message: false,
         allow_unfunded_recipient: true,
         no_wait: false,
-        blockhash_query: BlockhashQuery::FeeCalculator(
-            blockhash_query::Source::NonceAccount(nonce_account.pubkey()),
+        blockhash_query: BlockhashQuery::Validated(
+            Source::NonceAccount(nonce_account.pubkey()),
             nonce_hash,
         ),
         nonce_account: Some(nonce_account.pubkey()),
@@ -238,11 +244,12 @@ async fn test_transfer(skip_preflight: bool) {
         &sender_pubkey,
     );
     check_balance!(2_500_000_000, &rpc_client, &recipient_pubkey);
-    let new_nonce_hash = solana_rpc_client_nonce_utils::get_account_with_commitment(
+    let new_nonce_hash = solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
         &rpc_client,
         &nonce_account.pubkey(),
         CommitmentConfig::processed(),
     )
+    .await
     .and_then(|ref a| solana_rpc_client_nonce_utils::data_from_account(a))
     .unwrap()
     .blockhash();
@@ -265,11 +272,12 @@ async fn test_transfer(skip_preflight: bool) {
     );
 
     // Fetch nonce hash
-    let nonce_hash = solana_rpc_client_nonce_utils::get_account_with_commitment(
+    let nonce_hash = solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
         &rpc_client,
         &nonce_account.pubkey(),
         CommitmentConfig::processed(),
     )
+    .await
     .and_then(|ref a| solana_rpc_client_nonce_utils::data_from_account(a))
     .unwrap()
     .blockhash();
@@ -284,7 +292,7 @@ async fn test_transfer(skip_preflight: bool) {
         dump_transaction_message: false,
         allow_unfunded_recipient: true,
         no_wait: false,
-        blockhash_query: BlockhashQuery::None(nonce_hash),
+        blockhash_query: BlockhashQuery::Static(nonce_hash),
         nonce_account: Some(nonce_account.pubkey()),
         nonce_authority: 0,
         memo: None,
@@ -306,8 +314,8 @@ async fn test_transfer(skip_preflight: bool) {
         dump_transaction_message: false,
         allow_unfunded_recipient: true,
         no_wait: false,
-        blockhash_query: BlockhashQuery::FeeCalculator(
-            blockhash_query::Source::NonceAccount(nonce_account.pubkey()),
+        blockhash_query: BlockhashQuery::Validated(
+            Source::NonceAccount(nonce_account.pubkey()),
             sign_only.blockhash,
         ),
         nonce_account: Some(nonce_account.pubkey()),
@@ -357,6 +365,7 @@ async fn test_transfer_multisession_signing() {
         &offline_from_signer.pubkey(),
         43 * LAMPORTS_PER_SOL,
     )
+    .await
     .unwrap();
     request_and_confirm_airdrop(
         &rpc_client,
@@ -364,6 +373,7 @@ async fn test_transfer_multisession_signing() {
         &offline_fee_payer_signer.pubkey(),
         LAMPORTS_PER_SOL + 2 * fee_two_sig,
     )
+    .await
     .unwrap();
     check_balance!(
         43 * LAMPORTS_PER_SOL,
@@ -379,7 +389,7 @@ async fn test_transfer_multisession_signing() {
 
     check_ready(&rpc_client);
 
-    let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let blockhash = rpc_client.get_latest_blockhash().await.unwrap();
 
     // Offline fee-payer signs first
     let mut fee_payer_config = CliConfig::recent_for_tests();
@@ -396,7 +406,7 @@ async fn test_transfer_multisession_signing() {
         dump_transaction_message: false,
         allow_unfunded_recipient: true,
         no_wait: false,
-        blockhash_query: BlockhashQuery::None(blockhash),
+        blockhash_query: BlockhashQuery::Static(blockhash),
         nonce_account: None,
         nonce_authority: 0,
         memo: None,
@@ -428,7 +438,7 @@ async fn test_transfer_multisession_signing() {
         dump_transaction_message: false,
         allow_unfunded_recipient: true,
         no_wait: false,
-        blockhash_query: BlockhashQuery::None(blockhash),
+        blockhash_query: BlockhashQuery::Static(blockhash),
         nonce_account: None,
         nonce_authority: 0,
         memo: None,
@@ -457,7 +467,7 @@ async fn test_transfer_multisession_signing() {
         dump_transaction_message: false,
         allow_unfunded_recipient: true,
         no_wait: false,
-        blockhash_query: BlockhashQuery::FeeCalculator(blockhash_query::Source::Cluster, blockhash),
+        blockhash_query: BlockhashQuery::Validated(Source::Cluster, blockhash),
         nonce_account: None,
         nonce_authority: 0,
         memo: None,
@@ -517,10 +527,13 @@ async fn test_transfer_all(compute_unit_price: Option<u64>) {
                 compute_unit_price,
             ));
         }
-        let blockhash = rpc_client.get_latest_blockhash().unwrap();
+        let blockhash = rpc_client.get_latest_blockhash().await.unwrap();
         let sample_message =
             Message::new_with_blockhash(&instructions, Some(&default_signer.pubkey()), &blockhash);
-        rpc_client.get_fee_for_message(&sample_message).unwrap()
+        rpc_client
+            .get_fee_for_message(&sample_message)
+            .await
+            .unwrap()
     };
 
     let mut config = CliConfig::recent_for_tests();
@@ -529,7 +542,9 @@ async fn test_transfer_all(compute_unit_price: Option<u64>) {
 
     let sender_pubkey = config.signers[0].pubkey();
 
-    request_and_confirm_airdrop(&rpc_client, &config, &sender_pubkey, 500_000).unwrap();
+    request_and_confirm_airdrop(&rpc_client, &config, &sender_pubkey, 500_000)
+        .await
+        .unwrap();
     check_balance!(500_000, &rpc_client, &sender_pubkey);
     check_balance!(0, &rpc_client, &recipient_pubkey);
 
@@ -544,7 +559,7 @@ async fn test_transfer_all(compute_unit_price: Option<u64>) {
         dump_transaction_message: false,
         allow_unfunded_recipient: true,
         no_wait: false,
-        blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
+        blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
         nonce_account: None,
         nonce_authority: 0,
         memo: None,
@@ -585,7 +600,9 @@ async fn test_transfer_unfunded_recipient() {
     let sender_pubkey = config.signers[0].pubkey();
     let recipient_pubkey = Pubkey::from([1u8; 32]);
 
-    request_and_confirm_airdrop(&rpc_client, &config, &sender_pubkey, 50_000).unwrap();
+    request_and_confirm_airdrop(&rpc_client, &config, &sender_pubkey, 50_000)
+        .await
+        .unwrap();
     check_balance!(50_000, &rpc_client, &sender_pubkey);
     check_balance!(0, &rpc_client, &recipient_pubkey);
 
@@ -600,7 +617,7 @@ async fn test_transfer_unfunded_recipient() {
         dump_transaction_message: false,
         allow_unfunded_recipient: false,
         no_wait: false,
-        blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
+        blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
         nonce_account: None,
         nonce_authority: 0,
         memo: None,
@@ -649,8 +666,11 @@ async fn test_transfer_with_seed() {
     )
     .unwrap();
 
-    request_and_confirm_airdrop(&rpc_client, &config, &sender_pubkey, LAMPORTS_PER_SOL).unwrap();
+    request_and_confirm_airdrop(&rpc_client, &config, &sender_pubkey, LAMPORTS_PER_SOL)
+        .await
+        .unwrap();
     request_and_confirm_airdrop(&rpc_client, &config, &derived_address, 5 * LAMPORTS_PER_SOL)
+        .await
         .unwrap();
     check_balance!(LAMPORTS_PER_SOL, &rpc_client, &sender_pubkey);
     check_balance!(5 * LAMPORTS_PER_SOL, &rpc_client, &derived_address);
@@ -667,7 +687,7 @@ async fn test_transfer_with_seed() {
         dump_transaction_message: false,
         allow_unfunded_recipient: true,
         no_wait: false,
-        blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
+        blockhash_query: BlockhashQuery::Rpc(Source::Cluster),
         nonce_account: None,
         nonce_authority: 0,
         memo: None,

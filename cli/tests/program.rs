@@ -25,9 +25,10 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc::rpc::JsonRpcConfig,
-    solana_rpc_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient},
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
+    solana_rpc_client::rpc_client::GetConfirmedSignaturesForAddress2Config,
     solana_rpc_client_api::config::RpcTransactionConfig,
-    solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
+    solana_rpc_client_nonce_utils::nonblocking::blockhash_query::BlockhashQuery,
     solana_sdk_ids::{bpf_loader_upgradeable, compute_budget, loader_v4},
     solana_signature::Signature,
     solana_signer::{null_signer::NullSigner, Signer},
@@ -94,8 +95,11 @@ async fn expect_command_failure(
 }
 
 #[track_caller]
-fn expect_account_absent(rpc_client: &RpcClient, pubkey: Pubkey, absent_because: &str) {
-    let error_actual = rpc_client.get_account(&pubkey).expect_err(absent_because);
+async fn expect_account_absent(rpc_client: &RpcClient, pubkey: Pubkey, absent_because: &str) {
+    let error_actual = rpc_client
+        .get_account(&pubkey)
+        .await
+        .expect_err(absent_because);
     let error_actual = error_actual.to_string();
     assert!(
         format!("AccountNotFound: pubkey={pubkey}") == error_actual,
@@ -132,9 +136,11 @@ async fn test_cli_program_deploy_non_upgradeable() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             program_data.len(),
         ))
+        .await
         .unwrap();
     let minimum_balance_for_program = rpc_client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
         .unwrap();
 
     let keypair = Keypair::new();
@@ -173,14 +179,14 @@ async fn test_cli_program_deploy_non_upgradeable() {
         .as_str()
         .unwrap();
     let program_id = Pubkey::from_str(program_id_str).unwrap();
-    let account0 = rpc_client.get_account(&program_id).unwrap();
+    let account0 = rpc_client.get_account(&program_id).await.unwrap();
     assert_eq!(account0.lamports, minimum_balance_for_program);
     assert_eq!(account0.owner, bpf_loader_upgradeable::id());
     assert!(account0.executable);
 
     let (programdata_pubkey, _) =
         Pubkey::find_program_address(&[program_id.as_ref()], &bpf_loader_upgradeable::id());
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     assert_eq!(
         programdata_account.lamports,
         minimum_balance_for_programdata
@@ -215,6 +221,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
     process_command(&config).await.unwrap();
     let account1 = rpc_client
         .get_account(&custom_address_keypair.pubkey())
+        .await
         .unwrap();
     assert_eq!(account1.lamports, minimum_balance_for_program);
     assert_eq!(account1.owner, bpf_loader_upgradeable::id());
@@ -223,7 +230,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         &[custom_address_keypair.pubkey().as_ref()],
         &bpf_loader_upgradeable::id(),
     );
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     assert_eq!(
         programdata_account.lamports,
         minimum_balance_for_programdata
@@ -341,9 +348,11 @@ async fn test_cli_program_deploy_no_authority() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
     let minimum_balance_for_program = rpc_client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
         .unwrap();
     let upgrade_authority = Keypair::new();
 
@@ -453,9 +462,11 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
     let minimum_balance_for_program = rpc_client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
         .unwrap();
     let upgrade_authority = Keypair::new();
 
@@ -573,7 +584,7 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
     config.json_rpc_url = test_validator.rpc_url();
     let rpc_client = setup_rpc_client(&mut config);
 
-    let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let blockhash = rpc_client.get_latest_blockhash().await.unwrap();
 
     let mut file = File::open(syscall_program_path.to_str().unwrap()).unwrap();
     let mut large_program_data = Vec::new();
@@ -583,6 +594,7 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_program_data_len,
         ))
+        .await
         .unwrap();
 
     config.send_transaction_config.skip_preflight = false;
@@ -736,9 +748,11 @@ async fn test_cli_program_deploy_with_authority() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
     let minimum_balance_for_program = rpc_client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
         .unwrap();
     let upgrade_authority = Keypair::new();
 
@@ -784,7 +798,10 @@ async fn test_cli_program_deploy_with_authority() {
         program_keypair.pubkey(),
         Pubkey::from_str(program_pubkey_str).unwrap()
     );
-    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    let program_account = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(program_account.lamports, minimum_balance_for_program);
     assert_eq!(program_account.owner, bpf_loader_upgradeable::id());
     assert!(program_account.executable);
@@ -792,7 +809,7 @@ async fn test_cli_program_deploy_with_authority() {
         &[program_keypair.pubkey().as_ref()],
         &bpf_loader_upgradeable::id(),
     );
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     assert_eq!(
         programdata_account.lamports,
         minimum_balance_for_programdata
@@ -833,13 +850,13 @@ async fn test_cli_program_deploy_with_authority() {
         .as_str()
         .unwrap();
     let program_pubkey = Pubkey::from_str(program_pubkey_str).unwrap();
-    let program_account = rpc_client.get_account(&program_pubkey).unwrap();
+    let program_account = rpc_client.get_account(&program_pubkey).await.unwrap();
     assert_eq!(program_account.lamports, minimum_balance_for_program);
     assert_eq!(program_account.owner, bpf_loader_upgradeable::id());
     assert!(program_account.executable);
     let (programdata_pubkey, _) =
         Pubkey::find_program_address(&[program_pubkey.as_ref()], &bpf_loader_upgradeable::id());
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     assert_eq!(
         programdata_account.lamports,
         minimum_balance_for_programdata
@@ -871,13 +888,13 @@ async fn test_cli_program_deploy_with_authority() {
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
-    let program_account = rpc_client.get_account(&program_pubkey).unwrap();
+    let program_account = rpc_client.get_account(&program_pubkey).await.unwrap();
     assert_eq!(program_account.lamports, minimum_balance_for_program);
     assert_eq!(program_account.owner, bpf_loader_upgradeable::id());
     assert!(program_account.executable);
     let (programdata_pubkey, _) =
         Pubkey::find_program_address(&[program_pubkey.as_ref()], &bpf_loader_upgradeable::id());
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     assert_eq!(
         programdata_account.lamports,
         minimum_balance_for_programdata
@@ -889,7 +906,7 @@ async fn test_cli_program_deploy_with_authority() {
         program_data[..]
     );
 
-    let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let blockhash = rpc_client.get_latest_blockhash().await.unwrap();
     // Set a new authority sign offline first
     let new_upgrade_authority = Keypair::new();
     config.signers = vec![&keypair, &upgrade_authority, &new_upgrade_authority];
@@ -950,13 +967,13 @@ async fn test_cli_program_deploy_with_authority() {
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
-    let program_account = rpc_client.get_account(&program_pubkey).unwrap();
+    let program_account = rpc_client.get_account(&program_pubkey).await.unwrap();
     assert_eq!(program_account.lamports, minimum_balance_for_program);
     assert_eq!(program_account.owner, bpf_loader_upgradeable::id());
     assert!(program_account.executable);
     let (programdata_pubkey, _) =
         Pubkey::find_program_address(&[program_pubkey.as_ref()], &bpf_loader_upgradeable::id());
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     assert_eq!(
         programdata_account.lamports,
         minimum_balance_for_programdata
@@ -1070,7 +1087,7 @@ async fn test_cli_program_deploy_with_authority() {
     let program_pubkey = Pubkey::from_str(program_pubkey_str).unwrap();
     let (programdata_pubkey, _) =
         Pubkey::find_program_address(&[program_pubkey.as_ref()], &bpf_loader_upgradeable::id());
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     if let UpgradeableLoaderState::ProgramData {
         slot: _,
         upgrade_authority_address,
@@ -1146,9 +1163,11 @@ async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
     let minimum_balance_for_program = rpc_client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
         .unwrap();
     let upgrade_authority = Keypair::new();
 
@@ -1264,7 +1283,7 @@ async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
     let program_pubkey = Pubkey::from_str(program_pubkey_str).unwrap();
     let (programdata_pubkey, _) =
         Pubkey::find_program_address(&[program_pubkey.as_ref()], &bpf_loader_upgradeable::id());
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     if let UpgradeableLoaderState::ProgramData {
         slot: _,
         upgrade_authority_address,
@@ -1309,9 +1328,11 @@ async fn test_cli_program_close_program() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
     let minimum_balance_for_program = rpc_client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
         .unwrap();
     let upgrade_authority = Keypair::new();
 
@@ -1355,7 +1376,7 @@ async fn test_cli_program_close_program() {
     wait_n_slots(&rpc_client, 1);
 
     // Close program
-    let close_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let close_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     let programdata_lamports = close_account.lamports;
     let recipient_pubkey = Pubkey::new_unique();
     config.signers = vec![&keypair, &upgrade_authority];
@@ -1390,7 +1411,7 @@ async fn test_cli_program_close_program() {
         programdata_pubkey,
         "Program data account is deleted when the program is closed",
     );
-    let recipient_account = rpc_client.get_account(&recipient_pubkey).unwrap();
+    let recipient_account = rpc_client.get_account(&recipient_pubkey).await.unwrap();
     assert_eq!(programdata_lamports, recipient_account.lamports);
 }
 
@@ -1429,9 +1450,11 @@ async fn test_cli_program_extend_program() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
     let minimum_balance_for_program = rpc_client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
         .unwrap();
     let upgrade_authority = Keypair::new();
 
@@ -1476,7 +1499,7 @@ async fn test_cli_program_extend_program() {
         &bpf_loader_upgradeable::id(),
     );
 
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     let expected_len = UpgradeableLoaderState::size_of_programdata(max_len);
     assert_eq!(expected_len, programdata_account.data.len());
 
@@ -1497,7 +1520,7 @@ async fn test_cli_program_extend_program() {
     });
     process_command(&config).await.unwrap();
 
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     let expected_len = UpgradeableLoaderState::size_of_programdata(new_max_len - 1);
     assert_eq!(expected_len, programdata_account.data.len());
 
@@ -1551,7 +1574,7 @@ async fn test_cli_program_extend_program() {
     });
     process_command(&config).await.unwrap();
 
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     let expected_len = UpgradeableLoaderState::size_of_programdata(new_max_len);
     assert_eq!(expected_len, programdata_account.data.len());
 
@@ -1606,9 +1629,11 @@ async fn test_cli_program_migrate_program() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
     let minimum_balance_for_program = rpc_client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
         .unwrap();
     let upgrade_authority = Keypair::new();
 
@@ -1691,11 +1716,13 @@ async fn test_cli_program_write_buffer() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
     let minimum_balance_for_buffer_default = rpc_client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
 
     let keypair = Keypair::new();
@@ -1732,7 +1759,7 @@ async fn test_cli_program_write_buffer() {
         .as_str()
         .unwrap();
     let new_buffer_pubkey = Pubkey::from_str(buffer_pubkey_str).unwrap();
-    let buffer_account = rpc_client.get_account(&new_buffer_pubkey).unwrap();
+    let buffer_account = rpc_client.get_account(&new_buffer_pubkey).await.unwrap();
     assert_eq!(buffer_account.lamports, minimum_balance_for_buffer_default);
     assert_eq!(buffer_account.owner, bpf_loader_upgradeable::id());
     if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
@@ -1774,7 +1801,10 @@ async fn test_cli_program_write_buffer() {
         buffer_keypair.pubkey(),
         Pubkey::from_str(buffer_pubkey_str).unwrap()
     );
-    let buffer_account = rpc_client.get_account(&buffer_keypair.pubkey()).unwrap();
+    let buffer_account = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(buffer_account.lamports, minimum_balance_for_buffer);
     assert_eq!(buffer_account.owner, bpf_loader_upgradeable::id());
     if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
@@ -1841,7 +1871,10 @@ async fn test_cli_program_write_buffer() {
         buffer_keypair.pubkey(),
         Pubkey::from_str(buffer_pubkey_str).unwrap()
     );
-    let buffer_account = rpc_client.get_account(&buffer_keypair.pubkey()).unwrap();
+    let buffer_account = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(buffer_account.lamports, minimum_balance_for_buffer_default);
     assert_eq!(buffer_account.owner, bpf_loader_upgradeable::id());
     if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
@@ -1881,7 +1914,7 @@ async fn test_cli_program_write_buffer() {
         .as_str()
         .unwrap();
     let buffer_pubkey = Pubkey::from_str(buffer_pubkey_str).unwrap();
-    let buffer_account = rpc_client.get_account(&buffer_pubkey).unwrap();
+    let buffer_account = rpc_client.get_account(&buffer_pubkey).await.unwrap();
     assert_eq!(buffer_account.lamports, minimum_balance_for_buffer_default);
     assert_eq!(buffer_account.owner, bpf_loader_upgradeable::id());
     if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
@@ -1919,7 +1952,7 @@ async fn test_cli_program_write_buffer() {
     );
 
     // Close buffer
-    let close_account = rpc_client.get_account(&buffer_pubkey).unwrap();
+    let close_account = rpc_client.get_account(&buffer_pubkey).await.unwrap();
     assert_eq!(minimum_balance_for_buffer, close_account.lamports);
     let recipient_pubkey = Pubkey::new_unique();
     config.signers = vec![&keypair, &authority_keypair];
@@ -1936,7 +1969,7 @@ async fn test_cli_program_write_buffer() {
         buffer_pubkey,
         "Buffer account is deleted when the buffer is closed",
     );
-    let recipient_account = rpc_client.get_account(&recipient_pubkey).unwrap();
+    let recipient_account = rpc_client.get_account(&recipient_pubkey).await.unwrap();
     assert_eq!(minimum_balance_for_buffer, recipient_account.lamports);
 
     // Write a buffer with default params
@@ -1967,7 +2000,11 @@ async fn test_cli_program_write_buffer() {
     let new_buffer_pubkey = Pubkey::from_str(buffer_pubkey_str).unwrap();
 
     // Close buffers and deposit default keypair
-    let pre_lamports = rpc_client.get_account(&keypair.pubkey()).unwrap().lamports;
+    let pre_lamports = rpc_client
+        .get_account(&keypair.pubkey())
+        .await
+        .unwrap()
+        .lamports;
     config.signers = vec![&keypair];
     config.command = CliCommand::Program(ProgramCliCommand::Close {
         account_pubkey: Some(new_buffer_pubkey),
@@ -1982,7 +2019,7 @@ async fn test_cli_program_write_buffer() {
         new_buffer_pubkey,
         "Buffer account is deleted when the buffer is closed",
     );
-    let recipient_account = rpc_client.get_account(&keypair.pubkey()).unwrap();
+    let recipient_account = rpc_client.get_account(&keypair.pubkey()).await.unwrap();
     assert_eq!(
         pre_lamports + minimum_balance_for_buffer,
         recipient_account.lamports
@@ -2083,6 +2120,7 @@ async fn test_cli_program_write_buffer_feature(enable_feature: bool) {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
 
     let keypair = Keypair::new();
@@ -2172,6 +2210,7 @@ async fn test_cli_program_set_buffer_authority() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
 
     let keypair = Keypair::new();
@@ -2199,7 +2238,10 @@ async fn test_cli_program_set_buffer_authority() {
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
-    let buffer_account = rpc_client.get_account(&buffer_keypair.pubkey()).unwrap();
+    let buffer_account = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .await
+        .unwrap();
     if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(keypair.pubkey()));
     } else {
@@ -2228,7 +2270,10 @@ async fn test_cli_program_set_buffer_authority() {
         Pubkey::from_str(new_buffer_authority_str).unwrap(),
         new_buffer_authority.pubkey()
     );
-    let buffer_account = rpc_client.get_account(&buffer_keypair.pubkey()).unwrap();
+    let buffer_account = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .await
+        .unwrap();
     if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(new_buffer_authority.pubkey()));
     } else {
@@ -2286,7 +2331,10 @@ async fn test_cli_program_set_buffer_authority() {
         Pubkey::from_str(buffer_authority_str).unwrap(),
         buffer_keypair.pubkey()
     );
-    let buffer_account = rpc_client.get_account(&buffer_keypair.pubkey()).unwrap();
+    let buffer_account = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .await
+        .unwrap();
     if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(buffer_keypair.pubkey()));
     } else {
@@ -2345,6 +2393,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
 
     let keypair = Keypair::new();
@@ -2373,7 +2422,10 @@ async fn test_cli_program_mismatch_buffer_authority() {
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
-    let buffer_account = rpc_client.get_account(&buffer_keypair.pubkey()).unwrap();
+    let buffer_account = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .await
+        .unwrap();
     if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(buffer_authority.pubkey()));
     } else {
@@ -2465,7 +2517,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
     config.json_rpc_url = test_validator.rpc_url();
     let rpc_client = setup_rpc_client(&mut config);
 
-    let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let blockhash = rpc_client.get_latest_blockhash().await.unwrap();
 
     let mut file = File::open(noop_large_path.to_str().unwrap()).unwrap();
     let mut large_program_data = Vec::new();
@@ -2475,6 +2527,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_program_data_len,
         ))
+        .await
         .unwrap();
 
     let online_signer = Keypair::new();
@@ -2625,7 +2678,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         &[program_signer.pubkey().as_ref()],
         &bpf_loader_upgradeable::id(),
     );
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     assert_eq!(
         programdata_account.lamports,
         minimum_balance_for_large_buffer
@@ -2667,6 +2720,7 @@ async fn test_cli_program_show() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
 
     let keypair = Keypair::new();
@@ -2763,9 +2817,9 @@ async fn test_cli_program_show() {
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
-    let min_slot = rpc_client.get_slot().unwrap();
+    let min_slot = rpc_client.get_slot().await.unwrap();
     process_command(&config).await.unwrap();
-    let max_slot = rpc_client.get_slot().unwrap();
+    let max_slot = rpc_client.get_slot().await.unwrap();
 
     // Verify show
     config.signers = vec![&keypair];
@@ -2864,6 +2918,7 @@ async fn test_cli_program_dump() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
 
     let keypair = Keypair::new();
@@ -2942,7 +2997,10 @@ async fn create_buffer_with_offline_authority<'a>(
         skip_feature_verification: true,
     });
     process_command(config).await.unwrap();
-    let buffer_account = rpc_client.get_account(&buffer_signer.pubkey()).unwrap();
+    let buffer_account = rpc_client
+        .get_account(&buffer_signer.pubkey())
+        .await
+        .unwrap();
     if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(online_signer.pubkey()));
     } else {
@@ -2958,7 +3016,10 @@ async fn create_buffer_with_offline_authority<'a>(
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(config).await.unwrap();
-    let buffer_account = rpc_client.get_account(&buffer_signer.pubkey()).unwrap();
+    let buffer_account = rpc_client
+        .get_account(&buffer_signer.pubkey())
+        .await
+        .unwrap();
     if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(offline_signer.pubkey()));
     } else {
@@ -3009,9 +3070,11 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
     let minimum_balance_for_program = rpc_client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
         .unwrap();
     let upgrade_authority = Keypair::new();
 
@@ -3057,7 +3120,10 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
         program_keypair.pubkey(),
         Pubkey::from_str(program_pubkey_str).unwrap()
     );
-    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    let program_account = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(program_account.lamports, minimum_balance_for_program);
     assert_eq!(program_account.owner, bpf_loader_upgradeable::id());
     assert!(program_account.executable);
@@ -3069,6 +3135,7 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
                 ..GetConfirmedSignaturesForAddress2Config::default()
             },
         )
+        .await
         .unwrap();
     let signatures: Vec<_> = signature_statuses
         .into_iter()
@@ -3076,7 +3143,10 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
         .map(|status| Signature::from_str(&status.signature).unwrap())
         .collect();
 
-    fn fetch_and_decode_transaction(rpc_client: &RpcClient, signature: &Signature) -> Transaction {
+    async fn fetch_and_decode_transaction(
+        rpc_client: &RpcClient,
+        signature: &Signature,
+    ) -> Transaction {
         rpc_client
             .get_transaction_with_config(
                 signature,
@@ -3086,6 +3156,7 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
                     ..RpcTransactionConfig::default()
                 },
             )
+            .await
             .unwrap()
             .transaction
             .transaction
@@ -3096,9 +3167,9 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
     }
 
     assert!(signatures.len() >= 4);
-    let initial_tx = fetch_and_decode_transaction(&rpc_client, &signatures[1]);
-    let write_tx = fetch_and_decode_transaction(&rpc_client, &signatures[2]);
-    let final_tx = fetch_and_decode_transaction(&rpc_client, signatures.last().unwrap());
+    let initial_tx = fetch_and_decode_transaction(&rpc_client, &signatures[1]).await;
+    let write_tx = fetch_and_decode_transaction(&rpc_client, &signatures[2]).await;
+    let final_tx = fetch_and_decode_transaction(&rpc_client, signatures.last().unwrap()).await;
 
     if let Some(compute_unit_price) = compute_unit_price {
         for tx in [&initial_tx, &write_tx, &final_tx] {
@@ -3196,7 +3267,10 @@ async fn test_cli_program_v4() {
         upload_range: None..None,
     });
     assert!(process_command(&config).await.is_ok());
-    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    let program_account = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(program_account.owner, loader_v4::id());
     assert!(program_account.executable);
 
@@ -3211,7 +3285,10 @@ async fn test_cli_program_v4() {
         upload_range: None..None,
     });
     assert!(process_command(&config).await.is_ok());
-    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    let program_account = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(program_account.owner, loader_v4::id());
     assert!(program_account.executable);
 
@@ -3226,11 +3303,15 @@ async fn test_cli_program_v4() {
         upload_range: None..None,
     });
     assert!(process_command(&config).await.is_ok());
-    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    let program_account = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(program_account.owner, loader_v4::id());
     assert!(program_account.executable);
     let _error = rpc_client
         .get_account(&buffer_keypair.pubkey())
+        .await
         .unwrap_err();
 
     // Two-step redeployment with buffer
@@ -3244,7 +3325,10 @@ async fn test_cli_program_v4() {
         upload_range: None..None,
     });
     assert!(process_command(&config).await.is_ok());
-    let buffer_account = rpc_client.get_account(&buffer_keypair.pubkey()).unwrap();
+    let buffer_account = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(buffer_account.owner, loader_v4::id());
     assert!(buffer_account.executable);
     config.command = CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
@@ -3257,11 +3341,15 @@ async fn test_cli_program_v4() {
         upload_range: None..None,
     });
     assert!(process_command(&config).await.is_ok());
-    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    let program_account = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(program_account.owner, loader_v4::id());
     assert!(program_account.executable);
     let _error = rpc_client
         .get_account(&buffer_keypair.pubkey())
+        .await
         .unwrap_err();
 
     // Transfer authority over program
@@ -3272,7 +3360,10 @@ async fn test_cli_program_v4() {
         new_authority_signer_index: 2,
     });
     assert!(process_command(&config).await.is_ok());
-    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    let program_account = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(program_account.owner, loader_v4::id());
     assert!(program_account.executable);
 
@@ -3286,6 +3377,7 @@ async fn test_cli_program_v4() {
     assert!(process_command(&config).await.is_ok());
     let _error = rpc_client
         .get_account(&program_keypair.pubkey())
+        .await
         .unwrap_err();
 
     // Deployment at the closed address
@@ -3299,7 +3391,10 @@ async fn test_cli_program_v4() {
         upload_range: None..None,
     });
     assert!(process_command(&config).await.is_ok());
-    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    let program_account = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(program_account.owner, loader_v4::id());
     assert!(program_account.executable);
 
@@ -3311,7 +3406,10 @@ async fn test_cli_program_v4() {
         next_version_signer_index: 2,
     });
     assert!(process_command(&config).await.is_ok());
-    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    let program_account = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(program_account.owner, loader_v4::id());
     assert!(program_account.executable);
 }

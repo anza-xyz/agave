@@ -7,7 +7,7 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
     solana_keypair::{keypair_from_seed, Keypair},
-    solana_rpc_client::rpc_client::RpcClient,
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_test_validator::TestValidator,
@@ -44,6 +44,7 @@ async fn test_publish(compute_unit_price: Option<u64>) {
         &config_validator.signers[0].pubkey(),
         100_000_000_000,
     )
+    .await
     .unwrap();
     check_balance!(
         100_000_000_000,

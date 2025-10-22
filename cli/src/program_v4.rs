@@ -25,10 +25,11 @@ use {
     },
     solana_client::{
         connection_cache::ConnectionCache,
+        nonblocking::{rpc_client::RpcClient, tpu_client::TpuClient},
         send_and_confirm_transactions_in_parallel::{
-            send_and_confirm_transactions_in_parallel_blocking_v2, SendAndConfirmConfigV2,
+            send_and_confirm_transactions_in_parallel_v2, SendAndConfirmConfigV2,
         },
-        tpu_client::{TpuClient, TpuClientConfig},
+        tpu_client::TpuClientConfig,
     },
     solana_instruction::Instruction,
     solana_loader_v4_interface::{
@@ -44,13 +45,12 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
-    solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{
         config::{RpcAccountInfoConfig, RpcProgramAccountsConfig},
         filter::{Memcmp, RpcFilterType},
         request::MAX_MULTIPLE_ACCOUNTS,
     },
-    solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
+    solana_rpc_client_nonce_utils::nonblocking::blockhash_query::BlockhashQuery,
     solana_sbpf::{elf::Executable, verifier::RequisiteVerifier},
     solana_sdk_ids::{loader_v4, system_program},
     solana_signer::Signer,
@@ -530,9 +530,9 @@ pub fn parse_program_v4_subcommand(
     Ok(response)
 }
 
-pub fn process_program_v4_subcommand(
+pub async fn process_program_v4_subcommand(
     rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     program_subcommand: &ProgramV4CliCommand,
 ) -> ProcessResult {
     match program_subcommand {
@@ -563,55 +563,65 @@ pub fn process_program_v4_subcommand(
                 &program_data,
                 upload_range.clone(),
             )
+            .await
         }
         ProgramV4CliCommand::Retract {
             additional_cli_config,
             program_address,
             authority_signer_index,
             close_program_entirely,
-        } => process_retract_program(
-            rpc_client,
-            config,
-            additional_cli_config,
-            authority_signer_index,
-            program_address,
-            *close_program_entirely,
-        ),
+        } => {
+            process_retract_program(
+                rpc_client,
+                config,
+                additional_cli_config,
+                authority_signer_index,
+                program_address,
+                *close_program_entirely,
+            )
+            .await
+        }
         ProgramV4CliCommand::TransferAuthority {
             additional_cli_config,
             program_address,
             authority_signer_index,
             new_authority_signer_index,
-        } => process_transfer_authority_of_program(
-            rpc_client,
-            config,
-            additional_cli_config,
-            authority_signer_index,
-            new_authority_signer_index,
-            program_address,
-        ),
+        } => {
+            process_transfer_authority_of_program(
+                rpc_client,
+                config,
+                additional_cli_config,
+                authority_signer_index,
+                new_authority_signer_index,
+                program_address,
+            )
+            .await
+        }
         ProgramV4CliCommand::Finalize {
             additional_cli_config,
             program_address,
             authority_signer_index,
             next_version_signer_index,
-        } => process_finalize_program(
-            rpc_client,
-            config,
-            additional_cli_config,
-            authority_signer_index,
-            next_version_signer_index,
-            program_address,
-        ),
+        } => {
+            process_finalize_program(
+                rpc_client,
+                config,
+                additional_cli_config,
+                authority_signer_index,
+                next_version_signer_index,
+                program_address,
+            )
+            .await
+        }
         ProgramV4CliCommand::Show {
             account_pubkey,
             authority,
             all,
-        } => process_show(rpc_client, config, *account_pubkey, *authority, *all),
+        } => process_show(rpc_client, config, *account_pubkey, *authority, *all).await,
         ProgramV4CliCommand::Dump {
             account_pubkey,
             output_location,
-        } => process_dump(rpc_client, config, *account_pubkey, output_location),
+        } => process_dump(rpc_client, config, *account_pubkey, output_location).await,
     }
 }
 
@@ -631,9 +641,9 @@ pub fn process_program_v4_subcommand(
 // * Two-step redeploy an existing program using a buffer account
 //   - buffer_address must be `Some(buffer_signer.pubkey())`
 //   - upload_signer_index must be None
-pub fn process_deploy_program(
+pub async fn process_deploy_program(
     rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     additional_cli_config: &AdditionalCliConfig,
     program_address: &Pubkey,
     buffer_address: Option<&Pubkey>,
@@ -647,18 +657,22 @@ pub fn process_deploy_program(
 
     // Check requested command makes sense given the on-chain state
     let program_account = rpc_client
-        .get_account_with_commitment(program_address, config.commitment)?
+        .get_account_with_commitment(program_address, config.commitment)
+        .await?
         .value;
     let buffer_account = if let Some(buffer_address) = buffer_address {
         rpc_client
-            .get_account_with_commitment(buffer_address, config.commitment)?
+            .get_account_with_commitment(buffer_address, config.commitment)
+            .await?
             .value
     } else {
         None
     };
-    let lamports_required = rpc_client.get_minimum_balance_for_rent_exemption(
-        LoaderV4State::program_data_offset().saturating_add(program_data.len()),
-    )?;
+    let lamports_required = rpc_client
+        .get_minimum_balance_for_rent_exemption(
+            LoaderV4State::program_data_offset().saturating_add(program_data.len()),
+        )
+        .await?;
     let program_account_exists = program_account
         .as_ref()
         .map(|account| loader_v4::check_id(&account.owner))
@@ -709,7 +723,8 @@ pub fn process_deploy_program(
         .chunks(MAX_MULTIPLE_ACCOUNTS)
     {
         rpc_client
-            .get_multiple_accounts(feature_ids)?
+            .get_multiple_accounts(feature_ids)
+            .await?
             .into_iter()
             .zip(feature_ids)
             .for_each(|(account, feature_id)| {
@@ -774,7 +789,8 @@ pub fn process_deploy_program(
                 program_account,
                 program_address,
                 program_data.len() as u32,
-            )?;
+            )
+            .await?;
         if !set_program_length_instructions.is_empty() {
             initial_instructions.append(&mut set_program_length_instructions);
         }
@@ -895,11 +911,12 @@ pub fn process_deploy_program(
             signature: None,
         }),
     )
+    .await
 }
 
-fn process_retract_program(
+async fn process_retract_program(
     rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     additional_cli_config: &AdditionalCliConfig,
     auth_signer_index: &SignerIndex,
     program_address: &Pubkey,
@@ -909,7 +926,8 @@ fn process_retract_program(
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
 
     let Some(program_account) = rpc_client
-        .get_account_with_commitment(program_address, config.commitment)?
+        .get_account_with_commitment(program_address, config.commitment)
+        .await?
         .value
     else {
         return Err("Program account does not exist".into());
@@ -946,18 +964,20 @@ fn process_retract_program(
             signature: None,
         }),
     )
+    .await
 }
 
-fn process_transfer_authority_of_program(
+async fn process_transfer_authority_of_program(
     rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     additional_cli_config: &AdditionalCliConfig,
     auth_signer_index: &SignerIndex,
     new_auth_signer_index: &SignerIndex,
     program_address: &Pubkey,
 ) -> ProcessResult {
     if let Some(program_account) = rpc_client
-        .get_account_with_commitment(program_address, config.commitment)?
+        .get_account_with_commitment(program_address, config.commitment)
+        .await?
         .value
     {
         if !loader_v4::check_id(&program_account.owner) {
@@ -990,18 +1010,20 @@ fn process_transfer_authority_of_program(
             signature: None,
         }),
     )
+    .await
 }
 
-fn process_finalize_program(
+async fn process_finalize_program(
     rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     additional_cli_config: &AdditionalCliConfig,
     auth_signer_index: &SignerIndex,
     next_version_signer_index: &SignerIndex,
     program_address: &Pubkey,
 ) -> ProcessResult {
     if let Some(program_account) = rpc_client
-        .get_account_with_commitment(program_address, config.commitment)?
+        .get_account_with_commitment(program_address, config.commitment)
+        .await?
         .value
     {
         if !loader_v4::check_id(&program_account.owner) {
@@ -1034,18 +1056,20 @@ fn process_finalize_program(
             signature: None,
         }),
     )
+    .await
 }
 
-fn process_show(
+async fn process_show(
     rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     program_address: Option<Pubkey>,
     authority: Pubkey,
     all: bool,
 ) -> ProcessResult {
     if let Some(program_address) = program_address {
         if let Some(account) = rpc_client
-            .get_account_with_commitment(&program_address, config.commitment)?
+            .get_account_with_commitment(&program_address, config.commitment)
+            .await?
             .value
         {
             if loader_v4::check_id(&account.owner) {
@@ -1077,20 +1101,21 @@ fn process_show(
         }
     } else {
         let authority_pubkey = if all { None } else { Some(authority) };
-        let programs = get_programs(rpc_client, config, authority_pubkey)?;
+        let programs = get_programs(rpc_client, config, authority_pubkey).await?;
         Ok(config.output_format.formatted_string(&programs))
     }
 }
 
-pub fn process_dump(
+pub async fn process_dump(
     rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     account_pubkey: Option<Pubkey>,
     output_location: &str,
 ) -> ProcessResult {
     if let Some(account_pubkey) = account_pubkey {
         if let Some(account) = rpc_client
-            .get_account_with_commitment(&account_pubkey, config.commitment)?
+            .get_account_with_commitment(&account_pubkey, config.commitment)
+            .await?
             .value
         {
             if loader_v4::check_id(&account.owner) {
@@ -1109,9 +1134,9 @@ pub fn process_dump(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_messages(
+async fn send_messages(
     rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     additional_cli_config: &AdditionalCliConfig,
     auth_signer_index: &SignerIndex,
     initial_messages: Vec<Vec<Instruction>>,
@@ -1123,12 +1148,13 @@ fn send_messages(
     let payer_pubkey = config.signers[0].pubkey();
     let blockhash = additional_cli_config
         .blockhash_query
-        .get_blockhash(&rpc_client, config.commitment)?;
+        .get_blockhash(&rpc_client, config.commitment)
+        .await?;
     let compute_unit_config = ComputeUnitConfig {
         compute_unit_price: additional_cli_config.compute_unit_price,
         compute_unit_limit: ComputeUnitLimit::Simulated,
     };
-    let simulate_messages = |message_prototypes: Vec<Vec<Instruction>>| {
+    let simulate_messages = |message_prototypes: Vec<Vec<Instruction>>| async {
         let mut messages = Vec::with_capacity(message_prototypes.len());
         for instructions in message_prototypes.into_iter() {
             let mut message = Message::new_with_blockhash(
@@ -1140,26 +1166,28 @@ fn send_messages(
                 &ComputeUnitLimit::Simulated,
                 &rpc_client,
                 &mut message,
-            )?;
+            )
+            .await?;
             messages.push(message);
         }
         Ok::<Vec<solana_message::Message>, Box<dyn std::error::Error>>(messages)
     };
-    let initial_messages = simulate_messages(initial_messages)?;
-    let write_messages = simulate_messages(write_messages)?;
-    let final_messages = simulate_messages(final_messages)?;
+    let initial_messages = simulate_messages(initial_messages).await?;
+    let write_messages = simulate_messages(write_messages).await?;
+    let final_messages = simulate_messages(final_messages).await?;
 
     let mut fee = Saturating(0);
     for message in initial_messages.iter() {
-        fee += rpc_client.get_fee_for_message(message)?;
+        fee += rpc_client.get_fee_for_message(message).await?;
     }
     for message in final_messages.iter() {
-        fee += rpc_client.get_fee_for_message(message)?;
+        fee += rpc_client.get_fee_for_message(message).await?;
     }
     // Assume all write messages cost the same
     if let Some(message) = write_messages.first() {
         fee += rpc_client
-            .get_fee_for_message(message)?
+            .get_fee_for_message(message)
+            .await?
             .saturating_mul(write_messages.len() as u64);
     }
     check_account_for_spend_and_fee_with_commitment(
@@ -1168,9 +1196,10 @@ fn send_messages(
         balance_needed,
         fee.0,
         config.commitment,
-    )?;
+    )
+    .await?;
 
-    let send_or_return_message = |message: Message| {
+    let send_or_return_message = |message: Message| async {
         let signers = (0..message.header.num_required_signatures)
             .map(|signer_index| {
                 let key = message.account_keys[signer_index as usize];
@@ -1198,13 +1227,14 @@ fn send_messages(
                     config.commitment,
                     config.send_transaction_config,
                 )
+                .await
                 .map_err(|err| format!("Failed to send message: {err}").into())
                 .map(|_| String::new())
         }
     };
 
     for message in initial_messages.into_iter() {
-        let result = send_or_return_message(message)?;
+        let result = send_or_return_message(message).await?;
         if additional_cli_config.sign_only {
             return Ok(result);
         }
@@ -1221,32 +1251,38 @@ fn send_messages(
             ConnectionCache::with_udp("connection_cache_cli_program_v4_udp", 1)
         };
         let transaction_errors = match connection_cache {
-            ConnectionCache::Udp(cache) => TpuClient::new_with_connection_cache(
-                rpc_client.clone(),
-                &config.websocket_url,
-                TpuClientConfig::default(),
-                cache,
-            )?
-            .send_and_confirm_messages_with_spinner(
-                &write_messages,
-                &[config.signers[0], config.signers[*auth_signer_index]],
-            ),
+            ConnectionCache::Udp(cache) => {
+                TpuClient::new_with_connection_cache(
+                    rpc_client.clone(),
+                    &config.websocket_url,
+                    TpuClientConfig::default(),
+                    cache,
+                )
+                .await?
+                .send_and_confirm_messages_with_spinner(
+                    &write_messages,
+                    &[config.signers[0], config.signers[*auth_signer_index]],
+                )
+                .await
+            }
             ConnectionCache::Quic(cache) => {
-                let tpu_client_fut =
-                    solana_client::nonblocking::tpu_client::TpuClient::new_with_connection_cache(
-                        rpc_client.get_inner_client().clone(),
-                        &config.websocket_url,
-                        solana_client::tpu_client::TpuClientConfig::default(),
-                        cache,
-                    );
-                let tpu_client = (!additional_cli_config.use_rpc).then(|| {
-                    rpc_client
-                        .runtime()
-                        .block_on(tpu_client_fut)
-                        .expect("Should return a valid tpu client")
-                });
+                let tpu_client_fut = TpuClient::new_with_connection_cache(
+                    rpc_client.clone(),
+                    &config.websocket_url,
+                    solana_client::tpu_client::TpuClientConfig::default(),
+                    cache,
+                );
+                let tpu_client = if !additional_cli_config.use_rpc {
+                    Some(
+                        tpu_client_fut
+                            .await
+                            .expect("Should return a valid tpu client"),
+                    )
+                } else {
+                    None
+                };
 
-                send_and_confirm_transactions_in_parallel_blocking_v2(
+                send_and_confirm_transactions_in_parallel_v2(
                     rpc_client.clone(),
                     tpu_client,
                     &write_messages,
@@ -1257,6 +1293,7 @@ fn send_messages(
                         rpc_send_transaction_config: config.send_transaction_config,
                     },
                 )
+                .await
             }
         }
         .map_err(|err| format!("Data writes to account failed: {err}"))?
@@ -1273,7 +1310,7 @@ fn send_messages(
     }
 
     for message in final_messages.into_iter() {
-        let result = send_or_return_message(message)?;
+        let result = send_or_return_message(message).await?;
         if additional_cli_config.sign_only {
             return Ok(result);
         }
@@ -1313,9 +1350,9 @@ fn build_retract_instruction(
     }
 }
 
-fn build_set_program_length_instructions(
+async fn build_set_program_length_instructions(
     rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     auth_signer_index: &SignerIndex,
     account: &Account,
     buffer_address: &Pubkey,
@@ -1324,8 +1361,9 @@ fn build_set_program_length_instructions(
     let expected_account_data_len =
         LoaderV4State::program_data_offset().saturating_add(program_data_length as usize);
 
-    let lamports_required =
-        rpc_client.get_minimum_balance_for_rent_exemption(expected_account_data_len)?;
+    let lamports_required = rpc_client
+        .get_minimum_balance_for_rent_exemption(expected_account_data_len)
+        .await?;
 
     if !loader_v4::check_id(&account.owner) {
         return Ok((Vec::default(), lamports_required));
@@ -1336,8 +1374,9 @@ fn build_set_program_length_instructions(
     let expected_account_data_len =
         LoaderV4State::program_data_offset().saturating_add(program_data_length as usize);
 
-    let lamports_required =
-        rpc_client.get_minimum_balance_for_rent_exemption(expected_account_data_len)?;
+    let lamports_required = rpc_client
+        .get_minimum_balance_for_rent_exemption(expected_account_data_len)
+        .await?;
 
     if !loader_v4::check_id(&account.owner) {
         return Ok((Vec::default(), lamports_required));
@@ -1405,30 +1444,32 @@ fn build_set_program_length_instructions(
     }
 }
 
-fn get_accounts_with_filter(
+async fn get_accounts_with_filter(
     rpc_client: Arc<RpcClient>,
-    _config: &CliConfig,
+    _config: &CliConfig<'_>,
     filters: Vec<RpcFilterType>,
     length: usize,
 ) -> Result<Vec<(Pubkey, UiAccount)>, Box<dyn std::error::Error>> {
-    let results = rpc_client.get_program_ui_accounts_with_config(
-        &loader_v4::id(),
-        RpcProgramAccountsConfig {
-            filters: Some(filters),
-            account_config: RpcAccountInfoConfig {
-                encoding: Some(UiAccountEncoding::Base64),
-                data_slice: Some(UiDataSliceConfig { offset: 0, length }),
-                ..RpcAccountInfoConfig::default()
+    let results = rpc_client
+        .get_program_ui_accounts_with_config(
+            &loader_v4::id(),
+            RpcProgramAccountsConfig {
+                filters: Some(filters),
+                account_config: RpcAccountInfoConfig {
+                    encoding: Some(UiAccountEncoding::Base64),
+                    data_slice: Some(UiDataSliceConfig { offset: 0, length }),
+                    ..RpcAccountInfoConfig::default()
+                },
+                ..RpcProgramAccountsConfig::default()
             },
-            ..RpcProgramAccountsConfig::default()
-        },
-    )?;
+        )
+        .await?;
     Ok(results)
 }
 
-fn get_programs(
+async fn get_programs(
     rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     authority_pubkey: Option<Pubkey>,
 ) -> Result<CliProgramsV4, Box<dyn std::error::Error>> {
     let filters = if let Some(authority_pubkey) = authority_pubkey {
@@ -1447,7 +1488,8 @@ fn get_programs(
         config,
         filters,
         LoaderV4State::program_data_offset(),
-    )?;
+    )
+    .await?;
 
     let mut programs = vec![];
     for (program, account) in results.iter() {
@@ -1559,8 +1601,8 @@ mod tests {
         )
     }
 
-    #[test]
-    fn test_deploy() {
+    #[tokio::test]
+    async fn test_deploy() {
         let mut config = CliConfig::default();
         let mut program_data = Vec::new();
         let mut file = File::open("tests/fixtures/noop.so").unwrap();
@@ -1585,6 +1627,7 @@ mod tests {
             &program_data,
             None..None,
         )
+        .await
         .is_ok());
 
         assert!(process_deploy_program(
@@ -1598,6 +1641,7 @@ mod tests {
             &program_data,
             None..None,
         )
+        .await
         .is_ok());
 
         assert!(process_deploy_program(
@@ -1611,6 +1655,7 @@ mod tests {
             &program_data,
             None..None,
         )
+        .await
         .is_err());
 
         assert!(process_deploy_program(
@@ -1624,11 +1669,12 @@ mod tests {
             &program_data,
             None..None,
         )
+        .await
         .is_err());
     }
 
-    #[test]
-    fn test_redeploy() {
+    #[tokio::test]
+    async fn test_redeploy() {
         let mut config = CliConfig::default();
         let mut program_data = Vec::new();
         let mut file = File::open("tests/fixtures/noop.so").unwrap();
@@ -1653,6 +1699,7 @@ mod tests {
             &program_data,
             None..None,
         )
+        .await
         .is_err());
 
         assert!(process_deploy_program(
@@ -1666,6 +1713,7 @@ mod tests {
             &program_data,
             None..None,
         )
+        .await
         .is_ok());
 
         assert!(process_deploy_program(
@@ -1679,6 +1727,7 @@ mod tests {
             &program_data,
             None..None,
         )
+        .await
         .is_ok());
 
         assert!(process_deploy_program(
@@ -1692,6 +1741,7 @@ mod tests {
             &program_data,
             None..None,
         )
+        .await
         .is_err());
 
         assert!(process_deploy_program(
@@ -1705,6 +1755,7 @@ mod tests {
             &program_data,
             None..None,
         )
+        .await
         .is_err());
 
         assert!(process_deploy_program(
@@ -1718,11 +1769,12 @@ mod tests {
             &program_data,
             None..None,
         )
+        .await
         .is_err());
     }
 
-    #[test]
-    fn test_redeploy_from_source() {
+    #[tokio::test]
+    async fn test_redeploy_from_source() {
         let mut config = CliConfig::default();
         let mut program_data = Vec::new();
         let mut file = File::open("tests/fixtures/noop.so").unwrap();
@@ -1749,6 +1801,7 @@ mod tests {
             &program_data,
             None..None,
         )
+        .await
         .is_err());
 
         assert!(process_deploy_program(
@@ -1762,6 +1815,7 @@ mod tests {
             &program_data,
             None..None,
         )
+        .await
         .is_err());
 
         assert!(process_deploy_program(
@@ -1775,11 +1829,12 @@ mod tests {
             &program_data,
             None..None,
         )
+        .await
         .is_err());
     }
 
-    #[test]
-    fn test_retract() {
+    #[tokio::test]
+    async fn test_retract() {
         let mut config = CliConfig::default();
 
         let payer = keypair_from_seed(&[1u8; 32]).unwrap();
@@ -1798,6 +1853,7 @@ mod tests {
                 &program_signer.pubkey(),
                 close_program_entirely,
             )
+            .await
             .is_err());
 
             assert!(
@@ -1809,6 +1865,7 @@ mod tests {
                     &program_signer.pubkey(),
                     close_program_entirely,
                 )
+                .await
                 .is_ok()
                     == close_program_entirely
             );
@@ -1821,6 +1878,7 @@ mod tests {
                 &program_signer.pubkey(),
                 close_program_entirely,
             )
+            .await
             .is_ok());
 
             assert!(process_retract_program(
@@ -1831,6 +1889,7 @@ mod tests {
                 &program_signer.pubkey(),
                 close_program_entirely,
             )
+            .await
             .is_err());
 
             assert!(process_retract_program(
@@ -1841,6 +1900,7 @@ mod tests {
                 &program_signer.pubkey(),
                 close_program_entirely,
             )
+            .await
             .is_err());
 
             assert!(process_retract_program(
@@ -1851,12 +1911,13 @@ mod tests {
                 &program_signer.pubkey(),
                 close_program_entirely,
             )
+            .await
             .is_err());
         }
     }
 
-    #[test]
-    fn test_transfer_authority() {
+    #[tokio::test]
+    async fn test_transfer_authority() {
         let mut config = CliConfig::default();
 
         let payer = keypair_from_seed(&[1u8; 32]).unwrap();
@@ -1876,11 +1937,12 @@ mod tests {
             &2,
             &program_signer.pubkey(),
         )
+        .await
         .is_ok());
     }
 
-    #[test]
-    fn test_finalize() {
+    #[tokio::test]
+    async fn test_finalize() {
         let mut config = CliConfig::default();
 
         let payer = keypair_from_seed(&[1u8; 32]).unwrap();
@@ -1900,6 +1962,7 @@ mod tests {
             &2,
             &program_signer.pubkey(),
         )
+        .await
         .is_ok());
     }
 

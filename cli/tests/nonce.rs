@@ -13,8 +13,8 @@ use {
     solana_keypair::{keypair_from_seed, Keypair},
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
-    solana_rpc_client::rpc_client::RpcClient,
-    solana_rpc_client_nonce_utils::blockhash_query::{self, BlockhashQuery},
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
+    solana_rpc_client_nonce_utils::nonblocking::blockhash_query::{BlockhashQuery, Source},
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_system_interface::program as system_program,
@@ -57,6 +57,7 @@ async fn test_nonce(
         &config_payer.signers[0].pubkey(),
         2000 * LAMPORTS_PER_SOL,
     )
+    .await
     .unwrap();
     check_balance!(
         2000 * LAMPORTS_PER_SOL,
@@ -249,6 +250,7 @@ async fn test_create_account_with_seed() {
         &offline_nonce_authority_signer.pubkey(),
         42 * LAMPORTS_PER_SOL,
     )
+    .await
     .unwrap();
     request_and_confirm_airdrop(
         &rpc_client,
@@ -256,6 +258,7 @@ async fn test_create_account_with_seed() {
         &online_nonce_creator_signer.pubkey(),
         4242 * LAMPORTS_PER_SOL,
     )
+    .await
     .unwrap();
     check_balance!(
         42 * LAMPORTS_PER_SOL,
@@ -305,11 +308,12 @@ async fn test_create_account_with_seed() {
     check_balance!(0, &rpc_client, &to_address);
 
     // Fetch nonce hash
-    let nonce_hash = solana_rpc_client_nonce_utils::get_account_with_commitment(
+    let nonce_hash = solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
         &rpc_client,
         &nonce_address,
         CommitmentConfig::processed(),
     )
+    .await
     .and_then(|ref a| solana_rpc_client_nonce_utils::data_from_account(a))
     .unwrap()
     .blockhash();
@@ -329,7 +333,7 @@ async fn test_create_account_with_seed() {
         dump_transaction_message: true,
         allow_unfunded_recipient: true,
         no_wait: false,
-        blockhash_query: BlockhashQuery::None(nonce_hash),
+        blockhash_query: BlockhashQuery::Static(nonce_hash),
         nonce_account: Some(nonce_address),
         nonce_authority: 0,
         memo: None,
@@ -356,8 +360,8 @@ async fn test_create_account_with_seed() {
         dump_transaction_message: true,
         allow_unfunded_recipient: true,
         no_wait: false,
-        blockhash_query: BlockhashQuery::FeeCalculator(
-            blockhash_query::Source::NonceAccount(nonce_address),
+        blockhash_query: BlockhashQuery::Validated(
+            Source::NonceAccount(nonce_address),
             sign_only.blockhash,
         ),
         nonce_account: Some(nonce_address),

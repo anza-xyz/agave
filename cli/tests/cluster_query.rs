@@ -9,7 +9,7 @@ use {
     solana_fee_structure::FeeStructure,
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_rpc_client::rpc_client::RpcClient,
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_test_validator::TestValidator,
@@ -44,9 +44,11 @@ async fn test_ping(compute_unit_price: Option<u64>) {
     config.json_rpc_url = test_validator.rpc_url();
     config.signers = vec![&default_signer];
 
-    request_and_confirm_airdrop(&rpc_client, &config, &signer_pubkey, LAMPORTS_PER_SOL).unwrap();
+    request_and_confirm_airdrop(&rpc_client, &config, &signer_pubkey, LAMPORTS_PER_SOL)
+        .await
+        .unwrap();
     check_balance!(LAMPORTS_PER_SOL, &rpc_client, &signer_pubkey);
-    check_ready(&rpc_client);
+    check_ready(&rpc_client).await;
 
     let count = 5;
     config.command = CliCommand::Ping {

@@ -36,10 +36,12 @@ use {
     },
     solana_client::{
         connection_cache::ConnectionCache,
+        nonblocking::rpc_client::RpcClient,
+        nonblocking::tpu_client::TpuClient,
         send_and_confirm_transactions_in_parallel::{
-            send_and_confirm_transactions_in_parallel_blocking_v2, SendAndConfirmConfigV2,
+            send_and_confirm_transactions_in_parallel_v2, SendAndConfirmConfigV2,
         },
-        tpu_client::{TpuClient, TpuClientConfig},
+        tpu_client::TpuClientConfig,
     },
     solana_commitment_config::CommitmentConfig,
     solana_instruction::{error::InstructionError, Instruction},
@@ -55,14 +57,13 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
-    solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{
         client_error::ErrorKind as ClientErrorKind,
         config::{RpcAccountInfoConfig, RpcProgramAccountsConfig},
         filter::{Memcmp, RpcFilterType},
         request::MAX_MULTIPLE_ACCOUNTS,
     },
-    solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
+    solana_rpc_client_nonce_utils::nonblocking::blockhash_query::BlockhashQuery,
     solana_sbpf::{elf::Executable, verifier::RequisiteVerifier},
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, compute_budget},
     solana_signature::Signature,
@@ -1121,18 +1122,21 @@ pub async fn process_program_subcommand(
             dump_transaction_message,
             blockhash_query,
             skip_feature_verification,
-        } => process_program_upgrade(
-            rpc_client,
-            config,
-            *fee_payer_signer_index,
-            *program_pubkey,
-            *buffer_pubkey,
-            *upgrade_authority_signer_index,
-            *sign_only,
-            *dump_transaction_message,
-            blockhash_query,
-            *skip_feature_verification,
-        ),
+        } => {
+            process_program_upgrade(
+                rpc_client,
+                config,
+                *fee_payer_signer_index,
+                *program_pubkey,
+                *buffer_pubkey,
+                *upgrade_authority_signer_index,
+                *sign_only,
+                *dump_transaction_message,
+                blockhash_query,
+                *skip_feature_verification,
+            )
+            .await
+        }
         ProgramCliCommand::WriteBuffer {
             program_location,
             fee_payer_signer_index,
@@ -1167,17 +1171,20 @@ pub async fn process_program_subcommand(
             buffer_pubkey,
             buffer_authority_index,
             new_buffer_authority,
-        } => process_set_authority(
-            &rpc_client,
-            config,
-            None,
-            Some(*buffer_pubkey),
-            *buffer_authority_index,
-            Some(*new_buffer_authority),
-            false,
-            false,
-            &BlockhashQuery::default(),
-        ),
+        } => {
+            process_set_authority(
+                &rpc_client,
+                config,
+                None,
+                Some(*buffer_pubkey),
+                *buffer_authority_index,
+                Some(*new_buffer_authority),
+                false,
+                false,
+                &BlockhashQuery::default(),
+            )
+            .await
+        }
         ProgramCliCommand::SetUpgradeAuthority {
             program_pubkey,
             upgrade_authority_index,
@@ -1185,17 +1192,20 @@ pub async fn process_program_subcommand(
             sign_only,
             dump_transaction_message,
             blockhash_query,
-        } => process_set_authority(
-            &rpc_client,
-            config,
-            Some(*program_pubkey),
-            None,
-            *upgrade_authority_index,
-            *new_upgrade_authority,
-            *sign_only,
-            *dump_transaction_message,
-            blockhash_query,
-        ),
+        } => {
+            process_set_authority(
+                &rpc_client,
+                config,
+                Some(*program_pubkey),
+                None,
+                *upgrade_authority_index,
+                *new_upgrade_authority,
+                *sign_only,
+                *dump_transaction_message,
+                blockhash_query,
+            )
+            .await
+        }
         ProgramCliCommand::SetUpgradeAuthorityChecked {
             program_pubkey,
             upgrade_authority_index,
@@ -1203,16 +1213,19 @@ pub async fn process_program_subcommand(
             sign_only,
             dump_transaction_message,
             blockhash_query,
-        } => process_set_authority_checked(
-            &rpc_client,
-            config,
-            *program_pubkey,
-            *upgrade_authority_index,
-            *new_upgrade_authority_index,
-            *sign_only,
-            *dump_transaction_message,
-            blockhash_query,
-        ),
+        } => {
+            process_set_authority_checked(
+                &rpc_client,
+                config,
+                *program_pubkey,
+                *upgrade_authority_index,
+                *new_upgrade_authority_index,
+                *sign_only,
+                *dump_transaction_message,
+                blockhash_query,
+            )
+            .await
+        }
         ProgramCliCommand::Show {
             account_pubkey,
             authority_pubkey,
@@ -1220,57 +1233,69 @@ pub async fn process_program_subcommand(
             get_buffers,
             all,
             use_lamports_unit,
-        } => process_show(
-            &rpc_client,
-            config,
-            *account_pubkey,
-            *authority_pubkey,
-            *get_programs,
-            *get_buffers,
-            *all,
-            *use_lamports_unit,
-        ),
+        } => {
+            process_show(
+                &rpc_client,
+                config,
+                *account_pubkey,
+                *authority_pubkey,
+                *get_programs,
+                *get_buffers,
+                *all,
+                *use_lamports_unit,
+            )
+            .await
+        }
         ProgramCliCommand::Dump {
             account_pubkey,
             output_location,
-        } => process_dump(&rpc_client, config, *account_pubkey, output_location),
+        } => process_dump(&rpc_client, config, *account_pubkey, output_location).await,
         ProgramCliCommand::Close {
             account_pubkey,
             recipient_pubkey,
             authority_index,
             use_lamports_unit,
             bypass_warning,
-        } => process_close(
-            &rpc_client,
-            config,
-            *account_pubkey,
-            *recipient_pubkey,
-            *authority_index,
-            *use_lamports_unit,
-            *bypass_warning,
-        ),
+        } => {
+            process_close(
+                &rpc_client,
+                config,
+                *account_pubkey,
+                *recipient_pubkey,
+                *authority_index,
+                *use_lamports_unit,
+                *bypass_warning,
+            )
+            .await
+        }
         ProgramCliCommand::ExtendProgramChecked {
             program_pubkey,
             authority_signer_index,
             additional_bytes,
-        } => process_extend_program(
-            &rpc_client,
-            config,
-            *program_pubkey,
-            *authority_signer_index,
-            *additional_bytes,
-        ),
+        } => {
+            process_extend_program(
+                &rpc_client,
+                config,
+                *program_pubkey,
+                *authority_signer_index,
+                *additional_bytes,
+            )
+            .await
+        }
         ProgramCliCommand::MigrateProgram {
             program_pubkey,
             authority_signer_index,
             compute_unit_price,
-        } => process_migrate_program(
-            &rpc_client,
-            config,
-            *program_pubkey,
-            *authority_signer_index,
-            *compute_unit_price,
-        ),
+        } => {
+            process_migrate_program(
+                &rpc_client,
+                config,
+                *program_pubkey,
+                *authority_signer_index,
+                *compute_unit_price,
+            )
+            .await
+        }
     }
 }
 
@@ -1345,7 +1370,8 @@ async fn process_program_deploy(
     };
 
     let do_initial_deploy = if let Some(account) = rpc_client
-        .get_account_with_commitment(&program_pubkey, config.commitment)?
+        .get_account_with_commitment(&program_pubkey, config.commitment)
+        .await?
         .value
     {
         if account.owner != bpf_loader_upgradeable::id() {
@@ -1363,7 +1389,8 @@ async fn process_program_deploy(
         }) = account.state()
         {
             if let Some(account) = rpc_client
-                .get_account_with_commitment(&programdata_address, config.commitment)?
+                .get_account_with_commitment(&programdata_address, config.commitment)
+                .await?
                 .value
             {
                 if let Ok(UpgradeableLoaderState::ProgramData {
@@ -1409,7 +1436,7 @@ async fn process_program_deploy(
     let feature_set = if skip_feature_verification {
         FeatureSet::all_enabled()
     } else {
-        fetch_feature_set(&rpc_client)?
+        fetch_feature_set(&rpc_client).await?
     };
 
     if !skip_feature_verification
@@ -1431,7 +1458,8 @@ async fn process_program_deploy(
                     Some(program_len),
                     buffer_pubkey,
                     upgrade_authority_signer.pubkey(),
-                )?
+                )
+                .await?
             } else {
                 None
             };
@@ -1444,7 +1472,8 @@ async fn process_program_deploy(
                 buffer_pubkey,
                 upgrade_authority_signer.pubkey(),
                 feature_set,
-            )?;
+            )
+            .await?;
 
             (vec![], buffer_program_data.len(), Some(buffer_program_data))
         } else {
@@ -1462,9 +1491,11 @@ async fn process_program_deploy(
         program_len
     };
 
-    let min_rent_exempt_program_data_balance = rpc_client.get_minimum_balance_for_rent_exemption(
-        UpgradeableLoaderState::size_of_programdata(program_data_max_len),
-    )?;
+    let min_rent_exempt_program_data_balance = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
+            program_data_max_len,
+        ))
+        .await?;
 
     let result = if do_initial_deploy {
         if program_signer.is_none() {
@@ -1523,7 +1554,8 @@ async fn process_program_deploy(
             false,
             false,
             &BlockhashQuery::default(),
-        )?;
+        )
+        .await?;
     }
     if result.is_err() && !buffer_provided {
         // We might have deployed "temporary" buffer but failed to deploy our program from this
@@ -1533,15 +1565,16 @@ async fn process_program_deploy(
     result
 }
 
-fn fetch_verified_buffer_program_data(
+async fn fetch_verified_buffer_program_data(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     buffer_pubkey: Pubkey,
     buffer_authority: Pubkey,
     feature_set: FeatureSet,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let Some(buffer_program_data) =
-        fetch_buffer_program_data(rpc_client, config, None, buffer_pubkey, buffer_authority)?
+        fetch_buffer_program_data(rpc_client, config, None, buffer_pubkey, buffer_authority)
+            .await?
     else {
         return Err(format!("Buffer account {buffer_pubkey} not found").into());
     };
@@ -1553,15 +1586,16 @@ fn fetch_verified_buffer_program_data(
     Ok(buffer_program_data)
 }
 
-fn fetch_buffer_program_data(
+async fn fetch_buffer_program_data(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     min_program_len: Option<usize>,
     buffer_pubkey: Pubkey,
     buffer_authority: Pubkey,
 ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
     let Some(mut account) = rpc_client
-        .get_account_with_commitment(&buffer_pubkey, config.commitment)?
+        .get_account_with_commitment(&buffer_pubkey, config.commitment)
+        .await?
         .value
     else {
         return Ok(None);
@@ -1610,9 +1644,9 @@ fn fetch_buffer_program_data(
 
 /// Upgrade existing program using upgradeable loader
 #[allow(clippy::too_many_arguments)]
-fn process_program_upgrade(
+async fn process_program_upgrade(
     rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     fee_payer_signer_index: SignerIndex,
     program_id: Pubkey,
     buffer_pubkey: Pubkey,
@@ -1625,7 +1659,9 @@ fn process_program_upgrade(
     let fee_payer_signer = config.signers[fee_payer_signer_index];
     let upgrade_authority_signer = config.signers[upgrade_authority_signer_index];
 
-    let blockhash = blockhash_query.get_blockhash(&rpc_client, config.commitment)?;
+    let blockhash = blockhash_query
+        .get_blockhash(&rpc_client, config.commitment)
+        .await?;
     let message = Message::new_with_blockhash(
         &[loader_v3_instruction::upgrade(
             &program_id,
@@ -1654,7 +1690,7 @@ fn process_program_upgrade(
         let feature_set = if skip_feature_verification {
             FeatureSet::all_enabled()
         } else {
-            fetch_feature_set(&rpc_client)?
+            fetch_feature_set(&rpc_client).await?
         };
 
         fetch_verified_buffer_program_data(
@@ -1663,16 +1699,18 @@ fn process_program_upgrade(
             buffer_pubkey,
             upgrade_authority_signer.pubkey(),
             feature_set,
-        )?;
+        )
+        .await?;
 
-        let fee = rpc_client.get_fee_for_message(&message)?;
+        let fee = rpc_client.get_fee_for_message(&message).await?;
         check_account_for_spend_and_fee_with_commitment(
             &rpc_client,
             &fee_payer_signer.pubkey(),
             0,
             fee,
             config.commitment,
-        )?;
+        )
+        .await?;
         let mut tx = Transaction::new_unsigned(message);
         let signers = &[fee_payer_signer, upgrade_authority_signer];
         tx.try_sign(signers, blockhash)?;
@@ -1682,6 +1720,7 @@ fn process_program_upgrade(
                 config.commitment,
                 config.send_transaction_config,
             )
+            .await
             .map_err(|e| format!("Upgrading program failed: {e}"))?;
         let program_id = CliProgramId {
             program_id: program_id.to_string(),
@@ -1713,7 +1752,7 @@ async fn process_write_buffer(
     let feature_set = if skip_feature_verification {
         FeatureSet::all_enabled()
     } else {
-        fetch_feature_set(&rpc_client)?
+        fetch_feature_set(&rpc_client).await?
     };
 
     let program_data = read_and_verify_elf(program_location, feature_set)?;
@@ -1738,16 +1777,19 @@ async fn process_write_buffer(
         Some(program_len),
         buffer_pubkey,
         buffer_authority.pubkey(),
-    )?;
+    )
+    .await?;
 
     let buffer_data_max_len = if let Some(len) = max_len {
         len
     } else {
         program_data.len()
     };
-    let min_rent_exempt_program_data_balance = rpc_client.get_minimum_balance_for_rent_exemption(
-        UpgradeableLoaderState::size_of_programdata(buffer_data_max_len),
-    )?;
+    let min_rent_exempt_program_data_balance = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
+            buffer_data_max_len,
+        ))
+        .await?;
 
     let result = do_process_write_buffer(
         rpc_client,
@@ -1772,9 +1814,9 @@ async fn process_write_buffer(
     result
 }
 
-fn process_set_authority(
+async fn process_set_authority(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     program_pubkey: Option<Pubkey>,
     buffer_pubkey: Option<Pubkey>,
     authority: Option<SignerIndex>,
@@ -1790,7 +1832,9 @@ fn process_set_authority(
     };
 
     trace!("Set a new authority");
-    let blockhash = blockhash_query.get_blockhash(rpc_client, config.commitment)?;
+    let blockhash = blockhash_query
+        .get_blockhash(rpc_client, config.commitment)
+        .await?;
 
     let mut tx = if let Some(ref pubkey) = program_pubkey {
         Transaction::new_unsigned(Message::new(
@@ -1837,6 +1881,7 @@ fn process_set_authority(
                 config.commitment,
                 config.send_transaction_config,
             )
+            .await
             .map_err(|e| format!("Setting authority failed: {e}"))?;
 
         let authority = CliProgramAuthority {
@@ -1853,9 +1898,9 @@ fn process_set_authority(
     }
 }
 
-fn process_set_authority_checked(
+async fn process_set_authority_checked(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     program_pubkey: Pubkey,
     authority_index: SignerIndex,
     new_authority_index: SignerIndex,
@@ -1867,7 +1912,9 @@ fn process_set_authority_checked(
     let new_authority_signer = config.signers[new_authority_index];
 
     trace!("Set a new (checked) authority");
-    let blockhash = blockhash_query.get_blockhash(rpc_client, config.commitment)?;
+    let blockhash = blockhash_query
+        .get_blockhash(rpc_client, config.commitment)
+        .await?;
 
     let mut tx = Transaction::new_unsigned(Message::new(
         &[loader_v3_instruction::set_upgrade_authority_checked(
@@ -1896,6 +1943,7 @@ fn process_set_authority_checked(
                 config.commitment,
                 config.send_transaction_config,
             )
+            .await
             .map_err(|e| format!("Setting authority failed: {e}"))?;
 
         let authority = CliProgramAuthority {
@@ -1911,7 +1959,7 @@ const SLOT_SIZE: usize = size_of::<u64>();
 const OPTION_SIZE: usize = 1;
 const PUBKEY_LEN: usize = 32;
 
-fn get_buffers(
+async fn get_buffers(
     rpc_client: &RpcClient,
     authority_pubkey: Option<Pubkey>,
     use_lamports_unit: bool,
@@ -1935,7 +1983,8 @@ fn get_buffers(
         rpc_client,
         filters,
         ACCOUNT_TYPE_SIZE + OPTION_SIZE + PUBKEY_LEN,
-    )?;
+    )
+    .await?;
 
     let mut buffers = vec![];
     for (address, ui_account) in results.iter() {
@@ -1963,7 +2012,7 @@ fn get_buffers(
     })
 }
 
-fn get_programs(
+async fn get_programs(
     rpc_client: &RpcClient,
     authority_pubkey: Option<Pubkey>,
     use_lamports_unit: bool,
@@ -1987,7 +2036,8 @@ fn get_programs(
         rpc_client,
         filters,
         ACCOUNT_TYPE_SIZE + SLOT_SIZE + OPTION_SIZE + PUBKEY_LEN,
-    )?;
+    )
+    .await?;
 
     let mut programs = vec![];
     for (programdata_address, programdata_ui_account) in results.iter() {
@@ -2004,7 +2054,7 @@ fn get_programs(
             bytes.extend_from_slice(programdata_address.as_ref());
             let filters = vec![RpcFilterType::Memcmp(Memcmp::new_base58_encoded(0, &bytes))];
 
-            let results = get_accounts_with_filter(rpc_client, filters, 0)?;
+            let results = get_accounts_with_filter(rpc_client, filters, 0).await?;
             if results.len() != 1 {
                 return Err(format!(
                     "Error: More than one Program associated with ProgramData account \
@@ -2037,29 +2087,31 @@ fn get_programs(
     })
 }
 
-fn get_accounts_with_filter(
+async fn get_accounts_with_filter(
     rpc_client: &RpcClient,
     filters: Vec<RpcFilterType>,
     length: usize,
 ) -> Result<Vec<(Pubkey, UiAccount)>, Box<dyn std::error::Error>> {
-    let results = rpc_client.get_program_ui_accounts_with_config(
-        &bpf_loader_upgradeable::id(),
-        RpcProgramAccountsConfig {
-            filters: Some(filters),
-            account_config: RpcAccountInfoConfig {
-                encoding: Some(UiAccountEncoding::Base64),
-                data_slice: Some(UiDataSliceConfig { offset: 0, length }),
-                ..RpcAccountInfoConfig::default()
+    let results = rpc_client
+        .get_program_ui_accounts_with_config(
+            &bpf_loader_upgradeable::id(),
+            RpcProgramAccountsConfig {
+                filters: Some(filters),
+                account_config: RpcAccountInfoConfig {
+                    encoding: Some(UiAccountEncoding::Base64),
+                    data_slice: Some(UiDataSliceConfig { offset: 0, length }),
+                    ..RpcAccountInfoConfig::default()
+                },
+                ..RpcProgramAccountsConfig::default()
             },
-            ..RpcProgramAccountsConfig::default()
-        },
-    )?;
+        )
+        .await?;
     Ok(results)
 }
 
-fn process_show(
+async fn process_show(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     account_pubkey: Option<Pubkey>,
     authority_pubkey: Pubkey,
     programs: bool,
@@ -2069,7 +2121,8 @@ fn process_show(
 ) -> ProcessResult {
     if let Some(account_pubkey) = account_pubkey {
         if let Some(account) = rpc_client
-            .get_account_with_commitment(&account_pubkey, config.commitment)?
+            .get_account_with_commitment(&account_pubkey, config.commitment)
+            .await?
             .value
         {
             if account.owner == bpf_loader::id() || account.owner == bpf_loader_deprecated::id() {
@@ -2084,7 +2137,8 @@ fn process_show(
                 }) = account.state()
                 {
                     if let Some(programdata_account) = rpc_client
-                        .get_account_with_commitment(&programdata_address, config.commitment)?
+                        .get_account_with_commitment(&programdata_address, config.commitment)
+                        .await?
                         .value
                     {
                         if let Ok(UpgradeableLoaderState::ProgramData {
@@ -2145,26 +2199,27 @@ fn process_show(
         }
     } else if programs {
         let authority_pubkey = if all { None } else { Some(authority_pubkey) };
-        let programs = get_programs(rpc_client, authority_pubkey, use_lamports_unit)?;
+        let programs = get_programs(rpc_client, authority_pubkey, use_lamports_unit).await?;
         Ok(config.output_format.formatted_string(&programs))
     } else if buffers {
         let authority_pubkey = if all { None } else { Some(authority_pubkey) };
-        let buffers = get_buffers(rpc_client, authority_pubkey, use_lamports_unit)?;
+        let buffers = get_buffers(rpc_client, authority_pubkey, use_lamports_unit).await?;
         Ok(config.output_format.formatted_string(&buffers))
     } else {
         Err("Invalid parameters".to_string().into())
     }
 }
 
-fn process_dump(
+async fn process_dump(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     account_pubkey: Option<Pubkey>,
     output_location: &str,
 ) -> ProcessResult {
     if let Some(account_pubkey) = account_pubkey {
         if let Some(account) = rpc_client
-            .get_account_with_commitment(&account_pubkey, config.commitment)?
+            .get_account_with_commitment(&account_pubkey, config.commitment)
+            .await?
             .value
         {
             if account.owner == bpf_loader::id() || account.owner == bpf_loader_deprecated::id() {
@@ -2177,7 +2232,8 @@ fn process_dump(
                 }) = account.state()
                 {
                     if let Some(programdata_account) = rpc_client
-                        .get_account_with_commitment(&programdata_address, config.commitment)?
+                        .get_account_with_commitment(&programdata_address, config.commitment)
+                        .await?
                         .value
                     {
                         if let Ok(UpgradeableLoaderState::ProgramData { .. }) =
@@ -2217,15 +2273,15 @@ fn process_dump(
     }
 }
 
-fn close(
+async fn close(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     account_pubkey: &Pubkey,
     recipient_pubkey: &Pubkey,
     authority_signer: &dyn Signer,
     program_pubkey: Option<&Pubkey>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let blockhash = rpc_client.get_latest_blockhash()?;
+    let blockhash = rpc_client.get_latest_blockhash().await?;
 
     let mut tx = Transaction::new_unsigned(Message::new(
         &[loader_v3_instruction::close_any(
@@ -2238,11 +2294,13 @@ fn close(
     ));
 
     tx.try_sign(&[config.signers[0], authority_signer], blockhash)?;
-    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
-        &tx,
-        config.commitment,
-        config.send_transaction_config,
-    );
+    let result = rpc_client
+        .send_and_confirm_transaction_with_spinner_and_config(
+            &tx,
+            config.commitment,
+            config.send_transaction_config,
+        )
+        .await;
     if let Err(err) = result {
         if let ClientErrorKind::TransactionError(TransactionError::InstructionError(
             _,
@@ -2263,9 +2321,9 @@ fn close(
     Ok(())
 }
 
-fn process_close(
+async fn process_close(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     account_pubkey: Option<Pubkey>,
     recipient_pubkey: Pubkey,
     authority_index: SignerIndex,
@@ -2276,7 +2334,8 @@ fn process_close(
 
     if let Some(account_pubkey) = account_pubkey {
         if let Some(account) = rpc_client
-            .get_account_with_commitment(&account_pubkey, config.commitment)?
+            .get_account_with_commitment(&account_pubkey, config.commitment)
+            .await?
             .value
         {
             match account.state() {
@@ -2296,7 +2355,8 @@ fn process_close(
                             &recipient_pubkey,
                             authority_signer,
                             None,
-                        )?;
+                        )
+                        .await?;
                     }
                     Ok(config
                         .output_format
@@ -2317,7 +2377,8 @@ fn process_close(
                     programdata_address: programdata_pubkey,
                 }) => {
                     if let Some(account) = rpc_client
-                        .get_account_with_commitment(&programdata_pubkey, config.commitment)?
+                        .get_account_with_commitment(&programdata_pubkey, config.commitment)
+                        .await?
                         .value
                     {
                         if let Ok(UpgradeableLoaderState::ProgramData {
@@ -2343,7 +2404,8 @@ fn process_close(
                                     &recipient_pubkey,
                                     authority_signer,
                                     Some(&account_pubkey),
-                                )?;
+                                )
+                                .await?;
                                 Ok(config.output_format.formatted_string(
                                     &CliUpgradeableProgramClosed {
                                         program_id: account_pubkey.to_string(),
@@ -2369,7 +2431,8 @@ fn process_close(
             rpc_client,
             Some(authority_signer.pubkey()),
             use_lamports_unit,
-        )?;
+        )
+        .await?;
 
         let mut closed = vec![];
         for buffer in buffers.buffers.iter() {
@@ -2381,6 +2444,7 @@ fn process_close(
                 authority_signer,
                 None,
             )
+            .await
             .is_ok()
             {
                 closed.push(buffer.clone());
@@ -2395,9 +2459,9 @@ fn process_close(
     }
 }
 
-fn process_extend_program(
+async fn process_extend_program(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     program_pubkey: Pubkey,
     authority_signer_index: SignerIndex,
     additional_bytes: u32,
@@ -2410,7 +2474,8 @@ fn process_extend_program(
     }
 
     let program_account = match rpc_client
-        .get_account_with_commitment(&program_pubkey, config.commitment)?
+        .get_account_with_commitment(&program_pubkey, config.commitment)
+        .await?
         .value
     {
         Some(program_account) => Ok(program_account),
@@ -2431,7 +2496,8 @@ fn process_extend_program(
     }?;
 
     let programdata_account = match rpc_client
-        .get_account_with_commitment(&programdata_pubkey, config.commitment)?
+        .get_account_with_commitment(&programdata_pubkey, config.commitment)
+        .await?
         .value
     {
         Some(programdata_account) => Ok(programdata_account),
@@ -2458,8 +2524,8 @@ fn process_extend_program(
         .into());
     }
 
-    let blockhash = rpc_client.get_latest_blockhash()?;
-    let feature_set = fetch_feature_set(rpc_client)?;
+    let blockhash = rpc_client.get_latest_blockhash().await?;
+    let feature_set = fetch_feature_set(rpc_client).await?;
 
     let instruction =
         if feature_set.is_active(&agave_feature_set::enable_extend_program_checked::id()) {
@@ -2479,11 +2545,13 @@ fn process_extend_program(
     let mut tx = Transaction::new_unsigned(Message::new(&[instruction], Some(&payer_pubkey)));
 
     tx.try_sign(&[config.signers[0], authority_signer], blockhash)?;
-    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
-        &tx,
-        config.commitment,
-        config.send_transaction_config,
-    );
+    let result = rpc_client
+        .send_and_confirm_transaction_with_spinner_and_config(
+            &tx,
+            config.commitment,
+            config.send_transaction_config,
+        )
+        .await;
     if let Err(err) = result {
         if let ClientErrorKind::TransactionError(TransactionError::InstructionError(
             _,
@@ -2504,9 +2572,9 @@ fn process_extend_program(
         }))
 }
 
-fn process_migrate_program(
+async fn process_migrate_program(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     program_pubkey: Pubkey,
     authority_signer_index: SignerIndex,
     compute_unit_price: Option<u64>,
@@ -2515,7 +2583,8 @@ fn process_migrate_program(
     let authority_signer = config.signers[authority_signer_index];
 
     let program_account = match rpc_client
-        .get_account_with_commitment(&program_pubkey, config.commitment)?
+        .get_account_with_commitment(&program_pubkey, config.commitment)
+        .await?
         .value
     {
         Some(program_account) => Ok(program_account),
@@ -2534,7 +2603,8 @@ fn process_migrate_program(
     };
 
     let Some(programdata_account) = rpc_client
-        .get_account_with_commitment(&programdata_pubkey, config.commitment)?
+        .get_account_with_commitment(&programdata_pubkey, config.commitment)
+        .await?
         .value
     else {
         return Err(format!("Program {program_pubkey} is closed").into());
@@ -2557,7 +2627,7 @@ fn process_migrate_program(
         .into());
     }
 
-    let blockhash = rpc_client.get_latest_blockhash()?;
+    let blockhash = rpc_client.get_latest_blockhash().await?;
     let mut message = Message::new(
         &vec![loader_v3_instruction::migrate_program(
             &programdata_pubkey,
@@ -2570,15 +2640,18 @@ fn process_migrate_program(
         }),
         Some(&payer_pubkey),
     );
-    simulate_and_update_compute_unit_limit(&ComputeUnitLimit::Simulated, rpc_client, &mut message)?;
+    simulate_and_update_compute_unit_limit(&ComputeUnitLimit::Simulated, rpc_client, &mut message)
+        .await?;
 
     let mut tx = Transaction::new_unsigned(message);
     tx.try_sign(&[config.signers[0], config.signers[1]], blockhash)?;
-    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
-        &tx,
-        config.commitment,
-        config.send_transaction_config,
-    );
+    let result = rpc_client
+        .send_and_confirm_transaction_with_spinner_and_config(
+            &tx,
+            config.commitment,
+            config.send_transaction_config,
+        )
+        .await;
     if let Err(err) = result {
         if let ClientErrorKind::TransactionError(TransactionError::InstructionError(
             _,
@@ -2630,7 +2703,7 @@ async fn do_process_program_deploy(
     max_sign_attempts: usize,
     use_rpc: bool,
 ) -> ProcessResult {
-    let blockhash = rpc_client.get_latest_blockhash()?;
+    let blockhash = rpc_client.get_latest_blockhash().await?;
     let compute_unit_limit = ComputeUnitLimit::Simulated;
 
     let (initial_instructions, balance_needed, buffer_program_data) =
@@ -2697,7 +2770,8 @@ async fn do_process_program_deploy(
             buffer_pubkey,
             &program_signers[1].pubkey(),
             rpc_client
-                .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())?,
+                .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+                .await?,
             program_data_max_len,
         )?
         .with_compute_unit_config(&ComputeUnitConfig {
@@ -2721,7 +2795,8 @@ async fn do_process_program_deploy(
             &initial_message,
             &write_messages,
             &final_message,
-        )?;
+        )
+        .await?;
     }
 
     let final_tx_sig = send_deploy_messages(
@@ -2764,7 +2839,7 @@ async fn do_process_write_buffer(
     max_sign_attempts: usize,
     use_rpc: bool,
 ) -> ProcessResult {
-    let blockhash = rpc_client.get_latest_blockhash()?;
+    let blockhash = rpc_client.get_latest_blockhash().await?;
     let compute_unit_limit = ComputeUnitLimit::Simulated;
 
     let (initial_instructions, balance_needed, buffer_program_data) =
@@ -2831,7 +2906,8 @@ async fn do_process_write_buffer(
             &initial_message,
             &write_messages,
             &None,
-        )?;
+        )
+        .await?;
     }
 
     let _final_tx_sig = send_deploy_messages(
@@ -2875,7 +2951,7 @@ async fn do_process_program_upgrade(
     auto_extend: bool,
     use_rpc: bool,
 ) -> ProcessResult {
-    let blockhash = rpc_client.get_latest_blockhash()?;
+    let blockhash = rpc_client.get_latest_blockhash().await?;
     let compute_unit_limit = ComputeUnitLimit::Simulated;
 
     let (initial_message, write_messages, balance_needed) = if let Some(buffer_signer) =
@@ -2906,7 +2982,8 @@ async fn do_process_program_upgrade(
                 &fee_payer_signer.pubkey(),
                 program_id,
                 program_len,
-            )?;
+            )
+            .await?;
         }
 
         let initial_message = if !initial_instructions.is_empty() {
@@ -2980,7 +3057,8 @@ async fn do_process_program_upgrade(
             &initial_message,
             &write_messages,
             &final_message,
-        )?;
+        )
+        .await?;
     }
 
     let final_tx_sig = send_deploy_messages(
@@ -3008,7 +3086,7 @@ async fn do_process_program_upgrade(
 
 // Attempts to look up the program data account, and adds an extend program data instruction if the
 // program data account is too small.
-fn extend_program_data_if_needed(
+async fn extend_program_data_if_needed(
     initial_instructions: &mut Vec<Instruction>,
     rpc_client: &RpcClient,
     commitment: CommitmentConfig,
@@ -3019,7 +3097,8 @@ fn extend_program_data_if_needed(
     let program_data_address = get_program_data_address(program_id);
 
     let Some(program_data_account) = rpc_client
-        .get_account_with_commitment(&program_data_address, commitment)?
+        .get_account_with_commitment(&program_data_address, commitment)
+        .await?
         .value
     else {
         // Program data has not been allocated yet.
@@ -3059,7 +3138,7 @@ fn extend_program_data_if_needed(
     let additional_bytes =
         u32::try_from(additional_bytes).expect("`u32` is big enough to hold an account size");
 
-    let feature_set = fetch_feature_set(rpc_client)?;
+    let feature_set = fetch_feature_set(rpc_client).await?;
     let instruction =
         if feature_set.is_active(&agave_feature_set::enable_extend_program_checked::id()) {
             loader_v3_instruction::extend_program_checked(
@@ -3114,9 +3193,9 @@ fn verify_elf(
         .map_err(|err| format!("ELF error: {err}").into())
 }
 
-fn check_payer(
+async fn check_payer(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     fee_payer_pubkey: Pubkey,
     balance_needed: u64,
     initial_message: &Option<Message>,
@@ -3125,16 +3204,17 @@ fn check_payer(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut fee = Saturating(0);
     if let Some(message) = initial_message {
-        fee += rpc_client.get_fee_for_message(message)?;
+        fee += rpc_client.get_fee_for_message(message).await?;
     }
     // Assume all write messages cost the same
     if let Some(message) = write_messages.first() {
         fee += rpc_client
-            .get_fee_for_message(message)?
+            .get_fee_for_message(message)
+            .await?
             .saturating_mul(write_messages.len() as u64);
     }
     if let Some(message) = final_message {
-        fee += rpc_client.get_fee_for_message(message)?;
+        fee += rpc_client.get_fee_for_message(message).await?;
     }
     check_account_for_spend_and_fee_with_commitment(
         rpc_client,
@@ -3142,7 +3222,8 @@ fn check_payer(
         balance_needed,
         fee.0,
         config.commitment,
-    )?;
+    )
+    .await?;
     Ok(())
 }
 
@@ -3164,9 +3245,10 @@ async fn send_deploy_messages(
     if let Some(mut message) = initial_message {
         if let Some(initial_signer) = initial_signer {
             trace!("Preparing the required accounts");
-            simulate_and_update_compute_unit_limit(compute_unit_limit, &rpc_client, &mut message)?;
+            simulate_and_update_compute_unit_limit(compute_unit_limit, &rpc_client, &mut message)
+                .await?;
             let mut initial_transaction = Transaction::new_unsigned(message.clone());
-            let blockhash = rpc_client.get_latest_blockhash()?;
+            let blockhash = rpc_client.get_latest_blockhash().await?;
 
             // Most of the initial_transaction combinations require both the fee-payer and new program
             // account to sign the transaction. One (transfer) only requires the fee-payer signature.
@@ -3182,11 +3264,13 @@ async fn send_deploy_messages(
             } else {
                 initial_transaction.try_sign(&[fee_payer_signer], blockhash)?;
             }
-            let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
-                &initial_transaction,
-                config.commitment,
-                config.send_transaction_config,
-            );
+            let result = rpc_client
+                .send_and_confirm_transaction_with_spinner_and_config(
+                    &initial_transaction,
+                    config.commitment,
+                    config.send_transaction_config,
+                )
+                .await;
             log_instruction_custom_error::<SystemError>(result, config)
                 .map_err(|err| format!("Account allocation failed: {err}"))?;
         } else {
@@ -3208,7 +3292,8 @@ async fn send_deploy_messages(
                         compute_unit_limit,
                         &rpc_client,
                         &mut message,
-                    )?
+                    )
+                    .await?
                 {
                     for msg in &mut write_messages {
                         // Write messages are all assumed to be identical except
@@ -3235,19 +3320,23 @@ async fn send_deploy_messages(
                 ConnectionCache::with_udp("connection_cache_cli_program_udp", 1)
             };
             let transaction_errors = match connection_cache {
-                ConnectionCache::Udp(cache) => TpuClient::new_with_connection_cache(
-                    rpc_client.clone(),
-                    &config.websocket_url,
-                    TpuClientConfig::default(),
-                    cache,
-                )?
-                .send_and_confirm_messages_with_spinner(
-                    &write_messages,
-                    &[fee_payer_signer, write_signer],
-                ),
+                ConnectionCache::Udp(cache) => {
+                    TpuClient::new_with_connection_cache(
+                        rpc_client.clone(),
+                        &config.websocket_url,
+                        TpuClientConfig::default(),
+                        cache,
+                    )
+                    .await?
+                    .send_and_confirm_messages_with_spinner(
+                        &write_messages,
+                        &[fee_payer_signer, write_signer],
+                    )
+                    .await
+                }
                 ConnectionCache::Quic(cache) => {
-                    let tpu_client_fut = solana_client::nonblocking::tpu_client::TpuClient::new_with_connection_cache(
-                        rpc_client.get_inner_client().clone(),
+                    let tpu_client_fut = TpuClient::new_with_connection_cache(
+                        rpc_client.clone(),
                         config.websocket_url.as_str(),
                         solana_client::tpu_client::TpuClientConfig::default(),
                         cache,
@@ -3261,7 +3350,7 @@ async fn send_deploy_messages(
                                 .expect("Should return a valid tpu client"),
                         )
                     };
-                    send_and_confirm_transactions_in_parallel_blocking_v2(
+                    send_and_confirm_transactions_in_parallel_v2(
                         rpc_client.clone(),
                         tpu_client,
                         &write_messages,
@@ -3272,6 +3361,7 @@ async fn send_deploy_messages(
                             rpc_send_transaction_config: config.send_transaction_config,
                         },
                     )
+                    .await
                 }
             }
             .map_err(|err| format!("Data writes to account failed: {err}"))?
@@ -3294,9 +3384,10 @@ async fn send_deploy_messages(
         if let Some(final_signers) = final_signers {
             trace!("Deploying program");
 
-            simulate_and_update_compute_unit_limit(compute_unit_limit, &rpc_client, &mut message)?;
+            simulate_and_update_compute_unit_limit(compute_unit_limit, &rpc_client, &mut message)
+                .await?;
             let mut final_tx = Transaction::new_unsigned(message);
-            let blockhash = rpc_client.get_latest_blockhash()?;
+            let blockhash = rpc_client.get_latest_blockhash().await?;
             let mut signers = final_signers.to_vec();
             signers.push(fee_payer_signer);
             final_tx.try_sign(&signers, blockhash)?;
@@ -3307,6 +3398,7 @@ async fn send_deploy_messages(
                         config.commitment,
                         config.send_transaction_config,
                     )
+                    .await
                     .map_err(|e| format!("Deploying program failed: {e}"))?,
             ));
         }
@@ -3337,7 +3429,9 @@ fn report_ephemeral_mnemonic(words: usize, mnemonic: bip39::Mnemonic, ephemeral_
     eprintln!("{divider}\nsolana program close {ephemeral_pubkey}\n{divider}");
 }
 
-fn fetch_feature_set(rpc_client: &RpcClient) -> Result<FeatureSet, Box<dyn std::error::Error>> {
+async fn fetch_feature_set(
+    rpc_client: &RpcClient,
+) -> Result<FeatureSet, Box<dyn std::error::Error>> {
     let mut feature_set = FeatureSet::default();
     for feature_ids in FEATURE_NAMES
         .keys()
@@ -3346,7 +3440,8 @@ fn fetch_feature_set(rpc_client: &RpcClient) -> Result<FeatureSet, Box<dyn std::
         .chunks(MAX_MULTIPLE_ACCOUNTS)
     {
         rpc_client
-            .get_multiple_accounts(feature_ids)?
+            .get_multiple_accounts(feature_ids)
+            .await?
             .into_iter()
             .zip(feature_ids)
             .for_each(|(account, feature_id)| {

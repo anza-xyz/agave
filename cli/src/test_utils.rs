@@ -1,16 +1,17 @@
 use {
     solana_clock::{Epoch, DEFAULT_MS_PER_SLOT},
     solana_commitment_config::CommitmentConfig,
-    solana_rpc_client::rpc_client::RpcClient,
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
     std::{thread::sleep, time::Duration},
 };
 
 #[macro_export]
 macro_rules! check_balance {
     ($expected_balance:expr, $client:expr, $pubkey:expr) => {
-        (0..5).for_each(|tries| {
+        for tries in 0..5 {
             let balance = $client
-                .get_balance_with_commitment($pubkey, CommitmentConfig::processed())
+                .get_balance_with_commitment(&$pubkey, CommitmentConfig::processed())
+                .await
                 .unwrap()
                 .value;
             if balance == $expected_balance {
@@ -20,16 +21,17 @@ macro_rules! check_balance {
                 assert_eq!(balance, $expected_balance);
             }
             std::thread::sleep(std::time::Duration::from_millis(500));
-        });
+        }
     };
     ($expected_balance:expr, $client:expr, $pubkey:expr,) => {
         check_balance!($expected_balance, $client, $pubkey)
     };
 }
 
-pub fn check_ready(rpc_client: &RpcClient) {
+pub async fn check_ready(rpc_client: &RpcClient) {
     while rpc_client
         .get_slot_with_commitment(CommitmentConfig::processed())
+        .await
         .unwrap()
         < 5
     {
@@ -37,27 +39,27 @@ pub fn check_ready(rpc_client: &RpcClient) {
     }
 }
 
-pub fn wait_n_slots(rpc_client: &RpcClient, n: u64) -> u64 {
-    let slot = rpc_client.get_slot().unwrap();
+pub async fn wait_n_slots(rpc_client: &RpcClient, n: u64) -> u64 {
+    let slot = rpc_client.get_slot().await.unwrap();
     loop {
         sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT));
-        let new_slot = rpc_client.get_slot().unwrap();
+        let new_slot = rpc_client.get_slot().await.unwrap();
         if new_slot.saturating_sub(slot) >= n {
             return new_slot;
         }
     }
 }
 
-pub fn wait_for_next_epoch_plus_n_slots(rpc_client: &RpcClient, n: u64) -> (Epoch, u64) {
-    let current_epoch = rpc_client.get_epoch_info().unwrap().epoch;
+pub async fn wait_for_next_epoch_plus_n_slots(rpc_client: &RpcClient, n: u64) -> (Epoch, u64) {
+    let current_epoch = rpc_client.get_epoch_info().await.unwrap().epoch;
     let next_epoch = current_epoch.saturating_add(1);
     println!("waiting for epoch {next_epoch} plus {n} slots");
     loop {
         sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT));
 
-        let next_epoch = rpc_client.get_epoch_info().unwrap().epoch;
+        let next_epoch = rpc_client.get_epoch_info().await.unwrap().epoch;
         if next_epoch > current_epoch {
-            let new_slot = wait_n_slots(rpc_client, n);
+            let new_slot = wait_n_slots(rpc_client, n).await;
             return (next_epoch, new_slot);
         }
     }

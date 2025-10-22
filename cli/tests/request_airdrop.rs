@@ -5,7 +5,7 @@ use {
     solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_rpc_client::rpc_client::RpcClient,
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_test_validator::TestValidator,
@@ -40,6 +40,7 @@ async fn test_cli_request_airdrop() {
 
     let balance = rpc_client
         .get_balance(&bob_config.signers[0].pubkey())
+        .await
         .unwrap();
     assert_eq!(balance, 50 * LAMPORTS_PER_SOL);
 }
