@@ -61,23 +61,20 @@ fn bench_staked_nodes_compute(b: &mut Bencher) {
     let mut rng = rand::thread_rng();
     let mut vote_accounts_map = HashMap::new();
 
-    // Create realistic scenario with 100 nodes, each with 3-5 vote accounts
-    // This simulates stake aggregation across multiple vote accounts per node
-    let node_count = 100;
+    // Create a scenario with ~400 vote accounts
+    // Each vote account has one node_pubkey and receives delegated stake
+    // The stake represents the total from multiple stake accounts delegating to it
+    let num_vote_accounts = 400;
 
-    for _ in 0..node_count {
-        let node_pubkey = Pubkey::new_unique();
-        let vote_accounts_per_node = rng.gen_range(3..=5);
-
-        for _ in 0..vote_accounts_per_node {
-            let (account, _) = new_rand_vote_account(&mut rng, Some(node_pubkey));
-            let vote_account = VoteAccount::try_from(account).unwrap();
-            let stake: u64 = rng.gen_range(1_000_000..100_000_000);
-            vote_accounts_map.insert(Pubkey::new_unique(), (stake, vote_account));
-        }
+    for _ in 0..num_vote_accounts {
+        let (account, _) = new_rand_vote_account(&mut rng, None);
+        let vote_account = VoteAccount::try_from(account).unwrap();
+        // Stake amount represents total delegated stake (from multiple stake accounts)
+        let stake: u64 = rng.gen_range(1_000_000..100_000_000);
+        vote_accounts_map.insert(Pubkey::new_unique(), (stake, vote_account));
     }
 
-    // Add some zero-stake accounts to test filtering
+    // Add some zero-stake accounts (vote accounts with no delegations)
     for _ in 0..50 {
         let (account, _) = new_rand_vote_account(&mut rng, None);
         let vote_account = VoteAccount::try_from(account).unwrap();
