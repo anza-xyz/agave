@@ -18,7 +18,7 @@ use {
     solana_nonce::state::State as NonceState,
     solana_pubkey::Pubkey,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
-    solana_rpc_client_nonce_utils::nonblocking::blockhash_query::{self, BlockhashQuery},
+    solana_rpc_client_nonce_utils::nonblocking::blockhash_query::BlockhashQuery,
     solana_signer::{null_signer::NullSigner, Signer},
     solana_stake_interface as stake,
     solana_streamer::socket::SocketAddrSpace,
@@ -65,7 +65,7 @@ async fn test_transfer(skip_preflight: bool) {
     check_balance!(5 * LAMPORTS_PER_SOL, &rpc_client, &sender_pubkey);
     check_balance!(0, &rpc_client, &recipient_pubkey);
 
-    check_ready(&rpc_client);
+    check_ready(&rpc_client).await;
 
     // Plain ole transfer
     config.command = CliCommand::Transfer {
@@ -387,7 +387,7 @@ async fn test_transfer_multisession_signing() {
     );
     check_balance!(0, &rpc_client, &to_pubkey);
 
-    check_ready(&rpc_client);
+    check_ready(&rpc_client).await;
 
     let blockhash = rpc_client.get_latest_blockhash().await.unwrap();
 
@@ -548,7 +548,7 @@ async fn test_transfer_all(compute_unit_price: Option<u64>) {
     check_balance!(500_000, &rpc_client, &sender_pubkey);
     check_balance!(0, &rpc_client, &recipient_pubkey);
 
-    check_ready(&rpc_client);
+    check_ready(&rpc_client).await;
 
     // Plain ole transfer
     config.command = CliCommand::Transfer {
@@ -606,7 +606,7 @@ async fn test_transfer_unfunded_recipient() {
     check_balance!(50_000, &rpc_client, &sender_pubkey);
     check_balance!(0, &rpc_client, &recipient_pubkey);
 
-    check_ready(&rpc_client);
+    check_ready(&rpc_client).await;
 
     // Plain ole transfer
     config.command = CliCommand::Transfer {
@@ -676,7 +676,7 @@ async fn test_transfer_with_seed() {
     check_balance!(5 * LAMPORTS_PER_SOL, &rpc_client, &derived_address);
     check_balance!(0, &rpc_client, &recipient_pubkey);
 
-    check_ready(&rpc_client);
+    check_ready(&rpc_client).await;
 
     // Transfer with seed
     config.command = CliCommand::Transfer {

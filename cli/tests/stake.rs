@@ -161,7 +161,7 @@ async fn test_stake_delegation_force() {
     };
     process_command(&config).await.unwrap();
 
-    wait_for_next_epoch_plus_n_slots(&rpc_client, 1);
+    wait_for_next_epoch_plus_n_slots(&rpc_client, 1).await;
 
     // Delegate stake2 fails because voter has not voted, but is now staked
     config.signers = vec![&default_signer];
@@ -1449,7 +1449,7 @@ async fn test_stake_authorize_with_fee_payer() {
     .unwrap();
     check_balance!(5_000_000_000_000, &rpc_client, &offline_pubkey);
 
-    check_ready(&rpc_client);
+    check_ready(&rpc_client).await;
 
     // Create stake account, identity is authority
     let stake_keypair = Keypair::new();

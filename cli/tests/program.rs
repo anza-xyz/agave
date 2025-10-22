@@ -94,6 +94,9 @@ async fn expect_command_failure(
     );
 }
 
+// TODO: `track_caller`` on an async function is a noop; Enable feature when implemented.
+//        See https://github.com/rust-lang/rust/issues/110011
+#[allow(ungated_async_fn_track_caller)]
 #[track_caller]
 async fn expect_account_absent(rpc_client: &RpcClient, pubkey: Pubkey, absent_because: &str) {
     let error_actual = rpc_client
@@ -1373,7 +1376,7 @@ async fn test_cli_program_close_program() {
     );
 
     // Wait one slot to avoid "Program was deployed in this block already" error
-    wait_n_slots(&rpc_client, 1);
+    wait_n_slots(&rpc_client, 1).await;
 
     // Close program
     let close_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
@@ -1410,7 +1413,8 @@ async fn test_cli_program_close_program() {
         &rpc_client,
         programdata_pubkey,
         "Program data account is deleted when the program is closed",
-    );
+    )
+    .await;
     let recipient_account = rpc_client.get_account(&recipient_pubkey).await.unwrap();
     assert_eq!(programdata_lamports, recipient_account.lamports);
 }
@@ -1504,7 +1508,7 @@ async fn test_cli_program_extend_program() {
     assert_eq!(expected_len, programdata_account.data.len());
 
     // Wait one slot to avoid "Program was deployed in this block already" error
-    wait_n_slots(&rpc_client, 1);
+    wait_n_slots(&rpc_client, 1).await;
 
     // Extend program for larger program, minus 1 required byte
     let mut file = File::open(noop_large_path.to_str().unwrap()).unwrap();
@@ -1563,7 +1567,7 @@ async fn test_cli_program_extend_program() {
     .await;
 
     // Wait one slot to avoid "Program was deployed in this block already" error
-    wait_n_slots(&rpc_client, 1);
+    wait_n_slots(&rpc_client, 1).await;
 
     // Extend 1 last byte
     config.signers = vec![&keypair, &upgrade_authority];
@@ -1669,7 +1673,7 @@ async fn test_cli_program_migrate_program() {
     process_command(&config).await.unwrap();
 
     // Wait one slot to avoid "Program was deployed in this block already" error
-    wait_n_slots(&rpc_client, 1);
+    wait_n_slots(&rpc_client, 1).await;
 
     // Migrate program
     config.signers = vec![&keypair, &upgrade_authority];
@@ -1968,7 +1972,8 @@ async fn test_cli_program_write_buffer() {
         &rpc_client,
         buffer_pubkey,
         "Buffer account is deleted when the buffer is closed",
-    );
+    )
+    .await;
     let recipient_account = rpc_client.get_account(&recipient_pubkey).await.unwrap();
     assert_eq!(minimum_balance_for_buffer, recipient_account.lamports);
 
@@ -2018,7 +2023,8 @@ async fn test_cli_program_write_buffer() {
         &rpc_client,
         new_buffer_pubkey,
         "Buffer account is deleted when the buffer is closed",
-    );
+    )
+    .await;
     let recipient_account = rpc_client.get_account(&keypair.pubkey()).await.unwrap();
     assert_eq!(
         pre_lamports + minimum_balance_for_buffer,

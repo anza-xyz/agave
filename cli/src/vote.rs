@@ -1621,7 +1621,6 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::{read_keypair_file, write_keypair, Keypair},
         solana_presigner::Presigner,
-        solana_rpc_client_nonce_utils::blockhash_query,
         solana_signer::Signer,
         tempfile::NamedTempFile,
     };

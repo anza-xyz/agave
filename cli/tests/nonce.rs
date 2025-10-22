@@ -272,7 +272,7 @@ async fn test_create_account_with_seed() {
     );
     check_balance!(0, &rpc_client, &to_address);
 
-    check_ready(&rpc_client);
+    check_ready(&rpc_client).await;
 
     // Create nonce account
     let creator_pubkey = online_nonce_creator_signer.pubkey();

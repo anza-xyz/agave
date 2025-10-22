@@ -15,9 +15,7 @@ use {
     serde::{Deserialize, Serialize},
     serde_json::from_slice,
     sha2::{Digest, Sha256},
-    solana_cli::program_v4::{
-        process_deploy_program_sync, process_dump_sync, AdditionalCliConfig,
-    },
+    solana_cli::program_v4::{process_deploy_program_sync, process_dump_sync, AdditionalCliConfig},
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_signer::{EncodableKey, Signer},

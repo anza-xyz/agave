@@ -123,7 +123,9 @@ pub async fn get_fee_for_messages(
     let mut total_fee = 0u64;
     for message in messages {
         let fee = rpc_client.get_fee_for_message(*message).await?;
-        total_fee += fee;
+        total_fee = total_fee
+            .checked_add(fee)
+            .ok_or(CliError::BadParameter("Fee overflow".to_string()))?;
     }
     Ok(total_fee)
 }
