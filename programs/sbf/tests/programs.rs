@@ -896,13 +896,7 @@ fn test_program_sbf_invoke_sanity() {
             &bank,
         );
 
-        do_invoke_success(
-            TEST_CU_USAGE_MAX,
-            &[],
-            &[noop_program_id.clone()],
-            &bank,
-        );
-
+        do_invoke_success(TEST_CU_USAGE_MAX, &[], &[noop_program_id.clone()], &bank);
 
         let bank = bank_with_feature_deactivated(
             &bank_forks,

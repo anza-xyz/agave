@@ -10,11 +10,11 @@ use {
     solana_instruction::Instruction,
     solana_msg::msg,
     solana_program::{
+        compute_units::sol_remaining_compute_units,
         program::{get_return_data, invoke, invoke_signed, set_return_data},
         syscalls::{
             MAX_CPI_ACCOUNT_INFOS, MAX_CPI_INSTRUCTION_ACCOUNTS, MAX_CPI_INSTRUCTION_DATA_LEN,
         },
-        compute_units::sol_remaining_compute_units,
     },
     solana_program_entrypoint::{ProgramResult, MAX_PERMITTED_DATA_INCREASE},
     solana_program_error::ProgramError,
@@ -1551,25 +1551,24 @@ fn process_instruction<'a>(
 
             let account_infos: Vec<AccountInfo<'_>> = vec![accounts[NOOP_PROGRAM_INDEX].clone()];
 
-            let account_metas: Vec<(&Pubkey, bool, bool)> = vec![
-                (accounts[NOOP_PROGRAM_INDEX].key, false, false),
-            ];
+            let account_metas: Vec<(&Pubkey, bool, bool)> =
+                vec![(accounts[NOOP_PROGRAM_INDEX].key, false, false)];
 
-            let instruction = create_instruction(
-                *accounts[NOOP_PROGRAM_INDEX].key, 
-                &account_metas,                    
-                vec![],                            
-            );
+            let instruction =
+                create_instruction(*accounts[NOOP_PROGRAM_INDEX].key, &account_metas, vec![]);
 
             let before_cpi = sol_remaining_compute_units();
-            invoke_signed(&instruction, &account_infos, &[])?; 
+            invoke_signed(&instruction, &account_infos, &[])?;
             let after_cpi = sol_remaining_compute_units();
             let cu_used = before_cpi - after_cpi;
 
-            assert_eq!(cu_used, 1755); 
+            assert_eq!(cu_used, 1755);
         }
         TEST_CU_USAGE_BASELINE => {
-            msg!("Test minimum cost of a CPI invocation with up to 255 account metas and 64 account infos");
+            msg!(
+                "Test minimum cost of a CPI invocation with up to 255 account metas and 64 \
+                 account infos"
+            );
 
             let mut selected_indices: Vec<usize> = vec![NOOP_PROGRAM_INDEX];
 
@@ -1589,25 +1588,25 @@ fn process_instruction<'a>(
                 account_metas.push((accounts[NOOP_PROGRAM_INDEX].key, false, false));
             }
 
-            let instruction = create_instruction(
-                *accounts[NOOP_PROGRAM_INDEX].key,
-                &account_metas,
-                vec![],
-            );
+            let instruction =
+                create_instruction(*accounts[NOOP_PROGRAM_INDEX].key, &account_metas, vec![]);
 
             let before_cpi = sol_remaining_compute_units();
-            invoke_signed(&instruction, &account_infos, &[])?; 
+            invoke_signed(&instruction, &account_infos, &[])?;
             let after_cpi = sol_remaining_compute_units();
             let cu_used = before_cpi - after_cpi;
 
             assert_eq!(cu_used, 44735);
         }
         TEST_CU_USAGE_MAX => {
-            msg!("Test minimum cost of a CPI invocation with up to 255 account metas and 255 account infos");
+            msg!(
+                "Test minimum cost of a CPI invocation with up to 255 account metas and 255 \
+                 account infos"
+            );
             //this is currently using 64 account infos due to heap memmory running out
             let mut selected_indices: Vec<usize> = vec![NOOP_PROGRAM_INDEX];
             while selected_indices.len() < 64 {
-                    selected_indices.push(selected_indices[0]);
+                selected_indices.push(selected_indices[0]);
             }
 
             let account_infos: Vec<AccountInfo<'_>> = selected_indices
@@ -1621,11 +1620,8 @@ fn process_instruction<'a>(
                 account_metas.push((accounts[NOOP_PROGRAM_INDEX].key, false, false));
             }
 
-            let instruction = create_instruction(
-                *accounts[NOOP_PROGRAM_INDEX].key,
-                &account_metas,
-                vec![],
-            );
+            let instruction =
+                create_instruction(*accounts[NOOP_PROGRAM_INDEX].key, &account_metas, vec![]);
 
             let before_cpi = sol_remaining_compute_units();
             invoke_signed(&instruction, &account_infos, &[])?;
