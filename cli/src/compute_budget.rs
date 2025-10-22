@@ -5,7 +5,7 @@ use {
     solana_instruction::Instruction,
     solana_message::Message,
     solana_program_runtime::execution_budget::MAX_COMPUTE_UNIT_LIMIT,
-    solana_rpc_client::nonblocking::rpc_client::RpcClient as AsyncRpcClient,
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcSimulateTransactionConfig,
     solana_transaction::Transaction,
 };
@@ -40,7 +40,7 @@ fn get_compute_unit_limit_instruction_index(message: &Message) -> Option<usize> 
 /// Like `simulate_for_compute_unit_limit`, but does not check that the message
 /// contains a compute unit limit instruction.
 async fn simulate_for_compute_unit_limit_unchecked(
-    rpc_client: &AsyncRpcClient,
+    rpc_client: &RpcClient,
     message: &Message,
 ) -> Result<u32, Box<dyn std::error::Error>> {
     let transaction = Transaction::new_unsigned(message.clone());
@@ -73,7 +73,7 @@ async fn simulate_for_compute_unit_limit_unchecked(
 /// Returns an error if the message does not contain a compute unit limit
 /// instruction or if the simulation fails.
 pub(crate) async fn simulate_for_compute_unit_limit(
-    rpc_client: &AsyncRpcClient,
+    rpc_client: &RpcClient,
     message: &Message,
 ) -> Result<u32, Box<dyn std::error::Error>> {
     if get_compute_unit_limit_instruction_index(message).is_none() {
@@ -90,7 +90,7 @@ pub(crate) async fn simulate_for_compute_unit_limit(
 /// message.
 pub(crate) async fn simulate_and_update_compute_unit_limit(
     compute_unit_limit: &ComputeUnitLimit,
-    rpc_client: &AsyncRpcClient,
+    rpc_client: &RpcClient,
     message: &mut Message,
 ) -> Result<UpdateComputeUnitLimitResult, Box<dyn std::error::Error>> {
     let Some(compute_unit_limit_ix_index) = get_compute_unit_limit_instruction_index(message)

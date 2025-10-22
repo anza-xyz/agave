@@ -17,7 +17,7 @@ use {
     solana_message::Message,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
-    solana_rpc_client::nonblocking::rpc_client::RpcClient as AsyncRpcClient,
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcSendTransactionConfig,
     solana_sdk_ids::sysvar,
     solana_signer::Signer,
@@ -470,7 +470,7 @@ pub fn parse_address_lookup_table_subcommand(
 }
 
 pub async fn process_address_lookup_table_subcommand(
-    rpc_client: Arc<AsyncRpcClient>,
+    rpc_client: Arc<RpcClient>,
     config: &CliConfig<'_>,
     subcommand: &AddressLookupTableCliCommand,
 ) -> ProcessResult {
@@ -547,7 +547,7 @@ pub async fn process_address_lookup_table_subcommand(
 }
 
 async fn process_create_lookup_table(
-    rpc_client: &AsyncRpcClient,
+    rpc_client: &RpcClient,
     config: &CliConfig<'_>,
     authority_address: Pubkey,
     payer_signer_index: usize,
@@ -601,7 +601,7 @@ pub const FREEZE_LOOKUP_TABLE_WARNING: &str =
      proceed with freezing, rerun the `freeze` command with the `--bypass-warning` flag";
 
 async fn process_freeze_lookup_table(
-    rpc_client: &AsyncRpcClient,
+    rpc_client: &RpcClient,
     config: &CliConfig<'_>,
     lookup_table_pubkey: Pubkey,
     authority_signer_index: usize,
@@ -657,7 +657,7 @@ async fn process_freeze_lookup_table(
 }
 
 async fn process_extend_lookup_table(
-    rpc_client: &AsyncRpcClient,
+    rpc_client: &RpcClient,
     config: &CliConfig<'_>,
     lookup_table_pubkey: Pubkey,
     authority_signer_index: usize,
@@ -726,7 +726,7 @@ Deactivated lookup tables may only be closed and cannot be recreated at the same
      proceed with deactivation, rerun the `deactivate` command with the `--bypass-warning` flag";
 
 async fn process_deactivate_lookup_table(
-    rpc_client: &AsyncRpcClient,
+    rpc_client: &RpcClient,
     config: &CliConfig<'_>,
     lookup_table_pubkey: Pubkey,
     authority_signer_index: usize,
@@ -783,7 +783,7 @@ async fn process_deactivate_lookup_table(
 }
 
 async fn process_close_lookup_table(
-    rpc_client: &AsyncRpcClient,
+    rpc_client: &RpcClient,
     config: &CliConfig<'_>,
     lookup_table_pubkey: Pubkey,
     authority_signer_index: usize,
@@ -845,7 +845,7 @@ async fn process_close_lookup_table(
 }
 
 async fn process_show_lookup_table(
-    rpc_client: &AsyncRpcClient,
+    rpc_client: &RpcClient,
     config: &CliConfig<'_>,
     lookup_table_pubkey: Pubkey,
 ) -> ProcessResult {

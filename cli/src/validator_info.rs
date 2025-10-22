@@ -28,7 +28,7 @@ use {
     solana_message::Message,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
-    solana_rpc_client::nonblocking::rpc_client::RpcClient as AsyncRpcClient,
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_signer::Signer,
     solana_transaction::Transaction,
     std::{error, rc::Rc},
@@ -272,7 +272,7 @@ pub fn parse_get_validator_info_command(
 }
 
 pub async fn process_set_validator_info(
-    rpc_client: &AsyncRpcClient,
+    rpc_client: &RpcClient,
     config: &CliConfig<'_>,
     validator_info: &Value,
     force_keybase: bool,
@@ -431,7 +431,7 @@ pub async fn process_set_validator_info(
 }
 
 pub async fn process_get_validator_info(
-    rpc_client: &AsyncRpcClient,
+    rpc_client: &RpcClient,
     config: &CliConfig<'_>,
     pubkey: Option<Pubkey>,
 ) -> ProcessResult {
