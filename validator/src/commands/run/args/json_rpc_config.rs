@@ -7,17 +7,16 @@ use {
     std::sync::LazyLock,
 };
 
-pub(crate) static DEFAULT_HEALTH_CHECK_SLOT_DISTANCE: LazyLock<String> = LazyLock::new(|| {
+static DEFAULT_HEALTH_CHECK_SLOT_DISTANCE: LazyLock<String> = LazyLock::new(|| {
     solana_rpc_client_api::request::DELINQUENT_VALIDATOR_SLOT_DISTANCE.to_string()
 });
-pub(crate) static DEFAULT_MAX_MULTIPLE_ACCOUNTS: LazyLock<String> =
+static DEFAULT_MAX_MULTIPLE_ACCOUNTS: LazyLock<String> =
     LazyLock::new(|| solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS.to_string());
-pub(crate) static DEFAULT_RPC_THREADS: LazyLock<String> =
-    LazyLock::new(|| num_cpus::get().to_string());
-pub(crate) static DEFAULT_RPC_BLOCKING_THREADS: LazyLock<String> =
+static DEFAULT_RPC_THREADS: LazyLock<String> = LazyLock::new(|| num_cpus::get().to_string());
+static DEFAULT_RPC_BLOCKING_THREADS: LazyLock<String> =
     LazyLock::new(|| (1.max(num_cpus::get() / 4)).to_string());
-pub(crate) const DEFAULT_RPC_NICENESS_ADJ: &str = "0";
-pub(crate) static DEFAULT_RPC_MAX_REQUEST_BODY_SIZE: LazyLock<String> =
+const DEFAULT_RPC_NICENESS_ADJ: &str = "0";
+static DEFAULT_RPC_MAX_REQUEST_BODY_SIZE: LazyLock<String> =
     LazyLock::new(|| solana_rpc::rpc::MAX_REQUEST_BODY_SIZE.to_string());
 
 impl FromClapArgMatches for JsonRpcConfig {
