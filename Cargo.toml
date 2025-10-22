@@ -273,6 +273,7 @@ gag = "1.0.0"
 gethostname = "0.2.3"
 getrandom = "0.3.4"
 goauth = "0.13.1"
+governor = "0.6.3"
 hex = "0.4.3"
 hidapi = { version = "2.6.3", default-features = false }
 histogram = "0.6.9"
