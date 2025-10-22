@@ -12,7 +12,8 @@ mod tests {
         solana_perf::packet::PacketBatch,
         solana_quic_client::nonblocking::quic_client::{QuicClient, QuicLazyInitializedEndpoint},
         solana_streamer::{
-            quic::{QuicServerParams, SpawnServerResult},
+            nonblocking::swqos::SwQosConfig,
+            quic::{QuicStreamerConfig, SpawnServerResult},
             streamer::StakedNodes,
         },
         solana_tls_utils::{new_dummy_x509_certificate, QuicClientCertificate},
@@ -80,7 +81,8 @@ mod tests {
             &keypair,
             sender,
             staked_nodes,
-            QuicServerParams::default_for_tests(),
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
             cancel.clone(),
         )
         .unwrap();
@@ -160,7 +162,8 @@ mod tests {
             &keypair,
             sender,
             staked_nodes,
-            QuicServerParams::default_for_tests(),
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
             cancel.clone(),
         )
         .unwrap();
@@ -218,7 +221,8 @@ mod tests {
             &keypair,
             sender,
             staked_nodes.clone(),
-            QuicServerParams::default_for_tests(),
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
             request_recv_cancel.clone(),
         )
         .unwrap();
@@ -242,7 +246,8 @@ mod tests {
             &keypair2,
             sender2,
             staked_nodes,
-            QuicServerParams::default_for_tests(),
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
             response_recv_cancel.clone(),
         )
         .unwrap();
@@ -328,7 +333,8 @@ mod tests {
             &keypair,
             sender,
             staked_nodes,
-            QuicServerParams::default_for_tests(),
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
             cancel.clone(),
         )
         .unwrap();

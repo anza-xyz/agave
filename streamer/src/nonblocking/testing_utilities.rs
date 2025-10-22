@@ -2,8 +2,8 @@
 use {
     super::quic::{SpawnNonBlockingServerResult, ALPN_TPU_PROTOCOL_ID},
     crate::{
-        nonblocking::quic::spawn_server_with_cancel,
-        quic::{QuicServerParams, StreamerStats},
+        nonblocking::{quic::spawn_server_with_cancel, swqos::SwQosConfig},
+        quic::{QuicStreamerConfig, StreamerStats},
         streamer::StakedNodes,
     },
     crossbeam_channel::{unbounded, Receiver},
@@ -77,16 +77,18 @@ pub fn create_quic_server_sockets() -> Vec<UdpSocket> {
 
 pub fn setup_quic_server(
     option_staked_nodes: Option<StakedNodes>,
-    quic_server_params: QuicServerParams,
+    quic_server_params: QuicStreamerConfig,
+    qos_config: SwQosConfig,
 ) -> SpawnTestServerResult {
     let sockets = create_quic_server_sockets();
-    setup_quic_server_with_sockets(sockets, option_staked_nodes, quic_server_params)
+    setup_quic_server_with_sockets(sockets, option_staked_nodes, quic_server_params, qos_config)
 }
 
 pub fn setup_quic_server_with_sockets(
     sockets: Vec<UdpSocket>,
     option_staked_nodes: Option<StakedNodes>,
-    quic_server_params: QuicServerParams,
+    quic_server_params: QuicStreamerConfig,
+    qos_config: SwQosConfig,
 ) -> SpawnTestServerResult {
     let (sender, receiver) = unbounded();
     let keypair = Keypair::new();
@@ -106,6 +108,7 @@ pub fn setup_quic_server_with_sockets(
         sender,
         staked_nodes,
         quic_server_params,
+        qos_config,
         cancel.clone(),
     )
     .unwrap();
