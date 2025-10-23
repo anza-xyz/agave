@@ -37,6 +37,11 @@ static DEFAULT_RPC_SEND_TRANSACTION_SERVICE_MAX_RETRIES: LazyLock<String> = Lazy
         .service_max_retries
         .to_string()
 });
+static DEFAULT_RPC_SEND_TRANSACTION_RETRY_POOL_MAX_SIZE: LazyLock<String> = LazyLock::new(|| {
+    SendTransactionServiceConfig::default()
+        .retry_pool_max_size
+        .to_string()
+});
 
 impl FromClapArgMatches for SendTransactionServiceConfig {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
@@ -153,6 +158,13 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
                 "The maximum number of transaction broadcast retries, regardless of requested \
                  value.",
             ),
+        Arg::with_name("rpc_send_transaction_retry_pool_max_size")
+            .long("rpc-send-transaction-retry-pool-max-size")
+            .value_name("NUMBER")
+            .takes_value(true)
+            .validator(is_parsable::<usize>)
+            .default_value(&DEFAULT_RPC_SEND_TRANSACTION_RETRY_POOL_MAX_SIZE)
+            .help("The maximum size of transactions retry pool."),
     ]
 }
 
@@ -440,5 +452,10 @@ mod tests {
             *DEFAULT_RPC_SEND_TRANSACTION_SERVICE_MAX_RETRIES,
             usize::MAX.to_string()
         );
+    }
+
+    #[test]
+    fn test_default_rpc_send_transaction_retry_pool_max_size_unchanged() {
+        assert_eq!(*DEFAULT_RPC_SEND_TRANSACTION_RETRY_POOL_MAX_SIZE, "10000");
     }
 }

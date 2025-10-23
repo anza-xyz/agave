@@ -940,15 +940,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("rpc_send_transaction_retry_pool_max_size")
-            .long("rpc-send-transaction-retry-pool-max-size")
-            .value_name("NUMBER")
-            .takes_value(true)
-            .validator(is_parsable::<usize>)
-            .default_value(&default_args.rpc_send_transaction_retry_pool_max_size)
-            .help("The maximum size of transactions retry pool."),
-    )
-    .arg(
         Arg::with_name("rpc_send_transaction_also_leader")
             .long("rpc-send-transaction-also-leader")
             .requires("rpc_send_transaction_tpu_peer")
