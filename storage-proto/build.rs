@@ -1,12 +1,9 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     const PROTOC_ENVAR: &str = "PROTOC";
     if std::env::var(PROTOC_ENVAR).is_err() {
-        #[cfg(not(windows))]
-        {
-            // Use vendored protoc to avoid building C++ protobuf via autotools
-            let protoc_path = protoc_bin_vendored::protoc_bin_path()?;
-            std::env::set_var(PROTOC_ENVAR, protoc_path);
-        }
+        // Use vendored protoc to avoid building C++ protobuf via autotools
+        let protoc_path = protoc_bin_vendored::protoc_bin_path()?;
+        std::env::set_var(PROTOC_ENVAR, protoc_path);
     }
 
     let proto_base_path = std::path::PathBuf::from("proto");
