@@ -1561,8 +1561,10 @@ fn process_instruction<'a>(
             invoke_signed(&instruction, &account_infos, &[])?;
             let after_cpi = sol_remaining_compute_units();
             let cu_used = before_cpi - after_cpi;
-
-            assert_eq!(cu_used, 1676);
+            //need to use upper bound here, as different versions of sbpf add/remove speciliazed intructions hence leading to different CU usage
+            if cu_used > 1756 {
+                panic!("CU used {} more than baseline", cu_used);
+            }
         }
         TEST_CU_USAGE_BASELINE => {
             msg!(
@@ -1595,8 +1597,9 @@ fn process_instruction<'a>(
             invoke_signed(&instruction, &account_infos, &[])?;
             let after_cpi = sol_remaining_compute_units();
             let cu_used = before_cpi - after_cpi;
-
-            assert_eq!(cu_used, 48212);
+            if cu_used > 48212 {
+                panic!("CU used {} more than baseline", cu_used);
+            }
         }
         TEST_CU_USAGE_MAX => {
             msg!(
@@ -1627,9 +1630,10 @@ fn process_instruction<'a>(
             invoke_signed(&instruction, &account_infos, &[])?;
             let after_cpi = sol_remaining_compute_units();
             let cu_used = before_cpi - after_cpi;
-
             // previous test + 61
-            assert_eq!(cu_used, 48212);
+            if cu_used > 48212 {
+                panic!("CU used {} more than baseline", cu_used);
+            }
         }
         _ => panic!("unexpected program data"),
     }
