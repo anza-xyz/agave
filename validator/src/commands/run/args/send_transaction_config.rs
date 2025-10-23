@@ -121,6 +121,14 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .validator(|s| is_within_range(s, VALID_RANGE_RPC_SEND_TRANSACTION_BATCH_SIZE))
             .default_value(&DEFAULT_RPC_SEND_TRANSACTION_BATCH_SIZE)
             .help("The size of transactions to be sent in batch."),
+        Arg::with_name("rpc_send_transaction_tpu_peer")
+            .long("rpc-send-transaction-tpu-peer")
+            .takes_value(true)
+            .number_of_values(1)
+            .multiple(true)
+            .value_name("HOST:PORT")
+            .validator(solana_net_utils::is_host_port)
+            .help("Peer(s) to broadcast transactions to instead of the current leader"),
     ]
 }
 
