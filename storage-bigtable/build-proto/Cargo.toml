@@ -13,5 +13,5 @@ edition = { workspace = true }
 agave-unstable-api = []
 
 [dependencies]
-tonic-build = { workspace = true }
 protoc-bin-vendored = { workspace = true }
+tonic-build = { workspace = true }

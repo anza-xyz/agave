@@ -37,8 +37,8 @@ solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
 
 [build-dependencies]
-tonic-build = { workspace = true }
 protoc-bin-vendored = { workspace = true }
+tonic-build = { workspace = true }
 
 [dev-dependencies]
 enum-iterator = { workspace = true }
