@@ -1563,7 +1563,7 @@ fn process_instruction<'a>(
             let cu_used = before_cpi - after_cpi;
             //need to use upper bound here, as different versions of sbpf add/remove speciliazed intructions hence leading to different CU usage
             if cu_used > 1756 {
-                panic!("CU used {} more than baseline", cu_used);
+                panic!("CU used more than baseline");
             }
         }
         TEST_CU_USAGE_BASELINE => {
@@ -1598,7 +1598,7 @@ fn process_instruction<'a>(
             let after_cpi = sol_remaining_compute_units();
             let cu_used = before_cpi - after_cpi;
             if cu_used > 48212 {
-                panic!("CU used {} more than baseline", cu_used);
+                panic!("CU used more than baseline");
             }
         }
         TEST_CU_USAGE_MAX => {
@@ -1632,7 +1632,7 @@ fn process_instruction<'a>(
             let cu_used = before_cpi - after_cpi;
             // previous test + 61
             if cu_used > 48212 {
-                panic!("CU used {} more than baseline", cu_used);
+                panic!("CU usedmore than baseline");
             }
         }
         _ => panic!("unexpected program data"),
