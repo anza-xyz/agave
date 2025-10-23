@@ -1140,19 +1140,19 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             // For dirty entries: lock map briefly, get entry, calculate disk value, release lock, then write to disk
             // For clean entries: skip checks and pass to evict_from_cache
             let evictions_age: Vec<_> = evictions_age_possible
-                .iter()
+                .into_iter()
                 .filter_map(|(key, is_dirty)| {
-                    if !*is_dirty {
+                    if !is_dirty {
                         // Entry was not dirty at scan time and had ref_count == 1
                         // Skip all checks (including should_evict_from_mem) and do not do any disk ops
                         // Pass directly to evict_from_cache, which will re-check conditions under write lock
-                        Some(*key)
+                        Some(key)
                     } else {
                         // Entry was dirty at scan time, need to write to disk
                         let lock_measure = Measure::start("flush_read_lock");
                         let (disk_entry, disk_ref_count) = {
                             let map_read_guard = self.map_internal.read().unwrap();
-                            let entry = map_read_guard.get(key)?;
+                            let entry = map_read_guard.get(&key)?;
 
                             let mut mse = Measure::start("flush_should_evict");
                             let should_evict = self.should_evict_from_mem(
@@ -1174,7 +1174,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                             if !entry.clear_dirty() {
                                 // Entry was not dirty anymore, skip disk write
                                 flush_stats.flush_read_lock_us += lock_measure.end_as_us();
-                                return Some(*key);
+                                return Some(key);
                             }
 
                             // Check the refcount before grabbing the slot list read lock
@@ -1206,7 +1206,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         // may have to loop if disk has to grow and we have to retry the write
                         loop {
                             let disk_resize =
-                                disk.try_write(key, (&disk_entry, disk_ref_count.into()));
+                                disk.try_write(&key, (&disk_entry, disk_ref_count.into()));
                             match disk_resize {
                                 Ok(_) => {
                                     // successfully written to disk
@@ -1222,7 +1222,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                             }
                         }
 
-                        Some(*key)
+                        Some(key)
                     }
                 })
                 .collect();
