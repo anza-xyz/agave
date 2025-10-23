@@ -6,7 +6,7 @@ use {
         input_validators::{is_parsable, is_within_range},
     },
     solana_send_transaction_service::send_transaction_service::{
-        Config as SendTransactionServiceConfig, MAX_BATCH_SEND_RATE_MS,
+        Config as SendTransactionServiceConfig, MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
         MAX_TRANSACTION_SENDS_PER_SECOND,
     },
     std::sync::LazyLock,
@@ -14,6 +14,9 @@ use {
 
 const VALID_RANGE_RPC_SEND_TRANSACTION_BATCH_MS: std::ops::RangeInclusive<usize> =
     1..=MAX_BATCH_SEND_RATE_MS;
+const VALID_RANGE_RPC_SEND_TRANSACTION_BATCH_SIZE: std::ops::RangeInclusive<usize> =
+    1..=MAX_TRANSACTION_BATCH_SIZE;
+
 static DEFAULT_RPC_SEND_TRANSACTION_BATCH_MS: LazyLock<String> = LazyLock::new(|| {
     SendTransactionServiceConfig::default()
         .batch_send_rate_ms
@@ -22,6 +25,11 @@ static DEFAULT_RPC_SEND_TRANSACTION_BATCH_MS: LazyLock<String> = LazyLock::new(|
 static DEFAULT_RPC_SEND_TRANSACTION_RETRY_MS: LazyLock<String> = LazyLock::new(|| {
     SendTransactionServiceConfig::default()
         .retry_rate_ms
+        .to_string()
+});
+static DEFAULT_RPC_SEND_TRANSACTION_BATCH_SIZE: LazyLock<String> = LazyLock::new(|| {
+    SendTransactionServiceConfig::default()
+        .batch_size
         .to_string()
 });
 
@@ -105,6 +113,14 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .validator(is_parsable::<u64>)
             .default_value(&DEFAULT_RPC_SEND_TRANSACTION_RETRY_MS)
             .help("The rate at which transactions sent via rpc service are retried."),
+        Arg::with_name("rpc_send_transaction_batch_size")
+            .long("rpc-send-batch-size")
+            .value_name("NUMBER")
+            .hidden(hidden_unless_forced())
+            .takes_value(true)
+            .validator(|s| is_within_range(s, VALID_RANGE_RPC_SEND_TRANSACTION_BATCH_SIZE))
+            .default_value(&DEFAULT_RPC_SEND_TRANSACTION_BATCH_SIZE)
+            .help("The size of transactions to be sent in batch."),
     ]
 }
 
@@ -374,5 +390,15 @@ mod tests {
     #[test]
     fn test_default_rpc_send_transaction_retry_ms_unchanged() {
         assert_eq!(*DEFAULT_RPC_SEND_TRANSACTION_RETRY_MS, "2000");
+    }
+
+    #[test]
+    fn test_default_rpc_send_transaction_batch_size_unchanged() {
+        assert_eq!(*DEFAULT_RPC_SEND_TRANSACTION_BATCH_SIZE, "1");
+    }
+
+    #[test]
+    fn test_valid_range_rpc_send_transaction_batch_size_unchanged() {
+        assert_eq!(VALID_RANGE_RPC_SEND_TRANSACTION_BATCH_SIZE, 1..=10_000);
     }
 }

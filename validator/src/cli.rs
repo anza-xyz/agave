@@ -280,7 +280,6 @@ pub struct DefaultArgs {
     pub rpc_max_multiple_accounts: String,
     pub rpc_send_transaction_leader_forward_count: String,
     pub rpc_send_transaction_service_max_retries: String,
-    pub rpc_send_transaction_batch_size: String,
     pub rpc_send_transaction_retry_pool_max_size: String,
     pub rpc_threads: String,
     pub rpc_blocking_threads: String,
@@ -349,9 +348,6 @@ impl DefaultArgs {
                 .to_string(),
             rpc_send_transaction_service_max_retries: default_send_transaction_service_config
                 .service_max_retries
-                .to_string(),
-            rpc_send_transaction_batch_size: default_send_transaction_service_config
-                .batch_size
                 .to_string(),
             rpc_send_transaction_retry_pool_max_size: default_send_transaction_service_config
                 .retry_pool_max_size

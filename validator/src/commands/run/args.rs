@@ -26,9 +26,7 @@ use {
     solana_ledger::{blockstore_options::BlockstoreOptions, use_snapshot_archives_at_startup},
     solana_pubkey::Pubkey,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
-    solana_send_transaction_service::send_transaction_service::{
-        Config as SendTransactionServiceConfig, MAX_TRANSACTION_BATCH_SIZE,
-    },
+    solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
@@ -963,16 +961,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                 "The maximum number of transaction broadcast retries, regardless of requested \
                  value.",
             ),
-    )
-    .arg(
-        Arg::with_name("rpc_send_transaction_batch_size")
-            .long("rpc-send-batch-size")
-            .value_name("NUMBER")
-            .hidden(hidden_unless_forced())
-            .takes_value(true)
-            .validator(|s| is_within_range(s, 1..=MAX_TRANSACTION_BATCH_SIZE))
-            .default_value(&default_args.rpc_send_transaction_batch_size)
-            .help("The size of transactions to be sent in batch."),
     )
     .arg(
         Arg::with_name("rpc_send_transaction_retry_pool_max_size")
