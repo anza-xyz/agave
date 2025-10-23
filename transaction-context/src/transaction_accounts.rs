@@ -32,16 +32,22 @@ struct AccountSharedFields {
 }
 
 #[derive(Debug, PartialEq)]
-struct PrivateAccountFields {
+struct AccountPrivateFields {
     rent_epoch: u64,
     executable: bool,
     payload: Arc<Vec<u8>>,
 }
 
+impl AccountPrivateFields {
+    fn payload_len(&self) -> usize {
+        self.payload.len()
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct TransactionAccountView<'a> {
     abi_account: &'a AccountSharedFields,
-    private_fields: &'a PrivateAccountFields,
+    private_fields: &'a AccountPrivateFields,
 }
 
 impl ReadableAccount for TransactionAccountView<'_> {
@@ -64,13 +70,6 @@ impl ReadableAccount for TransactionAccountView<'_> {
     fn rent_epoch(&self) -> u64 {
         self.private_fields.rent_epoch
     }
-
-    fn to_account_shared_data(&self) -> AccountSharedData {
-        panic!(
-            "TransactionAccountView can't be transformed into AccountSharedData without losing \
-             reference constraints"
-        );
-    }
 }
 
 impl PartialEq<AccountSharedData> for TransactionAccountView<'_> {
@@ -86,7 +85,7 @@ impl PartialEq<AccountSharedData> for TransactionAccountView<'_> {
 #[derive(Debug)]
 pub struct TransactionAccountViewMut<'a> {
     abi_account: &'a mut AccountSharedFields,
-    private_fields: &'a mut PrivateAccountFields,
+    private_fields: &'a mut AccountPrivateFields,
 }
 
 impl TransactionAccountViewMut<'_> {
@@ -154,7 +153,7 @@ impl TransactionAccountViewMut<'_> {
         unsafe {
             self.abi_account
                 .payload
-                .set_len(self.private_fields.payload.len() as u64);
+                .set_len(self.private_fields.payload_len() as u64);
         }
     }
 
@@ -163,7 +162,7 @@ impl TransactionAccountViewMut<'_> {
             data.reserve(additional)
         } else {
             let mut data =
-                Vec::with_capacity(self.private_fields.payload.len().saturating_add(additional));
+                Vec::with_capacity(self.private_fields.payload_len().saturating_add(additional));
             data.extend_from_slice(self.private_fields.payload.as_slice());
             self.private_fields.payload = Arc::new(data);
         }
@@ -194,13 +193,6 @@ impl ReadableAccount for TransactionAccountViewMut<'_> {
 
     fn rent_epoch(&self) -> u64 {
         self.private_fields.rent_epoch
-    }
-
-    fn to_account_shared_data(&self) -> AccountSharedData {
-        panic!(
-            "TransactionAccountViewMut can't be transformed into AccountSharedData without losing \
-             reference constraints"
-        );
     }
 }
 
@@ -248,7 +240,7 @@ pub(crate) type DeconstructedTransactionAccounts =
 #[derive(Debug)]
 pub struct TransactionAccounts {
     shared_account_fields: UnsafeCell<Box<[AccountSharedFields]>>,
-    private_account_fields: UnsafeCell<Box<[PrivateAccountFields]>>,
+    private_account_fields: UnsafeCell<Box<[AccountPrivateFields]>>,
     borrow_counters: Box<[BorrowCounter]>,
     touched_flags: Box<[Cell<bool>]>,
     resize_delta: Cell<i64>,
@@ -275,14 +267,14 @@ impl TransactionAccounts {
                             item.1.data().len() as u64,
                         ),
                     },
-                    PrivateAccountFields {
+                    AccountPrivateFields {
                         rent_epoch: item.1.rent_epoch(),
                         executable: item.1.executable(),
                         payload: item.1.data_clone(),
                     },
                 )
             })
-            .collect::<(Vec<AccountSharedFields>, Vec<PrivateAccountFields>)>();
+            .collect::<(Vec<AccountSharedFields>, Vec<AccountPrivateFields>)>();
 
         TransactionAccounts {
             shared_account_fields: UnsafeCell::new(shared_accounts.into_boxed_slice()),
@@ -569,7 +561,7 @@ impl Drop for AccountRefMut<'_> {
             self.account
                 .abi_account
                 .payload
-                .set_len(self.account.private_fields.payload.len() as u64);
+                .set_len(self.account.private_fields.payload_len() as u64);
         }
         self.borrow_counter.release_borrow_mut();
     }
