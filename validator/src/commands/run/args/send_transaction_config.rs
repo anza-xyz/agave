@@ -1,7 +1,10 @@
 use {
     crate::commands::{Error, FromClapArgMatches, Result},
     clap::{value_t, Arg, ArgMatches},
-    solana_clap_utils::{hidden_unless_forced, input_validators::is_within_range},
+    solana_clap_utils::{
+        hidden_unless_forced,
+        input_validators::{is_parsable, is_within_range},
+    },
     solana_send_transaction_service::send_transaction_service::{
         Config as SendTransactionServiceConfig, MAX_BATCH_SEND_RATE_MS,
         MAX_TRANSACTION_SENDS_PER_SECOND,
@@ -14,6 +17,11 @@ const VALID_RANGE_RPC_SEND_TRANSACTION_BATCH_MS: std::ops::RangeInclusive<usize>
 static DEFAULT_RPC_SEND_TRANSACTION_BATCH_MS: LazyLock<String> = LazyLock::new(|| {
     SendTransactionServiceConfig::default()
         .batch_send_rate_ms
+        .to_string()
+});
+static DEFAULT_RPC_SEND_TRANSACTION_RETRY_MS: LazyLock<String> = LazyLock::new(|| {
+    SendTransactionServiceConfig::default()
+        .retry_rate_ms
         .to_string()
 });
 
@@ -81,14 +89,23 @@ impl FromClapArgMatches for SendTransactionServiceConfig {
 }
 
 pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
-    vec![Arg::with_name("rpc_send_transaction_batch_ms")
-        .long("rpc-send-batch-ms")
-        .value_name("MILLISECS")
-        .hidden(hidden_unless_forced())
-        .takes_value(true)
-        .validator(|s| is_within_range(s, VALID_RANGE_RPC_SEND_TRANSACTION_BATCH_MS))
-        .default_value(&DEFAULT_RPC_SEND_TRANSACTION_BATCH_MS)
-        .help("The rate at which transactions sent via rpc service are sent in batch.")]
+    vec![
+        Arg::with_name("rpc_send_transaction_batch_ms")
+            .long("rpc-send-batch-ms")
+            .value_name("MILLISECS")
+            .hidden(hidden_unless_forced())
+            .takes_value(true)
+            .validator(|s| is_within_range(s, VALID_RANGE_RPC_SEND_TRANSACTION_BATCH_MS))
+            .default_value(&DEFAULT_RPC_SEND_TRANSACTION_BATCH_MS)
+            .help("The rate at which transactions sent via rpc service are sent in batch."),
+        Arg::with_name("rpc_send_transaction_retry_ms")
+            .long("rpc-send-retry-ms")
+            .value_name("MILLISECS")
+            .takes_value(true)
+            .validator(is_parsable::<u64>)
+            .default_value(&DEFAULT_RPC_SEND_TRANSACTION_RETRY_MS)
+            .help("The rate at which transactions sent via rpc service are retried."),
+    ]
 }
 
 #[cfg(test)]
@@ -352,5 +369,10 @@ mod tests {
     #[test]
     fn test_valid_range_rpc_send_transaction_batch_ms_unchanged() {
         assert_eq!(VALID_RANGE_RPC_SEND_TRANSACTION_BATCH_MS, 1..=100_000);
+    }
+
+    #[test]
+    fn test_default_rpc_send_transaction_retry_ms_unchanged() {
+        assert_eq!(*DEFAULT_RPC_SEND_TRANSACTION_RETRY_MS, "2000");
     }
 }

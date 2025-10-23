@@ -930,15 +930,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("rpc_send_transaction_retry_ms")
-            .long("rpc-send-retry-ms")
-            .value_name("MILLISECS")
-            .takes_value(true)
-            .validator(is_parsable::<u64>)
-            .default_value(&default_args.rpc_send_transaction_retry_ms)
-            .help("The rate at which transactions sent via rpc service are retried."),
-    )
-    .arg(
         Arg::with_name("rpc_send_transaction_leader_forward_count")
             .long("rpc-send-leader-count")
             .value_name("NUMBER")
