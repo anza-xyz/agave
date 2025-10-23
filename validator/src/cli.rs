@@ -44,7 +44,7 @@ use {
 pub mod thread_args;
 use {
     solana_core::banking_stage::BankingStage,
-    thread_args::{DefaultThreadArgs, thread_args},
+    thread_args::{thread_args, DefaultThreadArgs},
 };
 
 // The default minimal snapshot download speed (bytes/second)
@@ -278,7 +278,6 @@ pub struct DefaultArgs {
     pub send_transaction_service_config: send_transaction_service::Config,
 
     pub rpc_max_multiple_accounts: String,
-    pub rpc_send_transaction_leader_forward_count: String,
     pub rpc_threads: String,
     pub rpc_blocking_threads: String,
     pub rpc_niceness_adjustment: String,
@@ -328,8 +327,6 @@ pub struct DefaultArgs {
 
 impl DefaultArgs {
     pub fn new() -> Self {
-        let default_send_transaction_service_config = send_transaction_service::Config::default();
-
         DefaultArgs {
             bind_address: "0.0.0.0".to_string(),
             ledger_path: "ledger".to_string(),
@@ -341,9 +338,6 @@ impl DefaultArgs {
             tower_storage: "file".to_string(),
             etcd_domain_name: "localhost".to_string(),
             send_transaction_service_config: send_transaction_service::Config::default(),
-            rpc_send_transaction_leader_forward_count: default_send_transaction_service_config
-                .leader_forward_count
-                .to_string(),
             rpc_threads: num_cpus::get().to_string(),
             rpc_blocking_threads: 1.max(num_cpus::get() / 4).to_string(),
             rpc_niceness_adjustment: "0".to_string(),

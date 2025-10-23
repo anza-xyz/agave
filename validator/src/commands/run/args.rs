@@ -928,18 +928,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("rpc_send_transaction_leader_forward_count")
-            .long("rpc-send-leader-count")
-            .value_name("NUMBER")
-            .takes_value(true)
-            .validator(is_parsable::<u64>)
-            .default_value(&default_args.rpc_send_transaction_leader_forward_count)
-            .help(
-                "The number of upcoming leaders to which to forward transactions sent via rpc \
-                 service.",
-            ),
-    )
-    .arg(
         Arg::with_name("geyser_plugin_config")
             .long("geyser-plugin-config")
             .alias("accountsdb-plugin-config")

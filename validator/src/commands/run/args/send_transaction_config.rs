@@ -42,6 +42,11 @@ static DEFAULT_RPC_SEND_TRANSACTION_RETRY_POOL_MAX_SIZE: LazyLock<String> = Lazy
         .retry_pool_max_size
         .to_string()
 });
+static DEFAULT_RPC_SEND_TRANSACTION_LEADER_FORWARD_COUNT: LazyLock<String> = LazyLock::new(|| {
+    SendTransactionServiceConfig::default()
+        .leader_forward_count
+        .to_string()
+});
 
 impl FromClapArgMatches for SendTransactionServiceConfig {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
@@ -170,6 +175,16 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .requires("rpc_send_transaction_tpu_peer")
             .help(
                 "With `--rpc-send-transaction-tpu-peer HOST:PORT`, also send to the current leader",
+            ),
+        Arg::with_name("rpc_send_transaction_leader_forward_count")
+            .long("rpc-send-leader-count")
+            .value_name("NUMBER")
+            .takes_value(true)
+            .validator(is_parsable::<u64>)
+            .default_value(&DEFAULT_RPC_SEND_TRANSACTION_LEADER_FORWARD_COUNT)
+            .help(
+                "The number of upcoming leaders to which to forward transactions sent via rpc \
+                 service.",
             ),
     ]
 }
@@ -463,5 +478,10 @@ mod tests {
     #[test]
     fn test_default_rpc_send_transaction_retry_pool_max_size_unchanged() {
         assert_eq!(*DEFAULT_RPC_SEND_TRANSACTION_RETRY_POOL_MAX_SIZE, "10000");
+    }
+
+    #[test]
+    fn test_default_rpc_send_transaction_leader_forward_count_unchanged() {
+        assert_eq!(*DEFAULT_RPC_SEND_TRANSACTION_LEADER_FORWARD_COUNT, "2");
     }
 }
