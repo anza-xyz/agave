@@ -1150,8 +1150,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         // Entry was dirty at scan time, need to write to disk
                         // Lock the map briefly to get the full entry reference
                         let lock_measure = Measure::start("flush_read_lock");
-                        let map = self.map_internal.read().unwrap();
-                        let entry = map.get(key)?;
+                        let map_read_guard = self.map_internal.read().unwrap();
+                        let entry = map_read_guard.get(key)?;
 
                         // Calculate should_evict_from_mem and disk index value under read lock
                         let mut mse = Measure::start("flush_should_evict");
@@ -1167,7 +1167,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
                         if !should_evict {
                             // not evicting, so don't write, even if dirty
-                            // map read lock will be released automatically when returning
+                            // map_read_guard will be released automatically when returning
                             flush_stats.flush_read_lock_us += lock_measure.end_as_us();
                             return None;
                         }
@@ -1178,7 +1178,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                             let mut ref_count = entry.ref_count();
                             if ref_count != 1 {
                                 entry.set_dirty(true);
-                                // map read lock will be released automatically when returning
+                                // map_read_guard will be released automatically when returning
                                 flush_stats.flush_read_lock_us += lock_measure.end_as_us();
                                 return None;
                             }
@@ -1188,7 +1188,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                             ref_count = entry.ref_count(); // needed to re-check ref count after grabbing slot list lock
                             if ref_count != 1 || slot_list.len() != 1 {
                                 entry.set_dirty(true);
-                                // slot_list and map read locks will be released automatically when returning
+                                // slot_list and map_read_guard will be released automatically when returning
                                 flush_stats.flush_read_lock_us += lock_measure.end_as_us();
                                 return None;
                             }
@@ -1197,7 +1197,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                             let disk_entry = [(slot, info.into())];
                             let disk_ref_count = ref_count;
                             drop(slot_list);
-                            drop(map);
+                            drop(map_read_guard);
                             flush_stats.flush_read_lock_us += lock_measure.end_as_us();
 
                             // Now write to disk WITHOUT holding the map lock
@@ -1222,7 +1222,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                             }
                         } else {
                             // Entry was not dirty anymore, skip disk write
-                            // map read lock will be released automatically at end of scope
+                            // map_read_guard will be released automatically at end of scope
                             flush_stats.flush_read_lock_us += lock_measure.end_as_us();
                         }
 
