@@ -129,6 +129,15 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .value_name("HOST:PORT")
             .validator(solana_net_utils::is_host_port)
             .help("Peer(s) to broadcast transactions to instead of the current leader"),
+        Arg::with_name("rpc_send_transaction_default_max_retries")
+            .long("rpc-send-default-max-retries")
+            .value_name("NUMBER")
+            .takes_value(true)
+            .validator(is_parsable::<usize>)
+            .help(
+                "The maximum number of transaction broadcast retries when unspecified by the \
+                 request, otherwise retried until expiration.",
+            ),
     ]
 }
 

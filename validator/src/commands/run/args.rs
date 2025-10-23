@@ -940,17 +940,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("rpc_send_transaction_default_max_retries")
-            .long("rpc-send-default-max-retries")
-            .value_name("NUMBER")
-            .takes_value(true)
-            .validator(is_parsable::<usize>)
-            .help(
-                "The maximum number of transaction broadcast retries when unspecified by the \
-                 request, otherwise retried until expiration.",
-            ),
-    )
-    .arg(
         Arg::with_name("rpc_send_transaction_service_max_retries")
             .long("rpc-send-service-max-retries")
             .value_name("NUMBER")
