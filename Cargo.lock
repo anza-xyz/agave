@@ -5594,8 +5594,9 @@ dependencies = [
 
 [[package]]
 name = "protosol"
-version = "1.0.1"
-source = "git+https://github.com/firedancer-io/protosol?tag=v1.0.4#72fb79f2a24e60a55d392c386c1ac7c2d15c13a4"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5e70d64aff3756d57a2b5e84ee2a01923f2a5350a51b93e8ec4631b817d8dcd"
 dependencies = [
  "prost",
  "prost-build",

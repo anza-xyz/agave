@@ -18,7 +18,7 @@ required-features = ["fuzz"]
 [features]
 agave-unstable-api = []
 dummy-for-ci-check = ["fuzz"]
-fuzz = ["dep:clap", "dep:prost", "dep:protosol", "dep:prost-build"]
+fuzz = ["dep:clap", "dep:prost", "dep:prost-build", "dep:protosol"]
 
 [dependencies]
 agave-feature-set = { workspace = true }
@@ -27,7 +27,7 @@ agave-syscalls = { workspace = true }
 bincode = { workspace = true }
 clap = { version = "4.5.2", features = ["derive"], optional = true }
 prost = { workspace = true, optional = true }
-protosol = { git = "https://github.com/firedancer-io/protosol", tag = "v1.0.4", optional = true }
+protosol = { workspace = true, optional = true }
 solana-account = { workspace = true }
 solana-builtins = { workspace = true }
 solana-clock = { workspace = true, features = ["sysvar"] }
