@@ -337,14 +337,12 @@ impl ClusterNodes<RetransmitStage> {
         }
 
         let mut rng = TurbineRng::new_seeded(leader, shred, self.use_cha_cha_8);
-        let nodes: Vec<_> =
-                // Only need shuffled nodes until this node itself.
-                weighted_shuffle
-                    .shuffle(&mut rng)
-                    .map(|index| &self.nodes[index])
-                    .take_while(|node| node.pubkey() != &self.pubkey)
-                    .collect();
-
+        // Only need shuffled nodes until this node itself.
+        let nodes: Vec<_> = weighted_shuffle
+            .shuffle(&mut rng)
+            .map(|index| &self.nodes[index])
+            .take_while(|node| node.pubkey() != &self.pubkey)
+            .collect();
         let parent = get_retransmit_parent(fanout, nodes.len(), &nodes);
         Ok(parent.map(Node::pubkey).copied())
     }
