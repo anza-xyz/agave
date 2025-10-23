@@ -8720,9 +8720,9 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f19aad3b79cf84cd24de85e711ed1718de1e5bf46a710fa73179efa6a117d707"
+checksum = "497caf6b5b0ad5fbf3879d4417cd520e11f19c34f183d052e42370d9a585c79a"
 dependencies = [
  "boxcar",
  "bs58",
@@ -8742,9 +8742,9 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi-macro"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d42809b90c84963eb5f2e17afafb1384892341b0d8ec12ae8f4a8c69a96138e4"
+checksum = "38e4bb0f5232668866a7f6f5cbc3222bbd9eebbff6afe392e3394498e8c9b1fa"
 dependencies = [
  "proc-macro2",
  "quote",
