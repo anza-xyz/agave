@@ -73,10 +73,10 @@ impl PossibleEvictions {
     }
 
     /// insert `key` at `relative_age` in the future into `possible_evictions`
-    fn insert(&mut self, relative_age: Age, key: Pubkey, is_dirty: bool, ref_count: RefCount) {
+    fn insert(&mut self, relative_age: Age, key: Pubkey, is_dirty: bool) {
         let index = self.index + (relative_age as usize);
         let list = &mut self.possible_evictions[index];
-        list.evictions_age_possible.push((key, is_dirty, ref_count));
+        list.evictions_age_possible.push((key, is_dirty));
     }
 }
 
@@ -164,8 +164,9 @@ struct StartupInfo<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
 /// result from scanning in-mem index during flush
 struct FlushScanResult {
     /// pubkeys whose age indicates they may be evicted now, pending further checks.
-    /// Each entry contains: (pubkey, is_dirty, ref_count)
-    evictions_age_possible: Vec<(Pubkey, bool, RefCount)>,
+    /// Each entry contains: (pubkey, is_dirty)
+    /// Entries with ref_count != 1 are filtered out during scan
+    evictions_age_possible: Vec<(Pubkey, bool)>,
 }
 
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T, U> {
@@ -921,7 +922,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     }
 
     /// fill in `possible_evictions` from `iter` by checking age
-    /// Filter as much as possible and capture dirty and ref_count info
+    /// Filter as much as possible and capture dirty flag
+    /// Skip entries with ref_count != 1 since they will be rejected later anyway
     fn gather_possible_evictions<'a>(
         iter: impl Iterator<Item = (&'a Pubkey, &'a Arc<AccountMapEntry<T>>)>,
         possible_evictions: &mut PossibleEvictions,
@@ -935,11 +937,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 continue;
             }
 
-            // Capture dirty and ref_count early during scan
-            let is_dirty = v.dirty();
-            let ref_count = v.ref_count();
+            // Skip entries with ref_count != 1 early
+            // In 99% of cases, these will be rejected by should_evict_from_mem or evict_from_cache anyway
+            // Filtering here avoids unnecessary work and reduces write lock contention in evict_from_cache
+            if v.ref_count() != 1 {
+                continue;
+            }
 
-            possible_evictions.insert(0, *k, is_dirty, ref_count);
+            // Capture dirty flag early during scan
+            let is_dirty = v.dirty();
+
+            possible_evictions.insert(0, *k, is_dirty);
         }
     }
 
@@ -1137,7 +1145,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             // For non-dirty entries: skip checks and pass to evict_from_cache
             let evictions_age: Vec<_> = evictions_age_possible
                 .iter()
-                .filter_map(|(key, is_dirty, ref_count)| {
+                .filter_map(|(key, is_dirty)| {
                     if *is_dirty {
                         // Entry was dirty at scan time, need to write to disk
                         // Lock the map briefly to get the full entry reference
@@ -1159,7 +1167,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
                         if !should_evict {
                             // not evicting, so don't write, even if dirty
-                            drop(map);
+                            // map read lock will be released automatically when returning
                             flush_stats.flush_read_lock_us += lock_measure.end_as_us();
                             return None;
                         }
@@ -1170,7 +1178,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                             let mut ref_count = entry.ref_count();
                             if ref_count != 1 {
                                 entry.set_dirty(true);
-                                drop(map);
+                                // map read lock will be released automatically when returning
                                 flush_stats.flush_read_lock_us += lock_measure.end_as_us();
                                 return None;
                             }
@@ -1180,8 +1188,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                             ref_count = entry.ref_count(); // needed to re-check ref count after grabbing slot list lock
                             if ref_count != 1 || slot_list.len() != 1 {
                                 entry.set_dirty(true);
-                                drop(slot_list);
-                                drop(map);
+                                // slot_list and map read locks will be released automatically when returning
                                 flush_stats.flush_read_lock_us += lock_measure.end_as_us();
                                 return None;
                             }
@@ -1215,19 +1222,15 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                             }
                         } else {
                             // Entry was not dirty anymore, skip disk write
-                            drop(map);
+                            // map read lock will be released automatically at end of scope
                             flush_stats.flush_read_lock_us += lock_measure.end_as_us();
                         }
 
                         Some(*key)
                     } else {
-                        // Entry was not dirty at scan time
+                        // Entry was not dirty at scan time and had ref_count == 1
                         // Skip all checks (including should_evict_from_mem) and do not do any disk ops
-                        // Still pass the entry to evict_from_cache, which will re-check under write lock
-                        if *ref_count != 1 {
-                            // Fast path: if ref_count != 1 at scan time, we know it won't be evictable
-                            return None;
-                        }
+                        // Pass directly to evict_from_cache, which will re-check conditions under write lock
                         Some(*key)
                     }
                 })
@@ -1771,7 +1774,7 @@ mod tests {
                 evictions
                     .evictions_age_possible
                     .iter()
-                    .for_each(|(key, _is_dirty, _ref_count)| {
+                    .for_each(|(key, _is_dirty)| {
                         let entry = map.get(key).unwrap();
                         assert!(
                             InMemAccountsIndex::<u64, u64>::should_evict_based_on_age(
