@@ -66,7 +66,6 @@ use {
         instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
     },
     solana_loader_v4_interface::{instruction as loader_v4, state::LoaderV4State},
-    agave_logger,
     solana_message::{
         compiled_instruction::CompiledInstruction, Message, MessageHeader, SanitizedMessage,
     },
