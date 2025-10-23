@@ -80,7 +80,7 @@ pub(crate) fn args<'a, 'b>(test_validator: bool) -> Vec<Arg<'a, 'b>> {
         )
     };
     let [default_rpc_pubsub_max_active_subscriptions, default_rpc_pubsub_queue_capacity_items, default_rpc_pubsub_queue_capacity_bytes] =
-        strings.map(|s| s.as_str());
+        strings;
 
     vec![
         Arg::with_name("rpc_pubsub_enable_block_subscription")
