@@ -20,6 +20,7 @@ name = "agave_snapshots"
 agave-unstable-api = []
 
 [dependencies]
+agave-fs = { workspace = true }
 bzip2 = { workspace = true }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }

@@ -29,11 +29,11 @@ use {
 ///
 /// This should be used when the required size is known at compile time and is within reasonable stack
 /// limits.
-pub(crate) struct Stack<const N: usize>([MaybeUninit<u8>; N]);
+struct Stack<const N: usize>([MaybeUninit<u8>; N]);
 
 impl<const N: usize> Stack<N> {
     #[inline(always)]
-    pub fn new() -> Self {
+    const fn new() -> Self {
         Self([MaybeUninit::uninit(); N])
     }
 }
@@ -56,7 +56,7 @@ impl<const N: usize> Stack<N> {
 
 /// An extension of the `BufRead` trait for file readers that allow tracking file
 /// read position offset.
-pub(crate) trait FileBufRead<'a>: BufRead {
+pub trait FileBufRead<'a>: BufRead {
     /// Activate the given `file` as source of reads of this reader.
     ///
     /// Resets the internal buffer to an empty state and sets the file offset to 0.
@@ -79,7 +79,7 @@ pub(crate) trait FileBufRead<'a>: BufRead {
 /// Unlike the standard `BufRead`, which only guarantees a non-empty buffer,
 /// this trait allows callers to enforce a minimum number of contiguous bytes
 /// to be made available.
-pub(crate) trait RequiredLenBufRead: BufRead {
+pub trait RequiredLenBufRead: BufRead {
     /// Ensures the internal buffer contains at least `required_len` contiguous bytes,
     /// and returns a slice of that buffer.
     ///
@@ -94,7 +94,7 @@ pub(crate) trait RequiredLenBufRead: BufRead {
     fn fill_buf_required(&mut self, required_len: usize) -> io::Result<&[u8]>;
 }
 
-pub(crate) trait RequiredLenBufFileRead<'a>: RequiredLenBufRead + FileBufRead<'a> {}
+pub trait RequiredLenBufFileRead<'a>: RequiredLenBufRead + FileBufRead<'a> {}
 impl<'a, T: RequiredLenBufRead + FileBufRead<'a>> RequiredLenBufFileRead<'a> for T {}
 
 /// read a file a large buffer at a time and provide access to a slice in that buffer
@@ -136,6 +136,12 @@ impl<'a, const N: usize> BufferedReader<'a, N> {
         self.file_last_offset = 0;
         self.file_offset_of_next_read = 0;
         self.buf_valid_bytes = 0..0;
+    }
+}
+
+impl<const N: usize> Default for BufferedReader<'_, N> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

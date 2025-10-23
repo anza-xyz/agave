@@ -3,6 +3,7 @@ use {
         hardened_unpack::{self, UnpackError},
         ArchiveFormat, ArchiveFormatDecompressor,
     },
+    agave_fs::buffered_reader,
     crossbeam_channel::Sender,
     std::{
         fs,
@@ -54,6 +55,6 @@ fn decompressed_tar_reader(
     buf_size: u64,
 ) -> io::Result<ArchiveFormatDecompressor<impl BufRead>> {
     let buf_reader =
-        solana_accounts_db::large_file_buf_reader(archive_path.as_ref(), buf_size as usize)?;
+        buffered_reader::large_file_buf_reader(archive_path.as_ref(), buf_size as usize)?;
     ArchiveFormatDecompressor::new(archive_format, buf_reader)
 }

@@ -36,6 +36,7 @@ frozen-abi = [
 ]
 
 [dependencies]
+agave-fs = { workspace = true }
 ahash = { workspace = true }
 bincode = { workspace = true }
 blake3 = { workspace = true }
@@ -46,7 +47,6 @@ crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
 indexmap = { workspace = true }
 itertools = { workspace = true }
-libc = { workspace = true }
 log = { workspace = true }
 lz4 = { workspace = true }
 memmap2 = { workspace = true }
@@ -58,7 +58,6 @@ rand = { workspace = true }
 rayon = { workspace = true }
 seqlock = { workspace = true }
 serde = { workspace = true, features = ["rc"] }
-slab = { workspace = true }
 smallvec = { workspace = true, features = ["const_generics"] }
 solana-account = { workspace = true, features = ["serde"] }
 solana-address-lookup-table-interface = { workspace = true, features = [
@@ -103,10 +102,6 @@ spl-generic-token = { workspace = true }
 static_assertions = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-agave-io-uring = { workspace = true }
-io-uring = { workspace = true }
 
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
