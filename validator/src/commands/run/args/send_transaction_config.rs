@@ -32,6 +32,11 @@ static DEFAULT_RPC_SEND_TRANSACTION_BATCH_SIZE: LazyLock<String> = LazyLock::new
         .batch_size
         .to_string()
 });
+static DEFAULT_RPC_SEND_TRANSACTION_SERVICE_MAX_RETRIES: LazyLock<String> = LazyLock::new(|| {
+    SendTransactionServiceConfig::default()
+        .service_max_retries
+        .to_string()
+});
 
 impl FromClapArgMatches for SendTransactionServiceConfig {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
@@ -137,6 +142,16 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .help(
                 "The maximum number of transaction broadcast retries when unspecified by the \
                  request, otherwise retried until expiration.",
+            ),
+        Arg::with_name("rpc_send_transaction_service_max_retries")
+            .long("rpc-send-service-max-retries")
+            .value_name("NUMBER")
+            .takes_value(true)
+            .validator(is_parsable::<usize>)
+            .default_value(&DEFAULT_RPC_SEND_TRANSACTION_SERVICE_MAX_RETRIES)
+            .help(
+                "The maximum number of transaction broadcast retries, regardless of requested \
+                 value.",
             ),
     ]
 }
@@ -417,5 +432,13 @@ mod tests {
     #[test]
     fn test_valid_range_rpc_send_transaction_batch_size_unchanged() {
         assert_eq!(VALID_RANGE_RPC_SEND_TRANSACTION_BATCH_SIZE, 1..=10_000);
+    }
+
+    #[test]
+    fn test_default_rpc_send_transaction_service_max_retries_unchanged() {
+        assert_eq!(
+            *DEFAULT_RPC_SEND_TRANSACTION_SERVICE_MAX_RETRIES,
+            usize::MAX.to_string()
+        );
     }
 }
