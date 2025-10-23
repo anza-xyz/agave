@@ -31,11 +31,12 @@ pub enum BanksClientError {
 }
 
 impl BanksClientError {
-    pub fn unwrap(&self) -> TransactionError {
+    /// Safely extract TransactionError if present, returns None for other error types
+    pub fn get_transaction_error(&self) -> Option<TransactionError> {
         match self {
             BanksClientError::TransactionError(err)
-            | BanksClientError::SimulationError { err, .. } => err.clone(),
-            _ => panic!("unexpected transport error"),
+            | BanksClientError::SimulationError { err, .. } => Some(err.clone()),
+            _ => None,
         }
     }
 }
