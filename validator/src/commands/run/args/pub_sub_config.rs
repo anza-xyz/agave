@@ -256,17 +256,26 @@ mod tests {
 
     #[test]
     fn test_default_rpc_pubsub_max_active_subscriptions_unchanged() {
-        assert_eq!(*DEFAULT_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS, "1000000");
+        assert_eq!(
+            *DEFAULT_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS,
+            1_000_000.to_string()
+        );
     }
 
     #[test]
     fn test_default_rpc_pubsub_queue_capacity_items_unchanged() {
-        assert_eq!(*DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS, "10000000");
+        assert_eq!(
+            *DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS,
+            10_000_000.to_string()
+        );
     }
 
     #[test]
     fn test_default_rpc_pubsub_queue_capacity_bytes_unchanged() {
-        assert_eq!(*DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_BYTES, "268435456");
+        assert_eq!(
+            *DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_BYTES,
+            (256 * 1024 * 1024).to_string()
+        );
     }
 
     #[test]
