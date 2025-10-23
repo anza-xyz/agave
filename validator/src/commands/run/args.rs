@@ -940,14 +940,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("rpc_send_transaction_also_leader")
-            .long("rpc-send-transaction-also-leader")
-            .requires("rpc_send_transaction_tpu_peer")
-            .help(
-                "With `--rpc-send-transaction-tpu-peer HOST:PORT`, also send to the current leader",
-            ),
-    )
-    .arg(
         Arg::with_name("geyser_plugin_config")
             .long("geyser-plugin-config")
             .alias("accountsdb-plugin-config")

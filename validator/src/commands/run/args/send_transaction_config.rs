@@ -165,6 +165,12 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .validator(is_parsable::<usize>)
             .default_value(&DEFAULT_RPC_SEND_TRANSACTION_RETRY_POOL_MAX_SIZE)
             .help("The maximum size of transactions retry pool."),
+        Arg::with_name("rpc_send_transaction_also_leader")
+            .long("rpc-send-transaction-also-leader")
+            .requires("rpc_send_transaction_tpu_peer")
+            .help(
+                "With `--rpc-send-transaction-tpu-peer HOST:PORT`, also send to the current leader",
+            ),
     ]
 }
 
