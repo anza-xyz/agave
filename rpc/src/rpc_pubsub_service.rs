@@ -69,7 +69,7 @@ impl PubSubConfig {
             enable_vote_subscription: false,
             max_active_subscriptions: 128,
             queue_capacity_items: 1000,
-            queue_capacity_bytes: 16*1024*1024,
+            queue_capacity_bytes: 16 * 1024 * 1024,
             worker_threads: 2,
             notification_threads: NonZeroUsize::new(2),
         }

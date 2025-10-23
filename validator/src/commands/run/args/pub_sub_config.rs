@@ -44,7 +44,7 @@ static DEFAULT_TEST_RPC_PUBSUB_WORKER_THREADS: LazyLock<String> = LazyLock::new(
 static DEFAULT_RPC_PUBSUB_NUM_NOTIFICATION_THREADS: LazyLock<String> =
     LazyLock::new(|| get_thread_count().to_string());
 
-pub(crate) fn args<'a, 'b, const TEST: bool>() -> Vec<Arg<'a, 'b>> {
+pub(crate) fn args<'a, 'b>(test_validator: bool) -> Vec<Arg<'a, 'b>> {
     let rpc_pubsub_notification_threads = Arg::with_name("rpc_pubsub_notification_threads")
         .long("rpc-pubsub-notification-threads")
         .takes_value(true)
@@ -54,24 +54,33 @@ pub(crate) fn args<'a, 'b, const TEST: bool>() -> Vec<Arg<'a, 'b>> {
             "The maximum number of threads that RPC PubSub will use for generating notifications. \
              0 will disable RPC PubSub notifications",
         );
-    let default_rpc_pubsub_max_active_subscriptions = if TEST {
-        &DEFAULT_TEST_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS
+    let (rpc_pubsub_notification_threads, strings) = if test_validator {
+        (
+            rpc_pubsub_notification_threads.default_value(&DEFAULT_TEST_RPC_PUBSUB_WORKER_THREADS),
+            [
+                &DEFAULT_TEST_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS,
+                &DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS,
+                &DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_BYTES,
+            ],
+        )
     } else {
-        &DEFAULT_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS
-    }
-    .as_str();
-    let default_rpc_pubsub_queue_capacity_items = if TEST {
-        &DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS
-    } else {
-        &DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS
-    }
-    .as_str();
-    let default_rpc_pubsub_queue_capacity_bytes = if TEST {
-        &DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_BYTES
-    } else {
-        &DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_BYTES
-    }
-    .as_str();
+        (
+            rpc_pubsub_notification_threads
+                .default_value_if(
+                    "full_rpc_api",
+                    None,
+                    &DEFAULT_RPC_PUBSUB_NUM_NOTIFICATION_THREADS,
+                )
+                .requires("full_rpc_api"),
+            [
+                &DEFAULT_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS,
+                &DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS,
+                &DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_BYTES,
+            ],
+        )
+    };
+    let [default_rpc_pubsub_max_active_subscriptions, default_rpc_pubsub_queue_capacity_items, default_rpc_pubsub_queue_capacity_bytes] =
+        strings.map(|s| s.as_str());
 
     vec![
         Arg::with_name("rpc_pubsub_enable_block_subscription")
@@ -120,17 +129,7 @@ pub(crate) fn args<'a, 'b, const TEST: bool>() -> Vec<Arg<'a, 'b>> {
             .validator(is_parsable::<usize>)
             .default_value(DEFAULT_RPC_PUBSUB_WORKER_THREADS)
             .help("PubSub worker threads"),
-        if TEST {
-            rpc_pubsub_notification_threads.default_value(&DEFAULT_TEST_RPC_PUBSUB_WORKER_THREADS)
-        } else {
-            rpc_pubsub_notification_threads
-                .default_value_if(
-                    "full_rpc_api",
-                    None,
-                    &DEFAULT_RPC_PUBSUB_NUM_NOTIFICATION_THREADS,
-                )
-                .requires("full_rpc_api")
-        },
+        rpc_pubsub_notification_threads,
     ]
 }
 

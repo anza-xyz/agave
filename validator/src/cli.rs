@@ -942,7 +942,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                      silently ignored",
                 ),
         )
-        .args(&pub_sub_config::args::<true>())
+        .args(&pub_sub_config::args(true))
 }
 
 pub struct DefaultTestArgs {

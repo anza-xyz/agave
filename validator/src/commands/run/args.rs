@@ -1472,7 +1472,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                  set,tpu-client-next is used by default.",
             ),
     )
-    .args(&pub_sub_config::args::<false>())
+    .args(&pub_sub_config::args(false))
     .args(&json_rpc_config::args(default_args))
     .args(&rpc_bigtable_config::args())
 }
