@@ -163,11 +163,13 @@ name = "agave-snapshots"
 version = "3.1.0"
 dependencies = [
  "agave-fs",
+ "bincode",
  "bzip2",
  "crossbeam-channel",
  "log",
  "lz4",
  "rand 0.8.5",
+ "semver",
  "solana-accounts-db",
  "solana-clock",
  "solana-genesis-config",

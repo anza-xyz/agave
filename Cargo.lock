@@ -265,11 +265,13 @@ version = "3.1.0"
 dependencies = [
  "agave-fs",
  "assert_matches",
+ "bincode",
  "bzip2",
  "crossbeam-channel",
  "log",
  "lz4",
  "rand 0.8.5",
+ "semver 1.0.27",
  "solana-accounts-db",
  "solana-clock",
  "solana-genesis-config",
