@@ -542,21 +542,19 @@ mod tests {
         solana_account::WritableAccount,
         solana_clock::Clock,
         solana_pubkey::Pubkey,
-        solana_vote_interface::{
-            authorized_voters::AuthorizedVoters,
-            state::{VoteInit, VoteStateV4, VoteStateVersions, BLS_PUBLIC_KEY_COMPRESSED_SIZE},
+        solana_vote_interface::state::{
+            VoteInit, VoteStateV4, VoteStateVersions, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
         },
         std::{collections::HashSet, iter::repeat_with},
-        test_case::test_case,
     };
 
     const MIN_STAKE_FOR_STAKED_ACCOUNT: u64 = 1;
     const MAX_STAKE_FOR_STAKED_ACCOUNT: u64 = 997;
 
-    fn new_rand_vote_account<R: Rng>(
+    fn new_rand_vote_account_internal<R: Rng>(
         rng: &mut R,
         node_pubkey: Option<Pubkey>,
-        is_alpenglow: bool,
+        fill_bls_pubkey: bool,
     ) -> AccountSharedData {
         let vote_pubkey = Pubkey::new_unique();
         let vote_init = VoteInit {
@@ -565,24 +563,17 @@ mod tests {
             authorized_withdrawer: Pubkey::new_unique(),
             commission: rng.gen(),
         };
-        let vote_state = if is_alpenglow {
-            VoteStateV4 {
-                node_pubkey: vote_init.node_pubkey,
-                authorized_voters: AuthorizedVoters::new(0, vote_init.authorized_voter),
-                authorized_withdrawer: vote_init.authorized_withdrawer,
-                bls_pubkey_compressed: Some([42; BLS_PUBLIC_KEY_COMPRESSED_SIZE]),
-                ..VoteStateV4::default()
-            }
-        } else {
-            let clock = Clock {
-                slot: rng.gen(),
-                epoch_start_timestamp: rng.gen(),
-                epoch: rng.gen(),
-                leader_schedule_epoch: rng.gen(),
-                unix_timestamp: rng.gen(),
-            };
-            VoteStateV4::new(&vote_pubkey, &vote_init, &clock)
+        let clock = Clock {
+            slot: rng.gen(),
+            epoch_start_timestamp: rng.gen(),
+            epoch: rng.gen(),
+            leader_schedule_epoch: rng.gen(),
+            unix_timestamp: rng.gen(),
         };
+        let mut vote_state = VoteStateV4::new(&vote_pubkey, &vote_init, &clock);
+        if fill_bls_pubkey {
+            vote_state.bls_pubkey_compressed = Some([42; BLS_PUBLIC_KEY_COMPRESSED_SIZE]);
+        }
         AccountSharedData::new_data(
             rng.gen(), // lamports
             &VoteStateVersions::new_v4(vote_state.clone()),
@@ -591,15 +582,21 @@ mod tests {
         .unwrap()
     }
 
+    fn new_rand_vote_account<R: Rng>(
+        rng: &mut R,
+        node_pubkey: Option<Pubkey>,
+    ) -> AccountSharedData {
+        new_rand_vote_account_internal(rng, node_pubkey, true)
+    }
+
     fn new_rand_vote_accounts<R: Rng>(
         rng: &mut R,
         num_nodes: usize,
-        is_alpenglow: bool,
     ) -> impl Iterator<Item = (Pubkey, (/*stake:*/ u64, VoteAccount))> + '_ {
         let nodes: Vec<_> = repeat_with(Pubkey::new_unique).take(num_nodes).collect();
         repeat_with(move || {
             let node = nodes[rng.gen_range(0..nodes.len())];
-            let account = new_rand_vote_account(rng, Some(node), is_alpenglow);
+            let account = new_rand_vote_account(rng, Some(node));
             let stake = rng.gen_range(0..MAX_STAKE_FOR_STAKED_ACCOUNT);
             let vote_account = VoteAccount::try_from(account).unwrap();
             (Pubkey::new_unique(), (stake, vote_account))
@@ -625,7 +622,7 @@ mod tests {
                 rng.gen_range(MIN_STAKE_FOR_STAKED_ACCOUNT..MAX_STAKE_FOR_STAKED_ACCOUNT)
             });
             let node_pubkey = Pubkey::new_unique();
-            let account = new_rand_vote_account(rng, Some(node_pubkey), is_alpenglow);
+            let account = new_rand_vote_account_internal(rng, Some(node_pubkey), is_alpenglow);
             // Give each identity account a large enough balance so they all pass the minimum vat check.
             identity_balances.insert(node_pubkey, 10_000_000_000);
             vote_accounts.insert(pubkey, VoteAccount::try_from(account).unwrap(), || stake);
@@ -650,23 +647,21 @@ mod tests {
         staked_nodes
     }
 
-    #[test_case(false ; "tower")]
-    #[test_case(true ; "alpenglow")]
-    fn test_vote_account_try_from(is_alpenglow: bool) {
+    #[test]
+    fn test_vote_account_try_from() {
         let mut rng = rand::thread_rng();
-        let account = new_rand_vote_account(&mut rng, None, is_alpenglow);
+        let account = new_rand_vote_account(&mut rng, None);
         let lamports = account.lamports();
         let vote_account = VoteAccount::try_from(account.clone()).unwrap();
         assert_eq!(lamports, vote_account.lamports());
         assert_eq!(&account, vote_account.account());
     }
 
-    #[test_case(false ; "tower")]
-    #[test_case(true ; "alpenglow")]
+    #[test]
     #[should_panic(expected = "InvalidOwner")]
-    fn test_vote_account_try_from_invalid_owner(is_alpenglow: bool) {
+    fn test_vote_account_try_from_invalid_owner() {
         let mut rng = rand::thread_rng();
-        let mut account = new_rand_vote_account(&mut rng, None, is_alpenglow);
+        let mut account = new_rand_vote_account(&mut rng, None);
         account.set_owner(Pubkey::new_unique());
         VoteAccount::try_from(account).unwrap();
     }
@@ -679,11 +674,10 @@ mod tests {
         VoteAccount::try_from(account).unwrap();
     }
 
-    #[test_case(false ; "tower")]
-    #[test_case(true ; "alpenglow")]
-    fn test_vote_account_serialize(is_alpenglow: bool) {
+    #[test]
+    fn test_vote_account_serialize() {
         let mut rng = rand::thread_rng();
-        let account = new_rand_vote_account(&mut rng, None, is_alpenglow);
+        let account = new_rand_vote_account(&mut rng, None);
         let vote_account = VoteAccount::try_from(account.clone()).unwrap();
         // Assert that VoteAccount has the same wire format as Account.
         assert_eq!(
@@ -692,14 +686,11 @@ mod tests {
         );
     }
 
-    #[test_case(false ; "tower")]
-    #[test_case(true ; "alpenglow")]
-    fn test_vote_accounts_serialize(is_alpenglow: bool) {
+    #[test]
+    fn test_vote_accounts_serialize() {
         let mut rng = rand::thread_rng();
         let vote_accounts_hash_map: VoteAccountsHashMap =
-            new_rand_vote_accounts(&mut rng, 64, is_alpenglow)
-                .take(1024)
-                .collect();
+            new_rand_vote_accounts(&mut rng, 64).take(1024).collect();
         let vote_accounts = VoteAccounts::from(Arc::new(vote_accounts_hash_map.clone()));
         assert!(vote_accounts.staked_nodes().len() > 32);
         assert_eq!(
@@ -711,17 +702,14 @@ mod tests {
             bincode::options()
                 .serialize(&vote_accounts_hash_map)
                 .unwrap(),
-        )
+        );
     }
 
-    #[test_case(false ; "tower")]
-    #[test_case(true ; "alpenglow")]
-    fn test_vote_accounts_deserialize(is_alpenglow: bool) {
+    #[test]
+    fn test_vote_accounts_deserialize() {
         let mut rng = rand::thread_rng();
         let vote_accounts_hash_map: VoteAccountsHashMap =
-            new_rand_vote_accounts(&mut rng, 64, is_alpenglow)
-                .take(1024)
-                .collect();
+            new_rand_vote_accounts(&mut rng, 64).take(1024).collect();
         let data = bincode::serialize(&vote_accounts_hash_map).unwrap();
         let vote_accounts: VoteAccounts = bincode::deserialize(&data).unwrap();
         assert!(vote_accounts.staked_nodes().len() > 32);
@@ -733,15 +721,14 @@ mod tests {
         assert_eq!(*vote_accounts.vote_accounts, vote_accounts_hash_map);
     }
 
-    #[test_case(false ; "tower")]
-    #[test_case(true ; "alpenglow")]
-    fn test_vote_accounts_deserialize_invalid_account(is_alpenglow: bool) {
+    #[test]
+    fn test_vote_accounts_deserialize_invalid_account() {
         let mut rng = rand::thread_rng();
         // we'll populate the map with 1 valid and 2 invalid accounts, then ensure that we only get
         // the valid one after deserialiation
         let mut vote_accounts_hash_map = HashMap::<Pubkey, (u64, AccountSharedData)>::new();
 
-        let valid_account = new_rand_vote_account(&mut rng, None, is_alpenglow);
+        let valid_account = new_rand_vote_account(&mut rng, None);
         vote_accounts_hash_map.insert(Pubkey::new_unique(), (0xAA, valid_account.clone()));
 
         // bad data
@@ -767,13 +754,10 @@ mod tests {
         assert_eq!(*stake, 0xAA);
     }
 
-    #[test_case(false ; "tower")]
-    #[test_case(true ; "alpenglow")]
-    fn test_staked_nodes(is_alpenglow: bool) {
+    #[test]
+    fn test_staked_nodes() {
         let mut rng = rand::thread_rng();
-        let mut accounts: Vec<_> = new_rand_vote_accounts(&mut rng, 64, is_alpenglow)
-            .take(1024)
-            .collect();
+        let mut accounts: Vec<_> = new_rand_vote_accounts(&mut rng, 64).take(1024).collect();
         let mut vote_accounts = VoteAccounts::default();
         // Add vote accounts.
         for (k, (pubkey, (stake, vote_account))) in accounts.iter().enumerate() {
@@ -821,15 +805,14 @@ mod tests {
         assert!(vote_accounts.staked_nodes.get().unwrap().is_empty());
     }
 
-    #[test_case(false ; "tower")]
-    #[test_case(true ; "alpenglow")]
-    fn test_staked_nodes_update(is_alpenglow: bool) {
+    #[test]
+    fn test_staked_nodes_update() {
         let mut vote_accounts = VoteAccounts::default();
 
         let mut rng = rand::thread_rng();
         let pubkey = Pubkey::new_unique();
         let node_pubkey = Pubkey::new_unique();
-        let account1 = new_rand_vote_account(&mut rng, Some(node_pubkey), is_alpenglow);
+        let account1 = new_rand_vote_account(&mut rng, Some(node_pubkey));
         let vote_account1 = VoteAccount::try_from(account1).unwrap();
 
         // first insert
@@ -849,7 +832,7 @@ mod tests {
         assert_eq!(vote_accounts.staked_nodes().get(&node_pubkey), Some(&42));
 
         // update with changed state, same node pubkey
-        let account2 = new_rand_vote_account(&mut rng, Some(node_pubkey), is_alpenglow);
+        let account2 = new_rand_vote_account(&mut rng, Some(node_pubkey));
         let vote_account2 = VoteAccount::try_from(account2).unwrap();
         let ret = vote_accounts.insert(pubkey, vote_account2.clone(), || {
             panic!("should not be called")
@@ -862,7 +845,7 @@ mod tests {
 
         // update with new node pubkey, stake must be moved
         let new_node_pubkey = Pubkey::new_unique();
-        let account3 = new_rand_vote_account(&mut rng, Some(new_node_pubkey), is_alpenglow);
+        let account3 = new_rand_vote_account(&mut rng, Some(new_node_pubkey));
         let vote_account3 = VoteAccount::try_from(account3).unwrap();
         let ret = vote_accounts.insert(pubkey, vote_account3.clone(), || {
             panic!("should not be called")
@@ -875,15 +858,14 @@ mod tests {
         );
     }
 
-    #[test_case(false ; "tower")]
-    #[test_case(true ; "alpenglow")]
-    fn test_staked_nodes_zero_stake(is_alpenglow: bool) {
+    #[test]
+    fn test_staked_nodes_zero_stake() {
         let mut vote_accounts = VoteAccounts::default();
 
         let mut rng = rand::thread_rng();
         let pubkey = Pubkey::new_unique();
         let node_pubkey = Pubkey::new_unique();
-        let account1 = new_rand_vote_account(&mut rng, Some(node_pubkey), is_alpenglow);
+        let account1 = new_rand_vote_account(&mut rng, Some(node_pubkey));
         let vote_account1 = VoteAccount::try_from(account1).unwrap();
 
         // we call this here to initialize VoteAccounts::staked_nodes which is a OnceLock
@@ -896,7 +878,7 @@ mod tests {
 
         // update with new node pubkey, stake is 0 and should remain 0
         let new_node_pubkey = Pubkey::new_unique();
-        let account2 = new_rand_vote_account(&mut rng, Some(new_node_pubkey), is_alpenglow);
+        let account2 = new_rand_vote_account(&mut rng, Some(new_node_pubkey));
         let vote_account2 = VoteAccount::try_from(account2).unwrap();
         let ret = vote_accounts.insert(pubkey, vote_account2.clone(), || {
             panic!("should not be called")
@@ -908,11 +890,10 @@ mod tests {
     }
 
     // Asserts that returned staked-nodes are copy-on-write references.
-    #[test_case(false ; "tower")]
-    #[test_case(true ; "alpenglow")]
-    fn test_staked_nodes_cow(is_alpenglow: bool) {
+    #[test]
+    fn test_staked_nodes_cow() {
         let mut rng = rand::thread_rng();
-        let mut accounts = new_rand_vote_accounts(&mut rng, 64, is_alpenglow);
+        let mut accounts = new_rand_vote_accounts(&mut rng, 64);
         // Add vote accounts.
         let mut vote_accounts = VoteAccounts::default();
         for (pubkey, (stake, vote_account)) in (&mut accounts).take(1024) {
@@ -941,11 +922,10 @@ mod tests {
     }
 
     // Asserts that returned vote-accounts are copy-on-write references.
-    #[test_case(false ; "tower")]
-    #[test_case(true ; "alpenglow")]
-    fn test_vote_accounts_cow(is_alpenglow: bool) {
+    #[test]
+    fn test_vote_accounts_cow() {
         let mut rng = rand::thread_rng();
-        let mut accounts = new_rand_vote_accounts(&mut rng, 64, is_alpenglow);
+        let mut accounts = new_rand_vote_accounts(&mut rng, 64);
         // Add vote accounts.
         let mut vote_accounts = VoteAccounts::default();
         for (pubkey, (stake, vote_account)) in (&mut accounts).take(1024) {
@@ -1061,7 +1041,7 @@ mod tests {
         let num_accounts = num_alpenglow_nodes + 2;
         let mut identity_balances = HashMap::with_capacity(num_accounts);
         let accounts = (0..num_accounts).map(|index| {
-            let account = new_rand_vote_account(&mut rng, None, true);
+            let account = new_rand_vote_account(&mut rng, None);
             let vote_account = VoteAccount::try_from(account).unwrap();
             identity_balances.insert(*vote_account.node_pubkey(), 10_000_000_000);
             let stake = if index < num_alpenglow_nodes - 10 {
@@ -1111,7 +1091,7 @@ mod tests {
             minimum_identity_balance,
             &identity_balances,
         );
-        assert!(filtered.len() <= num_alpenglow_nodes - entries_to_modify);
+        assert_eq!(filtered.len(), num_alpenglow_nodes - entries_to_modify);
     }
 
     #[test]
@@ -1157,7 +1137,7 @@ mod tests {
         // Make sure our vote account to identity mapping is 1:1.
         let vote_accounts = (0..num_nodes)
             .map(|_| {
-                let account = new_rand_vote_account(&mut rng, None, true);
+                let account = new_rand_vote_account(&mut rng, None);
                 let vote_account = VoteAccount::try_from(account).unwrap();
                 let stake = rng.gen_range(0..MAX_STAKE_FOR_STAKED_ACCOUNT);
                 (Pubkey::new_unique(), (stake, vote_account))

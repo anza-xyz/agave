@@ -63,7 +63,6 @@ solana-transaction = { workspace = true, features = ["bincode"] }
 solana-vote = { path = ".", features = ["agave-unstable-api"] }
 solana-vote-interface = { workspace = true, features = ["bincode", "dev-context-only-utils"] }
 static_assertions = { workspace = true }
-test-case = { workspace = true }
 
 [[bench]]
 name = "vote_account"
