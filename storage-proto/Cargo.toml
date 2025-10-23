@@ -42,7 +42,7 @@ tonic-build = { workspace = true }
 # windows users should install the protobuf compiler manually and set the PROTOC
 # envar to point to the installed binary
 [target."cfg(not(windows))".build-dependencies]
-protobuf-src = { workspace = true }
+protoc-bin-vendored = { workspace = true }
 
 [dev-dependencies]
 enum-iterator = { workspace = true }
