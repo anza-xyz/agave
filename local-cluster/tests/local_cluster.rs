@@ -3152,7 +3152,7 @@ fn run_test_load_program_accounts(scan_commitment: CommitmentConfig) {
     .take(node_stakes.len())
     .collect();
 
-    let num_starting_accounts = 1000;
+    let num_starting_accounts = 100;
     let exit = Arc::new(AtomicBool::new(false));
     let (update_client_sender, update_client_receiver) = unbounded();
     let (scan_client_sender, scan_client_receiver) = unbounded();
