@@ -1,6 +1,6 @@
 use {
     crate::commands::{Error, FromClapArgMatches, Result},
-    clap::{value_t, ArgMatches},
+    clap::{value_t, Arg, ArgMatches},
     solana_send_transaction_service::send_transaction_service::{
         Config as SendTransactionServiceConfig, MAX_TRANSACTION_SENDS_PER_SECOND,
     },
@@ -67,6 +67,10 @@ impl FromClapArgMatches for SendTransactionServiceConfig {
             leader_forward_count,
         })
     }
+}
+
+pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
+    vec![]
 }
 
 #[cfg(test)]
