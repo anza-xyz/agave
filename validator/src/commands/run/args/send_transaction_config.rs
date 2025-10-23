@@ -1,10 +1,21 @@
 use {
     crate::commands::{Error, FromClapArgMatches, Result},
     clap::{value_t, Arg, ArgMatches},
+    solana_clap_utils::{hidden_unless_forced, input_validators::is_within_range},
     solana_send_transaction_service::send_transaction_service::{
-        Config as SendTransactionServiceConfig, MAX_TRANSACTION_SENDS_PER_SECOND,
+        Config as SendTransactionServiceConfig, MAX_BATCH_SEND_RATE_MS,
+        MAX_TRANSACTION_SENDS_PER_SECOND,
     },
+    std::sync::LazyLock,
 };
+
+const VALID_RANGE_RPC_SEND_TRANSACTION_BATCH_MS: std::ops::RangeInclusive<usize> =
+    1..=MAX_BATCH_SEND_RATE_MS;
+static DEFAULT_RPC_SEND_TRANSACTION_BATCH_MS: LazyLock<String> = LazyLock::new(|| {
+    SendTransactionServiceConfig::default()
+        .batch_send_rate_ms
+        .to_string()
+});
 
 impl FromClapArgMatches for SendTransactionServiceConfig {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
@@ -70,7 +81,14 @@ impl FromClapArgMatches for SendTransactionServiceConfig {
 }
 
 pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
-    vec![]
+    vec![Arg::with_name("rpc_send_transaction_batch_ms")
+        .long("rpc-send-batch-ms")
+        .value_name("MILLISECS")
+        .hidden(hidden_unless_forced())
+        .takes_value(true)
+        .validator(|s| is_within_range(s, VALID_RANGE_RPC_SEND_TRANSACTION_BATCH_MS))
+        .default_value(&DEFAULT_RPC_SEND_TRANSACTION_BATCH_MS)
+        .help("The rate at which transactions sent via rpc service are sent in batch.")]
 }
 
 #[cfg(test)]
@@ -324,5 +342,15 @@ mod tests {
                 expected_args,
             );
         }
+    }
+
+    #[test]
+    fn test_default_rpc_send_transaction_batch_ms_unchanged() {
+        assert_eq!(*DEFAULT_RPC_SEND_TRANSACTION_BATCH_MS, "1");
+    }
+
+    #[test]
+    fn test_valid_range_rpc_send_transaction_batch_ms_unchanged() {
+        assert_eq!(VALID_RANGE_RPC_SEND_TRANSACTION_BATCH_MS, 1..=100_000);
     }
 }

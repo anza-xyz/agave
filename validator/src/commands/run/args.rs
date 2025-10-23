@@ -27,7 +27,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_send_transaction_service::send_transaction_service::{
-        Config as SendTransactionServiceConfig, MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
+        Config as SendTransactionServiceConfig, MAX_TRANSACTION_BATCH_SIZE,
     },
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
@@ -937,16 +937,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(is_parsable::<u64>)
             .default_value(&default_args.rpc_send_transaction_retry_ms)
             .help("The rate at which transactions sent via rpc service are retried."),
-    )
-    .arg(
-        Arg::with_name("rpc_send_transaction_batch_ms")
-            .long("rpc-send-batch-ms")
-            .value_name("MILLISECS")
-            .hidden(hidden_unless_forced())
-            .takes_value(true)
-            .validator(|s| is_within_range(s, 1..=MAX_BATCH_SEND_RATE_MS))
-            .default_value(&default_args.rpc_send_transaction_batch_ms)
-            .help("The rate at which transactions sent via rpc service are sent in batch."),
     )
     .arg(
         Arg::with_name("rpc_send_transaction_leader_forward_count")

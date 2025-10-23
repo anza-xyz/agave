@@ -279,7 +279,6 @@ pub struct DefaultArgs {
 
     pub rpc_max_multiple_accounts: String,
     pub rpc_send_transaction_retry_ms: String,
-    pub rpc_send_transaction_batch_ms: String,
     pub rpc_send_transaction_leader_forward_count: String,
     pub rpc_send_transaction_service_max_retries: String,
     pub rpc_send_transaction_batch_size: String,
@@ -348,9 +347,6 @@ impl DefaultArgs {
             send_transaction_service_config: send_transaction_service::Config::default(),
             rpc_send_transaction_retry_ms: default_send_transaction_service_config
                 .retry_rate_ms
-                .to_string(),
-            rpc_send_transaction_batch_ms: default_send_transaction_service_config
-                .batch_send_rate_ms
                 .to_string(),
             rpc_send_transaction_leader_forward_count: default_send_transaction_service_config
                 .leader_forward_count
