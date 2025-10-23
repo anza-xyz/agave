@@ -684,7 +684,10 @@ impl TestValidatorGenesis {
         socket_addr_space: SocketAddrSpace,
         rpc_to_plugin_manager_receiver: Option<Receiver<GeyserPluginManagerRequest>>,
     ) -> Result<TestValidator, Box<dyn std::error::Error>> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
+        // A current_thread runtime can deadlock since
+        // the HTTP client needs to spawn tasks while we block_on().
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
             .enable_io()
             .enable_time()
             .build()
@@ -748,7 +751,8 @@ impl TestValidatorGenesis {
         let mint_keypair = Keypair::new();
         self.start_with_mint_address(mint_keypair.pubkey(), socket_addr_space)
             .inspect(|test_validator| {
-                let runtime = tokio::runtime::Builder::new_current_thread()
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
                     .enable_io()
                     .enable_time()
                     .build()
