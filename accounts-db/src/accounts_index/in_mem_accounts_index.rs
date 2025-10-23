@@ -1185,7 +1185,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                                 return None;
                             }
 
-                            // Acquire the slot list lock just before extracting disk data
                             let slot_list = entry.slot_list_read_lock();
                             ref_count = entry.ref_count(); // re-check ref count after grabbing slot list lock
                             if ref_count != 1 || slot_list.len() != 1 {
@@ -1194,13 +1193,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                                 return None;
                             }
 
-                            // Extract data for disk write
                             // since we know slot_list.len() == 1, we can create a stack-allocated array for single element
                             let (slot, info) = slot_list[0];
                             let disk_entry = [(slot, info.into())];
 
                             (disk_entry, ref_count)
-                        }; // Locks released here
+                        };
 
                         flush_stats.flush_read_lock_us += lock_measure.end_as_us();
 
