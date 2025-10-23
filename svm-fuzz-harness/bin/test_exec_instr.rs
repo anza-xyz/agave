@@ -2,7 +2,7 @@ use {
     clap::Parser,
     prost::Message,
     solana_svm_fuzz_harness::{
-        fixture::proto::InstrFixture as ProtoInstrFixture, instr::execute_instr_proto,
+        fixture::proto::InstrFixture as ProtoInstrFixture, fuzz::execute_instr_proto,
     },
     std::path::PathBuf,
 };

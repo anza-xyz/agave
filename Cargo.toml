@@ -5,14 +5,11 @@ members = [
     "accounts-cluster-bench",
     "accounts-db",
     "accounts-db/store-histogram",
-    "accounts-db/store-tool",
-    "banking-bench",
     "banking-stage-ingress-types",
     "banks-client",
     "banks-interface",
     "banks-server",
     "bench-streamer",
-    "bench-tps",
     "bench-vote",
     "bloom",
     "bucket_map",
@@ -32,7 +29,6 @@ members = [
     "core",
     "cost-model",
     "curves/curve25519",
-    "dos",
     "download-utils",
     "entry",
     "faucet",
@@ -48,7 +44,6 @@ members = [
     "keygen",
     "lattice-hash",
     "ledger",
-    "ledger-tool",
     "local-cluster",
     "measure",
     "merkle-tree",
@@ -142,7 +137,16 @@ members = [
     "zk-token-sdk",
 ]
 
-exclude = ["ci/xtask", "programs/sbf", "svm/tests/example-programs"]
+exclude = [
+    # solana-dos depends on bench-tps. ignore bench-tps here to avoid confusing cargo's
+    # workspace resolution logic, which expects it in the top-level worspace rather than
+    # dev-bins
+    "bench-tps",
+    "ci/xtask",
+    "dev-bins",
+    "programs/sbf",
+    "svm/tests/example-programs",
+]
 
 resolver = "2"
 
@@ -273,6 +277,7 @@ gag = "1.0.0"
 gethostname = "0.2.3"
 getrandom = "0.3.4"
 goauth = "0.13.1"
+governor = "0.6.3"
 hex = "0.4.3"
 hidapi = { version = "2.6.3", default-features = false }
 histogram = "0.6.9"
@@ -353,7 +358,7 @@ reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.4"
 rts-alloc = { version = "0.1.1" }
-rustls = { version = "0.23.32", features = ["std"], default-features = false }
+rustls = { version = "0.23.34", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.27"
 seqlock = "0.2.0"
@@ -386,7 +391,6 @@ solana-atomic-u64 = "3.0.0"
 solana-banks-client = { path = "banks-client", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-banks-interface = { path = "banks-interface", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-banks-server = { path = "banks-server", version = "=3.1.0", features = ["agave-unstable-api"] }
-solana-bench-tps = { path = "bench-tps", version = "=3.1.0" }
 solana-big-mod-exp = "3.0.0"
 solana-bincode = "3.0.0"
 solana-blake3-hasher = "3.0.0"
@@ -598,7 +602,7 @@ tokio-serde = "0.8"
 tokio-stream = "0.1.17"
 tokio-tungstenite = "0.28.0"
 tokio-util = "0.7.16"
-toml = "0.8.12"
+toml = "0.9.8"
 tonic = "0.9.2"
 tonic-build = "0.9.2"
 tower = "0.5.2"

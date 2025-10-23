@@ -1,19 +1,16 @@
-#![allow(dead_code)]
-
 //! Controls the queueing and firing of skip timer events for use
 //! in the event loop.
 // TODO: Make this mockable in event_handler for tests
-
 mod stats;
 mod timers;
-
 use {
     crate::{
         common::{DELTA_BLOCK, DELTA_TIMEOUT},
+        consensus_metrics::ConsensusMetrics,
         event::VotorEvent,
     },
     crossbeam_channel::Sender,
-    parking_lot::RwLock,
+    parking_lot::RwLock as PlRwLock,
     solana_clock::Slot,
     std::{
         sync::{
@@ -25,20 +22,24 @@ use {
     },
     timers::Timers,
 };
-
 /// A manager of timer states.  Uses a background thread to trigger next ready
 /// timers and send events.
 pub(crate) struct TimerManager {
-    timers: Arc<RwLock<Timers>>,
+    timers: Arc<PlRwLock<Timers>>,
     handle: JoinHandle<()>,
 }
 
 impl TimerManager {
-    pub(crate) fn new(event_sender: Sender<VotorEvent>, exit: Arc<AtomicBool>) -> Self {
-        let timers = Arc::new(RwLock::new(Timers::new(
+    pub(crate) fn new(
+        event_sender: Sender<VotorEvent>,
+        exit: Arc<AtomicBool>,
+        consensus_metrics: Arc<PlRwLock<ConsensusMetrics>>,
+    ) -> Self {
+        let timers = Arc::new(PlRwLock::new(Timers::new(
             DELTA_TIMEOUT,
             DELTA_BLOCK,
             event_sender,
+            consensus_metrics,
         )));
         let handle = {
             let timers = Arc::clone(&timers);
@@ -57,28 +58,30 @@ impl TimerManager {
                 }
             })
         };
-
         Self { timers, handle }
     }
-
     pub(crate) fn set_timeouts(&self, slot: Slot) {
         self.timers.write().set_timeouts(slot, Instant::now());
     }
-
     pub(crate) fn join(self) {
         self.handle.join().unwrap();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_timeout_set(&self, slot: Slot) -> bool {
+        self.timers.read().is_timeout_set(slot)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use {super::*, crate::event::VotorEvent, crossbeam_channel::unbounded, std::time::Duration};
-
     #[test]
     fn test_timer_manager() {
         let (event_sender, event_receiver) = unbounded();
         let exit = Arc::new(AtomicBool::new(false));
-        let timer_manager = TimerManager::new(event_sender, exit.clone());
+        let consensus_metrics = Arc::new(PlRwLock::new(ConsensusMetrics::new(0)));
+        let timer_manager = TimerManager::new(event_sender, exit.clone(), consensus_metrics);
         let slot = 52;
         let start = Instant::now();
         timer_manager.set_timeouts(slot);

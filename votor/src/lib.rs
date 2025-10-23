@@ -23,6 +23,7 @@ pub mod event;
 mod event_handler;
 pub mod root_utils;
 mod staked_validators_cache;
+#[allow(dead_code)]
 mod timer_manager;
 pub mod vote_history;
 pub mod vote_history_storage;

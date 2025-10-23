@@ -425,7 +425,6 @@ pub fn large_file_buf_reader(path: &Path, buf_size: usize) -> io::Result<impl Bu
 mod tests {
     use {
         super::*,
-        crate::append_vec::ValidSlice,
         std::io::{Read as _, Write},
         tempfile::tempfile,
         test_case::test_case,
@@ -451,11 +450,11 @@ mod tests {
         let default_min_read = 8;
         let mut reader = BufferedReader::new(backing).with_file(&sample_file, file_len_valid);
         let offset = reader.get_file_offset();
-        let slice = ValidSlice::new(reader.fill_buf_required(default_min_read).unwrap());
+        let slice = reader.fill_buf_required(default_min_read).unwrap();
         let mut expected_offset = 0;
         assert_eq!(offset, expected_offset);
         assert_eq!(slice.len(), buffer_size);
-        assert_eq!(slice.slice(), &bytes[0..buffer_size]);
+        assert_eq!(slice, &bytes[0..buffer_size]);
 
         // Consume the data and attempt to read next 32 bytes, which is above supported buffer size,
         // so file offset is moved, but call returns quota error.
@@ -490,7 +489,7 @@ mod tests {
         // set_required_data to zero and offset should not change, and slice should be empty.
         required_len = 0;
         let offset = reader.get_file_offset();
-        let slice = ValidSlice::new(reader.fill_buf_required(required_len).unwrap());
+        let slice = reader.fill_buf_required(required_len).unwrap();
         let expected_offset = file_len_valid;
         assert_eq!(offset, expected_offset);
         let expected_slice_len = 0;
@@ -512,11 +511,11 @@ mod tests {
         let default_min_read_size = 8;
         let mut reader = BufferedReader::new(backing).with_file(&sample_file, valid_len);
         let offset = reader.get_file_offset();
-        let slice = ValidSlice::new(reader.fill_buf_required(default_min_read_size).unwrap());
+        let slice = reader.fill_buf_required(default_min_read_size).unwrap();
         let mut expected_offset = 0;
         assert_eq!(offset, expected_offset);
         assert_eq!(slice.len(), buffer_size);
-        assert_eq!(slice.slice(), &bytes[0..buffer_size]);
+        assert_eq!(slice, &bytes[0..buffer_size]);
 
         // Consume the data and attempt read next 16 bytes, expect to hit `valid_len`, and only read 14 bytes
         let mut advance = 16;
@@ -592,23 +591,23 @@ mod tests {
         let default_min_read_size = 8;
         let mut reader = BufferedReader::new(backing).with_file(&sample_file, file_len_valid);
         let offset = reader.get_file_offset();
-        let slice = ValidSlice::new(reader.fill_buf_required(default_min_read_size).unwrap());
+        let slice = reader.fill_buf_required(default_min_read_size).unwrap();
         let mut expected_offset = 0;
         assert_eq!(offset, expected_offset);
         assert_eq!(slice.len(), buffer_size);
-        assert_eq!(slice.slice(), &bytes[0..buffer_size]);
+        assert_eq!(slice, &bytes[0..buffer_size]);
 
         // Consume the partial data (8 byte) and attempt to read next 8 bytes
         let mut advance = 8;
         let mut required_len = 8;
         reader.consume(advance);
         let offset = reader.get_file_offset();
-        let slice = ValidSlice::new(reader.fill_buf_required(required_len).unwrap());
+        let slice = reader.fill_buf_required(required_len).unwrap();
         expected_offset += advance;
         assert_eq!(offset, expected_offset);
         assert_eq!(slice.len(), required_len);
         assert_eq!(
-            slice.slice(),
+            slice,
             &bytes[expected_offset..expected_offset + required_len]
         ); // no need to read more
 
@@ -617,12 +616,12 @@ mod tests {
         required_len = 16;
         reader.consume(advance);
         let offset = reader.get_file_offset();
-        let slice = ValidSlice::new(reader.fill_buf_required(required_len).unwrap());
+        let slice = reader.fill_buf_required(required_len).unwrap();
         expected_offset += advance;
         assert_eq!(offset, expected_offset);
         assert_eq!(slice.len(), required_len);
         assert_eq!(
-            slice.slice(),
+            slice,
             &bytes[expected_offset..expected_offset + required_len]
         );
 
@@ -665,11 +664,11 @@ mod tests {
         let default_min_read = 8;
         let mut reader = BufferedReader::new(backing).with_file(&sample_file, valid_len);
         let offset = reader.get_file_offset();
-        let slice = ValidSlice::new(reader.fill_buf_required(default_min_read).unwrap());
+        let slice = reader.fill_buf_required(default_min_read).unwrap();
         let mut expected_offset = 0;
         assert_eq!(offset, expected_offset);
         assert_eq!(slice.len(), buffer_size);
-        assert_eq!(slice.slice(), &bytes[0..buffer_size]);
+        assert_eq!(slice, &bytes[0..buffer_size]);
 
         // Consume the partial data (8 bytes) and attempt to read next 16 bytes
         // This will move the leftover 8bytes and read next 8 bytes.
@@ -677,12 +676,12 @@ mod tests {
         let mut required_data_len = 16;
         reader.consume(advance);
         let offset = reader.get_file_offset();
-        let slice = ValidSlice::new(reader.fill_buf_required(required_data_len).unwrap());
+        let slice = reader.fill_buf_required(required_data_len).unwrap();
         expected_offset += advance;
         assert_eq!(offset, expected_offset);
         assert_eq!(slice.len(), required_data_len);
         assert_eq!(
-            slice.slice(),
+            slice,
             &bytes[expected_offset..expected_offset + required_data_len]
         );
 
@@ -691,12 +690,12 @@ mod tests {
         required_data_len = 8;
         reader.consume(advance);
         let offset = reader.get_file_offset();
-        let slice = ValidSlice::new(reader.fill_buf_required(required_data_len).unwrap());
+        let slice = reader.fill_buf_required(required_data_len).unwrap();
         expected_offset += advance;
         assert_eq!(offset, expected_offset);
         assert_eq!(slice.len(), required_data_len);
         assert_eq!(
-            slice.slice(),
+            slice,
             &bytes[expected_offset..expected_offset + required_data_len]
         );
     }

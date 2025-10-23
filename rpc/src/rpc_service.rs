@@ -9,7 +9,7 @@ use {
         rpc_cache::LargestAccountsCache,
         rpc_health::*,
     },
-    agave_snapshots::SnapshotInterval,
+    agave_snapshots::{snapshot_config::SnapshotConfig, SnapshotInterval},
     crossbeam_channel::unbounded,
     jsonrpc_core::{futures::prelude::*, MetaIoHandler},
     jsonrpc_http_server::{
@@ -38,8 +38,7 @@ use {
         bank::Bank, bank_forks::BankForks, commitment::BlockCommitmentCache,
         non_circulating_supply::calculate_non_circulating_supply,
         prioritization_fee_cache::PrioritizationFeeCache,
-        snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
-        snapshot_utils,
+        snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_utils,
     },
     solana_send_transaction_service::{
         send_transaction_service::{self, SendTransactionService},

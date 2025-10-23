@@ -35,7 +35,6 @@ use {
         socket::SocketAddrSpace,
     },
     solana_time_utils::timestamp,
-    static_assertions::const_assert_eq,
     std::{
         borrow::Cow,
         collections::{HashMap, HashSet},
@@ -58,7 +57,14 @@ const DEDUPER_RESET_CYCLE: Duration = Duration::from_secs(5 * 60);
 // Minimum number of shreds to use rayon parallel iterators.
 const PAR_ITER_MIN_NUM_SHREDS: usize = 2;
 
-const_assert_eq!(CLUSTER_NODES_CACHE_NUM_EPOCH_CAP, 5);
+const _: () = const {
+    // From https://github.com/anza-xyz/agave/pull/1735#discussion_r1644899183:
+    // 1. There must be at least two epochs because near an epoch boundary you might receive
+    //    shreds from the other side of the epoch boundary.
+    // 2. It does not make sense to have capacity more than the number of epoch-stakes in Bank.
+    assert!(CLUSTER_NODES_CACHE_NUM_EPOCH_CAP >= 2);
+    assert!(CLUSTER_NODES_CACHE_NUM_EPOCH_CAP <= MAX_LEADER_SCHEDULE_STAKES as usize);
+};
 const CLUSTER_NODES_CACHE_NUM_EPOCH_CAP: usize = MAX_LEADER_SCHEDULE_STAKES as usize;
 const CLUSTER_NODES_CACHE_TTL: Duration = Duration::from_secs(5);
 

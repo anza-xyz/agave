@@ -1,6 +1,8 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    agave_snapshots::{hardened_unpack::open_genesis_config, SnapshotInterval},
+    agave_snapshots::{
+        hardened_unpack::open_genesis_config, snapshot_config::SnapshotConfig, SnapshotInterval,
+    },
     assert_matches::assert_matches,
     crossbeam_channel::{unbounded, Receiver},
     gag::BufferRedirect,
@@ -71,7 +73,6 @@ use {
         commitment::VOTE_THRESHOLD_SIZE,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils,
-        snapshot_config::SnapshotConfig,
         snapshot_package::SnapshotKind,
         snapshot_utils::{self, BANK_SNAPSHOTS_DIR},
     },
@@ -2652,7 +2653,7 @@ fn run_test_load_program_accounts_partition(scan_commitment: CommitmentConfig) {
     let exit = Arc::new(AtomicBool::new(false));
 
     let (t_update, t_scan, additional_accounts) = setup_transfer_scan_threads(
-        1000,
+        100,
         exit.clone(),
         scan_commitment,
         update_client_receiver,

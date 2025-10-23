@@ -228,12 +228,13 @@ pub struct WorkerToPackMessage {
     /// and is safe to do so - agave will hold no references to this memory
     /// after sending this message.
     pub batch: SharableTransactionBatchRegion,
-    /// `true` if the message was processed.
-    /// `false` if the message could not be processed. This will occur
+    /// `1` if the message was processed.
+    /// `0` if the message could not be processed. This will occur
     /// if the passed message was invalid, and could indicate an issue
     /// with the external pack process.
-    /// If `false`, the value of [`Self::responses`] is undefined.
-    pub processed: bool,
+    /// If `0`, the value of [`Self::responses`] is undefined.
+    /// Other values should be considered invalid.
+    pub processed: u8,
     /// Response per transaction in the batch.
     /// If [`Self::processed`] is false, this field is undefined.
     /// See [`TransactionResponseRegion`] for details.
@@ -294,7 +295,9 @@ pub mod worker_message_types {
     #[repr(C)]
     pub struct Resolved {
         /// Indicates if resolution was successful.
-        pub success: bool,
+        /// 0 = false, 1 = true.
+        /// Other values should be considered invalid.
+        pub success: u8,
         /// Slot of the bank used for resolution.
         pub slot: u64,
         /// Minimum deactivation slot of any ALT if any.

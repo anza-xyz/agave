@@ -715,8 +715,8 @@ fn cmp_snapshot_request_kinds_by_priority(
 mod test {
     use {
         super::*,
-        crate::{genesis_utils::create_genesis_config, snapshot_config::SnapshotConfig},
-        agave_snapshots::SnapshotInterval,
+        crate::genesis_utils::create_genesis_config,
+        agave_snapshots::{snapshot_config::SnapshotConfig, SnapshotInterval},
         crossbeam_channel::unbounded,
         solana_account::AccountSharedData,
         solana_epoch_schedule::EpochSchedule,

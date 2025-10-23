@@ -10,6 +10,8 @@
 
 mod archive_format;
 pub mod hardened_unpack;
+pub mod snapshot_config;
+pub mod snapshot_hash;
 mod snapshot_interval;
 mod snapshot_version;
 mod unarchive;
