@@ -164,9 +164,8 @@ struct StartupInfo<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
 /// result from scanning in-mem index during flush
 struct FlushScanResult {
     /// pubkeys whose age indicates they may be evicted now, pending further checks.
-    /// Each entry contains: (pubkey, is_dirty)
     /// Entries with ref_count != 1 are filtered out during scan
-    evictions_age_possible: Vec<(Pubkey, bool)>,
+    evictions_age_possible: Vec<(Pubkey, /*is_dirty*/ bool)>,
 }
 
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T, U> {
