@@ -1969,12 +1969,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "conditional-mod"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67935045d95e19071aae6ee98d649f2a5593e510802040c622200c8d6666a9ca"
-
-[[package]]
 name = "console"
 version = "0.15.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8175,7 +8169,6 @@ dependencies = [
  "bytemuck",
  "bytes",
  "chrono",
- "conditional-mod",
  "criterion",
  "crossbeam-channel",
  "dashmap",
@@ -9135,7 +9128,6 @@ dependencies = [
  "bzip2",
  "chrono",
  "chrono-humanize",
- "conditional-mod",
  "criterion",
  "crossbeam-channel",
  "dashmap",
@@ -11670,7 +11662,6 @@ dependencies = [
  "bs58",
  "bytes",
  "caps",
- "conditional-mod",
  "crossbeam-channel",
  "futures 0.3.31",
  "itertools 0.12.1",

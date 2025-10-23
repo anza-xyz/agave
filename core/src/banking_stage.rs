@@ -24,7 +24,6 @@ use {
         validator::BlockProductionMethod,
     },
     agave_banking_stage_ingress_types::BankingPacketReceiver,
-    conditional_mod::conditional_vis_mod,
     crossbeam_channel::{unbounded, Receiver, Sender},
     histogram::Histogram,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery},
@@ -67,14 +66,29 @@ pub mod vote_storage;
 
 mod consume_worker;
 mod vote_worker;
-conditional_vis_mod!(decision_maker, feature = "dev-context-only-utils", pub);
+
+#[cfg(feature = "dev-context-only-utils")]
+pub mod decision_maker;
+#[cfg(not(feature = "dev-context-only-utils"))]
+mod decision_maker;
+
 mod latest_validator_vote_packet;
 mod leader_slot_timing_metrics;
 mod read_write_account_set;
 mod vote_packet_receiver;
-conditional_vis_mod!(scheduler_messages, feature = "dev-context-only-utils", pub);
+
+#[cfg(feature = "dev-context-only-utils")]
+pub mod scheduler_messages;
+#[cfg(not(feature = "dev-context-only-utils"))]
+mod scheduler_messages;
+
 pub mod transaction_scheduler;
-conditional_vis_mod!(unified_scheduler, feature = "dev-context-only-utils", pub, pub(crate));
+
+#[cfg(feature = "dev-context-only-utils")]
+pub mod unified_scheduler;
+#[cfg(not(feature = "dev-context-only-utils"))]
+pub(crate) mod unified_scheduler;
+
 #[allow(dead_code)]
 #[cfg(unix)]
 mod progress_tracker;
