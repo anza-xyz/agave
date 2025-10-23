@@ -1169,7 +1169,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                                 return None;
                             }
 
-                            // Clear dirty and prepare disk write
                             if !entry.clear_dirty() {
                                 // Entry was not dirty anymore, skip disk write
                                 flush_stats.flush_read_lock_us += lock_measure.end_as_us();
