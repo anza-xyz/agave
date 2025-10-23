@@ -1144,7 +1144,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 .filter_map(|(key, is_dirty)| {
                     if *is_dirty {
                         // Entry was dirty at scan time, need to write to disk
-                        // Extract disk data while holding map read lock, then write outside the lock
                         let lock_measure = Measure::start("flush_read_lock");
                         let (disk_entry, disk_ref_count) = {
                             let map_read_guard = self.map_internal.read().unwrap();
