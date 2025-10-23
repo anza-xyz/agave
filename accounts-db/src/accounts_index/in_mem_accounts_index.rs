@@ -1151,7 +1151,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                             let map_read_guard = self.map_internal.read().unwrap();
                             let entry = map_read_guard.get(key)?;
 
-                            // Calculate should_evict_from_mem under read lock
                             let mut mse = Measure::start("flush_should_evict");
                             let should_evict = self.should_evict_from_mem(
                                 current_age,
