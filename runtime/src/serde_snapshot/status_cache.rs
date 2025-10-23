@@ -6,6 +6,7 @@ use shuttle::sync::Mutex;
 use std::sync::Mutex;
 use {
     crate::{bank::BankSlotDelta, snapshot_utils, status_cache::KeySlice},
+    agave_snapshots::error::SnapshotResult,
     bincode::{self, Options as _},
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
@@ -29,7 +30,7 @@ type SerdeStatus<T> = ahash::HashMap<Hash, (usize, Vec<(KeySlice, T)>)>;
 pub fn serialize_status_cache(
     slot_deltas: &[BankSlotDelta],
     status_cache_path: &Path,
-) -> snapshot_utils::Result<u64> {
+) -> SnapshotResult<u64> {
     snapshot_utils::serialize_snapshot_data_file(status_cache_path, |stream| {
         let snapshot_slot_deltas = slot_deltas
             .iter()
@@ -67,9 +68,7 @@ pub fn serialize_status_cache(
 /// Deserializes the status cache from file at `status_cache_path`
 ///
 /// This fn deserializes the status cache from a snapshot.
-pub fn deserialize_status_cache(
-    status_cache_path: &Path,
-) -> snapshot_utils::Result<Vec<BankSlotDelta>> {
+pub fn deserialize_status_cache(status_cache_path: &Path) -> SnapshotResult<Vec<BankSlotDelta>> {
     snapshot_utils::deserialize_snapshot_data_file(status_cache_path, |stream| {
         let snapshot_slot_deltas: Vec<SerdeBankSlotDelta> = bincode::options()
             .with_limit(snapshot_utils::MAX_SNAPSHOT_DATA_FILE_SIZE)

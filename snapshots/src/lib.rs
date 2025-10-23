@@ -9,6 +9,7 @@
 )]
 
 mod archive_format;
+pub mod error;
 pub mod hardened_unpack;
 pub mod snapshot_config;
 pub mod snapshot_hash;

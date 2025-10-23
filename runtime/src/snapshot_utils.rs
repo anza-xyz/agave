@@ -18,7 +18,13 @@ use {
         },
     },
     agave_snapshots::{
-        hardened_unpack::UnpackError, snapshot_config::SnapshotConfig, snapshot_hash::SnapshotHash,
+        error::{
+            AddBankSnapshotError, ArchiveSnapshotPackageError, GetSnapshotAccountsHardLinkDirError,
+            HardLinkStoragesToSnapshotError, SnapshotError, SnapshotFastbootError,
+            SnapshotNewFromDirError, SnapshotResult,
+        },
+        snapshot_config::SnapshotConfig,
+        snapshot_hash::SnapshotHash,
         streaming_unarchive_snapshot, ArchiveFormat, SnapshotVersion,
     },
     crossbeam_channel::{Receiver, Sender},
@@ -28,13 +34,11 @@ use {
     solana_accounts_db::{
         account_storage::{AccountStorageMap, AccountStoragesOrderer},
         account_storage_reader::AccountStorageReader,
-        accounts_db::{
-            AccountStorageEntry, AccountsDbConfig, AccountsFileId, AtomicAccountsFileId,
-        },
-        accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
+        accounts_db::{AccountStorageEntry, AccountsDbConfig, AtomicAccountsFileId},
+        accounts_file::{AccountsFile, StorageAccess},
         utils::{move_and_async_delete_path, ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR},
     },
-    solana_clock::{Epoch, Slot},
+    solana_clock::Slot,
     solana_hash::Hash,
     solana_measure::{measure::Measure, measure_time, measure_us},
     std::{
@@ -44,15 +48,12 @@ use {
         io::{self, BufReader, BufWriter, Error as IoError, Read, Seek, Write},
         mem,
         num::NonZeroUsize,
-        ops::RangeInclusive,
         path::{Path, PathBuf},
-        process::ExitStatus,
         str::FromStr,
         sync::{Arc, LazyLock},
     },
     tar,
     tempfile::TempDir,
-    thiserror::Error,
 };
 
 pub mod snapshot_storage_rebuilder;
@@ -259,287 +260,6 @@ pub struct UnpackedSnapshotsDirAndVersion {
 pub(crate) struct StorageAndNextAccountsFileId {
     pub storage: AccountStorageMap,
     pub next_append_vec_id: AtomicAccountsFileId,
-}
-
-#[derive(Error, Debug)]
-#[allow(clippy::large_enum_variant)]
-pub enum SnapshotError {
-    #[error("I/O error: {0}")]
-    Io(#[from] IoError),
-
-    #[error("AccountsFile error: {0}")]
-    AccountsFileError(#[from] AccountsFileError),
-
-    #[error("serialization error: {0}")]
-    Serialize(#[from] bincode::Error),
-
-    #[error("crossbeam send error: {0}")]
-    CrossbeamSend(#[from] crossbeam_channel::SendError<PathBuf>),
-
-    #[error("archive generation failure {0}")]
-    ArchiveGenerationFailure(ExitStatus),
-
-    #[error("Unpack error: {0}")]
-    UnpackError(#[from] UnpackError),
-
-    #[error("source({1}) - I/O error: {0}")]
-    IoWithSource(IoError, &'static str),
-
-    #[error("could not get file name from path '{0}'")]
-    PathToFileNameError(PathBuf),
-
-    #[error("could not get str from file name '{0}'")]
-    FileNameToStrError(PathBuf),
-
-    #[error("could not parse snapshot archive's file name '{0}'")]
-    ParseSnapshotArchiveFileNameError(String),
-
-    #[error(
-        "snapshots are incompatible: full snapshot slot ({0}) and incremental snapshot base slot \
-         ({1}) do not match"
-    )]
-    MismatchedBaseSlot(Slot, Slot),
-
-    #[error("no snapshot archives to load from '{0}'")]
-    NoSnapshotArchives(PathBuf),
-
-    #[error("snapshot slot mismatch: deserialized bank: {0}, snapshot archive: {1}")]
-    MismatchedSlot(Slot, Slot),
-
-    #[error("snapshot hash mismatch: deserialized bank: {0:?}, snapshot archive: {1:?}")]
-    MismatchedHash(SnapshotHash, SnapshotHash),
-
-    #[error(
-        "snapshot accounts file id mismatch: deserialized obsolete accounts file id: {0}, \
-         snapshot archive: {1}"
-    )]
-    MismatchedAccountsFileId(AccountsFileId, AccountsFileId),
-
-    #[error("snapshot slot deltas are invalid: {0}")]
-    VerifySlotDeltas(#[from] VerifySlotDeltasError),
-
-    #[error("snapshot epoch stakes are invalid: {0}")]
-    VerifyEpochStakes(#[from] VerifyEpochStakesError),
-
-    #[error("bank_snapshot_info new_from_dir failed: {0}")]
-    NewFromDir(#[from] SnapshotNewFromDirError),
-
-    #[error("invalid snapshot dir path '{0}'")]
-    InvalidSnapshotDirPath(PathBuf),
-
-    #[error("invalid AppendVec path '{0}'")]
-    InvalidAppendVecPath(PathBuf),
-
-    #[error("invalid account path '{0}'")]
-    InvalidAccountPath(PathBuf),
-
-    #[error("no valid snapshot dir found under '{0}'")]
-    NoSnapshotSlotDir(PathBuf),
-
-    #[error("snapshot dir account paths mismatching")]
-    AccountPathsMismatch,
-
-    #[error("failed to add bank snapshot for slot {1}: {0}")]
-    AddBankSnapshot(#[source] AddBankSnapshotError, Slot),
-
-    #[error("failed to archive snapshot package: {0}")]
-    ArchiveSnapshotPackage(#[from] ArchiveSnapshotPackageError),
-
-    #[error("failed to rebuild snapshot storages: {0}")]
-    RebuildStorages(String),
-}
-
-#[derive(Error, Debug)]
-pub enum SnapshotFastbootError {
-    #[error("incompatible fastboot version '{0}'")]
-    IncompatibleVersion(Version),
-}
-
-#[derive(Error, Debug)]
-pub enum SnapshotNewFromDirError {
-    #[error("invalid bank snapshot directory '{0}'")]
-    InvalidBankSnapshotDir(PathBuf),
-
-    #[error("missing status cache file '{0}'")]
-    MissingStatusCacheFile(PathBuf),
-
-    #[error("missing version file '{0}'")]
-    MissingVersionFile(PathBuf),
-
-    #[error("invalid snapshot version '{0}'")]
-    InvalidVersion(String),
-
-    #[error("invalid version string for fastboot '{0}'")]
-    InvalidFastbootVersion(String),
-
-    #[error("snapshot directory incomplete '{1}': {0}")]
-    IncompleteDir(#[source] IoError, PathBuf),
-
-    #[error("missing snapshot file '{0}'")]
-    MissingSnapshotFile(PathBuf),
-}
-
-pub type Result<T> = std::result::Result<T, SnapshotError>;
-
-/// Errors that can happen in `verify_slot_deltas()`
-#[derive(Error, Debug, PartialEq, Eq)]
-pub enum VerifySlotDeltasError {
-    #[error("too many entries: {0} (max: {1})")]
-    TooManyEntries(usize, usize),
-
-    #[error("slot {0} is not a root")]
-    SlotIsNotRoot(Slot),
-
-    #[error("slot {0} is greater than bank slot {1}")]
-    SlotGreaterThanMaxRoot(Slot, Slot),
-
-    #[error("slot {0} has multiple entries")]
-    SlotHasMultipleEntries(Slot),
-
-    #[error("slot {0} was not found in slot history")]
-    SlotNotFoundInHistory(Slot),
-
-    #[error("slot {0} was in history but missing from slot deltas")]
-    SlotNotFoundInDeltas(Slot),
-
-    #[error("snapshot slot history is invalid: {0}")]
-    VerifySlotHistory(#[from] VerifySlotHistoryError),
-}
-
-/// Errors that can happen in `verify_slot_history()`
-#[derive(Error, Debug, PartialEq, Eq)]
-pub enum VerifySlotHistoryError {
-    #[error("newest slot does not match snapshot")]
-    InvalidNewestSlot,
-
-    #[error("invalid number of entries")]
-    InvalidNumEntries,
-}
-
-/// Errors that can happen in `verify_epoch_stakes()`
-#[derive(Error, Debug, PartialEq, Eq)]
-pub enum VerifyEpochStakesError {
-    #[error("epoch {0} is greater than the max {1}")]
-    EpochGreaterThanMax(Epoch, Epoch),
-
-    #[error("stakes not found for epoch {0} (required epochs: {1:?})")]
-    StakesNotFound(Epoch, RangeInclusive<Epoch>),
-}
-
-/// Errors that can happen in `add_bank_snapshot()`
-#[derive(Error, Debug)]
-pub enum AddBankSnapshotError {
-    #[error("bank snapshot dir already exists '{0}'")]
-    SnapshotDirAlreadyExists(PathBuf),
-
-    #[error("failed to create snapshot dir '{1}': {0}")]
-    CreateSnapshotDir(#[source] IoError, PathBuf),
-
-    #[error("failed to flush storage '{1}': {0}")]
-    FlushStorage(#[source] AccountsFileError, PathBuf),
-
-    #[error("failed to hard link storages: {0}")]
-    HardLinkStorages(#[source] HardLinkStoragesToSnapshotError),
-
-    #[error("failed to serialize bank: {0}")]
-    SerializeBank(#[source] Box<SnapshotError>),
-
-    #[error("failed to serialize status cache: {0}")]
-    SerializeStatusCache(#[source] Box<SnapshotError>),
-
-    #[error("failed to serialize obsolete accounts: {0}")]
-    SerializeObsoleteAccounts(#[source] Box<SnapshotError>),
-
-    #[error("failed to write snapshot version file '{1}': {0}")]
-    WriteSnapshotVersionFile(#[source] IoError, PathBuf),
-
-    #[error("failed to mark snapshot as 'loadable': {0}")]
-    MarkSnapshotLoadable(#[source] IoError),
-}
-
-/// Errors that can happen in `archive_snapshot_package()`
-#[derive(Error, Debug)]
-pub enum ArchiveSnapshotPackageError {
-    #[error("failed to create archive path '{1}': {0}")]
-    CreateArchiveDir(#[source] IoError, PathBuf),
-
-    #[error("failed to create staging dir inside '{1}': {0}")]
-    CreateStagingDir(#[source] IoError, PathBuf),
-
-    #[error("failed to create snapshot staging dir '{1}': {0}")]
-    CreateSnapshotStagingDir(#[source] IoError, PathBuf),
-
-    #[error("failed to canonicalize snapshot source dir '{1}': {0}")]
-    CanonicalizeSnapshotSourceDir(#[source] IoError, PathBuf),
-
-    #[error("failed to symlink snapshot from '{1}' to '{2}': {0}")]
-    SymlinkSnapshot(#[source] IoError, PathBuf, PathBuf),
-
-    #[error("failed to symlink status cache from '{1}' to '{2}': {0}")]
-    SymlinkStatusCache(#[source] IoError, PathBuf, PathBuf),
-
-    #[error("failed to symlink version file from '{1}' to '{2}': {0}")]
-    SymlinkVersionFile(#[source] IoError, PathBuf, PathBuf),
-
-    #[error("failed to create archive file '{1}': {0}")]
-    CreateArchiveFile(#[source] IoError, PathBuf),
-
-    #[error("failed to archive version file: {0}")]
-    ArchiveVersionFile(#[source] IoError),
-
-    #[error("failed to archive snapshots dir: {0}")]
-    ArchiveSnapshotsDir(#[source] IoError),
-
-    #[error("failed to archive account storage file '{1}': {0}")]
-    ArchiveAccountStorageFile(#[source] IoError, PathBuf),
-
-    #[error("failed to archive snapshot: {0}")]
-    FinishArchive(#[source] IoError),
-
-    #[error("failed to create encoder: {0}")]
-    CreateEncoder(#[source] IoError),
-
-    #[error("failed to encode archive: {0}")]
-    FinishEncoder(#[source] IoError),
-
-    #[error("failed to query archive metadata '{1}': {0}")]
-    QueryArchiveMetadata(#[source] IoError, PathBuf),
-
-    #[error("failed to move archive from '{1}' to '{2}': {0}")]
-    MoveArchive(#[source] IoError, PathBuf, PathBuf),
-
-    #[error("failed to create account storage reader '{1}': {0}")]
-    AccountStorageReaderError(#[source] IoError, PathBuf),
-}
-
-/// Errors that can happen in `hard_link_storages_to_snapshot()`
-#[derive(Error, Debug)]
-pub enum HardLinkStoragesToSnapshotError {
-    #[error("failed to create accounts hard links dir '{1}': {0}")]
-    CreateAccountsHardLinksDir(#[source] IoError, PathBuf),
-
-    #[error("failed to get the snapshot's accounts hard link dir: {0}")]
-    GetSnapshotHardLinksDir(#[from] GetSnapshotAccountsHardLinkDirError),
-
-    #[error("failed to hard link storage from '{1}' to '{2}': {0}")]
-    HardLinkStorage(#[source] IoError, PathBuf, PathBuf),
-}
-
-/// Errors that can happen in `get_snapshot_accounts_hardlink_dir()`
-#[derive(Error, Debug)]
-pub enum GetSnapshotAccountsHardLinkDirError {
-    #[error("invalid account storage path '{0}'")]
-    GetAccountPath(PathBuf),
-
-    #[error("failed to create the snapshot hard link dir '{1}': {0}")]
-    CreateSnapshotHardLinkDir(#[source] IoError, PathBuf),
-
-    #[error("failed to symlink snapshot hard link dir '{link}' to '{original}': {source}")]
-    SymlinkSnapshotHardLinkDir {
-        source: IoError,
-        original: PathBuf,
-        link: PathBuf,
-    },
 }
 
 /// The account snapshot directories under <account_path>/snapshot/<slot> contain account files hardlinked
@@ -793,7 +513,7 @@ pub fn serialize_and_archive_snapshot_package(
     snapshot_package: SnapshotPackage,
     snapshot_config: &SnapshotConfig,
     should_flush_and_hard_link_storages: bool,
-) -> Result<SnapshotArchiveInfo> {
+) -> SnapshotResult<SnapshotArchiveInfo> {
     let SnapshotPackage {
         snapshot_kind,
         slot: snapshot_slot,
@@ -876,7 +596,7 @@ fn serialize_snapshot(
     bank_hash_stats: BankHashStats,
     write_version: u64,
     should_flush_and_hard_link_storages: bool,
-) -> Result<BankSnapshotInfo> {
+) -> SnapshotResult<BankSnapshotInfo> {
     let slot = bank_fields.slot;
 
     // this lambda function is to facilitate converting between
@@ -900,25 +620,26 @@ fn serialize_snapshot(
             bank_snapshot_path.display(),
         );
 
-        let bank_snapshot_serializer = move |stream: &mut BufWriter<fs::File>| -> Result<()> {
-            let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
-            let extra_fields = ExtraFieldsToSerialize {
-                lamports_per_signature: bank_fields.fee_rate_governor.lamports_per_signature,
-                obsolete_incremental_snapshot_persistence: None,
-                obsolete_epoch_accounts_hash: None,
-                versioned_epoch_stakes,
-                accounts_lt_hash: Some(bank_fields.accounts_lt_hash.clone().into()),
+        let bank_snapshot_serializer =
+            move |stream: &mut BufWriter<fs::File>| -> SnapshotResult<()> {
+                let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
+                let extra_fields = ExtraFieldsToSerialize {
+                    lamports_per_signature: bank_fields.fee_rate_governor.lamports_per_signature,
+                    obsolete_incremental_snapshot_persistence: None,
+                    obsolete_epoch_accounts_hash: None,
+                    versioned_epoch_stakes,
+                    accounts_lt_hash: Some(bank_fields.accounts_lt_hash.clone().into()),
+                };
+                serde_snapshot::serialize_bank_snapshot_into(
+                    stream,
+                    bank_fields,
+                    bank_hash_stats,
+                    &get_storages_to_serialize(snapshot_storages),
+                    extra_fields,
+                    write_version,
+                )?;
+                Ok(())
             };
-            serde_snapshot::serialize_bank_snapshot_into(
-                stream,
-                bank_fields,
-                bank_hash_stats,
-                &get_storages_to_serialize(snapshot_storages),
-                extra_fields,
-                write_version,
-            )?;
-            Ok(())
-        };
         let (bank_snapshot_consumed_size, bank_serialize) = measure_time!(
             serialize_snapshot_data_file(&bank_snapshot_path, bank_snapshot_serializer)
                 .map_err(|err| AddBankSnapshotError::SerializeBank(Box::new(err)))?,
@@ -1017,7 +738,7 @@ fn archive_snapshot(
     bank_snapshot_dir: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
     archive_format: ArchiveFormat,
-) -> Result<SnapshotArchiveInfo> {
+) -> SnapshotResult<SnapshotArchiveInfo> {
     use ArchiveSnapshotPackageError as E;
     const ACCOUNTS_DIR: &str = "accounts";
     info!("Generating snapshot archive for slot {snapshot_slot}, kind: {snapshot_kind:?}");
@@ -1240,7 +961,7 @@ pub fn write_obsolete_accounts_to_snapshot(
     bank_snapshot_dir: impl AsRef<Path>,
     snapshot_storages: &[Arc<AccountStorageEntry>],
     snapshot_slot: Slot,
-) -> Result<u64> {
+) -> SnapshotResult<u64> {
     let obsolete_accounts =
         SerdeObsoleteAccountsMap::new_from_storages(snapshot_storages, snapshot_slot);
     serialize_obsolete_accounts(
@@ -1254,7 +975,7 @@ fn serialize_obsolete_accounts(
     bank_snapshot_dir: impl AsRef<Path>,
     obsolete_accounts_map: &SerdeObsoleteAccountsMap,
     maximum_obsolete_accounts_file_size: u64,
-) -> Result<u64> {
+) -> SnapshotResult<u64> {
     let obsolete_accounts_path = bank_snapshot_dir
         .as_ref()
         .join(SNAPSHOT_OBSOLETE_ACCOUNTS_FILENAME);
@@ -1280,7 +1001,7 @@ fn serialize_obsolete_accounts(
 fn deserialize_obsolete_accounts(
     bank_snapshot_dir: impl AsRef<Path>,
     maximum_obsolete_accounts_file_size: u64,
-) -> Result<SerdeObsoleteAccountsMap> {
+) -> SnapshotResult<SerdeObsoleteAccountsMap> {
     let obsolete_accounts_path = bank_snapshot_dir
         .as_ref()
         .join(SNAPSHOT_OBSOLETE_ACCOUNTS_FILENAME);
@@ -1304,9 +1025,9 @@ fn deserialize_obsolete_accounts(
     Ok(obsolete_accounts)
 }
 
-pub fn serialize_snapshot_data_file<F>(data_file_path: &Path, serializer: F) -> Result<u64>
+pub fn serialize_snapshot_data_file<F>(data_file_path: &Path, serializer: F) -> SnapshotResult<u64>
 where
-    F: FnOnce(&mut BufWriter<std::fs::File>) -> Result<()>,
+    F: FnOnce(&mut BufWriter<std::fs::File>) -> SnapshotResult<()>,
 {
     serialize_snapshot_data_file_capped::<F>(
         data_file_path,
@@ -1317,11 +1038,12 @@ where
 
 pub fn deserialize_snapshot_data_file<T: Sized>(
     data_file_path: &Path,
-    deserializer: impl FnOnce(&mut BufReader<std::fs::File>) -> Result<T>,
-) -> Result<T> {
-    let wrapped_deserializer = move |streams: &mut SnapshotStreams<std::fs::File>| -> Result<T> {
-        deserializer(streams.full_snapshot_stream)
-    };
+    deserializer: impl FnOnce(&mut BufReader<std::fs::File>) -> SnapshotResult<T>,
+) -> SnapshotResult<T> {
+    let wrapped_deserializer =
+        move |streams: &mut SnapshotStreams<std::fs::File>| -> SnapshotResult<T> {
+            deserializer(streams.full_snapshot_stream)
+        };
 
     let wrapped_data_file_path = SnapshotRootPaths {
         full_snapshot_root_file_path: data_file_path.to_path_buf(),
@@ -1337,8 +1059,8 @@ pub fn deserialize_snapshot_data_file<T: Sized>(
 
 pub fn deserialize_snapshot_data_files<T: Sized>(
     snapshot_root_paths: &SnapshotRootPaths,
-    deserializer: impl FnOnce(&mut SnapshotStreams<std::fs::File>) -> Result<T>,
-) -> Result<T> {
+    deserializer: impl FnOnce(&mut SnapshotStreams<std::fs::File>) -> SnapshotResult<T>,
+) -> SnapshotResult<T> {
     deserialize_snapshot_data_files_capped(
         snapshot_root_paths,
         MAX_SNAPSHOT_DATA_FILE_SIZE,
@@ -1350,9 +1072,9 @@ fn serialize_snapshot_data_file_capped<F>(
     data_file_path: &Path,
     maximum_file_size: u64,
     serializer: F,
-) -> Result<u64>
+) -> SnapshotResult<u64>
 where
-    F: FnOnce(&mut BufWriter<std::fs::File>) -> Result<()>,
+    F: FnOnce(&mut BufWriter<std::fs::File>) -> SnapshotResult<()>,
 {
     let data_file = fs::File::create(data_file_path)?;
     let mut data_file_stream = BufWriter::new(data_file);
@@ -1373,8 +1095,8 @@ where
 fn deserialize_snapshot_data_files_capped<T: Sized>(
     snapshot_root_paths: &SnapshotRootPaths,
     maximum_file_size: u64,
-    deserializer: impl FnOnce(&mut SnapshotStreams<std::fs::File>) -> Result<T>,
-) -> Result<T> {
+    deserializer: impl FnOnce(&mut SnapshotStreams<std::fs::File>) -> SnapshotResult<T>,
+) -> SnapshotResult<T> {
     let (full_snapshot_file_size, mut full_snapshot_data_file_stream) =
         create_snapshot_data_file_stream(
             &snapshot_root_paths.full_snapshot_root_file_path,
@@ -1424,7 +1146,7 @@ fn deserialize_snapshot_data_files_capped<T: Sized>(
 fn create_snapshot_data_file_stream(
     snapshot_root_file_path: impl AsRef<Path>,
     maximum_file_size: u64,
-) -> Result<(u64, BufReader<std::fs::File>)> {
+) -> SnapshotResult<(u64, BufReader<std::fs::File>)> {
     let snapshot_file_size = fs::metadata(&snapshot_root_file_path)?.len();
 
     if snapshot_file_size > maximum_file_size {
@@ -1449,7 +1171,7 @@ fn check_deserialize_file_consumed(
     file_size: u64,
     file_path: impl AsRef<Path>,
     file_stream: &mut BufReader<std::fs::File>,
-) -> Result<()> {
+) -> SnapshotResult<()> {
     let consumed_size = file_stream.stream_position()?;
 
     if consumed_size != file_size {
@@ -1587,7 +1309,7 @@ pub fn verify_and_unarchive_snapshots(
     incremental_snapshot_archive_info: Option<&IncrementalSnapshotArchiveInfo>,
     account_paths: &[PathBuf],
     accounts_db_config: &AccountsDbConfig,
-) -> Result<(UnarchivedSnapshots, UnarchivedSnapshotsGuard)> {
+) -> SnapshotResult<(UnarchivedSnapshots, UnarchivedSnapshotsGuard)> {
     check_are_snapshots_compatible(
         full_snapshot_archive_info,
         incremental_snapshot_archive_info,
@@ -1704,7 +1426,7 @@ fn get_snapshot_file_kind(filename: &str) -> Option<SnapshotFileKind> {
 /// This function will push append_vec files into a buffer until we receive the snapshot file
 fn get_version_and_snapshot_files(
     file_receiver: &Receiver<PathBuf>,
-) -> Result<(PathBuf, PathBuf, Vec<PathBuf>)> {
+) -> SnapshotResult<(PathBuf, PathBuf, Vec<PathBuf>)> {
     let mut append_vec_files = Vec::with_capacity(1024);
     let mut snapshot_version_path = None;
     let mut snapshot_file_path = None;
@@ -1756,7 +1478,9 @@ struct SnapshotFieldsBundle {
 
 /// Parses fields and information from the snapshot files provided by
 /// `file_receiver`.
-fn snapshot_fields_from_files(file_receiver: &Receiver<PathBuf>) -> Result<SnapshotFieldsBundle> {
+fn snapshot_fields_from_files(
+    file_receiver: &Receiver<PathBuf>,
+) -> SnapshotResult<SnapshotFieldsBundle> {
     let (snapshot_version_path, snapshot_file_path, append_vec_files) =
         get_version_and_snapshot_files(file_receiver)?;
     let snapshot_version_str = snapshot_version_from_file(snapshot_version_path)?;
@@ -1784,7 +1508,9 @@ fn snapshot_fields_from_files(file_receiver: &Receiver<PathBuf>) -> Result<Snaps
 /// as a valid one.  A dir unpacked from an archive lacks these files.  Fill them here to
 /// allow new_from_dir() checks to pass.  These checks are not needed for unpacked dirs,
 /// but it is not clean to add another flag to new_from_dir() to skip them.
-fn create_snapshot_meta_files_for_unarchived_snapshot(unpack_dir: impl AsRef<Path>) -> Result<()> {
+fn create_snapshot_meta_files_for_unarchived_snapshot(
+    unpack_dir: impl AsRef<Path>,
+) -> SnapshotResult<()> {
     let snapshots_dir = unpack_dir.as_ref().join(BANK_SNAPSHOTS_DIR);
     if !snapshots_dir.is_dir() {
         return Err(SnapshotError::NoSnapshotSlotDir(snapshots_dir));
@@ -1822,7 +1548,7 @@ fn unarchive_snapshot(
     archive_format: ArchiveFormat,
     next_append_vec_id: Arc<AtomicAccountsFileId>,
     accounts_db_config: &AccountsDbConfig,
-) -> Result<UnarchivedSnapshot> {
+) -> SnapshotResult<UnarchivedSnapshot> {
     let unpack_dir = tempfile::Builder::new()
         .prefix(unpacked_snapshots_dir_prefix)
         .tempdir_in(bank_snapshots_dir)?;
@@ -1887,7 +1613,7 @@ fn streaming_snapshot_dir_files(
     snapshot_file_path: impl Into<PathBuf>,
     snapshot_version_path: impl Into<PathBuf>,
     account_paths: &[PathBuf],
-) -> Result<()> {
+) -> SnapshotResult<()> {
     file_sender.send(snapshot_file_path.into())?;
     file_sender.send(snapshot_version_path.into())?;
 
@@ -1909,7 +1635,7 @@ pub fn rebuild_storages_from_snapshot_dir(
     account_paths: &[PathBuf],
     next_append_vec_id: Arc<AtomicAccountsFileId>,
     storage_access: StorageAccess,
-) -> Result<(
+) -> SnapshotResult<(
     AccountStorageMap,
     BankFieldsToDeserialize,
     AccountsDbFields<SerializableAccountStorageEntry>,
@@ -2062,7 +1788,7 @@ fn snapshot_version_from_file(path: impl AsRef<Path>) -> io::Result<String> {
 fn check_are_snapshots_compatible(
     full_snapshot_archive_info: &FullSnapshotArchiveInfo,
     incremental_snapshot_archive_info: Option<&IncrementalSnapshotArchiveInfo>,
-) -> Result<()> {
+) -> SnapshotResult<()> {
     if incremental_snapshot_archive_info.is_none() {
         return Ok(());
     }
@@ -2080,7 +1806,7 @@ fn check_are_snapshots_compatible(
 }
 
 /// Get the `&str` from a `&Path`
-pub fn path_to_file_name_str(path: &Path) -> Result<&str> {
+pub fn path_to_file_name_str(path: &Path) -> SnapshotResult<&str> {
     path.file_name()
         .ok_or_else(|| SnapshotError::PathToFileNameError(path.to_path_buf()))?
         .to_str()
@@ -2131,7 +1857,7 @@ pub fn build_incremental_snapshot_archive_path(
 /// Parse a full snapshot archive filename into its Slot, Hash, and Archive Format
 pub(crate) fn parse_full_snapshot_archive_filename(
     archive_filename: &str,
-) -> Result<(Slot, SnapshotHash, ArchiveFormat)> {
+) -> SnapshotResult<(Slot, SnapshotHash, ArchiveFormat)> {
     static RE: std::sync::LazyLock<Regex> =
         std::sync::LazyLock::new(|| Regex::new(FULL_SNAPSHOT_ARCHIVE_FILENAME_REGEX).unwrap());
 
@@ -2162,7 +1888,7 @@ pub(crate) fn parse_full_snapshot_archive_filename(
 /// Parse an incremental snapshot archive filename into its base Slot, actual Slot, Hash, and Archive Format
 pub(crate) fn parse_incremental_snapshot_archive_filename(
     archive_filename: &str,
-) -> Result<(Slot, Slot, SnapshotHash, ArchiveFormat)> {
+) -> SnapshotResult<(Slot, Slot, SnapshotHash, ArchiveFormat)> {
     static RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
         Regex::new(INCREMENTAL_SNAPSHOT_ARCHIVE_FILENAME_REGEX).unwrap()
     });
@@ -2198,7 +1924,7 @@ pub(crate) fn parse_incremental_snapshot_archive_filename(
 /// Walk down the snapshot archive to collect snapshot archive file info
 fn get_snapshot_archives<T, F>(snapshot_archives_dir: &Path, cb: F) -> Vec<T>
 where
-    F: Fn(PathBuf) -> Result<T>,
+    F: Fn(PathBuf) -> SnapshotResult<T>,
 {
     let walk_dir = |dir: &Path| -> Vec<T> {
         let entry_iter = fs::read_dir(dir);
@@ -2390,7 +2116,7 @@ pub fn purge_old_snapshot_archives(
 
 pub fn verify_unpacked_snapshots_dir_and_version(
     unpacked_snapshots_dir_and_version: &UnpackedSnapshotsDirAndVersion,
-) -> Result<(SnapshotVersion, BankSnapshotInfo)> {
+) -> SnapshotResult<(SnapshotVersion, BankSnapshotInfo)> {
     info!(
         "snapshot version: {}",
         &unpacked_snapshots_dir_and_version.snapshot_version
@@ -2493,7 +2219,7 @@ fn purge_bank_snapshots<'a>(bank_snapshots: impl IntoIterator<Item = &'a BankSna
 }
 
 /// Remove the bank snapshot at this path
-pub fn purge_bank_snapshot(bank_snapshot_dir: impl AsRef<Path>) -> Result<()> {
+pub fn purge_bank_snapshot(bank_snapshot_dir: impl AsRef<Path>) -> SnapshotResult<()> {
     const FN_ERR: &str = "failed to purge bank snapshot";
     let accounts_hardlinks_dir = bank_snapshot_dir.as_ref().join(SNAPSHOT_ACCOUNTS_HARDLINKS);
     if accounts_hardlinks_dir.is_dir() {
