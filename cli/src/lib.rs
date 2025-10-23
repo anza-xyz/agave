@@ -32,6 +32,7 @@ pub mod memo;
 pub mod nonce;
 pub mod program;
 pub mod program_v4;
+mod rpc_subscriptions;
 pub mod spend_utils;
 pub mod stake;
 pub mod test_utils;
