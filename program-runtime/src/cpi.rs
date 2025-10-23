@@ -60,6 +60,12 @@ type Error = Box<dyn std::error::Error>;
 const SUCCESS: u64 = 0;
 /// Maximum signers
 const MAX_SIGNERS: usize = 16;
+///SIMD-0339 based calculation of AccountInfo translation byte size. Fixed size of **80 bytes** for each AccountInfo broken down as:
+/// - 32 bytes for account address
+/// - 32 bytes for owner address
+/// - 8 bytes for lamport balance
+/// - 8 bytes for data length
+const ACCOUNT_INFO_BYTE_SIZE: usize = 80;
 
 /// Rust representation of C's SolInstruction
 #[derive(Debug)]
@@ -602,25 +608,6 @@ pub fn translate_accounts_rust<'a>(
         check_aligned,
     )?;
 
-    if invoke_context
-        .get_feature_set()
-        .increase_cpi_account_info_limit
-    {
-        //std::mem::size_of::<AccountInfo>() returns 48 bytes, which contains references to the 2 Pubkeys of owner and key,
-        //but we need the full size here so, need to add (32 + 32) bytes for Pubkey types and account for 8 + 8 bytes already existing for refence types.
-        //Hence adding 32 here due to 5 bytes being the padding and 11 bytes being the other data, see SIMD-0339 for calculations.
-        let account_infos_bytes = account_infos
-            .len()
-            .saturating_mul(std::mem::size_of::<AccountInfo>().saturating_add(32));
-
-        consume_compute_meter(
-            invoke_context,
-            (account_infos_bytes as u64)
-                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-                .unwrap_or(u64::MAX),
-        )?;
-    }
-
     translate_accounts_common(
         &account_info_keys,
         account_infos,
@@ -762,25 +749,6 @@ pub fn translate_accounts_c<'a>(
         invoke_context,
         check_aligned,
     )?;
-
-    if invoke_context
-        .get_feature_set()
-        .increase_cpi_account_info_limit
-    {
-        //std::mem::size_of::<AccountInfo>() returns 48 bytes, which contains references to the 2 Pubkeys of owner and key,
-        //but we need the full size here so, need to add (32 + 32) bytes for Pubkey types and account for 8 + 8 bytes already existing for refence types.
-        //Hence adding 32 here due to 5 bytes being the padding and 11 bytes being the other data, see SIMD-0339 for calculations.
-        let account_infos_bytes = account_infos
-            .len()
-            .saturating_mul(std::mem::size_of::<AccountInfo>().saturating_add(32));
-
-        consume_compute_meter(
-            invoke_context,
-            (account_infos_bytes as u64)
-                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-                .unwrap_or(u64::MAX),
-        )?;
-    }
 
     translate_accounts_common(
         &account_info_keys,
@@ -1001,6 +969,21 @@ where
         check_aligned,
     )?;
     check_account_infos(account_infos.len(), invoke_context)?;
+
+    if invoke_context
+        .get_feature_set()
+        .increase_cpi_account_info_limit
+    {
+        let account_infos_bytes = account_infos.len().saturating_mul(ACCOUNT_INFO_BYTE_SIZE);
+
+        consume_compute_meter(
+            invoke_context,
+            (account_infos_bytes as u64)
+                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+                .unwrap_or(u64::MAX),
+        )?;
+    }
+
     let mut account_info_keys = Vec::with_capacity(account_infos_len as usize);
     #[allow(clippy::needless_range_loop)]
     for account_index in 0..account_infos_len as usize {
