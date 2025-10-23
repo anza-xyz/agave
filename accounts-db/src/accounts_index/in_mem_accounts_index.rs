@@ -1198,7 +1198,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                             let (slot, info) = slot_list[0];
                             let disk_entry = [(slot, info.into())];
 
-                            // map_read_guard and slot_list are dropped here, releasing locks
                             (disk_entry, ref_count)
                         }; // Locks released here
 
