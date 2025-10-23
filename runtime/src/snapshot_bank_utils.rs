@@ -31,6 +31,7 @@ use {
         },
         status_cache,
     },
+    agave_fs::dirs,
     agave_snapshots::{
         snapshot_config::SnapshotConfig, snapshot_hash::SnapshotHash, ArchiveFormat,
         SnapshotVersion,
@@ -39,7 +40,6 @@ use {
     solana_accounts_db::{
         accounts_db::{AccountsDbConfig, AtomicAccountsFileId},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
-        utils::remove_dir_contents,
     },
     solana_clock::{Epoch, Slot},
     solana_genesis_config::GenesisConfig,
@@ -346,7 +346,7 @@ pub fn bank_from_snapshot_dir(
     // Clear the contents of the account paths run directories.  When constructing the bank, the appendvec
     // files will be extracted from the snapshot hardlink directories into these run/ directories.
     for path in account_paths {
-        remove_dir_contents(path);
+        dirs::remove_dir_contents(path);
     }
 
     let next_append_vec_id = Arc::new(AtomicAccountsFileId::new(0));

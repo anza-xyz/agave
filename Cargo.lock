@@ -120,6 +120,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-fs"
+version = "3.1.0"
+dependencies = [
+ "agave-io-uring",
+ "io-uring",
+ "libc",
+ "log",
+ "rand 0.8.5",
+ "slab",
+ "smallvec",
+ "tempfile",
+ "test-case",
+]
+
+[[package]]
 name = "agave-geyser-plugin-interface"
 version = "3.1.0"
 dependencies = [
@@ -248,6 +263,7 @@ dependencies = [
 name = "agave-snapshots"
 version = "3.1.0"
 dependencies = [
+ "agave-fs",
  "assert_matches",
  "bzip2",
  "crossbeam-channel",
@@ -6939,7 +6955,7 @@ dependencies = [
 name = "solana-accounts-db"
 version = "3.1.0"
 dependencies = [
- "agave-io-uring",
+ "agave-fs",
  "agave-reserved-account-keys",
  "ahash 0.8.11",
  "assert_matches",
@@ -6952,9 +6968,7 @@ dependencies = [
  "crossbeam-channel",
  "dashmap",
  "indexmap 2.11.4",
- "io-uring",
  "itertools 0.12.1",
- "libc",
  "libsecp256k1",
  "log",
  "lz4",
@@ -6970,7 +6984,6 @@ dependencies = [
  "seqlock",
  "serde",
  "serde_bytes",
- "slab",
  "smallvec",
  "solana-account",
  "solana-accounts-db",
@@ -10048,6 +10061,7 @@ name = "solana-runtime"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-fs",
  "agave-precompiles",
  "agave-reserved-account-keys",
  "agave-snapshots",

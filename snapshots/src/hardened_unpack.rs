@@ -1,9 +1,9 @@
 use {
+    agave_fs::file_io::{self, FileCreator},
     bzip2::bufread::BzDecoder,
     crossbeam_channel::Sender,
     log::*,
     rand::{thread_rng, Rng},
-    solana_accounts_db::{file_creator, set_path_permissions, FileCreator},
     solana_genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
     std::{
         fs::{self, File},
@@ -118,7 +118,7 @@ where
     // (decompression multiplies content size, but buffering more than origin isn't necessary).
     let buf_size =
         (memlock_budget_size.min(actual_limit_size as usize)).min(MAX_UNPACK_WRITE_BUF_SIZE);
-    let mut files_creator = file_creator(buf_size, file_path_processor)?;
+    let mut files_creator = file_io::file_creator(buf_size, file_path_processor)?;
 
     let mut archive = Archive::new(input);
     for entry in archive.entries()? {
@@ -217,7 +217,7 @@ fn unpack_entry<'a, R: Read>(
     if should_fallback_to_tar_unpack(&entry) {
         entry.unpack(&dst)?;
         // Sanitize permissions.
-        set_path_permissions(&dst, mode)?;
+        file_io::set_path_permissions(&dst, mode)?;
 
         if !entry.header().entry_type().is_dir() {
             // Process file after setting permissions
