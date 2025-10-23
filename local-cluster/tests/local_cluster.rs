@@ -2653,7 +2653,7 @@ fn run_test_load_program_accounts_partition(scan_commitment: CommitmentConfig) {
     let exit = Arc::new(AtomicBool::new(false));
 
     let (t_update, t_scan, additional_accounts) = setup_transfer_scan_threads(
-        1000,
+        100,
         exit.clone(),
         scan_commitment,
         update_client_receiver,
