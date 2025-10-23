@@ -1060,10 +1060,6 @@ fn do_process_tower_sync(
     )
 }
 
-// This function is used:
-// a. In many tests.
-// b. In the genesis tool that initializes a cluster to create the bootstrap validator.
-// c. In the ledger tool when creating bootstrap vote accounts.
 #[cfg(test)]
 pub fn create_account_with_authorized(
     node_pubkey: &Pubkey,
