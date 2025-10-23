@@ -267,9 +267,9 @@ fn add_validator_accounts(
             let bls_pubkey = bls_pubkeys_iter
                 .next()
                 .expect("Missing BLS pubkey for {identity_pubkey}");
-            Some(bls_pubkey_to_compressed_bytes(bls_pubkey)),
+            Some(bls_pubkey_to_compressed_bytes(bls_pubkey))
         } else {
-          None
+            None
         };
         let vote_account = vote_state::create_v4_account_with_authorized(
             identity_pubkey,
