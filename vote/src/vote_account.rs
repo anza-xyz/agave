@@ -1,6 +1,5 @@
 use {
     crate::vote_state_view::VoteStateView,
-    itertools::Itertools,
     log::*,
     serde::{
         de::{MapAccess, Visitor},
