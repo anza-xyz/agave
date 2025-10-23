@@ -944,10 +944,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 continue;
             }
 
-            // Capture dirty flag early during scan
-            let is_dirty = v.dirty();
-
-            possible_evictions.insert(0, *k, is_dirty);
+            possible_evictions.insert(0, *k, v.dirty());
         }
     }
 
