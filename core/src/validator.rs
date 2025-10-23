@@ -1569,7 +1569,7 @@ impl Validator {
                     .local_addr()
                     .expect("failed to get local address")
                     .port();
-                let (rtx, sender) = XdpRetransmitter::new(xdp_config, src_port)
+                let (rtx, sender) = XdpRetransmitter::new(xdp_config, src_port, exit.clone())
                     .expect("failed to create xdp retransmitter");
                 (Some(rtx), Some(sender))
             } else {

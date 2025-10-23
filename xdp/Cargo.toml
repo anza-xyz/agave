@@ -12,6 +12,7 @@ publish = true
 agave-unstable-api = []
 
 [dependencies]
+arc-swap = { workspace = true }
 crossbeam-channel = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
