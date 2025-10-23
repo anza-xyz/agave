@@ -1148,82 +1148,83 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 .filter_map(|(key, is_dirty)| {
                     if *is_dirty {
                         // Entry was dirty at scan time, need to write to disk
-                        // Lock the map briefly to get the full entry reference
+                        // Extract disk data while holding map read lock, then write outside the lock
                         let lock_measure = Measure::start("flush_read_lock");
-                        let map_read_guard = self.map_internal.read().unwrap();
-                        let entry = map_read_guard.get(key)?;
+                        let (disk_entry, disk_ref_count) = {
+                            let map_read_guard = self.map_internal.read().unwrap();
+                            let entry = map_read_guard.get(key)?;
 
-                        // Calculate should_evict_from_mem and disk index value under read lock
-                        let mut mse = Measure::start("flush_should_evict");
-                        let should_evict = self.should_evict_from_mem(
-                            current_age,
-                            entry,
-                            startup,
-                            true,
-                            ages_flushing_now,
-                        );
-                        mse.stop();
-                        flush_stats.flush_should_evict_us += mse.as_us();
+                            // Calculate should_evict_from_mem under read lock
+                            let mut mse = Measure::start("flush_should_evict");
+                            let should_evict = self.should_evict_from_mem(
+                                current_age,
+                                entry,
+                                startup,
+                                true,
+                                ages_flushing_now,
+                            );
+                            mse.stop();
+                            flush_stats.flush_should_evict_us += mse.as_us();
 
-                        if !should_evict {
-                            // not evicting, so don't write, even if dirty
-                            // map_read_guard will be released automatically when returning
-                            flush_stats.flush_read_lock_us += lock_measure.end_as_us();
-                            return None;
-                        }
+                            if !should_evict {
+                                // not evicting, so don't write, even if dirty
+                                flush_stats.flush_read_lock_us += lock_measure.end_as_us();
+                                return None;
+                            }
 
-                        // Clear dirty and prepare disk write
-                        if entry.clear_dirty() {
-                            // Check the refcount before grabbing the slot list read lock. If ref_count != 1, then skip.
+                            // Clear dirty and prepare disk write
+                            if !entry.clear_dirty() {
+                                // Entry was not dirty anymore, skip disk write
+                                flush_stats.flush_read_lock_us += lock_measure.end_as_us();
+                                return Some(*key);
+                            }
+
+                            // Check the refcount before grabbing the slot list read lock
                             let mut ref_count = entry.ref_count();
                             if ref_count != 1 {
                                 entry.set_dirty(true);
-                                // map_read_guard will be released automatically when returning
                                 flush_stats.flush_read_lock_us += lock_measure.end_as_us();
                                 return None;
                             }
 
-                            // Re-acquire the slot list lock just before disk write to minimize lock contention
+                            // Acquire the slot list lock just before extracting disk data
                             let slot_list = entry.slot_list_read_lock();
-                            ref_count = entry.ref_count(); // needed to re-check ref count after grabbing slot list lock
+                            ref_count = entry.ref_count(); // re-check ref count after grabbing slot list lock
                             if ref_count != 1 || slot_list.len() != 1 {
                                 entry.set_dirty(true);
-                                // slot_list and map_read_guard will be released automatically when returning
                                 flush_stats.flush_read_lock_us += lock_measure.end_as_us();
                                 return None;
                             }
-                            // since we know slot_list.len() == 1, we can create a stack-allocated array for single element.
+
+                            // Extract data for disk write
+                            // since we know slot_list.len() == 1, we can create a stack-allocated array for single element
                             let (slot, info) = slot_list[0];
                             let disk_entry = [(slot, info.into())];
-                            let disk_ref_count = ref_count;
-                            drop(slot_list);
-                            drop(map_read_guard);
-                            flush_stats.flush_read_lock_us += lock_measure.end_as_us();
 
-                            // Now write to disk WITHOUT holding the map lock
-                            // may have to loop if disk has to grow and we have to retry the write
-                            loop {
-                                let disk_resize =
-                                    disk.try_write(key, (&disk_entry, disk_ref_count.into()));
-                                match disk_resize {
-                                    Ok(_) => {
-                                        // successfully written to disk
-                                        flush_stats.flush_entries_updated_on_disk += 1;
-                                        // exit disk-resize loop
-                                        break;
-                                    }
-                                    Err(err) => {
-                                        // disk needs to resize. This item did not get written. Resize and try again.
-                                        let m = Measure::start("flush_grow");
-                                        disk.grow(err);
-                                        flush_stats.flush_grow_us += m.end_as_us();
-                                    }
+                            // map_read_guard and slot_list are dropped here, releasing locks
+                            (disk_entry, ref_count)
+                        }; // Locks released here
+
+                        flush_stats.flush_read_lock_us += lock_measure.end_as_us();
+
+                        // Now write to disk WITHOUT holding any locks
+                        // may have to loop if disk has to grow and we have to retry the write
+                        loop {
+                            let disk_resize =
+                                disk.try_write(key, (&disk_entry, disk_ref_count.into()));
+                            match disk_resize {
+                                Ok(_) => {
+                                    // successfully written to disk
+                                    flush_stats.flush_entries_updated_on_disk += 1;
+                                    break;
+                                }
+                                Err(err) => {
+                                    // disk needs to resize. This item did not get written. Resize and try again.
+                                    let m = Measure::start("flush_grow");
+                                    disk.grow(err);
+                                    flush_stats.flush_grow_us += m.end_as_us();
                                 }
                             }
-                        } else {
-                            // Entry was not dirty anymore, skip disk write
-                            // map_read_guard will be released automatically at end of scope
-                            flush_stats.flush_read_lock_us += lock_measure.end_as_us();
                         }
 
                         Some(*key)
