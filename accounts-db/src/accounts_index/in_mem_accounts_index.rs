@@ -1139,7 +1139,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
             // Process each eviction candidate
             // For dirty entries: lock map briefly, get entry, calculate disk value, release lock, then write to disk
-            // For non-dirty entries: skip checks and pass to evict_from_cache
+            // For clean entries: skip checks and pass to evict_from_cache
             let evictions_age: Vec<_> = evictions_age_possible
                 .iter()
                 .filter_map(|(key, is_dirty)| {
