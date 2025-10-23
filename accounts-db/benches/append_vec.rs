@@ -1,7 +1,5 @@
-#![feature(test)]
-extern crate test;
-
 use {
+    bencher::{benchmark_group, benchmark_main, Bencher},
     rand::{thread_rng, Rng},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
@@ -18,7 +16,6 @@ use {
         thread::{sleep, spawn},
         time::Duration,
     },
-    test::Bencher,
 };
 
 #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
@@ -51,12 +48,10 @@ fn append_vec_append(bencher: &mut Bencher, storage_access: StorageAccess) {
     });
 }
 
-#[bench]
 fn append_vec_append_file(bencher: &mut Bencher) {
     append_vec_append(bencher, StorageAccess::File);
 }
 
-#[bench]
 fn append_vec_append_mmap(bencher: &mut Bencher) {
     append_vec_append(
         bencher,
@@ -90,12 +85,10 @@ fn append_vec_sequential_read(bencher: &mut Bencher, storage_access: StorageAcce
     });
 }
 
-#[bench]
 fn append_vec_sequential_read_file(bencher: &mut Bencher) {
     append_vec_sequential_read(bencher, StorageAccess::File);
 }
 
-#[bench]
 fn append_vec_sequential_read_mmap(bencher: &mut Bencher) {
     append_vec_sequential_read(
         bencher,
@@ -119,12 +112,10 @@ fn append_vec_random_read(bencher: &mut Bencher, storage_access: StorageAccess) 
     });
 }
 
-#[bench]
 fn append_vec_random_read_file(bencher: &mut Bencher) {
     append_vec_random_read(bencher, StorageAccess::File);
 }
 
-#[bench]
 fn append_vec_random_read_mmap(bencher: &mut Bencher) {
     append_vec_random_read(
         bencher,
@@ -167,12 +158,10 @@ fn append_vec_concurrent_append_read(bencher: &mut Bencher, storage_access: Stor
     });
 }
 
-#[bench]
 fn append_vec_concurrent_append_read_file(bencher: &mut Bencher) {
     append_vec_concurrent_append_read(bencher, StorageAccess::File);
 }
 
-#[bench]
 fn append_vec_concurrent_append_read_mmap(bencher: &mut Bencher) {
     append_vec_concurrent_append_read(
         bencher,
@@ -217,12 +206,10 @@ fn append_vec_concurrent_read_append(bencher: &mut Bencher, storage_access: Stor
     });
 }
 
-#[bench]
 fn append_vec_concurrent_read_append_file(bencher: &mut Bencher) {
     append_vec_concurrent_read_append(bencher, StorageAccess::File);
 }
 
-#[bench]
 fn append_vec_concurrent_read_append_mmap(bencher: &mut Bencher) {
     append_vec_concurrent_read_append(
         bencher,
@@ -230,3 +217,18 @@ fn append_vec_concurrent_read_append_mmap(bencher: &mut Bencher) {
         StorageAccess::Mmap,
     );
 }
+
+benchmark_group!(
+    benches,
+    append_vec_append_file,
+    append_vec_append_mmap,
+    append_vec_sequential_read_file,
+    append_vec_sequential_read_mmap,
+    append_vec_random_read_file,
+    append_vec_random_read_mmap,
+    append_vec_concurrent_append_read_file,
+    append_vec_concurrent_append_read_mmap,
+    append_vec_concurrent_read_append_file,
+    append_vec_concurrent_read_append_mmap,
+);
+benchmark_main!(benches);

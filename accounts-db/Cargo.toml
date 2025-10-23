@@ -107,6 +107,7 @@ thiserror = { workspace = true }
 agave-logger = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 assert_matches = { workspace = true }
+bencher = { workspace = true }
 criterion = { workspace = true }
 libsecp256k1 = { workspace = true }
 memoffset = { workspace = true }
@@ -146,6 +147,10 @@ harness = false
 
 [[bench]]
 name = "bench_lock_accounts"
+harness = false
+
+[[bench]]
+name = "append_vec"
 harness = false
 
 [lints]

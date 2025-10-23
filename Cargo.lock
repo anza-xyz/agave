@@ -7136,6 +7136,7 @@ dependencies = [
  "agave-reserved-account-keys",
  "ahash 0.8.11",
  "assert_matches",
+ "bencher",
  "bincode",
  "blake3",
  "bv",
