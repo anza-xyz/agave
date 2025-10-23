@@ -1142,7 +1142,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             let evictions_age: Vec<_> = evictions_age_possible
                 .iter()
                 .filter_map(|(key, is_dirty)| {
-                    if *is_dirty {
+                    if !*is_dirty {
+                        // Entry was not dirty at scan time and had ref_count == 1
+                        // Skip all checks (including should_evict_from_mem) and do not do any disk ops
+                        // Pass directly to evict_from_cache, which will re-check conditions under write lock
+                        Some(*key)
+                    } else {
                         // Entry was dirty at scan time, need to write to disk
                         let lock_measure = Measure::start("flush_read_lock");
                         let (disk_entry, disk_ref_count) = {
@@ -1219,11 +1224,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                             }
                         }
 
-                        Some(*key)
-                    } else {
-                        // Entry was not dirty at scan time and had ref_count == 1
-                        // Skip all checks (including should_evict_from_mem) and do not do any disk ops
-                        // Pass directly to evict_from_cache, which will re-check conditions under write lock
                         Some(*key)
                     }
                 })
