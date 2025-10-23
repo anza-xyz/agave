@@ -1171,6 +1171,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                                 return None;
                             }
 
+                            // Step 1: Clear the dirty flag
+                            // Step 2: Extract data and perform disk update outside the lock
+                            // Race condition handling: If a parallel operation dirties the item again after scanning,
+                            // then we will set_dirty(true) and skip the disk update. The dirty flag will ensure the
+                            // next flush picks up the item again. If the item becomes dirty during our disk write,
+                            // that's ok - the dirty flag will be picked up on the next flush and prevent us from
+                            // evicting the item from the cache.
                             if !entry.clear_dirty() {
                                 // Entry was not dirty anymore, skip disk write
                                 flush_stats.flush_read_lock_us += lock_measure.end_as_us();
