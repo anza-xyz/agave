@@ -17,7 +17,7 @@ use {
     solana_signer::Signer,
     solana_transaction::Transaction,
     solana_vote::vote_account::VoteAccount,
-    solana_vote_program::vote_state::create_account_with_authorized,
+    solana_vote_program::vote_state::create_v4_account_with_authorized,
     std::collections::HashMap,
 };
 
@@ -50,10 +50,11 @@ fn test_syscall_get_epoch_stake() {
             .map(|keypair| {
                 let node_id = keypair.node_keypair.pubkey();
                 let authorized_voter = keypair.vote_keypair.pubkey();
-                let vote_account = VoteAccount::try_from(create_account_with_authorized(
+                let vote_account = VoteAccount::try_from(create_v4_account_with_authorized(
                     &node_id,
                     &authorized_voter,
                     &node_id,
+                    None,
                     0,
                     100,
                 ))

@@ -117,7 +117,7 @@ use {
     solana_vote_program::{
         vote_instruction,
         vote_state::{
-            self, create_account_with_authorized, BlockTimestamp, VoteAuthorize, VoteInit,
+            self, create_v4_account_with_authorized, BlockTimestamp, VoteAuthorize, VoteInit,
             VoteStateV4, VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
     },
@@ -148,17 +148,21 @@ impl VoteReward {
         let validator_pubkey = solana_pubkey::new_rand();
         let validator_stake_lamports = rng.gen_range(1..200);
         let validator_voting_keypair = Keypair::new();
+        let commission: u8 = rng.gen_range(1..20);
+        let commission_bps = u16::from(commission) * 100;
 
-        let validator_vote_account = vote_state::create_account(
-            &validator_voting_keypair.pubkey(),
+        let validator_vote_account = vote_state::create_v4_account_with_authorized(
             &validator_pubkey,
-            rng.gen_range(1..20),
+            &validator_voting_keypair.pubkey(),
+            &validator_voting_keypair.pubkey(),
+            None,
+            commission_bps,
             validator_stake_lamports,
         );
 
         Self {
             vote_account: validator_vote_account,
-            commission: rng.gen_range(1..20),
+            commission,
             vote_rewards: rng.gen_range(1..200),
         }
     }
@@ -865,7 +869,15 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
     );
 
     let vote_id = solana_pubkey::new_rand();
-    let mut vote_account = vote_state::create_account(&vote_id, &solana_pubkey::new_rand(), 0, 100);
+    let node_pubkey = solana_pubkey::new_rand();
+    let mut vote_account = vote_state::create_v4_account_with_authorized(
+        &node_pubkey,
+        &vote_id,
+        &vote_id,
+        None,
+        0,
+        100,
+    );
     let stake_id1 = solana_pubkey::new_rand();
     let stake_account1 = crate::stakes::tests::create_stake_account(123, &vote_id, &stake_id1);
     let stake_id2 = solana_pubkey::new_rand();
@@ -1745,24 +1757,27 @@ fn test_readonly_accounts(relax_intrabatch_account_locks: bool) {
     let payer1 = Keypair::new();
 
     // Create vote accounts
-    let vote_account0 = vote_state::create_account_with_authorized(
+    let vote_account0 = vote_state::create_v4_account_with_authorized(
         &vote_pubkey0,
         &authorized_voter.pubkey(),
         &authorized_voter.pubkey(),
+        None,
         0,
         100,
     );
-    let vote_account1 = vote_state::create_account_with_authorized(
+    let vote_account1 = vote_state::create_v4_account_with_authorized(
         &vote_pubkey1,
         &authorized_voter.pubkey(),
         &authorized_voter.pubkey(),
+        None,
         0,
         100,
     );
-    let vote_account2 = vote_state::create_account_with_authorized(
+    let vote_account2 = vote_state::create_v4_account_with_authorized(
         &vote_pubkey2,
         &authorized_voter.pubkey(),
         &authorized_voter.pubkey(),
+        None,
         0,
         100,
     );
@@ -9903,9 +9918,11 @@ fn test_rent_state_changes_sysvars() {
     let validator_vote_account_pubkey = Pubkey::new_unique();
     let validator_voting_keypair = Keypair::new();
 
-    let validator_vote_account = vote_state::create_account(
-        &validator_voting_keypair.pubkey(),
+    let validator_vote_account = vote_state::create_v4_account_with_authorized(
         &validator_pubkey,
+        &validator_voting_keypair.pubkey(),
+        &validator_voting_keypair.pubkey(),
+        None,
         0,
         validator_stake_lamports,
     );
@@ -12252,10 +12269,11 @@ fn test_bank_epoch_stakes() {
                 .map(|keypair| {
                     let node_id = keypair.node_keypair.pubkey();
                     let authorized_voter = keypair.vote_keypair.pubkey();
-                    let vote_account = VoteAccount::try_from(create_account_with_authorized(
+                    let vote_account = VoteAccount::try_from(create_v4_account_with_authorized(
                         &node_id,
                         &authorized_voter,
                         &node_id,
+                        None,
                         0,
                         100,
                     ))

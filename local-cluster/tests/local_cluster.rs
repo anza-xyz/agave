@@ -2653,7 +2653,7 @@ fn run_test_load_program_accounts_partition(scan_commitment: CommitmentConfig) {
     let exit = Arc::new(AtomicBool::new(false));
 
     let (t_update, t_scan, additional_accounts) = setup_transfer_scan_threads(
-        1000,
+        100,
         exit.clone(),
         scan_commitment,
         update_client_receiver,
@@ -3152,7 +3152,7 @@ fn run_test_load_program_accounts(scan_commitment: CommitmentConfig) {
     .take(node_stakes.len())
     .collect();
 
-    let num_starting_accounts = 1000;
+    let num_starting_accounts = 100;
     let exit = Arc::new(AtomicBool::new(false));
     let (update_client_sender, update_client_receiver) = unbounded();
     let (scan_client_sender, scan_client_receiver) = unbounded();

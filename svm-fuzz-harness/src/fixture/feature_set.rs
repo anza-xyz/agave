@@ -1,3 +1,7 @@
+//! Feature set conversions for protobuf support.
+
+#![cfg(feature = "fuzz")]
+
 use {
     super::proto::FeatureSet as ProtoFeatureSet,
     agave_feature_set::{FeatureSet, FEATURE_NAMES},

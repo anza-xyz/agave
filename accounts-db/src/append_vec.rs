@@ -119,12 +119,6 @@ impl<'a> ValidSlice<'a> {
     pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
-
-    #[inline(always)]
-    #[cfg(test)]
-    pub(crate) fn slice(&self) -> &[u8] {
-        self.0
-    }
 }
 
 /// offsets to help navigate the persisted format of `AppendVec`

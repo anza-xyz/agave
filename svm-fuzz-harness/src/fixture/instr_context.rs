@@ -1,11 +1,7 @@
 //! Instruction context (input).
 
 use {
-    super::{error::FixtureError, proto::InstrContext as ProtoInstrContext},
-    agave_feature_set::FeatureSet,
-    solana_account::Account,
-    solana_instruction::AccountMeta,
-    solana_pubkey::Pubkey,
+    agave_feature_set::FeatureSet, solana_account::Account, solana_pubkey::Pubkey,
     solana_stable_layout::stable_instruction::StableInstruction,
 };
 
@@ -17,6 +13,13 @@ pub struct InstrContext {
     pub cu_avail: u64,
 }
 
+#[cfg(feature = "fuzz")]
+use {
+    super::{error::FixtureError, proto::InstrContext as ProtoInstrContext},
+    solana_instruction::AccountMeta,
+};
+
+#[cfg(feature = "fuzz")]
 impl TryFrom<ProtoInstrContext> for InstrContext {
     type Error = FixtureError;
 

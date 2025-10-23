@@ -511,17 +511,6 @@ pub fn execute(
         UseSnapshotArchivesAtStartup
     );
 
-    if mark_obsolete_accounts == MarkObsoleteAccounts::Enabled
-        && use_snapshot_archives_at_startup != UseSnapshotArchivesAtStartup::Always
-    {
-        Err(format!(
-            "The --accounts-db-mark-obsolete-accounts option requires the \
-             --use-snapshot-archives-at-startup option to be set to {}. Current value: {}",
-            UseSnapshotArchivesAtStartup::Always,
-            use_snapshot_archives_at_startup
-        ))?;
-    }
-
     let mut validator_config = ValidatorConfig {
         require_tower: matches.is_present("require_tower"),
         tower_storage,
