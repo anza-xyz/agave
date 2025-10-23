@@ -72,7 +72,7 @@ struct Cli {
     #[arg(short, long, default_value = "0.0.0.0:8008")]
     bind_to: SocketAddr,
 
-    #[arg(short, long, default_value = "./results/serverlog.bin")]
+    #[arg(short, long, default_value = "serverlog.bin")]
     log_file: String,
 
     #[arg(short, long, value_parser = parse_duration)]
@@ -153,13 +153,25 @@ async fn main() -> anyhow::Result<()> {
         logfile.flush()?;
         Ok(())
     });
-
-    sleep(cli.test_duration).await;
+    // wait for test to finish, report errors early if they occur
+    let status = tokio::select! {
+        _ = sleep(cli.test_duration)=>{
+            info!("Test duration expired");
+            Ok(())
+        },
+        _ = run_thread => {
+            Err(anyhow::anyhow!("Server thread exited too early"))
+        },
+        v = logger_thread => {
+            match v {
+                Ok(Err(v))=>Err(v.context("Logger thread error")),
+                _=>Err(anyhow::anyhow!("Logger thread exited too early"))
+            }
+        }
+    };
     info!("Server terminating");
     cancel.cancel();
     drop(endpoints);
-    run_thread.await?;
-    logger_thread.await??;
     stats.report("final_stats");
-    Ok(())
+    status
 }
