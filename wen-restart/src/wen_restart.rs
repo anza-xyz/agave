@@ -1446,7 +1446,7 @@ mod tests {
         solana_time_utils::timestamp,
         solana_vote::vote_account::VoteAccount,
         solana_vote_interface::state::{TowerSync, Vote},
-        solana_vote_program::vote_state::create_account_with_authorized,
+        solana_vote_program::vote_state::create_v4_account_with_authorized,
         std::{fs::remove_file, sync::Arc, thread::Builder},
         tempfile::TempDir,
     };
@@ -1987,10 +1987,11 @@ mod tests {
                     authorized_voter,
                     (
                         stake,
-                        VoteAccount::try_from(create_account_with_authorized(
+                        VoteAccount::try_from(create_v4_account_with_authorized(
                             &node_id,
                             &authorized_voter,
                             &node_id,
+                            None,
                             0,
                             100,
                         ))

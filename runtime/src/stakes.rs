@@ -523,8 +523,15 @@ pub(crate) mod tests {
         stake: u64,
     ) -> ((Pubkey, AccountSharedData), (Pubkey, AccountSharedData)) {
         let vote_pubkey = solana_pubkey::new_rand();
-        let vote_account =
-            vote_state::create_account(&vote_pubkey, &solana_pubkey::new_rand(), 0, 1);
+        let node_pubkey = solana_pubkey::new_rand();
+        let vote_account = vote_state::create_v4_account_with_authorized(
+            &node_pubkey,
+            &vote_pubkey,
+            &vote_pubkey,
+            None,
+            0,
+            1,
+        );
         let stake_pubkey = solana_pubkey::new_rand();
         (
             (vote_pubkey, vote_account),
@@ -541,10 +548,18 @@ pub(crate) mod tests {
         vote_pubkey: &Pubkey,
         stake_pubkey: &Pubkey,
     ) -> AccountSharedData {
+        let node_pubkey = solana_pubkey::new_rand();
         stake_state::create_account(
             stake_pubkey,
             vote_pubkey,
-            &vote_state::create_account(vote_pubkey, &solana_pubkey::new_rand(), 0, 1),
+            &vote_state::create_v4_account_with_authorized(
+                &node_pubkey,
+                vote_pubkey,
+                vote_pubkey,
+                None,
+                0,
+                1,
+            ),
             &Rent::free(),
             stake,
         )

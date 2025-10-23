@@ -1060,10 +1060,7 @@ fn do_process_tower_sync(
     )
 }
 
-// This function is used:
-// a. In many tests.
-// b. In the genesis tool that initializes a cluster to create the bootstrap validator.
-// c. In the ledger tool when creating bootstrap vote accounts.
+#[cfg(test)]
 pub fn create_account_with_authorized(
     node_pubkey: &Pubkey,
     authorized_voter: &Pubkey,
@@ -1117,16 +1114,6 @@ pub fn create_v4_account_with_authorized(
     .unwrap();
 
     vote_account
-}
-
-// create_account() should be removed, use create_account_with_authorized() instead
-pub fn create_account(
-    vote_pubkey: &Pubkey,
-    node_pubkey: &Pubkey,
-    commission: u8,
-    lamports: u64,
-) -> AccountSharedData {
-    create_account_with_authorized(node_pubkey, vote_pubkey, vote_pubkey, commission, lamports)
 }
 
 #[allow(clippy::arithmetic_side_effects)]

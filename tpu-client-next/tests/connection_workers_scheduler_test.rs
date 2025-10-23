@@ -588,10 +588,13 @@ async fn test_rate_limiting() {
     scheduler_cancel.cancel();
     let stats = join_scheduler(scheduler_handle).await;
 
+    // we get 2 transactions registered as sent (but not acked) because of how QUIC works
+    // before ratelimiter kicks in.
     assert!(
         stats
             == SendTransactionStatsNonAtomic {
-                connection_error_timed_out: 1,
+                successfully_sent: 2,
+                write_error_connection_lost: 2,
                 ..Default::default()
             }
     );

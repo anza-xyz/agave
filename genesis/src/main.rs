@@ -263,27 +263,22 @@ fn add_validator_accounts(
             AccountSharedData::new(lamports, 0, &system_program::id()),
         );
 
-        let vote_account = if is_alpenglow {
+        let bls_pubkey_compressed_bytes = if is_alpenglow {
             let bls_pubkey = bls_pubkeys_iter
                 .next()
                 .expect("Missing BLS pubkey for {identity_pubkey}");
-            vote_state::create_v4_account_with_authorized(
-                identity_pubkey,
-                identity_pubkey,
-                identity_pubkey,
-                Some(bls_pubkey_to_compressed_bytes(bls_pubkey)),
-                commission.into(),
-                rent.minimum_balance(VoteStateV4::size_of()).max(1),
-            )
+            Some(bls_pubkey_to_compressed_bytes(bls_pubkey)),
         } else {
-            vote_state::create_account_with_authorized(
-                identity_pubkey,
-                identity_pubkey,
-                identity_pubkey,
-                commission,
-                rent.minimum_balance(VoteStateV4::size_of()).max(1),
-            )
+          None
         };
+        let vote_account = vote_state::create_v4_account_with_authorized(
+            identity_pubkey,
+            identity_pubkey,
+            identity_pubkey,
+            bls_pubkey_compressed_bytes,
+            u16::from(commission) * 100,
+            rent.minimum_balance(VoteStateV4::size_of()).max(1),
+        );
 
         genesis_config.add_account(
             *stake_pubkey,
