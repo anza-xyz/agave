@@ -1,7 +1,6 @@
 use {
     crate::commands,
     agave_snapshots::{
-        hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         snapshot_config::{
             DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
             DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
@@ -27,6 +26,7 @@ use {
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_faucet::faucet::{self, FAUCET_PORT},
     solana_hash::Hash,
+    solana_ledger::genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
     solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,

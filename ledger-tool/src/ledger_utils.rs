@@ -1,7 +1,6 @@
 use {
     crate::LEDGER_TOOL_DIRECTORY,
     agave_snapshots::{
-        hardened_unpack::open_genesis_config,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
         snapshot_hash::StartingSnapshotHashes,
     },
@@ -24,6 +23,7 @@ use {
         blockstore_processor::{
             self, BlockstoreProcessorError, ProcessOptions, TransactionStatusSender,
         },
+        genesis_utils::open_genesis_config,
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     solana_measure::measure_time,

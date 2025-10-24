@@ -8,7 +8,7 @@
     )
 )]
 use {
-    agave_snapshots::hardened_unpack::unpack_genesis_archive,
+    agave_snapshots::unpack_genesis_archive,
     log::*,
     solana_download_utils::download_genesis_if_missing,
     solana_genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE},
