@@ -317,7 +317,8 @@ pub fn run_cluster_partition<C>(
     let turbine_disabled = Arc::new(AtomicBool::new(false));
     let mut validator_config = ValidatorConfig {
         turbine_disabled: turbine_disabled.clone(),
-        wait_for_supermajority: Some(0),
+        wait_for_supermajority: None,
+        no_wait_for_vote_to_start_leader: false,
         ..ValidatorConfig::default_for_test()
     };
 
@@ -344,11 +345,18 @@ pub fn run_cluster_partition<C>(
         }
     };
 
+    // To avoid excessive forking slowing tests during bootstrap period, only
+    // allow the boostrap node to build blocks initially.
+    let mut validator_configs = make_identical_validator_configs(&validator_config, num_nodes);
+    validator_configs
+        .first_mut()
+        .unwrap()
+        .no_wait_for_vote_to_start_leader = true;
     let slots_per_epoch = 2048;
     let mut config = ClusterConfig {
         mint_lamports,
         node_stakes,
-        validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
+        validator_configs,
         validator_keys: Some(
             validator_keys
                 .into_iter()
