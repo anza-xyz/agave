@@ -8,6 +8,7 @@ use {
     agave_precompiles::{get_precompile, is_precompile},
     agave_syscalls::create_program_runtime_environment_v1,
     solana_account::{Account, AccountSharedData},
+    solana_clock::Clock,
     solana_compute_budget::compute_budget::{ComputeBudget, SVMTransactionExecutionCost},
     solana_instruction::AccountMeta,
     solana_instruction_error::InstructionError,
@@ -15,7 +16,6 @@ use {
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
-        sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -69,16 +69,9 @@ impl TransactionProcessingCallback for InstrContextCallback<'_> {
 
 fn create_invoke_context_fields(
     input: &mut InstrContext,
+    clock: &Clock,
     compute_budget: &ComputeBudget,
-) -> Option<(
-    SysvarCache,
-    ProgramRuntimeEnvironments,
-    ProgramCacheForTxBatch,
-)> {
-    let sysvar_cache = crate::sysvar_cache::setup_sysvar_cache(&input.accounts);
-
-    let clock = sysvar_cache.get_clock().unwrap();
-
+) -> Option<(ProgramRuntimeEnvironments, ProgramCacheForTxBatch)> {
     if !input
         .accounts
         .iter()
@@ -147,7 +140,7 @@ fn create_invoke_context_fields(
         }
     }
 
-    Some((sysvar_cache, environments, program_cache))
+    Some((environments, program_cache))
 }
 
 fn create_instruction_accounts(
@@ -193,6 +186,7 @@ pub fn execute_instr(mut input: InstrContext) -> Option<InstrEffects> {
     let mut compute_units_consumed = 0u64;
 
     let runtime_features = input.feature_set.runtime_features();
+    let sysvar_cache = crate::sysvar_cache::setup_sysvar_cache(&input.accounts);
 
     let log_collector = LogCollector::new_ref();
     let compute_budget = {
@@ -201,10 +195,11 @@ pub fn execute_instr(mut input: InstrContext) -> Option<InstrEffects> {
         budget
     };
 
-    let (sysvar_cache, environments, mut program_cache) =
-        create_invoke_context_fields(&mut input, &compute_budget)?;
-
+    let clock = sysvar_cache.get_clock().unwrap();
     let rent = sysvar_cache.get_rent().unwrap();
+
+    let (environments, mut program_cache) =
+        create_invoke_context_fields(&mut input, &clock, &compute_budget)?;
 
     let mut transaction_context =
         create_transaction_context(&input.accounts, &compute_budget, (*rent).clone());
