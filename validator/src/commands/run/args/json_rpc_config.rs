@@ -488,6 +488,6 @@ pub(super) mod tests {
 
     #[test]
     fn test_default_rpc_max_request_body_size_unchanged() {
-        assert_eq!(*DEFAULT_RPC_MAX_REQUEST_BODY_SIZE, "51200");
+        assert_eq!(*DEFAULT_RPC_MAX_REQUEST_BODY_SIZE, 51_200.to_string());
     }
 }
