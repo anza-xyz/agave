@@ -4116,7 +4116,7 @@ impl ReplayStage {
         drop_bank_sender: &Sender<Vec<BankWithScheduler>>,
         tbft_structs: &mut TowerBFTStructures,
     ) {
-        let _ = root_utils::check_and_handle_new_root(
+        root_utils::check_and_handle_new_root(
             parent_slot,
             new_root,
             snapshot_controller,
@@ -4138,7 +4138,8 @@ impl ReplayStage {
                     tbft_structs,
                 )
             },
-        );
+        )
+        .expect("rooting must succeed")
     }
 
     // To avoid code duplication and keep compatibility with alpenglow, we add this
