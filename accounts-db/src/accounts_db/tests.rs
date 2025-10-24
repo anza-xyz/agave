@@ -2075,7 +2075,7 @@ fn test_hash_stored_account() {
         executable,
         rent_epoch,
     };
-    let account = stored_account.to_account_shared_data();
+    let account = create_account_shared_data(&stored_account);
 
     let expected_account_hash = LtHashChecksum([
         160, 29, 105, 138, 56, 166, 40, 55, 224, 231, 29, 208, 68, 46, 190, 89, 141, 20, 65, 86,
@@ -6097,7 +6097,7 @@ fn get_all_accounts_from_storages<'a>(
             storage
                 .accounts
                 .scan_accounts(&mut reader, |_offset, account| {
-                    vec.push((*account.pubkey(), account.to_account_shared_data()));
+                    vec.push((*account.pubkey(), create_account_shared_data(&account)));
                 })
                 .expect("must scan accounts storage");
             // make sure scan_pubkeys results match

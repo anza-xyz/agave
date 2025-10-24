@@ -3,6 +3,7 @@ use {
     criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
+        account_info::create_account_shared_data,
         accounts_file::StorageAccess,
         append_vec::{self, AppendVec},
         tiered_storage::{
@@ -258,7 +259,9 @@ fn bench_get_account_shared_data(c: &mut Criterion) {
             |b| {
                 b.iter_with_large_drop(|| {
                     _ = append_vec_mmap
-                        .get_stored_account_callback(0, |account| account.to_account_shared_data())
+                        .get_stored_account_callback(0, |account| {
+                            create_account_shared_data(&account)
+                        })
                         .unwrap();
                 });
             },
@@ -280,7 +283,9 @@ fn bench_get_account_shared_data(c: &mut Criterion) {
             |b| {
                 b.iter_with_large_drop(|| {
                     _ = append_vec_file
-                        .get_stored_account_callback(0, |account| account.to_account_shared_data())
+                        .get_stored_account_callback(0, |account| {
+                            create_account_shared_data(&account)
+                        })
                         .unwrap();
                 });
             },

@@ -10,7 +10,18 @@ use {
         is_zero_lamport::IsZeroLamport,
     },
     modular_bitfield::prelude::*,
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
 };
+
+pub fn create_account_shared_data(account: &impl ReadableAccount) -> AccountSharedData {
+    AccountSharedData::create(
+        account.lamports(),
+        account.data().to_vec(),
+        *account.owner(),
+        account.executable(),
+        account.rent_epoch(),
+    )
+}
 
 /// offset within an append vec to account data
 pub type Offset = usize;

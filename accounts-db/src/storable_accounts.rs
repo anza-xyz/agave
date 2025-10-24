@@ -1,6 +1,7 @@
 //! trait for abstracting underlying storage of pubkey and account pairs to be written
 use {
     crate::{
+        account_info::create_account_shared_data,
         account_storage::stored_account_info::StoredAccountInfo,
         accounts_db::{AccountFromStorage, AccountStorageEntry, AccountsDb},
         is_zero_lamport::IsZeroLamport,
@@ -46,6 +47,15 @@ impl<'a> AccountForStorage<'a> {
             AccountForStorage::StoredAccountInfo(account) => account.pubkey(),
         }
     }
+
+    pub fn take_account(&self) -> AccountSharedData {
+        match self {
+            AccountForStorage::AddressAndAccount((_pubkey, account)) => {
+                create_account_shared_data(&**account)
+            }
+            AccountForStorage::StoredAccountInfo(account) => create_account_shared_data(&**account),
+        }
+    }
 }
 
 impl ReadableAccount for AccountForStorage<'_> {
@@ -80,12 +90,7 @@ impl ReadableAccount for AccountForStorage<'_> {
         }
     }
     fn to_account_shared_data(&self) -> AccountSharedData {
-        match self {
-            AccountForStorage::AddressAndAccount((_pubkey, account)) => {
-                account.to_account_shared_data()
-            }
-            AccountForStorage::StoredAccountInfo(account) => account.to_account_shared_data(),
-        }
+        self.take_account()
     }
 }
 

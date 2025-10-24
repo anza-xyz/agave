@@ -1111,7 +1111,7 @@ pub mod tests {
     use {
         super::*,
         crate::{
-            account_info::{AccountInfo, StorageLocation},
+            account_info::{create_account_shared_data, AccountInfo, StorageLocation},
             accounts_db::{
                 tests::{
                     append_single_account_with_default_hash, compare_all_accounts,
@@ -2049,7 +2049,7 @@ pub mod tests {
             assert_eq!(
                 one_ref_accounts_account_shared_data
                     .iter()
-                    .map(|meta| meta.to_account_shared_data())
+                    .map(create_account_shared_data)
                     .collect::<Vec<_>>(),
                 vec![account_with_1_ref]
             );
@@ -2128,7 +2128,7 @@ pub mod tests {
                 .accounts
                 .get_stored_account_callback(0, |account| {
                     assert_eq!(account.pubkey(), pk_with_2_refs);
-                    account.to_account_shared_data()
+                    create_account_shared_data(&account)
                 })
                 .unwrap();
             assert_eq!(account, account_shared_data_with_2_refs);
@@ -2242,7 +2242,7 @@ pub mod tests {
             assert_eq!(
                 one_ref_accounts_account_shared_data
                     .iter()
-                    .map(|meta| meta.to_account_shared_data())
+                    .map(create_account_shared_data)
                     .collect::<Vec<_>>(),
                 vec![account_with_1_ref]
             );
@@ -2276,7 +2276,7 @@ pub mod tests {
             let accounts_shrunk_same_slot = storage
                 .accounts
                 .get_stored_account_callback(0, |account| {
-                    (*account.pubkey(), account.to_account_shared_data())
+                    (*account.pubkey(), create_account_shared_data(&account))
                 })
                 .unwrap();
             let mut reader = append_vec::new_scan_accounts_reader();
@@ -3230,7 +3230,7 @@ pub mod tests {
                                 .new_storage()
                                 .accounts
                                 .scan_accounts(&mut reader, |_offset, meta| {
-                                    two.push((*meta.pubkey(), meta.to_account_shared_data()));
+                                    two.push((*meta.pubkey(), create_account_shared_data(&meta)));
                                 })
                                 .expect("must scan accounts storage");
 

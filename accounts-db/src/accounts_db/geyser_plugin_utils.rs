@@ -29,6 +29,7 @@ pub mod tests {
     use {
         super::*,
         crate::{
+            account_info::create_account_shared_data,
             accounts_db::{AccountsDbConfig, MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING},
             accounts_update_notifier_interface::{
                 AccountForGeyser, AccountsUpdateNotifier, AccountsUpdateNotifierInterface,
@@ -87,7 +88,7 @@ pub mod tests {
             self.accounts_notified
                 .entry(*account.pubkey)
                 .or_default()
-                .push((slot, write_version, account.to_account_shared_data()));
+                .push((slot, write_version, create_account_shared_data(account)));
         }
 
         fn notify_end_of_restore_from_snapshot(&self) {

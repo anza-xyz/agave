@@ -13,7 +13,7 @@ pub use meta::{AccountMeta, StoredAccountMeta, StoredMeta};
 use meta::{AccountMeta, StoredAccountMeta, StoredMeta};
 use {
     crate::{
-        account_info::Offset,
+        account_info::{create_account_shared_data, Offset},
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_file::{InternalsForArchive, StorageAccess, StoredAccountsInfo},
         buffered_reader::{
@@ -839,7 +839,7 @@ impl AppendVec {
         match &self.backing {
             AppendVecFileBacking::Mmap(_) => self
                 .get_stored_account_meta_callback(offset, |account| {
-                    account.to_account_shared_data()
+                    create_account_shared_data(&account)
                 }),
             AppendVecFileBacking::File(file) => {
                 let mut buf = MaybeUninit::<[u8; PAGE_SIZE]>::uninit();
@@ -867,7 +867,7 @@ impl AppendVec {
                         stored_size,
                     };
                     // data is within `buf`, so just allocate a new vec for data
-                    account.to_account_shared_data()
+                    create_account_shared_data(&account)
                 } else {
                     // not enough was read from file to get `data`
                     assert!(data_len <= MAX_PERMITTED_DATA_LENGTH, "{data_len}");
@@ -915,7 +915,7 @@ impl AppendVec {
             ));
             assert_eq!(sizes, r_callback.stored_size());
             let pubkey = r_callback.meta().pubkey;
-            Some((pubkey, r_callback.to_account_shared_data()))
+            Some((pubkey, create_account_shared_data(&r_callback)))
         });
         if result.is_none() {
             assert!(self
@@ -1657,7 +1657,7 @@ pub mod tests {
             let mut index = 0;
             av.scan_accounts_stored_meta(&mut reader, |v| {
                 let (pubkey, account) = &test_accounts[index];
-                let recovered = v.to_account_shared_data();
+                let recovered = create_account_shared_data(&v);
                 assert_eq!(&recovered, account);
                 assert_eq!(v.pubkey(), pubkey);
                 index += 1;
@@ -1709,7 +1709,7 @@ pub mod tests {
         let now = Instant::now();
         av.scan_accounts_stored_meta(&mut reader, |v| {
             let account = create_test_account(sample + 1);
-            let recovered = v.to_account_shared_data();
+            let recovered = create_account_shared_data(&v);
             assert_eq!(recovered, account.1);
             sample += 1;
         })

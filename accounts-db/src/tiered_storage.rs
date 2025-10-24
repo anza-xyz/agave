@@ -178,7 +178,7 @@ mod tests {
         file::TieredStorageMagicNumber,
         footer::TieredStorageFooter,
         hot::HOT_FORMAT,
-        solana_account::{AccountSharedData, ReadableAccount},
+        solana_account::AccountSharedData,
         solana_clock::Slot,
         solana_pubkey::Pubkey,
         solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
@@ -371,7 +371,7 @@ mod tests {
         let mut expected_accounts_map = HashMap::new();
         for i in 0..num_accounts {
             storable_accounts.account_default_if_zero_lamport(i, |account| {
-                expected_accounts_map.insert(*account.pubkey(), account.to_account_shared_data());
+                expected_accounts_map.insert(*account.pubkey(), account.take_account());
             });
         }
 

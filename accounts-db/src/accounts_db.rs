@@ -30,7 +30,7 @@ pub use accounts_db_config::{
 use qualifier_attr::qualifiers;
 use {
     crate::{
-        account_info::{AccountInfo, Offset, StorageLocation},
+        account_info::{create_account_shared_data, AccountInfo, Offset, StorageLocation},
         account_storage::{
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
             AccountStorage, AccountStoragesOrderer, ShrinkInProgress,
@@ -733,7 +733,7 @@ impl LoadedAccount<'_> {
 
     pub fn take_account(&self) -> AccountSharedData {
         match self {
-            LoadedAccount::Stored(stored_account) => stored_account.to_account_shared_data(),
+            LoadedAccount::Stored(stored_account) => create_account_shared_data(stored_account),
             LoadedAccount::Cached(cached_account) => match cached_account {
                 Cow::Owned(cached_account) => cached_account.account.clone(),
                 Cow::Borrowed(cached_account) => cached_account.account.clone(),
@@ -5976,7 +5976,7 @@ impl AccountsDb {
             .map(|index| {
                 let txn = txs.map(|txs| *txs.get(index).expect("txs must be present if provided"));
                 accounts_and_meta_to_store.account_default_if_zero_lamport(index, |account| {
-                    let account_shared_data = account.to_account_shared_data();
+                    let account_shared_data = account.take_account();
                     let pubkey = account.pubkey();
                     let account_info =
                         AccountInfo::new(StorageLocation::Cached, account.is_zero_lamport());

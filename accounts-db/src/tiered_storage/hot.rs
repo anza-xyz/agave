@@ -1489,7 +1489,7 @@ mod tests {
                     storable_accounts.account_default_if_zero_lamport(i, |account| {
                         verify_test_account(
                             &stored_account,
-                            &account.to_account_shared_data(),
+                            &account.take_account(),
                             account.pubkey(),
                         );
                     });
@@ -1512,7 +1512,7 @@ mod tests {
                     storable_accounts.account_default_if_zero_lamport(offset, |account| {
                         verify_test_account(
                             &stored_account,
-                            &account.to_account_shared_data(),
+                            &account.take_account(),
                             account.pubkey(),
                         );
                     });
@@ -1526,11 +1526,7 @@ mod tests {
         hot_storage
             .scan_accounts(|_offset, stored_account| {
                 storable_accounts.account_default_if_zero_lamport(i, |account| {
-                    verify_test_account(
-                        &stored_account,
-                        &account.to_account_shared_data(),
-                        account.pubkey(),
-                    );
+                    verify_test_account(&stored_account, &account.take_account(), account.pubkey());
                 });
                 i += 1;
             })
