@@ -30,7 +30,7 @@ pub use accounts_db_config::{
 use qualifier_attr::qualifiers;
 use {
     crate::{
-        account_info::{create_account_shared_data, AccountInfo, Offset, StorageLocation},
+        account_info::{AccountInfo, Offset, StorageLocation},
         account_storage::{
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
             AccountStorage, AccountStoragesOrderer, ShrinkInProgress,
@@ -59,7 +59,8 @@ use {
         partitioned_rewards::PartitionedEpochRewardsConfig,
         read_only_accounts_cache::ReadOnlyAccountsCache,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
-        u64_align, utils,
+        u64_align,
+        utils::{self, create_account_shared_data},
     },
     dashmap::{DashMap, DashSet},
     log::*,

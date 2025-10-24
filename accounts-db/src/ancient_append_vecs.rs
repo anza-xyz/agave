@@ -1111,7 +1111,7 @@ pub mod tests {
     use {
         super::*,
         crate::{
-            account_info::{create_account_shared_data, AccountInfo, StorageLocation},
+            account_info::{AccountInfo, StorageLocation},
             accounts_db::{
                 tests::{
                     append_single_account_with_default_hash, compare_all_accounts,
@@ -1127,6 +1127,7 @@ pub mod tests {
             },
             append_vec::{self, aligned_stored_size},
             storable_accounts::StorableAccountsBySlot,
+            utils::create_account_shared_data,
         },
         rand::seq::SliceRandom as _,
         solana_account::{AccountSharedData, ReadableAccount, WritableAccount},

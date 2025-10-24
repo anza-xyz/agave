@@ -13,7 +13,7 @@ pub use meta::{AccountMeta, StoredAccountMeta, StoredMeta};
 use meta::{AccountMeta, StoredAccountMeta, StoredMeta};
 use {
     crate::{
-        account_info::{create_account_shared_data, Offset},
+        account_info::Offset,
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_file::{InternalsForArchive, StorageAccess, StoredAccountsInfo},
         buffered_reader::{
@@ -24,6 +24,7 @@ use {
         is_zero_lamport::IsZeroLamport,
         storable_accounts::StorableAccounts,
         u64_align,
+        utils::create_account_shared_data,
     },
     log::*,
     memmap2::MmapMut,

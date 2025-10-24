@@ -29,11 +29,11 @@ pub mod tests {
     use {
         super::*,
         crate::{
-            account_info::create_account_shared_data,
             accounts_db::{AccountsDbConfig, MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING},
             accounts_update_notifier_interface::{
                 AccountForGeyser, AccountsUpdateNotifier, AccountsUpdateNotifierInterface,
             },
+            utils::create_account_shared_data,
         },
         dashmap::DashMap,
         solana_account::ReadableAccount as _,

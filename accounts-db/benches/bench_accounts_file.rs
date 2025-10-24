@@ -3,13 +3,13 @@ use {
     criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
-        account_info::create_account_shared_data,
         accounts_file::StorageAccess,
         append_vec::{self, AppendVec},
         tiered_storage::{
             file::TieredReadableFile,
             hot::{HotStorageReader, HotStorageWriter, RENT_EXEMPT_RENT_EPOCH},
         },
+        utils::create_account_shared_data,
     },
     solana_clock::Slot,
     solana_pubkey::Pubkey,

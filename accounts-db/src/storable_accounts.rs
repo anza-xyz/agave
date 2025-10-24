@@ -1,10 +1,10 @@
 //! trait for abstracting underlying storage of pubkey and account pairs to be written
 use {
     crate::{
-        account_info::create_account_shared_data,
         account_storage::stored_account_info::StoredAccountInfo,
         accounts_db::{AccountFromStorage, AccountStorageEntry, AccountsDb},
         is_zero_lamport::IsZeroLamport,
+        utils::create_account_shared_data,
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::{Epoch, Slot},

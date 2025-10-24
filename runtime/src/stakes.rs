@@ -10,7 +10,7 @@ use {
     rayon::{prelude::*, ThreadPool},
     serde::{Deserialize, Serialize},
     solana_account::{AccountSharedData, ReadableAccount},
-    solana_accounts_db::account_info::create_account_shared_data,
+    solana_accounts_db::utils::create_account_shared_data,
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_stake_interface::state::{Delegation, StakeActivationStatus},

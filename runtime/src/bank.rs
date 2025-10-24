@@ -74,7 +74,6 @@ use {
         AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
     },
     solana_accounts_db::{
-        account_info::create_account_shared_data,
         account_locks::validate_account_locks,
         accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
         accounts_db::{AccountStorageEntry, AccountsDb, AccountsDbConfig},
@@ -84,6 +83,7 @@ use {
         ancestors::{Ancestors, AncestorsForSerialization},
         blockhash_queue::BlockhashQueue,
         storable_accounts::StorableAccounts,
+        utils::create_account_shared_data,
     },
     solana_builtins::{BUILTINS, STATELESS_BUILTINS},
     solana_clock::{
