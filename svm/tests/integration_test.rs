@@ -704,8 +704,11 @@ impl From<Option<TransactionReturnData>> for ReturnDataAssert {
     }
 }
 
-fn program_medley() -> Vec<SvmTestEntry> {
-    let mut test_entry = SvmTestEntry::default();
+fn program_medley(drop_on_failure: bool) -> Vec<SvmTestEntry> {
+    let mut test_entry = SvmTestEntry {
+        drop_on_failure,
+        ..Default::default()
+    };
 
     // 0: A transaction that works without any account
     {
@@ -832,14 +835,23 @@ fn program_medley() -> Vec<SvmTestEntry> {
         let mut fee_payer_data = AccountSharedData::default();
         fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
         test_entry.add_initial_account(fee_payer, &fee_payer_data);
+        if drop_on_failure {
+            test_entry.final_accounts.insert(fee_payer, fee_payer_data);
+        }
 
         let mut sender_data = AccountSharedData::default();
         sender_data.set_lamports(base_amount);
         test_entry.add_initial_account(sender, &sender_data);
+        if drop_on_failure {
+            test_entry.final_accounts.insert(sender, sender_data);
+        }
 
         let mut recipient_data = AccountSharedData::default();
         recipient_data.set_lamports(base_amount);
         test_entry.add_initial_account(recipient, &recipient_data);
+        if drop_on_failure {
+            test_entry.final_accounts.insert(recipient, recipient_data);
+        }
 
         let instruction = Instruction::new_with_bytes(
             program_id,
@@ -858,15 +870,19 @@ fn program_medley() -> Vec<SvmTestEntry> {
                 &[&fee_payer_keypair, &sender_keypair],
                 Hash::default(),
             ),
-            ExecutionStatus::ExecutedFailed,
+            match drop_on_failure {
+                true => ExecutionStatus::Discarded,
+                false => ExecutionStatus::ExecutedFailed,
+            },
         );
 
-        test_entry.transaction_batch[3]
-            .asserts
-            .logs
-            .push("Transfer: insufficient lamports 900000, need 900050".to_string());
-
-        test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
+        if !drop_on_failure {
+            test_entry.transaction_batch[3]
+                .asserts
+                .logs
+                .push("Transfer: insufficient lamports 900000, need 900050".to_string());
+            test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
+        }
     }
 
     // 4: A transaction whose verification has already failed
@@ -892,7 +908,7 @@ fn program_medley() -> Vec<SvmTestEntry> {
 fn simple_transfer(drop_on_failure: bool) -> Vec<SvmTestEntry> {
     let mut test_entry = SvmTestEntry {
         drop_on_failure,
-        ..SvmTestEntry::default()
+        ..Default::default()
     };
     let transfer_amount = LAMPORTS_PER_SOL;
     let drop_on_failure_status = |status: ExecutionStatus| match (drop_on_failure, status) {
@@ -2360,7 +2376,13 @@ fn simd83_account_reallocate(formalize_loaded_transaction_data_size: bool) -> Ve
     test_entries
 }
 
-#[test_case(program_medley())]
+// O: Add the following test cases:
+//
+// - all_or_nothing=true; drop_on_revert=false
+// - all_or_nothing=true; drop_on_revert=true
+
+#[test_case(program_medley(false))]
+#[test_case(program_medley(true))]
 #[test_case(simple_transfer(false))]
 #[test_case(simple_transfer(true))]
 #[test_case(simple_nonce(false))]
@@ -3269,7 +3291,7 @@ fn svm_inspect_account() {
 // Tests for proper accumulation of metrics across loaded programs in a batch.
 #[test]
 fn svm_metrics_accumulation() {
-    for test_entry in program_medley() {
+    for test_entry in program_medley(false) {
         let env = SvmTestEnvironment::create(test_entry);
 
         let (transactions, check_results) = env.test_entry.prepare_transactions();
