@@ -164,7 +164,7 @@ struct StartupInfo<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
 
 #[derive(Default, Debug)]
 /// result from scanning in-mem index during flush
-struct FlushScanResult<T> {
+struct FlushScanResult<T: Copy> {
     /// pubkeys whose age indicates they may be evicted now, pending further checks.
     evictions_age_possible: Vec<(Pubkey, Arc<AccountMapEntry<T>>)>,
 }
