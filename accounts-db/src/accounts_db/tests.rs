@@ -2086,14 +2086,14 @@ fn test_hash_stored_account() {
             .0
             .checksum(),
         expected_account_hash,
-        "StoredAccountMeta's data layout might be changed; update hashing if needed."
+        "StoredAccountInfo's data layout might be changed; update hashing if needed."
     );
     assert_eq!(
         AccountsDb::lt_hash_account(&account, stored_account.pubkey())
             .0
             .checksum(),
         expected_account_hash,
-        "Account-based hashing must be consistent with StoredAccountMeta-based one."
+        "Account-based hashing must be consistent with StoredAccountInfo-based one."
     );
 }
 

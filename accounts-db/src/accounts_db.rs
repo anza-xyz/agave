@@ -298,8 +298,7 @@ struct LoadAccountsIndexForShrink<'a, T: ShrinkCollectRefs<'a>> {
     all_are_zero_lamports: bool,
 }
 
-/// reference an account found during scanning a storage. This is a byval struct to replace
-/// `StoredAccountMeta`
+/// reference an account found during scanning a storage.
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub struct AccountFromStorage {
     pub index_info: AccountInfo,
@@ -625,7 +624,7 @@ pub enum LoadHint {
 
 #[derive(Debug)]
 pub enum LoadedAccountAccessor<'a> {
-    // StoredAccountMeta can't be held directly here due to its lifetime dependency to
+    // StoredAccountInfo can't be held directly here due to its lifetime dependency on
     // AccountStorageEntry
     Stored(Option<(Arc<AccountStorageEntry>, usize)>),
     // None value in Cached variant means the cache was flushed

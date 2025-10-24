@@ -1131,9 +1131,7 @@ impl AppendVec {
     }
 
     /// iterate over all pubkeys and call `callback`.
-    /// This iteration does not deserialize and populate each field in `StoredAccountMeta`.
-    /// `data` is completely ignored, for example.
-    /// Also, no references have to be maintained/returned from an iterator function.
+    /// no references have to be maintained/returned from an iterator function.
     /// This fn can operate on a batch of data at once.
     pub fn scan_pubkeys(&self, mut callback: impl FnMut(&Pubkey)) -> Result<()> {
         self.scan_stored_accounts_no_data(|account| {
