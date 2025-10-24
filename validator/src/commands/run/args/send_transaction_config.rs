@@ -477,7 +477,10 @@ mod tests {
 
     #[test]
     fn test_default_rpc_send_transaction_retry_pool_max_size_unchanged() {
-        assert_eq!(*DEFAULT_RPC_SEND_TRANSACTION_RETRY_POOL_MAX_SIZE, "10000");
+        assert_eq!(
+            *DEFAULT_RPC_SEND_TRANSACTION_RETRY_POOL_MAX_SIZE,
+            10_000.to_string()
+        );
     }
 
     #[test]
