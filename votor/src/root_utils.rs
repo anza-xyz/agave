@@ -36,12 +36,12 @@ pub(crate) struct RootContext {
 }
 
 #[derive(Debug, Error)]
-pub(crate) enum SetRootError {
-    #[error("Failed to record optimistic slot in blockstore: {0}")]
-    RecordSlotError(#[from] BlockstoreError),
+pub enum SetRootError {
+    #[error("Failed to record slot in blockstore: {0}")]
+    Blockstore(#[from] BlockstoreError),
 
     #[error("Error sending bank nofification: {0}")]
-    SendNotificationError(#[from] SendError<()>),
+    SendNotification(#[from] SendError<()>),
 }
 
 /// Sets the root for the votor event handling loop. Handles rooting all things
@@ -75,7 +75,7 @@ pub(crate) fn set_root(
         ctx.rpc_subscriptions.as_deref(),
         my_pubkey,
         |_| {},
-    );
+    )?;
 
     // Distinguish between duplicate versions of same slot
     let hash = ctx.bank_forks.read().unwrap().bank_hash(new_root).unwrap();
@@ -127,7 +127,8 @@ pub fn check_and_handle_new_root<CB>(
     rpc_subscriptions: Option<&RpcSubscriptions>,
     my_pubkey: &Pubkey,
     callback: CB,
-) where
+) -> Result<(), SetRootError>
+where
     CB: FnOnce(&BankForks),
 {
     // get the root bank before squash
@@ -155,9 +156,8 @@ pub fn check_and_handle_new_root<CB>(
     // get shreds for repair on gossip before we update leader schedule, otherwise they may
     // get dropped.
     leader_schedule_cache.set_root(rooted_banks.last().unwrap());
-    blockstore
-        .set_roots(rooted_slots.iter())
-        .expect("Ledger set roots failed");
+    blockstore.set_roots(rooted_slots.iter())?;
+
     set_bank_forks_root(
         new_root,
         bank_forks,
@@ -192,6 +192,8 @@ pub fn check_and_handle_new_root<CB>(
         }
     }
     info!("{my_pubkey}: new root {new_root}");
+
+    Ok(())
 }
 
 /// Sets the bank forks root:

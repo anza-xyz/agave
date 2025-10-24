@@ -68,7 +68,7 @@ enum EventLoopError {
     SetIdentityError(#[from] VoteHistoryError),
 
     #[error("Set root error: {0}")]
-    RootingError(#[from] SetRootError),
+    SetRoot(#[from] SetRootError),
 }
 
 pub(crate) struct EventHandler {
@@ -730,7 +730,7 @@ impl EventHandler {
             finalized_blocks,
             received_shred,
         )
-        .map_err(EventLoopError::RootingError)
+        .map_err(EventLoopError::SetRoot)
     }
 
     pub(crate) fn join(self) -> thread::Result<()> {
