@@ -420,6 +420,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 processing_results.push(Err(TransactionError::CommitCancelled));
 
                 // O: Balances still need to be collected for skipped TXs.
+                let ((), collect_pre_us) =
+                    measure_us!(balance_collector.collect_pre_balances(&mut account_loader, tx));
+                let ((), collect_post_us) =
+                    measure_us!(balance_collector.collect_post_balances(&mut account_loader, tx));
+                execute_timings.saturating_add_in_place(
+                    ExecuteTimingType::CollectBalancesUs,
+                    collect_pre_us.saturating_add(collect_post_us),
+                );
 
                 continue;
             }
@@ -447,7 +455,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             ));
             load_us = load_us.saturating_add(single_load_us);
 
-            // O: Collect pre balances will not run for short circuted TXs.
             let ((), collect_balances_us) =
                 measure_us!(balance_collector.collect_pre_balances(&mut account_loader, tx));
             execute_timings
@@ -546,8 +553,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             });
             execution_us = execution_us.saturating_add(single_execution_us);
 
-            // O: Short circuited transactions will not have their balances collected which will
-            // break the invariant below.
             let ((), collect_balances_us) =
                 measure_us!(balance_collector.collect_post_balances(&mut account_loader, tx));
             execute_timings
@@ -585,7 +590,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         execute_timings.saturating_add_in_place(ExecuteTimingType::LoadUs, load_us);
         execute_timings.saturating_add_in_place(ExecuteTimingType::ExecuteUs, execution_us);
 
-        // O: This doesn't hold if transactions in an all or nothing are short circuited.
         if let Some(ref balance_collector) = balance_collector {
             debug_assert!(balance_collector.lengths_match_expected(sanitized_txs.len()));
         }
