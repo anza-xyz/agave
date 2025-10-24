@@ -37,9 +37,10 @@ jobs:
       - name: Get file status
         run: |
           set +e
-          git diff --name-only $COMMIT_RANGE | grep \
-            -e '.github/workflows/docs.yml' \
-            -e 'docs/**'
+          # Match exactly the workflow file, or any path under docs/
+          git diff --name-only $COMMIT_RANGE | grep -E \
+            -e '^\.github/workflows/docs\.yml$' \
+            -e '^docs/'
           echo "FILE_CHANGED=$?" >> $GITHUB_ENV
 
       - name: Check
