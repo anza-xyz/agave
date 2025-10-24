@@ -10,7 +10,7 @@ use {
         voting_service::BLSOp,
         votor::Votor,
     },
-    agave_votor_messages::consensus_message::{CertificateMessage, ConsensusMessage},
+    agave_votor_messages::consensus_message::{Certificate, ConsensusMessage},
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -89,7 +89,7 @@ impl ConsensusPoolService {
         sharable_banks: &SharableBanks,
         bls_sender: &Sender<BLSOp>,
         new_finalized_slot: Option<Slot>,
-        new_certificates_to_send: Vec<Arc<CertificateMessage>>,
+        new_certificates_to_send: Vec<Arc<Certificate>>,
         standstill_timer: &mut Instant,
     ) -> Result<(), AddVoteError> {
         // If we have a new finalized slot, update the root and send new certificates
@@ -105,7 +105,7 @@ impl ConsensusPoolService {
 
     fn send_certificates(
         bls_sender: &Sender<BLSOp>,
-        certificates_to_send: Vec<Arc<CertificateMessage>>,
+        certificates_to_send: Vec<Arc<Certificate>>,
     ) -> Result<(), AddVoteError> {
         for certificate in certificates_to_send.iter() {
             // The BLS cert channel is expected to be large enough, so we don't
@@ -122,7 +122,7 @@ impl ConsensusPoolService {
                     ));
                 }
                 Err(TrySendError::Full(_)) => {
-                    return Err(AddVoteError::VotingServiceChannelFull);
+                    return Err(AddVoteError::VotingServiceQueueFull);
                 }
             }
         }
@@ -279,7 +279,7 @@ impl ConsensusPoolService {
         consensus_pool: &mut ConsensusPool,
         votor_events: &mut Vec<VotorEvent>,
         commitment_sender: &Sender<CommitmentAggregationData>,
-    ) -> Result<(Option<Slot>, Vec<Arc<CertificateMessage>>), AddVoteError> {
+    ) -> Result<(Option<Slot>, Vec<Arc<Certificate>>), AddVoteError> {
         let (new_finalized_slot, new_certificates_to_send) = consensus_pool.add_message(
             root_bank.epoch_schedule(),
             root_bank.epoch_stakes_map(),
@@ -391,9 +391,7 @@ mod tests {
         super::*,
         crate::common::DELTA_STANDSTILL,
         agave_votor_messages::{
-            consensus_message::{
-                Certificate, CertificateType, VoteMessage, BLS_KEYPAIR_DERIVE_SEED,
-            },
+            consensus_message::{CertificateType, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
             vote::Vote,
         },
         crossbeam_channel::Sender,
@@ -543,13 +541,13 @@ mod tests {
             &setup_result.bls_receiver,
             |event| {
                 if let BLSOp::PushCertificate { certificate } = event {
-                    assert_eq!(certificate.certificate.slot(), target_slot);
-                    let certificate_type = certificate.certificate.certificate_type();
+                    assert_eq!(certificate.cert_type.slot(), target_slot);
+                    let certificate_type = certificate.cert_type;
                     assert!(matches!(
                         certificate_type,
-                        CertificateType::Notarize
-                            | CertificateType::FinalizeFast
-                            | CertificateType::NotarizeFallback
+                        CertificateType::Notarize(_, _)
+                            | CertificateType::FinalizeFast(_, _)
+                            | CertificateType::NotarizeFallback(_, _)
                     ));
                     true
                 } else {
@@ -584,8 +582,8 @@ mod tests {
 
         // Now send a Skip certificate on slot 3, should be forwarded immediately
         let target_slot = 3;
-        let skip_certificate = CertificateMessage {
-            certificate: Certificate::Skip(target_slot),
+        let skip_certificate = Certificate {
+            cert_type: CertificateType::Skip(target_slot),
             signature: BLSSignature::default(),
             bitmap: vec![],
         };
@@ -595,7 +593,7 @@ mod tests {
             &setup_result.bls_receiver,
             |event| {
                 if let BLSOp::PushCertificate { certificate } = event {
-                    matches!(certificate.certificate, Certificate::Skip(slot) if slot == target_slot)
+                    matches!(certificate.cert_type, CertificateType::Skip(slot) if slot == target_slot)
                 } else {
                     false
                 }
@@ -623,8 +621,8 @@ mod tests {
         // Send skip certificates for all slots up to the next leader slot
         let messages_to_send = (1..next_leader_slot.0)
             .map(|slot| {
-                let skip_certificate = CertificateMessage {
-                    certificate: Certificate::Skip(slot),
+                let skip_certificate = Certificate {
+                    cert_type: CertificateType::Skip(slot),
                     signature: BLSSignature::default(),
                     bitmap: vec![],
                 };
@@ -670,8 +668,8 @@ mod tests {
         let setup_result = setup(None);
         // A lot of the receiver needs a finalize certificate to trigger an exit
         if channel_name != "consensus_message_receiver" {
-            let finalize_certificate = CertificateMessage {
-                certificate: Certificate::FinalizeFast(2, Hash::new_unique()),
+            let finalize_certificate = Certificate {
+                cert_type: CertificateType::FinalizeFast(2, Hash::new_unique()),
                 signature: BLSSignature::default(),
                 bitmap: vec![],
             };

@@ -5,7 +5,7 @@ use {
         staked_validators_cache::StakedValidatorsCache,
         vote_history_storage::{SavedVoteHistoryVersions, VoteHistoryStorage},
     },
-    agave_votor_messages::consensus_message::{CertificateMessage, ConsensusMessage},
+    agave_votor_messages::consensus_message::{Certificate, ConsensusMessage},
     bincode::serialize,
     crossbeam_channel::Receiver,
     solana_client::connection_cache::ConnectionCache,
@@ -45,7 +45,7 @@ pub enum BLSOp {
         saved_vote_history: SavedVoteHistoryVersions,
     },
     PushCertificate {
-        certificate: Arc<CertificateMessage>,
+        certificate: Arc<Certificate>,
     },
 }
 
@@ -234,7 +234,7 @@ impl VotingService {
                 );
             }
             BLSOp::PushCertificate { certificate } => {
-                let vote_slot = certificate.certificate.slot();
+                let vote_slot = certificate.cert_type.slot();
                 let message = ConsensusMessage::Certificate((*certificate).clone());
                 Self::broadcast_consensus_message(
                     vote_slot,
@@ -261,9 +261,7 @@ mod tests {
             NullVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
         },
         agave_votor_messages::{
-            consensus_message::{
-                Certificate, CertificateMessage, CertificateType, ConsensusMessage, VoteMessage,
-            },
+            consensus_message::{Certificate, CertificateType, ConsensusMessage, VoteMessage},
             vote::Vote,
         },
         solana_bls_signatures::Signature as BLSSignature,
@@ -344,13 +342,13 @@ mod tests {
         rank: 1,
     }))]
     #[test_case(BLSOp::PushCertificate {
-        certificate: Arc::new(CertificateMessage {
-            certificate: Certificate::new(CertificateType::Skip, 5, None),
+        certificate: Arc::new(Certificate {
+            cert_type: CertificateType::Skip(5),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         }),
-    }, ConsensusMessage::Certificate(CertificateMessage {
-        certificate: Certificate::new(CertificateType::Skip, 5, None),
+    }, ConsensusMessage::Certificate(Certificate {
+        cert_type: CertificateType::Skip(5),
         signature: BLSSignature::default(),
         bitmap: Vec::new(),
     }))]
