@@ -1213,11 +1213,14 @@ pub mod tests {
     fn test_write_packed_storages_too_few_slots() {
         let (db, storages, slots, _infos) = get_sample_storages(1, None);
         let accounts_to_combine = AccountsToCombine::default();
+        let offset = 0;
         let account = storages
             .first()
             .unwrap()
             .accounts
-            .get_stored_account_meta_callback(0, |account| AccountFromStorage::new(&account))
+            .get_stored_account_without_data_callback(offset, |account| {
+                AccountFromStorage::new(offset, &account)
+            })
             .unwrap();
         let accounts = [&account];
 
@@ -3144,8 +3147,8 @@ pub mod tests {
                                 let mut accounts = Vec::default();
                                 storage
                                     .accounts
-                                    .scan_accounts_stored_meta(|account| {
-                                        accounts.push(AccountFromStorage::new(&account));
+                                    .scan_accounts_without_data(|offset, account| {
+                                        accounts.push(AccountFromStorage::new(offset, &account));
                                     })
                                     .expect("must scan accounts storage");
                                 (storage.slot(), accounts)
@@ -3577,11 +3580,12 @@ pub mod tests {
         let num_slots = 1;
         let data_size = None;
         let (_db, storages, _slots, _infos) = get_sample_storages(num_slots, data_size);
+        let offset = 0;
 
         storages[0]
             .accounts
-            .get_stored_account_meta_callback(0, |stored_account_meta| {
-                let account = AccountFromStorage::new(&stored_account_meta);
+            .get_stored_account_without_data_callback(offset, |stored_account| {
+                let account = AccountFromStorage::new(offset, &stored_account);
                 let slot = 1;
                 let capacity = 0;
                 for i in 0..4usize {

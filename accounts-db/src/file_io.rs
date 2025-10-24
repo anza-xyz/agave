@@ -223,20 +223,6 @@ impl FileCreator for SyncIoFileCreator<'_> {
     }
 }
 
-pub fn validate_memlock_limit_for_disk_io(required_size: usize) -> io::Result<()> {
-    #[cfg(target_os = "linux")]
-    {
-        // memory locked requirement is only necessary on linux where io_uring is used
-        use crate::io_uring::memory::adjust_ulimit_memlock;
-        adjust_ulimit_memlock(required_size)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = required_size;
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use {

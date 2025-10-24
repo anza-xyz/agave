@@ -38,7 +38,7 @@ use {
         bank_forks_utils,
         blockstore::{entries_to_test_shreds, Blockstore},
         blockstore_processor::ProcessOptions,
-        leader_schedule::FixedSchedule,
+        leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule},
         shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
@@ -2784,12 +2784,6 @@ fn test_oc_bad_signatures() {
     let leader_stake = (total_stake as f64 * VOTE_THRESHOLD_SIZE) as u64;
     let our_node_stake = total_stake - leader_stake;
     let node_stakes = vec![leader_stake, our_node_stake];
-    let mut validator_config = ValidatorConfig {
-        require_tower: true,
-        wait_for_supermajority: Some(0),
-        ..ValidatorConfig::default_for_test()
-    };
-    validator_config.enable_default_rpc_block_subscribe();
     let validator_keys = [
         "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
         "2saHBBoTkLMmttmPQP8KfBkcCw45S5cwtV3wTdGCscRC8uxdgvHxpHiWXKx4LvJjNJtnNcbSv5NdheokFFqnNDt8",
@@ -2798,6 +2792,23 @@ fn test_oc_bad_signatures() {
     .map(|s| (Arc::new(Keypair::from_base58_string(s)), true))
     .take(node_stakes.len())
     .collect::<Vec<_>>();
+
+    // Give bootstrap node all the leader slots to avoid initial forking leading
+    // to casting votes with invalid blockhash. This is not what is meant to be
+    // test and only inflates test time.
+    let fixed_schedule = FixedSchedule {
+        leader_schedule: Arc::new(Box::new(IdentityKeyedLeaderSchedule::new_from_schedule(
+            vec![validator_keys.first().unwrap().0.pubkey()],
+        ))),
+    };
+
+    let mut validator_config = ValidatorConfig {
+        require_tower: true,
+        wait_for_supermajority: Some(0),
+        fixed_leader_schedule: Some(fixed_schedule),
+        ..ValidatorConfig::default_for_test()
+    };
+    validator_config.enable_default_rpc_block_subscribe();
 
     let our_id = validator_keys.last().unwrap().0.pubkey();
     let mut config = ClusterConfig {

@@ -1,4 +1,4 @@
-use thiserror::Error;
+use {std::io, thiserror::Error};
 
 #[derive(Error, Debug)]
 pub enum ResourceLimitError {
@@ -68,4 +68,61 @@ pub fn adjust_nofile_limit(enforce_nofile_limit: bool) -> Result<(), ResourceLim
     }
     info!("Maximum open file descriptors: {}", nofile.rlim_cur);
     Ok(())
+}
+
+/// Check kernel memory lock limit and increase it if necessary.
+///
+/// Returns `Err` when current limit is below `min_required` and cannot be increased.
+#[cfg(target_os = "linux")]
+fn adjust_ulimit_memlock(min_required: usize) -> io::Result<()> {
+    fn get_memlock() -> libc::rlimit {
+        let mut memlock = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        if unsafe { libc::getrlimit(libc::RLIMIT_MEMLOCK, &mut memlock) } != 0 {
+            log::warn!("getrlimit(RLIMIT_MEMLOCK) failed");
+        }
+        memlock
+    }
+
+    let mut memlock = get_memlock();
+    let current = memlock.rlim_cur as usize;
+    if current < min_required {
+        memlock.rlim_cur = min_required as u64;
+        memlock.rlim_max = min_required as u64;
+        if unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &memlock) } != 0 {
+            log::error!(
+                "Unable to increase the maximum memory lock limit to {min_required} from {current}"
+            );
+
+            if cfg!(target_os = "macos") {
+                log::error!(
+                    "On mac OS you may need to run |sudo launchctl limit memlock {min_required} \
+                     {min_required}| first"
+                );
+            }
+            return Err(io::Error::new(
+                io::ErrorKind::OutOfMemory,
+                "unable to set memory lock limit",
+            ));
+        }
+
+        memlock = get_memlock();
+        log::info!("Bumped maximum memory lock limit: {}", memlock.rlim_cur);
+    }
+    Ok(())
+}
+
+pub fn validate_memlock_limit_for_disk_io(required_size: usize) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        // memory locked requirement is only necessary on linux where io_uring is used
+        adjust_ulimit_memlock(required_size)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = required_size;
+        Ok(())
+    }
 }

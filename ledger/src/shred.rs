@@ -702,9 +702,9 @@ where
 {
     debug_assert!(root < max_slot);
     let Some(shred) = layout::get_shred(packet) else {
-            stats.index_overrun += 1;
-            return true;
-        };
+        stats.index_overrun += 1;
+        return true;
+    };
     match layout::get_version(shred) {
         None => {
             stats.index_overrun += 1;

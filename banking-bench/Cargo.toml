@@ -7,6 +7,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+workspace = "../dev-bins"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -14,6 +15,8 @@ targets = ["x86_64-unknown-linux-gnu"]
 [features]
 agave-unstable-api = []
 dev-context-only-utils = []
+dummy-for-ci-check = []
+frozen-abi = []
 
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
