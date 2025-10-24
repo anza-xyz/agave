@@ -50,10 +50,8 @@ impl<'a> AccountForStorage<'a> {
 
     pub fn take_account(&self) -> AccountSharedData {
         match self {
-            AccountForStorage::AddressAndAccount((_pubkey, account)) => {
-                create_account_shared_data(&**account)
-            }
-            AccountForStorage::StoredAccountInfo(account) => create_account_shared_data(&**account),
+            AccountForStorage::AddressAndAccount((_pubkey, account)) => (*account).clone(),
+            AccountForStorage::StoredAccountInfo(account) => create_account_shared_data(*account),
         }
     }
 }
