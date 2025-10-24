@@ -10831,7 +10831,6 @@ dependencies = [
  "solana-clock",
  "solana-compute-budget",
  "solana-epoch-schedule",
- "solana-hash",
  "solana-instruction",
  "solana-instruction-error",
  "solana-last-restart-slot",
