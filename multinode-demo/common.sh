@@ -7,8 +7,9 @@
 # shellcheck disable=2034
 #
 
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. || exit 1; pwd)"
 # shellcheck source=net/common.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. || exit 1; pwd)"/net/common.sh
+source "$here"/net/common.sh
 
 prebuild=
 if [[ $1 = "--prebuild" ]]; then
@@ -41,6 +42,10 @@ else
   solana_program() {
     declare program="$1"
     declare crate="$program"
+    declare manifest_path
+    if [[ $program == "bench-tps" || $program == "ledger-tool" ]]; then
+      manifest_path="--manifest-path $here/dev-bins/Cargo.toml"
+    fi
     if [[ -z $program ]]; then
       crate="cli"
       program="solana"
@@ -59,11 +64,11 @@ else
       (
         set -x
         # shellcheck disable=SC2086 # Don't want to double quote
-        cargo $CARGO_TOOLCHAIN build $profile_arg --bin $program
+        cargo $CARGO_TOOLCHAIN build $manifest_path $profile_arg --bin $program
       )
     fi
 
-    printf "cargo $CARGO_TOOLCHAIN run $profile_arg --bin %s %s -- " "$program"
+    printf "cargo $CARGO_TOOLCHAIN run $manifest_path $profile_arg --bin %s %s -- " "$program"
   }
 fi
 
