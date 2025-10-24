@@ -125,8 +125,6 @@ pub enum SnapshotNewFromDirError {
     MissingSnapshotFile(PathBuf),
 }
 
-pub type SnapshotResult<T> = std::result::Result<T, SnapshotError>;
-
 /// Errors that can happen in `verify_slot_deltas()`
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum VerifySlotDeltasError {

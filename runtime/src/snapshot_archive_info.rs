@@ -2,7 +2,7 @@
 
 use {
     crate::snapshot_utils,
-    agave_snapshots::{error::SnapshotResult, snapshot_hash::SnapshotHash, ArchiveFormat},
+    agave_snapshots::{snapshot_hash::SnapshotHash, ArchiveFormat, Result},
     solana_clock::Slot,
     std::{cmp::Ordering, path::PathBuf},
 };
@@ -57,7 +57,7 @@ pub struct FullSnapshotArchiveInfo(SnapshotArchiveInfo);
 
 impl FullSnapshotArchiveInfo {
     /// Parse the path to a full snapshot archive and return a new `FullSnapshotArchiveInfo`
-    pub fn new_from_path(path: PathBuf) -> SnapshotResult<Self> {
+    pub fn new_from_path(path: PathBuf) -> Result<Self> {
         let filename = snapshot_utils::path_to_file_name_str(path.as_path())?;
         let (slot, hash, archive_format) =
             snapshot_utils::parse_full_snapshot_archive_filename(filename)?;
@@ -108,7 +108,7 @@ pub struct IncrementalSnapshotArchiveInfo {
 
 impl IncrementalSnapshotArchiveInfo {
     /// Parse the path to an incremental snapshot archive and return a new `IncrementalSnapshotArchiveInfo`
-    pub fn new_from_path(path: PathBuf) -> SnapshotResult<Self> {
+    pub fn new_from_path(path: PathBuf) -> Result<Self> {
         let filename = snapshot_utils::path_to_file_name_str(path.as_path())?;
         let (base_slot, slot, hash, archive_format) =
             snapshot_utils::parse_incremental_snapshot_archive_filename(filename)?;

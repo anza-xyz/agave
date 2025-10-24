@@ -6,7 +6,7 @@ use shuttle::sync::Mutex;
 use std::sync::Mutex;
 use {
     crate::{bank::BankSlotDelta, snapshot_utils, status_cache::KeySlice},
-    agave_snapshots::error::SnapshotResult,
+    agave_snapshots::Result as SnapshotResult,
     bincode::{self, Options as _},
     serde::{Deserialize, Serialize},
     solana_clock::Slot,

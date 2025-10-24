@@ -32,12 +32,11 @@ use {
     },
     agave_snapshots::{
         error::{
-            SnapshotError, SnapshotResult, VerifyEpochStakesError, VerifySlotDeltasError,
-            VerifySlotHistoryError,
+            SnapshotError, VerifyEpochStakesError, VerifySlotDeltasError, VerifySlotHistoryError,
         },
         snapshot_config::SnapshotConfig,
         snapshot_hash::SnapshotHash,
-        ArchiveFormat, SnapshotVersion,
+        ArchiveFormat, Result as SnapshotResult, SnapshotVersion,
     },
     log::*,
     solana_accounts_db::{
