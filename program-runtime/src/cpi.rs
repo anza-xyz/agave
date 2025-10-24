@@ -685,7 +685,11 @@ pub fn translate_instruction_c(
     {
         // Each account meta is 34 bytes (32 for pubkey, 1 for is_signer, 1 for is_writable)
         total_cu_translation_cost =
-            total_cu_translation_cost.saturating_add(ix_c.accounts_len.saturating_mul(size_of::<AccountMeta>() as u64));
+            total_cu_translation_cost.saturating_add(ix_c.accounts_len.saturating_mul(size_of::<
+                AccountMeta,
+            >(
+            )
+                as u64));
     }
 
     consume_compute_meter(
