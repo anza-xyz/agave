@@ -8,7 +8,7 @@ use {
     solana_transaction_context::{InstructionAccount, TransactionContext},
 };
 
-fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionContext {
+fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionContext<'static> {
     let program_id = solana_pubkey::new_rand();
     let transaction_accounts = vec![
         (
