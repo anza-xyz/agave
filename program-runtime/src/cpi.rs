@@ -544,29 +544,24 @@ pub fn translate_instruction_rust(
         ix.data.as_vaddr(),
         ix.data.len(),
         check_aligned,
-    )?
-    .to_vec();
+    )?;
 
     check_instruction_size(account_metas.len(), data.len())?;
+
+    let mut total_cu_translation_cost = data.len() as u64;
 
     if invoke_context
         .get_feature_set()
         .increase_cpi_account_info_limit
     {
         // Each account meta is 34 bytes (32 for pubkey, 1 for is_signer, 1 for is_writable)
-        let account_meta_bytes = account_metas.len().saturating_mul(size_of::<AccountMeta>());
-
-        consume_compute_meter(
-            invoke_context,
-            (account_meta_bytes as u64)
-                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-                .unwrap_or(u64::MAX),
-        )?;
+        total_cu_translation_cost = total_cu_translation_cost
+            .saturating_add(account_metas.len().saturating_mul(size_of::<AccountMeta>()) as u64);
     }
 
     consume_compute_meter(
         invoke_context,
-        (data.len() as u64)
+        (total_cu_translation_cost)
             .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
             .unwrap_or(u64::MAX),
     )?;
@@ -587,7 +582,7 @@ pub fn translate_instruction_rust(
 
     Ok(Instruction {
         accounts,
-        data,
+        data: data.to_vec(),
         program_id: ix.program_id,
     })
 }
@@ -678,31 +673,24 @@ pub fn translate_instruction_c(
         ix_c.accounts_len,
         check_aligned,
     )?;
-    let data = translate_slice::<u8>(memory_mapping, ix_c.data_addr, ix_c.data_len, check_aligned)?
-        .to_vec();
+    let data = translate_slice::<u8>(memory_mapping, ix_c.data_addr, ix_c.data_len, check_aligned)?;
 
     check_instruction_size(ix_c.accounts_len as usize, data.len())?;
+
+    let mut total_cu_translation_cost = data.len() as u64;
 
     if invoke_context
         .get_feature_set()
         .increase_cpi_account_info_limit
     {
         // Each account meta is 34 bytes (32 for pubkey, 1 for is_signer, 1 for is_writable)
-        let account_meta_bytes = ix_c
-            .accounts_len
-            .saturating_mul(size_of::<AccountMeta>() as u64);
-
-        consume_compute_meter(
-            invoke_context,
-            (account_meta_bytes as u64)
-                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-                .unwrap_or(u64::MAX),
-        )?;
+        total_cu_translation_cost =
+            total_cu_translation_cost.saturating_add(ix_c.accounts_len.saturating_mul(size_of::<AccountMeta>() as u64));
     }
 
     consume_compute_meter(
         invoke_context,
-        (data.len() as u64)
+        (total_cu_translation_cost)
             .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
             .unwrap_or(u64::MAX),
     )?;
@@ -729,7 +717,7 @@ pub fn translate_instruction_c(
 
     Ok(Instruction {
         accounts,
-        data,
+        data: data.to_vec(),
         program_id: *program_id,
     })
 }
