@@ -87,7 +87,7 @@ pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<
     last_age_flushed: AtomicAge,
 
     // backing store
-    map_internal: RwLock<HashMap<Pubkey, AccountMapEntry<T>, ahash::RandomState>>,
+    map_internal: RwLock<HashMap<Pubkey, Box<AccountMapEntry<T>>, ahash::RandomState>>,
     storage: Arc<BucketMapHolder<T, U>>,
     _bin: usize,
     pub(crate) lowest_pubkey: Pubkey,
@@ -357,7 +357,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         // If the entry is now dirty, then it must be put in the cache or the modifications will be lost.
                         if add_to_cache || disk_entry.dirty() {
                             stats.inc_mem_count();
-                            vacant.insert(disk_entry);
+                            vacant.insert(Box::new(disk_entry));
                         }
                         rt
                     }
@@ -387,7 +387,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
     /// return false if the entry is in the index (disk or memory) and has a slot list len > 0
     /// return true in all other cases, including if the entry is NOT in the index at all
-    fn remove_if_slot_list_empty_entry(&self, entry: Entry<Pubkey, AccountMapEntry<T>>) -> bool {
+    fn remove_if_slot_list_empty_entry(
+        &self,
+        entry: Entry<Pubkey, Box<AccountMapEntry<T>>>,
+    ) -> bool {
         match entry {
             Entry::Occupied(occupied) => {
                 let result = self
@@ -560,7 +563,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                             "Callback must insert item into slot list"
                         );
                         assert!(new_value.dirty());
-                        vacant.insert(new_value);
+                        vacant.insert(Box::new(new_value));
                         stats.inc_mem_count();
                     }
                 };
@@ -826,7 +829,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         &mut ReclaimsSlotList::new(),
                         UpsertReclaim::IgnoreReclaims,
                     );
-                    vacant.insert(disk_entry);
+                    vacant.insert(Box::new(disk_entry));
                     (
                         false, /* found in mem */
                         true,  /* already existed */
@@ -922,7 +925,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// Filter as much as possible and capture dirty flag
     /// Skip entries with ref_count != 1 since they will be rejected later anyway
     fn gather_possible_evictions<'a>(
-        iter: impl Iterator<Item = (&'a Pubkey, &'a AccountMapEntry<T>)>,
+        iter: impl Iterator<Item = (&'a Pubkey, &'a Box<AccountMapEntry<T>>)>,
         possible_evictions: &mut PossibleEvictions,
         startup: bool,
         current_age: Age,
@@ -1452,11 +1455,11 @@ mod tests {
         let pubkey = solana_pubkey::new_rand();
 
         // Insert an entry manually
-        let entry = AccountMapEntry::new(
+        let entry = Box::new(AccountMapEntry::new(
             SlotList::from([(0, 42)]),
             1,
             AccountMapEntryMeta::new_dirty(&accounts_index.storage, true),
-        );
+        ));
         accounts_index
             .map_internal
             .write()
@@ -1743,11 +1746,11 @@ mod tests {
             .map(|age| {
                 let pk = Pubkey::from([age; 32]);
                 let one_element_slot_list = SlotList::from([(0, 0)]);
-                let one_element_slot_list_entry = AccountMapEntry::new(
+                let one_element_slot_list_entry = Box::new(AccountMapEntry::new(
                     one_element_slot_list,
                     ref_count,
                     AccountMapEntryMeta::default(),
-                );
+                ));
                 one_element_slot_list_entry.set_age(age);
                 (pk, one_element_slot_list_entry)
             })
@@ -2161,7 +2164,7 @@ mod tests {
 
         {
             // add an entry with an empty slot list
-            let val = AccountMapEntry::<u64>::empty_for_tests();
+            let val = Box::new(AccountMapEntry::<u64>::empty_for_tests());
             map.insert(key, val);
             let entry = map.entry(key);
             assert_matches!(entry, Entry::Occupied(_));
@@ -2175,7 +2178,7 @@ mod tests {
 
         {
             // add an entry with a NON empty slot list - it will NOT get removed
-            let val = AccountMapEntry::<u64>::empty_for_tests();
+            let val = Box::new(AccountMapEntry::<u64>::empty_for_tests());
             val.slot_list_write_lock().push((1, 1));
             map.insert(key, val);
             // does NOT remove it since it has a non-empty slot list
