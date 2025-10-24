@@ -412,7 +412,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // With SIMD83, transactions must be executed in order, because transactions
         // in the same batch may modify the same accounts. Transaction order is
         // preserved within entries written to the ledger.
+        let mut all_or_nothing_failed = false;
         for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
+            // Short circuit the remainder if we've failed to process a prior TX in an all or
+            // nothing batch.
+            if all_or_nothing_failed {
+                processing_results.push(Err(TransactionError::CommitCancelled));
+
+                continue;
+            }
+
             let (validate_result, validate_fees_us) =
                 measure_us!(check_result.and_then(|tx_details| {
                     Self::validate_transaction_nonce_and_fee_payer(
@@ -444,6 +453,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             let (processing_result, single_execution_us) = measure_us!(match load_result {
                 TransactionLoadResult::NotLoaded(err) => Err(err),
                 TransactionLoadResult::FeesOnly(fees_only_tx) => {
+                    // O: Drop on failure needs to drop and not be fees only.
+
                     // Update loaded accounts cache with nonce and fee-payer
                     account_loader.update_accounts_for_failed_tx(&fees_only_tx.rollback_accounts);
 
@@ -530,10 +541,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             });
             execution_us = execution_us.saturating_add(single_execution_us);
 
+            // O: Confirm this behaves as expected with unprocessed TXs (it seems to).
             let ((), collect_balances_us) =
                 measure_us!(balance_collector.collect_post_balances(&mut account_loader, tx));
             execute_timings
                 .saturating_add_in_place(ExecuteTimingType::CollectBalancesUs, collect_balances_us);
+
+            // If the all or nothing flag was requested AND processing failed to commit a result,
+            // then we should trip the `all_or_nothing_failed` flag so we can short circuit through
+            // the remaining transactions in the batch.
+            all_or_nothing_failed |= config.all_or_nothing && processing_result.is_err();
 
             processing_results.push(processing_result);
         }
