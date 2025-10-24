@@ -8,13 +8,13 @@ mod tests {
             runtime_config::RuntimeConfig,
             serde_snapshot::{self, ExtraFieldsToSerialize, SnapshotStreams},
             snapshot_bank_utils,
-            snapshot_config::SnapshotConfig,
             snapshot_utils::{
                 create_tmp_accounts_dir_for_tests, get_storages_to_serialize,
                 StorageAndNextAccountsFileId,
             },
             stakes::{SerdeStakesToStakeFormat, Stakes},
         },
+        agave_snapshots::snapshot_config::SnapshotConfig,
         solana_accounts_db::{
             account_storage::AccountStorageMap,
             accounts_db::{

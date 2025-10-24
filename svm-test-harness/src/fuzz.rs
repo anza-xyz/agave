@@ -1,12 +1,13 @@
 #![allow(clippy::missing_safety_doc)]
 
-pub mod fixture;
-pub mod instr;
-pub mod program_cache;
-pub mod sysvar_cache;
-
 use {
-    fixture::proto::InstrContext as ProtoInstrContext,
+    crate::{
+        fixture::{
+            instr_context::InstrContext,
+            proto::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
+        },
+        instr::execute_instr,
+    },
     prost::Message,
     std::{env, ffi::c_int},
 };
@@ -24,6 +25,14 @@ pub unsafe extern "C" fn sol_compat_init(_log_level: i32) {
 #[no_mangle]
 pub unsafe extern "C" fn sol_compat_fini() {}
 
+pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects> {
+    let Ok(instr_context) = InstrContext::try_from(input) else {
+        return None;
+    };
+    let instr_effects = execute_instr(instr_context);
+    instr_effects.map(Into::into)
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn sol_compat_instr_execute_v1(
     out_ptr: *mut u8,
@@ -35,7 +44,7 @@ pub unsafe extern "C" fn sol_compat_instr_execute_v1(
     let Ok(instr_context) = ProtoInstrContext::decode(in_slice) else {
         return 0;
     };
-    let Some(instr_effects) = instr::execute_instr_proto(instr_context) else {
+    let Some(instr_effects) = execute_instr_proto(instr_context) else {
         return 0;
     };
     let out_slice = std::slice::from_raw_parts_mut(out_ptr, (*out_psz) as usize);

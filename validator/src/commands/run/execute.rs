@@ -7,8 +7,9 @@ use {
         ledger_lockfile, lock_ledger,
     },
     agave_snapshots::{
-        hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, ArchiveFormat, SnapshotInterval,
-        SnapshotVersion,
+        hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+        snapshot_config::{SnapshotConfig, SnapshotUsage},
+        ArchiveFormat, SnapshotInterval, SnapshotVersion,
     },
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
     crossbeam_channel::unbounded,
@@ -58,7 +59,6 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{
         runtime_config::RuntimeConfig,
-        snapshot_config::{SnapshotConfig, SnapshotUsage},
         snapshot_utils::{self, BANK_SNAPSHOTS_DIR},
     },
     solana_signer::Signer,
@@ -510,17 +510,6 @@ pub fn execute(
         use_snapshot_archives_at_startup::cli::NAME,
         UseSnapshotArchivesAtStartup
     );
-
-    if mark_obsolete_accounts == MarkObsoleteAccounts::Enabled
-        && use_snapshot_archives_at_startup != UseSnapshotArchivesAtStartup::Always
-    {
-        Err(format!(
-            "The --accounts-db-mark-obsolete-accounts option requires the \
-             --use-snapshot-archives-at-startup option to be set to {}. Current value: {}",
-            UseSnapshotArchivesAtStartup::Always,
-            use_snapshot_archives_at_startup
-        ))?;
-    }
 
     let mut validator_config = ValidatorConfig {
         require_tower: matches.is_present("require_tower"),

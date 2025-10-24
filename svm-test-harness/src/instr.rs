@@ -1,17 +1,12 @@
-//! Solana SVM fuzz harness for instructions.
+//! Solana SVM test harness for instructions.
 //!
 //! This entrypoint provides an API for Agave's program runtime in order to
 //! execute program instructions directly against the VM.
 
-#![allow(clippy::missing_safety_doc)]
-
 use {
-    crate::fixture::{
-        instr_context::InstrContext,
-        instr_effects::InstrEffects,
-        proto::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
-    },
+    crate::fixture::{instr_context::InstrContext, instr_effects::InstrEffects},
     agave_precompiles::{get_precompile, is_precompile},
+    agave_syscalls::create_program_runtime_environment_v1,
     solana_account::AccountSharedData,
     solana_compute_budget::compute_budget::{ComputeBudget, SVMTransactionExecutionCost},
     solana_hash::Hash,
@@ -20,7 +15,7 @@ use {
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::ProgramCacheForTxBatch,
+        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -32,7 +27,7 @@ use {
         transaction_accounts::KeyedAccountSharedData, IndexOfAccount, InstructionAccount,
         TransactionContext,
     },
-    std::collections::HashSet,
+    std::{collections::HashSet, sync::Arc},
 };
 
 /// Implement the callback trait so that the SVM API can be used to load
@@ -77,6 +72,7 @@ fn create_invoke_context_fields(
 ) -> Option<(
     TransactionContext,
     SysvarCache,
+    ProgramRuntimeEnvironments,
     ProgramCacheForTxBatch,
     Hash,
     u64,
@@ -117,11 +113,22 @@ fn create_invoke_context_fields(
         compute_budget.max_instruction_trace_length,
     );
 
+    let environments = ProgramRuntimeEnvironments {
+        program_runtime_v1: Arc::new(
+            create_program_runtime_environment_v1(
+                &input.feature_set.runtime_features(),
+                &compute_budget.to_budget(),
+                false, /* deployment */
+                false, /* debugging_features */
+            )
+            .unwrap(),
+        ),
+        ..ProgramRuntimeEnvironments::default()
+    };
+
     // Set up the program cache, which will include all builtins by default.
     let mut program_cache =
-        crate::program_cache::setup_program_cache(&input.feature_set, &compute_budget, clock.slot);
-
-    let environments = program_cache.environments.clone();
+        crate::program_cache::setup_program_cache(&input.feature_set, clock.slot);
 
     #[allow(deprecated)]
     let (blockhash, lamports_per_signature) = sysvar_cache
@@ -174,6 +181,7 @@ fn create_invoke_context_fields(
     Some((
         transaction_context,
         sysvar_cache,
+        environments,
         program_cache,
         blockhash,
         lamports_per_signature,
@@ -201,12 +209,14 @@ fn get_instr_accounts(
     instruction_accounts
 }
 
-fn execute_instr(mut input: InstrContext) -> Option<InstrEffects> {
+/// Execute a single instruction against the Solana VM.
+pub fn execute_instr(mut input: InstrContext) -> Option<InstrEffects> {
     let log_collector = LogCollector::new_ref();
 
     let (
         mut transaction_context,
         sysvar_cache,
+        environments,
         mut program_cache,
         blockhash,
         lamports_per_signature,
@@ -224,6 +234,8 @@ fn execute_instr(mut input: InstrContext) -> Option<InstrEffects> {
             lamports_per_signature,
             &callback,
             &runtime_features,
+            &environments,
+            &environments,
             &sysvar_cache,
         );
 
@@ -299,26 +311,22 @@ fn execute_instr(mut input: InstrContext) -> Option<InstrEffects> {
     })
 }
 
-pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects> {
-    let Ok(instr_context) = InstrContext::try_from(input) else {
-        return None;
-    };
-    let instr_effects = execute_instr(instr_context);
-    instr_effects.map(Into::into)
-}
-
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        crate::fixture::proto::{AcctState as ProtoAcctState, InstrAcct as ProtoInstrAcct},
-        solana_sysvar_id::SysvarId,
+        super::*, agave_feature_set::FeatureSet, solana_account::Account,
+        solana_instruction::AccountMeta, solana_pubkey::Pubkey,
+        solana_stable_layout::stable_instruction::StableInstruction, solana_sysvar_id::SysvarId,
     };
 
     #[test]
     fn test_system_program_exec() {
-        let native_loader_id = solana_sdk_ids::native_loader::id().to_bytes().to_vec();
-        let sysvar_id = solana_sysvar_id::id().to_bytes().to_vec();
+        let system_program_id = solana_sdk_ids::system_program::id();
+        let native_loader_id = solana_sdk_ids::native_loader::id();
+        let sysvar_id = solana_sysvar_id::id();
+
+        let from_pubkey = Pubkey::new_from_array([1u8; 32]);
+        let to_pubkey = Pubkey::new_from_array([2u8; 32]);
 
         // Create Clock sysvar
         let clock = solana_clock::Clock {
@@ -331,123 +339,108 @@ mod tests {
         let rent = solana_rent::Rent::default();
         let rent_data = bincode::serialize(&rent).unwrap();
 
-        // Ensure that a basic account transfer works
-        let input = ProtoInstrContext {
-            program_id: vec![0u8; 32],
+        // Build the instruction context.
+        let context = InstrContext {
+            feature_set: FeatureSet::default(),
             accounts: vec![
-                ProtoAcctState {
-                    address: vec![1u8; 32],
-                    owner: vec![0u8; 32],
-                    lamports: 1000,
-                    data: vec![],
-                    executable: false,
-                    seed_addr: None,
-                },
-                ProtoAcctState {
-                    address: vec![2u8; 32],
-                    owner: vec![0u8; 32],
-                    lamports: 0,
-                    data: vec![],
-                    executable: false,
-                    seed_addr: None,
-                },
-                ProtoAcctState {
-                    address: vec![0u8; 32],
-                    owner: native_loader_id.clone(),
-                    lamports: 10000000,
-                    data: b"Solana Program".to_vec(),
-                    executable: true,
-                    seed_addr: None,
-                },
-                ProtoAcctState {
-                    address: solana_clock::Clock::id().to_bytes().to_vec(),
-                    owner: sysvar_id.clone(),
-                    lamports: 1,
-                    data: clock_data.clone(),
-                    executable: false,
-                    seed_addr: None,
-                },
-                ProtoAcctState {
-                    address: solana_rent::Rent::id().to_bytes().to_vec(),
-                    owner: sysvar_id.clone(),
-                    lamports: 1,
-                    data: rent_data.clone(),
-                    executable: false,
-                    seed_addr: None,
-                },
-            ],
-            instr_accounts: vec![
-                ProtoInstrAcct {
-                    index: 0,
-                    is_signer: true,
-                    is_writable: true,
-                },
-                ProtoInstrAcct {
-                    index: 1,
-                    is_signer: false,
-                    is_writable: true,
-                },
-            ],
-            data: vec![
-                // Transfer
-                0x02, 0x00, 0x00, 0x00, // Lamports
-                0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            ],
-            cu_avail: 10000u64,
-            epoch_context: None,
-            slot_context: None,
-        };
-        let output = execute_instr_proto(input.clone());
-        assert_eq!(
-            output,
-            Some(ProtoInstrEffects {
-                result: 0,
-                custom_err: 0,
-                modified_accounts: vec![
-                    ProtoAcctState {
-                        address: vec![1u8; 32],
-                        owner: vec![0u8; 32],
-                        lamports: 999,
+                (
+                    from_pubkey,
+                    Account {
+                        lamports: 1000,
                         data: vec![],
+                        owner: system_program_id,
                         executable: false,
-                        seed_addr: None,
+                        rent_epoch: u64::MAX,
                     },
-                    ProtoAcctState {
-                        address: vec![2u8; 32],
-                        owner: vec![0u8; 32],
-                        lamports: 1,
+                ),
+                (
+                    to_pubkey,
+                    Account {
+                        lamports: 0,
                         data: vec![],
+                        owner: system_program_id,
                         executable: false,
-                        seed_addr: None,
+                        rent_epoch: u64::MAX,
                     },
-                    ProtoAcctState {
-                        address: vec![0u8; 32],
-                        owner: native_loader_id.clone(),
+                ),
+                (
+                    system_program_id,
+                    Account {
                         lamports: 10000000,
                         data: b"Solana Program".to_vec(),
+                        owner: native_loader_id,
                         executable: true,
-                        seed_addr: None,
+                        rent_epoch: u64::MAX,
                     },
-                    ProtoAcctState {
-                        address: solana_clock::Clock::id().to_bytes().to_vec(),
-                        owner: sysvar_id.clone(),
+                ),
+                (
+                    solana_clock::Clock::id(),
+                    Account {
                         lamports: 1,
                         data: clock_data,
+                        owner: sysvar_id,
                         executable: false,
-                        seed_addr: None,
+                        rent_epoch: u64::MAX,
                     },
-                    ProtoAcctState {
-                        address: solana_rent::Rent::id().to_bytes().to_vec(),
-                        owner: sysvar_id.clone(),
+                ),
+                (
+                    solana_rent::Rent::id(),
+                    Account {
                         lamports: 1,
                         data: rent_data,
+                        owner: sysvar_id,
                         executable: false,
-                        seed_addr: None,
+                        rent_epoch: u64::MAX,
                     },
-                ],
-                cu_avail: 9850u64,
-                return_data: vec![],
-            })
-        );
+                ),
+            ],
+            instruction: StableInstruction {
+                program_id: system_program_id,
+                accounts: vec![
+                    AccountMeta {
+                        pubkey: from_pubkey,
+                        is_signer: true,
+                        is_writable: true,
+                    },
+                    AccountMeta {
+                        pubkey: to_pubkey,
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                ]
+                .into(),
+                data: vec![
+                    // Transfer
+                    0x02, 0x00, 0x00, 0x00, // Lamports
+                    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                ]
+                .into(),
+            },
+            cu_avail: 10000u64,
+        };
+
+        // Execute the instruction.
+        let effects = execute_instr(context).expect("Instruction execution should succeed");
+
+        // Verify the results.
+        assert_eq!(effects.result, None);
+        assert_eq!(effects.custom_err, None);
+        assert_eq!(effects.cu_avail, 9850u64);
+        assert_eq!(effects.return_data, Vec::<u8>::new(),);
+
+        // Verify account changes.
+        let from_account = effects
+            .modified_accounts
+            .iter()
+            .find(|(k, _)| k == &from_pubkey)
+            .unwrap();
+        assert_eq!(from_account.1.lamports, 999);
+
+        let to_account = effects
+            .modified_accounts
+            .iter()
+            .find(|(k, _)| k == &to_pubkey)
+            .unwrap();
+        assert_eq!(to_account.1.lamports, 1);
     }
 }

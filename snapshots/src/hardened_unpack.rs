@@ -28,6 +28,8 @@ pub enum UnpackError {
     Io(#[from] std::io::Error),
     #[error("Archive error: {0}")]
     Archive(String),
+    #[error("Unpacking '{1}' failed: {0}")]
+    Unpack(Box<UnpackError>, PathBuf),
 }
 
 pub type Result<T> = std::result::Result<T, UnpackError>;

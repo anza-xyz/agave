@@ -1,3 +1,7 @@
+//! Account state conversions for protobuf support.
+
+#![cfg(feature = "fuzz")]
+
 use {
     super::{error::FixtureError, proto::AcctState as ProtoAccount},
     solana_account::Account,
@@ -52,7 +56,6 @@ impl From<(Pubkey, Account)> for ProtoAccount {
             lamports,
             data,
             executable,
-            seed_addr: None,
         }
     }
 }

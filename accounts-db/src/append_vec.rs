@@ -7,13 +7,10 @@
 mod meta;
 pub mod test_utils;
 
-// Used all over the accounts-db crate.  Probably should be minimized.
-pub(crate) use meta::StoredAccountMeta;
-// Some tests/benches use AccountMeta/StoredMeta
 #[cfg(feature = "dev-context-only-utils")]
-pub use meta::{AccountMeta, StoredMeta};
+pub use meta::{AccountMeta, StoredAccountMeta, StoredMeta};
 #[cfg(not(feature = "dev-context-only-utils"))]
-use meta::{AccountMeta, StoredMeta};
+use meta::{AccountMeta, StoredAccountMeta, StoredMeta};
 use {
     crate::{
         account_info::Offset,
@@ -21,7 +18,7 @@ use {
         accounts_file::{InternalsForArchive, StorageAccess, StoredAccountsInfo},
         buffered_reader::{
             BufReaderWithOverflow, BufferedReader, FileBufRead as _, RequiredLenBufFileRead,
-            RequiredLenBufRead as _, Stack,
+            RequiredLenBufRead as _,
         },
         file_io::{read_into_buffer, write_buffer_to_file},
         is_zero_lamport::IsZeroLamport,
@@ -118,12 +115,6 @@ impl<'a> ValidSlice<'a> {
     #[inline(always)]
     pub(crate) fn len(&self) -> usize {
         self.0.len()
-    }
-
-    #[inline(always)]
-    #[cfg(test)]
-    pub(crate) fn slice(&self) -> &[u8] {
-        self.0
     }
 }
 
@@ -910,7 +901,7 @@ impl AppendVec {
     pub fn get_account_test(
         &self,
         offset: usize,
-    ) -> Option<(StoredMeta, solana_account::AccountSharedData)> {
+    ) -> Option<(Pubkey, solana_account::AccountSharedData)> {
         let data_len = self.get_account_data_lens(&[offset]);
         let sizes: usize = data_len
             .iter()
@@ -923,8 +914,8 @@ impl AppendVec {
                 r2.as_ref().unwrap()
             ));
             assert_eq!(sizes, r_callback.stored_size());
-            let meta = r_callback.meta().clone();
-            Some((meta, r_callback.to_account_shared_data()))
+            let pubkey = r_callback.meta().pubkey;
+            Some((pubkey, r_callback.to_account_shared_data()))
         });
         if result.is_none() {
             assert!(self
@@ -1192,8 +1183,7 @@ impl AppendVec {
             AppendVecFileBacking::File(file) => {
                 // Heuristic observed in benchmarking that maintains a reasonable balance between syscalls and data waste
                 const BUFFER_SIZE: usize = PAGE_SIZE * 4;
-                let mut reader =
-                    BufferedReader::<Stack<BUFFER_SIZE>>::new_stack().with_file(file, self_len);
+                let mut reader = BufferedReader::<BUFFER_SIZE>::new().with_file(file, self_len);
                 const REQUIRED_READ_LEN: usize =
                     mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>();
                 loop {
@@ -1330,7 +1320,7 @@ pub(crate) fn new_scan_accounts_reader<'a>() -> impl RequiredLenBufFileRead<'a> 
     const MAX_CAPACITY: usize = STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize;
     const BUFFER_SIZE: usize = PAGE_SIZE * 8;
     BufReaderWithOverflow::new(
-        BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(),
+        BufferedReader::<BUFFER_SIZE>::new(),
         MIN_CAPACITY,
         MAX_CAPACITY,
     )
@@ -1361,9 +1351,9 @@ pub mod tests {
     };
 
     impl AppendVec {
-        fn append_account_test(&self, data: &(StoredMeta, AccountSharedData)) -> Option<usize> {
+        fn append_account_test(&self, data: &(Pubkey, AccountSharedData)) -> Option<usize> {
             let slot_ignored = Slot::MAX;
-            let accounts = [(&data.0.pubkey, &data.1)];
+            let accounts = [(&data.0, &data.1)];
             let slice = &accounts[..];
             let storable_accounts = (slot_ignored, slice);
 

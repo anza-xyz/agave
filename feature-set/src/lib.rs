@@ -1163,9 +1163,12 @@ pub mod vote_state_v4 {
     }
 }
 
+pub mod switch_to_chacha8_turbine {
+    solana_pubkey::declare_id!("CHaChatUnR3s6cPyPMMGNJa3VdQQ8PNH2JqdD4LpCKnB");
+}
+
 pub mod deprecate_rent_exemption_threshold {
     solana_pubkey::declare_id!("rent6iVy6PDoViPBeJ6k5EJQrkj62h7DPyLbWGHwjrC");
-}
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
@@ -2094,6 +2097,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
              rules",
         ),
         (vote_state_v4::id(), "SIMD-0185: Vote State v4"),
+        (
+            switch_to_chacha8_turbine::id(),
+            "SIMD-0332: Reduce ChaCha rounds for Turbine from 20 to 8",
+        ),
         (
             deprecate_rent_exemption_threshold::id(),
             "SIMD-0194: Deprecate rent exemption threshold",

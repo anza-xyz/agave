@@ -1,8 +1,14 @@
 use {
     crate::commands,
     agave_snapshots::{
-        hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, SnapshotVersion,
-        DEFAULT_ARCHIVE_COMPRESSION,
+        hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+        snapshot_config::{
+            DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
+            DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
+            DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+            DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+        },
+        SnapshotVersion, DEFAULT_ARCHIVE_COMPRESSION,
     },
     clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches, SubCommand},
     solana_accounts_db::accounts_db::{
@@ -25,12 +31,6 @@ use {
     solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,
     solana_rpc_client_api::request::{DELINQUENT_VALIDATOR_SLOT_DISTANCE, MAX_MULTIPLE_ACCOUNTS},
-    solana_runtime::snapshot_config::{
-        DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-        DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-        DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
-        DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
-    },
     solana_send_transaction_service::send_transaction_service::{self},
     solana_streamer::quic::{
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER,
@@ -274,7 +274,6 @@ pub struct DefaultArgs {
     pub genesis_archive_unpacked_size: String,
     pub health_check_slot_distance: String,
     pub tower_storage: String,
-    pub etcd_domain_name: String,
     pub send_transaction_service_config: send_transaction_service::Config,
 
     pub rpc_max_multiple_accounts: String,
@@ -344,7 +343,6 @@ impl DefaultArgs {
             rpc_max_multiple_accounts: MAX_MULTIPLE_ACCOUNTS.to_string(),
             health_check_slot_distance: DELINQUENT_VALIDATOR_SLOT_DISTANCE.to_string(),
             tower_storage: "file".to_string(),
-            etcd_domain_name: "localhost".to_string(),
             send_transaction_service_config: send_transaction_service::Config::default(),
             rpc_send_transaction_retry_ms: default_send_transaction_service_config
                 .retry_rate_ms

@@ -1,0 +1,212 @@
+[workspace]
+members = [
+    "../accounts-db/store-tool",
+    "../banking-bench",
+    "../bench-tps",
+    "../dos",
+    "../ledger-tool",
+]
+
+resolver = "2"
+
+[workspace.package]
+version = "3.1.0"
+authors = ["Anza Maintainers <maintainers@anza.xyz>"]
+description = "Blockchain, Rebuilt for Scale"
+repository = "https://github.com/anza-xyz/agave"
+homepage = "https://anza.xyz/"
+license = "Apache-2.0"
+edition = "2021"
+
+[workspace.lints.rust]
+warnings = "deny"
+
+[workspace.lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = [
+    'cfg(target_os, values("solana"))',
+    'cfg(feature, values("frozen-abi", "no-entrypoint"))',
+]
+
+# Clippy lint configuration that can not be applied in clippy.toml
+[workspace.lints.clippy]
+arithmetic_side_effects = "deny"
+default_trait_access = "deny"
+manual_let_else = "deny"
+used_underscore_binding = "deny"
+
+[workspace.dependencies]
+agave-banking-stage-ingress-types = { path = "../banking-stage-ingress-types", version = "=3.1.0", features = ["agave-unstable-api"] }
+agave-feature-set = { path = "../feature-set", version = "=3.1.0", features = ["agave-unstable-api"] }
+agave-reserved-account-keys = { path = "../reserved-account-keys", version = "=3.1.0", features = ["agave-unstable-api"] }
+agave-snapshots = { path = "../snapshots", version = "=3.1.0", features = ["agave-unstable-api"] }
+agave-syscalls = { path = "../syscalls", version = "=3.1.0", features = ["agave-unstable-api"] }
+ahash = "0.8.11"
+assert_cmd = "2.0"
+assert_matches = "1.5.0"
+bincode = "1.3.3"
+bs58 = { version = "0.5.1", default-features = false }
+chrono = { version = "0.4.42", default-features = false }
+clap = "2.33.1"
+crossbeam-channel = "0.5.15"
+csv = "1.4.0"
+dashmap = "5.5.3"
+futures = "0.3.31"
+histogram = "0.6.9"
+itertools = "0.12.1"
+jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
+    "unprefixed_malloc_on_supported_platforms",
+] }
+log = "0.4.28"
+num_cpus = "1.17.0"
+pretty-hex = "0.3.0"
+rand = "0.8.5"
+rayon = "1.11.0"
+regex = "1.12.2"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_bytes = "0.11.19"
+serde_json = "1.0.145"
+serde_yaml = "0.9.34"
+serial_test = "2.0.0"
+signal-hook = "0.3.18"
+solana-account = "3.1.0"
+solana-account-decoder = { path = "../account-decoder", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-accounts-db = { path = "../accounts-db", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-bench-tps = { path = "../bench-tps", version = "=3.1.0" }
+solana-bpf-loader-program = { path = "../programs/bpf_loader", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-clap-utils = { path = "../clap-utils", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-cli-config = { path = "../cli-config", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-cli-output = { path = "../cli-output", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-client = { path = "../client", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-clock = "3.0.0"
+solana-cluster-type = "3.0.0"
+solana-commitment-config = "3.0.0"
+solana-compute-budget = { path = "../compute-budget", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-compute-budget-interface = "3.0.0"
+solana-connection-cache = { path = "../connection-cache", version = "=3.1.0", default-features = false, features = ["agave-unstable-api"] }
+solana-core = { path = "../core", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-cost-model = { path = "../cost-model", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-entry = { path = "../entry", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-faucet = { path = "../faucet", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-feature-gate-interface = "3.0.0"
+solana-fee-calculator = "3.0.0"
+solana-genesis = { path = "../genesis", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-genesis-config = "3.0.0"
+solana-geyser-plugin-manager = { path = "../geyser-plugin-manager", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-gossip = { path = "../gossip", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-hash = "3.0.0"
+solana-inflation = "3.0.0"
+solana-instruction = "3.0.0"
+solana-keypair = "3.0.1"
+solana-ledger = { path = "../ledger", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-loader-v3-interface = "6.1.0"
+solana-local-cluster = { path = "../local-cluster", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-logger = "3.0.0"
+solana-measure = { path = "../measure", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-message = "3.0.1"
+solana-metrics = { path = "../metrics", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-native-token = "3.0.0"
+solana-net-utils = { path = "../net-utils", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-nonce = "3.0.0"
+solana-perf = { path = "../perf", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-poh = { path = "../poh", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-program-runtime = { path = "../program-runtime", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-pubkey = { version = "3.0.0", default-features = false }
+solana-quic-client = { path = "../quic-client", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-rent = "3.0.0"
+solana-rpc = { path = "../rpc", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-rpc-client = { path = "../rpc-client", version = "=3.1.0", default-features = false, features = ["agave-unstable-api"] }
+solana-rpc-client-api = { path = "../rpc-client-api", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-rpc-client-nonce-utils = { path = "../rpc-client-nonce-utils", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-runtime = { path = "../runtime", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-runtime-transaction = { path = "../runtime-transaction", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-sbpf = { version = "=0.13.0", default-features = false }
+solana-sdk-ids = "3.0.0"
+solana-shred-version = "3.0.0"
+solana-signature = { version = "3.1.0", default-features = false }
+solana-signer = "3.0.0"
+solana-stake-interface = { version = "2.0.1" }
+solana-stake-program = { path = "../programs/stake", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-storage-bigtable = { path = "../storage-bigtable", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-streamer = { path = "../streamer", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-svm-callback = { path = "../svm-callback", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-svm-feature-set = { path = "../svm-feature-set", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-svm-log-collector = { path = "../svm-log-collector", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-svm-type-overrides = { path = "../svm-type-overrides", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-system-interface = "2.0"
+solana-system-transaction = "3.0.0"
+solana-test-validator = { path = "../test-validator", version = "=3.1.0" }
+solana-time-utils = "3.0.0"
+solana-tps-client = { path = "../tps-client", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-tpu-client = { path = "../tpu-client", version = "=3.1.0", default-features = false, features = ["agave-unstable-api"] }
+solana-transaction = "3.0.1"
+solana-transaction-context = { path = "../transaction-context", version = "=3.1.0", features = ["agave-unstable-api", "bincode"] }
+solana-transaction-status = { path = "../transaction-status", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-version = { path = "../version", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-vote = { path = "../vote", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-vote-program = { path = "../programs/vote", version = "=3.1.0", default-features = false, features = ["agave-unstable-api"] }
+tempfile = "3.23.0"
+thiserror = "2.0.17"
+tokio = "1.48.0"
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true
+strip = false
+split-debuginfo = "off"
+
+[profile.release]
+split-debuginfo = "unpacked"
+lto = "thin"
+
+[profile.release-with-lto]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+
+# curve25519-dalek uses the simd backend by default in v4 if possible,
+# which has very slow performance on some platforms with opt-level 0,
+# which is the default for dev and test builds.
+# This slowdown causes certain interactions in the solana-test-validator,
+# such as verifying ZK proofs in transactions, to take much more than 400ms,
+# creating problems in the testing environment.
+# To enable better performance in solana-test-validator during tests and dev builds,
+# we override the opt-level to 3 for the crate.
+[profile.dev.package.curve25519-dalek]
+opt-level = 3
+
+[patch.crates-io]
+# We include the following crates as our dependencies above from crates.io:
+#
+#  * spl-associated-token-account-interface
+#  * spl-instruction-padding
+#  * spl-memo-interface
+#  * spl-pod
+#  * spl-token
+#  * spl-token-2022-interface
+#  * spl-token-metadata-interface
+#
+# They, in turn, depend on a number of crates that we also include directly
+# using `path` specifications.  For example, `spl-token` depends on
+# `solana-program`.  And we explicitly specify `solana-program` above as a local
+# path dependency:
+#
+#     solana-program = { path = "../../../sdk/program", version = "=1.16.0" }
+#
+# Unfortunately, Cargo will try to resolve the `spl-token` `solana-program`
+# dependency only using what is available on crates.io.  Crates.io normally
+# contains a previous version of these crates, and we end up with two versions
+# of `solana-program` and `solana-zk-token-sdk` and all of their dependencies in
+# our build tree.
+#
+# If you are developing downstream using non-crates-io solana-program (local or
+# forked repo, or from github rev, eg), duplicate the following patch statements
+# in your Cargo.toml. If you still hit duplicate-type errors with the patch
+# statements in place, run `cargo update -p solana-program` and/or `cargo update
+# -p solana-zk-token-sdk` to remove extraneous versions from your Cargo.lock
+# file.
+#
+# There is a similar override in `programs/sbf/Cargo.toml`.  Please keep both
+# comments and the overrides in sync.
+solana-curve25519 = { path = "../curves/curve25519" }

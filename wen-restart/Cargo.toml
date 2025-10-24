@@ -20,6 +20,7 @@ name = "solana_wen_restart"
 agave-unstable-api = []
 
 [dependencies]
+agave-snapshots = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
 prost = { workspace = true }

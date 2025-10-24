@@ -1,5 +1,5 @@
 use {
-    agave_snapshots::{ArchiveFormat, SnapshotInterval, SnapshotVersion, ZstdConfig},
+    super::{ArchiveFormat, SnapshotInterval, SnapshotVersion, ZstdConfig},
     std::{
         num::{NonZeroU64, NonZeroUsize},
         path::PathBuf,
