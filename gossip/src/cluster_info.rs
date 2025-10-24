@@ -570,7 +570,7 @@ impl ClusterInfo {
                     let ip_addr = node.gossip().as_ref().map(SocketAddr::ip);
                     Some(format!(
                         "{:15} {:2}| {:5} | {:44} |{:^9}| {:5}|  {:5}| {:5}| {:5}| {:5}| {:5}| \
-                         {:5}| {}\n",
+                         {:5}| {:5}| {}\n",
                         node.gossip()
                             .filter(|addr| self.socket_addr_space.check(addr))
                             .as_ref()
@@ -603,6 +603,7 @@ impl ClusterInfo {
                             &ip_addr,
                             &node.serve_repair(contact_info::Protocol::UDP)
                         ),
+                        self.addr_to_string(&ip_addr, &node.alpenglow()),
                         node.shred_version(),
                     ))
                 }
@@ -611,9 +612,9 @@ impl ClusterInfo {
 
         format!(
             "IP Address        |Age(ms)| Node identifier                              \
-             | Version |Gossip|TPUvote| TPU  |TPUfwd| TVU  |TVU Q |ServeR|ShredVer\n\
+             | Version |Gossip|TPUvote| TPU  |TPUfwd| TVU  |TVU Q |ServeR|Alpeng|ShredVer\n\
              ------------------+-------+----------------------------------------------\
-             +---------+------+-------+------+------+------+------+------+--------\n\
+             +---------+------+-------+------+------+------+------+------+------+--------\n\
              {}\
              Nodes: {}{}{}",
             nodes.join(""),
@@ -2391,6 +2392,8 @@ pub struct Sockets {
     pub alpenglow: Option<UdpSocket>,
     /// Connection cache endpoint for QUIC-based Vote
     pub quic_vote_client: UdpSocket,
+    /// Connection cache endpoint for QUIC-based Alpenglow messages
+    pub quic_alpenglow_client: UdpSocket,
     /// Client-side socket for RPC/SendTransactionService.
     pub rpc_sts_client: UdpSocket,
     pub vortexor_receivers: Option<Vec<UdpSocket>>,
@@ -2861,7 +2864,9 @@ mod tests {
     fn check_node_sockets(node: &Node, ip: IpAddr, range: (u16, u16)) {
         check_socket(&node.sockets.repair, ip, range);
         check_socket(&node.sockets.tvu_quic, ip, range);
-
+        if let Some(alpenglow_port) = &node.sockets.alpenglow {
+            check_socket(alpenglow_port, ip, range);
+        }
         check_sockets(&node.sockets.gossip, ip, range);
         check_sockets(&node.sockets.tvu, ip, range);
         check_sockets(&node.sockets.tpu, ip, range);
@@ -3765,6 +3770,10 @@ mod tests {
     #[test]
     fn test_contact_trace() {
         solana_logger::setup();
+        // If you change the format of cluster_info_trace or rpc_info_trace, please make sure
+        // you read the actual output so the headers lign up with the output.
+        const CLUSTER_INFO_TRACE_LENGTH: usize = 452;
+        const RPC_INFO_TRACE_LENGTH: usize = 335;
         let keypair43 = Arc::new(
             Keypair::try_from(
                 [
@@ -3805,19 +3814,19 @@ mod tests {
 
         let trace = cluster_info44.contact_info_trace();
         info!("cluster:\n{trace}");
-        assert_eq!(trace.len(), 431);
+        assert_eq!(trace.len(), CLUSTER_INFO_TRACE_LENGTH);
 
         let trace = cluster_info44.rpc_info_trace();
         info!("rpc:\n{trace}");
-        assert_eq!(trace.len(), 335);
+        assert_eq!(trace.len(), RPC_INFO_TRACE_LENGTH);
 
         let trace = cluster_info43.contact_info_trace();
         info!("cluster:\n{trace}");
-        assert_eq!(trace.len(), 431);
+        assert_eq!(trace.len(), CLUSTER_INFO_TRACE_LENGTH);
 
         let trace = cluster_info43.rpc_info_trace();
         info!("rpc:\n{trace}");
-        assert_eq!(trace.len(), 335);
+        assert_eq!(trace.len(), RPC_INFO_TRACE_LENGTH);
     }
 
     #[test]
