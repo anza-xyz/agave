@@ -169,7 +169,7 @@ impl Votor {
             event_sender,
             event_receiver,
             own_vote_sender,
-            consensus_message_receiver: bls_receiver,
+            consensus_message_receiver,
         } = config;
 
         let start = Arc::new((Mutex::new(false), Condvar::new()));
@@ -238,7 +238,7 @@ impl Votor {
             blockstore,
             sharable_banks,
             leader_schedule_cache,
-            consensus_message_receiver: bls_receiver,
+            consensus_message_receiver,
             bls_sender,
             event_sender,
             commitment_sender,
