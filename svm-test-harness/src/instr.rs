@@ -8,7 +8,6 @@ use {
     agave_precompiles::{get_precompile, is_precompile},
     solana_account::{Account, AccountSharedData},
     solana_compute_budget::compute_budget::{ComputeBudget, SVMTransactionExecutionCost},
-    solana_hash::Hash,
     solana_instruction::AccountMeta,
     solana_instruction_error::InstructionError,
     solana_precompile_error::PrecompileError,
@@ -69,13 +68,7 @@ impl TransactionProcessingCallback for InstrContextCallback<'_> {
 
 fn create_invoke_context_fields(
     input: &mut InstrContext,
-) -> Option<(
-    SysvarCache,
-    ProgramCacheForTxBatch,
-    Hash,
-    u64,
-    ComputeBudget,
-)> {
+) -> Option<(SysvarCache, ProgramCacheForTxBatch, ComputeBudget)> {
     let compute_budget = {
         let mut budget = ComputeBudget::new_with_defaults(false);
         budget.compute_unit_limit = input.cu_avail;
@@ -102,14 +95,6 @@ fn create_invoke_context_fields(
         crate::program_cache::setup_program_cache(&input.feature_set, &compute_budget, clock.slot);
 
     let environments = program_cache.environments.clone();
-
-    #[allow(deprecated)]
-    let (blockhash, lamports_per_signature) = sysvar_cache
-        .get_recent_blockhashes()
-        .ok()
-        .and_then(|x| (*x).last().cloned())
-        .map(|x| (x.blockhash, x.fee_calculator.lamports_per_signature))
-        .unwrap_or_default();
 
     let mut newly_loaded_programs = HashSet::<Pubkey>::new();
 
@@ -151,13 +136,7 @@ fn create_invoke_context_fields(
         }
     }
 
-    Some((
-        sysvar_cache,
-        program_cache,
-        blockhash,
-        lamports_per_signature,
-        compute_budget,
-    ))
+    Some((sysvar_cache, program_cache, compute_budget))
 }
 
 fn create_instruction_accounts(
@@ -202,7 +181,7 @@ fn create_transaction_context(
 pub fn execute_instr(mut input: InstrContext) -> Option<InstrEffects> {
     let log_collector = LogCollector::new_ref();
 
-    let (sysvar_cache, mut program_cache, blockhash, lamports_per_signature, compute_budget) =
+    let (sysvar_cache, mut program_cache, compute_budget) =
         create_invoke_context_fields(&mut input)?;
 
     let mut compute_units_consumed = 0u64;
@@ -216,9 +195,17 @@ pub fn execute_instr(mut input: InstrContext) -> Option<InstrEffects> {
     let result = {
         let callback = InstrContextCallback(&input);
 
+        #[allow(deprecated)]
+        let (blockhash, blockhash_lamports_per_signature) = sysvar_cache
+            .get_recent_blockhashes()
+            .ok()
+            .and_then(|x| (*x).last().cloned())
+            .map(|x| (x.blockhash, x.fee_calculator.lamports_per_signature))
+            .unwrap_or_default();
+
         let environment_config = EnvironmentConfig::new(
             blockhash,
-            lamports_per_signature,
+            blockhash_lamports_per_signature,
             &callback,
             &runtime_features,
             &sysvar_cache,
