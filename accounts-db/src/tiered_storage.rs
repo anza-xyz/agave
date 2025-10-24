@@ -351,13 +351,8 @@ mod tests {
             .map(|size| create_test_account(*size))
             .collect();
 
-        let account_refs: Vec<_> = accounts
-            .iter()
-            .map(|account| (&account.0.pubkey, &account.1))
-            .collect();
-
         // Slot information is not used here
-        let storable_accounts = (Slot::MAX, &account_refs[..]);
+        let storable_accounts = (Slot::MAX, &accounts[..]);
 
         let temp_dir = tempdir().unwrap();
         let tiered_storage_path = temp_dir.path().join(path_suffix);
