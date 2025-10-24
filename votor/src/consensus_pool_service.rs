@@ -132,7 +132,7 @@ impl ConsensusPoolService {
     fn process_consensus_message(
         ctx: &mut ConsensusPoolContext,
         my_pubkey: &Pubkey,
-        message: &ConsensusMessage,
+        message: ConsensusMessage,
         consensus_pool: &mut ConsensusPool,
         events: &mut Vec<VotorEvent>,
         standstill_timer: &mut Instant,
@@ -247,7 +247,7 @@ impl ConsensusPoolService {
                 match Self::process_consensus_message(
                     ctx,
                     &my_pubkey,
-                    &message,
+                    message,
                     &mut consensus_pool,
                     &mut events,
                     &mut standstill_timer,
@@ -275,7 +275,7 @@ impl ConsensusPoolService {
         root_bank: &Bank,
         my_pubkey: &Pubkey,
         my_vote_pubkey: &Pubkey,
-        message: &ConsensusMessage,
+        message: ConsensusMessage,
         consensus_pool: &mut ConsensusPool,
         votor_events: &mut Vec<VotorEvent>,
         commitment_sender: &Sender<CommitmentAggregationData>,
