@@ -274,7 +274,6 @@ pub struct DefaultArgs {
     pub genesis_archive_unpacked_size: String,
     pub health_check_slot_distance: String,
     pub tower_storage: String,
-    pub etcd_domain_name: String,
     pub send_transaction_service_config: send_transaction_service::Config,
 
     pub rpc_max_multiple_accounts: String,
@@ -344,7 +343,6 @@ impl DefaultArgs {
             rpc_max_multiple_accounts: MAX_MULTIPLE_ACCOUNTS.to_string(),
             health_check_slot_distance: DELINQUENT_VALIDATOR_SLOT_DISTANCE.to_string(),
             tower_storage: "file".to_string(),
-            etcd_domain_name: "localhost".to_string(),
             send_transaction_service_config: send_transaction_service::Config::default(),
             rpc_send_transaction_retry_ms: default_send_transaction_service_config
                 .retry_rate_ms

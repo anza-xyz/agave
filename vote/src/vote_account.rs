@@ -1,6 +1,5 @@
 use {
     crate::vote_state_view::VoteStateView,
-    itertools::Itertools,
     serde::{
         de::{MapAccess, Visitor},
         ser::Serializer,
@@ -140,16 +139,22 @@ impl VoteAccounts {
     pub fn staked_nodes(&self) -> Arc<HashMap</*node_pubkey:*/ Pubkey, /*stake:*/ u64>> {
         self.staked_nodes
             .get_or_init(|| {
-                Arc::new(
-                    self.vote_accounts
-                        .values()
-                        .filter(|(stake, _)| *stake != 0u64)
-                        .map(|(stake, vote_account)| (*vote_account.node_pubkey(), stake))
-                        .into_grouping_map()
-                        .aggregate(|acc, _node_pubkey, stake| {
-                            Some(acc.unwrap_or_default() + stake)
-                        }),
-                )
+                // Count non-zero stake accounts for optimal capacity allocation
+                let non_zero_count = self
+                    .vote_accounts
+                    .values()
+                    .filter(|(stake, _)| *stake != 0)
+                    .count();
+
+                let mut staked_nodes = HashMap::with_capacity(non_zero_count);
+
+                for (stake, vote_account) in self.vote_accounts.values() {
+                    if *stake != 0 {
+                        *staked_nodes.entry(*vote_account.node_pubkey()).or_default() += *stake;
+                    }
+                }
+
+                Arc::new(staked_nodes)
             })
             .clone()
     }

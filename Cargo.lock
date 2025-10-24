@@ -235,8 +235,13 @@ dependencies = [
  "agave-scheduler-bindings",
  "agave-transaction-view",
  "ahash 0.8.11",
+ "libc",
+ "nix",
  "rts-alloc",
+ "shaq",
  "solana-pubkey",
+ "tempfile",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -1855,12 +1860,6 @@ checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
 dependencies = [
  "crossbeam-utils",
 ]
-
-[[package]]
-name = "conditional-mod"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67935045d95e19071aae6ee98d649f2a5593e510802040c622200c8d6666a9ca"
 
 [[package]]
 name = "console"
@@ -5462,8 +5461,9 @@ dependencies = [
 
 [[package]]
 name = "protosol"
-version = "1.0.1"
-source = "git+https://github.com/firedancer-io/protosol?tag=v1.0.4#72fb79f2a24e60a55d392c386c1ac7c2d15c13a4"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5e70d64aff3756d57a2b5e84ee2a01923f2a5350a51b93e8ec4631b817d8dcd"
 dependencies = [
  "prost",
  "prost-build",
@@ -6042,9 +6042,9 @@ dependencies = [
 
 [[package]]
 name = "rts-alloc"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7ccc6c6ddf12ced79aeae78454bcb4d0f5e31e5bc0aaca490e2f1b012f56b9d"
+checksum = "9c55727ea58e2c9c131d8f003dab5aaa7056d99f8292bc6a5dfb299cefe55e60"
 dependencies = [
  "libc",
 ]
@@ -6625,9 +6625,9 @@ dependencies = [
 
 [[package]]
 name = "shaq"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c451e9289cd55fd2406917d16abe8af5f83c74b3ba3736398f6aadd2ab1fba2"
+checksum = "014fb38bb8370732f76c67752106d2a4b25cc1891ec489c7fc5ab23b27e90a75"
 dependencies = [
  "libc",
 ]
@@ -7940,7 +7940,6 @@ dependencies = [
  "bytemuck",
  "bytes",
  "chrono",
- "conditional-mod",
  "criterion",
  "crossbeam-channel",
  "dashmap",
@@ -8441,9 +8440,9 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f19aad3b79cf84cd24de85e711ed1718de1e5bf46a710fa73179efa6a117d707"
+checksum = "497caf6b5b0ad5fbf3879d4417cd520e11f19c34f183d052e42370d9a585c79a"
 dependencies = [
  "boxcar",
  "bs58",
@@ -8463,9 +8462,9 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi-macro"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d42809b90c84963eb5f2e17afafb1384892341b0d8ec12ae8f4a8c69a96138e4"
+checksum = "38e4bb0f5232668866a7f6f5cbc3222bbd9eebbff6afe392e3394498e8c9b1fa"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8857,7 +8856,6 @@ dependencies = [
  "bzip2",
  "chrono",
  "chrono-humanize",
- "conditional-mod",
  "criterion",
  "crossbeam-channel",
  "dashmap",
@@ -10792,7 +10790,18 @@ name = "solana-svm-feature-set"
 version = "3.1.0"
 
 [[package]]
-name = "solana-svm-fuzz-harness"
+name = "solana-svm-log-collector"
+version = "3.1.0"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "solana-svm-measure"
+version = "3.1.0"
+
+[[package]]
+name = "solana-svm-test-harness"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
@@ -10827,17 +10836,6 @@ dependencies = [
  "solana-transaction-context",
  "thiserror 2.0.17",
 ]
-
-[[package]]
-name = "solana-svm-log-collector"
-version = "3.1.0"
-dependencies = [
- "log",
-]
-
-[[package]]
-name = "solana-svm-measure"
-version = "3.1.0"
 
 [[package]]
 name = "solana-svm-timings"
@@ -11391,7 +11389,6 @@ dependencies = [
  "bs58",
  "bytes",
  "caps",
- "conditional-mod",
  "crossbeam-channel",
  "futures 0.3.31",
  "itertools 0.12.1",

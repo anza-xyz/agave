@@ -21,7 +21,7 @@ use {
         accounts_file::{InternalsForArchive, StorageAccess, StoredAccountsInfo},
         buffered_reader::{
             BufReaderWithOverflow, BufferedReader, FileBufRead as _, RequiredLenBufFileRead,
-            RequiredLenBufRead as _, Stack,
+            RequiredLenBufRead as _,
         },
         file_io::{read_into_buffer, write_buffer_to_file},
         is_zero_lamport::IsZeroLamport,
@@ -1186,8 +1186,7 @@ impl AppendVec {
             AppendVecFileBacking::File(file) => {
                 // Heuristic observed in benchmarking that maintains a reasonable balance between syscalls and data waste
                 const BUFFER_SIZE: usize = PAGE_SIZE * 4;
-                let mut reader =
-                    BufferedReader::<Stack<BUFFER_SIZE>>::new_stack().with_file(file, self_len);
+                let mut reader = BufferedReader::<BUFFER_SIZE>::new().with_file(file, self_len);
                 const REQUIRED_READ_LEN: usize =
                     mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>();
                 loop {
@@ -1324,7 +1323,7 @@ pub(crate) fn new_scan_accounts_reader<'a>() -> impl RequiredLenBufFileRead<'a> 
     const MAX_CAPACITY: usize = STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize;
     const BUFFER_SIZE: usize = PAGE_SIZE * 8;
     BufReaderWithOverflow::new(
-        BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(),
+        BufferedReader::<BUFFER_SIZE>::new(),
         MIN_CAPACITY,
         MAX_CAPACITY,
     )
