@@ -107,6 +107,7 @@
 use {
     crate::utils::{ShortCounter, Token, TokenCell},
     assert_matches::assert_matches,
+    solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_transaction::sanitized::SanitizedTransaction,
@@ -452,6 +453,8 @@ const_assert_eq!(mem::size_of::<Task>(), 8);
 pub type BlockSize = usize;
 pub const NO_CONSUMED_BLOCK_SIZE: BlockSize = 0;
 
+pub const NO_LAST_RUNNABLE_SLOT: Slot = Slot::MAX;
+
 /// [`Token`] for [`UsageQueue`].
 type UsageQueueToken = Token<UsageQueueInner>;
 const_assert_eq!(mem::size_of::<UsageQueueToken>(), 0);
@@ -476,6 +479,7 @@ pub struct TaskInner {
     /// before running.
     blocked_usage_count: TokenCell<ShortCounter>,
     consumed_block_size: BlockSize,
+    last_runnable_slot: Slot,
 }
 
 impl TaskInner {
@@ -493,6 +497,14 @@ impl TaskInner {
 
     pub fn consumed_block_size(&self) -> BlockSize {
         self.consumed_block_size
+    }
+
+    pub fn last_runnable_slot(&self) -> Slot {
+        self.last_runnable_slot
+    }
+
+    pub fn is_runnable(&self, current_slot: Slot) -> bool {
+        current_slot <= self.last_runnable_slot
     }
 
     pub fn transaction(&self) -> &RuntimeTransaction<SanitizedTransaction> {
@@ -1254,6 +1266,7 @@ impl SchedulingStateMachine {
             transaction,
             task_id,
             NO_CONSUMED_BLOCK_SIZE,
+            NO_LAST_RUNNABLE_SLOT,
             usage_queue_loader,
         )
     }
@@ -1262,12 +1275,14 @@ impl SchedulingStateMachine {
         transaction: RuntimeTransaction<SanitizedTransaction>,
         task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
+        last_runnable_slot: Slot,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
         Self::do_create_task(
             transaction,
             task_id,
             consumed_block_size,
+            last_runnable_slot,
             usage_queue_loader,
         )
     }
@@ -1276,6 +1291,7 @@ impl SchedulingStateMachine {
         transaction: RuntimeTransaction<SanitizedTransaction>,
         task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
+        last_runnable_slot: Slot,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
         // It's crucial for tasks to be validated with
@@ -1332,6 +1348,7 @@ impl SchedulingStateMachine {
             lock_contexts,
             blocked_usage_count: TokenCell::new(ShortCounter::zero()),
             consumed_block_size,
+            last_runnable_slot,
         })
     }
 

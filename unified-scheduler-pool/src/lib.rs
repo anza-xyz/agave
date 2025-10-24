@@ -97,7 +97,7 @@ enum CheckPoint<'a> {
     TaskHandled(OrderedTaskId),
     TaskAccumulated(OrderedTaskId, &'a Result<()>),
     SessionEnding,
-    SessionFinished(Option<Slot>),
+    SessionFinished(Slot),
     SchedulerThreadAborted,
     IdleSchedulerCleaned(usize),
     IdlingSchedulerTrashed,
@@ -387,11 +387,13 @@ impl BankingStageHelper {
         transaction: RuntimeTransaction<SanitizedTransaction>,
         task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
+        last_runnable_slot: Slot,
     ) -> Task {
         SchedulingStateMachine::create_block_production_task(
             transaction,
             task_id,
             consumed_block_size,
+            last_runnable_slot,
             &mut |pubkey| self.usage_queue_loader.load(pubkey),
         )
     }
@@ -399,8 +401,14 @@ impl BankingStageHelper {
     fn recreate_task(&self, executed_task: Box<ExecutedTask>) -> Task {
         let new_task_id = self.regenerated_task_id(executed_task.task.task_id());
         let consumed_block_size = executed_task.consumed_block_size();
+        let last_runnable_slot = executed_task.last_runnable_slot();
         let transaction = executed_task.into_transaction();
-        self.create_new_task(transaction, new_task_id, consumed_block_size)
+        self.create_new_task(
+            transaction,
+            new_task_id,
+            consumed_block_size,
+            last_runnable_slot,
+        )
     }
 
     pub fn send_new_task(&self, task: Task) {
@@ -1189,6 +1197,10 @@ impl ExecutedTask {
         self.task.consumed_block_size()
     }
 
+    fn last_runnable_slot(&self) -> Slot {
+        self.task.last_runnable_slot()
+    }
+
     fn into_transaction(self) -> RuntimeTransaction<SanitizedTransaction> {
         self.task.into_transaction()
     }
@@ -1754,6 +1766,19 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         }
     }
 
+    fn drop_unrunnable_task_or(
+        current_slot: Slot,
+        task: Task,
+        state_machine: &mut SchedulingStateMachine,
+        on_send: impl Fn(Task),
+    ) {
+        if task.is_runnable(current_slot) {
+            on_send(task)
+        } else {
+            state_machine.deschedule_task(&task);
+        }
+    }
+
     /// Returns `true` if the caller should abort.
     #[must_use]
     fn abort_or_accumulate_result_with_timings(
@@ -1888,7 +1913,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         handler_context: HandlerContext,
     ) {
         let scheduling_mode = context.mode();
-        let mut current_slot = context.slot();
+        let mut current_slot = context.slot().unwrap_or_default();
         let mut block_size_estimate = 0;
         let (mut is_finished, mut session_ending) = match scheduling_mode {
             BlockVerification => (false, false),
@@ -2114,7 +2139,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 let task = state_machine
                                     .schedule_next_unblocked_task()
                                     .expect("unblocked task");
-                                runnable_task_sender.send_payload(task).unwrap();
+                                Self::drop_unrunnable_task_or(current_slot, task, &mut state_machine, |task| {
+                                    runnable_task_sender.send_payload(task).unwrap();
+                                });
                             },
                             recv(new_task_receiver) -> message => {
                                 assert!(scheduling_mode == BlockProduction || !session_ending);
@@ -2125,7 +2152,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                         sleepless_testing::at(CheckPoint::NewTask(task_id));
 
                                         if let Some(task) = state_machine.schedule_or_buffer_task(task, session_ending) {
-                                            runnable_task_sender.send_aux_payload(task).unwrap();
+                                            Self::drop_unrunnable_task_or(current_slot, task, &mut state_machine, |task| {
+                                                runnable_task_sender.send_aux_payload(task).unwrap();
+                                            });
                                         } else {
                                             sleepless_testing::at(CheckPoint::BufferedTask(task_id));
                                         }
@@ -2187,7 +2216,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     if matches!(scheduling_mode, BlockProduction) {
                         datapoint_info!(
                             "unified_scheduler-bp_session_stats",
-                            ("slot", current_slot.unwrap_or_default(), i64),
+                            ("slot", current_slot, i64),
                             ("block_size_estimate", block_size_estimate, i64),
                         );
                     }
@@ -2234,7 +2263,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 // Before that, propagate new SchedulingContext to handler threads
                                 assert_eq!(scheduling_mode, new_context.mode());
                                 assert!(!new_context.is_preallocated());
-                                current_slot = new_context.slot();
+                                current_slot = new_context.slot().unwrap();
                                 block_size_estimate = 0;
                                 runnable_task_sender
                                     .send_chained_channel(
@@ -2775,7 +2804,7 @@ mod tests {
         solana_system_transaction as system_transaction,
         solana_transaction::sanitized::SanitizedTransaction,
         solana_transaction_error::TransactionError,
-        solana_unified_scheduler_logic::NO_CONSUMED_BLOCK_SIZE,
+        solana_unified_scheduler_logic::{NO_CONSUMED_BLOCK_SIZE, NO_LAST_RUNNABLE_SLOT},
         std::{
             num::Saturating,
             sync::{Arc, RwLock},
@@ -4004,7 +4033,7 @@ mod tests {
                 ORIGINAL_TRANSACTION_INDEX,
                 &Err(TransactionError::WouldExceedMaxBlockCostLimit),
             ),
-            &CheckPoint::SessionFinished(Some(FULL_BLOCK_SLOT)),
+            &CheckPoint::SessionFinished(FULL_BLOCK_SLOT),
             &TestCheckPoint::AfterSessionFinished,
             &TestCheckPoint::AfterSession,
             &CheckPoint::TaskAccumulated(RETRIED_TRANSACTION_INDEX, &Ok(())),
@@ -4654,7 +4683,12 @@ mod tests {
             transaction: RuntimeTransaction<SanitizedTransaction>,
             task_id: OrderedTaskId,
         ) -> Task {
-            self.create_new_task(transaction, task_id, NO_CONSUMED_BLOCK_SIZE)
+            self.create_new_task(
+                transaction,
+                task_id,
+                NO_CONSUMED_BLOCK_SIZE,
+                NO_LAST_RUNNABLE_SLOT,
+            )
         }
     }
 
