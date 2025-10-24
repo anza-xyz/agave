@@ -145,7 +145,7 @@ impl EventHandler {
             local_context.stats.receive_event_time_us = local_context
                 .stats
                 .receive_event_time_us
-                .saturating_add(receive_event_time.as_us() as u32);
+                .saturating_add(receive_event_time.as_us());
 
             let root_bank = vctx.sharable_banks.root();
             if event.should_ignore(root_bank.slot()) {
@@ -177,7 +177,7 @@ impl EventHandler {
             local_context.stats.send_votes_batch_time_us = local_context
                 .stats
                 .send_votes_batch_time_us
-                .saturating_add(send_votes_batch_time.as_us() as u32);
+                .saturating_add(send_votes_batch_time.as_us());
             local_context.stats.maybe_report();
         }
 

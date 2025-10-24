@@ -9,7 +9,7 @@ use {
     },
 };
 
-const STATS_REPORT_INTERVAL: Duration = Duration::from_secs(10);
+const STATS_REPORT_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone)]
 struct SlotTracking {
@@ -43,8 +43,8 @@ impl Default for SlotTracking {
 
 #[derive(Debug, Default)]
 struct EventCountAndTime {
-    count: u16,
-    time_us: u32,
+    count: usize,
+    time_us: u64,
 }
 
 #[derive(Debug)]
@@ -52,30 +52,30 @@ pub(crate) struct EventHandlerStats {
     // Number of events that were ignored. This includes events that were
     // received but not processed due to various reasons (e.g., outdated,
     // irrelevant).
-    pub(crate) ignored: u16,
+    pub(crate) ignored: usize,
 
     // Number of times where we are attempting to start a leader window but
     // there is already a pending window to produce. The older window is
     // discarded in favor of the newer one.
-    pub(crate) leader_window_replaced: u16,
+    pub(crate) leader_window_replaced: usize,
 
     // Number of times we updated the root.
-    pub(crate) set_root_count: u16,
+    pub(crate) set_root_count: usize,
 
     // Number of times we setup timeouts for a new leader window.
-    pub(crate) timeout_set: u16,
+    pub(crate) timeout_set: usize,
 
     // Amount of time spent receiving events. Includes waiting for events.
-    pub(crate) receive_event_time_us: u32,
+    pub(crate) receive_event_time_us: u64,
 
     // Amount of time spent sending votes.
-    pub(crate) send_votes_batch_time_us: u32,
+    pub(crate) send_votes_batch_time_us: u64,
 
     // Number of times we saw each event and time spent processing the event.
     received_events_count_and_timing: HashMap<StatsEvent, EventCountAndTime>,
 
     // Number of votes sent for each vote type.
-    sent_votes: HashMap<VoteType, u16>,
+    sent_votes: HashMap<VoteType, usize>,
 
     // Timing information for major events for each slot.
     slot_tracking_map: BTreeMap<Slot, SlotTracking>,
@@ -179,7 +179,7 @@ impl EventHandlerStats {
             .entry(stats_event)
             .or_default();
         entry.count = entry.count.saturating_add(1);
-        entry.time_us = entry.time_us.saturating_add(time_us as u32);
+        entry.time_us = entry.time_us.saturating_add(time_us);
     }
 
     pub fn incr_vote(&mut self, bls_op: &BLSOp) {
