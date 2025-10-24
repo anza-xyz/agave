@@ -452,14 +452,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
             let (processing_result, single_execution_us) = measure_us!(match load_result {
                 TransactionLoadResult::NotLoaded(err) => Err(err),
-                TransactionLoadResult::FeesOnly(fees_only_tx) => {
-                    // O: Drop on failure needs to drop and not be fees only.
+                TransactionLoadResult::FeesOnly(fees_only_tx) => match config.drop_on_failure {
+                    true => Err(TransactionError::CommitCancelled),
+                    false => {
+                        // Update loaded accounts cache with nonce and fee-payer
+                        account_loader
+                            .update_accounts_for_failed_tx(&fees_only_tx.rollback_accounts);
 
-                    // Update loaded accounts cache with nonce and fee-payer
-                    account_loader.update_accounts_for_failed_tx(&fees_only_tx.rollback_accounts);
-
-                    Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
-                }
+                        Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
+                    }
+                },
                 TransactionLoadResult::Loaded(loaded_transaction) => {
                     let (program_accounts_set, filter_executable_us) = measure_us!(self
                         .filter_executable_program_accounts(
