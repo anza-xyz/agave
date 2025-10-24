@@ -2,11 +2,13 @@ use {
     agave_feature_set::{
         enable_loader_v4, zk_elgamal_proof_program_enabled, zk_token_sdk_enabled, FeatureSet,
     },
+    agave_syscalls::create_program_runtime_environment_v1,
     solana_account::{Account, AccountSharedData},
     solana_builtins::BUILTINS,
+    solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction_error::InstructionError,
     solana_program_runtime::loaded_programs::{
-        ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments,
+        LoadProgramMetrics, ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments,
     },
     solana_pubkey::Pubkey,
     solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
@@ -48,6 +50,37 @@ pub fn new_with_builtins(feature_set: &FeatureSet, slot: u64) -> ProgramCacheFor
     }
 
     cache
+}
+
+/// Add a program loaded from ELF bytes to the cache.
+pub fn add_program(
+    cache: &mut ProgramCacheForTxBatch,
+    program_id: &Pubkey,
+    loader_key: &Pubkey,
+    elf: &[u8],
+    feature_set: &FeatureSet,
+    compute_budget: &ComputeBudget,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let program_runtime_environment = Arc::new(create_program_runtime_environment_v1(
+        &feature_set.runtime_features(),
+        &compute_budget.to_budget(),
+        false, /* reject_deployment_of_broken_elfs */
+        false, /* debugging_features */
+    )?);
+
+    let entry = ProgramCacheEntry::new(
+        loader_key,
+        program_runtime_environment,
+        0, // deployment_slot
+        0, // effective_slot
+        elf,
+        elf.len(),
+        &mut LoadProgramMetrics::default(),
+    )?;
+
+    cache.replenish(*program_id, Arc::new(entry));
+
+    Ok(())
 }
 
 /// Populate a `ProgramCacheForTxBatch` via `load_program_with_pubkey` from any program accounts.
