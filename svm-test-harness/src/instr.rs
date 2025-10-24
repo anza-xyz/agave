@@ -66,7 +66,7 @@ impl TransactionProcessingCallback for InstrContextCallback<'_> {
     }
 }
 
-fn create_invoke_context_fields(
+fn create_program_cache(
     input: &mut InstrContext,
     clock: &Clock,
     compute_budget: &ComputeBudget,
@@ -186,7 +186,7 @@ pub fn execute_instr(mut input: InstrContext) -> Option<InstrEffects> {
     let clock = sysvar_cache.get_clock().unwrap();
     let rent = sysvar_cache.get_rent().unwrap();
 
-    let mut program_cache = create_invoke_context_fields(&mut input, &clock, &compute_budget)?;
+    let mut program_cache = create_program_cache(&mut input, &clock, &compute_budget)?;
 
     let mut transaction_context =
         create_transaction_context(&input.accounts, &compute_budget, (*rent).clone());
