@@ -419,6 +419,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             if all_or_nothing_failed {
                 processing_results.push(Err(TransactionError::CommitCancelled));
 
+                // O: Balances still need to be collected for skipped TXs.
+
                 continue;
             }
 
@@ -445,6 +447,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             ));
             load_us = load_us.saturating_add(single_load_us);
 
+            // O: Collect pre balances will not run for short circuted TXs.
             let ((), collect_balances_us) =
                 measure_us!(balance_collector.collect_pre_balances(&mut account_loader, tx));
             execute_timings
