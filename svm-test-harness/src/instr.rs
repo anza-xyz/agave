@@ -68,13 +68,8 @@ impl TransactionProcessingCallback for InstrContextCallback<'_> {
 
 fn create_invoke_context_fields(
     input: &mut InstrContext,
-) -> Option<(SysvarCache, ProgramCacheForTxBatch, ComputeBudget)> {
-    let compute_budget = {
-        let mut budget = ComputeBudget::new_with_defaults(false);
-        budget.compute_unit_limit = input.cu_avail;
-        budget
-    };
-
+    compute_budget: &ComputeBudget,
+) -> Option<(SysvarCache, ProgramCacheForTxBatch)> {
     let sysvar_cache = crate::sysvar_cache::setup_sysvar_cache(&input.accounts);
 
     let clock = sysvar_cache.get_clock().unwrap();
@@ -92,7 +87,7 @@ fn create_invoke_context_fields(
 
     // Set up the program cache, which will include all builtins by default.
     let mut program_cache =
-        crate::program_cache::setup_program_cache(&input.feature_set, &compute_budget, clock.slot);
+        crate::program_cache::setup_program_cache(&input.feature_set, compute_budget, clock.slot);
 
     let environments = program_cache.environments.clone();
 
@@ -136,7 +131,7 @@ fn create_invoke_context_fields(
         }
     }
 
-    Some((sysvar_cache, program_cache, compute_budget))
+    Some((sysvar_cache, program_cache))
 }
 
 fn create_instruction_accounts(
@@ -179,13 +174,19 @@ fn create_transaction_context(
 
 /// Execute a single instruction against the Solana VM.
 pub fn execute_instr(mut input: InstrContext) -> Option<InstrEffects> {
-    let log_collector = LogCollector::new_ref();
-
-    let (sysvar_cache, mut program_cache, compute_budget) =
-        create_invoke_context_fields(&mut input)?;
-
     let mut compute_units_consumed = 0u64;
+
     let runtime_features = input.feature_set.runtime_features();
+
+    let log_collector = LogCollector::new_ref();
+    let compute_budget = {
+        let mut budget = ComputeBudget::new_with_defaults(false);
+        budget.compute_unit_limit = input.cu_avail;
+        budget
+    };
+
+    let (sysvar_cache, mut program_cache) =
+        create_invoke_context_fields(&mut input, &compute_budget)?;
 
     let rent = sysvar_cache.get_rent().unwrap();
 
