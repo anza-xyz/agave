@@ -5,11 +5,14 @@ members = [
     "accounts-cluster-bench",
     "accounts-db",
     "accounts-db/store-histogram",
+    "accounts-db/store-tool",
+    "banking-bench",
     "banking-stage-ingress-types",
     "banks-client",
     "banks-interface",
     "banks-server",
     "bench-streamer",
+    "bench-tps",
     "bench-vote",
     "bloom",
     "bucket_map",
@@ -29,6 +32,7 @@ members = [
     "core",
     "cost-model",
     "curves/curve25519",
+    "dos",
     "download-utils",
     "entry",
     "faucet",
@@ -44,6 +48,7 @@ members = [
     "keygen",
     "lattice-hash",
     "ledger",
+    "ledger-tool",
     "local-cluster",
     "measure",
     "merkle-tree",
@@ -137,16 +142,7 @@ members = [
     "zk-token-sdk",
 ]
 
-exclude = [
-    # solana-dos depends on bench-tps. ignore bench-tps here to avoid confusing cargo's
-    # workspace resolution logic, which expects it in the top-level worspace rather than
-    # dev-bins
-    "bench-tps",
-    "ci/xtask",
-    "dev-bins",
-    "programs/sbf",
-    "svm/tests/example-programs",
-]
+exclude = ["ci/xtask", "programs/sbf", "svm/tests/example-programs"]
 
 resolver = "2"
 
@@ -341,6 +337,7 @@ prost = "0.11.9"
 prost-build = "0.11.9"
 prost-types = "0.11.9"
 protobuf-src = "1.1.0"
+protosol = "2.0.0"
 qstring = "0.7.2"
 qualifier_attr = { version = "0.2.2", default-features = false }
 quinn = "0.11.9"
@@ -391,6 +388,7 @@ solana-atomic-u64 = "3.0.0"
 solana-banks-client = { path = "banks-client", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-banks-interface = { path = "banks-interface", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-banks-server = { path = "banks-server", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-bench-tps = { path = "bench-tps", version = "=3.1.0" }
 solana-big-mod-exp = "3.0.0"
 solana-bincode = "3.0.0"
 solana-blake3-hasher = "3.0.0"

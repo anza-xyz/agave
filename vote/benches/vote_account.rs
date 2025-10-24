@@ -3,8 +3,9 @@ use {
     rand::Rng,
     solana_account::AccountSharedData,
     solana_pubkey::Pubkey,
-    solana_vote::vote_account::VoteAccount,
+    solana_vote::vote_account::{VoteAccount, VoteAccounts},
     solana_vote_interface::state::{VoteInit, VoteStateV4, VoteStateVersions},
+    std::{collections::HashMap, sync::Arc},
 };
 
 fn new_rand_vote_account<R: Rng>(
@@ -56,5 +57,44 @@ fn bench_vote_account_try_from(b: &mut Bencher) {
     });
 }
 
-benchmark_group!(benches, bench_vote_account_try_from);
+fn bench_staked_nodes_compute(b: &mut Bencher) {
+    let mut rng = rand::thread_rng();
+    let mut vote_accounts_map = HashMap::new();
+
+    // Create a scenario with ~400 vote accounts
+    // Each vote account has one node_pubkey and receives delegated stake
+    // The stake represents the total from multiple stake accounts delegating to it
+    let num_vote_accounts = 400;
+
+    for _ in 0..num_vote_accounts {
+        let (account, _) = new_rand_vote_account(&mut rng, None);
+        let vote_account = VoteAccount::try_from(account).unwrap();
+        // Stake amount represents total delegated stake (from multiple stake accounts)
+        let stake: u64 = rng.gen_range(1_000_000..100_000_000);
+        vote_accounts_map.insert(Pubkey::new_unique(), (stake, vote_account));
+    }
+
+    // Add some zero-stake accounts (vote accounts with no delegations)
+    for _ in 0..50 {
+        let (account, _) = new_rand_vote_account(&mut rng, None);
+        let vote_account = VoteAccount::try_from(account).unwrap();
+        vote_accounts_map.insert(Pubkey::new_unique(), (0, vote_account));
+    }
+
+    let vote_accounts_map = Arc::new(vote_accounts_map);
+
+    // Benchmark measures only the staked_nodes() computation
+    // Create new VoteAccounts each iteration to bypass OnceLock cache
+    b.iter(|| {
+        let vote_accounts = VoteAccounts::from(Arc::clone(&vote_accounts_map));
+        let staked_nodes = vote_accounts.staked_nodes();
+        assert!(!staked_nodes.is_empty());
+    });
+}
+
+benchmark_group!(
+    benches,
+    bench_vote_account_try_from,
+    bench_staked_nodes_compute
+);
 benchmark_main!(benches);

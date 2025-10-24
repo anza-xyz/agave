@@ -23,17 +23,6 @@ use {
     },
 };
 
-/// A trait that abstracts over the backing storage of the buffer.
-///
-/// This allows flexibility in the type of buffer used. For example, depending on the required size, a
-/// caller may be able to opt for a stack-allocated buffer rather than a heap-allocated buffer, or
-/// vice versa.
-pub(crate) trait Backing {
-    fn capacity(&self) -> usize;
-    unsafe fn as_slice(&self) -> &[u8];
-    unsafe fn as_mut_slice(&mut self) -> &mut [u8];
-}
-
 /// A stack-allocated buffer.
 ///
 /// This is a fixed-size buffer that is allocated on the stack.
@@ -49,7 +38,7 @@ impl<const N: usize> Stack<N> {
     }
 }
 
-impl<const N: usize> Backing for Stack<N> {
+impl<const N: usize> Stack<N> {
     fn capacity(&self) -> usize {
         N
     }
@@ -109,11 +98,11 @@ pub(crate) trait RequiredLenBufFileRead<'a>: RequiredLenBufRead + FileBufRead<'a
 impl<'a, T: RequiredLenBufRead + FileBufRead<'a>> RequiredLenBufFileRead<'a> for T {}
 
 /// read a file a large buffer at a time and provide access to a slice in that buffer
-pub struct BufferedReader<'a, T> {
+pub struct BufferedReader<'a, const N: usize> {
     /// when we are next asked to read from file, start at this offset
     file_offset_of_next_read: usize,
     /// the most recently read data. `buf_valid_bytes` specifies the range of `buf` that is valid.
-    buf: T,
+    buf: Stack<N>,
     /// specifies the range of `buf` that contains valid data that has not been used by the caller
     buf_valid_bytes: Range<usize>,
     /// offset in the file of the `buf_valid_bytes`.`start`
@@ -124,11 +113,11 @@ pub struct BufferedReader<'a, T> {
     file: Option<&'a File>,
 }
 
-impl<'a, T: Backing> BufferedReader<'a, T> {
-    pub fn new(backing: T) -> Self {
+impl<'a, const N: usize> BufferedReader<'a, N> {
+    pub fn new() -> Self {
         Self {
             file_offset_of_next_read: 0,
-            buf: backing,
+            buf: Stack::new(),
             buf_valid_bytes: 0..0,
             file_last_offset: 0,
             file_len_valid: 0,
@@ -150,7 +139,7 @@ impl<'a, T: Backing> BufferedReader<'a, T> {
     }
 }
 
-impl<'a, T: Backing> FileBufRead<'a> for BufferedReader<'a, T> {
+impl<'a, const N: usize> FileBufRead<'a> for BufferedReader<'a, N> {
     fn set_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()> {
         self.do_set_file(file, read_limit);
         Ok(())
@@ -166,10 +155,7 @@ impl<'a, T: Backing> FileBufRead<'a> for BufferedReader<'a, T> {
     }
 }
 
-impl<T> BufferedReader<'_, T>
-where
-    T: Backing,
-{
+impl<const N: usize> BufferedReader<'_, N> {
     /// Defragment buffer and read more bytes to make sure we have filled available
     /// space as much as possible.
     fn read_more_bytes(&mut self) -> io::Result<()> {
@@ -196,14 +182,7 @@ where
     }
 }
 
-impl<const N: usize> BufferedReader<'_, Stack<N>> {
-    /// create a new buffered reader with a stack-allocated buffer
-    pub fn new_stack() -> Self {
-        BufferedReader::new(Stack::new())
-    }
-}
-
-impl<T: Backing> io::Read for BufferedReader<'_, T> {
+impl<const N: usize> io::Read for BufferedReader<'_, N> {
     fn read(&mut self, mut buf: &mut [u8]) -> io::Result<usize> {
         let available_len = self.buf_valid_bytes.len();
         if available_len > 0 {
@@ -238,7 +217,7 @@ impl<T: Backing> io::Read for BufferedReader<'_, T> {
 
 /// `BufferedReader` implements a more permissive API compared to `BufRead`
 /// by allowing `consume` to advance beyond the end of the buffer returned by `fill_buf`.
-impl<T: Backing> BufRead for BufferedReader<'_, T> {
+impl<const N: usize> BufRead for BufferedReader<'_, N> {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         if self.buf_valid_bytes.is_empty() {
             self.read_more_bytes()?;
@@ -263,7 +242,7 @@ impl<T: Backing> BufRead for BufferedReader<'_, T> {
 }
 
 /// Supported `required_len` is limited by backing buffer size without ability to grow.
-impl<T: Backing> RequiredLenBufRead for BufferedReader<'_, T> {
+impl<const N: usize> RequiredLenBufRead for BufferedReader<'_, N> {
     fn fill_buf_required(&mut self, required_len: usize) -> io::Result<&[u8]> {
         if self.buf_valid_bytes.len() < required_len {
             self.read_more_bytes()?;
@@ -437,8 +416,8 @@ mod tests {
         std::array::from_fn(|_| rng.gen::<u8>())
     }
 
-    #[test_case(Stack::<16>::new(), 16)]
-    fn test_buffered_reader(backing: impl Backing, buffer_size: usize) {
+    #[test_case(16)]
+    fn test_buffered_reader(buffer_size: usize) {
         // Setup a sample file with 32 bytes of data
         const FILE_SIZE: usize = 32;
         let mut sample_file = tempfile().unwrap();
@@ -448,7 +427,7 @@ mod tests {
         // First read 16 bytes to fill buffer
         let file_len_valid = 32;
         let default_min_read = 8;
-        let mut reader = BufferedReader::new(backing).with_file(&sample_file, file_len_valid);
+        let mut reader = BufferedReader::<16>::new().with_file(&sample_file, file_len_valid);
         let offset = reader.get_file_offset();
         let slice = reader.fill_buf_required(default_min_read).unwrap();
         let mut expected_offset = 0;
@@ -496,8 +475,8 @@ mod tests {
         assert_eq!(slice.len(), expected_slice_len);
     }
 
-    #[test_case(Stack::<16>::new(), 16)]
-    fn test_buffered_reader_with_extra_data_in_file(backing: impl Backing, buffer_size: usize) {
+    #[test_case(16)]
+    fn test_buffered_reader_with_extra_data_in_file(buffer_size: usize) {
         // Setup a sample file with 32 bytes of data
         let mut sample_file = tempfile().unwrap();
         const FILE_SIZE: usize = 32;
@@ -509,7 +488,7 @@ mod tests {
 
         // First read 16 bytes to fill buffer
         let default_min_read_size = 8;
-        let mut reader = BufferedReader::new(backing).with_file(&sample_file, valid_len);
+        let mut reader = BufferedReader::<16>::new().with_file(&sample_file, valid_len);
         let offset = reader.get_file_offset();
         let slice = reader.fill_buf_required(default_min_read_size).unwrap();
         let mut expected_offset = 0;
@@ -578,8 +557,8 @@ mod tests {
         );
     }
 
-    #[test_case(Stack::<16>::new(), 16)]
-    fn test_buffered_reader_partial_consume(backing: impl Backing, buffer_size: usize) {
+    #[test_case(16)]
+    fn test_buffered_reader_partial_consume(buffer_size: usize) {
         // Setup a sample file with 32 bytes of data
         let mut sample_file = tempfile().unwrap();
         const FILE_SIZE: usize = 32;
@@ -589,7 +568,7 @@ mod tests {
         // First read 16 bytes to fill buffer
         let file_len_valid = 32;
         let default_min_read_size = 8;
-        let mut reader = BufferedReader::new(backing).with_file(&sample_file, file_len_valid);
+        let mut reader = BufferedReader::<16>::new().with_file(&sample_file, file_len_valid);
         let offset = reader.get_file_offset();
         let slice = reader.fill_buf_required(default_min_read_size).unwrap();
         let mut expected_offset = 0;
@@ -651,8 +630,8 @@ mod tests {
         );
     }
 
-    #[test_case(Stack::<16>::new(), 16)]
-    fn test_buffered_reader_partial_consume_with_move(backing: impl Backing, buffer_size: usize) {
+    #[test_case(16)]
+    fn test_buffered_reader_partial_consume_with_move(buffer_size: usize) {
         // Setup a sample file with 32 bytes of data
         let mut sample_file = tempfile().unwrap();
         const FILE_SIZE: usize = 32;
@@ -662,7 +641,7 @@ mod tests {
         // First read 16 bytes to fill buffer
         let valid_len = 32;
         let default_min_read = 8;
-        let mut reader = BufferedReader::new(backing).with_file(&sample_file, valid_len);
+        let mut reader = BufferedReader::<16>::new().with_file(&sample_file, valid_len);
         let offset = reader.get_file_offset();
         let slice = reader.fill_buf_required(default_min_read).unwrap();
         let mut expected_offset = 0;
@@ -700,8 +679,8 @@ mod tests {
         );
     }
 
-    #[test_case(Stack::<16>::new(), 16)]
-    fn test_fill_buf_required_or_overflow(backing: impl Backing, buffer_size: usize) {
+    #[test_case(16)]
+    fn test_fill_buf_required_or_overflow(buffer_size: usize) {
         // Setup a sample file with 32 bytes of data
         const FILE_SIZE: usize = 32;
         let mut sample_file = tempfile().unwrap();
@@ -709,7 +688,7 @@ mod tests {
         sample_file.write_all(&bytes).unwrap();
 
         let mut reader = BufReaderWithOverflow::new(
-            BufferedReader::new(backing).with_file(&sample_file, FILE_SIZE),
+            BufferedReader::<16>::new().with_file(&sample_file, FILE_SIZE),
             0,
             usize::MAX,
         );
@@ -747,15 +726,15 @@ mod tests {
         assert_eq!(offset_before, offset_after);
     }
 
-    #[test_case(Stack::<16>::new(), 16)]
-    fn test_overflow_reader_read_and_fill_buf(backing: impl Backing, buffer_size: usize) {
+    #[test_case(16)]
+    fn test_overflow_reader_read_and_fill_buf(buffer_size: usize) {
         const FILE_SIZE: usize = 64;
         let mut sample_file = tempfile().unwrap();
         let bytes = rand_bytes::<FILE_SIZE>();
         sample_file.write_all(&bytes).unwrap();
 
         let mut reader = BufReaderWithOverflow::new(
-            BufferedReader::new(backing).with_file(&sample_file, FILE_SIZE),
+            BufferedReader::<16>::new().with_file(&sample_file, FILE_SIZE),
             0,
             32,
         );
