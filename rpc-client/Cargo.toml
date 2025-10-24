@@ -14,6 +14,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
 default = ["spinner"]
+agave-unstable-api = []
 # Support rpc-client methods that feature a spinner progress bar for
 # command-line interfaces
 spinner = ["dep:indicatif"]
@@ -61,6 +62,7 @@ jsonrpc-http-server = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
+solana-rpc-client = { path = ".", features = ["agave-unstable-api"] }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 static_assertions = { workspace = true }

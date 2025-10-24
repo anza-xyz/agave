@@ -13,6 +13,7 @@ edition = { workspace = true }
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
+agave-unstable-api = []
 dev-context-only-utils = [
     "solana-perf/dev-context-only-utils",
     "solana-runtime/dev-context-only-utils",
@@ -60,13 +61,13 @@ bs58 = { workspace = true }
 bytemuck = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }
-conditional-mod = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
 derive_more = { workspace = true }
 futures = { workspace = true }
 histogram = { workspace = true }
 itertools = { workspace = true }
+libc = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
 min-max-heap = { workspace = true }
@@ -189,6 +190,7 @@ sysctl = { workspace = true }
 
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
+bencher = { workspace = true }
 criterion = { workspace = true }
 fs_extra = { workspace = true }
 serde_json = { workspace = true }
@@ -199,7 +201,7 @@ solana-client = { workspace = true, features = ["dev-context-only-utils"] }
 solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-core = { path = ".", features = ["dev-context-only-utils"] }
+solana-core = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-cost-model = { workspace = true, features = ["dev-context-only-utils"] }
 solana-keypair = { workspace = true }
 solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
@@ -227,6 +229,11 @@ name = "gen_keys"
 
 [[bench]]
 name = "sigverify_stage"
+harness = false
+
+[[bench]]
+name = "shredder"
+harness = false
 
 [[bench]]
 name = "receive_and_buffer"

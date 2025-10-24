@@ -17,6 +17,7 @@ crate-type = ["lib"]
 name = "solana_runtime"
 
 [features]
+agave-unstable-api = []
 dev-context-only-utils = [
     "dep:solana-system-program",
     "solana-accounts-db/dev-context-only-utils",
@@ -67,7 +68,7 @@ blake3 = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
 bytemuck = { workspace = true }
 crossbeam-channel = { workspace = true }
-dashmap = { workspace = true, features = ["rayon", "raw-api"] }
+dashmap = { workspace = true, features = ["rayon", "raw-api", "serde"] }
 dir-diff = { workspace = true }
 fnv = { workspace = true }
 im = { workspace = true, features = ["rayon", "serde"] }
@@ -202,7 +203,7 @@ solana-instruction-error = { workspace = true }
 solana-logger = { workspace = true }
 solana-program-binaries = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-runtime = { path = ".", features = ["dev-context-only-utils"] }
+solana-runtime = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime-transaction = { workspace = true, features = [
     "dev-context-only-utils",
 ] }

@@ -214,7 +214,8 @@ fn test_program_sbf_sanity() {
         // cargo-build-sbf and ensure it is working correctly.
         use std::{env, fs::File, io::Write};
         let current_dir = env::current_dir().unwrap();
-        let mut file = File::create(current_dir.join("sanity_programs.txt")).unwrap();
+        let mut file =
+            File::create(current_dir.join("target").join("sanity_programs.txt")).unwrap();
         for program in programs.iter() {
             writeln!(file, "{}", program.0.trim_start_matches("solana_sbf_rust_"))
                 .expect("Failed to write to file");

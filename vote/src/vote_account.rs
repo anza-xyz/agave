@@ -1,6 +1,5 @@
 use {
     crate::vote_state_view::VoteStateView,
-    itertools::Itertools,
     serde::{
         de::{MapAccess, Visitor},
         ser::Serializer,
@@ -97,10 +96,11 @@ impl VoteAccount {
         use {
             rand::Rng as _,
             solana_clock::Clock,
-            solana_vote_interface::state::{VoteInit, VoteStateV3, VoteStateVersions},
+            solana_vote_interface::state::{VoteInit, VoteStateV4, VoteStateVersions},
         };
 
         let mut rng = rand::thread_rng();
+        let vote_pubkey = Pubkey::new_unique();
 
         let vote_init = VoteInit {
             node_pubkey: Pubkey::new_unique(),
@@ -115,10 +115,10 @@ impl VoteAccount {
             leader_schedule_epoch: rng.gen(),
             unix_timestamp: rng.gen(),
         };
-        let vote_state = VoteStateV3::new(&vote_init, &clock);
+        let vote_state = VoteStateV4::new(&vote_pubkey, &vote_init, &clock);
         let account = AccountSharedData::new_data(
             rng.gen(), // lamports
-            &VoteStateVersions::new_v3(vote_state.clone()),
+            &VoteStateVersions::new_v4(vote_state.clone()),
             &solana_sdk_ids::vote::id(), // owner
         )
         .unwrap();
@@ -139,16 +139,22 @@ impl VoteAccounts {
     pub fn staked_nodes(&self) -> Arc<HashMap</*node_pubkey:*/ Pubkey, /*stake:*/ u64>> {
         self.staked_nodes
             .get_or_init(|| {
-                Arc::new(
-                    self.vote_accounts
-                        .values()
-                        .filter(|(stake, _)| *stake != 0u64)
-                        .map(|(stake, vote_account)| (*vote_account.node_pubkey(), stake))
-                        .into_grouping_map()
-                        .aggregate(|acc, _node_pubkey, stake| {
-                            Some(acc.unwrap_or_default() + stake)
-                        }),
-                )
+                // Count non-zero stake accounts for optimal capacity allocation
+                let non_zero_count = self
+                    .vote_accounts
+                    .values()
+                    .filter(|(stake, _)| *stake != 0)
+                    .count();
+
+                let mut staked_nodes = HashMap::with_capacity(non_zero_count);
+
+                for (stake, vote_account) in self.vote_accounts.values() {
+                    if *stake != 0 {
+                        *staked_nodes.entry(*vote_account.node_pubkey()).or_default() += *stake;
+                    }
+                }
+
+                Arc::new(staked_nodes)
             })
             .clone()
     }
@@ -454,7 +460,7 @@ mod tests {
         solana_account::WritableAccount,
         solana_clock::Clock,
         solana_pubkey::Pubkey,
-        solana_vote_interface::state::{VoteInit, VoteStateV3, VoteStateVersions},
+        solana_vote_interface::state::{VoteInit, VoteStateV4, VoteStateVersions},
         std::iter::repeat_with,
     };
 
@@ -462,6 +468,7 @@ mod tests {
         rng: &mut R,
         node_pubkey: Option<Pubkey>,
     ) -> AccountSharedData {
+        let vote_pubkey = Pubkey::new_unique();
         let vote_init = VoteInit {
             node_pubkey: node_pubkey.unwrap_or_else(Pubkey::new_unique),
             authorized_voter: Pubkey::new_unique(),
@@ -475,10 +482,10 @@ mod tests {
             leader_schedule_epoch: rng.gen(),
             unix_timestamp: rng.gen(),
         };
-        let vote_state = VoteStateV3::new(&vote_init, &clock);
+        let vote_state = VoteStateV4::new(&vote_pubkey, &vote_init, &clock);
         AccountSharedData::new_data(
             rng.gen(), // lamports
-            &VoteStateVersions::new_v3(vote_state.clone()),
+            &VoteStateVersions::new_v4(vote_state.clone()),
             &solana_sdk_ids::vote::id(), // owner
         )
         .unwrap()

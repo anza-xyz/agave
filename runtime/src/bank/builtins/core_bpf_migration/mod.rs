@@ -137,6 +137,9 @@ impl Bank {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new_from_cache(
             self.slot,
             self.epoch,
+            self.transaction_processor
+                .epoch_boundary_preparation
+                .clone(),
             &self
                 .transaction_processor
                 .global_program_cache

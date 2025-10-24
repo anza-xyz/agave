@@ -64,10 +64,10 @@ solana-cluster-type = "=3.0.0"
 solana-connection-cache = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = "=3.0.0"
-solana-frozen-abi = { version = "=3.0.0", optional = true, features = [
+solana-frozen-abi = { version = "=3.0.1", optional = true, features = [
     "frozen-abi",
 ] }
-solana-frozen-abi-macro = { version = "=3.0.0", optional = true, features = [
+solana-frozen-abi-macro = { version = "=3.0.1", optional = true, features = [
     "frozen-abi",
 ] }
 solana-hash = "=3.0.0"
@@ -109,6 +109,7 @@ num_cpus = { workspace = true }
 rand0-7 = { workspace = true }
 rand_chacha0-2 = { workspace = true }
 serial_test = { workspace = true }
+solana-gossip = { path = ".", features = ["agave-unstable-api"] }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }

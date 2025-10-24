@@ -28,6 +28,7 @@ agave-unstable-api = []
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
+agave-snapshots = { workspace = true }
 anyhow = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
@@ -36,7 +37,6 @@ bytes = { workspace = true }
 bzip2 = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }
 chrono-humanize = { workspace = true }
-conditional-mod = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
 eager = { workspace = true }
@@ -44,7 +44,6 @@ fs_extra = { workspace = true }
 futures = { workspace = true }
 itertools = { workspace = true }
 lazy-lru = { workspace = true }
-libc = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
 mockall = { workspace = true }

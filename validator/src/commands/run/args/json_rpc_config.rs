@@ -66,11 +66,6 @@ pub(crate) fn args<'a>(default_args: &DefaultArgs) -> Vec<Arg<'_, 'a>> {
                 "Fetch historical transaction info from a BigTable instance as a fallback to \
                  local ledger data",
             ),
-        Arg::with_name("enable_bigtable_ledger_upload")
-            .long("enable-bigtable-ledger-upload")
-            .requires("enable_rpc_transaction_history")
-            .takes_value(false)
-            .help("Upload new confirmed blocks into a BigTable instance"),
         Arg::with_name("enable_extended_tx_metadata_storage")
             .long("enable-extended-tx-metadata-storage")
             .requires("enable_rpc_transaction_history")

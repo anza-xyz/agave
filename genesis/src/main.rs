@@ -3,11 +3,11 @@
 
 use {
     agave_feature_set::FEATURE_NAMES,
+    agave_snapshots::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     base64::{prelude::BASE64_STANDARD, Engine},
     clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches},
     itertools::Itertools,
     solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_accounts_db::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     solana_clap_utils::{
         input_parsers::{
             cluster_type_of, pubkey_of, pubkeys_of, unix_timestamp_from_rfc3339_datetime,
@@ -43,7 +43,7 @@ use {
     solana_signer::Signer,
     solana_stake_interface::state::StakeStateV2,
     solana_stake_program::stake_state,
-    solana_vote_program::vote_state::{self, VoteStateV3},
+    solana_vote_program::vote_state::{self, VoteStateV4},
     std::{
         collections::HashMap,
         error,
@@ -249,12 +249,13 @@ fn add_validator_accounts(
             AccountSharedData::new(lamports, 0, &system_program::id()),
         );
 
-        let vote_account = vote_state::create_account_with_authorized(
+        let vote_account = vote_state::create_v4_account_with_authorized(
             identity_pubkey,
             identity_pubkey,
             identity_pubkey,
-            commission,
-            rent.minimum_balance(VoteStateV3::size_of()).max(1),
+            None,
+            u16::from(commission) * 100,
+            rent.minimum_balance(VoteStateV4::size_of()).max(1),
         );
 
         genesis_config.add_account(
@@ -314,7 +315,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     // vote account
     let default_bootstrap_validator_lamports = &(500 * LAMPORTS_PER_SOL)
-        .max(rent.minimum_balance(VoteStateV3::size_of()))
+        .max(rent.minimum_balance(VoteStateV4::size_of()))
         .to_string();
     // stake account
     let default_bootstrap_validator_stake_lamports = &(LAMPORTS_PER_SOL / 2)
@@ -1322,10 +1323,10 @@ mod tests {
                 // check vote account
                 let vote_pk = b64_account.vote_account.parse().unwrap();
                 let vote_data = genesis_config.accounts[&vote_pk].data.clone();
-                let vote_state = VoteStateV3::deserialize(&vote_data).unwrap();
+                let vote_state = VoteStateV4::deserialize(&vote_data, &vote_pk).unwrap();
                 assert_eq!(vote_state.node_pubkey, identity_pk);
                 assert_eq!(vote_state.authorized_withdrawer, identity_pk);
-                let authorized_voters = vote_state.authorized_voters();
+                let authorized_voters = &vote_state.authorized_voters;
                 assert_eq!(authorized_voters.first().unwrap().1, &identity_pk);
 
                 // check stake account

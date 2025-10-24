@@ -257,7 +257,7 @@ impl AncestorHashesService {
                 let mut stats = AncestorHashesResponsesStats::default();
                 let mut packet_threshold = DynamicPacketToProcessThreshold::default();
                 while !exit.load(Ordering::Relaxed) {
-                    let keypair = cluster_info.keypair().clone();
+                    let keypair = cluster_info.keypair();
                     let result = Self::process_new_packets_from_channel(
                         &ancestor_hashes_request_statuses,
                         &response_receiver,
@@ -722,7 +722,7 @@ impl AncestorHashesService {
         // Keep around the last second of requests in the throttler.
         request_throttle.retain(|request_time| *request_time > (timestamp() - 1000));
 
-        let identity_keypair: &Keypair = &repair_info.cluster_info.keypair().clone();
+        let identity_keypair: &Keypair = &repair_info.cluster_info.keypair();
 
         let number_of_allowed_requests =
             MAX_ANCESTOR_HASHES_SLOT_REQUESTS_PER_SECOND.saturating_sub(request_throttle.len());

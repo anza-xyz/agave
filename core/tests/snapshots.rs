@@ -2,7 +2,7 @@
 
 use {
     crate::snapshot_utils::create_tmp_accounts_dir_for_tests,
-    agave_snapshots::SnapshotInterval,
+    agave_snapshots::{snapshot_config::SnapshotConfig, SnapshotInterval},
     crossbeam_channel::unbounded,
     itertools::Itertools,
     log::{info, trace},
@@ -24,7 +24,6 @@ use {
         runtime_config::RuntimeConfig,
         snapshot_archive_info::FullSnapshotArchiveInfo,
         snapshot_bank_utils,
-        snapshot_config::SnapshotConfig,
         snapshot_controller::SnapshotController,
         snapshot_utils,
         status_cache::MAX_CACHE_ENTRIES,

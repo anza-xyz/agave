@@ -6,7 +6,11 @@ use {
         commands::{run::args::RunArgs, FromClapArgMatches},
         ledger_lockfile, lock_ledger,
     },
-    agave_snapshots::{ArchiveFormat, SnapshotInterval},
+    agave_snapshots::{
+        hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+        snapshot_config::{SnapshotConfig, SnapshotUsage},
+        ArchiveFormat, SnapshotInterval, SnapshotVersion,
+    },
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
     crossbeam_channel::unbounded,
     log::*,
@@ -15,7 +19,6 @@ use {
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig, MarkObsoleteAccounts},
         accounts_file::StorageAccess,
         accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig, IndexLimitMb, ScanFilter},
-        hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         utils::{
             create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
             create_and_canonicalize_directory,
@@ -56,8 +59,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{
         runtime_config::RuntimeConfig,
-        snapshot_config::{SnapshotConfig, SnapshotUsage},
-        snapshot_utils::{self, SnapshotVersion, BANK_SNAPSHOTS_DIR},
+        snapshot_utils::{self, BANK_SNAPSHOTS_DIR},
     },
     solana_signer::Signer,
     solana_streamer::quic::{QuicServerParams, DEFAULT_TPU_COALESCE},
@@ -509,17 +511,6 @@ pub fn execute(
         UseSnapshotArchivesAtStartup
     );
 
-    if mark_obsolete_accounts == MarkObsoleteAccounts::Enabled
-        && use_snapshot_archives_at_startup != UseSnapshotArchivesAtStartup::Always
-    {
-        Err(format!(
-            "The --accounts-db-mark-obsolete-accounts option requires the \
-             --use-snapshot-archives-at-startup option to be set to {}. Current value: {}",
-            UseSnapshotArchivesAtStartup::Always,
-            use_snapshot_archives_at_startup
-        ))?;
-    }
-
     let mut validator_config = ValidatorConfig {
         require_tower: matches.is_present("require_tower"),
         tower_storage,
@@ -568,6 +559,9 @@ pub fn execute(
         no_os_network_stats_reporting: matches.is_present("no_os_network_stats_reporting"),
         no_os_cpu_stats_reporting: matches.is_present("no_os_cpu_stats_reporting"),
         no_os_disk_stats_reporting: matches.is_present("no_os_disk_stats_reporting"),
+        // The validator needs to open many files, check that the process has
+        // permission to do so in order to fail quickly and give a direct error
+        enforce_ulimit_nofile: true,
         poh_pinned_cpu_core: value_of(matches, "poh_pinned_cpu_core")
             .unwrap_or(poh_service::DEFAULT_PINNED_CPU_CORE),
         poh_hashes_per_batch: value_of(matches, "poh_hashes_per_batch")

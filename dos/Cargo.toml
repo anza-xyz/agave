@@ -8,12 +8,16 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+workspace = "../dev-bins"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
+agave-unstable-api = []
 dev-context-only-utils = []
+dummy-for-ci-check = []
+frozen-abi = []
 
 [dependencies]
 bincode = { workspace = true }
@@ -23,7 +27,7 @@ itertools = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
-solana-bench-tps = { workspace = true }
+solana-bench-tps = { workspace = true, features = ["agave-unstable-api"] }
 solana-client = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-core = { workspace = true }

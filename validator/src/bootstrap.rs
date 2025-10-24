@@ -1226,7 +1226,7 @@ fn download_snapshot(
     };
     let desired_snapshot_hash = (
         desired_snapshot_hash.0,
-        solana_runtime::snapshot_hash::SnapshotHash(desired_snapshot_hash.1),
+        agave_snapshots::snapshot_hash::SnapshotHash(desired_snapshot_hash.1),
     );
     download_snapshot_archive(
         &rpc_contact_info

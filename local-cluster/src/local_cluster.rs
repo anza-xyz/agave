@@ -5,6 +5,7 @@ use {
         integration_tests::DEFAULT_NODE_STAKE,
         validator_configs::*,
     },
+    agave_snapshots::snapshot_config::SnapshotConfig,
     itertools::izip,
     log::*,
     solana_account::{Account, AccountSharedData, ReadableAccount},
@@ -39,7 +40,6 @@ use {
             create_genesis_config_with_vote_accounts_and_cluster_type, GenesisConfigInfo,
             ValidatorVoteKeypairs,
         },
-        snapshot_config::SnapshotConfig,
         snapshot_utils::BANK_SNAPSHOTS_DIR,
     },
     solana_signer::{signers::Signers, Signer},
@@ -342,52 +342,6 @@ impl LocalCluster {
         let leader_keypair = Arc::new(leader_keypair.insecure_clone());
         let leader_vote_keypair = Arc::new(leader_vote_keypair.insecure_clone());
 
-        let leader_server = Validator::new(
-            leader_node,
-            leader_keypair.clone(),
-            &leader_ledger_path,
-            &leader_vote_keypair.pubkey(),
-            Arc::new(RwLock::new(vec![leader_vote_keypair.clone()])),
-            vec![],
-            &leader_config,
-            true, // should_check_duplicate_instance
-            None, // rpc_to_plugin_manager_receiver
-            Arc::new(RwLock::new(ValidatorStartProgress::default())),
-            socket_addr_space,
-            // We are turning tpu_enable_udp to true in order to prevent concurrent local cluster tests
-            // to use the same QUIC ports due to SO_REUSEPORT.
-            ValidatorTpuConfig::new_for_tests(true),
-            Arc::new(RwLock::new(None)),
-        )
-        .expect("assume successful validator start");
-
-        let leader_contact_info = leader_server.cluster_info.my_contact_info();
-        let mut validators = HashMap::new();
-        let leader_info = ValidatorInfo {
-            keypair: leader_keypair,
-            voting_keypair: leader_vote_keypair,
-            ledger_path: leader_ledger_path,
-            contact_info: leader_contact_info.clone(),
-        };
-        let cluster_leader = ClusterValidatorInfo::new(
-            leader_info,
-            safe_clone_config(&config.validator_configs[0]),
-            leader_server,
-        );
-
-        validators.insert(leader_pubkey, cluster_leader);
-
-        let mut cluster = Self {
-            funding_keypair: mint_keypair,
-            entry_point_info: leader_contact_info.clone(),
-            validators,
-            genesis_config,
-            connection_cache,
-            quic_connection_cache_config,
-            tpu_connection_pool_size: config.tpu_connection_pool_size,
-            shred_version: leader_contact_info.shred_version(),
-        };
-
         let node_pubkey_to_vote_key: HashMap<Pubkey, Arc<Keypair>> = keys_in_genesis
             .into_iter()
             .map(|keypairs| {
@@ -397,19 +351,130 @@ impl LocalCluster {
                 )
             })
             .collect();
-        for (stake, validator_config, (key, _)) in izip!(
-            config.node_stakes[1..].iter(),
-            config.validator_configs[1..].iter(),
-            validator_keys[1..].iter(),
-        ) {
-            cluster.add_validator(
-                validator_config,
-                *stake,
-                key.clone(),
-                node_pubkey_to_vote_key.get(&key.pubkey()).cloned(),
-                socket_addr_space,
+
+        // Check if we should start validators in parallel in order to enable WFSM
+        let wait_for_supermajority = config
+            .validator_configs
+            .iter()
+            .all(|cfg| cfg.wait_for_supermajority.is_some());
+
+        let (mut cluster, leader_contact_info) = if wait_for_supermajority {
+            info!(
+                "Detected wait_for_supermajority in validator configs, starting all validators \
+                 (including leader) in parallel"
             );
-        }
+
+            let mut cluster = Self {
+                funding_keypair: mint_keypair,
+                entry_point_info: leader_node.info.clone(),
+                validators: HashMap::new(),
+                genesis_config,
+                connection_cache,
+                quic_connection_cache_config,
+                tpu_connection_pool_size: config.tpu_connection_pool_size,
+                shred_version: leader_node.info.shred_version(),
+            };
+
+            // Start all validators in parallel
+            cluster.start_all_validators_parallel(
+                &config.validator_configs,
+                &validator_keys,
+                &node_pubkey_to_vote_key,
+                socket_addr_space,
+                (
+                    leader_pubkey,
+                    leader_node,
+                    leader_config,
+                    leader_keypair.clone(),
+                    leader_vote_keypair.clone(),
+                    leader_ledger_path,
+                ),
+            );
+
+            // Get the leader contact info from the started validators
+            let leader_contact_info = cluster
+                .validators
+                .get(&leader_pubkey)
+                .unwrap()
+                .info
+                .contact_info
+                .clone();
+
+            // Update cluster with correct entry point and shred version
+            cluster.entry_point_info = leader_contact_info.clone();
+            cluster.shred_version = leader_contact_info.shred_version();
+
+            (cluster, leader_contact_info)
+        } else {
+            assert!(
+                config
+                    .validator_configs
+                    .iter()
+                    .all(|cfg| cfg.wait_for_supermajority.is_none()),
+                "Cannot partially specify WFSM in local cluster"
+            );
+            let leader_server = Validator::new(
+                leader_node,
+                leader_keypair.clone(),
+                &leader_ledger_path,
+                &leader_vote_keypair.pubkey(),
+                Arc::new(RwLock::new(vec![leader_vote_keypair.clone()])),
+                vec![],
+                &leader_config,
+                true, // should_check_duplicate_instance
+                None, // rpc_to_plugin_manager_receiver
+                Arc::new(RwLock::new(ValidatorStartProgress::default())),
+                socket_addr_space,
+                // We are turning tpu_enable_udp to true in order to prevent concurrent local cluster tests
+                // to use the same QUIC ports due to SO_REUSEPORT.
+                ValidatorTpuConfig::new_for_tests(true),
+                Arc::new(RwLock::new(None)),
+            )
+            .expect("assume successful validator start");
+
+            let leader_contact_info = leader_server.cluster_info.my_contact_info();
+            let mut validators = HashMap::new();
+            let leader_info = ValidatorInfo {
+                keypair: leader_keypair,
+                voting_keypair: leader_vote_keypair,
+                ledger_path: leader_ledger_path,
+                contact_info: leader_contact_info.clone(),
+            };
+            let cluster_leader = ClusterValidatorInfo::new(
+                leader_info,
+                safe_clone_config(&config.validator_configs[0]),
+                leader_server,
+            );
+
+            validators.insert(leader_pubkey, cluster_leader);
+
+            let mut cluster = Self {
+                funding_keypair: mint_keypair,
+                entry_point_info: leader_contact_info.clone(),
+                validators,
+                genesis_config,
+                connection_cache,
+                quic_connection_cache_config,
+                tpu_connection_pool_size: config.tpu_connection_pool_size,
+                shred_version: leader_contact_info.shred_version(),
+            };
+
+            for (stake, validator_config, (key, _)) in izip!(
+                config.node_stakes[1..].iter(),
+                config.validator_configs[1..].iter(),
+                validator_keys[1..].iter(),
+            ) {
+                cluster.add_validator(
+                    validator_config,
+                    *stake,
+                    key.clone(),
+                    node_pubkey_to_vote_key.get(&key.pubkey()).cloned(),
+                    socket_addr_space,
+                );
+            }
+
+            (cluster, leader_contact_info)
+        };
 
         let mut listener_config = safe_clone_config(&config.validator_configs[0]);
         listener_config.voting_disabled = true;
@@ -592,6 +657,149 @@ impl LocalCluster {
 
         self.validators.insert(validator_pubkey, validator_info);
         validator_pubkey
+    }
+
+    /// Starts all the validators in parallel for use with WFSM.
+    /// This assumes that all vote accounts are setup in genesis, and does not create any
+    /// vote or stake accounts.
+    fn start_all_validators_parallel(
+        &mut self,
+        validator_configs: &[ValidatorConfig],
+        validator_keys: &[(Arc<Keypair>, bool)],
+        node_pubkey_to_vote_key: &HashMap<Pubkey, Arc<Keypair>>,
+        socket_addr_space: SocketAddrSpace,
+        leader_data: (
+            Pubkey,
+            Node,
+            ValidatorConfig,
+            Arc<Keypair>,
+            Arc<Keypair>,
+            PathBuf,
+        ),
+    ) {
+        let (
+            leader_pubkey,
+            leader_node,
+            leader_config,
+            leader_keypair,
+            leader_vote_keypair,
+            leader_ledger_path,
+        ) = leader_data;
+
+        let mut handles = vec![];
+
+        // Start bootstrap (cluster leader)
+        let handle = std::thread::spawn(move || {
+            info!("Starting boostrap {leader_pubkey}");
+
+            let leader_server = Validator::new(
+                leader_node,
+                leader_keypair.clone(),
+                &leader_ledger_path,
+                &leader_vote_keypair.pubkey(),
+                Arc::new(RwLock::new(vec![leader_vote_keypair.clone()])),
+                vec![],
+                &leader_config,
+                true, // should_check_duplicate_instance
+                None, // rpc_to_plugin_manager_receiver
+                Arc::new(RwLock::new(ValidatorStartProgress::default())),
+                socket_addr_space,
+                ValidatorTpuConfig::new_for_tests(true),
+                Arc::new(RwLock::new(None)),
+            )
+            .unwrap_or_else(|e| panic!("Cluster leader failed to start: {e:?}"));
+
+            let leader_contact_info = leader_server.cluster_info.my_contact_info();
+            let leader_info = ValidatorInfo {
+                keypair: leader_keypair,
+                voting_keypair: leader_vote_keypair,
+                ledger_path: leader_ledger_path,
+                contact_info: leader_contact_info.clone(),
+            };
+            let cluster_leader =
+                ClusterValidatorInfo::new(leader_info, leader_config, leader_server);
+
+            info!("Bootstrap {leader_pubkey} started successfully");
+            (leader_pubkey, cluster_leader)
+        });
+
+        handles.push(handle);
+
+        // Start remaining validators
+        for (i, ((key, _), validator_config)) in validator_keys[1..]
+            .iter()
+            .zip(validator_configs[1..].iter())
+            .enumerate()
+        {
+            let validator_keypair = key.clone();
+            let voting_keypair = node_pubkey_to_vote_key
+                .get(&validator_keypair.pubkey())
+                .expect("All vote accounts must be setup in genesis for WFSM")
+                .clone();
+            let validator_config = safe_clone_config(validator_config);
+            let genesis_config = self.genesis_config.clone();
+            let entry_points = vec![self.entry_point_info.clone()];
+
+            let handle = std::thread::spawn(move || {
+                let validator_pubkey = validator_keypair.pubkey();
+                info!("Starting validator {validator_pubkey}");
+
+                let validator_node = Node::new_localhost_with_pubkey(&validator_keypair.pubkey());
+                let contact_info = validator_node.info.clone();
+                let (ledger_path, _blockhash) = create_new_tmp_ledger_with_size!(
+                    &genesis_config,
+                    validator_config.max_genesis_archive_unpacked_size,
+                );
+
+                let mut config = validator_config;
+                config.rpc_addrs = Some((
+                    validator_node.info.rpc().unwrap(),
+                    validator_node.info.rpc_pubsub().unwrap(),
+                ));
+                Self::sync_ledger_path_across_nested_config_fields(&mut config, &ledger_path);
+
+                let validator_server = Validator::new(
+                    validator_node,
+                    validator_keypair.clone(),
+                    &ledger_path,
+                    &voting_keypair.pubkey(),
+                    Arc::new(RwLock::new(vec![voting_keypair.clone()])),
+                    entry_points,
+                    &config,
+                    true, // should_check_duplicate_instance
+                    None, // rpc_to_plugin_manager_receiver
+                    Arc::new(RwLock::new(ValidatorStartProgress::default())),
+                    socket_addr_space,
+                    ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
+                    Arc::new(RwLock::new(None)),
+                )
+                .unwrap_or_else(|e| panic!("Validator {i} failed to start: {e:?}"));
+
+                let validator_pubkey = validator_keypair.pubkey();
+                let validator_info = ClusterValidatorInfo::new(
+                    ValidatorInfo {
+                        keypair: validator_keypair,
+                        voting_keypair: voting_keypair.clone(),
+                        ledger_path,
+                        contact_info,
+                    },
+                    config,
+                    validator_server,
+                );
+
+                info!("Validator {validator_pubkey} started successfully");
+                (validator_pubkey, validator_info)
+            });
+
+            handles.push(handle);
+        }
+
+        // Wait for all validators to start
+        for handle in handles.into_iter() {
+            let (validator_pubkey, validator_info) =
+                handle.join().expect("Validator thread panicked");
+            self.validators.insert(validator_pubkey, validator_info);
+        }
     }
 
     pub fn ledger_path(&self, validator_pubkey: &Pubkey) -> PathBuf {
@@ -915,7 +1123,7 @@ impl LocalCluster {
                                 } else {
                                     info!("node {node_pubkey} {stake_state:?} {vote_state:?}");
 
-                                    return Ok(());
+                                    Ok(())
                                 }
                             }
                             (None, _) => Err(Error::other("invalid stake account data")),

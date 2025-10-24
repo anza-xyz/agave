@@ -1,7 +1,7 @@
 use {
     crate::{
         nonblocking::{
-            connection_rate_limiter::ConnectionRateLimiter,
+            connection_rate_limiter::{ConnectionRateLimiter, TotalConnectionRateLimiter},
             stream_throttle::{
                 ConnectionStreamCounter, StakedStreamLoadEMA, STREAM_THROTTLING_INTERVAL,
                 STREAM_THROTTLING_INTERVAL_MS,
@@ -21,7 +21,6 @@ use {
     smallvec::SmallVec,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
-    solana_net_utils::token_bucket::TokenBucket,
     solana_packet::{Meta, PACKET_DATA_SIZE},
     solana_perf::packet::{BytesPacket, BytesPacketBatch, PacketBatch, PACKETS_PER_BATCH},
     solana_pubkey::Pubkey,
@@ -88,9 +87,12 @@ const CONNECTION_CLOSE_REASON_INVALID_STREAM: &[u8] = b"invalid_stream";
 /// Total new connection counts per second. Heuristically taken from
 /// the default staked and unstaked connection limits. Might be adjusted
 /// later.
-const TOTAL_CONNECTIONS_PER_SECOND: f64 = 2500.0;
-/// Max burst of connections above sustained rate to pass through
-const MAX_CONNECTION_BURST: u64 = 1000;
+const TOTAL_CONNECTIONS_PER_SECOND: u64 = 2500;
+
+/// The threshold of the size of the connection rate limiter map. When
+/// the map size is above this, we will trigger a cleanup of older
+/// entries used by past requests.
+const CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD: usize = 100_000;
 
 /// Timeout for connection handshake. Timer starts once we get Initial from the
 /// peer, and is canceled when we get a Handshake packet from them.
@@ -322,11 +324,8 @@ async fn run_server(
 ) -> TaskTracker {
     let rate_limiter = Arc::new(ConnectionRateLimiter::new(
         quic_server_params.max_connections_per_ipaddr_per_min,
-        quic_server_params.num_threads.get() * 2,
     ));
-    let overall_connection_rate_limiter = Arc::new(TokenBucket::new(
-        MAX_CONNECTION_BURST,
-        MAX_CONNECTION_BURST,
+    let overall_connection_rate_limiter = Arc::new(TotalConnectionRateLimiter::new(
         TOTAL_CONNECTIONS_PER_SECOND,
     ));
 
@@ -392,30 +391,14 @@ async fn run_server(
                 .total_incoming_connection_attempts
                 .fetch_add(1, Ordering::Relaxed);
 
-            // check overall connection request rate limiter
-            if overall_connection_rate_limiter.current_tokens() == 0 {
-                stats
-                    .connection_rate_limited_across_all
-                    .fetch_add(1, Ordering::Relaxed);
-                debug!(
-                    "Ignoring incoming connection from {} due to overall rate limit.",
-                    incoming.remote_address()
-                );
-                incoming.ignore();
-                continue;
+            // first do per IpAddr rate limiting
+            if rate_limiter.len() > CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD {
+                rate_limiter.retain_recent();
             }
-            // then perform per IpAddr rate limiting
-            if !rate_limiter.is_allowed(&incoming.remote_address().ip()) {
-                stats
-                    .connection_rate_limited_per_ipaddr
-                    .fetch_add(1, Ordering::Relaxed);
-                debug!(
-                    "Ignoring incoming connection from {} due to per-IP rate limiting.",
-                    incoming.remote_address()
-                );
-                incoming.ignore();
-                continue;
-            }
+            stats
+                .connection_rate_limiter_length
+                .store(rate_limiter.len(), Ordering::Relaxed);
+
             let Ok(client_connection_tracker) = ClientConnectionTracker::new(
                 stats.clone(),
                 quic_server_params.max_concurrent_connections(),
@@ -744,7 +727,7 @@ fn compute_recieve_window(
 async fn setup_connection(
     connecting: Connecting,
     rate_limiter: Arc<ConnectionRateLimiter>,
-    overall_connection_rate_limiter: Arc<TokenBucket>,
+    overall_connection_rate_limiter: Arc<TotalConnectionRateLimiter>,
     client_connection_tracker: ClientConnectionTracker,
     unstaked_connection_table: Arc<Mutex<ConnectionTable>>,
     staked_connection_table: Arc<Mutex<ConnectionTable>>,
@@ -765,10 +748,7 @@ async fn setup_connection(
         match connecting_result {
             Ok(new_connection) => {
                 debug!("Got a connection {from:?}");
-                // now that we have observed the handshake we can be certain
-                // that the initiator owns an IP address, we can update rate
-                // limiters on the server
-                if !rate_limiter.register_connection(&from.ip()) {
+                if !rate_limiter.is_allowed(&from.ip()) {
                     debug!("Reject connection from {from:?} -- rate limiting exceeded");
                     stats
                         .connection_rate_limited_per_ipaddr
@@ -779,7 +759,9 @@ async fn setup_connection(
                     );
                     return;
                 }
-                if overall_connection_rate_limiter.consume_tokens(1).is_err() {
+                stats.total_new_connections.fetch_add(1, Ordering::Relaxed);
+
+                if !overall_connection_rate_limiter.is_allowed() {
                     debug!(
                         "Reject connection from {:?} -- total rate limiting exceeded",
                         from.ip()
@@ -793,7 +775,6 @@ async fn setup_connection(
                     );
                     return;
                 }
-                stats.total_new_connections.fetch_add(1, Ordering::Relaxed);
 
                 let params = get_connection_stake(&new_connection, &staked_nodes).map_or(
                     NewConnectionHandlerParams::new_unstaked(
@@ -1774,16 +1755,19 @@ pub mod test {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_quic_server_exit() {
+    async fn test_quic_server_exit_on_cancel() {
         let SpawnTestServerResult {
             join_handle,
-            receiver: _,
+            receiver,
             server_address: _,
             stats: _,
             cancel,
         } = setup_quic_server(None, QuicServerParams::default_for_tests());
         cancel.cancel();
         join_handle.await.unwrap();
+        // test that it is stopped by cancel, not due to receiver
+        // dropped.
+        drop(receiver);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1858,7 +1842,7 @@ pub mod test {
         solana_logger::setup();
         let SpawnTestServerResult {
             join_handle,
-            receiver: _,
+            receiver,
             server_address,
             stats,
             cancel,
@@ -1885,6 +1869,7 @@ pub mod test {
         assert!(s1.write_all(&[0u8]).await.is_err());
 
         cancel.cancel();
+        drop(receiver);
         join_handle.await.unwrap();
     }
 
@@ -1893,13 +1878,14 @@ pub mod test {
         solana_logger::setup();
         let SpawnTestServerResult {
             join_handle,
-            receiver: _,
+            receiver,
             server_address,
             stats: _,
             cancel,
         } = setup_quic_server(None, QuicServerParams::default_for_tests());
         check_block_multiple_connections(server_address).await;
         cancel.cancel();
+        drop(receiver);
         join_handle.await.unwrap();
     }
 
@@ -1954,7 +1940,8 @@ pub mod test {
         );
 
         let start = Instant::now();
-        while stats.connection_removed.load(Ordering::Relaxed) != 1 {
+        while stats.connection_removed.load(Ordering::Relaxed) != 1 && start.elapsed().as_secs() < 1
+        {
             debug!("First connection not removed yet");
             sleep(Duration::from_millis(10)).await;
         }
@@ -1969,7 +1956,8 @@ pub mod test {
         );
 
         let start = Instant::now();
-        while stats.connection_removed.load(Ordering::Relaxed) != 2 {
+        while stats.connection_removed.load(Ordering::Relaxed) != 2 && start.elapsed().as_secs() < 1
+        {
             debug!("Second connection not removed yet");
             sleep(Duration::from_millis(10)).await;
         }
@@ -2019,7 +2007,7 @@ pub mod test {
         check_multiple_writes(receiver, server_address, Some(&client_keypair)).await;
         cancel.cancel();
         join_handle.await.unwrap();
-        sleep(Duration::from_millis(100)).await;
+
         assert_eq!(
             stats
                 .connection_added_from_unstaked_peer
@@ -2051,7 +2039,7 @@ pub mod test {
         check_multiple_writes(receiver, server_address, Some(&client_keypair)).await;
         cancel.cancel();
         join_handle.await.unwrap();
-        sleep(Duration::from_millis(100)).await;
+
         assert_eq!(
             stats
                 .connection_added_from_staked_peer
@@ -2075,7 +2063,7 @@ pub mod test {
         check_multiple_writes(receiver, server_address, None).await;
         cancel.cancel();
         join_handle.await.unwrap();
-        sleep(Duration::from_millis(100)).await;
+
         assert_eq!(
             stats
                 .connection_added_from_staked_peer
@@ -2154,10 +2142,7 @@ pub mod test {
         assert_eq!(stats.total_new_connections.load(Ordering::Relaxed), 2);
         cancel.cancel();
         t.await.unwrap();
-        // handle of the streamer doesn't wait for the child task to finish, so
-        // it is not deterministic if the tasks handling connections exit before
-        // the assertion below or after.
-        sleep(Duration::from_millis(100)).await;
+
         assert_eq!(stats.total_connections.load(Ordering::Relaxed), 0);
         assert_eq!(stats.total_new_connections.load(Ordering::Relaxed), 2);
     }
@@ -2533,7 +2518,6 @@ pub mod test {
         }
         assert_eq!(expected_num_txs, num_txs_received);
 
-        // stop it
         cancel.cancel();
         join_handle.await.unwrap();
 

@@ -1409,8 +1409,12 @@ pub(crate) fn write_wen_restart_records(
 mod tests {
     use {
         crate::wen_restart::{tests::wen_restart_proto::LastVotedForkSlotsAggregateFinal, *},
+        agave_snapshots::{
+            hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+            snapshot_config::{SnapshotConfig, SnapshotUsage},
+            snapshot_hash::SnapshotHash,
+        },
         crossbeam_channel::unbounded,
-        solana_accounts_db::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         solana_entry::entry::create_ticks,
         solana_gossip::{
             cluster_info::ClusterInfo,
@@ -1435,8 +1439,6 @@ mod tests {
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
             snapshot_bank_utils::bank_to_full_snapshot_archive,
-            snapshot_config::{SnapshotConfig, SnapshotUsage},
-            snapshot_hash::SnapshotHash,
             snapshot_utils::build_incremental_snapshot_archive_path,
         },
         solana_signer::Signer,
@@ -1444,7 +1446,7 @@ mod tests {
         solana_time_utils::timestamp,
         solana_vote::vote_account::VoteAccount,
         solana_vote_interface::state::{TowerSync, Vote},
-        solana_vote_program::vote_state::create_account_with_authorized,
+        solana_vote_program::vote_state::create_v4_account_with_authorized,
         std::{fs::remove_file, sync::Arc, thread::Builder},
         tempfile::TempDir,
     };
@@ -1985,10 +1987,11 @@ mod tests {
                     authorized_voter,
                     (
                         stake,
-                        VoteAccount::try_from(create_account_with_authorized(
+                        VoteAccount::try_from(create_v4_account_with_authorized(
                             &node_id,
                             &authorized_voter,
                             &node_id,
+                            None,
                             0,
                             100,
                         ))

@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 //! Transaction scheduling code.
 //!
 //! This crate implements 3 solana-runtime traits [`InstalledScheduler`], [`UninstalledScheduler`]
@@ -1134,7 +1143,10 @@ impl TaskHandler for DefaultTaskHandler {
                     .transaction_recorder
                     .as_ref()
                     .unwrap()
-                    .record_transactions(bank.slot(), vec![transaction.to_versioned_transaction()]);
+                    .record_transactions(
+                        bank.bank_id(),
+                        vec![transaction.to_versioned_transaction()],
+                    );
                 match result {
                     Ok(()) => Ok(starting_transaction_index),
                     Err(_) => {
@@ -3901,7 +3913,7 @@ mod tests {
 
         let (record_sender, mut record_receiver) = record_channels(true);
         let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         if matches!(scheduling_mode, BlockProduction) {
             pool.register_banking_stage(
@@ -3957,7 +3969,7 @@ mod tests {
         // Update the slot so recording can succeed on new bank's slot.
         record_receiver.shutdown();
         for _ in record_receiver.drain() {}
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let context = SchedulingContext::new_with_mode(scheduling_mode, bank.clone());
         let scheduler = pool.take_scheduler(context);
@@ -4042,7 +4054,7 @@ mod tests {
         let scheduler = pool.take_scheduler(context);
         let old_scheduler_id = scheduler.id();
         let bank = BankWithScheduler::new(bank, Some(scheduler));
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
         bank.schedule_transaction_executions([(tx, ORIGINAL_TRANSACTION_INDEX)].into_iter())
             .unwrap();
         bank.unpause_new_block_production_scheduler();
@@ -4072,7 +4084,7 @@ mod tests {
         // Make sure the same scheduler is used to test its internal cross-session behavior
         assert_eq!(scheduler.id(), old_scheduler_id);
         let bank = BankWithScheduler::new(bank, Some(scheduler));
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
         bank.unpause_new_block_production_scheduler();
 
         // Calling wait_for_completed_scheduler() for block production scheduler causes it to be
@@ -4534,7 +4546,7 @@ mod tests {
         // Recording will succeed based upon if the channel is shutdown or not.
         if should_succeed_to_record_to_poh {
             // If we should succeed, we reset the channel to accept records.
-            record_receiver.restart(bank.slot());
+            record_receiver.restart(bank.bank_id());
         }
 
         assert_eq!(bank.transaction_count(), 0);
@@ -4609,7 +4621,7 @@ mod tests {
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         let (record_sender, mut record_receiver) = record_channels(true);
         let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         pool.register_banking_stage(
             None,
@@ -4669,7 +4681,7 @@ mod tests {
 
         let (record_sender, mut record_receiver) = record_channels(true);
         let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         // send fake packet batch to trigger banking_packet_handler
         let (banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
@@ -4733,7 +4745,7 @@ mod tests {
 
         let (record_sender, mut record_receiver) = record_channels(true);
         let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         // Create a dummy handler which unconditionally sends tx0 back to the scheduler thread
         let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
@@ -4812,7 +4824,7 @@ mod tests {
 
         let (record_sender, mut record_receiver) = record_channels(true);
         let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         pool.register_banking_stage(
@@ -4863,7 +4875,7 @@ mod tests {
 
         let (record_sender, mut record_receiver) = record_channels(true);
         let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         pool.register_banking_stage(
@@ -4939,7 +4951,7 @@ mod tests {
 
         let (record_sender, mut record_receiver) = record_channels(true);
         let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         pool.register_banking_stage(
@@ -4986,7 +4998,7 @@ mod tests {
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         let (record_sender, mut record_receiver) = record_channels(true);
         let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         pool.register_banking_stage(
             None,
@@ -5071,7 +5083,7 @@ mod tests {
             .unwrap();
         let (record_sender, mut record_receiver) = record_channels(true);
         let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        record_receiver.restart(bank.bank_id());
 
         pool.register_banking_stage(
             None,

@@ -19,6 +19,7 @@ use {
     },
     crossbeam_channel::unbounded,
     solana_clock::Slot,
+    solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -392,6 +393,7 @@ pub fn initialize_state(
         vec![stake; validator_keypairs.len()],
     );
 
+    genesis_config.epoch_schedule = EpochSchedule::without_warmup();
     genesis_config.poh_config.hashes_per_tick = Some(2);
     let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     bank0.set_block_id(Some(Hash::new_unique()));

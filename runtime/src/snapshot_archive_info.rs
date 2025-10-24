@@ -1,11 +1,8 @@
 //! Information about snapshot archives
 
 use {
-    crate::{
-        snapshot_hash::SnapshotHash,
-        snapshot_utils::{self, Result},
-    },
-    agave_snapshots::ArchiveFormat,
+    crate::snapshot_utils::{self, Result},
+    agave_snapshots::{snapshot_hash::SnapshotHash, ArchiveFormat},
     solana_clock::Slot,
     std::{cmp::Ordering, path::PathBuf},
 };

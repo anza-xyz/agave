@@ -94,26 +94,6 @@ fn serialize_stake_accounts_to_stake_format<S: Serializer>(
     SerdeStakeAccountsToStakeFormat::from(stakes.clone()).serialize(serializer)
 }
 
-impl From<Stakes<Stake>> for SerdeStakesToDelegationFormat {
-    fn from(stakes: Stakes<Stake>) -> Self {
-        let Stakes {
-            vote_accounts,
-            stake_delegations,
-            unused,
-            epoch,
-            stake_history,
-        } = stakes;
-
-        Self {
-            vote_accounts,
-            stake_delegations: SerdeStakeMapToDelegationFormat(stake_delegations),
-            unused,
-            epoch,
-            stake_history,
-        }
-    }
-}
-
 impl From<Stakes<StakeAccount>> for SerdeStakeAccountsToDelegationFormat {
     fn from(stakes: Stakes<StakeAccount>) -> Self {
         let Stakes {
@@ -156,16 +136,6 @@ impl From<Stakes<StakeAccount>> for SerdeStakeAccountsToStakeFormat {
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize)]
-struct SerdeStakesToDelegationFormat {
-    vote_accounts: VoteAccounts,
-    stake_delegations: SerdeStakeMapToDelegationFormat,
-    unused: u64,
-    epoch: Epoch,
-    stake_history: StakeHistory,
-}
-
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize)]
 struct SerdeStakeAccountsToDelegationFormat {
     vote_accounts: VoteAccounts,
     stake_delegations: SerdeStakeAccountMapToDelegationFormat,
@@ -182,21 +152,6 @@ struct SerdeStakeAccountsToStakeFormat {
     unused: u64,
     epoch: Epoch,
     stake_history: StakeHistory,
-}
-
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-struct SerdeStakeMapToDelegationFormat(ImHashMap<Pubkey, Stake>);
-impl Serialize for SerdeStakeMapToDelegationFormat {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut s = serializer.serialize_map(Some(self.0.len()))?;
-        for (pubkey, stake) in self.0.iter() {
-            s.serialize_entry(pubkey, &stake.delegation)?;
-        }
-        s.end()
-    }
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -240,14 +195,18 @@ mod tests {
     #[test]
     fn test_serde_stakes_to_stake_format() {
         let mut stake_delegations = ImHashMap::new();
+        let vote_pubkey = Pubkey::new_unique();
+        let node_pubkey = Pubkey::new_unique();
         stake_delegations.insert(
             Pubkey::new_unique(),
             StakeAccount::try_from(stake_state::create_account(
                 &Pubkey::new_unique(),
-                &Pubkey::new_unique(),
-                &vote_state::create_account(
-                    &Pubkey::new_unique(),
-                    &Pubkey::new_unique(),
+                &vote_pubkey,
+                &vote_state::create_v4_account_with_authorized(
+                    &node_pubkey,
+                    &vote_pubkey,
+                    &vote_pubkey,
+                    None,
                     0,
                     1_000_000_000,
                 ),
@@ -307,10 +266,15 @@ mod tests {
         });
         for _ in 0..rng.gen_range(5usize..10) {
             let vote_pubkey = solana_pubkey::new_rand();
-            let vote_account = vote_state::create_account(
+            let node_pubkey = solana_pubkey::new_rand();
+            let commission = rng.gen_range(0..101);
+            let commission_bps = commission * 100;
+            let vote_account = vote_state::create_v4_account_with_authorized(
+                &node_pubkey,
                 &vote_pubkey,
-                &solana_pubkey::new_rand(),  // node_pubkey
-                rng.gen_range(0..101),       // commission
+                &vote_pubkey,
+                None,
+                commission_bps,
                 rng.gen_range(0..1_000_000), // lamports
             );
             stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);

@@ -391,8 +391,9 @@ mod tests {
         super::*,
         crate::{
             bank::tests::new_bank_from_parent_with_bank_forks, runtime_config::RuntimeConfig,
-            snapshot_bank_utils, snapshot_config::SnapshotConfig, snapshot_utils,
+            snapshot_bank_utils, snapshot_utils,
         },
+        agave_snapshots::snapshot_config::SnapshotConfig,
         solana_account::{ReadableAccount as _, WritableAccount as _},
         solana_accounts_db::{
             accounts_db::{AccountsDbConfig, MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING},

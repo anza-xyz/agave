@@ -19,6 +19,8 @@ crate-type = ["lib"]
 name = "solana_vortexor"
 
 [features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
 dev-context-only-utils = []
 
 [dependencies]
@@ -29,6 +31,7 @@ crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
 futures  = { workspace = true }
 futures-util = { workspace = true }
+governor = { workspace = true }
 histogram = { workspace = true }
 indexmap = { workspace = true }
 itertools = { workspace = true }

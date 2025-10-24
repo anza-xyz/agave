@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 #![no_std]
 
 //! Messages passed between agave and an external pack process.
@@ -84,7 +93,7 @@ pub struct SharableTransactionBatchRegion {
     /// Offset within the shared memory allocator for the batch of transactions.
     /// The transactions are laid out back-to-back in memory as a
     /// [`SharableTransactionRegion`] with size `num_transactions`.
-    pub transactions_offset: u32,
+    pub transactions_offset: usize,
 }
 /// Reference to an array of response messages.
 /// General flow:
@@ -109,13 +118,14 @@ pub struct TransactionResponseRegion {
     /// this offset. The type of each inner message is indicated by `tag`.
     /// There are `num_transaction_responses` inner messages.
     /// See [`worker_message_types`] for details on the inner message types.
-    pub transaction_responses_offset: u32,
+    pub transaction_responses_offset: usize,
 }
 
 /// Message: [TPU -> Pack]
 /// TPU passes transactions to the external pack process.
 /// This is also a transfer of ownership of the transaction:
 ///   the external pack process is responsible for freeing the memory.
+#[repr(C)]
 pub struct TpuToPackMessage {
     pub transaction: SharableTransactionRegion,
     /// See [`tpu_message_flags`] for details.
@@ -209,8 +219,6 @@ pub mod pack_message_flags {
 
 /// Message: [Worker -> Pack]
 /// Message from worker threads in response to a [`PackToWorkerMessage`].
-/// [`PackToWorkerMessage`] may have multiple response messages that
-/// will follow the order of transactions in the original message.
 #[repr(C)]
 pub struct WorkerToPackMessage {
     /// Offset and number of transactions in the batch.
@@ -220,13 +228,15 @@ pub struct WorkerToPackMessage {
     /// and is safe to do so - agave will hold no references to this memory
     /// after sending this message.
     pub batch: SharableTransactionBatchRegion,
-    /// `true` if the message was processed.
-    /// `false` if the message could not be processed. This will occur
+    /// `1` if the message was processed.
+    /// `0` if the message could not be processed. This will occur
     /// if the passed message was invalid, and could indicate an issue
     /// with the external pack process.
-    /// If `false`, the value of [`Self::responses`] is undefined.
-    pub processed: bool,
+    /// If `0`, the value of [`Self::responses`] is undefined.
+    /// Other values should be considered invalid.
+    pub processed: u8,
     /// Response per transaction in the batch.
+    /// If [`Self::processed`] is false, this field is undefined.
     /// See [`TransactionResponseRegion`] for details.
     pub responses: TransactionResponseRegion,
 }
@@ -244,7 +254,7 @@ pub mod worker_message_types {
     pub struct ExecutionResponse {
         /// Indicates if the transaction was included in the block or not.
         /// If [`not_included_reasons::NONE`], the transaction was included.
-        not_included_reason: u8,
+        pub not_included_reason: u8,
         /// If included, cost units used by the transaction.
         pub cost_units: u64,
         /// If included, the fee-payer balance after execution.
@@ -285,7 +295,9 @@ pub mod worker_message_types {
     #[repr(C)]
     pub struct Resolved {
         /// Indicates if resolution was successful.
-        pub success: bool,
+        /// 0 = false, 1 = true.
+        /// Other values should be considered invalid.
+        pub success: u8,
         /// Slot of the bank used for resolution.
         pub slot: u64,
         /// Minimum deactivation slot of any ALT if any.

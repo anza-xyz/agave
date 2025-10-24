@@ -24,7 +24,7 @@ const BITS_PER_WORD: usize = std::mem::size_of::<Word>() * 8;
 /// assert_eq!(bit_vec.range(..2).iter_ones().collect::<Vec<_>>(), [0, 1]);
 /// assert_eq!(bit_vec.range(1..).count_ones(), 1);
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct BitVec<const NUM_BITS: usize> {
     #[serde(with = "serde_bytes")]
@@ -36,6 +36,29 @@ impl<const NUM_BITS: usize> Default for BitVec<NUM_BITS> {
         Self {
             words: vec![0; Self::NUM_WORDS],
         }
+    }
+}
+
+// Note: serde_bytes' default `Deserialize` would construct a variable-length buffer,
+// which violates `BitVec`'s invariant that its backing vector length (in words)
+// is exactly `NUM_WORDS`. Bounds checks and performance rely on this fixed size.
+//
+// `BitVec` is normally constructed via `Default`, which initializes with
+// `vec![0; Self::NUM_WORDS]`. This custom `Deserialize` preserves the invariant by
+// allocating exactly `NUM_WORDS` and populating from the serialized data, zero-filling
+// any missing words. This is required for the `SlotMetaV1` -> `SlotMetaV2` migration,
+// where `completed_data_indexes` was encoded as a variable-length `BTreeSet<u32>`.
+impl<'de, const NUM_BITS: usize> Deserialize<'de> for BitVec<NUM_BITS> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let bytes = <&serde_bytes::Bytes as Deserialize>::deserialize(deserializer)?;
+        let mut words = Vec::with_capacity(Self::NUM_WORDS);
+        words.extend_from_slice(bytes);
+        words.resize(Self::NUM_WORDS, 0);
+
+        Ok(Self { words })
     }
 }
 
@@ -572,6 +595,34 @@ mod tests {
                 prop_assert_eq!(iter.next(), range_iter.next());
                 prop_assert_eq!(iter.next_back(), range_iter.next_back());
             }
+        }
+
+        #[test]
+        fn test_deserialize_from_smaller_length(data in prop::collection::vec(any::<u8>(), 0..BitVec::<1024>::NUM_WORDS)) {
+            const NUM_BITS: usize = 1024;
+            let mut expected = BitVec::<NUM_BITS>::default();
+            expected.words[..data.len()].copy_from_slice(&data);
+
+            #[derive(Serialize)]
+            #[serde(transparent)]
+            struct Source {
+                #[serde(with = "serde_bytes")]
+                data: Vec<u8>,
+            }
+            let serialized = bincode::serialize(&Source { data }).unwrap();
+            // Deserializing should always result in a BitVec with exactly NUM_WORDS words,
+            // adding zeroed bits that are not present in the serialized data.
+            let deserialized: BitVec<NUM_BITS> = bincode::deserialize(&serialized).unwrap();
+            prop_assert_eq!(deserialized, expected);
+        }
+
+        #[test]
+        fn serialize_roundtrip(range in rand_range(0..1024_usize)) {
+            const NUM_BITS: usize = 1024;
+            let bit_vec = range.into_iter().collect::<BitVec<NUM_BITS>>();
+            let serialized = bincode::serialize(&bit_vec).unwrap();
+            let deserialized: BitVec<NUM_BITS> = bincode::deserialize(&serialized).unwrap();
+            prop_assert_eq!(deserialized, bit_vec);
         }
     }
 

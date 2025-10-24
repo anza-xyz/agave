@@ -46,7 +46,6 @@ use {
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
         rent_collector::RentCollector,
         runtime_config::RuntimeConfig,
-        snapshot_hash::SnapshotHash,
         stake_account::StakeAccount,
         stake_weighted_timestamp::{
             calculate_stake_weighted_timestamp, MaxAllowableDrift,
@@ -63,6 +62,7 @@ use {
     },
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
+    agave_snapshots::snapshot_hash::SnapshotHash,
     agave_syscalls::{
         create_program_runtime_environment_v1, create_program_runtime_environment_v2,
     },
@@ -1499,25 +1499,29 @@ impl Bank {
                 .checked_div(2)
                 .unwrap();
 
-        let mut program_cache = self
+        let program_cache = self
             .transaction_processor
             .global_program_cache
+            .read()
+            .unwrap();
+        let mut epoch_boundary_preparation = self
+            .transaction_processor
+            .epoch_boundary_preparation
             .write()
             .unwrap();
 
-        if program_cache.upcoming_environments.is_some() {
-            if let Some((key, program_to_recompile)) = program_cache.programs_to_recompile.pop() {
-                let effective_epoch = program_cache.latest_root_epoch.saturating_add(1);
+        if let Some(upcoming_environments) =
+            epoch_boundary_preparation.upcoming_environments.as_ref()
+        {
+            let upcoming_environments = upcoming_environments.clone();
+            if let Some((key, program_to_recompile)) =
+                epoch_boundary_preparation.programs_to_recompile.pop()
+            {
+                drop(epoch_boundary_preparation);
                 drop(program_cache);
-                let environments_for_epoch = self
-                    .transaction_processor
-                    .global_program_cache
-                    .read()
-                    .unwrap()
-                    .get_environments_for_epoch(effective_epoch);
                 if let Some(recompiled) = load_program_with_pubkey(
                     self,
-                    &environments_for_epoch,
+                    &upcoming_environments,
                     &key,
                     self.slot,
                     &mut ExecuteTimings::default(),
@@ -1537,17 +1541,11 @@ impl Bank {
                     program_cache.assign_program(key, recompiled);
                 }
             }
-        } else if self.epoch != program_cache.latest_root_epoch
+        } else if self.epoch != epoch_boundary_preparation.latest_root_epoch
             || slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch
         {
             // Anticipate the upcoming program runtime environment for the next epoch,
             // so we can try to recompile loaded programs before the feature transition hits.
-            drop(program_cache);
-            let mut program_cache = self
-                .transaction_processor
-                .global_program_cache
-                .write()
-                .unwrap();
             let (program_runtime_environment_v1, program_runtime_environment_v2) =
                 self.create_program_runtime_environments(&upcoming_feature_set);
             let mut upcoming_environments = program_cache.environments.clone();
@@ -1561,21 +1559,27 @@ impl Bank {
             if changed_program_runtime_v2 {
                 upcoming_environments.program_runtime_v2 = program_runtime_environment_v2;
             }
-            program_cache.upcoming_environments = Some(upcoming_environments);
-            program_cache.programs_to_recompile = program_cache
+            epoch_boundary_preparation.upcoming_environments = Some(upcoming_environments);
+            epoch_boundary_preparation.programs_to_recompile = program_cache
                 .get_flattened_entries(changed_program_runtime_v1, changed_program_runtime_v2);
-            program_cache
+            epoch_boundary_preparation
                 .programs_to_recompile
                 .sort_by_cached_key(|(_id, program)| program.decayed_usage_counter(self.slot));
         }
     }
 
     pub fn prune_program_cache(&self, new_root_slot: Slot, new_root_epoch: Epoch) {
+        let upcoming_environments = self
+            .transaction_processor
+            .epoch_boundary_preparation
+            .write()
+            .unwrap()
+            .reroot(new_root_epoch);
         self.transaction_processor
             .global_program_cache
             .write()
             .unwrap()
-            .prune(new_root_slot, new_root_epoch);
+            .prune(new_root_slot, upcoming_environments);
     }
 
     pub fn prune_program_cache_by_deployment_slot(&self, deployment_slot: Slot) {
@@ -2160,7 +2164,9 @@ impl Bank {
         //  crossed a boundary
         if !self.epoch_stakes.contains_key(&leader_schedule_epoch) {
             self.epoch_stakes.retain(|&epoch, _| {
-                epoch >= leader_schedule_epoch.saturating_sub(MAX_LEADER_SCHEDULE_STAKES)
+                // Note the greater-than-or-equal (and the `- 1`) is needed here
+                // to ensure we retain the oldest epoch, if that epoch is 0.
+                epoch >= leader_schedule_epoch.saturating_sub(MAX_LEADER_SCHEDULE_STAKES - 1)
             });
             let stakes = self.stakes_cache.stakes().clone();
             let stakes = SerdeStakesToStakeFormat::from(stakes);
@@ -5308,6 +5314,16 @@ impl Bank {
         if new_feature_activations.contains(&feature_set::raise_account_cu_limit::id()) {
             self.apply_simd_0306_cost_tracker_changes();
         }
+
+        if new_feature_activations.contains(&feature_set::vote_state_v4::id()) {
+            if let Err(e) = self.upgrade_core_bpf_program(
+                &solana_sdk_ids::stake::id(),
+                &feature_set::vote_state_v4::stake_program_buffer::id(),
+                "upgrade_stake_program_for_vote_state_v4",
+            ) {
+                error!("Failed to upgrade Core BPF Stake program: {e}");
+            }
+        }
         if new_feature_activations.contains(&feature_set::increase_cpi_account_info_limit::id()) {
             self.apply_simd_0339_invoke_cost_changes();
         }
@@ -5709,7 +5725,7 @@ impl InvokeContextCallback for Bank {
     fn get_epoch_stake_for_vote_account(&self, vote_address: &Pubkey) -> u64 {
         self.get_current_epoch_vote_accounts()
             .get(vote_address)
-            .map(|(stake, _)| (*stake))
+            .map(|(stake, _)| *stake)
             .unwrap_or(0)
     }
 
@@ -5932,6 +5948,9 @@ impl Bank {
         ProgramCacheForTxBatch::new_from_cache(
             slot,
             self.epoch_schedule.get_epoch(slot),
+            self.transaction_processor
+                .epoch_boundary_preparation
+                .clone(),
             &self
                 .transaction_processor
                 .global_program_cache

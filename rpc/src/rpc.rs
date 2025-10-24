@@ -7,6 +7,7 @@ use {
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         parsed_token_accounts::*, rpc_cache::LargestAccountsCache, rpc_health::*,
     },
+    agave_snapshots::snapshot_config::SnapshotConfig,
     base64::{prelude::BASE64_STANDARD, Engine},
     bincode::{config::Options, serialize},
     crossbeam_channel::{unbounded, Receiver, Sender},
@@ -69,7 +70,6 @@ use {
         commitment::{BlockCommitmentArray, BlockCommitmentCache},
         non_circulating_supply::{calculate_non_circulating_supply, NonCirculatingSupply},
         prioritization_fee_cache::PrioritizationFeeCache,
-        snapshot_config::SnapshotConfig,
         snapshot_utils,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
@@ -4588,7 +4588,7 @@ pub mod tests {
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
             TransactionDetails,
         },
-        solana_vote_interface::state::VoteStateV3,
+        solana_vote_interface::state::VoteStateV4,
         solana_vote_program::{
             vote_instruction,
             vote_state::{TowerSync, VoteInit, VoteStateVersions, MAX_LOCKOUT_HISTORY},
@@ -5041,10 +5041,10 @@ pub mod tests {
             bank
         }
 
-        fn store_vote_account(&self, vote_pubkey: &Pubkey, vote_state: VoteStateV3) {
+        fn store_vote_account(&self, vote_pubkey: &Pubkey, vote_state: VoteStateV4) {
             let bank = self.working_bank();
-            let versioned = VoteStateVersions::new_v3(vote_state);
-            let space = VoteStateV3::size_of();
+            let versioned = VoteStateVersions::new_v4(vote_state);
+            let space = VoteStateV4::size_of();
             let balance = bank.get_minimum_balance_for_rent_exemption(space);
             let mut vote_account =
                 AccountSharedData::new(balance, space, &solana_vote_program::id());
@@ -7698,11 +7698,9 @@ pub mod tests {
         assert_eq!(bank.vote_accounts().len(), 1);
 
         // Create a vote account with no stake.
-        // TODO: Update this test to use `VoteStateV4` after vote program
-        // migration is complete. Currently using `VoteStateV3` because this
-        // test invokes the vote program which hasn't been migrated to v4 yet.
         let alice_vote_keypair = Keypair::new();
-        let alice_vote_state = VoteStateV3::new(
+        let alice_vote_state = VoteStateV4::new(
+            &alice_vote_keypair.pubkey(),
             &VoteInit {
                 node_pubkey: mint_keypair.pubkey(),
                 authorized_voter: alice_vote_keypair.pubkey(),

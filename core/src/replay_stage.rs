@@ -652,7 +652,7 @@ impl ReplayStage {
             let verify_recyclers = VerifyRecyclers::default();
             let _exit = Finalizer::new(exit.clone());
 
-            let mut identity_keypair = cluster_info.keypair().clone();
+            let mut identity_keypair = cluster_info.keypair();
             let mut my_pubkey = identity_keypair.pubkey();
             if !is_alpenglow_migration_complete && my_pubkey != tower.node_pubkey {
                 // set-identity was called during the startup procedure, ensure the tower is consistent
@@ -736,7 +736,7 @@ impl ReplayStage {
                 .build()
                 .expect("new rayon threadpool");
 
-            let shared_poh_bank = poh_recorder.read().unwrap().shared_working_bank();
+            let poh_shared_leader_state = poh_recorder.read().unwrap().shared_leader_state();
             if !is_alpenglow_migration_complete {
                 // This reset is handled by Votor instead when alpenglow is active
                 Self::reset_poh_recorder(
@@ -771,8 +771,8 @@ impl ReplayStage {
 
                 // We either have a bank currently, OR there is a pending message to either reset or set
                 // the bank.
-                let tpu_has_bank =
-                    shared_poh_bank.load_full().is_some() || poh_controller.has_pending_message();
+                let tpu_has_bank = poh_shared_leader_state.load().working_bank().is_some()
+                    || poh_controller.has_pending_message();
 
                 let mut replay_active_banks_time = Measure::start("replay_active_banks_time");
                 let (mut ancestors, mut descendants) = {
@@ -1105,7 +1105,7 @@ impl ReplayStage {
                             );
 
                             if my_pubkey != cluster_info.id() {
-                                identity_keypair = cluster_info.keypair().clone();
+                                identity_keypair = cluster_info.keypair();
                                 let my_old_pubkey = my_pubkey;
                                 my_pubkey = identity_keypair.pubkey();
 
@@ -1168,7 +1168,10 @@ impl ReplayStage {
                     let mut dump_then_repair_correct_slots_time =
                         Measure::start("dump_then_repair_correct_slots_time");
                     // Used for correctness check
-                    let poh_bank = shared_poh_bank.load_full();
+                    let poh_bank = poh_shared_leader_state
+                        .load()
+                        .working_bank()
+                        .map(Arc::clone);
                     // Dump any duplicate slots that have been confirmed by the network in
                     // anticipation of repairing the confirmed version of the slot.
                     //
@@ -2577,12 +2580,9 @@ impl ReplayStage {
                 return GenerateVoteTxResult::Failed;
             }
         }
-        let vote_account = match bank.get_vote_account(vote_account_pubkey) {
-            None => {
-                warn!("Vote account {vote_account_pubkey} does not exist.  Unable to vote",);
-                return GenerateVoteTxResult::Failed;
-            }
-            Some(vote_account) => vote_account,
+        let Some(vote_account) = bank.get_vote_account(vote_account_pubkey) else {
+            warn!("Vote account {vote_account_pubkey} does not exist.  Unable to vote",);
+            return GenerateVoteTxResult::Failed;
         };
         let vote_state_view = vote_account.vote_state_view();
         if vote_state_view.node_pubkey() != &node_keypair.pubkey() {
@@ -2604,18 +2604,15 @@ impl ReplayStage {
             return GenerateVoteTxResult::Failed;
         };
 
-        let authorized_voter_keypair = match authorized_voter_keypairs
+        let Some(authorized_voter_keypair) = authorized_voter_keypairs
             .iter()
             .find(|keypair| &keypair.pubkey() == authorized_voter_pubkey)
-        {
-            None => {
-                warn!(
-                    "The authorized keypair {authorized_voter_pubkey} for vote account \
-                     {vote_account_pubkey} is not available.  Unable to vote"
-                );
-                return GenerateVoteTxResult::NonVoting;
-            }
-            Some(authorized_voter_keypair) => authorized_voter_keypair,
+        else {
+            warn!(
+                "The authorized keypair {authorized_voter_pubkey} for vote account \
+                 {vote_account_pubkey} is not available.  Unable to vote"
+            );
+            return GenerateVoteTxResult::NonVoting;
         };
 
         // Send our last few votes along with the new one
@@ -7711,7 +7708,7 @@ pub(crate) mod tests {
         let has_new_vote_been_rooted = false;
         let mut tracked_vote_transactions = vec![];
 
-        let identity_keypair = cluster_info.keypair().clone();
+        let identity_keypair = cluster_info.keypair();
         let my_vote_keypair = vec![Arc::new(
             validator_keypairs.remove(&my_pubkey).unwrap().vote_keypair,
         )];
@@ -8224,7 +8221,7 @@ pub(crate) mod tests {
         let has_new_vote_been_rooted = false;
         let mut tracked_vote_transactions = vec![];
 
-        let identity_keypair = cluster_info.keypair().clone();
+        let identity_keypair = cluster_info.keypair();
         let my_vote_keypair = vec![Arc::new(
             validator_keypairs.remove(&my_pubkey).unwrap().vote_keypair,
         )];

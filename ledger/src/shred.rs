@@ -701,12 +701,9 @@ where
     P: Into<PacketRef<'a>>,
 {
     debug_assert!(root < max_slot);
-    let shred = match layout::get_shred(packet) {
-        None => {
-            stats.index_overrun += 1;
-            return true;
-        }
-        Some(shred) => shred,
+    let Some(shred) = layout::get_shred(packet) else {
+        stats.index_overrun += 1;
+        return true;
     };
     match layout::get_version(shred) {
         None => {

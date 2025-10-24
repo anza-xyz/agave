@@ -105,7 +105,7 @@ pub fn spawn_shred_sigverify(
             }
             // We can't store the keypair outside the loop
             // because the identity might be hot swapped.
-            let keypair: Arc<Keypair> = cluster_info.keypair().clone();
+            let keypair = cluster_info.keypair();
             match run_shred_sigverify(
                 &thread_pool,
                 &keypair,
