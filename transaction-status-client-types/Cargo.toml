@@ -34,4 +34,6 @@ solana-transaction-error = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+solana-instruction-v2 = { package = "solana-instruction", version = "2", features = ["serde"] }
+solana-transaction-error-v2 = { package = "solana-transaction-error", version = "2", features = ["serde"] }
 test-case = { workspace = true }
