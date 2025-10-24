@@ -414,28 +414,18 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // preserved within entries written to the ledger.
         let mut all_or_nothing_failed = false;
         for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
-            // Short circuit the remainder if we've failed to process a prior TX in an all or
-            // nothing batch.
-            if all_or_nothing_failed {
-                processing_results.push(Err(TransactionError::CommitCancelled));
+            // Short circuit processing if an all or nothing batch has failed.
+            let all_or_nothing_result = match all_or_nothing_failed {
+                true => Err(TransactionError::CommitCancelled),
+                false => Ok(()),
+            };
 
-                // O: This is annoying and may be a footgun if we add other steps that must occur
-                // pre/post non executed transactions... What if we don't short circuit and instead
-                // just for a pre validation error?
-                let ((), collect_pre_us) =
-                    measure_us!(balance_collector.collect_pre_balances(&mut account_loader, tx));
-                let ((), collect_post_us) =
-                    measure_us!(balance_collector.collect_post_balances(&mut account_loader, tx));
-                execute_timings.saturating_add_in_place(
-                    ExecuteTimingType::CollectBalancesUs,
-                    collect_pre_us.saturating_add(collect_post_us),
-                );
-
-                continue;
-            }
-
-            let (validate_result, validate_fees_us) =
-                measure_us!(check_result.and_then(|tx_details| {
+            // O: Here we will drop the check_result error in favor of the all_or_nothing_result
+            // error, is this okay? I.e. all check errors will be mapped to CommitCancelled if part
+            // of an all or nothing batch and not the first error.
+            let (validate_result, validate_fees_us) = measure_us!(all_or_nothing_result
+                .and(check_result)
+                .and_then(|tx_details| {
                     Self::validate_transaction_nonce_and_fee_payer(
                         &mut account_loader,
                         tx,
