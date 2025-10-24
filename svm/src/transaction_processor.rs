@@ -509,20 +509,23 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                                 tx,
                                 &executed_tx.loaded_transaction.accounts,
                             );
-
                             program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
+
+                            Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
                         }
                         // If the transaction failed & drop on failure is set then we don't want to
                         // update the accounts as this transaction will be dropped from the batch.
-                        (false, true) => {}
+                        (false, true) => Err(TransactionError::CommitCancelled),
                         // Unsuccessful transactions will still update rollback accounts (fee payer,
                         // nonce, etc).
-                        (false, false) => account_loader.update_accounts_for_failed_tx(
-                            &executed_tx.loaded_transaction.rollback_accounts,
-                        ),
-                    }
+                        (false, false) => {
+                            account_loader.update_accounts_for_failed_tx(
+                                &executed_tx.loaded_transaction.rollback_accounts,
+                            );
 
-                    Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
+                            Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
+                        }
+                    }
                 }
             });
             execution_us = execution_us.saturating_add(single_execution_us);
