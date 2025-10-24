@@ -415,17 +415,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut all_or_nothing_failed = false;
         for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
             // Short circuit processing if an all or nothing batch has failed.
-            let all_or_nothing_result = match all_or_nothing_failed {
-                true => Err(TransactionError::CommitCancelled),
-                false => Ok(()),
+            let pre_validate = match (check_result, all_or_nothing_failed) {
+                (Ok(_), true) => Err(TransactionError::CommitCancelled),
+                (res, _) => res,
             };
 
-            // O: Here we will drop the check_result error in favor of the all_or_nothing_result
-            // error, is this okay? I.e. all check errors will be mapped to CommitCancelled if part
-            // of an all or nothing batch and not the first error.
-            let (validate_result, validate_fees_us) = measure_us!(all_or_nothing_result
-                .and(check_result)
-                .and_then(|tx_details| {
+            let (validate_result, validate_fees_us) =
+                measure_us!(pre_validate.and_then(|tx_details| {
                     Self::validate_transaction_nonce_and_fee_payer(
                         &mut account_loader,
                         tx,

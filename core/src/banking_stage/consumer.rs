@@ -317,8 +317,6 @@ impl Consumer {
             })
             .collect();
 
-        // O: If an all or nothing batch has failed we need to take care to dump the entire batch
-        // and not commit anything.
         let (load_and_execute_transactions_output, load_execute_us) = measure_us!(bank
             .load_and_execute_transactions(
                 batch,
