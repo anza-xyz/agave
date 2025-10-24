@@ -7,9 +7,8 @@ use {
     crate::fixture::{instr_context::InstrContext, instr_effects::InstrEffects},
     agave_precompiles::{get_precompile, is_precompile},
     agave_syscalls::create_program_runtime_environment_v1,
-    solana_account::{Account, AccountSharedData},
+    solana_account::AccountSharedData,
     solana_compute_budget::compute_budget::ComputeBudget,
-    solana_instruction::AccountMeta,
     solana_instruction_error::InstructionError,
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
@@ -19,7 +18,6 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
-    solana_stable_layout::stable_vec::StableVec,
     solana_svm_callback::InvokeContextCallback,
     solana_svm_log_collector::LogCollector,
     solana_svm_timings::ExecuteTimings,
@@ -57,42 +55,52 @@ impl InvokeContextCallback for InstrContextCallback<'_> {
     }
 }
 
-fn create_instruction_accounts(
-    txn_context: &TransactionContext,
-    acct_metas: &StableVec<AccountMeta>,
-) -> Vec<InstructionAccount> {
-    let mut instruction_accounts: Vec<InstructionAccount> =
-        Vec::with_capacity(acct_metas.len().try_into().unwrap());
-    for account_meta in acct_metas.iter() {
-        let index_in_transaction = txn_context
-            .find_index_of_account(&account_meta.pubkey)
-            .unwrap_or(txn_context.get_number_of_accounts())
-            as IndexOfAccount;
-        instruction_accounts.push(InstructionAccount::new(
-            index_in_transaction,
-            account_meta.is_signer,
-            account_meta.is_writable,
-        ));
-    }
-    instruction_accounts
-}
-
-fn create_transaction_context(
-    accounts: &[(Pubkey, Account)],
+fn compile_accounts(
+    input: &mut InstrContext,
     compute_budget: &ComputeBudget,
     rent: Rent,
-) -> TransactionContext {
-    let transaction_accounts: Vec<KeyedAccountSharedData> = accounts
+) -> (Vec<InstructionAccount>, TransactionContext) {
+    // Add default account for the program being invoked if not already present.
+    if !input
+        .accounts
+        .iter()
+        .any(|(pubkey, _)| pubkey == &input.instruction.program_id)
+    {
+        input.accounts.push((
+            input.instruction.program_id,
+            AccountSharedData::default().into(),
+        ));
+    }
+
+    let transaction_accounts: Vec<KeyedAccountSharedData> = input
+        .accounts
         .iter()
         .map(|(pubkey, account)| (*pubkey, AccountSharedData::from(account.clone())))
         .collect();
 
-    TransactionContext::new(
+    let transaction_context = TransactionContext::new(
         transaction_accounts.clone(),
         rent,
         compute_budget.max_instruction_stack_depth,
         compute_budget.max_instruction_trace_length,
-    )
+    );
+
+    let num_transaction_accounts = transaction_context.get_number_of_accounts();
+
+    let instruction_accounts = input
+        .instruction
+        .accounts
+        .iter()
+        .map(|meta| {
+            let index_in_transaction = transaction_context
+                .find_index_of_account(&meta.pubkey)
+                .unwrap_or(num_transaction_accounts)
+                as IndexOfAccount;
+            InstructionAccount::new(index_in_transaction, meta.is_signer, meta.is_writable)
+        })
+        .collect();
+
+    (instruction_accounts, transaction_context)
 }
 
 /// Execute a single instruction against the Solana VM.
@@ -109,18 +117,8 @@ pub fn execute_instr(
     let runtime_features = input.feature_set.runtime_features();
 
     let rent = sysvar_cache.get_rent().unwrap();
-
-    // Add default account for the program being invoked if not already present.
-    if !input
-        .accounts
-        .iter()
-        .any(|(pubkey, _)| pubkey == &input.instruction.program_id)
-    {
-        input.accounts.push((
-            input.instruction.program_id,
-            AccountSharedData::default().into(),
-        ));
-    }
+    let (instruction_accounts, mut transaction_context) =
+        compile_accounts(&mut input, compute_budget, (*rent).clone());
 
     let environments = ProgramRuntimeEnvironments {
         program_runtime_v1: Arc::new(
@@ -135,9 +133,6 @@ pub fn execute_instr(
         ..ProgramRuntimeEnvironments::default()
     };
 
-    let mut transaction_context =
-        create_transaction_context(&input.accounts, compute_budget, (*rent).clone());
-
     let result = {
         #[allow(deprecated)]
         let (blockhash, blockhash_lamports_per_signature) = sysvar_cache
@@ -151,9 +146,6 @@ pub fn execute_instr(
 
         let program_idx =
             transaction_context.find_index_of_account(&input.instruction.program_id)?;
-
-        let instruction_accounts =
-            create_instruction_accounts(&transaction_context, &input.instruction.accounts);
 
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
