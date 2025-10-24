@@ -419,7 +419,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             if all_or_nothing_failed {
                 processing_results.push(Err(TransactionError::CommitCancelled));
 
-                // O: Balances still need to be collected for skipped TXs.
+                // O: This is annoying and may be a footgun if we add other steps that must occur
+                // pre/post non executed transactions... What if we don't short circuit and instead
+                // just for a pre validation error?
                 let ((), collect_pre_us) =
                     measure_us!(balance_collector.collect_pre_balances(&mut account_loader, tx));
                 let ((), collect_post_us) =
