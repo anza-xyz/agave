@@ -41,8 +41,14 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects
         budget.compute_unit_limit = instr_context.cu_avail;
         budget
     };
+    // When testing with protobuf, we fill the sysvar cache from input accounts.
+    let sysvar_cache = {
+        let mut cache = solana_program_runtime::sysvar_cache::SysvarCache::default();
+        crate::sysvar_cache::fill_from_accounts(&mut cache, &instr_context.accounts);
+        cache
+    };
 
-    let instr_effects = execute_instr(instr_context, &compute_budget);
+    let instr_effects = execute_instr(instr_context, &compute_budget, &sysvar_cache);
     instr_effects.map(Into::into)
 }
 

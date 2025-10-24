@@ -16,6 +16,7 @@ use {
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
+        sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -185,13 +186,13 @@ fn create_transaction_context(
 pub fn execute_instr(
     mut input: InstrContext,
     compute_budget: &ComputeBudget,
+    sysvar_cache: &SysvarCache,
 ) -> Option<InstrEffects> {
     let mut compute_units_consumed = 0;
     let mut timings = ExecuteTimings::default();
 
     let log_collector = LogCollector::new_ref();
     let runtime_features = input.feature_set.runtime_features();
-    let sysvar_cache = crate::sysvar_cache::setup_sysvar_cache(&input.accounts);
 
     let clock = sysvar_cache.get_clock().unwrap();
     let rent = sysvar_cache.get_rent().unwrap();
@@ -229,7 +230,7 @@ pub fn execute_instr(
                 &runtime_features,
                 &environments,
                 &environments,
-                &sysvar_cache,
+                sysvar_cache,
             ),
             Some(log_collector.clone()),
             compute_budget.to_budget(),
@@ -409,9 +410,13 @@ mod tests {
             budget
         };
 
+        // Create Sysvar Cache
+        let mut sysvar_cache = SysvarCache::default();
+        crate::sysvar_cache::fill_from_accounts(&mut sysvar_cache, &context.accounts);
+
         // Execute the instruction.
-        let effects =
-            execute_instr(context, &compute_budget).expect("Instruction execution should succeed");
+        let effects = execute_instr(context, &compute_budget, &sysvar_cache)
+            .expect("Instruction execution should succeed");
 
         // Verify the results.
         assert_eq!(effects.result, None);
