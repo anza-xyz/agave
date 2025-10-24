@@ -1,7 +1,20 @@
-use quinn::{ClientConfig, Endpoint, ServerConfig, TokioRuntime};
-use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
-use std::{net::SocketAddr, sync::Arc};
-use tokio::time::{sleep, Duration};
+use {
+    pem::Pem,
+    quinn::{
+        crypto::rustls::{QuicClientConfig, QuicServerConfig},
+        ClientConfig, Connection, Endpoint, ServerConfig, TokioRuntime, TransportConfig,
+    },
+    solana_keypair::Keypair,
+    solana_pubkey::Pubkey,
+    solana_tls_utils::{
+        get_pubkey_from_tls_certificate, new_dummy_x509_certificate, tls_client_config_builder,
+        tls_server_config_builder,
+    },
+    std::{net::SocketAddr, sync::Arc},
+    tokio::time::{sleep, Duration},
+};
+
+pub const ALPN_QUIC_VOTOR: &[u8] = b"votor";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -9,27 +22,9 @@ async fn main() -> anyhow::Result<()> {
     let addr: SocketAddr = "127.0.0.1:5000".parse()?;
     let udp = solana_net_utils::sockets::bind_to(addr.ip(), addr.port())?;
     udp.set_nonblocking(true)?;
-    //let udp = tokio::net::UdpSocket::from_std(udp)?;
-    let (server_config, server_cert) = configure_server()?;
-    let client_config = configure_client(&[&server_cert])?;
-    // // Self-signed certificate
-    // let cert_key = generate_simple_self_signed(vec!["localhost".into()])?;
-    // let key_pem = cert_key.key_pair.serialize_pem();
-    // let cert_der = CertificateDer::from_slice(cert_key.cert.der());
-
-    // // Server config
-    // let cert_chain = vec![cert_der];
-    // let key = PrivateKeyDer::from_pem_slice(key_pem.as_bytes())?;
-    // let mut server_cfg = ServerConfig::with_single_cert(cert_chain, key)?;
-    // server_cfg.transport_config(Arc::new(quinn::TransportConfig::default()));
-
-    // // Client config trusting that cert
-    // let mut roots = rustls::RootCertStore::empty();
-    // roots.add(cert_der)?;
-    // let mut tls = rustls::ClientConfig::builder()
-    //     .with_root_certificates(roots)
-    //     .with_no_client_auth();
-    // let client_cfg = ClientConfig::new(Arc::new(tls));
+    let (server_config, _server_cert) = configure_server()?;
+    // TODO: verify server cert
+    let client_config = configure_client()?;
 
     let runtime = Arc::new(TokioRuntime);
     // Create one endpoint with both roles
@@ -45,8 +40,14 @@ async fn main() -> anyhow::Result<()> {
         let endpoint = endpoint.clone();
         async move {
             while let Some(incoming) = endpoint.accept().await {
+                if incoming.remote_address_validated() {
+                    incoming.retry().unwrap();
+                    continue;
+                }
                 let connecting = incoming.accept().unwrap();
                 let connection = connecting.await.unwrap();
+                let remote_pubkey = get_remote_pubkey(&connection).unwrap();
+                println!("Accepted connection from {remote_pubkey:?}");
                 tokio::spawn(async move {
                     while let Ok(dg) = connection.read_datagram().await {
                         println!("Server received: {}", String::from_utf8_lossy(&dg));
@@ -72,65 +73,72 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Constructs a QUIC endpoint configured for use a client only.
-///
-/// ## Args
-///
-/// - server_certs: list of trusted certificates.
-#[allow(unused)]
-pub fn make_client_endpoint(
-    bind_addr: SocketAddr,
-    server_certs: &[&[u8]],
-) -> anyhow::Result<Endpoint> {
-    let client_cfg = configure_client(server_certs)?;
-    let mut endpoint = Endpoint::client(bind_addr)?;
-    endpoint.set_default_client_config(client_cfg);
-    Ok(endpoint)
+fn configure_client() -> anyhow::Result<ClientConfig> {
+    // let mut certs = rustls::RootCertStore::empty();
+    // for cert in server_certs {
+    //     certs.add(CertificateDer::from(*cert))?;
+    // }
+
+    let keypair = Keypair::new();
+    let (client_cert, client_key) = new_dummy_x509_certificate(&keypair);
+
+    let mut tls_client_config = tls_client_config_builder()
+        .with_client_auth_cert(vec![client_cert], client_key)
+        .expect("Failed to use client certificate");
+
+    tls_client_config.enable_early_data = true;
+    tls_client_config.alpn_protocols = vec![ALPN_QUIC_VOTOR.to_vec()];
+
+    let mut quinn_client_config = ClientConfig::new(Arc::new(
+        QuicClientConfig::try_from(tls_client_config).unwrap(),
+    ));
+
+    let transport_config = TransportConfig::default();
+    quinn_client_config.transport_config(Arc::new(transport_config));
+
+    Ok(quinn_client_config)
 }
 
-/// Constructs a QUIC endpoint configured to listen for incoming connections on a certain address
-/// and port.
-///
-/// ## Returns
-///
-/// - a stream of incoming QUIC connections
-/// - server certificate serialized into DER format
-#[allow(unused)]
-pub fn make_server_endpoint(
-    bind_addr: SocketAddr,
-) -> anyhow::Result<(Endpoint, CertificateDer<'static>)> {
-    let (server_config, server_cert) = configure_server()?;
-    let endpoint = Endpoint::server(server_config, bind_addr)?;
-    Ok((endpoint, server_cert))
-}
+pub(crate) fn configure_server() -> anyhow::Result<(ServerConfig, String)> {
+    let keypair = Keypair::new();
+    let (cert, priv_key) = new_dummy_x509_certificate(&keypair);
+    let cert_chain_pem_parts = vec![Pem {
+        tag: "CERTIFICATE".to_string(),
+        contents: cert.as_ref().to_vec(),
+    }];
+    let cert_chain_pem = pem::encode_many(&cert_chain_pem_parts);
 
-/// Builds default quinn client config and trusts given certificates.
-///
-/// ## Args
-///
-/// - server_certs: a list of trusted certificates in DER format.
-fn configure_client(server_certs: &[&[u8]]) -> anyhow::Result<ClientConfig> {
-    let mut certs = rustls::RootCertStore::empty();
-    for cert in server_certs {
-        certs.add(CertificateDer::from(*cert))?;
-    }
+    let mut server_tls_config =
+        tls_server_config_builder().with_single_cert(vec![cert], priv_key)?;
+    server_tls_config.alpn_protocols = vec![ALPN_QUIC_VOTOR.to_vec()];
+    let quic_server_config = QuicServerConfig::try_from(server_tls_config)?;
 
-    Ok(ClientConfig::with_root_certificates(Arc::new(certs))?)
-}
+    let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
 
-/// Returns default server configuration along with its certificate.
-fn configure_server() -> anyhow::Result<(ServerConfig, CertificateDer<'static>)> {
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-    let cert_der = CertificateDer::from(cert.cert);
-    let priv_key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+    // disable path migration as we do not expect TPU clients to be on a mobile device
+    server_config.migration(false);
 
-    let mut server_config =
-        ServerConfig::with_single_cert(vec![cert_der.clone()], priv_key.into())?;
     let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
     transport_config.max_concurrent_uni_streams(0_u8.into());
+    transport_config.max_concurrent_bidi_streams(0_u8.into());
+    transport_config.datagram_receive_buffer_size(Some(2048));
 
-    Ok((server_config, cert_der))
+    // let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
+    // transport_config.max_idle_timeout(Some(timeout));
+
+    // Disable GSO.
+    transport_config.enable_segmentation_offload(false);
+
+    Ok((server_config, cert_chain_pem))
 }
 
-#[allow(unused)]
-pub const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
+pub fn get_remote_pubkey(connection: &Connection) -> Option<Pubkey> {
+    // Use the client cert only if it is self signed and the chain length is 1.
+    connection
+        .peer_identity()?
+        .downcast::<Vec<rustls::pki_types::CertificateDer>>()
+        .ok()
+        .filter(|certs| certs.len() == 1)?
+        .first()
+        .and_then(get_pubkey_from_tls_certificate)
+}

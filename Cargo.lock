@@ -13521,10 +13521,15 @@ version = "3.1.0"
 dependencies = [
  "anyhow",
  "futures-util",
+ "pem 1.1.1",
  "quinn",
  "rcgen",
  "rustls 0.23.34",
+ "solana-address",
+ "solana-keypair",
  "solana-net-utils",
+ "solana-pubkey",
+ "solana-tls-utils",
  "tokio",
 ]
 
