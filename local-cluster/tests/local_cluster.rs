@@ -1,8 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    agave_snapshots::{
-        hardened_unpack::open_genesis_config, snapshot_config::SnapshotConfig, SnapshotInterval,
-    },
+    agave_snapshots::{snapshot_config::SnapshotConfig, SnapshotInterval},
     assert_matches::assert_matches,
     crossbeam_channel::{unbounded, Receiver},
     gag::BufferRedirect,
@@ -29,6 +27,7 @@ use {
     solana_download_utils::download_snapshot_archive,
     solana_entry::entry::create_ticks,
     solana_epoch_schedule::{MAX_LEADER_SCHEDULE_EPOCH_OFFSET, MINIMUM_SLOTS_PER_EPOCH},
+    solana_genesis_utils::open_genesis_config,
     solana_gossip::{crds_data::MAX_VOTES, gossip_service::discover_validators},
     solana_hard_forks::HardForks,
     solana_hash::Hash,

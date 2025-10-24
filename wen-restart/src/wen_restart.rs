@@ -1410,12 +1410,12 @@ mod tests {
     use {
         crate::wen_restart::{tests::wen_restart_proto::LastVotedForkSlotsAggregateFinal, *},
         agave_snapshots::{
-            hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
             snapshot_config::{SnapshotConfig, SnapshotUsage},
             snapshot_hash::SnapshotHash,
         },
         crossbeam_channel::unbounded,
         solana_entry::entry::create_ticks,
+        solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         solana_gossip::{
             cluster_info::ClusterInfo,
             contact_info::ContactInfo,

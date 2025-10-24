@@ -82,6 +82,7 @@ gag = { workspace = true }
 serial_test = { workspace = true }
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }
 solana-download-utils = { workspace = true }
+solana-genesis-utils = { workspace = true }
 solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
 solana-local-cluster = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }

@@ -33,6 +33,7 @@ solana-core = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-feature-gate-interface = { workspace = true }
 solana-fee-calculator = { workspace = true }
+solana-genesis-utils = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
 solana-gossip = { workspace = true }
 solana-inflation = { workspace = true }

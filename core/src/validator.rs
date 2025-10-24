@@ -35,12 +35,7 @@ use {
         tvu::{Tvu, TvuConfig, TvuSockets},
     },
     agave_snapshots::{
-        hardened_unpack::{
-            open_genesis_config, OpenGenesisConfigError, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
-        },
-        snapshot_config::SnapshotConfig,
-        snapshot_hash::StartingSnapshotHashes,
-        SnapshotInterval,
+        snapshot_config::SnapshotConfig, snapshot_hash::StartingSnapshotHashes, SnapshotInterval,
     },
     anyhow::{anyhow, Context, Result},
     crossbeam_channel::{bounded, unbounded, Receiver},
@@ -61,6 +56,9 @@ use {
     solana_entry::poh::compute_hash_time,
     solana_epoch_schedule::MAX_LEADER_SCHEDULE_EPOCH_OFFSET,
     solana_genesis_config::GenesisConfig,
+    solana_genesis_utils::{
+        open_genesis_config, OpenGenesisConfigError, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+    },
     solana_geyser_plugin_manager::{
         geyser_plugin_service::GeyserPluginService, GeyserPluginManagerRequest,
     },

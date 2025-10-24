@@ -8,7 +8,7 @@
     )
 )]
 use {
-    agave_snapshots::hardened_unpack::unpack_genesis_archive,
+    agave_snapshots::unpack_genesis_archive,
     log::*,
     solana_download_utils::download_genesis_if_missing,
     solana_genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE},
@@ -16,6 +16,8 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     std::net::SocketAddr,
 };
+
+mod open;
 
 fn check_genesis_hash(
     genesis_config: &GenesisConfig,
@@ -130,3 +132,5 @@ pub fn download_then_check_genesis_hash(
 
     set_and_verify_expected_genesis_hash(genesis_config, expected_genesis_hash, rpc_client)
 }
+
+pub use open::{open_genesis_config, OpenGenesisConfigError, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE};

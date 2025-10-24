@@ -151,6 +151,7 @@ dependencies = [
  "solana-entry",
  "solana-feature-gate-interface",
  "solana-genesis-config",
+ "solana-genesis-utils",
  "solana-geyser-plugin-manager",
  "solana-gossip",
  "solana-hash",
@@ -2935,6 +2936,20 @@ dependencies = [
 
 [[package]]
 name = "hyper-rustls"
+version = "0.24.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec3efd23720e2049821a693cbc7e65ea87c72f1c58ff2f9522ff332b1491e590"
+dependencies = [
+ "futures-util",
+ "http 0.2.12",
+ "hyper 0.14.32",
+ "rustls 0.21.12",
+ "tokio",
+ "tokio-rustls 0.24.1",
+]
+
+[[package]]
+name = "hyper-rustls"
 version = "0.27.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3c93eb611681b207e1fe55d5a71ecf91572ec8a6705cdb6857f7d8d5242cf58"
@@ -3207,6 +3222,19 @@ dependencies = [
  "equivalent",
  "hashbrown 0.16.0",
  "rayon",
+]
+
+[[package]]
+name = "indicatif"
+version = "0.17.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "183b3088984b400f4cfac3620d5e076c84da5364016b4f49473de574b2586235"
+dependencies = [
+ "console 0.15.11",
+ "number_prefix",
+ "portable-atomic",
+ "unicode-width 0.2.2",
+ "web-time",
 ]
 
 [[package]]
@@ -4077,6 +4105,12 @@ dependencies = [
  "quote",
  "syn 2.0.106",
 ]
+
+[[package]]
+name = "number_prefix"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "830b246a0e5f20af87141b25c173cd1b609bd7779a4617d6ec582abaf90870f3"
 
 [[package]]
 name = "object"
@@ -5006,6 +5040,7 @@ version = "0.11.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd67538700a17451e7cba03ac727fb961abb7607553461627b97de0b89cf4a62"
 dependencies = [
+ "async-compression",
  "base64 0.21.7",
  "bytes",
  "encoding_rs",
@@ -5015,6 +5050,7 @@ dependencies = [
  "http 0.2.12",
  "http-body 0.4.6",
  "hyper 0.14.32",
+ "hyper-rustls 0.24.2",
  "hyper-tls",
  "ipnet",
  "js-sys",
@@ -5024,6 +5060,7 @@ dependencies = [
  "once_cell",
  "percent-encoding 2.3.2",
  "pin-project-lite",
+ "rustls 0.21.12",
  "rustls-pemfile",
  "serde",
  "serde_json",
@@ -5032,11 +5069,14 @@ dependencies = [
  "system-configuration",
  "tokio",
  "tokio-native-tls",
+ "tokio-rustls 0.24.1",
+ "tokio-util 0.7.16",
  "tower-service",
  "url 2.5.7",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "webpki-roots 0.25.4",
  "winreg",
 ]
 
@@ -5056,7 +5096,7 @@ dependencies = [
  "http-body 1.0.1",
  "http-body-util",
  "hyper 1.7.0",
- "hyper-rustls",
+ "hyper-rustls 0.27.7",
  "hyper-util",
  "js-sys",
  "log",
@@ -6395,7 +6435,7 @@ dependencies = [
  "clap 2.34.0",
  "console 0.16.1",
  "humantime",
- "indicatif",
+ "indicatif 0.18.0",
  "pretty-hex",
  "semver",
  "serde",
@@ -6434,7 +6474,7 @@ dependencies = [
  "futures 0.3.31",
  "futures-util",
  "indexmap 2.11.4",
- "indicatif",
+ "indicatif 0.18.0",
  "log",
  "quinn",
  "rayon",
@@ -6677,6 +6717,7 @@ dependencies = [
  "solana-fee-calculator",
  "solana-fee-structure",
  "solana-genesis-config",
+ "solana-genesis-utils",
  "solana-geyser-plugin-manager",
  "solana-gossip",
  "solana-hard-forks",
@@ -6883,6 +6924,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-download-utils"
+version = "3.1.0"
+dependencies = [
+ "agave-snapshots",
+ "log",
+ "solana-clock",
+ "solana-file-download",
+ "solana-genesis-config",
+ "solana-runtime",
+]
+
+[[package]]
 name = "solana-ed25519-program"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7052,6 +7105,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-file-download"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6884e13cc98f58e609a9b73e3d53f728f0f743b8c15c6768cad6f6382c336c1"
+dependencies = [
+ "console 0.15.11",
+ "indicatif 0.17.11",
+ "log",
+ "reqwest 0.11.27",
+]
+
+[[package]]
 name = "solana-genesis"
 version = "3.1.0"
 dependencies = [
@@ -7075,6 +7140,7 @@ dependencies = [
  "solana-feature-gate-interface",
  "solana-fee-calculator",
  "solana-genesis-config",
+ "solana-genesis-utils",
  "solana-inflation",
  "solana-keypair",
  "solana-ledger",
@@ -7124,6 +7190,19 @@ dependencies = [
  "solana-shred-version",
  "solana-signer",
  "solana-time-utils",
+]
+
+[[package]]
+name = "solana-genesis-utils"
+version = "3.1.0"
+dependencies = [
+ "agave-snapshots",
+ "log",
+ "solana-download-utils",
+ "solana-genesis-config",
+ "solana-hash",
+ "solana-rpc-client",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -7400,6 +7479,7 @@ dependencies = [
  "solana-entry",
  "solana-epoch-schedule",
  "solana-genesis-config",
+ "solana-genesis-utils",
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
@@ -8221,7 +8301,7 @@ dependencies = [
  "bincode",
  "bs58",
  "futures 0.3.31",
- "indicatif",
+ "indicatif 0.18.0",
  "log",
  "reqwest 0.12.24",
  "reqwest-middleware",
@@ -9090,6 +9170,7 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-feature-gate-interface",
  "solana-fee-calculator",
+ "solana-genesis-utils",
  "solana-geyser-plugin-manager",
  "solana-gossip",
  "solana-inflation",
@@ -9174,7 +9255,7 @@ dependencies = [
  "bincode",
  "futures-util",
  "indexmap 2.11.4",
- "indicatif",
+ "indicatif 0.18.0",
  "log",
  "rayon",
  "solana-client-traits",
@@ -9578,6 +9659,7 @@ dependencies = [
  "rayon",
  "solana-clock",
  "solana-entry",
+ "solana-genesis-utils",
  "solana-gossip",
  "solana-hash",
  "solana-ledger",
@@ -11112,6 +11194,12 @@ checksum = "05d651ec480de84b762e7be71e6efa7461699c19d9e2c272c8d93455f567786e"
 dependencies = [
  "rustls-pki-types",
 ]
+
+[[package]]
+name = "webpki-roots"
+version = "0.25.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f20c57d8d7db6d3b86154206ae5d8fba62dd39573114de97c2cb0578251f8e1"
 
 [[package]]
 name = "webpki-roots"
