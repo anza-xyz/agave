@@ -401,12 +401,14 @@ pub fn validate_fee_payer(
             TransactionError::InsufficientFundsForFee
         })?;
 
-    let payer_pre_rent_state = get_account_rent_state(rent, payer_account);
+    let payer_pre_rent_state =
+        get_account_rent_state(rent, payer_account.lamports(), payer_account.data().len());
     payer_account
         .checked_sub_lamports(fee)
         .map_err(|_| TransactionError::InsufficientFundsForFee)?;
 
-    let payer_post_rent_state = get_account_rent_state(rent, payer_account);
+    let payer_post_rent_state =
+        get_account_rent_state(rent, payer_account.lamports(), payer_account.data().len());
     check_rent_state_with_account(
         &payer_pre_rent_state,
         &payer_post_rent_state,

@@ -7,13 +7,10 @@
 mod meta;
 pub mod test_utils;
 
-// Used all over the accounts-db crate.  Probably should be minimized.
-pub(crate) use meta::StoredAccountMeta;
-// Some tests/benches use AccountMeta/StoredMeta
 #[cfg(feature = "dev-context-only-utils")]
-pub use meta::{AccountMeta, StoredMeta};
+pub use meta::{AccountMeta, StoredAccountMeta, StoredMeta};
 #[cfg(not(feature = "dev-context-only-utils"))]
-use meta::{AccountMeta, StoredMeta};
+use meta::{AccountMeta, StoredAccountMeta, StoredMeta};
 use {
     crate::{
         account_info::Offset,
