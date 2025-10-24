@@ -117,6 +117,9 @@ pub struct TransactionProcessingConfig<'a> {
     pub limit_to_load_programs: bool,
     /// Recording capabilities for transaction execution.
     pub recording_config: ExecutionRecordingConfig,
+    // O: Confirm it's fine to break public API here.
+    pub drop_on_failure: bool,
+    pub all_or_nothing: bool,
 }
 
 /// Runtime environment for transaction batch processing.
@@ -498,13 +501,25 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         config,
                     );
 
-                    // Update loaded accounts cache with account states which might have changed.
-                    // Also update local program cache with modifications made by the transaction,
-                    // if it executed successfully.
-                    account_loader.update_accounts_for_executed_tx(tx, &executed_tx);
+                    match (executed_tx.was_successful(), config.drop_on_failure) {
+                        // Successful transactions need to update the account loader cache as future
+                        // transactions in the batch may depend on them.
+                        (true, _) => {
+                            account_loader.update_accounts_for_successful_tx(
+                                tx,
+                                &executed_tx.loaded_transaction.accounts,
+                            );
 
-                    if executed_tx.was_successful() {
-                        program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
+                            program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
+                        }
+                        // If the transaction failed & drop on failure is set then we don't want to
+                        // update the accounts as this transaction will be dropped from the batch.
+                        (false, true) => {}
+                        // Unsuccessful transactions will still update rollback accounts (fee payer,
+                        // nonce, etc).
+                        (false, false) => account_loader.update_accounts_for_failed_tx(
+                            &executed_tx.loaded_transaction.rollback_accounts,
+                        ),
                     }
 
                     Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))

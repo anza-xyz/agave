@@ -3089,6 +3089,8 @@ impl Bank {
                     enable_return_data_recording: true,
                     enable_transaction_balance_recording: true,
                 },
+                drop_on_failure: false,
+                all_or_nothing: false,
             },
         );
 
@@ -3809,6 +3811,8 @@ impl Bank {
                 log_messages_bytes_limit,
                 limit_to_load_programs: false,
                 recording_config,
+                drop_on_failure: false,
+                all_or_nothing: false,
             },
         );
 
