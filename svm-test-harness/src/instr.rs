@@ -9,7 +9,7 @@ use {
     agave_syscalls::create_program_runtime_environment_v1,
     solana_account::{Account, AccountSharedData},
     solana_clock::Clock,
-    solana_compute_budget::compute_budget::{ComputeBudget, SVMTransactionExecutionCost},
+    solana_compute_budget::compute_budget::ComputeBudget,
     solana_instruction::AccountMeta,
     solana_instruction_error::InstructionError,
     solana_precompile_error::PrecompileError,
@@ -182,31 +182,27 @@ fn create_transaction_context(
 }
 
 /// Execute a single instruction against the Solana VM.
-pub fn execute_instr(mut input: InstrContext) -> Option<InstrEffects> {
-    let mut compute_units_consumed = 0u64;
-
-    let runtime_features = input.feature_set.runtime_features();
-    let sysvar_cache = crate::sysvar_cache::setup_sysvar_cache(&input.accounts);
+pub fn execute_instr(
+    mut input: InstrContext,
+    compute_budget: &ComputeBudget,
+) -> Option<InstrEffects> {
+    let mut compute_units_consumed = 0;
+    let mut timings = ExecuteTimings::default();
 
     let log_collector = LogCollector::new_ref();
-    let compute_budget = {
-        let mut budget = ComputeBudget::new_with_defaults(false, false);
-        budget.compute_unit_limit = input.cu_avail;
-        budget
-    };
+    let runtime_features = input.feature_set.runtime_features();
+    let sysvar_cache = crate::sysvar_cache::setup_sysvar_cache(&input.accounts);
 
     let clock = sysvar_cache.get_clock().unwrap();
     let rent = sysvar_cache.get_rent().unwrap();
 
     let (environments, mut program_cache) =
-        create_program_cache(&mut input, &clock, &compute_budget)?;
+        create_program_cache(&mut input, &clock, compute_budget)?;
 
     let mut transaction_context =
-        create_transaction_context(&input.accounts, &compute_budget, (*rent).clone());
+        create_transaction_context(&input.accounts, compute_budget, (*rent).clone());
 
     let result = {
-        let callback = InstrContextCallback(&input);
-
         #[allow(deprecated)]
         let (blockhash, blockhash_lamports_per_signature) = sysvar_cache
             .get_recent_blockhashes()
@@ -215,15 +211,7 @@ pub fn execute_instr(mut input: InstrContext) -> Option<InstrEffects> {
             .map(|x| (x.blockhash, x.fee_calculator.lamports_per_signature))
             .unwrap_or_default();
 
-        let environment_config = EnvironmentConfig::new(
-            blockhash,
-            blockhash_lamports_per_signature,
-            &callback,
-            &runtime_features,
-            &environments,
-            &environments,
-            &sysvar_cache,
-        );
+        let callback = InstrContextCallback(&input);
 
         let program_idx =
             transaction_context.find_index_of_account(&input.instruction.program_id)?;
@@ -234,10 +222,18 @@ pub fn execute_instr(mut input: InstrContext) -> Option<InstrEffects> {
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             &mut program_cache,
-            environment_config,
+            EnvironmentConfig::new(
+                blockhash,
+                blockhash_lamports_per_signature,
+                &callback,
+                &runtime_features,
+                &environments,
+                &environments,
+                &sysvar_cache,
+            ),
             Some(log_collector.clone()),
             compute_budget.to_budget(),
-            SVMTransactionExecutionCost::default(),
+            compute_budget.to_cost(),
         );
 
         invoke_context
@@ -257,8 +253,7 @@ pub fn execute_instr(mut input: InstrContext) -> Option<InstrEffects> {
                 [instruction_data.as_slice()].into_iter(),
             )
         } else {
-            invoke_context
-                .process_instruction(&mut compute_units_consumed, &mut ExecuteTimings::default())
+            invoke_context.process_instruction(&mut compute_units_consumed, &mut timings)
         }
     };
 
@@ -313,6 +308,8 @@ mod tests {
 
         let from_pubkey = Pubkey::new_from_array([1u8; 32]);
         let to_pubkey = Pubkey::new_from_array([2u8; 32]);
+
+        let cu_avail = 10000u64;
 
         // Create Clock sysvar
         let clock = solana_clock::Clock {
@@ -402,11 +399,19 @@ mod tests {
                 ]
                 .into(),
             },
-            cu_avail: 10000u64,
+            cu_avail,
+        };
+
+        // Set up the Compute Budget.
+        let compute_budget = {
+            let mut budget = ComputeBudget::new_with_defaults(false, false);
+            budget.compute_unit_limit = cu_avail;
+            budget
         };
 
         // Execute the instruction.
-        let effects = execute_instr(context).expect("Instruction execution should succeed");
+        let effects =
+            execute_instr(context, &compute_budget).expect("Instruction execution should succeed");
 
         // Verify the results.
         assert_eq!(effects.result, None);

@@ -8,7 +8,9 @@ use {
         },
         instr::execute_instr,
     },
+    agave_feature_set::{increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8},
     prost::Message,
+    solana_compute_budget::compute_budget::ComputeBudget,
     std::{env, ffi::c_int},
 };
 
@@ -29,7 +31,18 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects
     let Ok(instr_context) = InstrContext::try_from(input) else {
         return None;
     };
-    let instr_effects = execute_instr(instr_context);
+
+    let feature_set = &instr_context.feature_set;
+    let simd_0268_active = feature_set.is_active(&raise_cpi_nesting_limit_to_8::id());
+    let simd_0339_active = feature_set.is_active(&increase_cpi_account_info_limit::id());
+
+    let compute_budget = {
+        let mut budget = ComputeBudget::new_with_defaults(simd_0268_active, simd_0339_active);
+        budget.compute_unit_limit = instr_context.cu_avail;
+        budget
+    };
+
+    let instr_effects = execute_instr(instr_context, &compute_budget);
     instr_effects.map(Into::into)
 }
 
