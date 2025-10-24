@@ -13520,6 +13520,9 @@ name = "votor-quic"
 version = "3.1.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
+ "bytes",
+ "crossbeam-channel",
  "futures-util",
  "pem 1.1.1",
  "quinn",
