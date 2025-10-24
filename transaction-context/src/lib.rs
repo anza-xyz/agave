@@ -18,11 +18,7 @@ use {
     solana_instructions_sysvar as instructions,
     solana_pubkey::Pubkey,
     solana_sbpf::memory_region::{AccessType, AccessViolationHandler, MemoryRegion},
-    std::{
-        cell::{Cell, UnsafeCell},
-        collections::HashSet,
-        rc::Rc,
-    },
+    std::{cell::Cell, collections::HashSet, rc::Rc},
 };
 #[cfg(not(target_os = "solana"))]
 use {solana_account::WritableAccount, solana_rent::Rent};
@@ -164,15 +160,11 @@ impl TransactionContext {
             return Err(InstructionError::CallDepth);
         }
 
-        let (accounts, _, _) = Rc::try_unwrap(self.accounts)
+        let accounts = Rc::try_unwrap(self.accounts)
             .expect("transaction_context.accounts has unexpected outstanding refs")
-            .take();
+            .deconstruct_into_account_shared_data();
 
-        Ok(UnsafeCell::into_inner(accounts)
-            .into_vec()
-            .into_iter()
-            .map(|(_, account)| account)
-            .collect())
+        Ok(accounts)
     }
 
     #[cfg(not(target_os = "solana"))]
@@ -1070,7 +1062,6 @@ impl From<TransactionContext> for ExecutionRecord {
         let (accounts, touched_flags, resize_delta) = Rc::try_unwrap(context.accounts)
             .expect("transaction_context.accounts has unexpected outstanding refs")
             .take();
-        let accounts = UnsafeCell::into_inner(accounts).into_vec();
         let touched_account_count = touched_flags
             .iter()
             .fold(0usize, |accumulator, was_touched| {

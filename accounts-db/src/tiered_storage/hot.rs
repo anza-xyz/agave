@@ -1462,13 +1462,8 @@ mod tests {
             .map(|size| create_test_account(*size))
             .collect();
 
-        let account_refs: Vec<_> = accounts
-            .iter()
-            .map(|account| (&account.0.pubkey, &account.1))
-            .collect();
-
         // Slot information is not used here
-        let storable_accounts = (Slot::MAX, &account_refs[..]);
+        let storable_accounts = (Slot::MAX, &accounts[..]);
 
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("test_write_account_and_index_blocks");
@@ -1489,7 +1484,7 @@ mod tests {
                     storable_accounts.account_default_if_zero_lamport(i, |account| {
                         verify_test_account(
                             &stored_account,
-                            &account.to_account_shared_data(),
+                            &account.take_account(),
                             account.pubkey(),
                         );
                     });
@@ -1512,7 +1507,7 @@ mod tests {
                     storable_accounts.account_default_if_zero_lamport(offset, |account| {
                         verify_test_account(
                             &stored_account,
-                            &account.to_account_shared_data(),
+                            &account.take_account(),
                             account.pubkey(),
                         );
                     });
@@ -1526,11 +1521,7 @@ mod tests {
         hot_storage
             .scan_accounts(|_offset, stored_account| {
                 storable_accounts.account_default_if_zero_lamport(i, |account| {
-                    verify_test_account(
-                        &stored_account,
-                        &account.to_account_shared_data(),
-                        account.pubkey(),
-                    );
+                    verify_test_account(&stored_account, &account.take_account(), account.pubkey());
                 });
                 i += 1;
             })

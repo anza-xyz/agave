@@ -7,7 +7,6 @@ use {
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_poh::poh_recorder::SharedLeaderState,
     std::{
-        path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc,
@@ -19,16 +18,14 @@ use {
 /// Spawns a thread to track and send progress updates.
 pub fn spawn(
     exit: Arc<AtomicBool>,
-    queue_path: PathBuf,
+    mut producer: shaq::Producer<ProgressMessage>,
     shared_leader_state: SharedLeaderState,
     ticks_per_slot: u64,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("solProgTrker".to_string())
         .spawn(move || {
-            if let Some(mut producer) = setup(queue_path) {
-                ProgressTracker::new(exit, shared_leader_state, ticks_per_slot).run(&mut producer);
-            }
+            ProgressTracker::new(exit, shared_leader_state, ticks_per_slot).run(&mut producer);
         })
         .unwrap()
 }
@@ -139,16 +136,6 @@ impl ProgressTracker {
             .map(|(limit, shared_block_cost)| limit.saturating_sub(shared_block_cost.load()))
             .unwrap_or(0)
     }
-}
-
-fn setup(queue_path: impl AsRef<Path>) -> Option<shaq::Producer<ProgressMessage>> {
-    let producer = shaq::Producer::join(queue_path)
-        .map_err(|err| {
-            error!("Failed to join queue: {err:?}");
-        })
-        .ok()?;
-
-    Some(producer)
 }
 
 /// Calculate progress through a slot based on tick-height.

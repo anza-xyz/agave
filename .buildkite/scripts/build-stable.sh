@@ -24,6 +24,19 @@ EOF
   )")
 done
 
+# add dev-bins
+partitions+=(
+  "$(
+    cat <<EOF
+{
+  "name": "dev-bins",
+  "command": "ci/docker-run-default-image.sh cargo nextest run --profile ci --manifest-path ./dev-bins/Cargo.toml",
+  "timeout_in_minutes": 35,
+  "agent": "$agent"
+}
+EOF
+  )")
+
 parallelism=10
 local_cluster_partitions=()
 for i in $(seq 1 $parallelism); do

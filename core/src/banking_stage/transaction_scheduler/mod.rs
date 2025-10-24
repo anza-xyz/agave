@@ -1,15 +1,44 @@
-use conditional_mod::conditional_vis_mod;
-
 mod batch_id_generator;
-conditional_vis_mod!(greedy_scheduler, feature = "dev-context-only-utils", pub, pub(crate));
+
+#[cfg(feature = "dev-context-only-utils")]
+pub mod greedy_scheduler;
+#[cfg(not(feature = "dev-context-only-utils"))]
+pub(crate) mod greedy_scheduler;
+
 mod in_flight_tracker;
-conditional_vis_mod!(prio_graph_scheduler, feature = "dev-context-only-utils", pub, pub(crate));
-conditional_vis_mod!(receive_and_buffer, feature = "dev-context-only-utils", pub, pub(crate));
-conditional_vis_mod!(scheduler, feature = "dev-context-only-utils", pub, pub(crate));
+
+#[cfg(feature = "dev-context-only-utils")]
+pub mod prio_graph_scheduler;
+#[cfg(not(feature = "dev-context-only-utils"))]
+pub(crate) mod prio_graph_scheduler;
+
+#[cfg(feature = "dev-context-only-utils")]
+pub mod receive_and_buffer;
+#[cfg(not(feature = "dev-context-only-utils"))]
+pub(crate) mod receive_and_buffer;
+
+#[cfg(feature = "dev-context-only-utils")]
+pub mod scheduler;
+#[cfg(not(feature = "dev-context-only-utils"))]
+pub(crate) mod scheduler;
+
 pub(crate) mod scheduler_common;
 pub mod scheduler_controller;
 pub(crate) mod scheduler_error;
-conditional_vis_mod!(scheduler_metrics, feature = "dev-context-only-utils", pub);
+
+#[cfg(feature = "dev-context-only-utils")]
+pub mod scheduler_metrics;
+#[cfg(not(feature = "dev-context-only-utils"))]
+mod scheduler_metrics;
+
 mod transaction_priority_id;
-conditional_vis_mod!(transaction_state, feature = "dev-context-only-utils", pub, pub(crate));
-conditional_vis_mod!(transaction_state_container, feature = "dev-context-only-utils", pub, pub(crate));
+
+#[cfg(feature = "dev-context-only-utils")]
+pub mod transaction_state;
+#[cfg(not(feature = "dev-context-only-utils"))]
+pub(crate) mod transaction_state;
+
+#[cfg(feature = "dev-context-only-utils")]
+pub mod transaction_state_container;
+#[cfg(not(feature = "dev-context-only-utils"))]
+pub(crate) mod transaction_state_container;

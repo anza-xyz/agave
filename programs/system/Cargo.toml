@@ -51,6 +51,7 @@ solana-sha256-hasher = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-system-program = { path = ".", features = ["agave-unstable-api"] }
+solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
 
 [[bench]]
 name = "system"

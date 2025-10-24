@@ -5,8 +5,7 @@ use {
         accounts_file::AccountsFileProvider,
         accounts_index::{tests::*, AccountSecondaryIndexesIncludeExclude},
         append_vec::{
-            aligned_stored_size, test_utils::TempFile, AccountMeta, AppendVec, StoredAccountMeta,
-            StoredMeta,
+            aligned_stored_size, test_utils::TempFile, AccountMeta, AppendVec, StoredMeta,
         },
         storable_accounts::AccountForStorage,
     },
@@ -2050,76 +2049,33 @@ fn test_store_large_account() {
 }
 
 #[test]
-fn test_stored_readable_account() {
-    let lamports = 1;
-    let owner = Pubkey::new_unique();
-    let executable = true;
-    let rent_epoch = 2;
-    let meta = StoredMeta {
-        write_version_obsolete: 5,
-        pubkey: Pubkey::new_unique(),
-        data_len: 7,
-    };
-    let account_meta = AccountMeta {
-        lamports,
-        owner,
-        executable,
-        rent_epoch,
-    };
-    let data = Vec::new();
-    let account = Account {
-        lamports,
-        owner,
-        executable,
-        rent_epoch,
-        data: data.clone(),
-    };
-    let offset = 99 * std::mem::size_of::<u64>(); // offset needs to be 8 byte aligned
-    let stored_size = 101;
-    let stored_account = StoredAccountMeta {
-        meta: &meta,
-        account_meta: &account_meta,
-        data: &data,
-        offset,
-        stored_size,
-    };
-    assert!(accounts_equal(&account, &stored_account));
-}
-
-#[test]
 fn test_hash_stored_account() {
     // Number are just sequential.
-    let meta = StoredMeta {
-        write_version_obsolete: 0x09_0a_0b_0c_0d_0e_0f_10,
-        data_len: 0x11_12_13_14_15_16_17_18,
-        pubkey: Pubkey::from([
-            0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26,
-            0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33, 0x34,
-            0x35, 0x36, 0x37, 0x38,
-        ]),
-    };
-    let account_meta = AccountMeta {
-        lamports: 0x39_3a_3b_3c_3d_3e_3f_40,
-        rent_epoch: 0x41_42_43_44_45_46_47_48,
-        owner: Pubkey::from([
-            0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56,
-            0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f, 0x60, 0x61, 0x62, 0x63, 0x64,
-            0x65, 0x66, 0x67, 0x68,
-        ]),
-        executable: false,
-    };
+    let pubkey = Pubkey::new_from_array([
+        0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+        0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36,
+        0x37, 0x38,
+    ]);
+    let lamports = 0x39_3a_3b_3c_3d_3e_3f_40;
+    let rent_epoch = 0x41_42_43_44_45_46_47_48;
+    let owner = Pubkey::new_from_array([
+        0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57,
+        0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f, 0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+        0x67, 0x68,
+    ]);
     const ACCOUNT_DATA_LEN: usize = 3;
     let data: [u8; ACCOUNT_DATA_LEN] = [0x69, 0x6a, 0x6b];
-    let offset: usize = 0x6c_6d_6e_6f_70_71_72_73;
+    let executable = false;
 
-    let stored_account = StoredAccountMeta {
-        meta: &meta,
-        account_meta: &account_meta,
+    let stored_account = StoredAccountInfo {
+        pubkey: &pubkey,
+        lamports,
+        owner: &owner,
         data: &data,
-        offset,
-        stored_size: 0,
+        executable,
+        rent_epoch,
     };
-    let account = stored_account.to_account_shared_data();
+    let account = create_account_shared_data(&stored_account);
 
     let expected_account_hash = LtHashChecksum([
         160, 29, 105, 138, 56, 166, 40, 55, 224, 231, 29, 208, 68, 46, 190, 89, 141, 20, 65, 86,
@@ -2130,14 +2086,14 @@ fn test_hash_stored_account() {
             .0
             .checksum(),
         expected_account_hash,
-        "StoredAccountMeta's data layout might be changed; update hashing if needed."
+        "StoredAccountInfo's data layout might be changed; update hashing if needed."
     );
     assert_eq!(
         AccountsDb::lt_hash_account(&account, stored_account.pubkey())
             .0
             .checksum(),
         expected_account_hash,
-        "Account-based hashing must be consistent with StoredAccountMeta-based one."
+        "Account-based hashing must be consistent with StoredAccountInfo-based one."
     );
 }
 
@@ -6141,7 +6097,7 @@ fn get_all_accounts_from_storages<'a>(
             storage
                 .accounts
                 .scan_accounts(&mut reader, |_offset, account| {
-                    vec.push((*account.pubkey(), account.to_account_shared_data()));
+                    vec.push((*account.pubkey(), create_account_shared_data(&account)));
                 })
                 .expect("must scan accounts storage");
             // make sure scan_pubkeys results match

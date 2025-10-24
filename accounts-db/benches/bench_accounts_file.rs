@@ -9,6 +9,7 @@ use {
             file::TieredReadableFile,
             hot::{HotStorageReader, HotStorageWriter, RENT_EXEMPT_RENT_EPOCH},
         },
+        utils::create_account_shared_data,
     },
     solana_clock::Slot,
     solana_pubkey::Pubkey,
@@ -258,7 +259,9 @@ fn bench_get_account_shared_data(c: &mut Criterion) {
             |b| {
                 b.iter_with_large_drop(|| {
                     _ = append_vec_mmap
-                        .get_stored_account_callback(0, |account| account.to_account_shared_data())
+                        .get_stored_account_callback(0, |account| {
+                            create_account_shared_data(&account)
+                        })
                         .unwrap();
                 });
             },
@@ -280,7 +283,9 @@ fn bench_get_account_shared_data(c: &mut Criterion) {
             |b| {
                 b.iter_with_large_drop(|| {
                     _ = append_vec_file
-                        .get_stored_account_callback(0, |account| account.to_account_shared_data())
+                        .get_stored_account_callback(0, |account| {
+                            create_account_shared_data(&account)
+                        })
                         .unwrap();
                 });
             },

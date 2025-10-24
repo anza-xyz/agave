@@ -23,8 +23,6 @@ mod geyser_plugin_utils;
 pub mod stats;
 pub mod tests;
 
-#[cfg(test)]
-use crate::append_vec::StoredAccountMeta;
 pub use accounts_db_config::{
     AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
 };
@@ -61,7 +59,8 @@ use {
         partitioned_rewards::PartitionedEpochRewardsConfig,
         read_only_accounts_cache::ReadOnlyAccountsCache,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
-        u64_align, utils,
+        u64_align,
+        utils::{self, create_account_shared_data},
     },
     dashmap::{DashMap, DashSet},
     log::*,
@@ -300,8 +299,7 @@ struct LoadAccountsIndexForShrink<'a, T: ShrinkCollectRefs<'a>> {
     all_are_zero_lamports: bool,
 }
 
-/// reference an account found during scanning a storage. This is a byval struct to replace
-/// `StoredAccountMeta`
+/// reference an account found during scanning a storage.
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub struct AccountFromStorage {
     pub index_info: AccountInfo,
@@ -326,18 +324,18 @@ impl AccountFromStorage {
         self.data_len as usize
     }
     #[cfg(test)]
-    pub fn new(account: &StoredAccountMeta) -> Self {
+    pub(crate) fn new(offset: Offset, account: &StoredAccountInfoWithoutData) -> Self {
         // the id is irrelevant in this account info. This structure is only used DURING shrink operations.
         // In those cases, there is only 1 append vec id per slot when we read the accounts.
         // Any value of storage id in account info works fine when we want the 'normal' storage.
         let storage_id = 0;
         AccountFromStorage {
             index_info: AccountInfo::new(
-                StorageLocation::AppendVec(storage_id, account.offset()),
+                StorageLocation::AppendVec(storage_id, offset),
                 account.is_zero_lamport(),
             ),
             pubkey: *account.pubkey(),
-            data_len: account.data_len() as u64,
+            data_len: account.data_len as u64,
         }
     }
 }
@@ -627,7 +625,7 @@ pub enum LoadHint {
 
 #[derive(Debug)]
 pub enum LoadedAccountAccessor<'a> {
-    // StoredAccountMeta can't be held directly here due to its lifetime dependency to
+    // StoredAccountInfo can't be held directly here due to its lifetime dependency on
     // AccountStorageEntry
     Stored(Option<(Arc<AccountStorageEntry>, usize)>),
     // None value in Cached variant means the cache was flushed
@@ -735,7 +733,7 @@ impl LoadedAccount<'_> {
 
     pub fn take_account(&self) -> AccountSharedData {
         match self {
-            LoadedAccount::Stored(stored_account) => stored_account.to_account_shared_data(),
+            LoadedAccount::Stored(stored_account) => create_account_shared_data(stored_account),
             LoadedAccount::Cached(cached_account) => match cached_account {
                 Cow::Owned(cached_account) => cached_account.account.clone(),
                 Cow::Borrowed(cached_account) => cached_account.account.clone(),
@@ -5978,7 +5976,7 @@ impl AccountsDb {
             .map(|index| {
                 let txn = txs.map(|txs| *txs.get(index).expect("txs must be present if provided"));
                 accounts_and_meta_to_store.account_default_if_zero_lamport(index, |account| {
-                    let account_shared_data = account.to_account_shared_data();
+                    let account_shared_data = account.take_account();
                     let pubkey = account.pubkey();
                     let account_info =
                         AccountInfo::new(StorageLocation::Cached, account.is_zero_lamport());

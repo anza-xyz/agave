@@ -21,7 +21,9 @@ use {
             repair_handler::RepairHandlerType,
             serve_repair_service::ServeRepairService,
         },
-        resource_limits::{adjust_nofile_limit, ResourceLimitError},
+        resource_limits::{
+            adjust_nofile_limit, validate_memlock_limit_for_disk_io, ResourceLimitError,
+        },
         sample_performance_service::SamplePerformanceService,
         sigverify,
         snapshot_packager_service::SnapshotPackagerService,
@@ -758,9 +760,7 @@ impl Validator {
         sigverify::init();
         info!("Initializing sigverify done.");
 
-        solana_accounts_db::validate_memlock_limit_for_disk_io(
-            config.accounts_db_config.memlock_budget_size,
-        )?;
+        validate_memlock_limit_for_disk_io(config.accounts_db_config.memlock_budget_size)?;
 
         if !ledger_path.is_dir() {
             return Err(anyhow!(

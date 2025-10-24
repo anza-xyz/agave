@@ -56,7 +56,6 @@ impl From<(Pubkey, Account)> for ProtoAccount {
             lamports,
             data,
             executable,
-            seed_addr: None,
         }
     }
 }

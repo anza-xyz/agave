@@ -11,7 +11,7 @@ use {
             slot_stake_counters::SlotStakeCounters,
             stats::ConsensusPoolStats,
             vote_certificate_builder::{CertificateError, VoteCertificateBuilder},
-            vote_pool::{DuplicateBlockVotePool, SimpleVotePool, VotePool, VotePoolType},
+            vote_pool::{DuplicateBlockVotePool, SimpleVotePool, VotePool},
         },
         event::VotorEvent,
     },
@@ -103,7 +103,7 @@ fn get_key_and_stakes(
 pub struct ConsensusPool {
     my_pubkey: Pubkey,
     // Vote pools to do bean counting for votes.
-    vote_pools: BTreeMap<PoolId, VotePoolType>,
+    vote_pools: BTreeMap<PoolId, VotePool>,
     /// Completed certificates
     completed_certificates: BTreeMap<Certificate, Arc<CertificateMessage>>,
     /// Tracks slots which have reached the parent ready condition:
@@ -140,41 +140,36 @@ impl ConsensusPool {
         }
     }
 
-    fn new_vote_pool(vote_type: VoteType) -> VotePoolType {
+    fn new_vote_pool(vote_type: VoteType) -> VotePool {
         match vote_type {
-            VoteType::NotarizeFallback => VotePoolType::DuplicateBlockVotePool(
+            VoteType::NotarizeFallback => VotePool::DuplicateBlockVotePool(
                 DuplicateBlockVotePool::new(MAX_ENTRIES_PER_PUBKEY_FOR_NOTARIZE_LITE),
             ),
-            VoteType::Notarize => VotePoolType::DuplicateBlockVotePool(
-                DuplicateBlockVotePool::new(MAX_ENTRIES_PER_PUBKEY_FOR_OTHER_TYPES),
-            ),
-            _ => VotePoolType::SimpleVotePool(SimpleVotePool::new()),
+            VoteType::Notarize => VotePool::DuplicateBlockVotePool(DuplicateBlockVotePool::new(
+                MAX_ENTRIES_PER_PUBKEY_FOR_OTHER_TYPES,
+            )),
+            _ => VotePool::SimpleVotePool(SimpleVotePool::default()),
         }
     }
 
     fn update_vote_pool(
         &mut self,
-        slot: Slot,
-        vote_type: VoteType,
-        block_id: Option<Hash>,
-        transaction: &VoteMessage,
-        validator_vote_key: &Pubkey,
+        vote: VoteMessage,
+        validator_vote_key: Pubkey,
         validator_stake: Stake,
     ) -> Option<Stake> {
+        let vote_type = VoteType::get_type(&vote.vote);
         let pool = self
             .vote_pools
-            .entry((slot, vote_type))
+            .entry((vote.vote.slot(), vote_type))
             .or_insert_with(|| Self::new_vote_pool(vote_type));
         match pool {
-            VotePoolType::SimpleVotePool(pool) => {
-                pool.add_vote(validator_vote_key, validator_stake, transaction)
+            VotePool::SimpleVotePool(pool) => {
+                pool.add_vote(validator_vote_key, validator_stake, vote)
             }
-            VotePoolType::DuplicateBlockVotePool(pool) => pool.add_vote(
-                validator_vote_key,
-                block_id.expect("Duplicate block pool expects a block id"),
-                transaction,
-                validator_stake,
-            ),
+            VotePool::DuplicateBlockVotePool(pool) => {
+                pool.add_vote(validator_vote_key, validator_stake, vote)
+            }
         }
     }
 
@@ -205,8 +200,8 @@ impl ConsensusPool {
                 .iter()
                 .filter_map(|vote_type| {
                     Some(match self.vote_pools.get(&(slot, *vote_type))? {
-                        VotePoolType::SimpleVotePool(pool) => pool.total_stake(),
-                        VotePoolType::DuplicateBlockVotePool(pool) => {
+                        VotePool::SimpleVotePool(pool) => pool.total_stake(),
+                        VotePool::DuplicateBlockVotePool(pool) => {
                             pool.total_stake_by_block_id(block_id.as_ref().expect(
                                 "Duplicate block pool for {vote_type:?} expects a block id for \
                                  certificate {cert_id:?}",
@@ -222,16 +217,17 @@ impl ConsensusPool {
             vote_types.iter().for_each(|vote_type| {
                 if let Some(vote_pool) = self.vote_pools.get(&(slot, *vote_type)) {
                     match vote_pool {
-                        VotePoolType::SimpleVotePool(pool) => {
-                            pool.add_to_certificate(&mut vote_certificate_builder)
+                        VotePool::SimpleVotePool(pool) => {
+                            vote_certificate_builder.aggregate(pool.votes()).unwrap();
                         }
-                        VotePoolType::DuplicateBlockVotePool(pool) => pool.add_to_certificate(
-                            block_id.as_ref().expect(
+                        VotePool::DuplicateBlockVotePool(pool) => {
+                            if let Some(votes) = pool.votes(block_id.as_ref().expect(
                                 "Duplicate block pool for {vote_type:?} expects a block id for \
                                  certificate {cert_id:?}",
-                            ),
-                            &mut vote_certificate_builder,
-                        ),
+                            )) {
+                                vote_certificate_builder.aggregate(votes).unwrap();
+                            }
+                        }
                     };
                 }
             });
@@ -255,14 +251,14 @@ impl ConsensusPool {
             if let Some(pool) = self.vote_pools.get(&(slot, *conflicting_type)) {
                 let is_conflicting = match pool {
                     // In a simple vote pool, just check if the validator previously voted at all. If so, that's a conflict
-                    VotePoolType::SimpleVotePool(pool) => {
+                    VotePool::SimpleVotePool(pool) => {
                         pool.has_prev_validator_vote(validator_vote_key)
                     }
                     // In a duplicate block vote pool, because some conflicts between things like Notarize and NotarizeFallback
                     // for different blocks are allowed, we need a more specific check.
                     // TODO: This can be made much cleaner/safer if VoteType carried the bank hash, block id so we
                     // could check which exact VoteType(blockid, bankhash) was the source of the conflict.
-                    VotePoolType::DuplicateBlockVotePool(pool) => {
+                    VotePool::DuplicateBlockVotePool(pool) => {
                         if let Some(block_id) = &block_id {
                             // Reject votes for the same block with a conflicting type, i.e.
                             // a NotarizeFallback vote for the same block as a Notarize vote.
@@ -355,7 +351,7 @@ impl ConsensusPool {
         epoch_stakes_map: &HashMap<Epoch, VersionedEpochStakes>,
         root_slot: Slot,
         my_vote_pubkey: &Pubkey,
-        message: &ConsensusMessage,
+        message: ConsensusMessage,
         events: &mut Vec<VotorEvent>,
     ) -> Result<(Option<Slot>, Vec<Arc<CertificateMessage>>), AddVoteError> {
         let current_highest_finalized_slot = self.highest_finalized_slot;
@@ -369,7 +365,7 @@ impl ConsensusPool {
                 events,
             )?,
             ConsensusMessage::Certificate(certificate_message) => {
-                self.add_certificate(root_slot, certificate_message, events)?
+                self.add_certificate(root_slot, &certificate_message, events)?
             }
         };
         // If we have a new highest finalized slot, return it
@@ -387,7 +383,7 @@ impl ConsensusPool {
         epoch_stakes_map: &HashMap<Epoch, VersionedEpochStakes>,
         root_slot: Slot,
         my_vote_pubkey: &Pubkey,
-        vote_message: &VoteMessage,
+        vote_message: VoteMessage,
         events: &mut Vec<VotorEvent>,
     ) -> Result<Vec<Arc<CertificateMessage>>, AddVoteError> {
         let vote = &vote_message.vote;
@@ -425,14 +421,7 @@ impl ConsensusPool {
                 validator_vote_key,
             ));
         }
-        match self.update_vote_pool(
-            vote_slot,
-            vote_type,
-            block_id,
-            vote_message,
-            &validator_vote_key,
-            validator_stake,
-        ) {
+        match self.update_vote_pool(vote_message, validator_vote_key, validator_stake) {
             None => {
                 // No new vote pool entry was created, just return empty vec
                 self.stats.exist_votes = self.stats.exist_votes.saturating_add(1);
@@ -685,7 +674,7 @@ mod tests {
         test_case::test_case,
     };
 
-    fn dummy_transaction(
+    fn dummy_vote_message(
         keypairs: &[ValidatorVoteKeypairs],
         vote: &Vote,
         rank: usize,
@@ -744,7 +733,7 @@ mod tests {
                     bank.epoch_stakes_map(),
                     bank.slot(),
                     &Pubkey::new_unique(),
-                    &dummy_transaction(validator_keypairs, &vote, rank),
+                    dummy_vote_message(validator_keypairs, &vote, rank),
                     &mut vec![]
                 )
                 .is_ok());
@@ -755,7 +744,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &dummy_transaction(validator_keypairs, &vote, 6),
+                dummy_vote_message(validator_keypairs, &vote, 6),
                 &mut vec![]
             )
             .is_ok());
@@ -784,7 +773,7 @@ mod tests {
                     root_bank.epoch_stakes_map(),
                     root_bank.slot(),
                     &Pubkey::new_unique(),
-                    &dummy_transaction(keypairs, &vote, rank),
+                    dummy_vote_message(keypairs, &vote, rank),
                     &mut vec![]
                 )
                 .is_ok());
@@ -1066,7 +1055,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &dummy_transaction(&validator_keypairs, &vote, my_validator_ix),
+                dummy_vote_message(&validator_keypairs, &vote, my_validator_ix),
                 &mut vec![]
             )
             .is_ok());
@@ -1079,7 +1068,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &dummy_transaction(&validator_keypairs, &vote, my_validator_ix),
+                dummy_vote_message(&validator_keypairs, &vote, my_validator_ix),
                 &mut vec![]
             )
             .is_ok());
@@ -1091,7 +1080,7 @@ mod tests {
                     bank.epoch_stakes_map(),
                     bank.slot(),
                     &Pubkey::new_unique(),
-                    &dummy_transaction(&validator_keypairs, &vote, rank),
+                    dummy_vote_message(&validator_keypairs, &vote, rank),
                     &mut vec![]
                 )
                 .is_ok());
@@ -1104,7 +1093,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &dummy_transaction(&validator_keypairs, &vote, new_validator_ix),
+                dummy_vote_message(&validator_keypairs, &vote, new_validator_ix),
                 &mut vec![],
             )
             .unwrap();
@@ -1128,7 +1117,7 @@ mod tests {
                     bank.epoch_stakes_map(),
                     bank.slot(),
                     &Pubkey::new_unique(),
-                    &ConsensusMessage::Certificate((*cert).clone()),
+                    ConsensusMessage::Certificate((*cert).clone()),
                     &mut vec![],
                 )
                 .unwrap();
@@ -1170,7 +1159,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &message,
+                message.clone(),
                 &mut vec![],
             )
             .unwrap();
@@ -1192,7 +1181,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &message,
+                message,
                 &mut vec![],
             )
             .unwrap();
@@ -1207,7 +1196,7 @@ mod tests {
                     bank.epoch_stakes_map(),
                     bank.slot(),
                     &Pubkey::new_unique(),
-                    &dummy_transaction(&validator_keypairs, &vote, rank),
+                    dummy_vote_message(&validator_keypairs, &vote, rank),
                     &mut vec![],
                 )
                 .unwrap();
@@ -1227,7 +1216,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &ConsensusMessage::Vote(VoteMessage {
+                ConsensusMessage::Vote(VoteMessage {
                     vote: Vote::new_skip_vote(5),
                     rank: 100,
                     signature: BLSSignature::default(),
@@ -1271,7 +1260,7 @@ mod tests {
                     bank.epoch_stakes_map(),
                     bank.slot(),
                     &Pubkey::new_unique(),
-                    &dummy_transaction(&validator_keypairs, &vote, i),
+                    dummy_vote_message(&validator_keypairs, &vote, i),
                     &mut vec![]
                 )
                 .is_ok());
@@ -1393,7 +1382,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &dummy_transaction(&validator_keypairs, &vote, 6),
+                dummy_vote_message(&validator_keypairs, &vote, 6),
                 &mut vec![]
             )
             .is_ok());
@@ -1408,7 +1397,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &dummy_transaction(&validator_keypairs, &vote, 7),
+                dummy_vote_message(&validator_keypairs, &vote, 7),
                 &mut vec![]
             )
             .is_ok());
@@ -1424,7 +1413,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &dummy_transaction(&validator_keypairs, &vote, 8),
+                dummy_vote_message(&validator_keypairs, &vote, 8),
                 &mut vec![]
             )
             .is_ok());
@@ -1468,7 +1457,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &dummy_transaction(&validator_keypairs, &vote, 6),
+                dummy_vote_message(&validator_keypairs, &vote, 6),
                 &mut vec![]
             )
             .is_ok());
@@ -1506,7 +1495,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &dummy_transaction(&validator_keypairs, &vote, 6),
+                dummy_vote_message(&validator_keypairs, &vote, 6),
                 &mut vec![]
             )
             .is_ok());
@@ -1595,7 +1584,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &my_vote_key,
-                &dummy_transaction(&validator_keypairs, &vote, 0),
+                dummy_vote_message(&validator_keypairs, &vote, 0),
                 &mut new_events
             )
             .is_ok());
@@ -1610,7 +1599,7 @@ mod tests {
                     bank.epoch_stakes_map(),
                     bank.slot(),
                     &Pubkey::new_unique(),
-                    &dummy_transaction(&validator_keypairs, &vote, rank),
+                    dummy_vote_message(&validator_keypairs, &vote, rank),
                     &mut new_events
                 )
                 .is_ok());
@@ -1637,7 +1626,7 @@ mod tests {
                     bank.epoch_stakes_map(),
                     bank.slot(),
                     &Pubkey::new_unique(),
-                    &dummy_transaction(&validator_keypairs, &vote, rank),
+                    dummy_vote_message(&validator_keypairs, &vote, rank),
                     &mut new_events
                 )
                 .is_ok());
@@ -1652,7 +1641,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &my_vote_key,
-                &dummy_transaction(&validator_keypairs, &vote, 0),
+                dummy_vote_message(&validator_keypairs, &vote, 0),
                 &mut new_events
             )
             .is_ok());
@@ -1668,7 +1657,7 @@ mod tests {
                     bank.epoch_stakes_map(),
                     bank.slot(),
                     &Pubkey::new_unique(),
-                    &dummy_transaction(&validator_keypairs, &vote, rank),
+                    dummy_vote_message(&validator_keypairs, &vote, rank),
                     &mut new_events
                 )
                 .is_ok());
@@ -1698,7 +1687,7 @@ mod tests {
                     bank.epoch_stakes_map(),
                     bank.slot(),
                     &Pubkey::new_unique(),
-                    &dummy_transaction(&validator_keypairs, &vote, rank),
+                    dummy_vote_message(&validator_keypairs, &vote, rank),
                     &mut new_events
                 )
                 .is_ok());
@@ -1731,7 +1720,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &my_vote_key,
-                &dummy_transaction(&validator_keypairs, &vote, 0),
+                dummy_vote_message(&validator_keypairs, &vote, 0),
                 &mut new_events
             )
             .is_ok());
@@ -1746,7 +1735,7 @@ mod tests {
                     bank.epoch_stakes_map(),
                     bank.slot(),
                     &Pubkey::new_unique(),
-                    &dummy_transaction(&validator_keypairs, &vote, rank),
+                    dummy_vote_message(&validator_keypairs, &vote, rank),
                     &mut new_events
                 )
                 .is_ok());
@@ -1766,7 +1755,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &dummy_transaction(&validator_keypairs, &vote, 6),
+                dummy_vote_message(&validator_keypairs, &vote, 6),
                 &mut new_events
             )
             .is_ok());
@@ -1801,7 +1790,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &dummy_transaction(validator_keypairs, &vote_1, 0),
+                dummy_vote_message(validator_keypairs, &vote_1, 0),
                 &mut vec![]
             )
             .is_ok());
@@ -1811,7 +1800,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &dummy_transaction(validator_keypairs, &vote_2, 0),
+                dummy_vote_message(validator_keypairs, &vote_2, 0),
                 &mut vec![]
             )
             .is_err());
@@ -1867,7 +1856,7 @@ mod tests {
                 root_bank.epoch_stakes_map(),
                 root_bank.slot(),
                 &Pubkey::new_unique(),
-                &ConsensusMessage::Certificate(cert_1.clone()),
+                ConsensusMessage::Certificate(cert_1.clone()),
                 &mut vec![]
             )
             .is_ok());
@@ -1886,7 +1875,7 @@ mod tests {
                 root_bank.epoch_stakes_map(),
                 root_bank.slot(),
                 &Pubkey::new_unique(),
-                &ConsensusMessage::Certificate(cert_2.clone()),
+                ConsensusMessage::Certificate(cert_2.clone()),
                 &mut vec![]
             )
             .is_ok());
@@ -1911,7 +1900,7 @@ mod tests {
                 new_bank.epoch_stakes_map(),
                 new_bank.slot(),
                 &Pubkey::new_unique(),
-                &dummy_transaction(&validator_keypairs, &vote, 0),
+                dummy_vote_message(&validator_keypairs, &vote, 0),
                 &mut vec![]
             )
             .is_err());
@@ -1930,7 +1919,7 @@ mod tests {
                 new_bank.epoch_stakes_map(),
                 new_bank.slot(),
                 &Pubkey::new_unique(),
-                &cert,
+                cert,
                 &mut vec![]
             )
             .is_err());
@@ -1960,7 +1949,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &ConsensusMessage::Certificate(cert_3.clone()),
+                ConsensusMessage::Certificate(cert_3.clone()),
                 &mut vec![]
             )
             .is_ok());
@@ -1975,7 +1964,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &ConsensusMessage::Certificate(cert_4.clone()),
+                ConsensusMessage::Certificate(cert_4.clone()),
                 &mut vec![]
             )
             .is_ok());
@@ -1999,7 +1988,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &ConsensusMessage::Certificate(cert_5.clone()),
+                ConsensusMessage::Certificate(cert_5.clone()),
                 &mut vec![]
             )
             .is_ok());
@@ -2016,7 +2005,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &ConsensusMessage::Certificate(cert_5_finalize.clone()),
+                ConsensusMessage::Certificate(cert_5_finalize.clone()),
                 &mut vec![]
             )
             .is_ok());
@@ -2037,7 +2026,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &ConsensusMessage::Certificate(cert_5.clone()),
+                ConsensusMessage::Certificate(cert_5.clone()),
                 &mut vec![]
             )
             .is_ok());
@@ -2061,7 +2050,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &ConsensusMessage::Certificate(cert_6.clone()),
+                ConsensusMessage::Certificate(cert_6.clone()),
                 &mut vec![]
             )
             .is_ok());
@@ -2085,7 +2074,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &ConsensusMessage::Certificate(cert_6_finalize.clone()),
+                ConsensusMessage::Certificate(cert_6_finalize.clone()),
                 &mut vec![]
             )
             .is_ok());
@@ -2105,7 +2094,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &ConsensusMessage::Certificate(cert_6_notarize_fallback.clone()),
+                ConsensusMessage::Certificate(cert_6_notarize_fallback.clone()),
                 &mut vec![]
             )
             .is_ok());
@@ -2130,7 +2119,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &ConsensusMessage::Certificate(cert_7.clone()),
+                ConsensusMessage::Certificate(cert_7.clone()),
                 &mut vec![]
             )
             .is_ok());
@@ -2156,7 +2145,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &ConsensusMessage::Certificate(cert_8_finalize),
+                ConsensusMessage::Certificate(cert_8_finalize),
                 &mut vec![]
             )
             .is_ok());
@@ -2171,7 +2160,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &ConsensusMessage::Certificate(cert_8_notarize),
+                ConsensusMessage::Certificate(cert_8_notarize),
                 &mut vec![]
             )
             .is_ok());
@@ -2205,7 +2194,7 @@ mod tests {
                     bank.epoch_stakes_map(),
                     bank.slot(),
                     &Pubkey::new_unique(),
-                    &ConsensusMessage::Certificate(cert),
+                    ConsensusMessage::Certificate(cert),
                     &mut events,
                 )
                 .is_ok());
@@ -2233,7 +2222,7 @@ mod tests {
                     bank.epoch_stakes_map(),
                     bank.slot(),
                     &Pubkey::new_unique(),
-                    &ConsensusMessage::Certificate(cert),
+                    ConsensusMessage::Certificate(cert),
                     &mut events,
                 )
                 .is_ok());
@@ -2261,7 +2250,7 @@ mod tests {
                     bank.epoch_stakes_map(),
                     bank.slot(),
                     &Pubkey::new_unique(),
-                    &ConsensusMessage::Certificate(cert),
+                    ConsensusMessage::Certificate(cert),
                     &mut events,
                 )
                 .is_ok());
@@ -2277,7 +2266,7 @@ mod tests {
                 bank.epoch_stakes_map(),
                 bank.slot(),
                 &Pubkey::new_unique(),
-                &ConsensusMessage::Certificate(cert),
+                ConsensusMessage::Certificate(cert),
                 &mut events,
             )
             .is_ok());
@@ -2297,7 +2286,7 @@ mod tests {
         let rank_to_test = 3;
         let vote = Vote::new_notarization_vote(42, Hash::new_unique());
 
-        let consensus_message = dummy_transaction(&validator_keypairs, &vote, rank_to_test);
+        let consensus_message = dummy_vote_message(&validator_keypairs, &vote, rank_to_test);
         let ConsensusMessage::Vote(vote_message) = consensus_message else {
             panic!("Expected Vote message")
         };

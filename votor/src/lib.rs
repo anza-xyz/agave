@@ -16,14 +16,11 @@ pub mod commitment;
 pub mod common;
 mod consensus_metrics;
 pub mod consensus_pool;
-#[allow(dead_code)]
 mod consensus_pool_service;
 pub mod event;
-#[allow(dead_code)]
 mod event_handler;
 pub mod root_utils;
 mod staked_validators_cache;
-#[allow(dead_code)]
 mod timer_manager;
 pub mod vote_history;
 pub mod vote_history_storage;

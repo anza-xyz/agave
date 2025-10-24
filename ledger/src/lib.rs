@@ -35,7 +35,12 @@ pub mod leader_schedule_cache;
 pub mod leader_schedule_utils;
 pub mod next_slots_iterator;
 pub mod rooted_slot_iterator;
-conditional_mod::conditional_vis_mod!(shred, feature="agave-unstable-api", pub,pub(crate));
+
+#[cfg(feature = "agave-unstable-api")]
+pub mod shred;
+#[cfg(not(feature = "agave-unstable-api"))]
+pub(crate) mod shred;
+
 mod shredder;
 pub mod sigverify_shreds;
 pub mod slot_stats;

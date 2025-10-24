@@ -9,7 +9,6 @@ use {
     solana_perf::packet::PacketBatch,
     std::{
         net::IpAddr,
-        path::{Path, PathBuf},
         ptr::NonNull,
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -26,26 +25,16 @@ pub struct BankingPacketReceivers {
 }
 
 /// Spawns a thread to receive packets from TPU and send them to the external scheduler.
-///
-/// # Safety:
-/// - `allocator_worker_id` must be unique among all processes using the same allocator path.
-pub unsafe fn spawn(
+pub fn spawn(
     exit: Arc<AtomicBool>,
     receivers: BankingPacketReceivers,
-    allocator_path: PathBuf,
-    allocator_worker_id: u32,
-    queue_path: PathBuf,
+    allocator: rts_alloc::Allocator,
+    producer: shaq::Producer<TpuToPackMessage>,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("solTpu2Pack".to_string())
         .spawn(move || {
-            // Setup allocator and queue
-            // SAFETY: The caller must ensure that no other process is using the same worker id.
-            if let Some((allocator, producer)) =
-                unsafe { setup(allocator_path, allocator_worker_id, queue_path) }
-            {
-                tpu_to_pack(exit, receivers, allocator, producer);
-            }
+            tpu_to_pack(exit, receivers, allocator, producer);
         })
         .unwrap()
 }
@@ -220,29 +209,6 @@ fn map_src_addr(addr: IpAddr) -> [u8; 16] {
         IpAddr::V4(ipv4) => ipv4.to_ipv6_mapped().octets(),
         IpAddr::V6(ipv6) => ipv6.octets(),
     }
-}
-
-/// # Safety:
-/// - `allocator_worker_id` must be unique among all processes using the same allocator path.
-unsafe fn setup(
-    allocator_path: impl AsRef<Path>,
-    allocator_worker_id: u32,
-    queue_path: impl AsRef<Path>,
-) -> Option<(Allocator, shaq::Producer<TpuToPackMessage>)> {
-    // SAFETY: The caller must ensure that no other process is using the same worker id.
-    let allocator = unsafe { Allocator::join(allocator_path, allocator_worker_id) }
-        .map_err(|err| {
-            error!("Failed to join allocator: {err:?}");
-        })
-        .ok()?;
-
-    let producer = shaq::Producer::join(queue_path)
-        .map_err(|err| {
-            error!("Failed to join queue: {err:?}");
-        })
-        .ok()?;
-
-    Some((allocator, producer))
 }
 
 #[cfg(test)]

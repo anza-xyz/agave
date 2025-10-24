@@ -134,18 +134,10 @@ impl Bank {
         let elf = &programdata[progradata_metadata_size..];
         // Set up the two `LoadedProgramsForTxBatch` instances, as if
         // processing a new transaction batch.
-        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new_from_cache(
-            self.slot,
-            self.epoch,
-            self.transaction_processor
-                .epoch_boundary_preparation
-                .clone(),
-            &self
-                .transaction_processor
-                .global_program_cache
-                .read()
-                .unwrap(),
-        );
+        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
+        let program_runtime_environments = self
+            .transaction_processor
+            .get_environments_for_epoch(self.epoch);
 
         // Configure a dummy `InvokeContext` from the runtime's current
         // environment, as well as the two `ProgramCacheForTxBatch`
@@ -181,6 +173,8 @@ impl Bank {
                     0,
                     &MockCallback {},
                     &feature_set,
+                    &program_runtime_environments,
+                    &program_runtime_environments,
                     &sysvar_cache,
                 ),
                 None,
@@ -188,19 +182,10 @@ impl Bank {
                 compute_budget.to_cost(),
             );
 
-            let environments = dummy_invoke_context
-                .get_environments_for_slot(self.slot.saturating_add(
-                    solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
-                ))
-                .map_err(|_err| {
-                    // This will never fail since the epoch schedule is already configured.
-                    InstructionError::ProgramEnvironmentSetupFailure
-                })?;
-
             let load_program_metrics = solana_bpf_loader_program::deploy_program(
                 dummy_invoke_context.get_log_collector(),
                 dummy_invoke_context.program_cache_for_tx_batch,
-                environments.program_runtime_v1.clone(),
+                program_runtime_environments.program_runtime_v1.clone(),
                 program_id,
                 &bpf_loader_upgradeable::id(),
                 data_len,
@@ -216,7 +201,10 @@ impl Bank {
             .global_program_cache
             .write()
             .unwrap()
-            .merge(&program_cache_for_tx_batch.drain_modified_entries());
+            .merge(
+                &self.transaction_processor.environments,
+                &program_cache_for_tx_batch.drain_modified_entries(),
+            );
 
         Ok(())
     }

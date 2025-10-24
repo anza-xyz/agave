@@ -101,7 +101,6 @@ pub(crate) const DELTA_BLOCK: Duration = Duration::from_millis(400);
 /// Base timeout for when leader's first slice should arrive if they sent it immediately.
 pub(crate) const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 
-#[cfg(test)]
 /// Timeout for standstill detection mechanism.
 pub(crate) const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 

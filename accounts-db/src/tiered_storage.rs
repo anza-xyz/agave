@@ -178,7 +178,7 @@ mod tests {
         file::TieredStorageMagicNumber,
         footer::TieredStorageFooter,
         hot::HOT_FORMAT,
-        solana_account::{AccountSharedData, ReadableAccount},
+        solana_account::AccountSharedData,
         solana_clock::Slot,
         solana_pubkey::Pubkey,
         solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
@@ -351,13 +351,8 @@ mod tests {
             .map(|size| create_test_account(*size))
             .collect();
 
-        let account_refs: Vec<_> = accounts
-            .iter()
-            .map(|account| (&account.0.pubkey, &account.1))
-            .collect();
-
         // Slot information is not used here
-        let storable_accounts = (Slot::MAX, &account_refs[..]);
+        let storable_accounts = (Slot::MAX, &accounts[..]);
 
         let temp_dir = tempdir().unwrap();
         let tiered_storage_path = temp_dir.path().join(path_suffix);
@@ -371,7 +366,7 @@ mod tests {
         let mut expected_accounts_map = HashMap::new();
         for i in 0..num_accounts {
             storable_accounts.account_default_if_zero_lamport(i, |account| {
-                expected_accounts_map.insert(*account.pubkey(), account.to_account_shared_data());
+                expected_accounts_map.insert(*account.pubkey(), account.take_account());
             });
         }
 

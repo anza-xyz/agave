@@ -78,7 +78,7 @@ fn append_vec_sequential_read(bencher: &mut Bencher, storage_access: StorageAcce
     bencher.iter(|| {
         let (sample, pos) = indexes.pop().unwrap();
         println!("reading pos {sample} {pos}");
-        vec.get_stored_account_meta_callback(pos, |account| {
+        vec.get_stored_account_callback(pos, |account| {
             let (_pubkey, test) = create_test_account(sample);
             assert_eq!(account.data(), test.data());
             indexes.push((sample, pos));
@@ -104,7 +104,7 @@ fn append_vec_random_read(bencher: &mut Bencher, storage_access: StorageAccess) 
     bencher.iter(|| {
         let random_index: usize = thread_rng().gen_range(0..indexes.len());
         let (sample, pos) = &indexes[random_index];
-        vec.get_stored_account_meta_callback(*pos, |account| {
+        vec.get_stored_account_callback(*pos, |account| {
             let (_pubkey, test) = create_test_account(*sample);
             assert_eq!(account.data(), test.data());
         });
@@ -148,7 +148,7 @@ fn append_vec_concurrent_append_read(bencher: &mut Bencher, storage_access: Stor
         let len = indexes.lock().unwrap().len();
         let random_index: usize = thread_rng().gen_range(0..len);
         let (sample, pos) = *indexes.lock().unwrap().get(random_index).unwrap();
-        vec.get_stored_account_meta_callback(pos, |account| {
+        vec.get_stored_account_callback(pos, |account| {
             let (_pubkey, test) = create_test_account(sample);
             assert_eq!(account.data(), test.data());
         });
@@ -187,7 +187,7 @@ fn append_vec_concurrent_read_append(bencher: &mut Bencher, storage_access: Stor
             .unwrap()
             .get(random_index.checked_rem(len).unwrap())
             .unwrap();
-        vec1.get_stored_account_meta_callback(pos, |account| {
+        vec1.get_stored_account_callback(pos, |account| {
             let (_pubkey, test) = create_test_account(sample);
             assert_eq!(account.data(), test.data());
         });
