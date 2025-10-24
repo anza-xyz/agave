@@ -56,27 +56,23 @@ impl InvokeContextCallback for InstrContextCallback<'_> {
 }
 
 fn compile_accounts(
-    input: &mut InstrContext,
+    input: &InstrContext,
     compute_budget: &ComputeBudget,
     rent: Rent,
 ) -> (Vec<InstructionAccount>, TransactionContext) {
-    // Add default account for the program being invoked if not already present.
-    if !input
-        .accounts
-        .iter()
-        .any(|(pubkey, _)| pubkey == &input.instruction.program_id)
-    {
-        input.accounts.push((
-            input.instruction.program_id,
-            AccountSharedData::default().into(),
-        ));
-    }
-
-    let transaction_accounts: Vec<KeyedAccountSharedData> = input
+    let mut transaction_accounts: Vec<KeyedAccountSharedData> = input
         .accounts
         .iter()
         .map(|(pubkey, account)| (*pubkey, AccountSharedData::from(account.clone())))
         .collect();
+
+    // Add default account for the program being invoked if not already present.
+    if !transaction_accounts
+        .iter()
+        .any(|(pubkey, _)| pubkey == &input.instruction.program_id)
+    {
+        transaction_accounts.push((input.instruction.program_id, AccountSharedData::default()));
+    }
 
     let transaction_context = TransactionContext::new(
         transaction_accounts.clone(),
@@ -105,7 +101,7 @@ fn compile_accounts(
 
 /// Execute a single instruction against the Solana VM.
 pub fn execute_instr(
-    mut input: InstrContext,
+    input: InstrContext,
     compute_budget: &ComputeBudget,
     program_cache: &mut ProgramCacheForTxBatch,
     sysvar_cache: &SysvarCache,
@@ -118,7 +114,7 @@ pub fn execute_instr(
 
     let rent = sysvar_cache.get_rent().unwrap();
     let (instruction_accounts, mut transaction_context) =
-        compile_accounts(&mut input, compute_budget, (*rent).clone());
+        compile_accounts(&input, compute_budget, (*rent).clone());
 
     let environments = ProgramRuntimeEnvironments {
         program_runtime_v1: Arc::new(
