@@ -1262,6 +1262,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
 
         let stats = self.stats();
+        let mut failed = 0;
         let mut evicted = 0;
         // chunk these so we don't hold the write lock too long
         for evictions in evictions.chunks(50) {
@@ -1282,6 +1283,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         // marked dirty or bumped in age after we looked above
                         // these evictions will be handled in later passes (at later ages)
                         // but, at startup, everything is ready to age out if it isn't dirty
+                        failed += 1;
                         continue;
                     }
 
@@ -1299,6 +1301,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
         stats.sub_mem_count(evicted);
         Self::update_stat(&stats.flush_entries_evicted_from_mem, evicted as u64);
+        Self::update_stat(&stats.failed_to_evict, failed as u64);
     }
 
     pub fn stats(&self) -> &BucketMapHolderStats {
