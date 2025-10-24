@@ -1169,6 +1169,7 @@ pub mod switch_to_chacha8_turbine {
 
 pub mod deprecate_rent_exemption_threshold {
     solana_pubkey::declare_id!("rent6iVy6PDoViPBeJ6k5EJQrkj62h7DPyLbWGHwjrC");
+}
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
