@@ -1,10 +1,12 @@
 use {
+    anyhow::Context as _,
     pem::Pem,
     quinn::{
         crypto::rustls::{QuicClientConfig, QuicServerConfig},
-        ClientConfig, Connection, Endpoint, ServerConfig, TokioRuntime, TransportConfig,
+        ClientConfig, Connection, Endpoint, IdleTimeout, ServerConfig, TokioRuntime,
+        TransportConfig,
     },
-    solana_keypair::Keypair,
+    solana_keypair::{Keypair, Signer},
     solana_pubkey::Pubkey,
     solana_tls_utils::{
         get_pubkey_from_tls_certificate, new_dummy_x509_certificate, tls_client_config_builder,
@@ -22,9 +24,15 @@ async fn main() -> anyhow::Result<()> {
     let addr: SocketAddr = "127.0.0.1:5000".parse()?;
     let udp = solana_net_utils::sockets::bind_to(addr.ip(), addr.port())?;
     udp.set_nonblocking(true)?;
-    let (server_config, _server_cert) = configure_server()?;
-    // TODO: verify server cert
-    let client_config = configure_client()?;
+    let client_keypair = Keypair::new();
+    let server_keypair = Keypair::new();
+    println!(
+        "Server ID {} Client ID {}",
+        server_keypair.pubkey(),
+        client_keypair.pubkey()
+    );
+    let (server_config, server_cert_chain) = configure_server(&server_keypair)?;
+    let client_config = configure_client(&client_keypair, &server_cert_chain)?;
 
     let runtime = Arc::new(TokioRuntime);
     // Create one endpoint with both roles
@@ -63,6 +71,9 @@ async fn main() -> anyhow::Result<()> {
         .connect_with(client_config, addr, "localhost")?
         .await?;
 
+    //is this secure?
+    let remote_pubkey = get_remote_pubkey(&client_connection).context("No server pubkey")?;
+    println!("Established connection to {remote_pubkey:?}");
     client_connection.send_datagram(b"ping".to_vec().into())?;
     if let Ok(resp) = client_connection.read_datagram().await {
         println!("Client received: {}", String::from_utf8_lossy(&resp));
@@ -73,14 +84,12 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn configure_client() -> anyhow::Result<ClientConfig> {
-    // let mut certs = rustls::RootCertStore::empty();
-    // for cert in server_certs {
-    //     certs.add(CertificateDer::from(*cert))?;
-    // }
+fn configure_client(keypair: &Keypair, _server_cert_pem: &str) -> anyhow::Result<ClientConfig> {
+    // TODO: verify server cert
+    //let mut certs = rustls::RootCertStore::empty();
+    //certs.add(CertificateDer::from_pem_slice(server_cert_pem.as_bytes())?)?;
 
-    let keypair = Keypair::new();
-    let (client_cert, client_key) = new_dummy_x509_certificate(&keypair);
+    let (client_cert, client_key) = new_dummy_x509_certificate(keypair);
 
     let mut tls_client_config = tls_client_config_builder()
         .with_client_auth_cert(vec![client_cert], client_key)
@@ -93,15 +102,20 @@ fn configure_client() -> anyhow::Result<ClientConfig> {
         QuicClientConfig::try_from(tls_client_config).unwrap(),
     ));
 
-    let transport_config = TransportConfig::default();
+    let mut transport_config = TransportConfig::default();
+    let timeout = IdleTimeout::try_from(Duration::from_secs(2)).unwrap();
+    transport_config.max_idle_timeout(Some(timeout));
+    transport_config.max_concurrent_bidi_streams(0u8.into());
+    transport_config.max_concurrent_uni_streams(0u8.into());
+    // Disable GSO.
+    transport_config.enable_segmentation_offload(false);
     quinn_client_config.transport_config(Arc::new(transport_config));
 
     Ok(quinn_client_config)
 }
 
-pub(crate) fn configure_server() -> anyhow::Result<(ServerConfig, String)> {
-    let keypair = Keypair::new();
-    let (cert, priv_key) = new_dummy_x509_certificate(&keypair);
+pub(crate) fn configure_server(keypair: &Keypair) -> anyhow::Result<(ServerConfig, String)> {
+    let (cert, priv_key) = new_dummy_x509_certificate(keypair);
     let cert_chain_pem_parts = vec![Pem {
         tag: "CERTIFICATE".to_string(),
         contents: cert.as_ref().to_vec(),
@@ -123,8 +137,8 @@ pub(crate) fn configure_server() -> anyhow::Result<(ServerConfig, String)> {
     transport_config.max_concurrent_bidi_streams(0_u8.into());
     transport_config.datagram_receive_buffer_size(Some(2048));
 
-    // let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
-    // transport_config.max_idle_timeout(Some(timeout));
+    let timeout = IdleTimeout::try_from(Duration::from_secs(2)).unwrap();
+    transport_config.max_idle_timeout(Some(timeout));
 
     // Disable GSO.
     transport_config.enable_segmentation_offload(false);
