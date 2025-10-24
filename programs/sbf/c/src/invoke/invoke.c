@@ -46,8 +46,8 @@ static const uint8_t TEST_NESTED_INVOKE_SIMD_0268_TOO_DEEP = 47;
 static const uint8_t TEST_MAX_ACCOUNT_INFOS_OK = 48;
 static const uint8_t TEST_MAX_ACCOUNT_INFOS_EXCEEDED = 49;
 static const uint8_t TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_SIMD_0339 = 50;
-static const uint8_t TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_INCREASE_CPI_INFO_BEFORE_SIMD_0339 = 51;
-static const uint8_t TEST_MAX_ACCOUNT_INFOS_EXCEEDED_BEFORE_INCREASE_CPI_INFO_BEFORE_SIMD_0339 = 52;
+static const uint8_t TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_INCREASE_TX_ACCOUNT_LOCK_BEFORE_SIMD_0339 = 51;
+static const uint8_t TEST_MAX_ACCOUNT_INFOS_EXCEEDED_BEFORE_INCREASE_TX_ACCOUNT_LOCK_BEFORE_SIMD_0339 = 52;
 static const uint8_t TEST_CU_USAGE_MINIMUM = 53;
 static const uint8_t TEST_CU_USAGE_BASELINE = 54;
 static const uint8_t TEST_CU_USAGE_MAX = 55;
@@ -558,7 +558,7 @@ extern uint64_t entrypoint(const uint8_t *input) {
 
     break;
   }
-  case TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_INCREASE_CPI_INFO_BEFORE_SIMD_0339: {
+  case TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_INCREASE_TX_ACCOUNT_LOCK_BEFORE_SIMD_0339: {
     sol_log("Test max account infos ok before SIMD-0339 and before increase cpi info");
     SolAccountMeta arguments[] = {};
     uint64_t account_infos_len = 64;
@@ -578,7 +578,7 @@ extern uint64_t entrypoint(const uint8_t *input) {
 
     break;
   }
-  case TEST_MAX_ACCOUNT_INFOS_EXCEEDED_BEFORE_INCREASE_CPI_INFO_BEFORE_SIMD_0339: {
+  case TEST_MAX_ACCOUNT_INFOS_EXCEEDED_BEFORE_INCREASE_TX_ACCOUNT_LOCK_BEFORE_SIMD_0339: {
     sol_log("Test max account infos exceeded before SIMD-0339 and before increase cpi info");
     SolAccountMeta arguments[] = {};
     uint64_t account_infos_len = 65;

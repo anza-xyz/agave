@@ -588,14 +588,14 @@ fn process_instruction<'a>(
                 create_instruction(*accounts[INVOKED_PROGRAM_INDEX].key, &account_metas, vec![]);
             invoke_signed(&instruction, &[], &[])?;
         }
-        TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_INCREASE_CPI_INFO_BEFORE_SIMD_0339 => {
+        TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_INCREASE_TX_ACCOUNT_LOCK_BEFORE_SIMD_0339 => {
             msg!("Test max account infos ok before SIMD-0339 and before increase cpi info");
             let instruction = create_instruction(*accounts[INVOKED_PROGRAM_INDEX].key, &[], vec![]);
             let account_infos_len = 64;
             let account_infos = vec![accounts[0].clone(); account_infos_len];
             invoke_signed(&instruction, &account_infos, &[])?;
         }
-        TEST_MAX_ACCOUNT_INFOS_EXCEEDED_BEFORE_INCREASE_CPI_INFO_BEFORE_SIMD_0339 => {
+        TEST_MAX_ACCOUNT_INFOS_EXCEEDED_BEFORE_INCREASE_TX_ACCOUNT_LOCK_BEFORE_SIMD_0339 => {
             msg!("Test max account infos exceeded before SIMD-0339 and before increase cpi info");
             let instruction = create_instruction(*accounts[INVOKED_PROGRAM_INDEX].key, &[], vec![]);
             let account_infos_len = 65;

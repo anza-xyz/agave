@@ -926,7 +926,7 @@ fn test_program_sbf_invoke_sanity() {
             .is_active(&feature_set::increase_tx_account_lock_limit::id()));
 
         do_invoke_success(
-            TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_INCREASE_CPI_INFO_BEFORE_SIMD_0339,
+            TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_INCREASE_TX_ACCOUNT_LOCK_BEFORE_SIMD_0339,
             &[],
             &[invoked_program_id.clone()],
             &bank,
@@ -1156,7 +1156,7 @@ fn test_program_sbf_invoke_sanity() {
             .is_active(&feature_set::increase_tx_account_lock_limit::id()));
 
         do_invoke_failure_test_local(
-            TEST_MAX_ACCOUNT_INFOS_EXCEEDED_BEFORE_INCREASE_CPI_INFO_BEFORE_SIMD_0339,
+            TEST_MAX_ACCOUNT_INFOS_EXCEEDED_BEFORE_INCREASE_TX_ACCOUNT_LOCK_BEFORE_SIMD_0339,
             TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete),
             &[],
             Some(vec![
