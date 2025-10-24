@@ -251,6 +251,7 @@ pub fn run_kill_partition_switch_threshold<C>(
         on_before_partition_resolved,
         on_partition_resolved,
         ticks_per_slot,
+        true,
         vec![],
     )
 }
@@ -287,13 +288,17 @@ pub fn create_custom_leader_schedule_with_random_keys(
 }
 
 /// This function runs a network, initiates a partition based on a
-/// configuration, resolve the partition, then checks that the network
-/// continues to achieve consensus
-/// # Arguments
+/// configuration, resolve the partition, then checks that the network continues
+/// to achieve consensus.
+///
+/// # Arguments:
 /// * `partitions` - A slice of partition configurations, where each partition
 ///   configuration is a usize representing a node's stake
 /// * `leader_schedule` - An option that specifies whether the cluster should
 ///   run with a fixed, predetermined leader schedule
+/// * `no_wait_for_vote_to_start_leader` - provide option to only allow the
+///   bootstrap to build blocks at first to minimize forking during cluster
+///   startup.
 #[allow(clippy::cognitive_complexity)]
 pub fn run_cluster_partition<C>(
     partitions: &[usize],
@@ -303,6 +308,7 @@ pub fn run_cluster_partition<C>(
     on_before_partition_resolved: impl FnOnce(&mut LocalCluster, &mut C),
     on_partition_resolved: impl FnOnce(&mut LocalCluster, &mut C),
     ticks_per_slot: Option<u64>,
+    no_wait_for_vote_to_start_leader: bool,
     additional_accounts: Vec<(Pubkey, AccountSharedData)>,
 ) {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
@@ -318,7 +324,7 @@ pub fn run_cluster_partition<C>(
     let mut validator_config = ValidatorConfig {
         turbine_disabled: turbine_disabled.clone(),
         wait_for_supermajority: None,
-        no_wait_for_vote_to_start_leader: false,
+        no_wait_for_vote_to_start_leader,
         ..ValidatorConfig::default_for_test()
     };
 
@@ -345,8 +351,7 @@ pub fn run_cluster_partition<C>(
         }
     };
 
-    // To avoid excessive forking slowing tests during bootstrap period, only
-    // allow the boostrap node to build blocks initially.
+    // Always ensure at least one node is allowed to build blocks.
     let mut validator_configs = make_identical_validator_configs(&validator_config, num_nodes);
     validator_configs
         .first_mut()
