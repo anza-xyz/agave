@@ -87,7 +87,7 @@ pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<
     last_age_flushed: AtomicAge,
 
     // backing store
-    map_internal: RwLock<HashMap<Pubkey, Arc<AccountMapEntry<T>>, ahash::RandomState>>,
+    map_internal: RwLock<HashMap<Pubkey, AccountMapEntry<T>, ahash::RandomState>>,
     storage: Arc<BucketMapHolder<T, U>>,
     _bin: usize,
     pub(crate) lowest_pubkey: Pubkey,
@@ -357,7 +357,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         // If the entry is now dirty, then it must be put in the cache or the modifications will be lost.
                         if add_to_cache || disk_entry.dirty() {
                             stats.inc_mem_count();
-                            vacant.insert(Arc::new(disk_entry));
+                            vacant.insert(disk_entry);
                         }
                         rt
                     }
@@ -387,10 +387,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
     /// return false if the entry is in the index (disk or memory) and has a slot list len > 0
     /// return true in all other cases, including if the entry is NOT in the index at all
-    fn remove_if_slot_list_empty_entry(
-        &self,
-        entry: Entry<Pubkey, Arc<AccountMapEntry<T>>>,
-    ) -> bool {
+    fn remove_if_slot_list_empty_entry(&self, entry: Entry<Pubkey, AccountMapEntry<T>>) -> bool {
         match entry {
             Entry::Occupied(occupied) => {
                 let result = self
@@ -563,7 +560,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                             "Callback must insert item into slot list"
                         );
                         assert!(new_value.dirty());
-                        vacant.insert(Arc::new(new_value));
+                        vacant.insert(new_value);
                         stats.inc_mem_count();
                     }
                 };
@@ -829,7 +826,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         &mut ReclaimsSlotList::new(),
                         UpsertReclaim::IgnoreReclaims,
                     );
-                    vacant.insert(Arc::new(disk_entry));
+                    vacant.insert(disk_entry);
                     (
                         false, /* found in mem */
                         true,  /* already existed */
@@ -925,7 +922,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// Filter as much as possible and capture dirty flag
     /// Skip entries with ref_count != 1 since they will be rejected later anyway
     fn gather_possible_evictions<'a>(
-        iter: impl Iterator<Item = (&'a Pubkey, &'a Arc<AccountMapEntry<T>>)>,
+        iter: impl Iterator<Item = (&'a Pubkey, &'a AccountMapEntry<T>)>,
         possible_evictions: &mut PossibleEvictions,
         startup: bool,
         current_age: Age,
@@ -1262,8 +1259,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
 
         let stats = self.stats();
-        let next_age_on_failure = self.storage.future_age_to_flush(false);
-        let mut failed = 0;
         let mut evicted = 0;
         // chunk these so we don't hold the write lock too long
         for evictions in evictions.chunks(50) {
@@ -1272,12 +1267,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             for k in evictions {
                 if let Entry::Occupied(occupied) = map.entry(*k) {
                     let v = occupied.get();
-                    if Arc::strong_count(v) > 1 {
-                        // someone is holding the value arc's ref count and could modify it, so do not evict
-                        failed += 1;
-                        v.try_exchange_age(next_age_on_failure, current_age);
-                        continue;
-                    }
 
                     if v.dirty()
                         || !Self::should_evict_based_on_age(
@@ -1290,7 +1279,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         // marked dirty or bumped in age after we looked above
                         // these evictions will be handled in later passes (at later ages)
                         // but, at startup, everything is ready to age out if it isn't dirty
-                        failed += 1;
                         continue;
                     }
 
@@ -1308,7 +1296,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
         stats.sub_mem_count(evicted);
         Self::update_stat(&stats.flush_entries_evicted_from_mem, evicted as u64);
-        Self::update_stat(&stats.failed_to_evict, failed as u64);
     }
 
     pub fn stats(&self) -> &BucketMapHolderStats {
@@ -1465,11 +1452,11 @@ mod tests {
         let pubkey = solana_pubkey::new_rand();
 
         // Insert an entry manually
-        let entry = Arc::new(AccountMapEntry::new(
+        let entry = AccountMapEntry::new(
             SlotList::from([(0, 42)]),
             1,
             AccountMapEntryMeta::new_dirty(&accounts_index.storage, true),
-        ));
+        );
         accounts_index
             .map_internal
             .write()
@@ -1756,11 +1743,11 @@ mod tests {
             .map(|age| {
                 let pk = Pubkey::from([age; 32]);
                 let one_element_slot_list = SlotList::from([(0, 0)]);
-                let one_element_slot_list_entry = Arc::new(AccountMapEntry::new(
+                let one_element_slot_list_entry = AccountMapEntry::new(
                     one_element_slot_list,
                     ref_count,
                     AccountMapEntryMeta::default(),
-                ));
+                );
                 one_element_slot_list_entry.set_age(age);
                 (pk, one_element_slot_list_entry)
             })
@@ -2174,7 +2161,7 @@ mod tests {
 
         {
             // add an entry with an empty slot list
-            let val = Arc::new(AccountMapEntry::<u64>::empty_for_tests());
+            let val = AccountMapEntry::<u64>::empty_for_tests();
             map.insert(key, val);
             let entry = map.entry(key);
             assert_matches!(entry, Entry::Occupied(_));
@@ -2188,7 +2175,7 @@ mod tests {
 
         {
             // add an entry with a NON empty slot list - it will NOT get removed
-            let val = Arc::new(AccountMapEntry::<u64>::empty_for_tests());
+            let val = AccountMapEntry::<u64>::empty_for_tests();
             val.slot_list_write_lock().push((1, 1));
             map.insert(key, val);
             // does NOT remove it since it has a non-empty slot list
