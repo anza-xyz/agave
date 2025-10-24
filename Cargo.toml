@@ -135,6 +135,7 @@ members = [
     "vortexor",
     "vote",
     "votor",
+    "votor-quic",
     "votor-messages",
     "watchtower",
     "wen-restart",

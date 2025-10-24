@@ -1,0 +1,23 @@
+[package]
+name = "votor-quic"
+version.workspace = true
+authors.workspace = true
+description.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+edition.workspace = true
+
+
+[dependencies]
+quinn = {workspace=true}
+anyhow = {workspace=true}
+tokio = { workspace=true, features = ["full"] }
+rustls = {workspace=true}
+rcgen = "0.13"
+futures-util.workspace = true
+solana-net-utils.workspace = true
+
+
+[lints]
+workspace = true
