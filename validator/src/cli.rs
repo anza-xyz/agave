@@ -274,16 +274,9 @@ pub struct DefaultArgs {
     pub genesis_archive_unpacked_size: String,
     pub health_check_slot_distance: String,
     pub tower_storage: String,
-    pub etcd_domain_name: String,
     pub send_transaction_service_config: send_transaction_service::Config,
 
     pub rpc_max_multiple_accounts: String,
-    pub rpc_send_transaction_retry_ms: String,
-    pub rpc_send_transaction_batch_ms: String,
-    pub rpc_send_transaction_leader_forward_count: String,
-    pub rpc_send_transaction_service_max_retries: String,
-    pub rpc_send_transaction_batch_size: String,
-    pub rpc_send_transaction_retry_pool_max_size: String,
     pub rpc_threads: String,
     pub rpc_blocking_threads: String,
     pub rpc_niceness_adjustment: String,
@@ -333,8 +326,6 @@ pub struct DefaultArgs {
 
 impl DefaultArgs {
     pub fn new() -> Self {
-        let default_send_transaction_service_config = send_transaction_service::Config::default();
-
         DefaultArgs {
             bind_address: "0.0.0.0".to_string(),
             ledger_path: "ledger".to_string(),
@@ -344,26 +335,7 @@ impl DefaultArgs {
             rpc_max_multiple_accounts: MAX_MULTIPLE_ACCOUNTS.to_string(),
             health_check_slot_distance: DELINQUENT_VALIDATOR_SLOT_DISTANCE.to_string(),
             tower_storage: "file".to_string(),
-            etcd_domain_name: "localhost".to_string(),
             send_transaction_service_config: send_transaction_service::Config::default(),
-            rpc_send_transaction_retry_ms: default_send_transaction_service_config
-                .retry_rate_ms
-                .to_string(),
-            rpc_send_transaction_batch_ms: default_send_transaction_service_config
-                .batch_send_rate_ms
-                .to_string(),
-            rpc_send_transaction_leader_forward_count: default_send_transaction_service_config
-                .leader_forward_count
-                .to_string(),
-            rpc_send_transaction_service_max_retries: default_send_transaction_service_config
-                .service_max_retries
-                .to_string(),
-            rpc_send_transaction_batch_size: default_send_transaction_service_config
-                .batch_size
-                .to_string(),
-            rpc_send_transaction_retry_pool_max_size: default_send_transaction_service_config
-                .retry_pool_max_size
-                .to_string(),
             rpc_threads: num_cpus::get().to_string(),
             rpc_blocking_threads: 1.max(num_cpus::get() / 4).to_string(),
             rpc_niceness_adjustment: "0".to_string(),

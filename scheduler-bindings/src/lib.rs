@@ -57,6 +57,10 @@
 //!
 
 /// Reference to a transaction that can shared safely across processes.
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    derive(Debug, Clone, Copy, PartialEq, Eq)
+)]
 #[repr(C)]
 pub struct SharableTransactionRegion {
     /// Offset within the shared memory allocator.
@@ -66,6 +70,10 @@ pub struct SharableTransactionRegion {
 }
 
 /// Reference to an array of Pubkeys that can be shared safely across processes.
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    derive(Debug, Clone, Copy, PartialEq, Eq)
+)]
 #[repr(C)]
 pub struct SharablePubkeys {
     /// Offset within the shared memory allocator.
@@ -86,6 +94,10 @@ pub struct SharablePubkeys {
 /// 4. External pack process frees all transaction memory pointed to by the
 ///    [`SharableTransactionRegion`] in the batch, then frees the memory for
 ///    the array of [`SharableTransactionRegion`].
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    derive(Debug, Clone, Copy, PartialEq, Eq)
+)]
 #[repr(C)]
 pub struct SharableTransactionBatchRegion {
     /// Number of transactions in the batch.
@@ -101,6 +113,10 @@ pub struct SharableTransactionBatchRegion {
 /// 2. agave sends a [`WorkerToPackMessage`] with `responses`.
 /// 3. External pack process processes the inner messages. Potentially freeing
 ///    any memory within each inner message (see [`worker_message_types`] for details).
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    derive(Debug, Clone, Copy, PartialEq, Eq)
+)]
 #[repr(C)]
 pub struct TransactionResponseRegion {
     /// Tag indicating the type of message.
@@ -125,6 +141,10 @@ pub struct TransactionResponseRegion {
 /// TPU passes transactions to the external pack process.
 /// This is also a transfer of ownership of the transaction:
 ///   the external pack process is responsible for freeing the memory.
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    derive(Debug, Clone, Copy, PartialEq, Eq)
+)]
 #[repr(C)]
 pub struct TpuToPackMessage {
     pub transaction: SharableTransactionRegion,
@@ -151,6 +171,10 @@ pub mod tpu_message_flags {
 
 /// Message: [Agave -> Pack]
 /// Agave passes leader status to the external pack process.
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    derive(Debug, Clone, Copy, PartialEq, Eq)
+)]
 #[repr(C)]
 pub struct ProgressMessage {
     /// The current slot.
@@ -181,6 +205,10 @@ pub const MAX_TRANSACTIONS_PER_MESSAGE: usize = 64;
 ///
 /// These messages do not transfer ownership of the transactions.
 /// The external pack process is still responsible for freeing the memory.
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    derive(Debug, Clone, Copy, PartialEq, Eq)
+)]
 #[repr(C)]
 pub struct PackToWorkerMessage {
     /// Flags on how to handle this message.
@@ -219,6 +247,10 @@ pub mod pack_message_flags {
 
 /// Message: [Worker -> Pack]
 /// Message from worker threads in response to a [`PackToWorkerMessage`].
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    derive(Debug, Clone, Copy, PartialEq, Eq)
+)]
 #[repr(C)]
 pub struct WorkerToPackMessage {
     /// Offset and number of transactions in the batch.
@@ -244,12 +276,16 @@ pub struct WorkerToPackMessage {
 pub mod worker_message_types {
     use crate::SharablePubkeys;
 
-    /// Tag indicating [`ExecutionResonse`] inner message.
+    /// Tag indicating [`ExecutionResponse`] inner message.
     pub const EXECUTION_RESPONSE: u8 = 0;
 
     /// Response to pack for a transaction that attempted execution.
     /// This response will only be sent if the original message flags
     /// requested execution i.e. not [`super::pack_message_flags::RESOLVE`].
+    #[cfg_attr(
+        feature = "dev-context-only-utils",
+        derive(Debug, Clone, Copy, PartialEq, Eq)
+    )]
     #[repr(C)]
     pub struct ExecutionResponse {
         /// Indicates if the transaction was included in the block or not.
@@ -292,6 +328,10 @@ pub mod worker_message_types {
     /// Tag indicating [`Resolved`] inner message.
     pub const RESOLVED: u8 = 1;
 
+    #[cfg_attr(
+        feature = "dev-context-only-utils",
+        derive(Debug, Clone, Copy, PartialEq, Eq)
+    )]
     #[repr(C)]
     pub struct Resolved {
         /// Indicates if resolution was successful.

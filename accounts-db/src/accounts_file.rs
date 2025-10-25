@@ -207,24 +207,6 @@ impl AccountsFile {
         }
     }
 
-    /// calls `callback` with the account located at the specified index offset.
-    ///
-    /// Prefer get_stored_account_callback() when possible, as it does not contain file format
-    /// implementation details, and thus potentially can read less and be faster.
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn get_stored_account_meta_callback<Ret>(
-        &self,
-        offset: usize,
-        callback: impl for<'local> FnMut(StoredAccountMeta<'local>) -> Ret,
-    ) -> Option<Ret> {
-        match self {
-            Self::AppendVec(av) => av.get_stored_account_meta_callback(offset, callback),
-            Self::TieredStorage(_) => {
-                unimplemented!("StoredAccountMeta is only implemented for AppendVec")
-            }
-        }
-    }
-
     /// return an `AccountSharedData` for an account at `offset`, if any.  Otherwise return None.
     pub(crate) fn get_account_shared_data(&self, offset: usize) -> Option<AccountSharedData> {
         match self {

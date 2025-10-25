@@ -1127,6 +1127,7 @@ pub mod tests {
             },
             append_vec::{self, aligned_stored_size},
             storable_accounts::StorableAccountsBySlot,
+            utils::create_account_shared_data,
         },
         rand::seq::SliceRandom as _,
         solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
@@ -1213,11 +1214,14 @@ pub mod tests {
     fn test_write_packed_storages_too_few_slots() {
         let (db, storages, slots, _infos) = get_sample_storages(1, None);
         let accounts_to_combine = AccountsToCombine::default();
+        let offset = 0;
         let account = storages
             .first()
             .unwrap()
             .accounts
-            .get_stored_account_meta_callback(0, |account| AccountFromStorage::new(&account))
+            .get_stored_account_without_data_callback(offset, |account| {
+                AccountFromStorage::new(offset, &account)
+            })
             .unwrap();
         let accounts = [&account];
 
@@ -2046,7 +2050,7 @@ pub mod tests {
             assert_eq!(
                 one_ref_accounts_account_shared_data
                     .iter()
-                    .map(|meta| meta.to_account_shared_data())
+                    .map(create_account_shared_data)
                     .collect::<Vec<_>>(),
                 vec![account_with_1_ref]
             );
@@ -2125,7 +2129,7 @@ pub mod tests {
                 .accounts
                 .get_stored_account_callback(0, |account| {
                     assert_eq!(account.pubkey(), pk_with_2_refs);
-                    account.to_account_shared_data()
+                    create_account_shared_data(&account)
                 })
                 .unwrap();
             assert_eq!(account, account_shared_data_with_2_refs);
@@ -2239,7 +2243,7 @@ pub mod tests {
             assert_eq!(
                 one_ref_accounts_account_shared_data
                     .iter()
-                    .map(|meta| meta.to_account_shared_data())
+                    .map(create_account_shared_data)
                     .collect::<Vec<_>>(),
                 vec![account_with_1_ref]
             );
@@ -2273,7 +2277,7 @@ pub mod tests {
             let accounts_shrunk_same_slot = storage
                 .accounts
                 .get_stored_account_callback(0, |account| {
-                    (*account.pubkey(), account.to_account_shared_data())
+                    (*account.pubkey(), create_account_shared_data(&account))
                 })
                 .unwrap();
             let mut reader = append_vec::new_scan_accounts_reader();
@@ -3144,8 +3148,8 @@ pub mod tests {
                                 let mut accounts = Vec::default();
                                 storage
                                     .accounts
-                                    .scan_accounts_stored_meta(|account| {
-                                        accounts.push(AccountFromStorage::new(&account));
+                                    .scan_accounts_without_data(|offset, account| {
+                                        accounts.push(AccountFromStorage::new(offset, &account));
                                     })
                                     .expect("must scan accounts storage");
                                 (storage.slot(), accounts)
@@ -3227,7 +3231,7 @@ pub mod tests {
                                 .new_storage()
                                 .accounts
                                 .scan_accounts(&mut reader, |_offset, meta| {
-                                    two.push((*meta.pubkey(), meta.to_account_shared_data()));
+                                    two.push((*meta.pubkey(), create_account_shared_data(&meta)));
                                 })
                                 .expect("must scan accounts storage");
 
@@ -3577,11 +3581,12 @@ pub mod tests {
         let num_slots = 1;
         let data_size = None;
         let (_db, storages, _slots, _infos) = get_sample_storages(num_slots, data_size);
+        let offset = 0;
 
         storages[0]
             .accounts
-            .get_stored_account_meta_callback(0, |stored_account_meta| {
-                let account = AccountFromStorage::new(&stored_account_meta);
+            .get_stored_account_without_data_callback(offset, |stored_account| {
+                let account = AccountFromStorage::new(offset, &stored_account);
                 let slot = 1;
                 let capacity = 0;
                 for i in 0..4usize {

@@ -488,7 +488,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
 
     // Adding `DELAY_VISIBILITY_SLOT_OFFSET` to slots to accommodate for delay visibility of the program
     let mut program_cache_for_tx_batch =
-        bank.new_program_cache_for_tx_batch_for_slot(bank.slot() + DELAY_VISIBILITY_SLOT_OFFSET);
+        ProgramCacheForTxBatch::new(bank.slot() + DELAY_VISIBILITY_SLOT_OFFSET);
     for key in cached_account_keys {
         program_cache_for_tx_batch.replenish(
             key,

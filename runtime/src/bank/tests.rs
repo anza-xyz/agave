@@ -10947,17 +10947,11 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase(
     let bank = new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 16);
     let current_env = bank
         .transaction_processor
-        .global_program_cache
-        .read()
-        .unwrap()
-        .get_environments_for_epoch(&bank.transaction_processor.epoch_boundary_preparation, 0)
+        .get_environments_for_epoch(0)
         .program_runtime_v1;
     let upcoming_env = bank
         .transaction_processor
-        .global_program_cache
-        .read()
-        .unwrap()
-        .get_environments_for_epoch(&bank.transaction_processor.epoch_boundary_preparation, 1)
+        .get_environments_for_epoch(1)
         .program_runtime_v1;
 
     // Advance the bank to recompile the program.
