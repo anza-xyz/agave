@@ -79,15 +79,16 @@ const CONNECTION_CLOSE_REASON_INVALID_STREAM: &[u8] = b"invalid_stream";
 /// that a connection can require to support RX buffers.
 ///
 /// This needs to be constrained to ensure that we can admit a lot of unstaked
-/// connections without consuming too much RAM. The 2Mbps target for unstake connection
-/// allows for about 600 TPS with mean TX size of 400 bytes, and still allows 200 TPS
-/// at maximal TX size (1280 bytes).
-const TARGET_UNSTAKED_KBPS: u64 = 2000;
+/// connections without consuming too much RAM. The 4Mbps target for unstaked connection
+/// allows for about 1200 TPS with mean TX size of 400 bytes, and will still allow 100 TPS
+/// at maximal planned TX size of 4096 bytes.
+const TARGET_UNSTAKED_KBPS: u64 = 4000;
 
 /// Target max bitrate for a staked connection with maximum
 /// stake amount through the cluster. Connections will get
-/// bitrates interpolated between this and [`TARGET_UNSTAKED_KBPS`].
-/// This is max raw network bitrare, actual TPS will be enforced
+/// bitrates interpolated between this and [`TARGET_UNSTAKED_KBPS`]
+/// based on their actual stake amount relative to maximum.
+/// This is only the max network bitrare, actual TPS will be enforced
 /// by the throttling logic.
 ///
 /// We want to allocate more bandwidth to staked nodes, since we have a
@@ -96,8 +97,8 @@ const TARGET_UNSTAKED_KBPS: u64 = 2000;
 /// many transactions as they have available. Of course we do not want
 /// to make this infinitely large to avoid the TPU bandwidth exhaustion
 /// if all staked nodes decide to use their allowance at the same time.
-/// Current value chosen to allow about 12000 TPS, but limit total TPU
-/// bandwidth per identity to 60 Mbps.
+/// Current value chosen to allow about 25000 TPS, and limit the total
+/// TPU bandwidth per identity to 80 Mbps.
 const TARGET_MAX_STAKED_KBPS: u64 = TARGET_UNSTAKED_KBPS * 20;
 
 /// Maximal allowed RTT for SWQOS calculations.
