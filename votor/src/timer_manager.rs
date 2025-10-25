@@ -6,7 +6,6 @@ mod timers;
 use {
     crate::{
         common::{DELTA_BLOCK, DELTA_TIMEOUT},
-        consensus_metrics::ConsensusMetrics,
         event::VotorEvent,
     },
     crossbeam_channel::Sender,
@@ -30,16 +29,11 @@ pub(crate) struct TimerManager {
 }
 
 impl TimerManager {
-    pub(crate) fn new(
-        event_sender: Sender<VotorEvent>,
-        exit: Arc<AtomicBool>,
-        consensus_metrics: Arc<PlRwLock<ConsensusMetrics>>,
-    ) -> Self {
+    pub(crate) fn new(event_sender: Sender<VotorEvent>, exit: Arc<AtomicBool>) -> Self {
         let timers = Arc::new(PlRwLock::new(Timers::new(
             DELTA_TIMEOUT,
             DELTA_BLOCK,
             event_sender,
-            consensus_metrics,
         )));
         let handle = {
             let timers = Arc::clone(&timers);
@@ -80,8 +74,7 @@ mod tests {
     fn test_timer_manager() {
         let (event_sender, event_receiver) = unbounded();
         let exit = Arc::new(AtomicBool::new(false));
-        let consensus_metrics = Arc::new(PlRwLock::new(ConsensusMetrics::new(0)));
-        let timer_manager = TimerManager::new(event_sender, exit.clone(), consensus_metrics);
+        let timer_manager = TimerManager::new(event_sender, exit.clone());
         let slot = 52;
         let start = Instant::now();
         timer_manager.set_timeouts(slot);
