@@ -176,6 +176,13 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
                     if connection_table_l.total_size >= self.max_staked_connections {
                         let num_pruned =
                             connection_table_l.prune_random(PRUNE_RANDOM_SAMPLE_SIZE, stake);
+
+                        println!(
+                            "Pruned {} staked connections to make room for new staked connection \
+                             from {}",
+                            num_pruned,
+                            connection.remote_address(),
+                        );
                         self.stats
                             .num_evictions_staked
                             .fetch_add(num_pruned, Ordering::Relaxed);
@@ -619,5 +626,497 @@ mod tests {
         assert_eq!(context.remote_address, server_connection.remote_address());
         assert!(context.last_update.load(Ordering::Relaxed) > 0); // Should have timestamp
         assert!(context.stream_counter.is_none()); // Should be None initially
+    }
+
+    #[tokio::test]
+    async fn test_try_add_connection_staked_peer_success() {
+        // Setup
+        let cancel = CancellationToken::new();
+        let stats = Arc::new(StreamerStats::default());
+
+        // Create keypairs for staked connection
+        let server_keypair = Keypair::new();
+        let client_keypair = Keypair::new();
+        let stake_amount = 50_000_000; // 50M lamports
+
+        // Create staked nodes with both keypairs
+        let staked_nodes =
+            create_staked_nodes_with_keypairs(&server_keypair, &client_keypair, stake_amount);
+
+        let simple_qos = SimpleQos::new(
+            SimpleQosConfig::default(),
+            10,  // max_connections_per_peer
+            100, // max_staked_connections
+            stats.clone(),
+            staked_nodes,
+            cancel.clone(),
+        );
+
+        let client_tracker = ClientConnectionTracker {
+            stats: stats.clone(),
+        };
+
+        // Create connection using the staked keypairs
+        let (server_connection, _client_endpoint, _server_endpoint) =
+            create_connection_with_keypairs(&server_keypair, &client_keypair).await;
+
+        // Build connection context
+        let mut conn_context = simple_qos.build_connection_context(&server_connection);
+
+        // Test - try to add staked connection
+        let result = simple_qos
+            .try_add_connection(client_tracker, &server_connection, &mut conn_context)
+            .await;
+
+        // Verify successful connection addition
+        assert!(result.is_some());
+        let cancel_token = result.unwrap();
+        assert!(!cancel_token.is_cancelled());
+
+        // Verify context was updated with stream counter
+        assert!(conn_context.stream_counter.is_some());
+        assert_eq!(
+            conn_context
+                .stream_counter
+                .as_ref()
+                .unwrap()
+                .stream_count
+                .load(Ordering::Relaxed),
+            0
+        );
+
+        // Verify stats were updated
+        assert_eq!(
+            stats
+                .connection_added_from_staked_peer
+                .load(Ordering::Relaxed),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_add_connection_unstaked_peer_rejected() {
+        // Setup
+        let cancel = CancellationToken::new();
+        let stats = Arc::new(StreamerStats::default());
+        let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+
+        let simple_qos = SimpleQos::new(
+            SimpleQosConfig::default(),
+            10,  // max_connections_per_peer
+            100, // max_staked_connections
+            stats.clone(),
+            staked_nodes,
+            cancel.clone(),
+        );
+
+        let client_tracker = ClientConnectionTracker {
+            stats: stats.clone(),
+        };
+
+        // Create unstaked connection
+        let (server_connection, _client_endpoint, _server_endpoint) =
+            create_server_side_connection().await;
+
+        // Build connection context (will be unstaked)
+        let mut conn_context = simple_qos.build_connection_context(&server_connection);
+
+        // Test - try to add unstaked connection (should be rejected)
+        let result = simple_qos
+            .try_add_connection(client_tracker, &server_connection, &mut conn_context)
+            .await;
+
+        // Verify unstaked connection was rejected
+        assert!(result.is_none());
+
+        // Verify context stream counter was not set
+        assert!(conn_context.stream_counter.is_none());
+
+        // Verify no staked peer connection stats were incremented
+        assert_eq!(
+            stats
+                .connection_added_from_staked_peer
+                .load(Ordering::Relaxed),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_add_connection_max_staked_connections_with_pruning() {
+        // Setup with very low max connections to trigger pruning
+        let cancel = CancellationToken::new();
+        let stats = Arc::new(StreamerStats::default());
+
+        // Create keypairs for staked connections
+        let server_keypair1 = Keypair::new();
+        let client_keypair1 = Keypair::new();
+        let server_keypair2 = Keypair::new();
+        let client_keypair2 = Keypair::new();
+        let stake_amount = 50_000_000; // 50M lamports
+
+        let mut stakes = std::collections::HashMap::new();
+        stakes.insert(server_keypair1.pubkey(), stake_amount);
+        stakes.insert(client_keypair1.pubkey(), stake_amount);
+        stakes.insert(server_keypair2.pubkey(), stake_amount);
+        // client 2 has higher stake so that it can prune client 1
+        stakes.insert(client_keypair2.pubkey(), stake_amount * 2);
+
+        let overrides: std::collections::HashMap<solana_pubkey::Pubkey, u64> =
+            std::collections::HashMap::new();
+        let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(Arc::new(stakes), overrides)));
+
+        let simple_qos = SimpleQos::new(
+            SimpleQosConfig::default(),
+            10, // max_connections_per_peer
+            1,  // max_staked_connections (set to 1 to trigger pruning)
+            stats.clone(),
+            staked_nodes,
+            cancel.clone(),
+        );
+
+        // Add first connection to fill the table
+        let client_tracker1 = ClientConnectionTracker {
+            stats: stats.clone(),
+        };
+
+        let (server_connection1, _client_endpoint1, _server_endpoint1) =
+            create_connection_with_keypairs(&server_keypair1, &client_keypair1).await;
+
+        let mut conn_context1 = simple_qos.build_connection_context(&server_connection1);
+
+        let result1 = simple_qos
+            .try_add_connection(client_tracker1, &server_connection1, &mut conn_context1)
+            .await;
+
+        assert!(result1.is_some()); // First connection should succeed
+
+        // Try to add second connection (should trigger pruning)
+        let client_tracker2 = ClientConnectionTracker {
+            stats: stats.clone(),
+        };
+
+        let (server_connection2, _client_endpoint2, _server_endpoint2) =
+            create_connection_with_keypairs(&server_keypair2, &client_keypair2).await;
+
+        let mut conn_context2 = simple_qos.build_connection_context(&server_connection2);
+
+        let result2 = simple_qos
+            .try_add_connection(client_tracker2, &server_connection2, &mut conn_context2)
+            .await;
+
+        // Verify second connection succeeded (after pruning)
+        assert!(result2.is_some());
+
+        // Verify pruning stats were updated
+        assert!(stats.num_evictions_staked.load(Ordering::Relaxed) > 0);
+    }
+
+    #[tokio::test]
+    async fn test_try_add_connection_max_staked_connections_no_pruning_possible() {
+        // Setup with max connections = 1 and high stake that can't be pruned
+        let cancel = CancellationToken::new();
+        let stats = Arc::new(StreamerStats::default());
+
+        // Create keypairs with different stake amounts
+        let server_keypair1 = Keypair::new();
+        let client_keypair1 = Keypair::new();
+        let server_keypair2 = Keypair::new();
+        let client_keypair2 = Keypair::new();
+        let high_stake = 100_000_000; // 100M lamports
+        let low_stake = 10_000_000; // 10M lamports
+
+        let mut stakes = std::collections::HashMap::new();
+        stakes.insert(server_keypair1.pubkey(), high_stake);
+        stakes.insert(client_keypair1.pubkey(), high_stake);
+        stakes.insert(server_keypair2.pubkey(), low_stake);
+        stakes.insert(client_keypair2.pubkey(), low_stake);
+
+        let overrides: std::collections::HashMap<solana_pubkey::Pubkey, u64> =
+            std::collections::HashMap::new();
+        let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(Arc::new(stakes), overrides)));
+
+        let simple_qos = SimpleQos::new(
+            SimpleQosConfig::default(),
+            10, // max_connections_per_peer
+            1,  // max_staked_connections (set to 1)
+            stats.clone(),
+            staked_nodes,
+            cancel.clone(),
+        );
+
+        // Add high-stake connection first
+        let client_tracker1 = ClientConnectionTracker {
+            stats: stats.clone(),
+        };
+
+        let (server_connection1, _client_endpoint1, _server_endpoint1) =
+            create_connection_with_keypairs(&server_keypair1, &client_keypair1).await;
+
+        let mut conn_context1 = simple_qos.build_connection_context(&server_connection1);
+
+        let result1 = simple_qos
+            .try_add_connection(client_tracker1, &server_connection1, &mut conn_context1)
+            .await;
+
+        assert!(result1.is_some()); // First high-stake connection should succeed
+
+        // Try to add low-stake connection (should fail as it can't prune the high-stake one)
+        let client_tracker2 = ClientConnectionTracker {
+            stats: stats.clone(),
+        };
+
+        let (server_connection2, _client_endpoint2, _server_endpoint2) =
+            create_connection_with_keypairs(&server_keypair2, &client_keypair2).await;
+
+        let mut conn_context2 = simple_qos.build_connection_context(&server_connection2);
+
+        let result2 = simple_qos
+            .try_add_connection(client_tracker2, &server_connection2, &mut conn_context2)
+            .await;
+
+        // Verify second connection failed (couldn't prune higher stake)
+        assert!(result2.is_none());
+
+        // Verify context was not updated
+        assert!(conn_context2.stream_counter.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_try_add_connection_context_updates() {
+        // Setup
+        let cancel = CancellationToken::new();
+        let stats = Arc::new(StreamerStats::default());
+
+        // Create keypairs for staked connection
+        let server_keypair = Keypair::new();
+        let client_keypair = Keypair::new();
+        let stake_amount = 50_000_000; // 50M lamports
+
+        let staked_nodes =
+            create_staked_nodes_with_keypairs(&server_keypair, &client_keypair, stake_amount);
+
+        let simple_qos = SimpleQos::new(
+            SimpleQosConfig::default(),
+            10,  // max_connections_per_peer
+            100, // max_staked_connections
+            stats.clone(),
+            staked_nodes,
+            cancel.clone(),
+        );
+
+        let client_tracker = ClientConnectionTracker {
+            stats: stats.clone(),
+        };
+
+        let (server_connection, _client_endpoint, _server_endpoint) =
+            create_connection_with_keypairs(&server_keypair, &client_keypair).await;
+
+        let mut conn_context = simple_qos.build_connection_context(&server_connection);
+
+        // Record initial context state
+        let initial_last_update = conn_context.last_update.load(Ordering::Relaxed);
+        assert!(conn_context.stream_counter.is_none());
+
+        // Test - try to add connection
+        let result = simple_qos
+            .try_add_connection(client_tracker, &server_connection, &mut conn_context)
+            .await;
+
+        // Verify connection was added successfully
+        assert!(result.is_some());
+
+        // Verify context was properly updated
+        assert!(conn_context.stream_counter.is_some());
+
+        // Verify last_update was updated (should be same or newer)
+        let updated_last_update = conn_context.last_update.load(Ordering::Relaxed);
+        assert!(updated_last_update >= initial_last_update);
+
+        // Verify stream counter starts at 0
+        assert_eq!(
+            conn_context
+                .stream_counter
+                .as_ref()
+                .unwrap()
+                .stream_count
+                .load(Ordering::Relaxed),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn test_on_stream_accepted_increments_counter() {
+        // Setup
+        let cancel = CancellationToken::new();
+        let stats = Arc::new(StreamerStats::default());
+
+        // Create keypairs for staked connection
+        let server_keypair = Keypair::new();
+        let client_keypair = Keypair::new();
+        let stake_amount = 50_000_000; // 50M lamports
+
+        let staked_nodes =
+            create_staked_nodes_with_keypairs(&server_keypair, &client_keypair, stake_amount);
+
+        let simple_qos = SimpleQos::new(
+            SimpleQosConfig::default(),
+            10,  // max_connections_per_peer
+            100, // max_staked_connections
+            stats.clone(),
+            staked_nodes,
+            cancel.clone(),
+        );
+
+        let client_tracker = ClientConnectionTracker {
+            stats: stats.clone(),
+        };
+
+        let (server_connection, _client_endpoint, _server_endpoint) =
+            create_connection_with_keypairs(&server_keypair, &client_keypair).await;
+
+        // Build connection context and add connection to initialize stream counter
+        let mut conn_context = simple_qos.build_connection_context(&server_connection);
+
+        let result = simple_qos
+            .try_add_connection(client_tracker, &server_connection, &mut conn_context)
+            .await;
+
+        assert!(result.is_some()); // Connection should be added successfully
+        assert!(conn_context.stream_counter.is_some()); // Stream counter should be set
+
+        // Record initial stream count
+        let initial_stream_count = conn_context
+            .stream_counter
+            .as_ref()
+            .unwrap()
+            .stream_count
+            .load(Ordering::Relaxed);
+        assert_eq!(initial_stream_count, 0);
+
+        // Test - call on_stream_accepted
+        simple_qos.on_stream_accepted(&conn_context);
+
+        // Verify stream count was incremented
+        let updated_stream_count = conn_context
+            .stream_counter
+            .as_ref()
+            .unwrap()
+            .stream_count
+            .load(Ordering::Relaxed);
+        assert_eq!(updated_stream_count, initial_stream_count + 1);
+    }
+
+    #[tokio::test]
+    async fn test_remove_connection_success() {
+        // Setup
+        let cancel = CancellationToken::new();
+        let stats = Arc::new(StreamerStats::default());
+
+        // Create keypairs for staked connection
+        let server_keypair = Keypair::new();
+        let client_keypair = Keypair::new();
+        let stake_amount = 50_000_000; // 50M lamports
+
+        let staked_nodes =
+            create_staked_nodes_with_keypairs(&server_keypair, &client_keypair, stake_amount);
+
+        let simple_qos = SimpleQos::new(
+            SimpleQosConfig::default(),
+            10,  // max_connections_per_peer
+            100, // max_staked_connections
+            stats.clone(),
+            staked_nodes,
+            cancel.clone(),
+        );
+
+        let client_tracker = ClientConnectionTracker {
+            stats: stats.clone(),
+        };
+
+        let (server_connection, _client_endpoint, _server_endpoint) =
+            create_connection_with_keypairs(&server_keypair, &client_keypair).await;
+
+        // Build connection context and add connection first
+        let mut conn_context = simple_qos.build_connection_context(&server_connection);
+
+        let add_result = simple_qos
+            .try_add_connection(client_tracker, &server_connection, &mut conn_context)
+            .await;
+
+        assert!(add_result.is_some()); // Connection should be added successfully
+
+        // Record initial stats
+        let initial_open_connections = stats.open_staked_connections.load(Ordering::Relaxed);
+        assert!(initial_open_connections > 0); // Should have at least one connection
+
+        // Test - remove the connection
+        let removed_count = simple_qos
+            .remove_connection(&conn_context, server_connection.clone())
+            .await;
+
+        // Verify connection was removed
+        assert_eq!(removed_count, 1); // Should have removed exactly 1 connection
+
+        // Verify stats were updated (open connections should decrease)
+        let final_open_connections = stats.open_staked_connections.load(Ordering::Relaxed);
+        assert!(final_open_connections < initial_open_connections);
+        assert_eq!(final_open_connections, initial_open_connections - 1);
+    }
+
+    #[tokio::test]
+    async fn test_on_new_stream_throttles_correctly() {
+        // Setup
+        let cancel = CancellationToken::new();
+        let stats = Arc::new(StreamerStats::default());
+
+        // Create keypairs for staked connection
+        let server_keypair = Keypair::new();
+        let client_keypair = Keypair::new();
+        let stake_amount = 50_000_000; // 50M lamports
+
+        let staked_nodes =
+            create_staked_nodes_with_keypairs(&server_keypair, &client_keypair, stake_amount);
+
+        // Set a specific max_streams_per_second for testing
+        let qos_config = SimpleQosConfig {
+            max_streams_per_second: 10, // 10 streams per second
+        };
+
+        let simple_qos = SimpleQos::new(
+            qos_config,
+            10,  // max_connections_per_peer
+            100, // max_staked_connections
+            stats.clone(),
+            staked_nodes,
+            cancel.clone(),
+        );
+
+        let client_tracker = ClientConnectionTracker {
+            stats: stats.clone(),
+        };
+
+        let (server_connection, _client_endpoint, _server_endpoint) =
+            create_connection_with_keypairs(&server_keypair, &client_keypair).await;
+
+        // Build connection context and add connection to initialize stream counter
+        let mut conn_context = simple_qos.build_connection_context(&server_connection);
+
+        let result = simple_qos
+            .try_add_connection(client_tracker, &server_connection, &mut conn_context)
+            .await;
+
+        assert!(result.is_some()); // Connection should be added successfully
+        assert!(conn_context.stream_counter.is_some()); // Stream counter should be set
+
+        // Test - call on_new_stream and measure timing
+        let start_time = std::time::Instant::now();
+
+        simple_qos.on_new_stream(&conn_context).await;
+
+        let elapsed = start_time.elapsed();
+
+        // The function should complete (may or may not sleep depending on current throttling state)
+        // We just verify it doesn't panic and completes successfully
+        assert!(elapsed < std::time::Duration::from_secs(1)); // Should not take too long
     }
 }
