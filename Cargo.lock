@@ -7297,6 +7297,7 @@ dependencies = [
  "agave-syscalls",
  "assert_matches",
  "bincode",
+ "cfg-if 1.0.3",
  "criterion",
  "qualifier_attr",
  "rand 0.8.5",
