@@ -1,9 +1,7 @@
 //! The `tpu` module implements the Transaction Processing Unit, a
 //! multi-stage transaction processing pipeline in software.
 
-pub use {
-    crate::forwarding_stage::ForwardingClientOption, solana_streamer::quic::DEFAULT_TPU_COALESCE,
-};
+pub use crate::forwarding_stage::ForwardingClientOption;
 use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
@@ -138,7 +136,6 @@ impl Tpu {
         replay_vote_receiver: ReplayVoteReceiver,
         replay_vote_sender: ReplayVoteSender,
         bank_notification_sender: Option<BankNotificationSenderConfig>,
-        tpu_coalesce: Duration,
         duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
         client: ForwardingClientOption,
         turbine_quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
@@ -186,7 +183,7 @@ impl Tpu {
             &forwarded_packet_sender,
             forwarded_packet_receiver,
             poh_recorder,
-            Some(tpu_coalesce),
+            None, // coalesce
             Some(bank_forks.read().unwrap().get_vote_only_mode_signal()),
             tpu_enable_udp,
         );
@@ -275,7 +272,6 @@ impl Tpu {
             let adapter = VortexorReceiverAdapter::new(
                 sockets,
                 Duration::from_millis(5),
-                tpu_coalesce,
                 non_vote_sender,
                 enable_block_production_forwarding.then(|| forward_stage_sender.clone()),
                 exit.clone(),

@@ -46,7 +46,6 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 const SINK_REPORT_INTERVAL: Duration = Duration::from_secs(5);
 const SINK_RECEIVE_TIMEOUT: Duration = Duration::from_secs(1);
 const SOCKET_RECEIVE_TIMEOUT: Duration = Duration::from_secs(1);
-const COALESCE_TIME: Option<Duration> = Some(Duration::from_millis(1));
 
 fn sink(
     exit: Arc<AtomicBool>,
@@ -300,10 +299,10 @@ fn main() -> Result<()> {
                     s_reader,
                     recycler.clone(),
                     stats.clone(),
-                    COALESCE_TIME, // coalesce
-                    true,          // use_pinned_memory
-                    None,          // in_vote_only_mode
-                    false,         // is_staked_service
+                    None,  // coalesce
+                    true,  // use_pinned_memory
+                    None,  // in_vote_only_mode
+                    false, // is_staked_service
                 ));
             }
         }

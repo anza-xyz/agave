@@ -791,14 +791,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("tpu_coalesce_ms")
-            .long("tpu-coalesce-ms")
-            .value_name("MILLISECS")
-            .takes_value(true)
-            .validator(is_parsable::<u64>)
-            .help("Milliseconds to wait in the TPU receiver for packet coalescing."),
-    )
-    .arg(
         Arg::with_name("tpu_connection_pool_size")
             .long("tpu-connection-pool-size")
             .takes_value(true)

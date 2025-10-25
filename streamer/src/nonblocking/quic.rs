@@ -11,7 +11,7 @@ use {
         streamer::StakedNodes,
     },
     bytes::{BufMut, Bytes, BytesMut},
-    crossbeam_channel::{bounded, Receiver, Sender, TrySendError},
+    crossbeam_channel::{bounded, Receiver, Sender, TryRecvError, TrySendError},
     futures::{stream::FuturesUnordered, Future, StreamExt as _},
     indexmap::map::{Entry, IndexMap},
     percentage::Percentage,
@@ -224,18 +224,12 @@ pub fn spawn_server_with_cancel(
         .collect::<Result<Vec<_>, _>>()?;
     let stats = Arc::<StreamerStats>::default();
     let (packet_batch_sender, packet_batch_receiver) =
-        bounded(quic_server_params.coalesce_channel_size);
+        bounded(quic_server_params.accumulator_channel_size);
     task::spawn_blocking({
         let cancel = cancel.clone();
         let stats = stats.clone();
         move || {
-            run_packet_batch_sender(
-                packet_sender,
-                packet_batch_receiver,
-                stats,
-                quic_server_params.coalesce,
-                cancel,
-            );
+            run_packet_batch_sender(packet_sender, packet_batch_receiver, stats, cancel);
         }
     });
 
@@ -947,11 +941,10 @@ fn run_packet_batch_sender(
     packet_sender: Sender<PacketBatch>,
     packet_receiver: Receiver<PacketAccumulator>,
     stats: Arc<StreamerStats>,
-    coalesce: Duration,
     cancel: CancellationToken,
 ) {
+    let mut channel_disconnected = false;
     trace!("enter packet_batch_sender");
-    let mut batch_start_time = Instant::now();
     loop {
         let mut packet_perf_measure: Vec<([u8; 64], Instant)> = Vec::default();
         let mut packet_batch = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);
@@ -965,13 +958,10 @@ fn run_packet_batch_sender(
             .fetch_add(PACKETS_PER_BATCH, Ordering::Relaxed);
 
         loop {
-            if cancel.is_cancelled() {
+            if cancel.is_cancelled() || channel_disconnected {
                 return;
             }
-            let elapsed = batch_start_time.elapsed();
-            if packet_batch.len() >= PACKETS_PER_BATCH
-                || (!packet_batch.is_empty() && elapsed >= coalesce)
-            {
+            if !packet_batch.is_empty() {
                 let len = packet_batch.len();
                 track_streamer_fetch_packet_performance(&packet_perf_measure, &stats);
 
@@ -1004,28 +994,28 @@ fn run_packet_batch_sender(
                 break;
             }
 
-            let timeout_res = if !packet_batch.is_empty() {
-                // If we get here, elapsed < coalesce (see above if condition)
-                packet_receiver.recv_timeout(coalesce - elapsed)
-            } else {
-                // Small bit of non-idealness here: the holder(s) of the other end
-                // of packet_receiver must drop it (without waiting for us to exit)
-                // or we have a chance of sleeping here forever
-                // and never polling exit. Not a huge deal in practice as the
-                // only time this happens is when we tear down the server
-                // and at that time the other end does indeed not wait for us
-                // to exit here
-                packet_receiver
-                    .recv()
-                    .map_err(|_| crossbeam_channel::RecvTimeoutError::Disconnected)
-            };
-
-            if let Ok(mut packet_accumulator) = timeout_res {
-                // Start the timeout from when the packet batch first becomes non-empty
-                if packet_batch.is_empty() {
-                    batch_start_time = Instant::now();
+            // On the first receive, we block on recv not to use excessive CPU when the channel is idle.
+            // This will not block the exit as the channel will be dropped on the sender's side.
+            //
+            // On subsequent receives, we call try_recv, so that we do not get blocked waiting for packets
+            // when we already have something in the batch.
+            //
+            // For setting channel_disconnected, we can ignore TryRecvError::Disconnected on try_recv and
+            // set it on the next iteration (if we don't exit early anyway from cancel token)
+            let mut first = true;
+            let mut recv = || {
+                if first {
+                    first = false;
+                    // recv is only an error if empty and disconnected
+                    packet_receiver.recv().map_err(|_| {
+                        channel_disconnected = true;
+                        TryRecvError::Disconnected
+                    })
+                } else {
+                    packet_receiver.try_recv()
                 }
-
+            };
+            while let Ok(mut packet_accumulator) = recv() {
                 // 86% of transactions/packets come in one chunk. In that case,
                 // we can just move the chunk to the `Packet` and no copy is
                 // made.
@@ -1058,6 +1048,11 @@ fn run_packet_batch_sender(
                 stats
                     .total_chunks_processed_by_batcher
                     .fetch_add(num_chunks, Ordering::Relaxed);
+
+                // prevent getting stuck in loop
+                if packet_batch.len() >= PACKETS_PER_BATCH {
+                    break;
+                }
             }
         }
     }
@@ -1633,15 +1628,12 @@ impl Future for EndpointAccept<'_> {
 pub mod test {
     use {
         super::*,
-        crate::{
-            nonblocking::{
-                quic::compute_max_allowed_uni_streams,
-                testing_utilities::{
-                    check_multiple_streams, get_client_config, make_client_endpoint,
-                    setup_quic_server, SpawnTestServerResult,
-                },
+        crate::nonblocking::{
+            quic::compute_max_allowed_uni_streams,
+            testing_utilities::{
+                check_multiple_streams, get_client_config, make_client_endpoint, setup_quic_server,
+                SpawnTestServerResult,
             },
-            quic::DEFAULT_TPU_COALESCE,
         },
         assert_matches::assert_matches,
         crossbeam_channel::{unbounded, Receiver},
@@ -1797,13 +1789,7 @@ pub mod test {
         let handle = task::spawn_blocking({
             let cancel = cancel.clone();
             move || {
-                run_packet_batch_sender(
-                    pkt_batch_sender,
-                    pkt_receiver,
-                    stats,
-                    DEFAULT_TPU_COALESCE,
-                    cancel,
-                );
+                run_packet_batch_sender(pkt_batch_sender, pkt_receiver, stats, cancel);
             }
         });
 
