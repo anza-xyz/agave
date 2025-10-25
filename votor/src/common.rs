@@ -1,5 +1,5 @@
 use {
-    agave_votor_messages::{consensus_message::Certificate, vote::Vote},
+    agave_votor_messages::{consensus_message::CertificateType, vote::Vote},
     std::time::Duration,
 };
 
@@ -51,35 +51,38 @@ pub const fn conflicting_types(vote_type: VoteType) -> &'static [VoteType] {
 ///
 /// Must be in sync with `vote_to_certificate_ids`
 pub const fn certificate_limits_and_vote_types(
-    cert_type: Certificate,
+    cert_type: &CertificateType,
 ) -> (f64, &'static [VoteType]) {
     match cert_type {
-        Certificate::Notarize(_, _) => (0.6, &[VoteType::Notarize]),
-        Certificate::NotarizeFallback(_, _) => {
+        CertificateType::Notarize(_, _) => (0.6, &[VoteType::Notarize]),
+        CertificateType::NotarizeFallback(_, _) => {
             (0.6, &[VoteType::Notarize, VoteType::NotarizeFallback])
         }
-        Certificate::FinalizeFast(_, _) => (0.8, &[VoteType::Notarize]),
-        Certificate::Finalize(_) => (0.6, &[VoteType::Finalize]),
-        Certificate::Skip(_) => (0.6, &[VoteType::Skip, VoteType::SkipFallback]),
+        CertificateType::FinalizeFast(_, _) => (0.8, &[VoteType::Notarize]),
+        CertificateType::Finalize(_) => (0.6, &[VoteType::Finalize]),
+        CertificateType::Skip(_) => (0.6, &[VoteType::Skip, VoteType::SkipFallback]),
     }
 }
 
 /// Lookup from `Vote` to the `CertificateId`s the vote accounts for
 ///
 /// Must be in sync with `certificate_limits_and_vote_types` and `VoteType::get_type`
-pub fn vote_to_certificate_ids(vote: &Vote) -> Vec<Certificate> {
+pub fn vote_to_certificate_ids(vote: &Vote) -> Vec<CertificateType> {
     match vote {
         Vote::Notarize(vote) => vec![
-            Certificate::Notarize(vote.slot(), *vote.block_id()),
-            Certificate::NotarizeFallback(vote.slot(), *vote.block_id()),
-            Certificate::FinalizeFast(vote.slot(), *vote.block_id()),
+            CertificateType::Notarize(vote.slot(), *vote.block_id()),
+            CertificateType::NotarizeFallback(vote.slot(), *vote.block_id()),
+            CertificateType::FinalizeFast(vote.slot(), *vote.block_id()),
         ],
         Vote::NotarizeFallback(vote) => {
-            vec![Certificate::NotarizeFallback(vote.slot(), *vote.block_id())]
+            vec![CertificateType::NotarizeFallback(
+                vote.slot(),
+                *vote.block_id(),
+            )]
         }
-        Vote::Finalize(vote) => vec![Certificate::Finalize(vote.slot())],
-        Vote::Skip(vote) => vec![Certificate::Skip(vote.slot())],
-        Vote::SkipFallback(vote) => vec![Certificate::Skip(vote.slot())],
+        Vote::Finalize(vote) => vec![CertificateType::Finalize(vote.slot())],
+        Vote::Skip(vote) => vec![CertificateType::Skip(vote.slot())],
+        Vote::SkipFallback(vote) => vec![CertificateType::Skip(vote.slot())],
     }
 }
 
