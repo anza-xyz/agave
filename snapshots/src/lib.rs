@@ -9,12 +9,15 @@
 )]
 
 mod archive_format;
+pub mod error;
 pub mod hardened_unpack;
 pub mod snapshot_config;
 pub mod snapshot_hash;
 mod snapshot_interval;
 mod snapshot_version;
 mod unarchive;
+
+pub type Result<T> = std::result::Result<T, error::SnapshotError>;
 
 pub use {
     archive_format::*, snapshot_interval::SnapshotInterval, snapshot_version::SnapshotVersion,

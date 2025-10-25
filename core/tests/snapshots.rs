@@ -2,7 +2,7 @@
 
 use {
     crate::snapshot_utils::create_tmp_accounts_dir_for_tests,
-    agave_snapshots::{snapshot_config::SnapshotConfig, SnapshotInterval},
+    agave_snapshots::{snapshot_config::SnapshotConfig, Result, SnapshotInterval},
     crossbeam_channel::unbounded,
     itertools::Itertools,
     log::{info, trace},
@@ -481,10 +481,7 @@ fn test_bank_forks_incremental_snapshot() {
     }
 }
 
-fn make_full_snapshot_archive(
-    bank: &Bank,
-    snapshot_config: &SnapshotConfig,
-) -> snapshot_utils::Result<()> {
+fn make_full_snapshot_archive(bank: &Bank, snapshot_config: &SnapshotConfig) -> Result<()> {
     info!(
         "Making full snapshot archive from bank at slot: {}",
         bank.slot(),
@@ -504,7 +501,7 @@ fn make_incremental_snapshot_archive(
     bank: &Bank,
     incremental_snapshot_base_slot: Slot,
     snapshot_config: &SnapshotConfig,
-) -> snapshot_utils::Result<()> {
+) -> Result<()> {
     info!(
         "Making incremental snapshot archive from bank at slot: {}, and base slot: {}",
         bank.slot(),
@@ -527,7 +524,7 @@ fn restore_from_snapshots_and_check_banks_are_equal(
     snapshot_config: &SnapshotConfig,
     accounts_dir: PathBuf,
     genesis_config: &GenesisConfig,
-) -> snapshot_utils::Result<()> {
+) -> Result<()> {
     let (deserialized_bank, ..) = snapshot_bank_utils::bank_from_latest_snapshot_archives(
         &snapshot_config.bank_snapshots_dir,
         &snapshot_config.full_snapshot_archives_dir,
