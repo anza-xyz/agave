@@ -1,11 +1,13 @@
 use {
     crate::{event_handler::PendingBlocks, voting_utils::VotingContext, votor::SharedContext},
     agave_votor_messages::consensus_message::Block,
-    crossbeam_channel::Sender,
+    crossbeam_channel::{SendError, Sender},
     log::{info, warn},
     solana_clock::Slot,
-    solana_hash::Hash,
-    solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
+    solana_ledger::{
+        blockstore::{Blockstore, BlockstoreError},
+        leader_schedule_cache::LeaderScheduleCache,
+    },
     solana_pubkey::Pubkey,
     solana_rpc::{
         optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSenderConfig},
@@ -20,6 +22,7 @@ use {
         collections::BTreeSet,
         sync::{Arc, RwLock},
     },
+    thiserror::Error,
 };
 
 #[allow(dead_code)]
@@ -30,6 +33,15 @@ pub(crate) struct RootContext {
     pub(crate) snapshot_controller: Option<Arc<SnapshotController>>,
     pub(crate) bank_notification_sender: Option<BankNotificationSenderConfig>,
     pub(crate) drop_bank_sender: Sender<Vec<BankWithScheduler>>,
+}
+
+#[derive(Debug, Error)]
+pub enum SetRootError {
+    #[error("Failed to record slot in blockstore: {0}")]
+    Blockstore(#[from] BlockstoreError),
+
+    #[error("Error sending bank nofification: {0}")]
+    SendNotification(#[from] SendError<()>),
 }
 
 /// Sets the root for the votor event handling loop. Handles rooting all things
@@ -43,12 +55,12 @@ pub(crate) fn set_root(
     pending_blocks: &mut PendingBlocks,
     finalized_blocks: &mut BTreeSet<Block>,
     received_shred: &mut BTreeSet<Slot>,
-) {
+) -> Result<(), SetRootError> {
     info!("{my_pubkey}: setting root {new_root}");
     vctx.vote_history.set_root(new_root);
-    *pending_blocks = pending_blocks.split_off(&new_root);
-    *finalized_blocks = finalized_blocks.split_off(&(new_root, Hash::default()));
-    *received_shred = received_shred.split_off(&new_root);
+    pending_blocks.retain(|pending_block, _| *pending_block >= new_root);
+    finalized_blocks.retain(|(slot, _)| *slot >= new_root);
+    received_shred.retain(|slot| *slot >= new_root);
 
     check_and_handle_new_root(
         new_root,
@@ -63,19 +75,12 @@ pub(crate) fn set_root(
         ctx.rpc_subscriptions.as_deref(),
         my_pubkey,
         |_| {},
-    );
+    )?;
 
     // Distinguish between duplicate versions of same slot
     let hash = ctx.bank_forks.read().unwrap().bank_hash(new_root).unwrap();
-    if let Err(e) =
-        ctx.blockstore
-            .insert_optimistic_slot(new_root, &hash, timestamp().try_into().unwrap())
-    {
-        error!(
-            "failed to record optimistic slot in blockstore: slot={}: {:?}",
-            new_root, &e
-        );
-    }
+    ctx.blockstore
+        .insert_optimistic_slot(new_root, &hash, timestamp().try_into().unwrap())?;
 
     // It is critical to send the OC notification in order to keep compatibility with
     // the RPC API. Additionally the PrioritizationFeeCache relies on this notification
@@ -86,13 +91,16 @@ pub(crate) fn set_root(
             .dependency_tracker
             .as_ref()
             .map(|s| s.get_current_declared_work());
-        if let Err(e) = config.sender.send((
-            BankNotification::OptimisticallyConfirmed(new_root),
-            dependency_work,
-        )) {
-            error!("Error sending bank nofification: {e}");
-        }
+        config
+            .sender
+            .send((
+                BankNotification::OptimisticallyConfirmed(new_root),
+                dependency_work,
+            ))
+            .map_err(|_| SendError(()))?;
     }
+
+    Ok(())
 }
 
 /// Sets the new root, additionally performs the callback after setting the bank forks root
@@ -119,7 +127,8 @@ pub fn check_and_handle_new_root<CB>(
     rpc_subscriptions: Option<&RpcSubscriptions>,
     my_pubkey: &Pubkey,
     callback: CB,
-) where
+) -> Result<(), SetRootError>
+where
     CB: FnOnce(&BankForks),
 {
     // get the root bank before squash
@@ -147,9 +156,8 @@ pub fn check_and_handle_new_root<CB>(
     // get shreds for repair on gossip before we update leader schedule, otherwise they may
     // get dropped.
     leader_schedule_cache.set_root(rooted_banks.last().unwrap());
-    blockstore
-        .set_roots(rooted_slots.iter())
-        .expect("Ledger set roots failed");
+    blockstore.set_roots(rooted_slots.iter())?;
+
     set_bank_forks_root(
         new_root,
         bank_forks,
@@ -184,6 +192,8 @@ pub fn check_and_handle_new_root<CB>(
         }
     }
     info!("{my_pubkey}: new root {new_root}");
+
+    Ok(())
 }
 
 /// Sets the bank forks root:

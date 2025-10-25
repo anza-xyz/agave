@@ -4139,6 +4139,7 @@ impl ReplayStage {
                 )
             },
         )
+        .expect("rooting must succeed")
     }
 
     // To avoid code duplication and keep compatibility with alpenglow, we add this
