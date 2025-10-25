@@ -46,8 +46,7 @@ use {
         commitment::CommitmentAggregationData,
         common::DELTA_STANDSTILL,
         consensus_metrics::{
-            ConsensusMetrics, ConsensusMetricsEventReceiver,
-            ConsensusMetricsEventSender,
+            ConsensusMetrics, ConsensusMetricsEventReceiver, ConsensusMetricsEventSender,
         },
         consensus_pool_service::{ConsensusPoolContext, ConsensusPoolService},
         event::{LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
