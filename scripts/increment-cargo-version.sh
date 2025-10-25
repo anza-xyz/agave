@@ -3,7 +3,7 @@ set -e
 
 usage() {
   cat <<EOF
-usage: $0 [major|minor|patch|-preXYZ]
+usage: $0 [major|minor|patch|prerelease|-preXYZ]
 
 Increments the Cargo.toml version.
 
@@ -58,21 +58,35 @@ if [[ -z $bump ]]; then
     bump=minor
   fi
 fi
-SPECIAL=""
 
 # Figure out what to increment
 case $bump in
+prerelease)
+  if [[ "$SPECIAL" == "-alpha" ]]; then
+    SPECIAL="-beta"
+  elif [[ "$SPECIAL" == "-beta" ]]; then
+    SPECIAL=""
+  else
+    echo "Error: Only '-alpha' and '-beta' prerelease can be bumped. Current prerelease value is: $SPECIAL"
+    exit 1
+  fi
+  ;;
 patch)
   PATCH=$((PATCH + 1))
+  if [[ "$SPECIAL" == "-alpha" ]]; then
+    SPECIAL="-beta"
+  fi
   ;;
 major)
   MAJOR=$((MAJOR+ 1))
   MINOR=0
   PATCH=0
+  SPECIAL="-alpha"
   ;;
 minor)
   MINOR=$((MINOR+ 1))
   PATCH=0
+  SPECIAL="-alpha"
   ;;
 dropspecial)
   ;;
