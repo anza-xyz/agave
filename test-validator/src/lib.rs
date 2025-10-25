@@ -684,20 +684,45 @@ impl TestValidatorGenesis {
         socket_addr_space: SocketAddrSpace,
         rpc_to_plugin_manager_receiver: Option<Receiver<GeyserPluginManagerRequest>>,
     ) -> Result<TestValidator, Box<dyn std::error::Error>> {
-        TestValidator::start(
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .unwrap();
+        runtime.block_on(self.start_async_with_mint_address_and_geyser_plugin_rpc(
+            mint_address,
+            socket_addr_space,
+            rpc_to_plugin_manager_receiver,
+        ))
+    }
+
+    pub async fn start_async_with_mint_address(
+        &self,
+        mint_address: Pubkey,
+        socket_addr_space: SocketAddrSpace,
+    ) -> Result<TestValidator, Box<dyn std::error::Error>> {
+        self.start_async_with_mint_address_and_geyser_plugin_rpc(
+            mint_address,
+            socket_addr_space,
+            None,
+        )
+        .await
+    }
+
+    pub async fn start_async_with_mint_address_and_geyser_plugin_rpc(
+        &self,
+        mint_address: Pubkey,
+        socket_addr_space: SocketAddrSpace,
+        rpc_to_plugin_manager_receiver: Option<Receiver<GeyserPluginManagerRequest>>,
+    ) -> Result<TestValidator, Box<dyn std::error::Error>> {
+        let test_validator = TestValidator::start(
             mint_address,
             self,
             socket_addr_space,
             rpc_to_plugin_manager_receiver,
-        )
-        .inspect(|test_validator| {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_io()
-                .enable_time()
-                .build()
-                .unwrap();
-            runtime.block_on(test_validator.wait_for_nonzero_fees());
-        })
+        )?;
+        test_validator.wait_for_nonzero_fees().await;
+        Ok(test_validator)
     }
 
     /// Start a test validator
@@ -784,6 +809,19 @@ pub struct TestValidator {
 }
 
 impl TestValidator {
+    fn configure_with_no_fees(faucet_addr: Option<SocketAddr>) -> TestValidatorGenesis {
+        let mut validator = TestValidatorGenesis::default();
+        validator
+            .fee_rate_governor(FeeRateGovernor::new(0, 0))
+            .rent(Rent {
+                lamports_per_byte_year: 1,
+                exemption_threshold: 1.0,
+                ..Rent::default()
+            })
+            .faucet_addr(faucet_addr);
+        validator
+    }
+
     /// Create and start a `TestValidator` with no transaction fees and minimal rent.
     /// Faucet optional.
     ///
@@ -793,15 +831,23 @@ impl TestValidator {
         faucet_addr: Option<SocketAddr>,
         socket_addr_space: SocketAddrSpace,
     ) -> Self {
-        TestValidatorGenesis::default()
-            .fee_rate_governor(FeeRateGovernor::new(0, 0))
-            .rent(Rent {
-                lamports_per_byte_year: 1,
-                exemption_threshold: 1.0,
-                ..Rent::default()
-            })
-            .faucet_addr(faucet_addr)
+        TestValidator::configure_with_no_fees(faucet_addr)
             .start_with_mint_address(mint_address, socket_addr_space)
+            .expect("validator start failed")
+    }
+
+    /// Create and start a `TestValidator` with no transaction fees and minimal rent.
+    /// Faucet optional.
+    ///
+    /// This function panics on initialization failure.
+    pub async fn async_with_no_fees(
+        mint_address: Pubkey,
+        faucet_addr: Option<SocketAddr>,
+        socket_addr_space: SocketAddrSpace,
+    ) -> Self {
+        TestValidator::configure_with_no_fees(faucet_addr)
+            .start_async_with_mint_address(mint_address, socket_addr_space)
+            .await
             .expect("validator start failed")
     }
 
@@ -824,6 +870,22 @@ impl TestValidator {
             .expect("validator start failed")
     }
 
+    fn configure_with_custom_fees(
+        target_lamports_per_signature: u64,
+        faucet_addr: Option<SocketAddr>,
+    ) -> TestValidatorGenesis {
+        let mut validator = TestValidatorGenesis::default();
+        validator
+            .fee_rate_governor(FeeRateGovernor::new(target_lamports_per_signature, 0))
+            .rent(Rent {
+                lamports_per_byte_year: 1,
+                exemption_threshold: 1.0,
+                ..Rent::default()
+            })
+            .faucet_addr(faucet_addr);
+        validator
+    }
+
     /// Create and start a `TestValidator` with custom transaction fees and minimal rent.
     /// Faucet optional.
     ///
@@ -834,15 +896,24 @@ impl TestValidator {
         faucet_addr: Option<SocketAddr>,
         socket_addr_space: SocketAddrSpace,
     ) -> Self {
-        TestValidatorGenesis::default()
-            .fee_rate_governor(FeeRateGovernor::new(target_lamports_per_signature, 0))
-            .rent(Rent {
-                lamports_per_byte_year: 1,
-                exemption_threshold: 1.0,
-                ..Rent::default()
-            })
-            .faucet_addr(faucet_addr)
+        TestValidator::configure_with_custom_fees(target_lamports_per_signature, faucet_addr)
             .start_with_mint_address(mint_address, socket_addr_space)
+            .expect("validator start failed")
+    }
+
+    /// Create and start a `TestValidator` with custom transaction fees and minimal rent.
+    /// Faucet optional.
+    ///
+    /// This function panics on initialization failure.
+    pub async fn async_with_custom_fees(
+        mint_address: Pubkey,
+        target_lamports_per_signature: u64,
+        faucet_addr: Option<SocketAddr>,
+        socket_addr_space: SocketAddrSpace,
+    ) -> Self {
+        TestValidator::configure_with_custom_fees(target_lamports_per_signature, faucet_addr)
+            .start_async_with_mint_address(mint_address, socket_addr_space)
+            .await
             .expect("validator start failed")
     }
 

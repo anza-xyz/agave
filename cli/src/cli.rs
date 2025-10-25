@@ -855,7 +855,7 @@ pub fn parse_command(
 
 pub type ProcessResult = Result<String, Box<dyn std::error::Error>>;
 
-pub fn process_command(config: &CliConfig) -> ProcessResult {
+pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
     if config.verbose && config.output_format == OutputFormat::DisplayVerbose {
         println_name_value("RPC URL:", &config.json_rpc_url);
         println_name_value("Default Signer Path:", &config.keypair_path);
@@ -1168,7 +1168,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
 
         // Deploy a custom program to the chain
         CliCommand::Program(program_subcommand) => {
-            process_program_subcommand(rpc_client, config, program_subcommand)
+            process_program_subcommand(rpc_client, config, program_subcommand).await
         }
 
         // Deploy a custom program v4 to the chain
@@ -2107,9 +2107,9 @@ mod tests {
         );
     }
 
-    #[test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     #[allow(clippy::cognitive_complexity)]
-    fn test_cli_process_command() {
+    async fn test_cli_process_command() {
         // Success cases
         let mut config = CliConfig {
             rpc_client: Some(Arc::new(RpcClient::new_mock("succeeds".to_string()))),
@@ -2121,19 +2121,19 @@ mod tests {
         let pubkey = keypair.pubkey().to_string();
         config.signers = vec![&keypair];
         config.command = CliCommand::Address;
-        assert_eq!(process_command(&config).unwrap(), pubkey);
+        assert_eq!(process_command(&config).await.unwrap(), pubkey);
 
         config.command = CliCommand::Balance {
             pubkey: None,
             use_lamports_unit: true,
         };
-        assert_eq!(process_command(&config).unwrap(), "50 lamports");
+        assert_eq!(process_command(&config).await.unwrap(), "50 lamports");
 
         config.command = CliCommand::Balance {
             pubkey: None,
             use_lamports_unit: false,
         };
-        assert_eq!(process_command(&config).unwrap(), "0.00000005 SOL");
+        assert_eq!(process_command(&config).await.unwrap(), "0.00000005 SOL");
 
         let good_signature = bs58::decode(SIGNATURE)
             .into_vec()
@@ -2142,7 +2142,7 @@ mod tests {
             .unwrap();
         config.command = CliCommand::Confirm(good_signature);
         assert_eq!(
-            process_command(&config).unwrap(),
+            process_command(&config).await.unwrap(),
             format!("{:?}", TransactionConfirmationStatus::Finalized)
         );
 
@@ -2186,7 +2186,7 @@ mod tests {
             compute_unit_price: None,
         };
         config.signers = vec![&keypair, &bob_keypair, &identity_keypair];
-        let result = process_command(&config);
+        let result = process_command(&config).await;
         assert!(result.is_ok());
 
         let vote_account_info_response = json!(Response {
@@ -2228,7 +2228,7 @@ mod tests {
             new_authorized: None,
             compute_unit_price: None,
         };
-        let result = process_command(&vote_config);
+        let result = process_command(&vote_config).await;
         assert!(result.is_ok());
 
         let new_identity_keypair = Keypair::new();
@@ -2246,7 +2246,7 @@ mod tests {
             fee_payer: 0,
             compute_unit_price: None,
         };
-        let result = process_command(&config);
+        let result = process_command(&config).await;
         assert!(result.is_ok());
 
         let bob_keypair = Keypair::new();
@@ -2295,7 +2295,7 @@ mod tests {
             compute_unit_price: None,
         };
         config.signers = vec![&keypair, &bob_keypair];
-        let result = process_command(&config);
+        let result = process_command(&config).await;
         assert!(result.is_ok());
 
         let stake_account_pubkey = solana_pubkey::new_rand();
@@ -2317,7 +2317,7 @@ mod tests {
             compute_unit_price: None,
         };
         config.signers = vec![&keypair];
-        let result = process_command(&config);
+        let result = process_command(&config).await;
         assert!(result.is_ok());
 
         let stake_account_pubkey = solana_pubkey::new_rand();
@@ -2335,7 +2335,7 @@ mod tests {
             fee_payer: 0,
             compute_unit_price: None,
         };
-        let result = process_command(&config);
+        let result = process_command(&config).await;
         assert!(result.is_ok());
 
         let stake_account_pubkey = solana_pubkey::new_rand();
@@ -2357,7 +2357,7 @@ mod tests {
             rent_exempt_reserve: None,
         };
         config.signers = vec![&keypair, &split_stake_account];
-        let result = process_command(&config);
+        let result = process_command(&config).await;
         assert!(result.is_ok());
 
         let stake_account_pubkey = solana_pubkey::new_rand();
@@ -2377,14 +2377,14 @@ mod tests {
             compute_unit_price: None,
         };
         config.signers = vec![&keypair, &merge_stake_account];
-        let result = process_command(&config);
+        let result = process_command(&config).await;
         assert!(result.is_ok());
 
         config.command = CliCommand::GetSlot;
-        assert_eq!(process_command(&config).unwrap(), "0");
+        assert_eq!(process_command(&config).await.unwrap(), "0");
 
         config.command = CliCommand::GetTransactionCount;
-        assert_eq!(process_command(&config).unwrap(), "1234");
+        assert_eq!(process_command(&config).await.unwrap(), "1234");
 
         // CreateAddressWithSeed
         let from_pubkey = solana_pubkey::new_rand();
@@ -2394,7 +2394,7 @@ mod tests {
             seed: "seed".to_string(),
             program_id: stake::id(),
         };
-        let address = process_command(&config);
+        let address = process_command(&config).await;
         let expected_address =
             Pubkey::create_with_seed(&from_pubkey, "seed", &stake::id()).unwrap();
         assert_eq!(address.unwrap(), expected_address.to_string());
@@ -2406,7 +2406,7 @@ mod tests {
             pubkey: Some(to),
             lamports: 50,
         };
-        assert!(process_command(&config).is_ok());
+        assert!(process_command(&config).await.is_ok());
 
         // sig_not_found case
         config.rpc_client = Some(Arc::new(RpcClient::new_mock("sig_not_found".to_string())));
@@ -2416,7 +2416,7 @@ mod tests {
             .unwrap()
             .unwrap();
         config.command = CliCommand::Confirm(missing_signature);
-        assert_eq!(process_command(&config).unwrap(), "Not found");
+        assert_eq!(process_command(&config).await.unwrap(), "Not found");
 
         // Tx error case
         config.rpc_client = Some(Arc::new(RpcClient::new_mock("account_in_use".to_string())));
@@ -2427,7 +2427,7 @@ mod tests {
             .unwrap();
         config.command = CliCommand::Confirm(any_signature);
         assert_eq!(
-            process_command(&config).unwrap(),
+            process_command(&config).await.unwrap(),
             format!("Transaction failed: {}", TransactionError::AccountInUse)
         );
 
@@ -2438,13 +2438,13 @@ mod tests {
             pubkey: None,
             lamports: 50,
         };
-        assert!(process_command(&config).is_err());
+        assert!(process_command(&config).await.is_err());
 
         config.command = CliCommand::Balance {
             pubkey: None,
             use_lamports_unit: false,
         };
-        assert!(process_command(&config).is_err());
+        assert!(process_command(&config).await.is_err());
 
         let bob_keypair = Keypair::new();
         let identity_keypair = Keypair::new();
@@ -2465,7 +2465,7 @@ mod tests {
             compute_unit_price: None,
         };
         config.signers = vec![&keypair, &bob_keypair, &identity_keypair];
-        assert!(process_command(&config).is_err());
+        assert!(process_command(&config).await.is_err());
 
         config.command = CliCommand::VoteAuthorize {
             vote_account_pubkey: bob_pubkey,
@@ -2482,7 +2482,7 @@ mod tests {
             new_authorized: None,
             compute_unit_price: None,
         };
-        assert!(process_command(&config).is_err());
+        assert!(process_command(&config).await.is_err());
 
         config.command = CliCommand::VoteUpdateValidator {
             vote_account_pubkey: bob_pubkey,
@@ -2497,20 +2497,20 @@ mod tests {
             fee_payer: 0,
             compute_unit_price: None,
         };
-        assert!(process_command(&config).is_err());
+        assert!(process_command(&config).await.is_err());
 
         config.command = CliCommand::GetSlot;
-        assert!(process_command(&config).is_err());
+        assert!(process_command(&config).await.is_err());
 
         config.command = CliCommand::GetTransactionCount;
-        assert!(process_command(&config).is_err());
+        assert!(process_command(&config).await.is_err());
 
         let message = OffchainMessage::new(0, b"Test Message").unwrap();
         config.command = CliCommand::SignOffchainMessage {
             message: message.clone(),
         };
         config.signers = vec![&keypair];
-        let result = process_command(&config);
+        let result = process_command(&config).await;
         assert!(result.is_ok());
 
         config.command = CliCommand::VerifyOffchainSignature {
@@ -2519,7 +2519,7 @@ mod tests {
             message,
         };
         config.signers = vec![&keypair];
-        let result = process_command(&config);
+        let result = process_command(&config).await;
         assert!(result.is_ok());
     }
 

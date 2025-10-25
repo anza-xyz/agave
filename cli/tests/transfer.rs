@@ -26,21 +26,23 @@ use {
     test_case::test_case,
 };
 
+#[tokio::test]
 #[test_case(true; "Skip Preflight")]
 #[test_case(false; "Don`t skip Preflight")]
-fn test_transfer(skip_preflight: bool) {
+async fn test_transfer(skip_preflight: bool) {
     solana_logger::setup();
     let fee_one_sig = FeeStructure::default().get_max_fee(1, 0);
     let fee_two_sig = FeeStructure::default().get_max_fee(2, 0);
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair);
-    let test_validator = TestValidator::with_custom_fees(
+    let test_validator = TestValidator::async_with_custom_fees(
         mint_pubkey,
         fee_one_sig,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,
-    );
+    )
+    .await;
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -81,7 +83,7 @@ fn test_transfer(skip_preflight: bool) {
         derived_address_program_id: None,
         compute_unit_price: None,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
     check_balance!(
         4 * LAMPORTS_PER_SOL - fee_one_sig,
         &rpc_client,
@@ -107,7 +109,7 @@ fn test_transfer(skip_preflight: bool) {
         derived_address_program_id: None,
         compute_unit_price: None,
     };
-    assert!(process_command(&config).is_err());
+    assert!(process_command(&config).await.is_err());
     check_balance!(
         4 * LAMPORTS_PER_SOL - fee_one_sig,
         &rpc_client,
@@ -120,7 +122,7 @@ fn test_transfer(skip_preflight: bool) {
     offline.signers = vec![&default_offline_signer];
     // Verify we cannot contact the cluster
     offline.command = CliCommand::ClusterVersion;
-    process_command(&offline).unwrap_err();
+    process_command(&offline).await.unwrap_err();
 
     let offline_pubkey = offline.signers[0].pubkey();
     request_and_confirm_airdrop(&rpc_client, &offline, &offline_pubkey, LAMPORTS_PER_SOL).unwrap();
@@ -146,7 +148,7 @@ fn test_transfer(skip_preflight: bool) {
         compute_unit_price: None,
     };
     offline.output_format = OutputFormat::JsonCompact;
-    let sign_only_reply = process_command(&offline).unwrap();
+    let sign_only_reply = process_command(&offline).await.unwrap();
     let sign_only = parse_sign_only_reply_string(&sign_only_reply);
     assert!(sign_only.has_all_signers());
     let offline_presigner = sign_only.presigner_of(&offline_pubkey).unwrap();
@@ -168,7 +170,7 @@ fn test_transfer(skip_preflight: bool) {
         derived_address_program_id: None,
         compute_unit_price: None,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
     check_balance!(
         LAMPORTS_PER_SOL / 2 - fee_one_sig,
         &rpc_client,
@@ -190,7 +192,7 @@ fn test_transfer(skip_preflight: bool) {
         amount: SpendAmount::Some(minimum_nonce_balance),
         compute_unit_price: None,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
     check_balance!(
         4 * LAMPORTS_PER_SOL - fee_one_sig - fee_two_sig - minimum_nonce_balance,
         &rpc_client,
@@ -229,7 +231,7 @@ fn test_transfer(skip_preflight: bool) {
         derived_address_program_id: None,
         compute_unit_price: None,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
     check_balance!(
         3 * LAMPORTS_PER_SOL - 2 * fee_one_sig - fee_two_sig - minimum_nonce_balance,
         &rpc_client,
@@ -255,7 +257,7 @@ fn test_transfer(skip_preflight: bool) {
         new_authority: offline_pubkey,
         compute_unit_price: None,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
     check_balance!(
         3 * LAMPORTS_PER_SOL - 3 * fee_one_sig - fee_two_sig - minimum_nonce_balance,
         &rpc_client,
@@ -291,7 +293,7 @@ fn test_transfer(skip_preflight: bool) {
         derived_address_program_id: None,
         compute_unit_price: None,
     };
-    let sign_only_reply = process_command(&offline).unwrap();
+    let sign_only_reply = process_command(&offline).await.unwrap();
     let sign_only = parse_sign_only_reply_string(&sign_only_reply);
     assert!(sign_only.has_all_signers());
     let offline_presigner = sign_only.presigner_of(&offline_pubkey).unwrap();
@@ -316,7 +318,7 @@ fn test_transfer(skip_preflight: bool) {
         derived_address_program_id: None,
         compute_unit_price: None,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
     check_balance!(
         LAMPORTS_PER_SOL / 10 - 2 * fee_one_sig,
         &rpc_client,
@@ -325,20 +327,21 @@ fn test_transfer(skip_preflight: bool) {
     check_balance!(2_900_000_000, &rpc_client, &recipient_pubkey);
 }
 
-#[test]
-fn test_transfer_multisession_signing() {
+#[tokio::test]
+async fn test_transfer_multisession_signing() {
     solana_logger::setup();
     let fee_one_sig = FeeStructure::default().get_max_fee(1, 0);
     let fee_two_sig = FeeStructure::default().get_max_fee(2, 0);
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair);
-    let test_validator = TestValidator::with_custom_fees(
+    let test_validator = TestValidator::async_with_custom_fees(
         mint_pubkey,
         fee_one_sig,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,
-    );
+    )
+    .await;
 
     let to_pubkey = Pubkey::from([1u8; 32]);
     let offline_from_signer = keypair_from_seed(&[2u8; 32]).unwrap();
@@ -384,7 +387,7 @@ fn test_transfer_multisession_signing() {
     fee_payer_config.signers = vec![&offline_fee_payer_signer, &from_null_signer];
     // Verify we cannot contact the cluster
     fee_payer_config.command = CliCommand::ClusterVersion;
-    process_command(&fee_payer_config).unwrap_err();
+    process_command(&fee_payer_config).await.unwrap_err();
     fee_payer_config.command = CliCommand::Transfer {
         amount: SpendAmount::Some(42 * LAMPORTS_PER_SOL),
         to: to_pubkey,
@@ -403,7 +406,7 @@ fn test_transfer_multisession_signing() {
         compute_unit_price: None,
     };
     fee_payer_config.output_format = OutputFormat::JsonCompact;
-    let sign_only_reply = process_command(&fee_payer_config).unwrap();
+    let sign_only_reply = process_command(&fee_payer_config).await.unwrap();
     let sign_only = parse_sign_only_reply_string(&sign_only_reply);
     assert!(!sign_only.has_all_signers());
     let fee_payer_presigner = sign_only
@@ -416,7 +419,7 @@ fn test_transfer_multisession_signing() {
     from_config.signers = vec![&fee_payer_presigner, &offline_from_signer];
     // Verify we cannot contact the cluster
     from_config.command = CliCommand::ClusterVersion;
-    process_command(&from_config).unwrap_err();
+    process_command(&from_config).await.unwrap_err();
     from_config.command = CliCommand::Transfer {
         amount: SpendAmount::Some(42 * LAMPORTS_PER_SOL),
         to: to_pubkey,
@@ -435,7 +438,7 @@ fn test_transfer_multisession_signing() {
         compute_unit_price: None,
     };
     from_config.output_format = OutputFormat::JsonCompact;
-    let sign_only_reply = process_command(&from_config).unwrap();
+    let sign_only_reply = process_command(&from_config).await.unwrap();
     let sign_only = parse_sign_only_reply_string(&sign_only_reply);
     assert!(sign_only.has_all_signers());
     let from_presigner = sign_only
@@ -463,7 +466,7 @@ fn test_transfer_multisession_signing() {
         derived_address_program_id: None,
         compute_unit_price: None,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     check_balance!(LAMPORTS_PER_SOL, &rpc_client, &offline_from_signer.pubkey(),);
     check_balance!(
@@ -474,20 +477,22 @@ fn test_transfer_multisession_signing() {
     check_balance!(42 * LAMPORTS_PER_SOL, &rpc_client, &to_pubkey);
 }
 
+#[tokio::test]
 #[test_case(None; "default")]
 #[test_case(Some(100_000); "with_compute_unit_price")]
-fn test_transfer_all(compute_unit_price: Option<u64>) {
+async fn test_transfer_all(compute_unit_price: Option<u64>) {
     solana_logger::setup();
     let lamports_per_signature = FeeStructure::default().get_max_fee(1, 0);
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair);
-    let test_validator = TestValidator::with_custom_fees(
+    let test_validator = TestValidator::async_with_custom_fees(
         mint_pubkey,
         lamports_per_signature,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,
-    );
+    )
+    .await;
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -548,23 +553,24 @@ fn test_transfer_all(compute_unit_price: Option<u64>) {
         derived_address_program_id: None,
         compute_unit_price,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
     check_balance!(0, &rpc_client, &sender_pubkey);
     check_balance!(500_000 - fee, &rpc_client, &recipient_pubkey);
 }
 
-#[test]
-fn test_transfer_unfunded_recipient() {
+#[tokio::test]
+async fn test_transfer_unfunded_recipient() {
     solana_logger::setup();
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair);
-    let test_validator = TestValidator::with_custom_fees(
+    let test_validator = TestValidator::async_with_custom_fees(
         mint_pubkey,
         1,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,
-    );
+    )
+    .await;
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -605,22 +611,23 @@ fn test_transfer_unfunded_recipient() {
     };
 
     // Expect failure due to unfunded recipient and the lack of the `allow_unfunded_recipient` flag
-    process_command(&config).unwrap_err();
+    process_command(&config).await.unwrap_err();
 }
 
-#[test]
-fn test_transfer_with_seed() {
+#[tokio::test]
+async fn test_transfer_with_seed() {
     solana_logger::setup();
     let fee = FeeStructure::default().get_max_fee(1, 0);
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair);
-    let test_validator = TestValidator::with_custom_fees(
+    let test_validator = TestValidator::async_with_custom_fees(
         mint_pubkey,
         fee,
         Some(faucet_addr),
         SocketAddrSpace::Unspecified,
-    );
+    )
+    .await;
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -669,7 +676,7 @@ fn test_transfer_with_seed() {
         derived_address_program_id: Some(derived_address_program_id),
         compute_unit_price: None,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
     check_balance!(LAMPORTS_PER_SOL - fee, &rpc_client, &sender_pubkey);
     check_balance!(5 * LAMPORTS_PER_SOL, &rpc_client, &recipient_pubkey);
     check_balance!(0, &rpc_client, &derived_address);

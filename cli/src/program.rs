@@ -1068,9 +1068,9 @@ pub fn parse_program_subcommand(
     Ok(response)
 }
 
-pub fn process_program_subcommand(
+pub async fn process_program_subcommand(
     rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     program_subcommand: &ProgramCliCommand,
 ) -> ProcessResult {
     match program_subcommand {
@@ -1090,25 +1090,28 @@ pub fn process_program_subcommand(
             auto_extend,
             use_rpc,
             skip_feature_verification,
-        } => process_program_deploy(
-            rpc_client,
-            config,
-            program_location,
-            *fee_payer_signer_index,
-            *program_signer_index,
-            *program_pubkey,
-            *buffer_signer_index,
-            *buffer_pubkey,
-            *upgrade_authority_signer_index,
-            *is_final,
-            *max_len,
-            *skip_fee_check,
-            *compute_unit_price,
-            *max_sign_attempts,
-            *auto_extend,
-            *use_rpc,
-            *skip_feature_verification,
-        ),
+        } => {
+            process_program_deploy(
+                rpc_client,
+                config,
+                program_location,
+                *fee_payer_signer_index,
+                *program_signer_index,
+                *program_pubkey,
+                *buffer_signer_index,
+                *buffer_pubkey,
+                *upgrade_authority_signer_index,
+                *is_final,
+                *max_len,
+                *skip_fee_check,
+                *compute_unit_price,
+                *max_sign_attempts,
+                *auto_extend,
+                *use_rpc,
+                *skip_feature_verification,
+            )
+            .await
+        }
         ProgramCliCommand::Upgrade {
             fee_payer_signer_index,
             program_pubkey,
@@ -1142,21 +1145,24 @@ pub fn process_program_subcommand(
             max_sign_attempts,
             use_rpc,
             skip_feature_verification,
-        } => process_write_buffer(
-            rpc_client,
-            config,
-            program_location,
-            *fee_payer_signer_index,
-            *buffer_signer_index,
-            *buffer_pubkey,
-            *buffer_authority_signer_index,
-            *max_len,
-            *skip_fee_check,
-            *compute_unit_price,
-            *max_sign_attempts,
-            *use_rpc,
-            *skip_feature_verification,
-        ),
+        } => {
+            process_write_buffer(
+                rpc_client,
+                config,
+                program_location,
+                *fee_payer_signer_index,
+                *buffer_signer_index,
+                *buffer_pubkey,
+                *buffer_authority_signer_index,
+                *max_len,
+                *skip_fee_check,
+                *compute_unit_price,
+                *max_sign_attempts,
+                *use_rpc,
+                *skip_feature_verification,
+            )
+            .await
+        }
         ProgramCliCommand::SetBufferAuthority {
             buffer_pubkey,
             buffer_authority_index,
@@ -1291,9 +1297,9 @@ fn get_default_program_keypair(program_location: &Option<String>) -> Keypair {
 
 /// Deploy program using upgradeable loader. It also can process program upgrades
 #[allow(clippy::too_many_arguments)]
-fn process_program_deploy(
+async fn process_program_deploy(
     rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     program_location: &Option<String>,
     fee_payer_signer_index: SignerIndex,
     program_signer_index: Option<SignerIndex>,
@@ -1484,6 +1490,7 @@ fn process_program_deploy(
             max_sign_attempts,
             use_rpc,
         )
+        .await
     } else {
         do_process_program_upgrade(
             rpc_client.clone(),
@@ -1503,6 +1510,7 @@ fn process_program_deploy(
             auto_extend,
             use_rpc,
         )
+        .await
     };
     if result.is_ok() && is_final {
         process_set_authority(
@@ -1684,9 +1692,9 @@ fn process_program_upgrade(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn process_write_buffer(
+async fn process_write_buffer(
     rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     program_location: &str,
     fee_payer_signer_index: SignerIndex,
     buffer_signer_index: Option<SignerIndex>,
@@ -1756,7 +1764,8 @@ fn process_write_buffer(
         compute_unit_price,
         max_sign_attempts,
         use_rpc,
-    );
+    )
+    .await;
     if result.is_err() && buffer_signer_index.is_none() && buffer_signer.is_some() {
         report_ephemeral_mnemonic(words, mnemonic, &buffer_pubkey);
     }
@@ -2603,9 +2612,9 @@ pub fn calculate_max_chunk_size(baseline_msg: Message) -> usize {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn do_process_program_deploy(
+async fn do_process_program_deploy(
     rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     program_data: &[u8], // can be empty, hence we have program_len
     program_len: usize,
     program_data_max_len: usize,
@@ -2728,7 +2737,8 @@ fn do_process_program_deploy(
         max_sign_attempts,
         use_rpc,
         &compute_unit_limit,
-    )?;
+    )
+    .await?;
 
     let program_id = CliProgramId {
         program_id: program_signers[0].pubkey().to_string(),
@@ -2738,9 +2748,9 @@ fn do_process_program_deploy(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn do_process_write_buffer(
+async fn do_process_write_buffer(
     rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     program_data: &[u8], // can be empty, hence we have program_len
     program_len: usize,
     min_rent_exempt_program_data_balance: u64,
@@ -2837,7 +2847,8 @@ fn do_process_write_buffer(
         max_sign_attempts,
         use_rpc,
         &compute_unit_limit,
-    )?;
+    )
+    .await?;
 
     let buffer = CliProgramBuffer {
         buffer: buffer_pubkey.to_string(),
@@ -2846,9 +2857,9 @@ fn do_process_write_buffer(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn do_process_program_upgrade(
+async fn do_process_program_upgrade(
     rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     program_data: &[u8], // can be empty, hence we have program_len
     program_len: usize,
     min_rent_exempt_program_data_balance: u64,
@@ -2985,7 +2996,8 @@ fn do_process_program_upgrade(
         max_sign_attempts,
         use_rpc,
         &compute_unit_limit,
-    )?;
+    )
+    .await?;
 
     let program_id = CliProgramId {
         program_id: program_id.to_string(),
@@ -3135,9 +3147,9 @@ fn check_payer(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_deploy_messages(
+async fn send_deploy_messages(
     rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     initial_message: Option<Message>,
     mut write_messages: Vec<Message>,
     final_message: Option<Message>,
@@ -3240,12 +3252,15 @@ fn send_deploy_messages(
                         solana_client::tpu_client::TpuClientConfig::default(),
                         cache,
                     );
-                    let tpu_client = (!use_rpc).then(|| rpc_client
-                        .runtime()
-                        .block_on(tpu_client_fut)
-                        .expect("Should return a valid tpu client")
-                    );
-
+                    let tpu_client = if use_rpc {
+                        None
+                    } else {
+                        Some(
+                            tpu_client_fut
+                                .await
+                                .expect("Should return a valid tpu client"),
+                        )
+                    };
                     send_and_confirm_transactions_in_parallel_blocking_v2(
                         rpc_client.clone(),
                         tpu_client,
@@ -3257,7 +3272,7 @@ fn send_deploy_messages(
                             rpc_send_transaction_config: config.send_transaction_config,
                         },
                     )
-                },
+                }
             }
             .map_err(|err| format!("Data writes to account failed: {err}"))?
             .into_iter()
@@ -4530,8 +4545,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_cli_keypair_file() {
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_cli_keypair_file() {
         solana_logger::setup();
 
         let default_keypair = Keypair::new();
@@ -4574,7 +4589,7 @@ mod tests {
             ..CliConfig::default()
         };
 
-        let result = process_command(&config);
+        let result = process_command(&config).await;
         let json: Value = serde_json::from_str(&result.unwrap()).unwrap();
         let program_id = json
             .as_object()
