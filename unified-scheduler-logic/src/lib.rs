@@ -107,7 +107,7 @@
 use {
     crate::utils::{ShortCounter, Token, TokenCell},
     assert_matches::assert_matches,
-    solana_clock::Slot,
+    solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_transaction::sanitized::SanitizedTransaction,
@@ -453,8 +453,6 @@ const_assert_eq!(mem::size_of::<Task>(), 8);
 pub type BlockSize = usize;
 pub const NO_CONSUMED_BLOCK_SIZE: BlockSize = 0;
 
-pub const NO_LAST_RUNNABLE_SLOT: Slot = Slot::MAX;
-
 /// [`Token`] for [`UsageQueue`].
 type UsageQueueToken = Token<UsageQueueInner>;
 const_assert_eq!(mem::size_of::<UsageQueueToken>(), 0);
@@ -462,6 +460,19 @@ const_assert_eq!(mem::size_of::<UsageQueueToken>(), 0);
 /// [`Token`] for [task](Task)'s [internal mutable data](`TaskInner::blocked_usage_count`).
 type BlockedUsageCountToken = Token<ShortCounter>;
 const_assert_eq!(mem::size_of::<BlockedUsageCountToken>(), 0);
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct MaxAge {
+    pub sanitized_epoch: Epoch,
+    pub alt_invalidation_slot: Slot,
+}
+
+impl MaxAge {
+    pub const MAX: Self = Self {
+        sanitized_epoch: Epoch::MAX,
+        alt_invalidation_slot: Slot::MAX,
+    };
+}
 
 /// Internal scheduling data about a particular task.
 #[derive(Debug)]
@@ -479,7 +490,7 @@ pub struct TaskInner {
     /// before running.
     blocked_usage_count: TokenCell<ShortCounter>,
     consumed_block_size: BlockSize,
-    last_runnable_slot: Slot,
+    max_age: MaxAge,
 }
 
 impl TaskInner {
@@ -499,12 +510,8 @@ impl TaskInner {
         self.consumed_block_size
     }
 
-    pub fn last_runnable_slot(&self) -> Slot {
-        self.last_runnable_slot
-    }
-
-    pub fn is_runnable(&self, current_slot: Slot) -> bool {
-        current_slot <= self.last_runnable_slot
+    pub fn max_age(&self) -> &MaxAge {
+        &self.max_age
     }
 
     pub fn transaction(&self) -> &RuntimeTransaction<SanitizedTransaction> {
@@ -1266,7 +1273,7 @@ impl SchedulingStateMachine {
             transaction,
             task_id,
             NO_CONSUMED_BLOCK_SIZE,
-            NO_LAST_RUNNABLE_SLOT,
+            MaxAge::MAX,
             usage_queue_loader,
         )
     }
@@ -1275,14 +1282,14 @@ impl SchedulingStateMachine {
         transaction: RuntimeTransaction<SanitizedTransaction>,
         task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
-        last_runnable_slot: Slot,
+        max_age: MaxAge,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
         Self::do_create_task(
             transaction,
             task_id,
             consumed_block_size,
-            last_runnable_slot,
+            max_age,
             usage_queue_loader,
         )
     }
@@ -1291,7 +1298,7 @@ impl SchedulingStateMachine {
         transaction: RuntimeTransaction<SanitizedTransaction>,
         task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
-        last_runnable_slot: Slot,
+        max_age: MaxAge,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
         // It's crucial for tasks to be validated with
@@ -1348,7 +1355,7 @@ impl SchedulingStateMachine {
             lock_contexts,
             blocked_usage_count: TokenCell::new(ShortCounter::zero()),
             consumed_block_size,
-            last_runnable_slot,
+            max_age,
         })
     }
 

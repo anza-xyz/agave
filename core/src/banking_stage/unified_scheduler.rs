@@ -52,6 +52,7 @@ use {
         versioned::{sanitized::SanitizedVersionedTransaction, VersionedTransaction},
     },
     solana_transaction_error::AddressLoaderError,
+    solana_unified_scheduler_logic::MaxAge,
     solana_unified_scheduler_pool::{BankingStageHelper, DefaultSchedulerPool},
     std::{
         num::NonZeroUsize,
@@ -93,10 +94,6 @@ pub(crate) fn ensure_banking_stage_setup(
                 return;
             }
             let bank = sharable_banks.root();
-            let current_slot = bank.slot();
-            let last_slot_before_feature_activation =
-                bank.epoch_schedule().get_last_slot_in_epoch(bank.epoch());
-
             for batch in batches.iter() {
                 // over-provision nevertheless some of packets could be invalid.
                 let task_id_base = helper.generate_task_ids(batch.len());
@@ -115,10 +112,8 @@ pub(crate) fn ensure_banking_stage_setup(
 
                     // WARN: Ignoring deactivation slot here can lead to the production of invalid
                     // blocks. Currently, this code is not used in prod.
-                    let (loaded_addresses, alt_deactivation_slot) =
+                    let (loaded_addresses, deactivation_slot) =
                         resolve_addresses_with_deactivation(&tx, &bank).ok()?;
-                    let last_valid_slot_for_alt =
-                        estimate_last_valid_slot(current_slot.min(alt_deactivation_slot));
                     let tx = RuntimeTransaction::<SanitizedTransaction>::try_from(
                         tx,
                         SimpleAddressLoader::Enabled(loaded_addresses),
@@ -139,15 +134,17 @@ pub(crate) fn ensure_banking_stage_setup(
                     let (priority, _cost) =
                         calculate_priority_and_cost(&tx, &compute_budget_limits.into(), &bank);
                     let task_id = BankingStageHelper::new_task_id(task_id_base + i, priority);
-                    let consumed_block_size = packet.meta().size;
-                    let last_runnable_slot =
-                        last_slot_before_feature_activation.min(last_valid_slot_for_alt);
 
                     Some(helper.create_new_task(
                         tx,
                         task_id,
-                        consumed_block_size,
-                        last_runnable_slot,
+                        packet.meta().size,
+                        MaxAge {
+                            sanitized_epoch: bank.epoch(),
+                            alt_invalidation_slot: estimate_last_valid_slot(
+                                bank.slot().min(deactivation_slot),
+                            ),
+                        },
                     ))
                 });
 
