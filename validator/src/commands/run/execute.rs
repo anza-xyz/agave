@@ -223,17 +223,31 @@ pub fn execute(
         BindIpAddrs::new(parsed).map_err(|err| format!("invalid bind_addresses: {err}"))?
     };
 
-    if bind_addresses.len() > 1 && matches.is_present("use_connection_cache") {
-        Err(String::from(
-            "Connection cache can not be used in a multihoming context",
-        ))?;
-    }
-
-    if bind_addresses.len() > 1 && matches.is_present("advertised_ip") {
-        Err(String::from(
-            "--advertised-ip cannot be used in a multihoming context. In multihoming, the \
-             validator will advertise the first --bind-address as this node's public IP address.",
-        ))?;
+    if bind_addresses.len() > 1 {
+        for (flag, msg) in [
+            (
+                "use_connection_cache",
+                "Connection cache can not be used in a multihoming context",
+            ),
+            (
+                "advertised_ip",
+                "--advertised-ip cannot be used in a multihoming context. In multihoming, the \
+                 validator will advertise the first --bind-address as this node's public IP \
+                 address.",
+            ),
+            (
+                "tpu_vortexor_receiver_address",
+                "--tpu-vortexor-receiver-address can not be used in a multihoming context",
+            ),
+            (
+                "public_tpu_addr",
+                "--public-tpu-address can not be used in a multihoming context",
+            ),
+        ] {
+            if matches.is_present(flag) {
+                Err(String::from(msg))?;
+            }
+        }
     }
 
     let rpc_bind_address = if matches.is_present("rpc_bind_address") {
