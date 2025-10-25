@@ -5,7 +5,6 @@ use {
         ArgMatches, SubCommand,
     },
     rayon::prelude::*,
-    solana_account::ReadableAccount,
     solana_accounts_db::accounts_file::{AccountsFile, StorageAccess},
     solana_pubkey::Pubkey,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
@@ -138,23 +137,23 @@ fn do_inspect(file: impl AsRef<Path>, verbose: bool) -> Result<(), String> {
     let mut stored_accounts_size = Saturating(0);
     let mut lamports = Saturating(0);
     storage
-        .scan_accounts_stored_meta(|account| {
+        .scan_accounts_without_data(|offset, account| {
             if verbose {
                 println!("{account:?}");
             } else {
                 println!(
                     "{:#0offset_width$x}: {:44}, owner: {:44}, data size: {:data_size_width$}, \
                      lamports: {}",
-                    account.offset(),
+                    offset,
                     account.pubkey().to_string(),
-                    account.owner().to_string(),
-                    account.data_len(),
-                    account.lamports(),
+                    account.owner.to_string(),
+                    account.data_len,
+                    account.lamports,
                 );
             }
             num_accounts += 1;
-            stored_accounts_size += account.stored_size();
-            lamports += account.lamports();
+            stored_accounts_size += storage.calculate_stored_size(account.data_len);
+            lamports += account.lamports;
         })
         .map_err(|err| {
             format!(
@@ -223,7 +222,7 @@ fn do_search(
 
         let file_name = Path::new(file.file_name().expect("path is a file"));
         storage
-            .scan_accounts_stored_meta(|account| {
+            .scan_accounts_without_data(|offset, account| {
                 if addresses.contains(account.pubkey()) {
                     if verbose {
                         println!("storage: {}, {account:?}", file_name.display());
@@ -232,11 +231,11 @@ fn do_search(
                             "storage: {}, offset: {}, pubkey: {}, owner: {}, data size: {}, \
                              lamports: {}",
                             file_name.display(),
-                            account.offset(),
+                            offset,
                             account.pubkey(),
-                            account.owner(),
-                            account.data_len(),
-                            account.lamports(),
+                            account.owner,
+                            account.data_len,
+                            account.lamports,
                         );
                     }
                 }
