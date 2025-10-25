@@ -6187,11 +6187,12 @@ pub fn get_account_from_account_from_storage(
 fn populate_index(db: &AccountsDb, slots: Range<Slot>) {
     slots.into_iter().for_each(|slot| {
         if let Some(storage) = db.get_storage_for_slot(slot) {
+            let mut reader = append_vec::new_scan_accounts_reader();
             storage
                 .accounts
-                .scan_accounts_stored_meta(|account| {
+                .scan_accounts(&mut reader, |offset, account| {
                     let info = AccountInfo::new(
-                        StorageLocation::AppendVec(storage.id(), account.offset()),
+                        StorageLocation::AppendVec(storage.id(), offset),
                         account.is_zero_lamport(),
                     );
                     db.accounts_index.upsert(
