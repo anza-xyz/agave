@@ -370,8 +370,6 @@ impl<'a> CallerAccount<'a> {
                     return Err(Box::new(CpiError::InvalidPointer));
                 }
             }
-            let ref_to_len_in_vm =
-                translate_type_mut_for_cpi::<u64>(memory_mapping, vm_len_addr, false)?;
             let vm_data_addr = data.as_ptr() as u64;
             let serialized_data = CallerAccount::get_serialized_data(
                 memory_mapping,
@@ -380,6 +378,8 @@ impl<'a> CallerAccount<'a> {
                 stricter_abi_and_runtime_constraints,
                 account_data_direct_mapping,
             )?;
+            let ref_to_len_in_vm =
+                translate_type_mut_for_cpi::<u64>(memory_mapping, vm_len_addr, false)?;
             (serialized_data, vm_data_addr, ref_to_len_in_vm)
         };
 
