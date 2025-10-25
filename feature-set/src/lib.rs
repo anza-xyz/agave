@@ -169,6 +169,7 @@ impl FeatureSet {
             provide_instruction_data_offset_in_vm_r2: self
                 .is_active(&provide_instruction_data_offset_in_vm_r2::id()),
             vote_state_v4: self.is_active(&vote_state_v4::id()),
+            poseidon_enforce_padding: self.is_active(&poseidon_enforce_padding::id()),
         }
     }
 }
@@ -1167,6 +1168,10 @@ pub mod switch_to_chacha8_turbine {
     solana_pubkey::declare_id!("CHaChatUnR3s6cPyPMMGNJa3VdQQ8PNH2JqdD4LpCKnB");
 }
 
+pub mod poseidon_enforce_padding {
+    solana_pubkey::declare_id!("poUdAqRXXsNmfqAZ6UqpjbeYgwBygbfQLEvWSqVhSnb");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2097,6 +2102,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             switch_to_chacha8_turbine::id(),
             "SIMD-0332: Reduce ChaCha rounds for Turbine from 20 to 8",
+        ),
+        (
+            poseidon_enforce_padding::id(),
+            "Enforce padding in Poseidon hash inputs",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

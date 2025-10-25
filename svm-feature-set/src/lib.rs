@@ -48,6 +48,7 @@ pub struct SVMFeatureSet {
     pub raise_cpi_nesting_limit_to_8: bool,
     pub provide_instruction_data_offset_in_vm_r2: bool,
     pub vote_state_v4: bool,
+    pub poseidon_enforce_padding: bool,
 }
 
 impl SVMFeatureSet {
@@ -92,6 +93,7 @@ impl SVMFeatureSet {
             raise_cpi_nesting_limit_to_8: true,
             provide_instruction_data_offset_in_vm_r2: true,
             vote_state_v4: true,
+            poseidon_enforce_padding: true,
         }
     }
 }
