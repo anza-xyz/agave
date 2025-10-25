@@ -1171,6 +1171,10 @@ pub mod increase_cpi_account_info_limit {
     solana_pubkey::declare_id!("7wM2pdjwmSXviEdsorpcBY3T4YWUPQXDMepZudub7nGQ"); // Placeholder ID HAVE TO CHANGE BEFORE USE
 }
 
+pub mod deprecate_rent_exemption_threshold {
+    solana_pubkey::declare_id!("rent6iVy6PDoViPBeJ6k5EJQrkj62h7DPyLbWGHwjrC");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2105,6 +2109,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             increase_cpi_account_info_limit::id(),
             "SIMD-0339: increase CPI info account limit",
+        ),
+        (
+            deprecate_rent_exemption_threshold::id(),
+            "SIMD-0194: Deprecate rent exemption threshold",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

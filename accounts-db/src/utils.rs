@@ -2,6 +2,7 @@
 use {crate::io_uring::dir_remover::RingDirRemover, agave_io_uring::io_uring_supported};
 use {
     log::*,
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_measure::measure_time,
     std::{
         collections::HashSet,
@@ -212,6 +213,18 @@ pub fn create_and_canonicalize_directories(
 pub fn create_and_canonicalize_directory(directory: impl AsRef<Path>) -> io::Result<PathBuf> {
     fs::create_dir_all(&directory)?;
     fs::canonicalize(directory)
+}
+
+/// Creates a new AccountSharedData structure for anything that implements ReadableAccount.
+/// This function implies data copies.
+pub fn create_account_shared_data(account: &impl ReadableAccount) -> AccountSharedData {
+    AccountSharedData::create(
+        account.lamports(),
+        account.data().to_vec(),
+        *account.owner(),
+        account.executable(),
+        account.rent_epoch(),
+    )
 }
 
 #[cfg(test)]

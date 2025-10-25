@@ -6,6 +6,7 @@
 use {
     crate::fixture::{instr_context::InstrContext, instr_effects::InstrEffects},
     agave_precompiles::{get_precompile, is_precompile},
+    agave_syscalls::create_program_runtime_environment_v1,
     solana_account::AccountSharedData,
     solana_compute_budget::compute_budget::{ComputeBudget, SVMTransactionExecutionCost},
     solana_hash::Hash,
@@ -14,7 +15,7 @@ use {
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::ProgramCacheForTxBatch,
+        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -26,7 +27,7 @@ use {
         transaction_accounts::KeyedAccountSharedData, IndexOfAccount, InstructionAccount,
         TransactionContext,
     },
-    std::collections::HashSet,
+    std::{collections::HashSet, sync::Arc},
 };
 
 /// Implement the callback trait so that the SVM API can be used to load
@@ -71,6 +72,7 @@ fn create_invoke_context_fields(
 ) -> Option<(
     TransactionContext,
     SysvarCache,
+    ProgramRuntimeEnvironments,
     ProgramCacheForTxBatch,
     Hash,
     u64,
@@ -111,11 +113,22 @@ fn create_invoke_context_fields(
         compute_budget.max_instruction_trace_length,
     );
 
+    let environments = ProgramRuntimeEnvironments {
+        program_runtime_v1: Arc::new(
+            create_program_runtime_environment_v1(
+                &input.feature_set.runtime_features(),
+                &compute_budget.to_budget(),
+                false, /* deployment */
+                false, /* debugging_features */
+            )
+            .unwrap(),
+        ),
+        ..ProgramRuntimeEnvironments::default()
+    };
+
     // Set up the program cache, which will include all builtins by default.
     let mut program_cache =
-        crate::program_cache::setup_program_cache(&input.feature_set, &compute_budget, clock.slot);
-
-    let environments = program_cache.environments.clone();
+        crate::program_cache::setup_program_cache(&input.feature_set, clock.slot);
 
     #[allow(deprecated)]
     let (blockhash, lamports_per_signature) = sysvar_cache
@@ -168,6 +181,7 @@ fn create_invoke_context_fields(
     Some((
         transaction_context,
         sysvar_cache,
+        environments,
         program_cache,
         blockhash,
         lamports_per_signature,
@@ -202,6 +216,7 @@ pub fn execute_instr(mut input: InstrContext) -> Option<InstrEffects> {
     let (
         mut transaction_context,
         sysvar_cache,
+        environments,
         mut program_cache,
         blockhash,
         lamports_per_signature,
@@ -219,6 +234,8 @@ pub fn execute_instr(mut input: InstrContext) -> Option<InstrEffects> {
             lamports_per_signature,
             &callback,
             &runtime_features,
+            &environments,
+            &environments,
             &sysvar_cache,
         );
 

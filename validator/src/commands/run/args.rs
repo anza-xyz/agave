@@ -26,9 +26,7 @@ use {
     solana_ledger::{blockstore_options::BlockstoreOptions, use_snapshot_archives_at_startup},
     solana_pubkey::Pubkey,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
-    solana_send_transaction_service::send_transaction_service::{
-        Config as SendTransactionServiceConfig, MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
-    },
+    solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
@@ -930,97 +928,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("rpc_send_transaction_retry_ms")
-            .long("rpc-send-retry-ms")
-            .value_name("MILLISECS")
-            .takes_value(true)
-            .validator(is_parsable::<u64>)
-            .default_value(&default_args.rpc_send_transaction_retry_ms)
-            .help("The rate at which transactions sent via rpc service are retried."),
-    )
-    .arg(
-        Arg::with_name("rpc_send_transaction_batch_ms")
-            .long("rpc-send-batch-ms")
-            .value_name("MILLISECS")
-            .hidden(hidden_unless_forced())
-            .takes_value(true)
-            .validator(|s| is_within_range(s, 1..=MAX_BATCH_SEND_RATE_MS))
-            .default_value(&default_args.rpc_send_transaction_batch_ms)
-            .help("The rate at which transactions sent via rpc service are sent in batch."),
-    )
-    .arg(
-        Arg::with_name("rpc_send_transaction_leader_forward_count")
-            .long("rpc-send-leader-count")
-            .value_name("NUMBER")
-            .takes_value(true)
-            .validator(is_parsable::<u64>)
-            .default_value(&default_args.rpc_send_transaction_leader_forward_count)
-            .help(
-                "The number of upcoming leaders to which to forward transactions sent via rpc \
-                 service.",
-            ),
-    )
-    .arg(
-        Arg::with_name("rpc_send_transaction_default_max_retries")
-            .long("rpc-send-default-max-retries")
-            .value_name("NUMBER")
-            .takes_value(true)
-            .validator(is_parsable::<usize>)
-            .help(
-                "The maximum number of transaction broadcast retries when unspecified by the \
-                 request, otherwise retried until expiration.",
-            ),
-    )
-    .arg(
-        Arg::with_name("rpc_send_transaction_service_max_retries")
-            .long("rpc-send-service-max-retries")
-            .value_name("NUMBER")
-            .takes_value(true)
-            .validator(is_parsable::<usize>)
-            .default_value(&default_args.rpc_send_transaction_service_max_retries)
-            .help(
-                "The maximum number of transaction broadcast retries, regardless of requested \
-                 value.",
-            ),
-    )
-    .arg(
-        Arg::with_name("rpc_send_transaction_batch_size")
-            .long("rpc-send-batch-size")
-            .value_name("NUMBER")
-            .hidden(hidden_unless_forced())
-            .takes_value(true)
-            .validator(|s| is_within_range(s, 1..=MAX_TRANSACTION_BATCH_SIZE))
-            .default_value(&default_args.rpc_send_transaction_batch_size)
-            .help("The size of transactions to be sent in batch."),
-    )
-    .arg(
-        Arg::with_name("rpc_send_transaction_retry_pool_max_size")
-            .long("rpc-send-transaction-retry-pool-max-size")
-            .value_name("NUMBER")
-            .takes_value(true)
-            .validator(is_parsable::<usize>)
-            .default_value(&default_args.rpc_send_transaction_retry_pool_max_size)
-            .help("The maximum size of transactions retry pool."),
-    )
-    .arg(
-        Arg::with_name("rpc_send_transaction_tpu_peer")
-            .long("rpc-send-transaction-tpu-peer")
-            .takes_value(true)
-            .number_of_values(1)
-            .multiple(true)
-            .value_name("HOST:PORT")
-            .validator(solana_net_utils::is_host_port)
-            .help("Peer(s) to broadcast transactions to instead of the current leader"),
-    )
-    .arg(
-        Arg::with_name("rpc_send_transaction_also_leader")
-            .long("rpc-send-transaction-also-leader")
-            .requires("rpc_send_transaction_tpu_peer")
-            .help(
-                "With `--rpc-send-transaction-tpu-peer HOST:PORT`, also send to the current leader",
-            ),
-    )
-    .arg(
         Arg::with_name("geyser_plugin_config")
             .long("geyser-plugin-config")
             .alias("accountsdb-plugin-config")
@@ -1475,6 +1382,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
     .args(&pub_sub_config::args())
     .args(&json_rpc_config::args(default_args))
     .args(&rpc_bigtable_config::args())
+    .args(&send_transaction_config::args())
 }
 
 fn validators_set(
