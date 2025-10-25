@@ -1104,10 +1104,12 @@ impl ReplayStage {
                                 ),
                             );
 
-                            if my_pubkey != cluster_info.id() {
-                                identity_keypair = cluster_info.keypair();
-                                let my_old_pubkey = my_pubkey;
-                                my_pubkey = identity_keypair.pubkey();
+                            let cluster_keypair = cluster_info.keypair();
+                            let cluster_pubkey = cluster_keypair.pubkey();
+                            if my_pubkey != cluster_pubkey {
+                                identity_keypair = cluster_keypair;
+                                let my_old_pubkey =
+                                    std::mem::replace(&mut my_pubkey, cluster_pubkey);
 
                                 // Load the new identity's tower
                                 tower = match Self::load_tower(
