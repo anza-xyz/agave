@@ -1058,7 +1058,14 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             } => {
                 search_for.retain(|(key, match_criteria)| {
                     if let Some(second_level) = entries.get(key) {
+                        let mut filter_by_deployment_slot = None;
                         for entry in second_level.iter().rev() {
+                            if filter_by_deployment_slot
+                                .map(|slot| slot != entry.deployment_slot)
+                                .unwrap_or(false)
+                            {
+                                continue;
+                            }
                             if entry.deployment_slot <= self.latest_root_slot
                                 || matches!(
                                     locked_fork_graph.relationship(
@@ -1070,10 +1077,15 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                             {
                                 let entry_to_return = if loaded_programs_for_tx_batch.slot
                                     >= entry.effective_slot
-                                    && Self::matches_environment(
+                                {
+                                    if !Self::matches_environment(
                                         entry,
                                         program_runtime_environments_for_execution,
                                     ) {
+                                        filter_by_deployment_slot = filter_by_deployment_slot
+                                            .or(Some(entry.deployment_slot));
+                                        continue;
+                                    }
                                     if !Self::matches_criteria(entry, match_criteria) {
                                         break;
                                     }
