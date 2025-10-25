@@ -3,6 +3,7 @@
 use {
     crate::{
         commitment::{update_commitment_cache, CommitmentType},
+        consensus_metrics::ConsensusMetricsEvent,
         event::{CompletedBlock, VotorEvent, VotorEventReceiver},
         root_utils::{self, RootContext},
         timer_manager::TimerManager,
@@ -30,7 +31,7 @@ use {
             Arc, Condvar, Mutex,
         },
         thread::{self, Builder, JoinHandle},
-        time::Duration,
+        time::{Duration, Instant},
     },
     thiserror::Error,
 };
@@ -213,18 +214,23 @@ impl EventHandler {
             // Block has completed replay
             VotorEvent::Block(CompletedBlock { slot, bank }) => {
                 debug_assert!(bank.is_frozen());
-                {
-                    let mut metrics_guard = vctx.consensus_metrics.write();
-                    match metrics_guard.record_block_hash_seen(*bank.collector_id(), slot) {
-                        Ok(()) => (),
-                        Err(err) => {
-                            error!(
-                                "{my_pubkey}: recording block on slot {slot} failed with {err:?}"
-                            );
-                        }
-                    }
-                    metrics_guard.maybe_new_epoch(bank.epoch());
+                let now = Instant::now();
+                let mut consensus_metrics_events =
+                    vec![ConsensusMetricsEvent::StartOfSlot { slot }];
+                if slot == first_of_consecutive_leader_slots(slot) {
+                    // all slots except the first in the window would typically start when the block is seen so the recording would essentially record 0.
+                    // hence we skip it.
+                    consensus_metrics_events.push(ConsensusMetricsEvent::BlockHashSeen {
+                        leader: *bank.collector_id(),
+                        slot,
+                    });
                 }
+                consensus_metrics_events.push(ConsensusMetricsEvent::MaybeNewEpoch {
+                    epoch: bank.epoch(),
+                });
+                vctx.consensus_metrics_sender
+                    .send((now, consensus_metrics_events))
+                    .map_err(|_| SendError(()))?;
                 let (block, parent_block) = Self::get_block_parent_block(&bank);
                 info!("{my_pubkey}: Block {block:?} parent {parent_block:?}");
                 if Self::try_notar(
@@ -280,6 +286,12 @@ impl EventHandler {
 
             // Received a parent ready notification for `slot`
             VotorEvent::ParentReady { slot, parent_block } => {
+                vctx.consensus_metrics_sender
+                    .send((
+                        Instant::now(),
+                        vec![ConsensusMetricsEvent::StartOfSlot { slot }],
+                    ))
+                    .map_err(|_| SendError(()))?;
                 Self::handle_parent_ready_event(
                     slot,
                     parent_block,
@@ -302,6 +314,16 @@ impl EventHandler {
             // Skip timer for the slot has fired
             VotorEvent::Timeout(slot) => {
                 info!("{my_pubkey}: Timeout {slot}");
+                if slot != last_of_consecutive_leader_slots(slot) {
+                    vctx.consensus_metrics_sender
+                        .send((
+                            Instant::now(),
+                            vec![ConsensusMetricsEvent::StartOfSlot {
+                                slot: slot.saturating_add(1),
+                            }],
+                        ))
+                        .map_err(|_| SendError(()))?;
+                }
                 if vctx.vote_history.voted(slot) {
                     return Ok(votes);
                 }
@@ -750,7 +772,7 @@ mod tests {
         super::*,
         crate::{
             commitment::CommitmentAggregationData,
-            consensus_metrics::ConsensusMetrics,
+            consensus_metrics::ConsensusMetricsEventReceiver,
             event::{LeaderWindowInfo, VotorEventSender},
             vote_history_storage::{
                 FileVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
@@ -812,6 +834,7 @@ mod tests {
         leader_window_notifier: Arc<LeaderWindowNotifier>,
         drop_bank_receiver: Receiver<Vec<BankWithScheduler>>,
         cluster_info: Arc<ClusterInfo>,
+        consensus_metrics_receiver: ConsensusMetricsEventReceiver,
     }
 
     impl EventHandlerTestContext {
@@ -823,11 +846,10 @@ mod tests {
             let exit = Arc::new(AtomicBool::new(false));
             let start = Arc::new((Mutex::new(true), Condvar::new()));
             let (event_sender, event_receiver) = unbounded();
-            let consensus_metrics = Arc::new(PlRwLock::new(ConsensusMetrics::new(0)));
+            let (consensus_metrics_sender, consensus_metrics_receiver) = unbounded();
             let timer_manager = Arc::new(PlRwLock::new(TimerManager::new(
                 event_sender.clone(),
                 exit.clone(),
-                consensus_metrics.clone(),
             )));
 
             // Create 10 node validatorvotekeypairs vec
@@ -887,7 +909,7 @@ mod tests {
                 derived_bls_keypairs: HashMap::new(),
                 has_new_vote_been_rooted: false,
                 own_vote_sender,
-                consensus_metrics,
+                consensus_metrics_sender,
             };
 
             let root_context = RootContext {
@@ -923,6 +945,7 @@ mod tests {
                 leader_window_notifier,
                 drop_bank_receiver,
                 cluster_info,
+                consensus_metrics_receiver,
             }
         }
 
@@ -1095,6 +1118,14 @@ mod tests {
             assert!(self.timer_manager.read().is_timeout_set(expected_slot));
         }
 
+        fn check_for_metrics_event(&self, expected: ConsensusMetricsEvent) {
+            let event = self
+                .consensus_metrics_receiver
+                .recv_timeout(TEST_SHORT_TIMEOUT)
+                .expect("Should receive metrics event");
+            assert!(event.1.contains(&expected));
+        }
+
         fn crate_vote_history_storage_and_switch_identity(
             &self,
             new_identity: &Keypair,
@@ -1147,6 +1178,8 @@ mod tests {
         let bank1 = test_context.create_block_and_send_block_event(slot, root_bank);
         test_context.wait_for_event_to_be_processed();
         let block_id_1 = bank1.block_id().unwrap();
+
+        test_context.check_for_metrics_event(ConsensusMetricsEvent::StartOfSlot { slot });
 
         // We should receive Notarize Vote for block 1
         test_context.check_for_vote(&Vote::new_notarization_vote(slot, block_id_1));
@@ -1609,6 +1642,7 @@ mod tests {
     #[test_case("bls_receiver")]
     #[test_case("commitment_receiver")]
     #[test_case("own_vote_receiver")]
+    #[test_case("consensus_metrics_receiver")]
     fn test_channel_disconnection(channel_name: &str) {
         solana_logger::setup();
         let mut test_context = EventHandlerTestContext::setup();
@@ -1627,6 +1661,11 @@ mod tests {
                 let own_vote_receiver = test_context.own_vote_receiver.clone();
                 test_context.own_vote_receiver = unbounded().1;
                 drop(own_vote_receiver);
+            }
+            "consensus_metrics_receiver" => {
+                let consensus_metrics_receiver = test_context.consensus_metrics_receiver.clone();
+                test_context.consensus_metrics_receiver = unbounded().1;
+                drop(consensus_metrics_receiver);
             }
             _ => panic!("Unknown channel name"),
         }
