@@ -6940,6 +6940,7 @@ name = "solana-gossip"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "arc-swap",
  "arrayvec",
  "assert_matches",
  "bincode",
