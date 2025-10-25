@@ -21,7 +21,7 @@ use {
 
 #[test]
 fn test_no_panic_banks_client() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
@@ -58,7 +58,7 @@ fn test_no_panic_banks_client() {
 
 #[test]
 fn test_no_panic_rpc_client() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let program_id = Pubkey::new_unique();
     let (test_validator, payer) = TestValidatorGenesis::default()

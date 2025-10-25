@@ -317,7 +317,7 @@ mod tests {
     };
 
     fn test_setup() -> (Keypair, Hash) {
-        solana_logger::setup();
+        agave_logger::setup();
         (Keypair::new(), Hash::new_unique())
     }
 

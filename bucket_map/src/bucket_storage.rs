@@ -628,7 +628,7 @@ mod test {
             count.clone(),
         )
         .is_none());
-        solana_logger::setup();
+        agave_logger::setup();
         for len in [0, 1, 47, 48, 49, 4097] {
             // create a zero len file. That will fail to load since it is too small.
             let path = tmpdir.path().join("small");

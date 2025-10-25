@@ -36,7 +36,7 @@ fn create_messages(from: Pubkey, to: Pubkey) -> (Vec<Message>, u64) {
 
 #[test]
 fn test_send_and_confirm_transactions_in_parallel_without_tpu_client() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let alice = Keypair::new();
     let test_validator =
@@ -93,7 +93,7 @@ fn test_send_and_confirm_transactions_in_parallel_without_tpu_client() {
 
 #[test]
 fn test_send_and_confirm_transactions_in_parallel_with_tpu_client() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let alice = Keypair::new();
     let test_validator =

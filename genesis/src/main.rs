@@ -878,7 +878,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         }
     }
 
-    solana_logger::setup();
+    agave_logger::setup();
     create_new_ledger(
         &ledger_path,
         &genesis_config,

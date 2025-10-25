@@ -1813,7 +1813,7 @@ mod test {
 
     #[test]
     fn test_generate_repairs_for_wen_restart() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
         let max_repairs = 3;

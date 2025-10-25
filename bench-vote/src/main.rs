@@ -184,7 +184,7 @@ fn main() -> Result<()> {
         )
         .get_matches();
 
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut num_sockets = 1usize;
     if let Some(n) = matches.value_of("num-recv-sockets") {

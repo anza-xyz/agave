@@ -155,7 +155,7 @@ fn retransmit_to(
 /// ring a -> b -> c -> d -> e -> a
 #[test]
 fn gossip_ring() {
-    solana_logger::setup();
+    agave_logger::setup();
     run_gossip_topo(40, |listen| {
         let num = listen.len();
         for n in 0..num {
@@ -173,7 +173,7 @@ fn gossip_ring() {
 #[test]
 #[ignore]
 fn gossip_ring_large() {
-    solana_logger::setup();
+    agave_logger::setup();
     run_gossip_topo(600, |listen| {
         let num = listen.len();
         for n in 0..num {
@@ -189,7 +189,7 @@ fn gossip_ring_large() {
 /// star a -> (b,c,d,e)
 #[test]
 fn gossip_star() {
-    solana_logger::setup();
+    agave_logger::setup();
     run_gossip_topo(10, |listen| {
         let num = listen.len();
         for n in 0..(num - 1) {
@@ -208,7 +208,7 @@ fn gossip_star() {
 /// rstar a <- (b,c,d,e)
 #[test]
 fn gossip_rstar() {
-    solana_logger::setup();
+    agave_logger::setup();
     run_gossip_topo(10, |listen| {
         let num = listen.len();
         let xd = {
@@ -227,7 +227,7 @@ fn gossip_rstar() {
 
 #[test]
 pub fn cluster_info_retransmit() {
-    solana_logger::setup();
+    agave_logger::setup();
     let exit = Arc::new(AtomicBool::new(false));
     trace!("c1:");
     let (c1, dr1, tn1) = test_node(exit.clone());
@@ -295,7 +295,7 @@ pub fn cluster_info_scale() {
             genesis_utils::{create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs},
         },
     };
-    solana_logger::setup();
+    agave_logger::setup();
     let exit = Arc::new(AtomicBool::new(false));
     let num_nodes: usize = std::env::var("NUM_NODES")
         .unwrap_or_else(|_| "10".to_string())

@@ -4990,7 +4990,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_dead_fork_invalid_slot_tick_count() {
-        solana_logger::setup();
+        agave_logger::setup();
         // Too many ticks per slot
         let res = check_dead_fork(|_keypair, bank| {
             let blockhash = bank.last_blockhash();
@@ -8199,7 +8199,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_replay_stage_last_vote_outside_slot_hashes() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ReplayBlockstoreComponents {
             cluster_info,
             poh_recorder,
@@ -8660,7 +8660,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_dumped_slot_not_causing_panic() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ReplayBlockstoreComponents {
             validator_node_to_vote_keys,
             leader_schedule_cache,
@@ -8956,7 +8956,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_tower_sync_from_bank_failed_switch() {
-        solana_logger::setup_with_default(
+        agave_logger::setup_with_default(
             "error,solana_core::replay_stage=info,solana_core::consensus=info",
         );
         /*
@@ -9037,7 +9037,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_tower_sync_from_bank_failed_lockout() {
-        solana_logger::setup_with_default(
+        agave_logger::setup_with_default(
             "error,solana_core::replay_stage=info,solana_core::consensus=info",
         );
         /*
@@ -9108,7 +9108,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_tower_adopt_from_bank_cache_only_computed() {
-        solana_logger::setup_with_default(
+        agave_logger::setup_with_default(
             "error,solana_core::replay_stage=info,solana_core::consensus=info",
         );
         /*
@@ -9241,7 +9241,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_initialize_progress_and_fork_choice_with_duplicates() {
-        solana_logger::setup();
+        agave_logger::setup();
         let GenesisConfigInfo {
             mut genesis_config, ..
         } = create_genesis_config(123);
@@ -9365,7 +9365,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_skip_leader_slot_for_existing_slot() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let ReplayBlockstoreComponents {
             blockstore,
@@ -9730,7 +9730,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_alpenglow_poh_migration_from_leader() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let ReplayBlockstoreComponents {
             blockstore,
@@ -9849,7 +9849,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_alpenglow_poh_migration_from_replay() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let ReplayBlockstoreComponents {
             blockstore,

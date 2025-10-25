@@ -29,7 +29,7 @@ use {
 #[test_case(true; "Skip Preflight")]
 #[test_case(false; "Don`t skip Preflight")]
 fn test_transfer(skip_preflight: bool) {
-    solana_logger::setup();
+    agave_logger::setup();
     let fee_one_sig = FeeStructure::default().get_max_fee(1, 0);
     let fee_two_sig = FeeStructure::default().get_max_fee(2, 0);
     let mint_keypair = Keypair::new();
@@ -327,7 +327,7 @@ fn test_transfer(skip_preflight: bool) {
 
 #[test]
 fn test_transfer_multisession_signing() {
-    solana_logger::setup();
+    agave_logger::setup();
     let fee_one_sig = FeeStructure::default().get_max_fee(1, 0);
     let fee_two_sig = FeeStructure::default().get_max_fee(2, 0);
     let mint_keypair = Keypair::new();
@@ -477,7 +477,7 @@ fn test_transfer_multisession_signing() {
 #[test_case(None; "default")]
 #[test_case(Some(100_000); "with_compute_unit_price")]
 fn test_transfer_all(compute_unit_price: Option<u64>) {
-    solana_logger::setup();
+    agave_logger::setup();
     let lamports_per_signature = FeeStructure::default().get_max_fee(1, 0);
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
@@ -555,7 +555,7 @@ fn test_transfer_all(compute_unit_price: Option<u64>) {
 
 #[test]
 fn test_transfer_unfunded_recipient() {
-    solana_logger::setup();
+    agave_logger::setup();
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair);
@@ -610,7 +610,7 @@ fn test_transfer_unfunded_recipient() {
 
 #[test]
 fn test_transfer_with_seed() {
-    solana_logger::setup();
+    agave_logger::setup();
     let fee = FeeStructure::default().get_max_fee(1, 0);
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();

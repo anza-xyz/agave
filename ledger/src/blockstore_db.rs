@@ -1335,7 +1335,7 @@ pub mod tests {
 
     #[test]
     fn test_open_unknown_columns() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path();
@@ -1375,7 +1375,7 @@ pub mod tests {
 
     #[test]
     fn test_remove_deprecated_progam_costs_column_compat() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         fn is_program_costs_column_present(path: &Path) -> bool {
             DB::list_cf(&Options::default(), path)

@@ -46,12 +46,12 @@ solana-transaction-error = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 assert_matches = { workspace = true }
 proptest = { workspace = true }
 solana-entry = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-keypair = { workspace = true }
-solana-logger = { workspace = true }
 solana-message = { workspace = true }
 solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true }

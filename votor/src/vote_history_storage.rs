@@ -176,7 +176,7 @@ mod test {
 
     #[test]
     fn test_file_vote_history_storage() {
-        solana_logger::setup();
+        agave_logger::setup();
         let tmp_dir = TempDir::new().unwrap();
         let storage = FileVoteHistoryStorage::new(tmp_dir.path().to_path_buf());
         let keypair = Keypair::new();

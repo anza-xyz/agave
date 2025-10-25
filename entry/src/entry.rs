@@ -1202,7 +1202,7 @@ mod tests {
 
     #[test]
     fn test_verify_slice1() {
-        solana_logger::setup();
+        agave_logger::setup();
         let thread_pool = thread_pool_for_tests();
 
         let zero = Hash::default();
@@ -1224,7 +1224,7 @@ mod tests {
 
     #[test]
     fn test_verify_slice_with_hashes1() {
-        solana_logger::setup();
+        agave_logger::setup();
         let thread_pool = thread_pool_for_tests();
 
         let zero = Hash::default();
@@ -1251,7 +1251,7 @@ mod tests {
 
     #[test]
     fn test_verify_slice_with_hashes_and_transactions() {
-        solana_logger::setup();
+        agave_logger::setup();
         let thread_pool = thread_pool_for_tests();
 
         let zero = Hash::default();
@@ -1404,7 +1404,7 @@ mod tests {
 
     #[test]
     fn test_poh_verify_fuzz() {
-        solana_logger::setup();
+        agave_logger::setup();
         for _ in 0..100 {
             let mut time = Measure::start("ticks");
             let num_ticks = thread_rng().gen_range(1..100);

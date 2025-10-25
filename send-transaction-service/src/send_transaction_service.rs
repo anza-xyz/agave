@@ -635,7 +635,7 @@ mod test {
     }
 
     fn process_transactions<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let (mut genesis_config, mint_keypair) = create_genesis_config(4);
         genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
@@ -927,7 +927,7 @@ mod test {
     }
 
     fn retry_durable_nonce_transactions<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let (mut genesis_config, mint_keypair) = create_genesis_config(4);
         genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);

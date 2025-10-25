@@ -455,7 +455,7 @@ mod tests {
 
     #[test]
     fn test_packet_discard() {
-        solana_logger::setup();
+        agave_logger::setup();
         let batch_size = 10;
         let mut batch = PinnedPacketBatch::with_capacity(batch_size);
         let packet = Packet::default();
@@ -498,7 +498,7 @@ mod tests {
     }
 
     fn test_sigverify_stage(use_same_tx: bool) {
-        solana_logger::setup();
+        agave_logger::setup();
         trace!("start");
         let (packet_s, packet_r) = unbounded();
         let (verified_s, verified_r) = BankingTracer::channel_for_test();

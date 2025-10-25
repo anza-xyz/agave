@@ -25,6 +25,7 @@ remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 
 [dependencies]
 agave-feature-set = { workspace = true }
+agave-logger = { workspace = true }
 agave-syscalls = { workspace = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }
@@ -67,7 +68,6 @@ solana-keypair = "=3.0.1"
 solana-loader-v3-interface = { version = "=6.1.0", features = ["bincode"] }
 solana-loader-v4-interface = "=3.1.0"
 solana-loader-v4-program = { workspace = true }
-solana-logger = "=3.0.0"
 solana-message = "=3.0.1"
 solana-native-token = "=3.0.0"
 solana-nonce = "=3.0.0"
