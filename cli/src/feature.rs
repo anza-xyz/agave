@@ -26,7 +26,7 @@ use {
     solana_message::Message,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
-    solana_rpc_client::rpc_client::RpcClient,
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_api::{
         client_error::Error as ClientError, request::MAX_MULTIPLE_ACCOUNTS,
         response::RpcVoteAccountInfo,
@@ -415,12 +415,12 @@ pub struct CliSoftwareVersionStats {
 }
 
 /// Check an RPC's reported genesis hash against the ClusterType's known genesis hash
-fn check_rpc_genesis_hash(
+async fn check_rpc_genesis_hash(
     cluster_type: &ClusterType,
     rpc_client: &RpcClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(genesis_hash) = cluster_type.get_genesis_hash() {
-        let rpc_genesis_hash = rpc_client.get_genesis_hash()?;
+        let rpc_genesis_hash = rpc_client.get_genesis_hash().await?;
         if rpc_genesis_hash != genesis_hash {
             return Err(format!(
                 "The genesis hash for the specified cluster {cluster_type:?} does not match the \
@@ -606,27 +606,27 @@ pub fn parse_feature_subcommand(
     Ok(response)
 }
 
-pub fn process_feature_subcommand(
+pub async fn process_feature_subcommand(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     feature_subcommand: &FeatureCliCommand,
 ) -> ProcessResult {
     match feature_subcommand {
         FeatureCliCommand::Status {
             features,
             display_all,
-        } => process_status(rpc_client, config, features, *display_all),
+        } => process_status(rpc_client, config, features, *display_all).await,
         FeatureCliCommand::Activate {
             feature,
             cluster,
             force,
             fee_payer,
-        } => process_activate(rpc_client, config, *feature, *cluster, *force, *fee_payer),
+        } => process_activate(rpc_client, config, *feature, *cluster, *force, *fee_payer).await,
         FeatureCliCommand::Revoke {
             feature,
             cluster,
             fee_payer,
-        } => process_revoke(rpc_client, config, *feature, *cluster, *fee_payer),
+        } => process_revoke(rpc_client, config, *feature, *cluster, *fee_payer).await,
     }
 }
 
@@ -677,7 +677,7 @@ impl ClusterInfoStats {
     }
 }
 
-fn cluster_info_stats(rpc_client: &RpcClient) -> Result<ClusterInfoStats, ClientError> {
+async fn cluster_info_stats(rpc_client: &RpcClient) -> Result<ClusterInfoStats, ClientError> {
     #[derive(Default)]
     struct StatsEntry {
         stake_lamports: u64,
@@ -685,7 +685,8 @@ fn cluster_info_stats(rpc_client: &RpcClient) -> Result<ClusterInfoStats, Client
     }
 
     let cluster_info_list = rpc_client
-        .get_cluster_nodes()?
+        .get_cluster_nodes()
+        .await?
         .into_iter()
         .map(|contact_info| {
             (
@@ -700,7 +701,7 @@ fn cluster_info_stats(rpc_client: &RpcClient) -> Result<ClusterInfoStats, Client
         })
         .collect::<Vec<_>>();
 
-    let vote_accounts = rpc_client.get_vote_accounts()?;
+    let vote_accounts = rpc_client.get_vote_accounts().await?;
 
     let mut total_active_stake: u64 = vote_accounts
         .delinquent
@@ -775,7 +776,7 @@ fn cluster_info_stats(rpc_client: &RpcClient) -> Result<ClusterInfoStats, Client
 }
 
 // Feature activation is only allowed when 95% of the active stake is on the current feature set
-fn feature_activation_allowed(
+async fn feature_activation_allowed(
     rpc_client: &RpcClient,
     quiet: bool,
 ) -> Result<
@@ -786,7 +787,7 @@ fn feature_activation_allowed(
     ),
     ClientError,
 > {
-    let cluster_info_stats = cluster_info_stats(rpc_client)?;
+    let cluster_info_stats = cluster_info_stats(rpc_client).await?;
     let feature_set_stats = cluster_info_stats.aggregate_by_feature_set();
 
     let tool_version = solana_version::Version::default();
@@ -882,47 +883,47 @@ pub(super) fn status_from_account(account: Account) -> Option<CliFeatureStatus> 
     })
 }
 
-fn get_feature_status(
+async fn get_feature_status(
     rpc_client: &RpcClient,
     feature_id: &Pubkey,
 ) -> Result<Option<CliFeatureStatus>, Box<dyn std::error::Error>> {
     rpc_client
         .get_account(feature_id)
+        .await
         .map(status_from_account)
         .map_err(|e| e.into())
 }
 
-pub fn get_feature_is_active(
+pub async fn get_feature_is_active(
     rpc_client: &RpcClient,
     feature_id: &Pubkey,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     get_feature_status(rpc_client, feature_id)
+        .await
         .map(|status| matches!(status, Some(CliFeatureStatus::Active(_))))
 }
 
-pub fn get_feature_activation_epoch(
+pub async fn get_feature_activation_epoch(
     rpc_client: &RpcClient,
     feature_id: &Pubkey,
 ) -> Result<Option<Epoch>, ClientError> {
-    rpc_client
-        .get_feature_activation_slot(feature_id)
-        .and_then(|activation_slot: Option<Slot>| {
-            rpc_client
-                .get_epoch_schedule()
-                .map(|epoch_schedule| (activation_slot, epoch_schedule))
-        })
-        .map(|(activation_slot, epoch_schedule)| {
-            activation_slot.map(|slot| epoch_schedule.get_epoch(slot))
-        })
+    let activation_slot = rpc_client
+        .get_account(feature_id)
+        .await
+        .ok()
+        .and_then(|account| from_account(&account))
+        .and_then(|feature| feature.activated_at);
+    let epoch_schedule = rpc_client.get_epoch_schedule().await?;
+    Ok(activation_slot.map(|slot| epoch_schedule.get_epoch(slot)))
 }
 
-fn process_status(
+async fn process_status(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     feature_ids: &[Pubkey],
     display_all: bool,
 ) -> ProcessResult {
-    let current_slot = rpc_client.get_slot()?;
+    let current_slot = rpc_client.get_slot().await?;
     let filter = if !display_all {
         current_slot.checked_sub(DEFAULT_MAX_ACTIVE_DISPLAY_AGE_SLOTS)
     } else {
@@ -932,7 +933,8 @@ fn process_status(
     let mut features = vec![];
     for feature_ids in feature_ids.chunks(MAX_MULTIPLE_ACCOUNTS) {
         let mut feature_chunk = rpc_client
-            .get_multiple_accounts(feature_ids)?
+            .get_multiple_accounts(feature_ids)
+            .await?
             .into_iter()
             .zip(feature_ids)
             .map(|(account, feature_id)| {
@@ -966,8 +968,8 @@ fn process_status(
     features.sort_unstable();
 
     let (feature_activation_allowed, cluster_feature_sets, cluster_software_versions) =
-        feature_activation_allowed(rpc_client, features.len() <= 1)?;
-    let epoch_schedule = rpc_client.get_epoch_schedule()?;
+        feature_activation_allowed(rpc_client, features.len() <= 1).await?;
+    let epoch_schedule = rpc_client.get_epoch_schedule().await?;
     let feature_set = CliFeatures {
         features,
         current_slot,
@@ -980,19 +982,20 @@ fn process_status(
     Ok(config.output_format.formatted_string(&feature_set))
 }
 
-fn process_activate(
+async fn process_activate(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     feature_id: Pubkey,
     cluster: ClusterType,
     force: ForceActivation,
     fee_payer: SignerIndex,
 ) -> ProcessResult {
-    check_rpc_genesis_hash(&cluster, rpc_client)?;
+    check_rpc_genesis_hash(&cluster, rpc_client).await?;
 
     let fee_payer = config.signers[fee_payer];
     let account = rpc_client
-        .get_multiple_accounts(&[feature_id])?
+        .get_multiple_accounts(&[feature_id])
+        .await?
         .into_iter()
         .next()
         .unwrap();
@@ -1003,7 +1006,7 @@ fn process_activate(
         }
     }
 
-    if !feature_activation_allowed(rpc_client, false)?.0 {
+    if !feature_activation_allowed(rpc_client, false).await?.0 {
         match force {
             ForceActivation::Almost => {
                 return Err(
@@ -1019,9 +1022,11 @@ fn process_activate(
         }
     }
 
-    let rent = rpc_client.get_minimum_balance_for_rent_exemption(Feature::size_of())?;
+    let rent = rpc_client
+        .get_minimum_balance_for_rent_exemption(Feature::size_of())
+        .await?;
 
-    let blockhash = rpc_client.get_latest_blockhash()?;
+    let blockhash = rpc_client.get_latest_blockhash().await?;
     let (message, _) = resolve_spend_tx_and_check_account_balance(
         rpc_client,
         false,
@@ -1036,7 +1041,8 @@ fn process_activate(
             )
         },
         config.commitment,
-    )?;
+    )
+    .await?;
     let mut transaction = Transaction::new_unsigned(message);
     transaction.try_sign(&config.signers, blockhash)?;
 
@@ -1045,25 +1051,27 @@ fn process_activate(
         FEATURE_NAMES.get(&feature_id).unwrap(),
         feature_id
     );
-    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
-        &transaction,
-        config.commitment,
-        config.send_transaction_config,
-    );
+    let result = rpc_client
+        .send_and_confirm_transaction_with_spinner_and_config(
+            &transaction,
+            config.commitment,
+            config.send_transaction_config,
+        )
+        .await;
     log_instruction_custom_error::<SystemError>(result, config)
 }
 
-fn process_revoke(
+async fn process_revoke(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     feature_id: Pubkey,
     cluster: ClusterType,
     fee_payer: SignerIndex,
 ) -> ProcessResult {
-    check_rpc_genesis_hash(&cluster, rpc_client)?;
+    check_rpc_genesis_hash(&cluster, rpc_client).await?;
 
     let fee_payer = config.signers[fee_payer];
-    let account = rpc_client.get_account(&feature_id).ok();
+    let account = rpc_client.get_account(&feature_id).await.ok();
 
     match account.and_then(status_from_account) {
         Some(CliFeatureStatus::Pending) => (),
@@ -1075,7 +1083,7 @@ fn process_revoke(
         }
     }
 
-    let blockhash = rpc_client.get_latest_blockhash()?;
+    let blockhash = rpc_client.get_latest_blockhash().await?;
     let (message, _) = resolve_spend_tx_and_check_account_balance(
         rpc_client,
         false,
@@ -1090,7 +1098,8 @@ fn process_revoke(
             )
         },
         config.commitment,
-    )?;
+    )
+    .await?;
     let mut transaction = Transaction::new_unsigned(message);
     transaction.try_sign(&config.signers, blockhash)?;
 
@@ -1099,10 +1108,12 @@ fn process_revoke(
         FEATURE_NAMES.get(&feature_id).unwrap(),
         feature_id
     );
-    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
-        &transaction,
-        config.commitment,
-        config.send_transaction_config,
-    );
+    let result = rpc_client
+        .send_and_confirm_transaction_with_spinner_and_config(
+            &transaction,
+            config.commitment,
+            config.send_transaction_config,
+        )
+        .await;
     log_instruction_custom_error_to_str::<FeatureGateError>(result, config)
 }

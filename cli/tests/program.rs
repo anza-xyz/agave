@@ -25,9 +25,11 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc::rpc::JsonRpcConfig,
-    solana_rpc_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient},
+    solana_rpc_client::{
+        nonblocking::rpc_client::RpcClient, rpc_client::GetConfirmedSignaturesForAddress2Config,
+    },
     solana_rpc_client_api::config::RpcTransactionConfig,
-    solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
+    solana_rpc_client_nonce_utils::nonblocking::blockhash_query::BlockhashQuery,
     solana_sdk_ids::{bpf_loader_upgradeable, compute_budget, loader_v4},
     solana_signature::Signature,
     solana_signer::{null_signer::NullSigner, Signer},
@@ -73,9 +75,18 @@ fn setup_rpc_client(config: &mut CliConfig) -> Arc<RpcClient> {
     rpc_client
 }
 
+// TODO: `track_caller`` on an async function is a noop; Enable feature when implemented.
+//        See https://github.com/rust-lang/rust/issues/110011
+#[allow(ungated_async_fn_track_caller)]
 #[track_caller]
-fn expect_command_failure(config: &CliConfig, should_fail_because: &str, error_expected: &str) {
-    let error_actual = process_command(config).expect_err(should_fail_because);
+async fn expect_command_failure(
+    config: &CliConfig<'_>,
+    should_fail_because: &str,
+    error_expected: &str,
+) {
+    let error_actual = process_command(config)
+        .await
+        .expect_err(should_fail_because);
     let error_actual = error_actual.to_string();
     assert!(
         error_expected == error_actual,
@@ -84,9 +95,15 @@ fn expect_command_failure(config: &CliConfig, should_fail_because: &str, error_e
     );
 }
 
+// TODO: `track_caller`` on an async function is a noop; Enable feature when implemented.
+//        See https://github.com/rust-lang/rust/issues/110011
+#[allow(ungated_async_fn_track_caller)]
 #[track_caller]
-fn expect_account_absent(rpc_client: &RpcClient, pubkey: Pubkey, absent_because: &str) {
-    let error_actual = rpc_client.get_account(&pubkey).expect_err(absent_because);
+async fn expect_account_absent(rpc_client: &RpcClient, pubkey: Pubkey, absent_because: &str) {
+    let error_actual = rpc_client
+        .get_account(&pubkey)
+        .await
+        .expect_err(absent_because);
     let error_actual = error_actual.to_string();
     assert!(
         format!("AccountNotFound: pubkey={pubkey}") == error_actual,
@@ -95,8 +112,8 @@ fn expect_account_absent(rpc_client: &RpcClient, pubkey: Pubkey, absent_because:
     );
 }
 
-#[test]
-fn test_cli_program_deploy_non_upgradeable() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_deploy_non_upgradeable() {
     solana_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -108,7 +125,8 @@ fn test_cli_program_deploy_non_upgradeable() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let test_validator = test_validator_genesis(mint_keypair)
-        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .start_async_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .await
         .expect("validator start failed");
 
     let mut config = CliConfig::recent_for_tests();
@@ -122,9 +140,11 @@ fn test_cli_program_deploy_non_upgradeable() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             program_data.len(),
         ))
+        .await
         .unwrap();
     let minimum_balance_for_program = rpc_client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
         .unwrap();
 
     let keypair = Keypair::new();
@@ -133,7 +153,7 @@ fn test_cli_program_deploy_non_upgradeable() {
         pubkey: None,
         lamports: 4 * minimum_balance_for_programdata, // min balance for rent exemption for three programs + leftover for tx processing
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     config.command = CliCommand::Program(ProgramCliCommand::Deploy {
         program_location: Some(noop_path.to_str().unwrap().to_string()),
@@ -153,7 +173,7 @@ fn test_cli_program_deploy_non_upgradeable() {
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let program_id_str = json
         .as_object()
@@ -163,14 +183,14 @@ fn test_cli_program_deploy_non_upgradeable() {
         .as_str()
         .unwrap();
     let program_id = Pubkey::from_str(program_id_str).unwrap();
-    let account0 = rpc_client.get_account(&program_id).unwrap();
+    let account0 = rpc_client.get_account(&program_id).await.unwrap();
     assert_eq!(account0.lamports, minimum_balance_for_program);
     assert_eq!(account0.owner, bpf_loader_upgradeable::id());
     assert!(account0.executable);
 
     let (programdata_pubkey, _) =
         Pubkey::find_program_address(&[program_id.as_ref()], &bpf_loader_upgradeable::id());
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     assert_eq!(
         programdata_account.lamports,
         minimum_balance_for_programdata
@@ -202,9 +222,10 @@ fn test_cli_program_deploy_non_upgradeable() {
         use_rpc: false,
         skip_feature_verification: true,
     });
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
     let account1 = rpc_client
         .get_account(&custom_address_keypair.pubkey())
+        .await
         .unwrap();
     assert_eq!(account1.lamports, minimum_balance_for_program);
     assert_eq!(account1.owner, bpf_loader_upgradeable::id());
@@ -213,7 +234,7 @@ fn test_cli_program_deploy_non_upgradeable() {
         &[custom_address_keypair.pubkey().as_ref()],
         &bpf_loader_upgradeable::id(),
     );
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     assert_eq!(
         programdata_account.lamports,
         minimum_balance_for_programdata
@@ -232,7 +253,8 @@ fn test_cli_program_deploy_non_upgradeable() {
             "Program {} is no longer upgradeable",
             custom_address_keypair.pubkey()
         ),
-    );
+    )
+    .await;
 
     // Attempt to deploy to account with excess balance
     let custom_address_keypair = Keypair::new();
@@ -242,7 +264,7 @@ fn test_cli_program_deploy_non_upgradeable() {
         // Anything over minimum_balance_for_programdata should trigger an error.
         lamports: 2 * minimum_balance_for_programdata,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
     config.signers = vec![&keypair, &custom_address_keypair];
     config.command = CliCommand::Program(ProgramCliCommand::Deploy {
         program_location: Some(noop_path.to_str().unwrap().to_string()),
@@ -268,7 +290,8 @@ fn test_cli_program_deploy_non_upgradeable() {
             "Account {} is not an upgradeable program or already in use",
             custom_address_keypair.pubkey()
         ),
-    );
+    )
+    .await;
 
     // Use forcing parameter to deploy to account with excess balance
     config.command = CliCommand::Program(ProgramCliCommand::Deploy {
@@ -296,11 +319,12 @@ fn test_cli_program_deploy_non_upgradeable() {
             "Account {} is not an upgradeable program or already in use",
             custom_address_keypair.pubkey()
         ),
-    );
+    )
+    .await;
 }
 
-#[test]
-fn test_cli_program_deploy_no_authority() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_deploy_no_authority() {
     solana_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -312,7 +336,8 @@ fn test_cli_program_deploy_no_authority() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let test_validator = test_validator_genesis(mint_keypair)
-        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .start_async_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .await
         .expect("validator start failed");
 
     let mut config = CliConfig::recent_for_tests();
@@ -327,9 +352,11 @@ fn test_cli_program_deploy_no_authority() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
     let minimum_balance_for_program = rpc_client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
         .unwrap();
     let upgrade_authority = Keypair::new();
 
@@ -339,7 +366,7 @@ fn test_cli_program_deploy_no_authority() {
         lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
     };
     config.signers = vec![&keypair];
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Deploy a program
     config.signers = vec![&keypair, &upgrade_authority];
@@ -361,7 +388,7 @@ fn test_cli_program_deploy_no_authority() {
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let program_id_str = json
         .as_object()
@@ -395,14 +422,16 @@ fn test_cli_program_deploy_no_authority() {
         &config,
         "Can not upgrade a program if it was deployed without the authority signature",
         &format!("Program {program_id} is no longer upgradeable"),
-    );
+    )
+    .await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 12)]
 #[test_case(true, true; "Feature enabled, skip preflight")]
 #[test_case(true, false; "Feature enabled, don't skip preflight")]
 #[test_case(false, true; "Feature disabled, skip preflight")]
 #[test_case(false, false; "Feature disabled, don't skip preflight")]
-fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: bool) {
+async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: bool) {
     solana_logger::setup();
 
     let mut program_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -421,7 +450,8 @@ fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: bool) {
     }
 
     let test_validator = test_validator_builder
-        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .start_async_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .await
         .expect("validator start failed");
 
     let mut config = CliConfig::recent_for_tests();
@@ -436,9 +466,11 @@ fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: bool) {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
     let minimum_balance_for_program = rpc_client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
         .unwrap();
     let upgrade_authority = Keypair::new();
 
@@ -449,7 +481,7 @@ fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: bool) {
     };
     config.signers = vec![&keypair];
     config.send_transaction_config.skip_preflight = skip_preflight;
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     config.signers = vec![&keypair, &upgrade_authority];
     config.command = CliCommand::Program(ProgramCliCommand::Deploy {
@@ -472,7 +504,7 @@ fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: bool) {
     config.output_format = OutputFormat::JsonCompact;
 
     if enable_feature {
-        let res = process_command(&config);
+        let res = process_command(&config).await;
         assert!(res.is_ok());
     } else {
         expect_command_failure(
@@ -480,7 +512,8 @@ fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: bool) {
             "Program contains a syscall from a deactivated feature",
             "ELF error: ELF error: Unresolved symbol (sol_alt_bn128_group_op) at instruction #49 \
              (ELF file offset 0x188)",
-        );
+        )
+        .await;
 
         // If we bypass the verification, there should be no error
         config.command = CliCommand::Program(ProgramCliCommand::Deploy {
@@ -502,7 +535,7 @@ fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: bool) {
         });
 
         // When we skip verification, we fail at a later stage
-        let response = process_command(&config);
+        let response = process_command(&config).await;
         if skip_preflight {
             assert!(response
                 .err()
@@ -519,9 +552,10 @@ fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: bool) {
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(true; "Feature enabled")]
 #[test_case(false; "Feature disabled")]
-fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
+async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
     solana_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -546,14 +580,15 @@ fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
     }
 
     let test_validator = test_validator_builder
-        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .start_async_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .await
         .expect("validator start failed");
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
     let rpc_client = setup_rpc_client(&mut config);
 
-    let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let blockhash = rpc_client.get_latest_blockhash().await.unwrap();
 
     let mut file = File::open(syscall_program_path.to_str().unwrap()).unwrap();
     let mut large_program_data = Vec::new();
@@ -563,6 +598,7 @@ fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_program_data_len,
         ))
+        .await
         .unwrap();
 
     config.send_transaction_config.skip_preflight = false;
@@ -579,13 +615,13 @@ fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         lamports: 100 * minimum_balance_for_large_buffer, // gotta be enough for this test
     };
     config.signers = vec![&online_signer];
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
     config.command = CliCommand::Airdrop {
         pubkey: None,
         lamports: 100 * minimum_balance_for_large_buffer, // gotta be enough for this test
     };
     config.signers = vec![&offline_signer];
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Deploy upgradeable program with authority set to offline signer
     config.signers = vec![&online_signer, &offline_signer, &program_signer];
@@ -607,7 +643,7 @@ fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         skip_feature_verification: false,
     });
     config.output_format = OutputFormat::JsonCompact;
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Prepare buffer to upgrade deployed program to a larger program
     create_buffer_with_offline_authority(
@@ -617,7 +653,8 @@ fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         &online_signer,
         &offline_signer,
         &buffer_signer,
-    );
+    )
+    .await;
 
     config.signers = vec![&offline_signer];
     config.command = CliCommand::Program(ProgramCliCommand::Upgrade {
@@ -631,7 +668,7 @@ fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         skip_feature_verification: false,
     });
     config.output_format = OutputFormat::JsonCompact;
-    let sig_response = process_command(&config).unwrap();
+    let sig_response = process_command(&config).await.unwrap();
     let sign_only = parse_sign_only_reply_string(&sig_response);
     let offline_pre_signer = sign_only.presigner_of(&offline_signer.pubkey()).unwrap();
     // Attempt to deploy from buffer using signature over correct message (should succeed)
@@ -649,7 +686,7 @@ fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
     });
     config.output_format = OutputFormat::JsonCompact;
     if enable_feature {
-        let res = process_command(&config);
+        let res = process_command(&config).await;
         assert!(res.is_ok());
     } else {
         expect_command_failure(
@@ -661,7 +698,8 @@ fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
                 buffer_signer.pubkey()
             )
             .as_str(),
-        );
+        )
+        .await;
 
         // If we skip verification, the failure should be at a later stage
         config.command = CliCommand::Program(ProgramCliCommand::Upgrade {
@@ -676,7 +714,7 @@ fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         });
         config.output_format = OutputFormat::JsonCompact;
 
-        let response = process_command(&config);
+        let response = process_command(&config).await;
         assert!(response
             .err()
             .unwrap()
@@ -685,8 +723,8 @@ fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
     }
 }
 
-#[test]
-fn test_cli_program_deploy_with_authority() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_deploy_with_authority() {
     solana_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -698,7 +736,8 @@ fn test_cli_program_deploy_with_authority() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let test_validator = test_validator_genesis(mint_keypair)
-        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .start_async_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .await
         .expect("validator start failed");
 
     let mut config = CliConfig::recent_for_tests();
@@ -713,9 +752,11 @@ fn test_cli_program_deploy_with_authority() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
     let minimum_balance_for_program = rpc_client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
         .unwrap();
     let upgrade_authority = Keypair::new();
 
@@ -725,7 +766,7 @@ fn test_cli_program_deploy_with_authority() {
         pubkey: None,
         lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Deploy the upgradeable program with specified program_id
     let program_keypair = Keypair::new();
@@ -748,7 +789,7 @@ fn test_cli_program_deploy_with_authority() {
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let program_pubkey_str = json
         .as_object()
@@ -761,7 +802,10 @@ fn test_cli_program_deploy_with_authority() {
         program_keypair.pubkey(),
         Pubkey::from_str(program_pubkey_str).unwrap()
     );
-    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    let program_account = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(program_account.lamports, minimum_balance_for_program);
     assert_eq!(program_account.owner, bpf_loader_upgradeable::id());
     assert!(program_account.executable);
@@ -769,7 +813,7 @@ fn test_cli_program_deploy_with_authority() {
         &[program_keypair.pubkey().as_ref()],
         &bpf_loader_upgradeable::id(),
     );
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     assert_eq!(
         programdata_account.lamports,
         minimum_balance_for_programdata
@@ -800,7 +844,7 @@ fn test_cli_program_deploy_with_authority() {
         use_rpc: false,
         skip_feature_verification: true,
     });
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let program_pubkey_str = json
         .as_object()
@@ -810,13 +854,13 @@ fn test_cli_program_deploy_with_authority() {
         .as_str()
         .unwrap();
     let program_pubkey = Pubkey::from_str(program_pubkey_str).unwrap();
-    let program_account = rpc_client.get_account(&program_pubkey).unwrap();
+    let program_account = rpc_client.get_account(&program_pubkey).await.unwrap();
     assert_eq!(program_account.lamports, minimum_balance_for_program);
     assert_eq!(program_account.owner, bpf_loader_upgradeable::id());
     assert!(program_account.executable);
     let (programdata_pubkey, _) =
         Pubkey::find_program_address(&[program_pubkey.as_ref()], &bpf_loader_upgradeable::id());
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     assert_eq!(
         programdata_account.lamports,
         minimum_balance_for_programdata
@@ -847,14 +891,14 @@ fn test_cli_program_deploy_with_authority() {
         use_rpc: false,
         skip_feature_verification: true,
     });
-    process_command(&config).unwrap();
-    let program_account = rpc_client.get_account(&program_pubkey).unwrap();
+    process_command(&config).await.unwrap();
+    let program_account = rpc_client.get_account(&program_pubkey).await.unwrap();
     assert_eq!(program_account.lamports, minimum_balance_for_program);
     assert_eq!(program_account.owner, bpf_loader_upgradeable::id());
     assert!(program_account.executable);
     let (programdata_pubkey, _) =
         Pubkey::find_program_address(&[program_pubkey.as_ref()], &bpf_loader_upgradeable::id());
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     assert_eq!(
         programdata_account.lamports,
         minimum_balance_for_programdata
@@ -866,7 +910,7 @@ fn test_cli_program_deploy_with_authority() {
         program_data[..]
     );
 
-    let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let blockhash = rpc_client.get_latest_blockhash().await.unwrap();
     // Set a new authority sign offline first
     let new_upgrade_authority = Keypair::new();
     config.signers = vec![&keypair, &upgrade_authority, &new_upgrade_authority];
@@ -878,7 +922,7 @@ fn test_cli_program_deploy_with_authority() {
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::new(Some(blockhash), true, None),
     });
-    let sig_response = process_command(&config).unwrap();
+    let sig_response = process_command(&config).await.unwrap();
     let sign_only = parse_sign_only_reply_string(&sig_response);
     let offline_pre_signer = sign_only
         .presigner_of(&new_upgrade_authority.pubkey())
@@ -893,7 +937,7 @@ fn test_cli_program_deploy_with_authority() {
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::new(Some(blockhash), false, None),
     });
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let new_upgrade_authority_str = json
         .as_object()
@@ -926,14 +970,14 @@ fn test_cli_program_deploy_with_authority() {
         use_rpc: false,
         skip_feature_verification: true,
     });
-    process_command(&config).unwrap();
-    let program_account = rpc_client.get_account(&program_pubkey).unwrap();
+    process_command(&config).await.unwrap();
+    let program_account = rpc_client.get_account(&program_pubkey).await.unwrap();
     assert_eq!(program_account.lamports, minimum_balance_for_program);
     assert_eq!(program_account.owner, bpf_loader_upgradeable::id());
     assert!(program_account.executable);
     let (programdata_pubkey, _) =
         Pubkey::find_program_address(&[program_pubkey.as_ref()], &bpf_loader_upgradeable::id());
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     assert_eq!(
         programdata_account.lamports,
         minimum_balance_for_programdata
@@ -955,7 +999,7 @@ fn test_cli_program_deploy_with_authority() {
         all: false,
         use_lamports_unit: false,
     });
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let authority_pubkey_str = json
         .as_object()
@@ -979,7 +1023,7 @@ fn test_cli_program_deploy_with_authority() {
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::default(),
     });
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let new_upgrade_authority_str = json
         .as_object()
@@ -1013,7 +1057,8 @@ fn test_cli_program_deploy_with_authority() {
         &config,
         "Upgrade without an authority is not allowed",
         &format!("Program {program_pubkey} is no longer upgradeable"),
-    );
+    )
+    .await;
 
     // deploy with finality
     config.signers = vec![&keypair, &new_upgrade_authority];
@@ -1034,7 +1079,7 @@ fn test_cli_program_deploy_with_authority() {
         use_rpc: false,
         skip_feature_verification: true,
     });
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let program_pubkey_str = json
         .as_object()
@@ -1046,7 +1091,7 @@ fn test_cli_program_deploy_with_authority() {
     let program_pubkey = Pubkey::from_str(program_pubkey_str).unwrap();
     let (programdata_pubkey, _) =
         Pubkey::find_program_address(&[program_pubkey.as_ref()], &bpf_loader_upgradeable::id());
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     if let UpgradeableLoaderState::ProgramData {
         slot: _,
         upgrade_authority_address,
@@ -1067,7 +1112,7 @@ fn test_cli_program_deploy_with_authority() {
         all: false,
         use_lamports_unit: false,
     });
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let authority_pubkey_str = json
         .as_object()
@@ -1079,9 +1124,10 @@ fn test_cli_program_deploy_with_authority() {
     assert_eq!("none", authority_pubkey_str);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(true; "Skip preflight")]
 #[test_case(false; "Dont skip preflight")]
-fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
+async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
     solana_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -1099,7 +1145,8 @@ fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let test_validator = test_validator_genesis(mint_keypair)
-        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .start_async_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .await
         .expect("validator start failed");
 
     let mut config = CliConfig::recent_for_tests();
@@ -1120,9 +1167,11 @@ fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
     let minimum_balance_for_program = rpc_client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
         .unwrap();
     let upgrade_authority = Keypair::new();
 
@@ -1132,7 +1181,7 @@ fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
         pubkey: None,
         lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Deploy the first, smaller program.
     let program_keypair = Keypair::new();
@@ -1156,7 +1205,7 @@ fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
     });
     config.output_format = OutputFormat::JsonCompact;
     config.send_transaction_config.skip_preflight = skip_preflight;
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Attempt to upgrade the program with a larger program, but with the
     // --no-auto-extend flag.
@@ -1184,7 +1233,8 @@ fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
             "Cannot upgrade a program when ELF does not fit into the allocated data account",
             "Deploying program failed: Error processing Instruction 0: account data too small for \
              instruction",
-        );
+        )
+        .await;
     } else {
         #[rustfmt::skip]
         let expected_error =
@@ -1201,7 +1251,8 @@ fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
             &config,
             "Can not upgrade a program when ELF does not fit into the allocated data account",
             expected_error,
-        );
+        )
+        .await;
     }
 
     // Attempt to upgrade the program with a larger program, this time without
@@ -1224,7 +1275,7 @@ fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
         use_rpc: false,
         skip_feature_verification: true,
     });
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let program_pubkey_str = json
         .as_object()
@@ -1236,7 +1287,7 @@ fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
     let program_pubkey = Pubkey::from_str(program_pubkey_str).unwrap();
     let (programdata_pubkey, _) =
         Pubkey::find_program_address(&[program_pubkey.as_ref()], &bpf_loader_upgradeable::id());
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     if let UpgradeableLoaderState::ProgramData {
         slot: _,
         upgrade_authority_address,
@@ -1252,8 +1303,8 @@ fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
     );
 }
 
-#[test]
-fn test_cli_program_close_program() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_close_program() {
     solana_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -1265,7 +1316,8 @@ fn test_cli_program_close_program() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let test_validator = test_validator_genesis(mint_keypair)
-        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .start_async_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .await
         .expect("validator start failed");
 
     let mut config = CliConfig::recent_for_tests();
@@ -1280,9 +1332,11 @@ fn test_cli_program_close_program() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
     let minimum_balance_for_program = rpc_client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
         .unwrap();
     let upgrade_authority = Keypair::new();
 
@@ -1292,7 +1346,7 @@ fn test_cli_program_close_program() {
         pubkey: None,
         lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Deploy the upgradeable program
     let program_keypair = Keypair::new();
@@ -1315,7 +1369,7 @@ fn test_cli_program_close_program() {
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     let (programdata_pubkey, _) = Pubkey::find_program_address(
         &[program_keypair.pubkey().as_ref()],
@@ -1323,10 +1377,10 @@ fn test_cli_program_close_program() {
     );
 
     // Wait one slot to avoid "Program was deployed in this block already" error
-    wait_n_slots(&rpc_client, 1);
+    wait_n_slots(&rpc_client, 1).await;
 
     // Close program
-    let close_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let close_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     let programdata_lamports = close_account.lamports;
     let recipient_pubkey = Pubkey::new_unique();
     config.signers = vec![&keypair, &upgrade_authority];
@@ -1343,7 +1397,8 @@ fn test_cli_program_close_program() {
         &config,
         "CLI requires the --bypass-warning flag in order to close a program",
         CLOSE_PROGRAM_WARNING,
-    );
+    )
+    .await;
 
     // Close with --bypass-warning flag
     config.command = CliCommand::Program(ProgramCliCommand::Close {
@@ -1353,19 +1408,20 @@ fn test_cli_program_close_program() {
         use_lamports_unit: false,
         bypass_warning: true,
     });
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     expect_account_absent(
         &rpc_client,
         programdata_pubkey,
         "Program data account is deleted when the program is closed",
-    );
-    let recipient_account = rpc_client.get_account(&recipient_pubkey).unwrap();
+    )
+    .await;
+    let recipient_account = rpc_client.get_account(&recipient_pubkey).await.unwrap();
     assert_eq!(programdata_lamports, recipient_account.lamports);
 }
 
-#[test]
-fn test_cli_program_extend_program() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_extend_program() {
     solana_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -1383,7 +1439,8 @@ fn test_cli_program_extend_program() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let test_validator = test_validator_genesis(mint_keypair)
-        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .start_async_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .await
         .expect("validator start failed");
 
     let mut config = CliConfig::recent_for_tests();
@@ -1398,9 +1455,11 @@ fn test_cli_program_extend_program() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
     let minimum_balance_for_program = rpc_client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
         .unwrap();
     let upgrade_authority = Keypair::new();
 
@@ -1415,7 +1474,7 @@ fn test_cli_program_extend_program() {
         preflight_commitment: Some(CommitmentConfig::processed().commitment),
         ..RpcSendTransactionConfig::default()
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Deploy an upgradeable program
     let program_keypair = Keypair::new();
@@ -1438,19 +1497,19 @@ fn test_cli_program_extend_program() {
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     let (programdata_pubkey, _) = Pubkey::find_program_address(
         &[program_keypair.pubkey().as_ref()],
         &bpf_loader_upgradeable::id(),
     );
 
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     let expected_len = UpgradeableLoaderState::size_of_programdata(max_len);
     assert_eq!(expected_len, programdata_account.data.len());
 
     // Wait one slot to avoid "Program was deployed in this block already" error
-    wait_n_slots(&rpc_client, 1);
+    wait_n_slots(&rpc_client, 1).await;
 
     // Extend program for larger program, minus 1 required byte
     let mut file = File::open(noop_large_path.to_str().unwrap()).unwrap();
@@ -1464,9 +1523,9 @@ fn test_cli_program_extend_program() {
         authority_signer_index: 1,
         additional_bytes: additional_bytes - 1,
     });
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     let expected_len = UpgradeableLoaderState::size_of_programdata(new_max_len - 1);
     assert_eq!(expected_len, programdata_account.data.len());
 
@@ -1505,10 +1564,11 @@ fn test_cli_program_extend_program() {
         &config,
         "Program upgrade must fail, as the buffer is 1 byte too short",
         expected_error,
-    );
+    )
+    .await;
 
     // Wait one slot to avoid "Program was deployed in this block already" error
-    wait_n_slots(&rpc_client, 1);
+    wait_n_slots(&rpc_client, 1).await;
 
     // Extend 1 last byte
     config.signers = vec![&keypair, &upgrade_authority];
@@ -1517,9 +1577,9 @@ fn test_cli_program_extend_program() {
         authority_signer_index: 1,
         additional_bytes: 1,
     });
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     let expected_len = UpgradeableLoaderState::size_of_programdata(new_max_len);
     assert_eq!(expected_len, programdata_account.data.len());
 
@@ -1542,11 +1602,11 @@ fn test_cli_program_extend_program() {
         use_rpc: false,
         skip_feature_verification: true,
     });
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 }
 
-#[test]
-fn test_cli_program_migrate_program() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_migrate_program() {
     solana_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -1558,7 +1618,8 @@ fn test_cli_program_migrate_program() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let test_validator = test_validator_genesis(mint_keypair)
-        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .start_async_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .await
         .expect("validator start failed");
 
     let mut config = CliConfig::recent_for_tests();
@@ -1573,9 +1634,11 @@ fn test_cli_program_migrate_program() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
     let minimum_balance_for_program = rpc_client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
         .unwrap();
     let upgrade_authority = Keypair::new();
 
@@ -1585,7 +1648,7 @@ fn test_cli_program_migrate_program() {
         pubkey: None,
         lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Deploy the upgradeable program
     let program_keypair = Keypair::new();
@@ -1608,10 +1671,10 @@ fn test_cli_program_migrate_program() {
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Wait one slot to avoid "Program was deployed in this block already" error
-    wait_n_slots(&rpc_client, 1);
+    wait_n_slots(&rpc_client, 1).await;
 
     // Migrate program
     config.signers = vec![&keypair, &upgrade_authority];
@@ -1620,11 +1683,11 @@ fn test_cli_program_migrate_program() {
         authority_signer_index: 1,
         compute_unit_price: Some(1),
     });
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 }
 
-#[test]
-fn test_cli_program_write_buffer() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_write_buffer() {
     solana_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -1642,7 +1705,8 @@ fn test_cli_program_write_buffer() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let test_validator = test_validator_genesis(mint_keypair)
-        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .start_async_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .await
         .expect("validator start failed");
 
     let mut config = CliConfig::recent_for_tests();
@@ -1657,11 +1721,13 @@ fn test_cli_program_write_buffer() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
     let minimum_balance_for_buffer_default = rpc_client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
 
     let keypair = Keypair::new();
@@ -1670,7 +1736,7 @@ fn test_cli_program_write_buffer() {
         pubkey: None,
         lamports: 100 * minimum_balance_for_buffer,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Write a buffer with default params
     config.signers = vec![&keypair];
@@ -1688,7 +1754,7 @@ fn test_cli_program_write_buffer() {
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let buffer_pubkey_str = json
         .as_object()
@@ -1698,7 +1764,7 @@ fn test_cli_program_write_buffer() {
         .as_str()
         .unwrap();
     let new_buffer_pubkey = Pubkey::from_str(buffer_pubkey_str).unwrap();
-    let buffer_account = rpc_client.get_account(&new_buffer_pubkey).unwrap();
+    let buffer_account = rpc_client.get_account(&new_buffer_pubkey).await.unwrap();
     assert_eq!(buffer_account.lamports, minimum_balance_for_buffer_default);
     assert_eq!(buffer_account.owner, bpf_loader_upgradeable::id());
     if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
@@ -1727,7 +1793,7 @@ fn test_cli_program_write_buffer() {
         use_rpc: false,
         skip_feature_verification: true,
     });
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let buffer_pubkey_str = json
         .as_object()
@@ -1740,7 +1806,10 @@ fn test_cli_program_write_buffer() {
         buffer_keypair.pubkey(),
         Pubkey::from_str(buffer_pubkey_str).unwrap()
     );
-    let buffer_account = rpc_client.get_account(&buffer_keypair.pubkey()).unwrap();
+    let buffer_account = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(buffer_account.lamports, minimum_balance_for_buffer);
     assert_eq!(buffer_account.owner, bpf_loader_upgradeable::id());
     if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
@@ -1763,7 +1832,7 @@ fn test_cli_program_write_buffer() {
         all: false,
         use_lamports_unit: false,
     });
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let authority_pubkey_str = json
         .as_object()
@@ -1794,7 +1863,7 @@ fn test_cli_program_write_buffer() {
         use_rpc: false,
         skip_feature_verification: true,
     });
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let buffer_pubkey_str = json
         .as_object()
@@ -1807,7 +1876,10 @@ fn test_cli_program_write_buffer() {
         buffer_keypair.pubkey(),
         Pubkey::from_str(buffer_pubkey_str).unwrap()
     );
-    let buffer_account = rpc_client.get_account(&buffer_keypair.pubkey()).unwrap();
+    let buffer_account = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(buffer_account.lamports, minimum_balance_for_buffer_default);
     assert_eq!(buffer_account.owner, bpf_loader_upgradeable::id());
     if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
@@ -1837,7 +1909,7 @@ fn test_cli_program_write_buffer() {
         use_rpc: false,
         skip_feature_verification: true,
     });
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let buffer_pubkey_str = json
         .as_object()
@@ -1847,7 +1919,7 @@ fn test_cli_program_write_buffer() {
         .as_str()
         .unwrap();
     let buffer_pubkey = Pubkey::from_str(buffer_pubkey_str).unwrap();
-    let buffer_account = rpc_client.get_account(&buffer_pubkey).unwrap();
+    let buffer_account = rpc_client.get_account(&buffer_pubkey).await.unwrap();
     assert_eq!(buffer_account.lamports, minimum_balance_for_buffer_default);
     assert_eq!(buffer_account.owner, bpf_loader_upgradeable::id());
     if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
@@ -1870,7 +1942,7 @@ fn test_cli_program_write_buffer() {
         all: false,
         use_lamports_unit: false,
     });
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let authority_pubkey_str = json
         .as_object()
@@ -1885,7 +1957,7 @@ fn test_cli_program_write_buffer() {
     );
 
     // Close buffer
-    let close_account = rpc_client.get_account(&buffer_pubkey).unwrap();
+    let close_account = rpc_client.get_account(&buffer_pubkey).await.unwrap();
     assert_eq!(minimum_balance_for_buffer, close_account.lamports);
     let recipient_pubkey = Pubkey::new_unique();
     config.signers = vec![&keypair, &authority_keypair];
@@ -1896,13 +1968,14 @@ fn test_cli_program_write_buffer() {
         use_lamports_unit: false,
         bypass_warning: false,
     });
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
     expect_account_absent(
         &rpc_client,
         buffer_pubkey,
         "Buffer account is deleted when the buffer is closed",
-    );
-    let recipient_account = rpc_client.get_account(&recipient_pubkey).unwrap();
+    )
+    .await;
+    let recipient_account = rpc_client.get_account(&recipient_pubkey).await.unwrap();
     assert_eq!(minimum_balance_for_buffer, recipient_account.lamports);
 
     // Write a buffer with default params
@@ -1921,7 +1994,7 @@ fn test_cli_program_write_buffer() {
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let buffer_pubkey_str = json
         .as_object()
@@ -1933,7 +2006,11 @@ fn test_cli_program_write_buffer() {
     let new_buffer_pubkey = Pubkey::from_str(buffer_pubkey_str).unwrap();
 
     // Close buffers and deposit default keypair
-    let pre_lamports = rpc_client.get_account(&keypair.pubkey()).unwrap().lamports;
+    let pre_lamports = rpc_client
+        .get_account(&keypair.pubkey())
+        .await
+        .unwrap()
+        .lamports;
     config.signers = vec![&keypair];
     config.command = CliCommand::Program(ProgramCliCommand::Close {
         account_pubkey: Some(new_buffer_pubkey),
@@ -1942,13 +2019,14 @@ fn test_cli_program_write_buffer() {
         use_lamports_unit: false,
         bypass_warning: false,
     });
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
     expect_account_absent(
         &rpc_client,
         new_buffer_pubkey,
         "Buffer account is deleted when the buffer is closed",
-    );
-    let recipient_account = rpc_client.get_account(&keypair.pubkey()).unwrap();
+    )
+    .await;
+    let recipient_account = rpc_client.get_account(&keypair.pubkey()).await.unwrap();
     assert_eq!(
         pre_lamports + minimum_balance_for_buffer,
         recipient_account.lamports
@@ -1970,7 +2048,7 @@ fn test_cli_program_write_buffer() {
         use_rpc: false,
         skip_feature_verification: true,
     });
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
     config.signers = vec![&keypair, &buffer_keypair];
     config.command = CliCommand::Program(ProgramCliCommand::Deploy {
         program_location: Some(noop_large_path.to_str().unwrap().to_string()),
@@ -2007,12 +2085,14 @@ fn test_cli_program_write_buffer() {
             "Buffer account data size ({buffer_account_len}) is smaller than the minimum size \
              ({min_buffer_account_len})"
         ),
-    );
+    )
+    .await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(true; "Feature enabled")]
 #[test_case(false; "Feature disabled")]
-fn test_cli_program_write_buffer_feature(enable_feature: bool) {
+async fn test_cli_program_write_buffer_feature(enable_feature: bool) {
     solana_logger::setup();
 
     let mut program_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -2031,7 +2111,8 @@ fn test_cli_program_write_buffer_feature(enable_feature: bool) {
     }
 
     let test_validator = test_validator_builder
-        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .start_async_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .await
         .expect("validator start failed");
 
     let mut config = CliConfig::recent_for_tests();
@@ -2046,6 +2127,7 @@ fn test_cli_program_write_buffer_feature(enable_feature: bool) {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
 
     let keypair = Keypair::new();
@@ -2054,7 +2136,7 @@ fn test_cli_program_write_buffer_feature(enable_feature: bool) {
         pubkey: None,
         lamports: 100 * minimum_balance_for_buffer,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Write a buffer with default params
     config.signers = vec![&keypair];
@@ -2074,7 +2156,7 @@ fn test_cli_program_write_buffer_feature(enable_feature: bool) {
     config.output_format = OutputFormat::JsonCompact;
 
     if enable_feature {
-        let response = process_command(&config);
+        let response = process_command(&config).await;
         assert!(response.is_ok());
     } else {
         expect_command_failure(
@@ -2082,7 +2164,8 @@ fn test_cli_program_write_buffer_feature(enable_feature: bool) {
             "Program contains a syscall from a deactivated feature",
             "ELF error: ELF error: Unresolved symbol (sol_alt_bn128_group_op) at instruction #49 \
              (ELF file offset 0x188)",
-        );
+        )
+        .await;
 
         // If we bypass the verification, there should be no error
         config.command = CliCommand::Program(ProgramCliCommand::WriteBuffer {
@@ -2100,13 +2183,13 @@ fn test_cli_program_write_buffer_feature(enable_feature: bool) {
         });
 
         // When we skip verification, we won't fail
-        let response = process_command(&config);
+        let response = process_command(&config).await;
         assert!(response.is_ok());
     }
 }
 
-#[test]
-fn test_cli_program_set_buffer_authority() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_set_buffer_authority() {
     solana_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -2118,7 +2201,8 @@ fn test_cli_program_set_buffer_authority() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let test_validator = test_validator_genesis(mint_keypair)
-        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .start_async_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .await
         .expect("validator start failed");
 
     let mut config = CliConfig::recent_for_tests();
@@ -2133,6 +2217,7 @@ fn test_cli_program_set_buffer_authority() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
 
     let keypair = Keypair::new();
@@ -2141,7 +2226,7 @@ fn test_cli_program_set_buffer_authority() {
         pubkey: None,
         lamports: 100 * minimum_balance_for_buffer,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Write a buffer
     let buffer_keypair = Keypair::new();
@@ -2159,8 +2244,11 @@ fn test_cli_program_set_buffer_authority() {
         use_rpc: false,
         skip_feature_verification: true,
     });
-    process_command(&config).unwrap();
-    let buffer_account = rpc_client.get_account(&buffer_keypair.pubkey()).unwrap();
+    process_command(&config).await.unwrap();
+    let buffer_account = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .await
+        .unwrap();
     if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(keypair.pubkey()));
     } else {
@@ -2176,7 +2264,7 @@ fn test_cli_program_set_buffer_authority() {
         new_buffer_authority: new_buffer_authority.pubkey(),
     });
     config.output_format = OutputFormat::JsonCompact;
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let new_buffer_authority_str = json
         .as_object()
@@ -2189,7 +2277,10 @@ fn test_cli_program_set_buffer_authority() {
         Pubkey::from_str(new_buffer_authority_str).unwrap(),
         new_buffer_authority.pubkey()
     );
-    let buffer_account = rpc_client.get_account(&buffer_keypair.pubkey()).unwrap();
+    let buffer_account = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .await
+        .unwrap();
     if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(new_buffer_authority.pubkey()));
     } else {
@@ -2224,7 +2315,8 @@ fn test_cli_program_set_buffer_authority() {
             new_buffer_authority.pubkey(),
             keypair.pubkey(),
         ),
-    );
+    )
+    .await;
 
     // Set buffer authority to the buffer identity (it's a common way for program devs to do so)
     config.signers = vec![&keypair, &new_buffer_authority];
@@ -2233,7 +2325,7 @@ fn test_cli_program_set_buffer_authority() {
         buffer_authority_index: Some(1),
         new_buffer_authority: buffer_keypair.pubkey(),
     });
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let buffer_authority_str = json
         .as_object()
@@ -2246,7 +2338,10 @@ fn test_cli_program_set_buffer_authority() {
         Pubkey::from_str(buffer_authority_str).unwrap(),
         buffer_keypair.pubkey()
     );
-    let buffer_account = rpc_client.get_account(&buffer_keypair.pubkey()).unwrap();
+    let buffer_account = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .await
+        .unwrap();
     if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(buffer_keypair.pubkey()));
     } else {
@@ -2273,11 +2368,11 @@ fn test_cli_program_set_buffer_authority() {
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 }
 
-#[test]
-fn test_cli_program_mismatch_buffer_authority() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_mismatch_buffer_authority() {
     solana_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -2289,7 +2384,8 @@ fn test_cli_program_mismatch_buffer_authority() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let test_validator = test_validator_genesis(mint_keypair)
-        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .start_async_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .await
         .expect("validator start failed");
 
     let mut config = CliConfig::recent_for_tests();
@@ -2304,6 +2400,7 @@ fn test_cli_program_mismatch_buffer_authority() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
 
     let keypair = Keypair::new();
@@ -2312,7 +2409,7 @@ fn test_cli_program_mismatch_buffer_authority() {
         pubkey: None,
         lamports: 100 * minimum_balance_for_buffer,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Write a buffer
     let buffer_authority = Keypair::new();
@@ -2331,8 +2428,11 @@ fn test_cli_program_mismatch_buffer_authority() {
         use_rpc: false,
         skip_feature_verification: true,
     });
-    process_command(&config).unwrap();
-    let buffer_account = rpc_client.get_account(&buffer_keypair.pubkey()).unwrap();
+    process_command(&config).await.unwrap();
+    let buffer_account = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .await
+        .unwrap();
     if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(buffer_authority.pubkey()));
     } else {
@@ -2367,7 +2467,8 @@ fn test_cli_program_mismatch_buffer_authority() {
             buffer_authority.pubkey(),
             upgrade_authority.pubkey(),
         ),
-    );
+    )
+    .await;
 
     // Attempt to deploy matched authority
     config.signers = vec![&keypair, &buffer_authority];
@@ -2388,15 +2489,16 @@ fn test_cli_program_mismatch_buffer_authority() {
         use_rpc: false,
         skip_feature_verification: true,
     });
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 }
 
 // Assume fee payer will be either online signer or offline signer (could be completely
 // separate signer too, but that option is unlikely to be chosen often, so don't bother
 // testing for it), we want to test for most common choices.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(true; "offline signer will be fee payer")]
 #[test_case(false; "online signer will be fee payer")]
-fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer: bool) {
+async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer: bool) {
     solana_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -2414,14 +2516,15 @@ fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer:
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let test_validator = test_validator_genesis(mint_keypair)
-        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .start_async_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .await
         .expect("validator start failed");
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
     let rpc_client = setup_rpc_client(&mut config);
 
-    let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let blockhash = rpc_client.get_latest_blockhash().await.unwrap();
 
     let mut file = File::open(noop_large_path.to_str().unwrap()).unwrap();
     let mut large_program_data = Vec::new();
@@ -2431,6 +2534,7 @@ fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer:
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_program_data_len,
         ))
+        .await
         .unwrap();
 
     let online_signer = Keypair::new();
@@ -2446,13 +2550,13 @@ fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer:
         lamports: 100 * minimum_balance_for_large_buffer, // gotta be enough for this test
     };
     config.signers = vec![&online_signer];
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
     config.command = CliCommand::Airdrop {
         pubkey: None,
         lamports: 100 * minimum_balance_for_large_buffer, // gotta be enough for this test
     };
     config.signers = vec![&offline_signer];
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Deploy upgradeable program with authority set to offline signer
     config.signers = vec![&online_signer, &offline_signer, &program_signer];
@@ -2474,7 +2578,7 @@ fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer:
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Prepare buffer to upgrade deployed program to a larger program
     create_buffer_with_offline_authority(
@@ -2484,7 +2588,8 @@ fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer:
         &online_signer,
         &offline_signer,
         &buffer_signer,
-    );
+    )
+    .await;
 
     // Offline sign-only with signature over "wrong" message (with different buffer)
     config.signers = vec![&offline_signer];
@@ -2505,7 +2610,7 @@ fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer:
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
-    let sig_response = process_command(&config).unwrap();
+    let sig_response = process_command(&config).await.unwrap();
     let sign_only = parse_sign_only_reply_string(&sig_response);
     let offline_pre_signer = sign_only.presigner_of(&offline_signer.pubkey()).unwrap();
     // Attempt to deploy from buffer using signature over wrong(different) message (should fail)
@@ -2531,7 +2636,8 @@ fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer:
         &config,
         "Signature becomes invalid if the buffer is modified",
         "presigner error",
-    );
+    )
+    .await;
 
     // Offline sign-only with online signer as fee payer (correct signature for program upgrade)
     config.signers = vec![&offline_signer];
@@ -2552,7 +2658,7 @@ fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer:
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
-    let sig_response = process_command(&config).unwrap();
+    let sig_response = process_command(&config).await.unwrap();
     let sign_only = parse_sign_only_reply_string(&sig_response);
     let offline_pre_signer = sign_only.presigner_of(&offline_signer.pubkey()).unwrap();
     // Attempt to deploy from buffer using signature over correct message (should succeed)
@@ -2574,12 +2680,12 @@ fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer:
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
     let (programdata_pubkey, _) = Pubkey::find_program_address(
         &[program_signer.pubkey().as_ref()],
         &bpf_loader_upgradeable::id(),
     );
-    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
     assert_eq!(
         programdata_account.lamports,
         minimum_balance_for_large_buffer
@@ -2592,8 +2698,8 @@ fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer:
     );
 }
 
-#[test]
-fn test_cli_program_show() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_show() {
     solana_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -2605,7 +2711,8 @@ fn test_cli_program_show() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let test_validator = test_validator_genesis(mint_keypair)
-        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .start_async_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .await
         .expect("validator start failed");
 
     let mut config = CliConfig::recent_for_tests();
@@ -2620,6 +2727,7 @@ fn test_cli_program_show() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
 
     let keypair = Keypair::new();
@@ -2631,7 +2739,7 @@ fn test_cli_program_show() {
         pubkey: None,
         lamports: 100 * minimum_balance_for_buffer,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Write a buffer
     let buffer_keypair = Keypair::new();
@@ -2650,7 +2758,7 @@ fn test_cli_program_show() {
         use_rpc: false,
         skip_feature_verification: true,
     });
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Verify show
     config.signers = vec![&keypair];
@@ -2662,7 +2770,7 @@ fn test_cli_program_show() {
         all: false,
         use_lamports_unit: false,
     });
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let address_str = json
         .as_object()
@@ -2716,9 +2824,9 @@ fn test_cli_program_show() {
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
-    let min_slot = rpc_client.get_slot().unwrap();
-    process_command(&config).unwrap();
-    let max_slot = rpc_client.get_slot().unwrap();
+    let min_slot = rpc_client.get_slot().await.unwrap();
+    process_command(&config).await.unwrap();
+    let max_slot = rpc_client.get_slot().await.unwrap();
 
     // Verify show
     config.signers = vec![&keypair];
@@ -2730,7 +2838,7 @@ fn test_cli_program_show() {
         all: false,
         use_lamports_unit: false,
     });
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let address_str = json
         .as_object()
@@ -2788,8 +2896,8 @@ fn test_cli_program_show() {
     assert_eq!(max_len, data_len as usize);
 }
 
-#[test]
-fn test_cli_program_dump() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_dump() {
     solana_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -2801,7 +2909,8 @@ fn test_cli_program_dump() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let test_validator = test_validator_genesis(mint_keypair)
-        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .start_async_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .await
         .expect("validator start failed");
 
     let mut config = CliConfig::recent_for_tests();
@@ -2816,6 +2925,7 @@ fn test_cli_program_dump() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
 
     let keypair = Keypair::new();
@@ -2827,7 +2937,7 @@ fn test_cli_program_dump() {
         pubkey: None,
         lamports: 100 * minimum_balance_for_buffer,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Write a buffer
     let buffer_keypair = Keypair::new();
@@ -2846,7 +2956,7 @@ fn test_cli_program_dump() {
         use_rpc: false,
         skip_feature_verification: true,
     });
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Verify dump
     let mut out_file = {
@@ -2859,7 +2969,7 @@ fn test_cli_program_dump() {
         account_pubkey: Some(buffer_keypair.pubkey()),
         output_location: out_file.clone().into_os_string().into_string().unwrap(),
     });
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     let mut file = File::open(out_file).unwrap();
     let mut out_data = Vec::new();
@@ -2870,7 +2980,7 @@ fn test_cli_program_dump() {
     }
 }
 
-fn create_buffer_with_offline_authority<'a>(
+async fn create_buffer_with_offline_authority<'a>(
     rpc_client: &RpcClient,
     program_path: &Path,
     config: &mut CliConfig<'a>,
@@ -2893,8 +3003,11 @@ fn create_buffer_with_offline_authority<'a>(
         use_rpc: false,
         skip_feature_verification: true,
     });
-    process_command(config).unwrap();
-    let buffer_account = rpc_client.get_account(&buffer_signer.pubkey()).unwrap();
+    process_command(config).await.unwrap();
+    let buffer_account = rpc_client
+        .get_account(&buffer_signer.pubkey())
+        .await
+        .unwrap();
     if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(online_signer.pubkey()));
     } else {
@@ -2909,8 +3022,11 @@ fn create_buffer_with_offline_authority<'a>(
         new_buffer_authority: offline_signer.pubkey(),
     });
     config.output_format = OutputFormat::JsonCompact;
-    process_command(config).unwrap();
-    let buffer_account = rpc_client.get_account(&buffer_signer.pubkey()).unwrap();
+    process_command(config).await.unwrap();
+    let buffer_account = rpc_client
+        .get_account(&buffer_signer.pubkey())
+        .await
+        .unwrap();
     if let UpgradeableLoaderState::Buffer { authority_address } = buffer_account.state().unwrap() {
         assert_eq!(authority_address, Some(offline_signer.pubkey()));
     } else {
@@ -2919,10 +3035,11 @@ fn create_buffer_with_offline_authority<'a>(
 }
 
 #[allow(clippy::assertions_on_constants)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(None, false; "default")]
 #[test_case(Some(10), false; "with_compute_unit_price")]
 #[test_case(None, true; "use_rpc")]
-fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: bool) {
+async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: bool) {
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
     noop_path.push("fixtures");
@@ -2944,7 +3061,8 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
             faucet_addr: Some(faucet_addr),
             ..JsonRpcConfig::default_for_test()
         })
-        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .start_async_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .await
         .expect("validator start failed");
 
     let mut config = CliConfig::recent_for_tests();
@@ -2959,9 +3077,11 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
             max_len,
         ))
+        .await
         .unwrap();
     let minimum_balance_for_program = rpc_client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
         .unwrap();
     let upgrade_authority = Keypair::new();
 
@@ -2971,7 +3091,7 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
         pubkey: None,
         lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Deploy the upgradeable program with specified program_id
     let program_keypair = Keypair::new();
@@ -2994,7 +3114,7 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
-    let response = process_command(&config);
+    let response = process_command(&config).await;
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let program_pubkey_str = json
         .as_object()
@@ -3007,7 +3127,10 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
         program_keypair.pubkey(),
         Pubkey::from_str(program_pubkey_str).unwrap()
     );
-    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    let program_account = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(program_account.lamports, minimum_balance_for_program);
     assert_eq!(program_account.owner, bpf_loader_upgradeable::id());
     assert!(program_account.executable);
@@ -3019,6 +3142,7 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
                 ..GetConfirmedSignaturesForAddress2Config::default()
             },
         )
+        .await
         .unwrap();
     let signatures: Vec<_> = signature_statuses
         .into_iter()
@@ -3026,7 +3150,10 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
         .map(|status| Signature::from_str(&status.signature).unwrap())
         .collect();
 
-    fn fetch_and_decode_transaction(rpc_client: &RpcClient, signature: &Signature) -> Transaction {
+    async fn fetch_and_decode_transaction(
+        rpc_client: &RpcClient,
+        signature: &Signature,
+    ) -> Transaction {
         rpc_client
             .get_transaction_with_config(
                 signature,
@@ -3036,6 +3163,7 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
                     ..RpcTransactionConfig::default()
                 },
             )
+            .await
             .unwrap()
             .transaction
             .transaction
@@ -3046,9 +3174,9 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
     }
 
     assert!(signatures.len() >= 4);
-    let initial_tx = fetch_and_decode_transaction(&rpc_client, &signatures[1]);
-    let write_tx = fetch_and_decode_transaction(&rpc_client, &signatures[2]);
-    let final_tx = fetch_and_decode_transaction(&rpc_client, signatures.last().unwrap());
+    let initial_tx = fetch_and_decode_transaction(&rpc_client, &signatures[1]).await;
+    let write_tx = fetch_and_decode_transaction(&rpc_client, &signatures[2]).await;
+    let final_tx = fetch_and_decode_transaction(&rpc_client, signatures.last().unwrap()).await;
 
     if let Some(compute_unit_price) = compute_unit_price {
         for tx in [&initial_tx, &write_tx, &final_tx] {
@@ -3094,8 +3222,8 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
     }
 }
 
-#[test]
-fn test_cli_program_v4() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_v4() {
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
     noop_path.push("fixtures");
@@ -3105,7 +3233,8 @@ fn test_cli_program_v4() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let test_validator = test_validator_genesis(mint_keypair)
-        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .start_async_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .await
         .expect("validator start failed");
 
     let mut config = CliConfig::recent_for_tests();
@@ -3126,12 +3255,12 @@ fn test_cli_program_v4() {
         pubkey: None,
         lamports: 10000000,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
     config.command = CliCommand::Airdrop {
         pubkey: Some(program_keypair.pubkey()),
         lamports: 1000,
     };
-    process_command(&config).unwrap();
+    process_command(&config).await.unwrap();
 
     // Initial deployment
     config.output_format = OutputFormat::JsonCompact;
@@ -3144,8 +3273,11 @@ fn test_cli_program_v4() {
         path_to_elf: Some(noop_path.to_str().unwrap().to_string()),
         upload_range: None..None,
     });
-    assert!(process_command(&config).is_ok());
-    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    assert!(process_command(&config).await.is_ok());
+    let program_account = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(program_account.owner, loader_v4::id());
     assert!(program_account.executable);
 
@@ -3159,8 +3291,11 @@ fn test_cli_program_v4() {
         path_to_elf: Some(noop_path.to_str().unwrap().to_string()),
         upload_range: None..None,
     });
-    assert!(process_command(&config).is_ok());
-    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    assert!(process_command(&config).await.is_ok());
+    let program_account = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(program_account.owner, loader_v4::id());
     assert!(program_account.executable);
 
@@ -3174,12 +3309,16 @@ fn test_cli_program_v4() {
         path_to_elf: Some(noop_path.to_str().unwrap().to_string()),
         upload_range: None..None,
     });
-    assert!(process_command(&config).is_ok());
-    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    assert!(process_command(&config).await.is_ok());
+    let program_account = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(program_account.owner, loader_v4::id());
     assert!(program_account.executable);
     let _error = rpc_client
         .get_account(&buffer_keypair.pubkey())
+        .await
         .unwrap_err();
 
     // Two-step redeployment with buffer
@@ -3192,8 +3331,11 @@ fn test_cli_program_v4() {
         path_to_elf: Some(noop_path.to_str().unwrap().to_string()),
         upload_range: None..None,
     });
-    assert!(process_command(&config).is_ok());
-    let buffer_account = rpc_client.get_account(&buffer_keypair.pubkey()).unwrap();
+    assert!(process_command(&config).await.is_ok());
+    let buffer_account = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(buffer_account.owner, loader_v4::id());
     assert!(buffer_account.executable);
     config.command = CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
@@ -3205,12 +3347,16 @@ fn test_cli_program_v4() {
         path_to_elf: Some(noop_path.to_str().unwrap().to_string()),
         upload_range: None..None,
     });
-    assert!(process_command(&config).is_ok());
-    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    assert!(process_command(&config).await.is_ok());
+    let program_account = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(program_account.owner, loader_v4::id());
     assert!(program_account.executable);
     let _error = rpc_client
         .get_account(&buffer_keypair.pubkey())
+        .await
         .unwrap_err();
 
     // Transfer authority over program
@@ -3220,8 +3366,11 @@ fn test_cli_program_v4() {
         authority_signer_index: 1,
         new_authority_signer_index: 2,
     });
-    assert!(process_command(&config).is_ok());
-    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    assert!(process_command(&config).await.is_ok());
+    let program_account = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(program_account.owner, loader_v4::id());
     assert!(program_account.executable);
 
@@ -3232,9 +3381,10 @@ fn test_cli_program_v4() {
         authority_signer_index: 2,
         close_program_entirely: true,
     });
-    assert!(process_command(&config).is_ok());
+    assert!(process_command(&config).await.is_ok());
     let _error = rpc_client
         .get_account(&program_keypair.pubkey())
+        .await
         .unwrap_err();
 
     // Deployment at the closed address
@@ -3247,8 +3397,11 @@ fn test_cli_program_v4() {
         path_to_elf: Some(noop_path.to_str().unwrap().to_string()),
         upload_range: None..None,
     });
-    assert!(process_command(&config).is_ok());
-    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    assert!(process_command(&config).await.is_ok());
+    let program_account = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(program_account.owner, loader_v4::id());
     assert!(program_account.executable);
 
@@ -3259,8 +3412,11 @@ fn test_cli_program_v4() {
         authority_signer_index: 1,
         next_version_signer_index: 2,
     });
-    assert!(process_command(&config).is_ok());
-    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    assert!(process_command(&config).await.is_ok());
+    let program_account = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .await
+        .unwrap();
     assert_eq!(program_account.owner, loader_v4::id());
     assert!(program_account.executable);
 }

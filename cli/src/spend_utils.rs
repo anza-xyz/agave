@@ -14,7 +14,7 @@ use {
     solana_hash::Hash,
     solana_message::Message,
     solana_pubkey::Pubkey,
-    solana_rpc_client::rpc_client::RpcClient,
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
 };
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -60,7 +60,7 @@ struct SpendAndFee {
     fee: u64,
 }
 
-pub fn resolve_spend_tx_and_check_account_balance<F>(
+pub async fn resolve_spend_tx_and_check_account_balance<F>(
     rpc_client: &RpcClient,
     sign_only: bool,
     amount: SpendAmount,
@@ -84,9 +84,10 @@ where
         build_message,
         commitment,
     )
+    .await
 }
 
-pub fn resolve_spend_tx_and_check_account_balances<F>(
+pub async fn resolve_spend_tx_and_check_account_balances<F>(
     rpc_client: &RpcClient,
     sign_only: bool,
     amount: SpendAmount,
@@ -111,17 +112,21 @@ where
             0,
             compute_unit_limit,
             build_message,
-        )?;
+        )
+        .await?;
         Ok((message, spend))
     } else {
         let account = rpc_client
-            .get_account_with_commitment(from_pubkey, commitment)?
+            .get_account_with_commitment(from_pubkey, commitment)
+            .await?
             .value
             .unwrap_or_default();
         let mut from_balance = account.lamports;
         let from_rent_exempt_minimum =
             if amount == SpendAmount::RentExempt || amount == SpendAmount::Available {
-                rpc_client.get_minimum_balance_for_rent_exemption(account.data.len())?
+                rpc_client
+                    .get_minimum_balance_for_rent_exemption(account.data.len())
+                    .await?
             } else {
                 0
             };
@@ -134,7 +139,8 @@ where
                 None,
                 false,
                 None,
-            )?;
+            )
+            .await?;
             let mut subtract_rent_exempt_minimum = false;
             if let Some(active_stake) = state.active_stake {
                 from_balance = from_balance.saturating_sub(active_stake);
@@ -158,7 +164,8 @@ where
             from_rent_exempt_minimum,
             compute_unit_limit,
             build_message,
-        )?;
+        )
+        .await?;
         if from_pubkey == fee_pubkey {
             if from_balance == 0 || from_balance < spend.saturating_add(fee) {
                 return Err(CliError::InsufficientFundsForSpendAndFee(
@@ -174,7 +181,8 @@ where
                     *from_pubkey,
                 ));
             }
-            if !check_account_for_balance_with_commitment(rpc_client, fee_pubkey, fee, commitment)?
+            if !check_account_for_balance_with_commitment(rpc_client, fee_pubkey, fee, commitment)
+                .await?
             {
                 return Err(CliError::InsufficientFundsForFee(
                     build_balance_message(fee, false, false),
@@ -186,7 +194,7 @@ where
     }
 }
 
-fn resolve_spend_message<F>(
+async fn resolve_spend_message<F>(
     rpc_client: &RpcClient,
     amount: SpendAmount,
     blockhash: Option<&Hash>,
@@ -240,14 +248,15 @@ where
                         &compute_unit_limit,
                         rpc_client,
                         &mut dummy_message,
-                    )?
+                    )
+                    .await?
                 {
                     Some((ix_index, dummy_message.instructions[ix_index].data.clone()))
                 } else {
                     None
                 };
             (
-                get_fee_for_messages(rpc_client, &[&dummy_message])?,
+                get_fee_for_messages(rpc_client, &[&dummy_message]).await?,
                 compute_unit_info,
             )
         }

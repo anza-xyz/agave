@@ -5,7 +5,7 @@ use {
     solana_instruction::Instruction,
     solana_message::Message,
     solana_program_runtime::execution_budget::MAX_COMPUTE_UNIT_LIMIT,
-    solana_rpc_client::rpc_client::RpcClient,
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcSimulateTransactionConfig,
     solana_transaction::Transaction,
 };
@@ -39,7 +39,7 @@ fn get_compute_unit_limit_instruction_index(message: &Message) -> Option<usize> 
 
 /// Like `simulate_for_compute_unit_limit`, but does not check that the message
 /// contains a compute unit limit instruction.
-fn simulate_for_compute_unit_limit_unchecked(
+async fn simulate_for_compute_unit_limit_unchecked(
     rpc_client: &RpcClient,
     message: &Message,
 ) -> Result<u32, Box<dyn std::error::Error>> {
@@ -52,7 +52,8 @@ fn simulate_for_compute_unit_limit_unchecked(
                 commitment: Some(rpc_client.commitment()),
                 ..RpcSimulateTransactionConfig::default()
             },
-        )?
+        )
+        .await?
         .value;
 
     // Bail if the simulated transaction failed
@@ -71,14 +72,14 @@ fn simulate_for_compute_unit_limit_unchecked(
 ///
 /// Returns an error if the message does not contain a compute unit limit
 /// instruction or if the simulation fails.
-pub(crate) fn simulate_for_compute_unit_limit(
+pub(crate) async fn simulate_for_compute_unit_limit(
     rpc_client: &RpcClient,
     message: &Message,
 ) -> Result<u32, Box<dyn std::error::Error>> {
     if get_compute_unit_limit_instruction_index(message).is_none() {
         return Err("No compute unit limit instruction found".into());
     }
-    simulate_for_compute_unit_limit_unchecked(rpc_client, message)
+    simulate_for_compute_unit_limit_unchecked(rpc_client, message).await
 }
 
 /// Simulates a message and returns the index of the compute unit limit
@@ -87,7 +88,7 @@ pub(crate) fn simulate_for_compute_unit_limit(
 /// If the message does not contain a compute unit limit instruction, or if
 /// simulation was not configured, then the function will not simulate the
 /// message.
-pub(crate) fn simulate_and_update_compute_unit_limit(
+pub(crate) async fn simulate_and_update_compute_unit_limit(
     compute_unit_limit: &ComputeUnitLimit,
     rpc_client: &RpcClient,
     message: &mut Message,
@@ -100,7 +101,7 @@ pub(crate) fn simulate_and_update_compute_unit_limit(
     match compute_unit_limit {
         ComputeUnitLimit::Simulated | ComputeUnitLimit::SimulatedWithExtraPercentage(_) => {
             let base_compute_unit_limit =
-                simulate_for_compute_unit_limit_unchecked(rpc_client, message)?;
+                simulate_for_compute_unit_limit_unchecked(rpc_client, message).await?;
 
             let compute_unit_limit =
                 if let ComputeUnitLimit::SimulatedWithExtraPercentage(n) = compute_unit_limit {
