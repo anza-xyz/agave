@@ -120,6 +120,9 @@ pub struct TransactionProcessingConfig<'a> {
     pub limit_to_load_programs: bool,
     /// Recording capabilities for transaction execution.
     pub recording_config: ExecutionRecordingConfig,
+    // O: Confirm it's fine to break public API here.
+    pub drop_on_failure: bool,
+    pub all_or_nothing: bool,
 }
 
 /// Runtime environment for transaction batch processing.
@@ -393,9 +396,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // With SIMD83, transactions must be executed in order, because transactions
         // in the same batch may modify the same accounts. Transaction order is
         // preserved within entries written to the ledger.
+        let mut all_or_nothing_failed = false;
         for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
+            // Short circuit processing if an all or nothing batch has failed.
+            let pre_validate = match (check_result, all_or_nothing_failed) {
+                (Ok(_), true) => Err(TransactionError::CommitCancelled),
+                (res, _) => res,
+            };
+
             let (validate_result, validate_fees_us) =
-                measure_us!(check_result.and_then(|tx_details| {
+                measure_us!(pre_validate.and_then(|tx_details| {
                     Self::validate_transaction_nonce_and_fee_payer(
                         &mut account_loader,
                         tx,
@@ -424,12 +434,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
             let (processing_result, single_execution_us) = measure_us!(match load_result {
                 TransactionLoadResult::NotLoaded(err) => Err(err),
-                TransactionLoadResult::FeesOnly(fees_only_tx) => {
-                    // Update loaded accounts cache with nonce and fee-payer
-                    account_loader.update_accounts_for_failed_tx(&fees_only_tx.rollback_accounts);
+                TransactionLoadResult::FeesOnly(fees_only_tx) => match config.drop_on_failure {
+                    true => Err(TransactionError::CommitCancelled),
+                    false => {
+                        // Update loaded accounts cache with nonce and fee-payer
+                        account_loader
+                            .update_accounts_for_failed_tx(&fees_only_tx.rollback_accounts);
 
-                    Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
-                }
+                        Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
+                    }
+                },
                 TransactionLoadResult::Loaded(loaded_transaction) => {
                     let (program_accounts_set, filter_executable_us) = measure_us!(self
                         .filter_executable_program_accounts(
@@ -483,16 +497,31 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         config,
                     );
 
-                    // Update loaded accounts cache with account states which might have changed.
-                    // Also update local program cache with modifications made by the transaction,
-                    // if it executed successfully.
-                    account_loader.update_accounts_for_executed_tx(tx, &executed_tx);
+                    match (executed_tx.was_successful(), config.drop_on_failure) {
+                        // Successful transactions need to update the account loader cache as future
+                        // transactions in the batch may depend on them.
+                        (true, _) => {
+                            account_loader.update_accounts_for_successful_tx(
+                                tx,
+                                &executed_tx.loaded_transaction.accounts,
+                            );
+                            program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
 
-                    if executed_tx.was_successful() {
-                        program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
+                            Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
+                        }
+                        // If the transaction failed & drop on failure is set then we don't want to
+                        // update the accounts as this transaction will be dropped from the batch.
+                        (false, true) => Err(TransactionError::CommitCancelled),
+                        // Unsuccessful transactions will still update rollback accounts (fee payer,
+                        // nonce, etc).
+                        (false, false) => {
+                            account_loader.update_accounts_for_failed_tx(
+                                &executed_tx.loaded_transaction.rollback_accounts,
+                            );
+
+                            Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
+                        }
                     }
-
-                    Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
                 }
             });
             execution_us = execution_us.saturating_add(single_execution_us);
@@ -501,6 +530,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 measure_us!(balance_collector.collect_post_balances(&mut account_loader, tx));
             execute_timings
                 .saturating_add_in_place(ExecuteTimingType::CollectBalancesUs, collect_balances_us);
+
+            // If the all or nothing flag was requested AND processing failed to commit a result,
+            // then we should trip the `all_or_nothing_failed` flag so we can short circuit through
+            // the remaining transactions in the batch.
+            all_or_nothing_failed |= config.all_or_nothing && processing_result.is_err();
 
             processing_results.push(processing_result);
         }

@@ -202,7 +202,7 @@ impl Consumer {
         // WouldExceedMaxAccountCostLimit, WouldExceedMaxVoteCostLimit
         // and WouldExceedMaxAccountDataCostLimit
         let execute_and_commit_transactions_output =
-            self.execute_and_commit_transactions_locked(bank, &batch);
+            self.execute_and_commit_transactions_locked(bank, &batch, false, false);
 
         // Once the accounts are new transactions can enter the pipeline to process them
         let (_, unlock_us) = measure_us!(drop(batch));
@@ -244,6 +244,8 @@ impl Consumer {
         &self,
         bank: &Bank,
         batch: &TransactionBatch<impl TransactionWithMeta>,
+        drop_on_failure: bool,
+        all_or_nothing: bool,
     ) -> ExecuteAndCommitTransactionsOutput {
         let transaction_status_sender_enabled = self.committer.transaction_status_sender_enabled();
         let mut execute_and_commit_timings = LeaderExecuteAndCommitTimings::default();
@@ -329,6 +331,8 @@ impl Consumer {
                     recording_config: ExecutionRecordingConfig::new_single_setting(
                         transaction_status_sender_enabled
                     ),
+                    drop_on_failure,
+                    all_or_nothing,
                 }
             ));
         execute_and_commit_timings.load_execute_us = load_execute_us;
@@ -357,6 +361,30 @@ impl Consumer {
             .accumulate_actual_execute_cu(actual_executed_cu);
         self.qos_service
             .accumulate_actual_execute_time(actual_execute_time);
+
+        // Early exit if this is an all or nothing batch that has failed.
+        if all_or_nothing && processing_results.iter().any(|res| res.is_err()) {
+            return ExecuteAndCommitTransactionsOutput {
+                transaction_counts: LeaderProcessedTransactionCounts {
+                    attempted_processing_count: processing_results.len() as u64,
+                    processed_count: 0,
+                    processed_with_successful_result_count: 0,
+                },
+                retryable_transaction_indexes,
+                commit_transactions_result: Ok(processing_results
+                    .into_iter()
+                    .map(|res| {
+                        CommitTransactionDetails::NotCommitted(
+                            res.err().unwrap_or(TransactionError::CommitCancelled),
+                        )
+                    })
+                    .collect()),
+                execute_and_commit_timings,
+                error_counters,
+                min_prioritization_fees,
+                max_prioritization_fees,
+            };
+        }
 
         let transaction_counts = LeaderProcessedTransactionCounts {
             processed_count: processed_counts.processed_transactions_count,
