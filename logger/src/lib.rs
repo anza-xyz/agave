@@ -120,8 +120,7 @@ pub fn redirect_stderr_to_file(logfile: Option<String>) -> Option<JoinHandle<()>
                         .spawn(move || {
                             for signal in signals.forever() {
                                 info!(
-                                    "received SIGUSR1 ({}), reopening log file: {:?}",
-                                    signal, logfile
+                                    "received SIGUSR1 ({signal}), reopening log file: {logfile:?}",
                                 );
                                 redirect_stderr(&logfile);
                             }
