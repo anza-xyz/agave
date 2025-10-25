@@ -8,7 +8,7 @@ sidebar_position: 1
 There are multiple ways to install the Solana tools on your computer depending
 on your preferred workflow:
 
-- [Use the Solana Install Tool (Simplest option)](#use-solanas-install-tool)
+- [Use the Solana Install Tool (Simplest option)](#use-the-solana-install-tool)
 - [Download Prebuilt Binaries](#download-prebuilt-binaries)
 - [Build from Source](#build-from-source)
 - [Use Homebrew](#use-homebrew)
@@ -192,7 +192,7 @@ installation instruction for Homebrew if not already installed.
 Then, install build dependencies with `brew`:
 
 ```bash
-brew install pkg-config libudev protobuf llvm coreutils
+brew install pkg-config protobuf llvm coreutils
 ```
 
 Follow the instructions given at the end of the brew install command about
