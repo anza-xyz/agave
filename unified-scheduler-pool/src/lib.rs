@@ -58,7 +58,7 @@ use {
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::{
-        BlockSize, Capability, OrderedTaskId,
+        BlockSize, Capability, MaxAge, OrderedTaskId,
         SchedulingMode::{self, BlockProduction, BlockVerification},
         SchedulingStateMachine, Task, UsageQueue,
     },
@@ -387,11 +387,13 @@ impl BankingStageHelper {
         transaction: RuntimeTransaction<SanitizedTransaction>,
         task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
+        max_age: MaxAge,
     ) -> Task {
         SchedulingStateMachine::create_block_production_task(
             transaction,
             task_id,
             consumed_block_size,
+            max_age,
             &mut |pubkey| self.usage_queue_loader.load(pubkey),
         )
     }
@@ -399,8 +401,9 @@ impl BankingStageHelper {
     fn recreate_task(&self, executed_task: Box<ExecutedTask>) -> Task {
         let new_task_id = self.regenerated_task_id(executed_task.task.task_id());
         let consumed_block_size = executed_task.consumed_block_size();
+        let max_age = *executed_task.max_age();
         let transaction = executed_task.into_transaction();
-        self.create_new_task(transaction, new_task_id, consumed_block_size)
+        self.create_new_task(transaction, new_task_id, consumed_block_size, max_age)
     }
 
     pub fn send_new_task(&self, task: Task) {
@@ -1045,6 +1048,13 @@ impl TaskHandler for DefaultTaskHandler {
                 bank.prepare_unlocked_batch_from_single_tx(transaction)
             }
             BlockProduction => {
+                if let Err(error) =
+                    bank.resanitize_transaction_if_needed(transaction, task.max_age())
+                {
+                    *result = Err(error);
+                    return;
+                }
+
                 // Due to the probable presence of an independent banking thread (like the jito
                 // thread), we are forced to lock the addresses unlike block verification. The
                 // scheduling thread isn't appropriate for these kinds of work; so, instead do that
@@ -1187,6 +1197,10 @@ impl ExecutedTask {
 
     fn consumed_block_size(&self) -> BlockSize {
         self.task.consumed_block_size()
+    }
+
+    fn max_age(&self) -> &MaxAge {
+        self.task.max_age()
     }
 
     fn into_transaction(self) -> RuntimeTransaction<SanitizedTransaction> {
@@ -4654,7 +4668,7 @@ mod tests {
             transaction: RuntimeTransaction<SanitizedTransaction>,
             task_id: OrderedTaskId,
         ) -> Task {
-            self.create_new_task(transaction, task_id, NO_CONSUMED_BLOCK_SIZE)
+            self.create_new_task(transaction, task_id, NO_CONSUMED_BLOCK_SIZE, MaxAge::MAX)
         }
     }
 
