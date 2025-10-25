@@ -314,6 +314,7 @@ impl ContactInfo {
         SOCKET_TAG_TPU_FORWARDS_QUIC
     );
     remove_socket!(remove_tvu, SOCKET_TAG_TVU, SOCKET_TAG_TVU_QUIC);
+    remove_socket!(remove_alpenglow, SOCKET_TAG_ALPENGLOW);
 
     #[cfg(test)]
     fn get_socket(&self, key: u8) -> Result<SocketAddr, Error> {
@@ -1102,6 +1103,23 @@ mod tests {
         node.remove_tpu_forwards();
         assert_matches!(node.tpu_forwards(Protocol::UDP), None);
         assert_matches!(node.tpu_forwards(Protocol::QUIC), None);
+    }
+
+    #[test]
+    fn test_set_and_remove_alpenglow() {
+        let mut rng = rand::thread_rng();
+        let mut node = ContactInfo::new(
+            Keypair::new().pubkey(),
+            rng.gen(), // wallclock
+            rng.gen(), // shred_version
+        );
+        let socket = repeat_with(|| new_rand_socket(&mut rng))
+            .find(|socket| matches!(sanitize_socket(socket), Ok(())))
+            .unwrap();
+        node.set_alpenglow(socket).unwrap();
+        assert_eq!(node.alpenglow().unwrap(), socket);
+        node.remove_alpenglow();
+        assert_matches!(node.alpenglow(), None);
     }
 
     #[test]

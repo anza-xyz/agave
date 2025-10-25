@@ -859,6 +859,7 @@ pub fn execute(
         node.info.remove_tpu_forwards();
         node.info.remove_tvu();
         node.info.remove_serve_repair();
+        node.info.remove_alpenglow();
 
         // A node in this configuration shouldn't be an entrypoint to other nodes
         node.sockets.ip_echo = None;
