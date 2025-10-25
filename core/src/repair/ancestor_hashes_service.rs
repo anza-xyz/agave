@@ -22,7 +22,7 @@ use {
     solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
     solana_cluster_type::ClusterType,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, ping_pong::Pong},
-    solana_keypair::{signable::Signable, Keypair},
+    solana_keypair::{signable::Signable, Keypair, Signer},
     solana_ledger::blockstore::Blockstore,
     solana_perf::{
         packet::{deserialize_from_with_limit, PacketBatch, PacketFlags, PacketRef},
@@ -843,6 +843,7 @@ impl AncestorHashesService {
             cluster_slots,
             repair_validators,
             repair_protocol,
+            &identity_keypair.pubkey(),
         ) else {
             return false;
         };
