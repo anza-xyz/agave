@@ -23,7 +23,7 @@ def load_metadata():
 
 # Consider a situation where a crate now wants to use already existing
 # developing-oriented library code for their integration tests and benchmarks,
-# like creating malformed data or omitting signature verifications. Ideally,
+# like creating malformed data or omitting signature verification. Ideally,
 # the code should have been guarded under the special feature
 # `dev-context-only-utils` to avoid accidental misuse for production code path.
 #

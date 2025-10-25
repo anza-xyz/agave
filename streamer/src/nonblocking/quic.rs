@@ -588,7 +588,7 @@ fn handle_and_cache_new_connection(
     {
         let remote_addr = connection.remote_address();
         let receive_window =
-            compute_recieve_window(params.max_stake, params.min_stake, params.peer_type);
+            compute_receive_window(params.max_stake, params.min_stake, params.peer_type);
 
         debug!(
             "Peer type {:?}, total stake {}, max streams {} receive_window {:?} from peer {}",
@@ -706,7 +706,7 @@ fn compute_receive_window_ratio_for_staked_node(max_stake: u64, min_stake: u64, 
     }
 }
 
-fn compute_recieve_window(
+fn compute_receive_window(
     max_stake: u64,
     min_stake: u64,
     peer_type: ConnectionPeerType,

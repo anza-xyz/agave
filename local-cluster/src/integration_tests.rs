@@ -182,7 +182,7 @@ pub fn copy_blocks(end_slot: Slot, source: &Blockstore, dest: &Blockstore, is_tr
     }
 }
 
-/// Computes the numbr of milliseconds `num_blocks` blocks will take given
+/// Computes the number of milliseconds `num_blocks` blocks will take given
 /// each slot contains `ticks_per_slot`
 pub fn ms_for_n_slots(num_blocks: u64, ticks_per_slot: u64) -> u64 {
     (ticks_per_slot * DEFAULT_MS_PER_SLOT * num_blocks).div_ceil(DEFAULT_TICKS_PER_SLOT)

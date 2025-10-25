@@ -743,7 +743,7 @@ impl BorrowedInstructionAccount<'_> {
         self.account.owner()
     }
 
-    /// Assignes the owner of this account (transaction wide)
+    /// Assigns the owner of this account (transaction wide)
     #[cfg(not(target_os = "solana"))]
     pub fn set_owner(&mut self, pubkey: &[u8]) -> Result<(), InstructionError> {
         // Only the owner can assign a new owner

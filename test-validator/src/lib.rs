@@ -1214,7 +1214,7 @@ impl TestValidator {
     }
 
     /// programs added to genesis ain't immediately usable. Actively check "Program
-    /// is not deployed" error for their availibility.
+    /// is not deployed" error for their availability.
     async fn wait_for_upgradeable_programs_deployed(
         &self,
         upgradeable_programs: &[&Pubkey],

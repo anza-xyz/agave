@@ -318,7 +318,7 @@ where
             if self.is_empty() {
                 break;
             }
-            info!("Looping verifications");
+            info!("Looping verification");
 
             let verified_txs = verified_txs.load(Ordering::Relaxed);
             let failed_verify = failed_verify.load(Ordering::Relaxed);
