@@ -477,7 +477,8 @@ impl MockAlpenglowConsensus {
         command: Receiver<SendCommand>,
     ) {
         let mut packet_buf = vec![0u8; MOCK_VOTE_PACKET_SIZE];
-        let id = cluster_info.id();
+        let self_keypair = cluster_info.keypair();
+        let id = self_keypair.pubkey();
         for command in command.iter() {
             let (slot, votor_msg) = match command {
                 SendCommand::Notarize(slot) => (slot, VotorMessageType::Notarize),
@@ -493,7 +494,7 @@ impl MockAlpenglowConsensus {
                 &mut packet_buf,
                 slot,
                 votor_msg,
-                cluster_info.keypair().as_ref(),
+                &self_keypair,
             );
 
             // prepare addresses to send the packets
