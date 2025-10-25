@@ -28,6 +28,7 @@ pub const JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED: i64 = -32016;
 pub const JSON_RPC_SERVER_ERROR_EPOCH_REWARDS_PERIOD_ACTIVE: i64 = -32017;
 pub const JSON_RPC_SERVER_ERROR_SLOT_NOT_EPOCH_BOUNDARY: i64 = -32018;
 pub const JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_UNREACHABLE: i64 = -32019;
+pub const JSON_RPC_SERVER_ERROR_TRANSACTION_STATUS_BEHIND: i64 = -32020;
 
 #[derive(Error, Debug)]
 #[allow(clippy::large_enum_variant)]
@@ -80,6 +81,8 @@ pub enum RpcCustomError {
     SlotNotEpochBoundary { slot: Slot },
     #[error("LongTermStorageUnreachable")]
     LongTermStorageUnreachable,
+    #[error("TransactionStatusBehind")]
+    TransactionStatusBehind { behind_by_slots: Slot },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -258,6 +261,13 @@ impl From<RpcCustomError> for Error {
                 code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_UNREACHABLE),
                 message: "Failed to query long-term storage; please try again".to_string(),
                 data: None,
+            },
+            RpcCustomError::TransactionStatusBehind { behind_by_slots } => Self {
+                code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_TRANSACTION_STATUS_BEHIND),
+                message: format!("Transaction status is behind by {behind_by_slots} slots"),
+                data: Some(serde_json::json!({
+                    "behind_by_slots": behind_by_slots,
+                })),
             },
         }
     }
