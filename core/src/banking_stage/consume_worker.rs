@@ -782,6 +782,7 @@ mod tests {
         super::*,
         crate::banking_stage::{
             committer::Committer,
+            consumer::ConsumerConfig,
             qos_service::QosService,
             scheduler_messages::{MaxAge, TransactionBatchId},
             tests::{create_slow_genesis_config, sanitize_transactions},
@@ -868,7 +869,13 @@ mod tests {
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(
+            ConsumerConfig::default(),
+            committer,
+            recorder,
+            QosService::new(1),
+            None,
+        );
         let shared_leader_state = SharedLeaderState::new(0, None);
 
         let (consume_sender, consume_receiver) = unbounded();
