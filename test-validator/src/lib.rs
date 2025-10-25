@@ -1,10 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     agave_feature_set::{alpenglow, raise_cpi_nesting_limit_to_8, FeatureSet, FEATURE_NAMES},
-    agave_snapshots::{
-        hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, snapshot_config::SnapshotConfig,
-        SnapshotInterval,
-    },
+    agave_snapshots::{snapshot_config::SnapshotConfig, SnapshotInterval},
     base64::{prelude::BASE64_STANDARD, Engine},
     crossbeam_channel::Receiver,
     log::*,
@@ -37,7 +34,7 @@ use {
     solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
     solana_ledger::{
         blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions,
-        create_new_tmp_ledger,
+        create_new_tmp_ledger, genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     },
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_message::Message,

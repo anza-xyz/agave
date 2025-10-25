@@ -24,7 +24,7 @@ use {
         transaction_address_lookup_table_scanner::scan_transaction,
     },
     agave_feature_set::FeatureSet,
-    agave_snapshots::hardened_unpack::unpack_genesis_archive,
+    agave_snapshots::unpack_genesis_archive,
     assert_matches::debug_assert_matches,
     bincode::{deserialize, serialize},
     crossbeam_channel::{bounded, Receiver, Sender, TrySendError},
@@ -4960,7 +4960,7 @@ macro_rules! create_new_tmp_ledger {
         $crate::blockstore::create_new_ledger_from_name(
             $crate::tmp_ledger_name!(),
             $genesis_config,
-            $crate::macro_reexports::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+            $crate::genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
             $crate::blockstore_options::LedgerColumnOptions::default(),
         )
     };
@@ -4987,7 +4987,7 @@ macro_rules! create_new_tmp_ledger_auto_delete {
         $crate::blockstore::create_new_ledger_from_name_auto_delete(
             $crate::tmp_ledger_name!(),
             $genesis_config,
-            $crate::macro_reexports::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+            $crate::genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
             $crate::blockstore_options::LedgerColumnOptions::default(),
         )
     };
@@ -5215,12 +5215,12 @@ pub mod tests {
     use {
         super::*,
         crate::{
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            genesis_utils::{
+                create_genesis_config, open_genesis_config, GenesisConfigInfo,
+                MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+            },
             leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule},
             shred::{max_ticks_per_n_shreds, MAX_DATA_SHREDS_PER_SLOT},
-        },
-        agave_snapshots::hardened_unpack::{
-            open_genesis_config, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         },
         assert_matches::assert_matches,
         bincode::{serialize, Options},

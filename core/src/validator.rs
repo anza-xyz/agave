@@ -35,12 +35,7 @@ use {
         tvu::{Tvu, TvuConfig, TvuSockets},
     },
     agave_snapshots::{
-        hardened_unpack::{
-            open_genesis_config, OpenGenesisConfigError, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
-        },
-        snapshot_config::SnapshotConfig,
-        snapshot_hash::StartingSnapshotHashes,
-        SnapshotInterval,
+        snapshot_config::SnapshotConfig, snapshot_hash::StartingSnapshotHashes, SnapshotInterval,
     },
     anyhow::{anyhow, Context, Result},
     crossbeam_channel::{bounded, unbounded, Receiver},
@@ -88,6 +83,9 @@ use {
         blockstore_processor::{self, TransactionStatusSender},
         entry_notifier_interface::EntryNotifierArc,
         entry_notifier_service::{EntryNotifierSender, EntryNotifierService},
+        genesis_utils::{
+            open_genesis_config, OpenGenesisConfigError, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+        },
         leader_schedule::FixedSchedule,
         leader_schedule_cache::LeaderScheduleCache,
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,

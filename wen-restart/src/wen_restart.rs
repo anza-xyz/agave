@@ -1410,7 +1410,6 @@ mod tests {
     use {
         crate::wen_restart::{tests::wen_restart_proto::LastVotedForkSlotsAggregateFinal, *},
         agave_snapshots::{
-            hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
             snapshot_config::{SnapshotConfig, SnapshotUsage},
             snapshot_hash::SnapshotHash,
         },
@@ -1430,6 +1429,7 @@ mod tests {
             blockstore::{create_new_ledger, entries_to_test_shreds, Blockstore},
             blockstore_options::LedgerColumnOptions,
             blockstore_processor::{fill_blockstore_slot_with_ticks, test_process_blockstore},
+            genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
             get_tmp_ledger_path_auto_delete,
         },
         solana_pubkey::Pubkey,

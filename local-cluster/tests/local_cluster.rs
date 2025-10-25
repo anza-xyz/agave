@@ -1,8 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    agave_snapshots::{
-        hardened_unpack::open_genesis_config, snapshot_config::SnapshotConfig, SnapshotInterval,
-    },
+    agave_snapshots::{snapshot_config::SnapshotConfig, SnapshotInterval},
     assert_matches::assert_matches,
     crossbeam_channel::{unbounded, Receiver},
     gag::BufferRedirect,
@@ -38,6 +36,7 @@ use {
         bank_forks_utils,
         blockstore::{entries_to_test_shreds, Blockstore},
         blockstore_processor::ProcessOptions,
+        genesis_utils::open_genesis_config,
         leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule},
         shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,

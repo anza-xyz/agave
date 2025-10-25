@@ -17,6 +17,8 @@ mod snapshot_version;
 mod unarchive;
 
 pub use {
-    archive_format::*, snapshot_interval::SnapshotInterval, snapshot_version::SnapshotVersion,
-    unarchive::streaming_unarchive_snapshot,
+    archive_format::*,
+    snapshot_interval::SnapshotInterval,
+    snapshot_version::SnapshotVersion,
+    unarchive::{streaming_unarchive_snapshot, unpack_genesis_archive},
 };
