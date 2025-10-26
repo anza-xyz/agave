@@ -340,10 +340,10 @@ mod tests {
         let client_connect_future = client_endpoint.connect(server_addr, "localhost").unwrap();
 
         // Wait for both to complete - we want the server-side connection
-        let (server_connection, _client_connection) =
+        let (server_connection, client_connection) =
             tokio::join!(server_connection_future, client_connect_future);
 
-        let _client_connection = _client_connection.unwrap();
+        let _client_connection = client_connection.unwrap();
 
         (server_connection, client_endpoint, server_endpoint)
     }
