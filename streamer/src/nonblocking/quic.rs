@@ -555,7 +555,6 @@ async fn setup_connection<Q, C>(
                     );
                     return;
                 }
-                stats.total_new_connections.fetch_add(1, Ordering::Relaxed);
 
                 if !overall_connection_rate_limiter.is_allowed() {
                     debug!(
