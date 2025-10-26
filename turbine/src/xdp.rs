@@ -131,10 +131,7 @@ impl XdpRetransmitter {
         });
 
         let ebpf = if config.zero_copy {
-            Some(
-                load_xdp_program(dev.if_index())
-                    .map_err(|e| format!("failed to attach xdp program: {e}"))?,
-            )
+            Some(load_xdp_program(&dev).map_err(|e| format!("failed to attach xdp program: {e}"))?)
         } else {
             None
         };
