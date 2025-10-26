@@ -219,7 +219,11 @@ impl ConsensusPool {
                             cert_builder.aggregate(pool.votes()).unwrap();
                         }
                         VotePool::DuplicateBlockVotePool(pool) => {
-                            if let Some(votes) = pool.votes(block_id.as_ref().unwrap()) {
+                            let block_id = block_id.as_ref().expect(
+                                "Duplicate block pool for {vote_type:?} expects a block id for \
+                                 certificate {cert_type:?}",
+                            );
+                            if let Some(votes) = pool.votes(block_id) {
                                 cert_builder.aggregate(votes).unwrap();
                             }
                         }
@@ -277,7 +281,7 @@ impl ConsensusPool {
         events: &mut Vec<VotorEvent>,
     ) {
         trace!("{}: Inserting certificate {:?}", self.my_pubkey, cert_type);
-        self.completed_certificates.insert(cert_type, cert.clone());
+        self.completed_certificates.insert(cert_type, cert);
         match cert_type {
             CertificateType::NotarizeFallback(slot, block_id) => {
                 self.parent_ready_tracker
@@ -397,7 +401,7 @@ impl ConsensusPool {
         }
         let block_id = vote.block_id().map(|block_id| {
             if !matches!(vote, Vote::Notarize(_) | Vote::NotarizeFallback(_)) {
-                panic!("expected Notarize/ NotarizeFallback/ Genesis vote");
+                panic!("expected Notarize or NotarizeFallback vote");
             }
             *block_id
         });

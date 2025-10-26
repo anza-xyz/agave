@@ -85,7 +85,7 @@ pub struct Certificate {
     pub cert_type: CertificateType,
     /// The aggregate signature.
     pub signature: BLSSignature,
-    /// The bitmap for validators' signatures are included in the aggregate.
+    /// A rank bitmap for validators' signatures included in the aggregate.
     /// See solana-signer-store for encoding format.
     pub bitmap: Vec<u8>,
 }
