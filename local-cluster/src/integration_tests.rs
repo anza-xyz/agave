@@ -321,9 +321,22 @@ pub fn run_cluster_partition<C>(
     assert_eq!(node_stakes.len(), num_nodes);
     let mint_lamports = node_stakes.iter().sum::<u64>() * 2;
     let turbine_disabled = Arc::new(AtomicBool::new(false));
+    let wait_for_supermajority = if no_wait_for_vote_to_start_leader {
+        // This helps nodes get a little more in sync by waiting for
+        // supermajority to observe slot 0. It still doesn't provide perfect
+        // synchronization because there is quite a bit of work todo after the
+        // sync point before nodes are fully operational.
+        Some(0)
+    } else {
+        // If we sync nodes on a slot, this overrides the flag to wait on
+        // building blocks until the node votes. But waiting for the bootstrap
+        // to build a block provides greater synchronization (less
+        // partitioning), so let that take precedence for these tests.
+        None
+    };
     let mut validator_config = ValidatorConfig {
         turbine_disabled: turbine_disabled.clone(),
-        wait_for_supermajority: None,
+        wait_for_supermajority,
         no_wait_for_vote_to_start_leader,
         ..ValidatorConfig::default_for_test()
     };
