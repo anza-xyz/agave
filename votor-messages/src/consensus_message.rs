@@ -99,9 +99,9 @@ pub struct Certificate {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[allow(clippy::large_enum_variant)]
 pub enum ConsensusMessage {
-    /// Vote message.
+    /// A vote from a single party.
     Vote(VoteMessage),
-    /// Certificate message
+    /// A certificate aggregating votes from multiple parties.
     Certificate(Certificate),
 }
 
