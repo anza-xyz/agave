@@ -146,16 +146,25 @@ mod test {
         };
         let my_pubkey = Pubkey::new_unique();
 
-        assert_eq!(vote_pool.add_vote(my_pubkey, 10, vote_message), Some(10));
+        assert_eq!(
+            vote_pool.add_vote(my_pubkey, 10, vote_message.clone()),
+            Some(10)
+        );
         assert_eq!(vote_pool.total_stake(), 10);
 
         // Adding the same key again should fail
-        assert_eq!(vote_pool.add_vote(my_pubkey, 10, vote_message), None);
+        assert_eq!(
+            vote_pool.add_vote(my_pubkey, 10, vote_message.clone()),
+            None
+        );
         assert_eq!(vote_pool.total_stake(), 10);
 
         // Adding a different key should succeed
         let new_pubkey = Pubkey::new_unique();
-        assert_eq!(vote_pool.add_vote(new_pubkey, 60, vote_message), Some(70));
+        assert_eq!(
+            vote_pool.add_vote(new_pubkey, 60, vote_message.clone()),
+            Some(70)
+        );
         assert_eq!(vote_pool.total_stake(), 70);
     }
 
@@ -170,18 +179,18 @@ mod test {
             signature: BLSSignature::default(),
             rank: 1,
         };
-        assert_eq!(vote_pool.add_vote(my_pubkey, 10, vote), Some(10));
+        assert_eq!(vote_pool.add_vote(my_pubkey, 10, vote.clone()), Some(10));
         assert_eq!(vote_pool.total_stake_by_block_id(&block_id), 10);
 
         // Adding the same key again should fail
-        assert_eq!(vote_pool.add_vote(my_pubkey, 10, vote), None);
+        assert_eq!(vote_pool.add_vote(my_pubkey, 10, vote.clone()), None);
 
         // Adding a different bankhash should fail
-        assert_eq!(vote_pool.add_vote(my_pubkey, 10, vote), None);
+        assert_eq!(vote_pool.add_vote(my_pubkey, 10, vote.clone()), None);
 
         // Adding a different key should succeed
         let new_pubkey = Pubkey::new_unique();
-        assert_eq!(vote_pool.add_vote(new_pubkey, 60, vote), Some(70));
+        assert_eq!(vote_pool.add_vote(new_pubkey, 60, vote.clone()), Some(70));
         assert_eq!(vote_pool.total_stake_by_block_id(&block_id), 70);
     }
 
@@ -204,14 +213,14 @@ mod test {
 
         // Adding the first 3 votes should succeed, but total_stake should remain at 10
         for vote in votes.iter().take(3).cloned() {
-            assert_eq!(vote_pool.add_vote(my_pubkey, 10, vote), Some(10));
+            assert_eq!(vote_pool.add_vote(my_pubkey, 10, vote.clone()), Some(10));
             assert_eq!(
                 vote_pool.total_stake_by_block_id(vote.vote.block_id().unwrap()),
                 10
             );
         }
         // Adding the 4th vote should fail
-        assert_eq!(vote_pool.add_vote(my_pubkey, 10, votes[3]), None);
+        assert_eq!(vote_pool.add_vote(my_pubkey, 10, votes[3].clone()), None);
         assert_eq!(
             vote_pool.total_stake_by_block_id(votes[3].vote.block_id().unwrap()),
             0
@@ -220,7 +229,7 @@ mod test {
         // Adding a different key should succeed
         let new_pubkey = Pubkey::new_unique();
         for vote in votes.iter().skip(1).take(2).cloned() {
-            assert_eq!(vote_pool.add_vote(new_pubkey, 60, vote), Some(70));
+            assert_eq!(vote_pool.add_vote(new_pubkey, 60, vote.clone()), Some(70));
             assert_eq!(
                 vote_pool.total_stake_by_block_id(vote.vote.block_id().unwrap()),
                 70
@@ -228,13 +237,16 @@ mod test {
         }
 
         // The new key only added 2 votes, so adding block_ids[3] should succeed
-        assert_eq!(vote_pool.add_vote(new_pubkey, 60, votes[3]), Some(60));
+        assert_eq!(
+            vote_pool.add_vote(new_pubkey, 60, votes[3].clone()),
+            Some(60)
+        );
         assert_eq!(
             vote_pool.total_stake_by_block_id(votes[3].vote.block_id().unwrap()),
             60
         );
 
         // Now if adding the same key again, it should fail
-        assert_eq!(vote_pool.add_vote(new_pubkey, 60, votes[0]), None);
+        assert_eq!(vote_pool.add_vote(new_pubkey, 60, votes[0].clone()), None);
     }
 }

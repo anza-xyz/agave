@@ -1,16 +1,11 @@
-#![allow(dead_code)]
-// TODO(wen): remove allow(dead_code) when consensus_pool is fully integrated
-
 use {
-    crate::common::VoteType,
-    agave_votor_messages::consensus_message::CertificateType,
+    agave_votor_messages::{consensus_message::CertificateType, vote::Vote},
     solana_metrics::datapoint_info,
     std::time::{Duration, Instant},
 };
 
 const STATS_REPORT_INTERVAL: Duration = Duration::from_secs(10);
 
-#[derive(Debug)]
 pub(crate) struct ConsensusPoolStats {
     pub(crate) conflicting_votes: u32,
     pub(crate) event_safe_to_notarize: u32,
@@ -24,9 +19,43 @@ pub(crate) struct ConsensusPoolStats {
 
     pub(crate) new_certs_generated: Vec<u32>,
     pub(crate) new_certs_ingested: Vec<u32>,
-    pub(crate) ingested_votes: Vec<u32>,
+    ingested_votes: VoteStats,
 
     pub(crate) last_request_time: Instant,
+}
+
+#[derive(Default)]
+struct VoteStats {
+    notarize: u64,
+    finalize: u64,
+    skip: u64,
+    notarize_fallback: u64,
+    skip_fallback: u64,
+}
+
+impl VoteStats {
+    fn increment(&mut self, vote: &Vote) {
+        match vote {
+            Vote::Notarize(_) => self.notarize = self.notarize.saturating_add(1),
+            Vote::NotarizeFallback(_) => {
+                self.notarize_fallback = self.notarize_fallback.saturating_add(1)
+            }
+            Vote::Skip(_) => self.skip = self.skip.saturating_add(1),
+            Vote::SkipFallback(_) => self.skip_fallback = self.skip_fallback.saturating_add(1),
+            Vote::Finalize(_) => self.finalize = self.finalize.saturating_add(1),
+        }
+    }
+
+    fn record(&self, header: &'static str) {
+        datapoint_info!(
+            header,
+            ("finalize", self.finalize, i64),
+            ("notarize", self.notarize, i64),
+            ("notarize_fallback", self.notarize_fallback, i64),
+            ("skip", self.skip, i64),
+            ("skip_fallback", self.skip_fallback, i64),
+        )
+    }
 }
 
 impl Default for ConsensusPoolStats {
@@ -37,7 +66,6 @@ impl Default for ConsensusPoolStats {
 
 impl ConsensusPoolStats {
     pub fn new() -> Self {
-        let num_vote_types = (VoteType::SkipFallback as usize).saturating_add(1);
         let num_cert_types = (CertificateType::Skip as usize).saturating_add(1);
         Self {
             conflicting_votes: 0,
@@ -52,16 +80,14 @@ impl ConsensusPoolStats {
 
             new_certs_ingested: vec![0; num_cert_types],
             new_certs_generated: vec![0; num_cert_types],
-            ingested_votes: vec![0; num_vote_types],
+            ingested_votes: VoteStats::default(),
 
             last_request_time: Instant::now(),
         }
     }
 
-    pub fn incr_ingested_vote_type(&mut self, vote_type: VoteType) {
-        let index = vote_type as usize;
-
-        self.ingested_votes[index] = self.ingested_votes[index].saturating_add(1);
+    pub fn incr_ingested_vote(&mut self, vote: &Vote) {
+        self.ingested_votes.increment(vote);
     }
 
     pub fn incr_cert_type(&mut self, cert_type: CertificateType, is_generated: bool) {
@@ -93,47 +119,7 @@ impl ConsensusPoolStats {
             ("out_of_range_certs", self.out_of_range_certs as i64, i64),
         );
 
-        datapoint_info!(
-            "consensus_ingested_votes",
-            (
-                "finalize",
-                *self
-                    .ingested_votes
-                    .get(VoteType::Finalize as usize)
-                    .unwrap() as i64,
-                i64
-            ),
-            (
-                "notarize",
-                *self
-                    .ingested_votes
-                    .get(VoteType::Notarize as usize)
-                    .unwrap() as i64,
-                i64
-            ),
-            (
-                "notarize_fallback",
-                *self
-                    .ingested_votes
-                    .get(VoteType::NotarizeFallback as usize)
-                    .unwrap() as i64,
-                i64
-            ),
-            (
-                "skip",
-                *self.ingested_votes.get(VoteType::Skip as usize).unwrap() as i64,
-                i64
-            ),
-            (
-                "skip_fallback",
-                *self
-                    .ingested_votes
-                    .get(VoteType::SkipFallback as usize)
-                    .unwrap() as i64,
-                i64
-            ),
-        );
-
+        self.ingested_votes.record("consensus_ingested_votes");
         datapoint_info!(
             "certfificate_pool_ingested_certs",
             (
