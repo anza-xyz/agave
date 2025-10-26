@@ -294,9 +294,12 @@ mod tests {
         quinn::Endpoint,
         solana_keypair::{Keypair, Signer},
         solana_net_utils::sockets::bind_to_localhost_unique,
-        std::sync::{
-            atomic::{AtomicU64, Ordering},
-            Arc, RwLock,
+        std::{
+            collections::HashMap,
+            sync::{
+                atomic::{AtomicU64, Ordering},
+                Arc, RwLock,
+            },
         },
         tokio_util::sync::CancellationToken,
     };
@@ -359,12 +362,11 @@ mod tests {
         client_keypair: &Keypair,
         stake_amount: u64,
     ) -> Arc<RwLock<StakedNodes>> {
-        let mut stakes = std::collections::HashMap::new();
+        let mut stakes = HashMap::new();
         stakes.insert(server_keypair.pubkey(), stake_amount);
         stakes.insert(client_keypair.pubkey(), stake_amount);
 
-        let overrides: std::collections::HashMap<solana_pubkey::Pubkey, u64> =
-            std::collections::HashMap::new();
+        let overrides: HashMap<solana_pubkey::Pubkey, u64> = HashMap::new();
 
         Arc::new(RwLock::new(StakedNodes::new(Arc::new(stakes), overrides)))
     }
@@ -754,15 +756,14 @@ mod tests {
         let client_keypair2 = Keypair::new();
         let stake_amount = 50_000_000; // 50M lamports
 
-        let mut stakes = std::collections::HashMap::new();
+        let mut stakes = HashMap::new();
         stakes.insert(server_keypair1.pubkey(), stake_amount);
         stakes.insert(client_keypair1.pubkey(), stake_amount);
         stakes.insert(server_keypair2.pubkey(), stake_amount);
         // client 2 has higher stake so that it can prune client 1
         stakes.insert(client_keypair2.pubkey(), stake_amount * 2);
 
-        let overrides: std::collections::HashMap<solana_pubkey::Pubkey, u64> =
-            std::collections::HashMap::new();
+        let overrides: HashMap<solana_pubkey::Pubkey, u64> = HashMap::new();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(Arc::new(stakes), overrides)));
 
         let simple_qos = SimpleQos::new(
@@ -825,14 +826,13 @@ mod tests {
         let high_stake = 100_000_000; // 100M lamports
         let low_stake = 10_000_000; // 10M lamports
 
-        let mut stakes = std::collections::HashMap::new();
+        let mut stakes = HashMap::new();
         stakes.insert(server_keypair1.pubkey(), high_stake);
         stakes.insert(client_keypair1.pubkey(), high_stake);
         stakes.insert(server_keypair2.pubkey(), low_stake);
         stakes.insert(client_keypair2.pubkey(), low_stake);
 
-        let overrides: std::collections::HashMap<solana_pubkey::Pubkey, u64> =
-            std::collections::HashMap::new();
+        let overrides: HashMap<solana_pubkey::Pubkey, u64> = HashMap::new();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(Arc::new(stakes), overrides)));
 
         let simple_qos = SimpleQos::new(
