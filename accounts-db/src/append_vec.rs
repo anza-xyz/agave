@@ -1661,10 +1661,11 @@ pub mod tests {
     }
 
     /// Test that `scan_accounts_stored_meta` correctly reads back all accounts that were written.
-    #[test]
-    fn test_scan_accounts_stored_meta_correctness() {
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    fn test_scan_accounts_stored_meta_correctness(storage_access: StorageAccess) {
         let (av_mmap, test_accounts, path) = rand_exhaustive_append_vec(100);
-        let av_file = AppendVec::new_from_file(&path.path, av_mmap.len(), StorageAccess::File)
+        let av_file = AppendVec::new_from_file(&path.path, av_mmap.len(), storage_access)
             .unwrap()
             .0;
         let mut reader = new_scan_accounts_reader();
