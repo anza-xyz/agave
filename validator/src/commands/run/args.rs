@@ -923,19 +923,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("wal_recovery_mode")
-            .long("wal-recovery-mode")
-            .value_name("MODE")
-            .takes_value(true)
-            .possible_values(&[
-                "tolerate_corrupted_tail_records",
-                "absolute_consistency",
-                "point_in_time",
-                "skip_any_corrupted_record",
-            ])
-            .help("Mode to recovery the ledger db write ahead log."),
-    )
-    .arg(
         Arg::with_name("poh_pinned_cpu_core")
             .hidden(hidden_unless_forced())
             .long("experimental-poh-pinned-cpu-core")
