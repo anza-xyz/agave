@@ -929,14 +929,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("max_genesis_archive_unpacked_size")
-            .long("max-genesis-archive-unpacked-size")
-            .value_name("NUMBER")
-            .takes_value(true)
-            .default_value(&default_args.genesis_archive_unpacked_size)
-            .help("maximum total uncompressed file size of downloaded genesis archive"),
-    )
-    .arg(
         Arg::with_name("wal_recovery_mode")
             .long("wal-recovery-mode")
             .value_name("MODE")
