@@ -94,10 +94,8 @@ pub struct SharablePubkeys {
 /// 4. External pack process frees all transaction memory pointed to by the
 ///    [`SharableTransactionRegion`] in the batch, then frees the memory for
 ///    the array of [`SharableTransactionRegion`].
-#[cfg_attr(
-    feature = "dev-context-only-utils",
-    derive(Debug, Clone, Copy, PartialEq, Eq)
-)]
+#[cfg_attr(feature = "dev-context-only-utils", derive(Debug, PartialEq, Eq))]
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct SharableTransactionBatchRegion {
     /// Number of transactions in the batch.
