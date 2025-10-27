@@ -116,7 +116,7 @@ use {
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionWithContext,
-        loaded_programs::{ProgramCacheEntry, ProgramRuntimeEnvironment},
+        loaded_programs::{ProgramCacheEntry, ProgramRuntimeEnvironments},
     },
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_reward_info::RewardInfo,
@@ -1547,18 +1547,17 @@ impl Bank {
         {
             // Anticipate the upcoming program runtime environment for the next epoch,
             // so we can try to recompile loaded programs before the feature transition hits.
-            let (program_runtime_environment_v1, program_runtime_environment_v2) =
-                self.create_program_runtime_environments(&upcoming_feature_set);
+            let new_environments = self.create_program_runtime_environments(&upcoming_feature_set);
             let mut upcoming_environments = self.transaction_processor.environments.clone();
             let changed_program_runtime_v1 =
-                *upcoming_environments.program_runtime_v1 != *program_runtime_environment_v1;
+                *upcoming_environments.program_runtime_v1 != *new_environments.program_runtime_v1;
             let changed_program_runtime_v2 =
-                *upcoming_environments.program_runtime_v2 != *program_runtime_environment_v2;
+                *upcoming_environments.program_runtime_v2 != *new_environments.program_runtime_v2;
             if changed_program_runtime_v1 {
-                upcoming_environments.program_runtime_v1 = program_runtime_environment_v1;
+                upcoming_environments.program_runtime_v1 = new_environments.program_runtime_v1;
             }
             if changed_program_runtime_v2 {
-                upcoming_environments.program_runtime_v2 = program_runtime_environment_v2;
+                upcoming_environments.program_runtime_v2 = new_environments.program_runtime_v2;
             }
             epoch_boundary_preparation.upcoming_environments = Some(upcoming_environments);
             epoch_boundary_preparation.programs_to_recompile = program_cache
@@ -4120,8 +4119,7 @@ impl Bank {
             self.apply_simd_0339_invoke_cost_changes();
         }
 
-        let (program_runtime_environment_v1, program_runtime_environment_v2) =
-            self.create_program_runtime_environments(&self.feature_set);
+        let environments = self.create_program_runtime_environments(&self.feature_set);
         self.transaction_processor
             .global_program_cache
             .write()
@@ -4132,14 +4130,13 @@ impl Bank {
             .write()
             .unwrap()
             .latest_root_epoch = self.epoch;
-        self.transaction_processor.environments.program_runtime_v1 = program_runtime_environment_v1;
-        self.transaction_processor.environments.program_runtime_v2 = program_runtime_environment_v2;
+        self.transaction_processor.environments = environments;
     }
 
     fn create_program_runtime_environments(
         &self,
         feature_set: &FeatureSet,
-    ) -> (ProgramRuntimeEnvironment, ProgramRuntimeEnvironment) {
+    ) -> ProgramRuntimeEnvironments {
         let simd_0268_active = feature_set.is_active(&raise_cpi_nesting_limit_to_8::id());
         let simd_0339_active = feature_set.is_active(&increase_cpi_account_info_limit::id());
         let compute_budget = self
@@ -4150,8 +4147,8 @@ impl Bank {
                 simd_0339_active,
             ))
             .to_budget();
-        (
-            Arc::new(
+        ProgramRuntimeEnvironments {
+            program_runtime_v1: Arc::new(
                 create_program_runtime_environment_v1(
                     &feature_set.runtime_features(),
                     &compute_budget,
@@ -4160,11 +4157,11 @@ impl Bank {
                 )
                 .unwrap(),
             ),
-            Arc::new(create_program_runtime_environment_v2(
+            program_runtime_v2: Arc::new(create_program_runtime_environment_v2(
                 &compute_budget,
                 false, /* debugging_features */
             )),
-        )
+        }
     }
 
     pub fn set_tick_height(&self, tick_height: u64) {
