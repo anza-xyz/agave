@@ -744,7 +744,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             })
             .collect();
 
-        let program_runtime_environments = self.get_environments_for_epoch(self.epoch);
         let mut count_hits_and_misses = true;
         loop {
             let (program_to_store, task_cookie, task_waiter) = {
@@ -784,7 +783,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 let mut global_program_cache = self.global_program_cache.write().unwrap();
                 // Submit our last completed loading task.
                 if global_program_cache.finish_cooperative_loading_task(
-                    &program_runtime_environments,
+                    program_runtime_environments_for_execution,
                     self.slot,
                     key,
                     program,
