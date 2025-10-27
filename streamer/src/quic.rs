@@ -804,7 +804,7 @@ mod test {
 
     #[test]
     fn test_quic_timeout() {
-        solana_logger::setup();
+        agave_logger::setup();
         let (t, receiver, server_address, cancel) = setup_quic_server();
         let runtime = rt_for_test();
         runtime.block_on(check_timeout(receiver, server_address));
@@ -814,7 +814,7 @@ mod test {
 
     #[test]
     fn test_quic_server_block_multiple_connections() {
-        solana_logger::setup();
+        agave_logger::setup();
         let (t, _receiver, server_address, cancel) = setup_quic_server();
 
         let runtime = rt_for_test();
@@ -825,7 +825,7 @@ mod test {
 
     #[test]
     fn test_quic_server_multiple_streams() {
-        solana_logger::setup();
+        agave_logger::setup();
         let s = bind_to_localhost_unique().expect("should bind");
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
@@ -859,7 +859,7 @@ mod test {
 
     #[test]
     fn test_quic_server_multiple_writes() {
-        solana_logger::setup();
+        agave_logger::setup();
         let (t, receiver, server_address, cancel) = setup_quic_server();
 
         let runtime = rt_for_test();
@@ -870,7 +870,7 @@ mod test {
 
     #[test]
     fn test_quic_server_unstaked_node_connect_failure() {
-        solana_logger::setup();
+        agave_logger::setup();
         let s = bind_to_localhost_unique().expect("should bind");
         let (sender, _) = unbounded();
         let keypair = Keypair::new();

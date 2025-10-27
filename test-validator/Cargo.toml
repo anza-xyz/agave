@@ -33,6 +33,7 @@ solana-core = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-feature-gate-interface = { workspace = true }
 solana-fee-calculator = { workspace = true }
+solana-genesis-utils = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
 solana-gossip = { workspace = true }
 solana-inflation = { workspace = true }
@@ -40,7 +41,6 @@ solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
 solana-loader-v3-interface = { workspace = true }
-solana-logger = "=3.0.0"
 solana-message = { workspace = true }
 solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true }

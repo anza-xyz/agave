@@ -688,7 +688,7 @@ mod tests {
     /// Test get_reward_distribution_num_blocks during normal epoch gives the expected result
     #[test]
     fn test_get_reward_distribution_num_blocks_normal() {
-        solana_logger::setup();
+        agave_logger::setup();
         let (mut genesis_config, _mint_keypair) =
             create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         genesis_config.epoch_schedule = EpochSchedule::custom(432000, 432000, false);
@@ -743,7 +743,7 @@ mod tests {
 
     #[test]
     fn test_rewards_computation_and_partitioned_distribution_one_block() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let starting_slot = SLOTS_PER_EPOCH - 1;
         let (
@@ -828,7 +828,7 @@ mod tests {
     /// Test rewards computation and partitioned rewards distribution at the epoch boundary (two reward distribution blocks)
     #[test]
     fn test_rewards_computation_and_partitioned_distribution_two_blocks() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let starting_slot = SLOTS_PER_EPOCH - 1;
         let (

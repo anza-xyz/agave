@@ -25,21 +25,24 @@ use {
         snapshot_utils::{
             self, get_highest_bank_snapshot, get_highest_full_snapshot_archive_info,
             get_highest_incremental_snapshot_archive_info, rebuild_storages_from_snapshot_dir,
-            verify_and_unarchive_snapshots, BankSnapshotInfo, SnapshotError,
-            StorageAndNextAccountsFileId, UnarchivedSnapshots, VerifyEpochStakesError,
-            VerifySlotDeltasError, VerifySlotHistoryError,
+            verify_and_unarchive_snapshots, BankSnapshotInfo, StorageAndNextAccountsFileId,
+            UnarchivedSnapshots,
         },
         status_cache,
     },
+    agave_fs::dirs,
     agave_snapshots::{
-        snapshot_config::SnapshotConfig, snapshot_hash::SnapshotHash, ArchiveFormat,
-        SnapshotVersion,
+        error::{
+            SnapshotError, VerifyEpochStakesError, VerifySlotDeltasError, VerifySlotHistoryError,
+        },
+        snapshot_config::SnapshotConfig,
+        snapshot_hash::SnapshotHash,
+        ArchiveFormat, SnapshotVersion,
     },
     log::*,
     solana_accounts_db::{
         accounts_db::{AccountsDbConfig, AtomicAccountsFileId},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
-        utils::remove_dir_contents,
     },
     solana_clock::{Epoch, Slot},
     solana_genesis_config::GenesisConfig,
@@ -61,7 +64,7 @@ pub fn bank_fields_from_snapshot_archives(
     full_snapshot_archives_dir: impl AsRef<Path>,
     incremental_snapshot_archives_dir: impl AsRef<Path>,
     accounts_db_config: &AccountsDbConfig,
-) -> snapshot_utils::Result<BankFieldsToDeserialize> {
+) -> agave_snapshots::Result<BankFieldsToDeserialize> {
     let full_snapshot_archive_info =
         get_highest_full_snapshot_archive_info(&full_snapshot_archives_dir).ok_or_else(|| {
             SnapshotError::NoSnapshotArchives(full_snapshot_archives_dir.as_ref().to_path_buf())
@@ -104,7 +107,7 @@ fn bank_fields_from_snapshots(
     incremental_snapshot_unpacked_snapshots_dir_and_version: Option<
         &UnpackedSnapshotsDirAndVersion,
     >,
-) -> snapshot_utils::Result<BankFieldsToDeserialize> {
+) -> agave_snapshots::Result<BankFieldsToDeserialize> {
     let (snapshot_version, snapshot_root_paths) = snapshot_version_and_root_paths(
         full_snapshot_unpacked_snapshots_dir_and_version,
         incremental_snapshot_unpacked_snapshots_dir_and_version,
@@ -142,7 +145,7 @@ pub fn bank_from_snapshot_archives(
     accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> snapshot_utils::Result<Bank> {
+) -> agave_snapshots::Result<Bank> {
     info!(
         "Loading bank from full snapshot archive: {}, and incremental snapshot archive: {:?}",
         full_snapshot_archive_info.path().display(),
@@ -285,7 +288,7 @@ pub fn bank_from_latest_snapshot_archives(
     accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> snapshot_utils::Result<(
+) -> agave_snapshots::Result<(
     Bank,
     FullSnapshotArchiveInfo,
     Option<IncrementalSnapshotArchiveInfo>,
@@ -337,7 +340,7 @@ pub fn bank_from_snapshot_dir(
     accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> snapshot_utils::Result<Bank> {
+) -> agave_snapshots::Result<Bank> {
     info!(
         "Loading bank from snapshot dir: {}",
         bank_snapshot.snapshot_dir.display()
@@ -346,7 +349,7 @@ pub fn bank_from_snapshot_dir(
     // Clear the contents of the account paths run directories.  When constructing the bank, the appendvec
     // files will be extracted from the snapshot hardlink directories into these run/ directories.
     for path in account_paths {
-        remove_dir_contents(path);
+        dirs::remove_dir_contents(path);
     }
 
     let next_append_vec_id = Arc::new(AtomicAccountsFileId::new(0));
@@ -435,7 +438,7 @@ pub fn bank_from_latest_snapshot_dir(
     accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> snapshot_utils::Result<Bank> {
+) -> agave_snapshots::Result<Bank> {
     let bank_snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).ok_or_else(|| {
         SnapshotError::NoSnapshotSlotDir(bank_snapshots_dir.as_ref().to_path_buf())
     })?;
@@ -460,7 +463,7 @@ fn verify_bank_against_expected_slot_hash(
     bank: &Bank,
     snapshot_slot: Slot,
     snapshot_hash: SnapshotHash,
-) -> snapshot_utils::Result<()> {
+) -> agave_snapshots::Result<()> {
     let bank_slot = bank.slot();
     if bank_slot != snapshot_slot {
         return Err(SnapshotError::MismatchedSlot(bank_slot, snapshot_slot));
@@ -481,7 +484,7 @@ fn snapshot_version_and_root_paths(
     incremental_snapshot_unpacked_snapshots_dir_and_version: Option<
         &UnpackedSnapshotsDirAndVersion,
     >,
-) -> snapshot_utils::Result<(SnapshotVersion, SnapshotRootPaths)> {
+) -> agave_snapshots::Result<(SnapshotVersion, SnapshotRootPaths)> {
     let (full_snapshot_version, full_snapshot_root_paths) =
         verify_unpacked_snapshots_dir_and_version(
             full_snapshot_unpacked_snapshots_dir_and_version,
@@ -680,7 +683,7 @@ pub fn bank_to_full_snapshot_archive(
     full_snapshot_archives_dir: impl AsRef<Path>,
     incremental_snapshot_archives_dir: impl AsRef<Path>,
     archive_format: ArchiveFormat,
-) -> snapshot_utils::Result<FullSnapshotArchiveInfo> {
+) -> agave_snapshots::Result<FullSnapshotArchiveInfo> {
     let snapshot_version = snapshot_version.unwrap_or_default();
     let temp_bank_snapshots_dir = tempfile::tempdir_in(bank_snapshots_dir)?;
     bank_to_full_snapshot_archive_with(
@@ -706,7 +709,7 @@ fn bank_to_full_snapshot_archive_with(
     incremental_snapshot_archives_dir: impl AsRef<Path>,
     archive_format: ArchiveFormat,
     should_flush_and_hard_link_storages: bool,
-) -> snapshot_utils::Result<FullSnapshotArchiveInfo> {
+) -> agave_snapshots::Result<FullSnapshotArchiveInfo> {
     assert!(bank.is_complete());
     // set accounts-db's latest full snapshot slot here to ensure zero lamport
     // accounts are handled properly.
@@ -758,7 +761,7 @@ pub fn bank_to_incremental_snapshot_archive(
     full_snapshot_archives_dir: impl AsRef<Path>,
     incremental_snapshot_archives_dir: impl AsRef<Path>,
     archive_format: ArchiveFormat,
-) -> snapshot_utils::Result<IncrementalSnapshotArchiveInfo> {
+) -> agave_snapshots::Result<IncrementalSnapshotArchiveInfo> {
     let snapshot_version = snapshot_version.unwrap_or_default();
 
     assert!(bank.is_complete());
@@ -823,6 +826,7 @@ mod tests {
             },
             status_cache::Status,
         },
+        agave_snapshots::error::VerifySlotDeltasError,
         semver::Version,
         solana_accounts_db::{
             accounts_db::{MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING},

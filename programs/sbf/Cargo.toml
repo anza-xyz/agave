@@ -91,6 +91,7 @@ check-cfg = [
 
 [workspace.dependencies]
 agave-feature-set = { path = "../../feature-set", version = "=3.1.0" }
+agave-logger = { path = "../../logger", version = "=3.1.0" }
 agave-reserved-account-keys = { path = "../../reserved-account-keys", version = "=3.1.0" }
 agave-syscalls = { path = "../../syscalls", version = "=3.1.0" }
 agave-validator = { path = "../../validator", version = "=3.1.0" }
@@ -133,7 +134,6 @@ solana-instruction = "=3.0.0"
 solana-instructions-sysvar = "=3.0.0"
 solana-keccak-hasher = { version = "=3.0.0", features = ["sha3"] }
 solana-ledger = { path = "../../ledger", version = "=3.1.0" }
-solana-logger = "=3.0.0"
 solana-measure = { path = "../../measure", version = "=3.1.0" }
 solana-msg = "=3.0.0"
 solana-poseidon = { path = "../../poseidon/", version = "=3.1.0" }
@@ -185,6 +185,7 @@ frozen-abi = []
 
 [dev-dependencies]
 agave-feature-set = { workspace = true }
+agave-logger = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-syscalls = { workspace = true }
 agave-validator = { workspace = true }
@@ -220,7 +221,6 @@ solana-keypair = "3.0.0"
 solana-ledger = { workspace = true }
 solana-loader-v3-interface = "6.1.0"
 solana-loader-v4-interface = "3.1.0"
-solana-logger = { workspace = true }
 solana-measure = { workspace = true }
 solana-message = "3.0.0"
 solana-program = { workspace = true }

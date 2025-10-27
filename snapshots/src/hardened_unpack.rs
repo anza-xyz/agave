@@ -1,19 +1,17 @@
 use {
-    bzip2::bufread::BzDecoder,
+    agave_fs::file_io::{self, FileCreator},
     crossbeam_channel::Sender,
     log::*,
     rand::{thread_rng, Rng},
-    solana_accounts_db::{file_creator, set_path_permissions, FileCreator},
-    solana_genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
+    solana_genesis_config::DEFAULT_GENESIS_FILE,
     std::{
         fs::{self, File},
-        io::{self, BufReader, Read},
+        io::{self, Read},
         path::{
             Component::{self, CurDir, Normal},
             Path, PathBuf,
         },
         sync::Arc,
-        time::Instant,
     },
     tar::{
         Archive,
@@ -46,7 +44,6 @@ const MAX_SNAPSHOT_ARCHIVE_UNPACKED_APPARENT_SIZE: u64 = 64 * 1024 * 1024 * 1024
 const MAX_SNAPSHOT_ARCHIVE_UNPACKED_ACTUAL_SIZE: u64 = 4 * 1024 * 1024 * 1024 * 1024;
 
 const MAX_SNAPSHOT_ARCHIVE_UNPACKED_COUNT: u64 = 5_000_000;
-pub const MAX_GENESIS_ARCHIVE_UNPACKED_SIZE: u64 = 10 * 1024 * 1024; // 10 MiB
 const MAX_GENESIS_ARCHIVE_UNPACKED_COUNT: u64 = 100;
 
 // The buffer should be large enough to saturate write I/O bandwidth, while also accommodating:
@@ -118,7 +115,7 @@ where
     // (decompression multiplies content size, but buffering more than origin isn't necessary).
     let buf_size =
         (memlock_budget_size.min(actual_limit_size as usize)).min(MAX_UNPACK_WRITE_BUF_SIZE);
-    let mut files_creator = file_creator(buf_size, file_path_processor)?;
+    let mut files_creator = file_io::file_creator(buf_size, file_path_processor)?;
 
     let mut archive = Archive::new(input);
     for entry in archive.entries()? {
@@ -217,7 +214,7 @@ fn unpack_entry<'a, R: Read>(
     if should_fallback_to_tar_unpack(&entry) {
         entry.unpack(&dst)?;
         // Sanitize permissions.
-        set_path_permissions(&dst, mode)?;
+        file_io::set_path_permissions(&dst, mode)?;
 
         if !entry.header().entry_type().is_dir() {
             // Process file after setting permissions
@@ -449,58 +446,7 @@ fn is_valid_snapshot_archive_entry(parts: &[&str], kind: tar::EntryType) -> bool
     }
 }
 
-#[derive(Error, Debug)]
-pub enum OpenGenesisConfigError {
-    #[error("unpack error: {0}")]
-    Unpack(#[from] UnpackError),
-    #[error("Genesis load error: {0}")]
-    Load(#[from] std::io::Error),
-}
-
-pub fn open_genesis_config(
-    ledger_path: &Path,
-    max_genesis_archive_unpacked_size: u64,
-) -> std::result::Result<GenesisConfig, OpenGenesisConfigError> {
-    match GenesisConfig::load(ledger_path) {
-        Ok(genesis_config) => Ok(genesis_config),
-        Err(load_err) => {
-            warn!(
-                "Failed to load genesis_config at {ledger_path:?}: {load_err}. Will attempt to \
-                 unpack genesis archive and then retry loading."
-            );
-
-            let genesis_package = ledger_path.join(DEFAULT_GENESIS_ARCHIVE);
-            unpack_genesis_archive(
-                &genesis_package,
-                ledger_path,
-                max_genesis_archive_unpacked_size,
-            )?;
-            GenesisConfig::load(ledger_path).map_err(OpenGenesisConfigError::Load)
-        }
-    }
-}
-
-pub fn unpack_genesis_archive(
-    archive_filename: &Path,
-    destination_dir: &Path,
-    max_genesis_archive_unpacked_size: u64,
-) -> std::result::Result<(), UnpackError> {
-    info!("Extracting {archive_filename:?}...");
-    let extract_start = Instant::now();
-
-    fs::create_dir_all(destination_dir)?;
-    let tar_bz2 = File::open(archive_filename)?;
-    let tar = BzDecoder::new(BufReader::new(tar_bz2));
-    unpack_genesis(tar, destination_dir, max_genesis_archive_unpacked_size)?;
-    info!(
-        "Extracted {:?} in {:?}",
-        archive_filename,
-        Instant::now().duration_since(extract_start)
-    );
-    Ok(())
-}
-
-fn unpack_genesis(
+pub(super) fn unpack_genesis(
     input: impl Read,
     unpack_dir: &Path,
     max_genesis_archive_unpacked_size: u64,
@@ -541,6 +487,7 @@ mod tests {
     use {
         super::*,
         assert_matches::assert_matches,
+        std::io::BufReader,
         tar::{Builder, Header},
     };
 
@@ -603,7 +550,7 @@ mod tests {
 
     #[test]
     fn test_valid_snapshot_accounts() {
-        solana_logger::setup();
+        agave_logger::setup();
         assert!(is_valid_snapshot_archive_entry(
             &["accounts", "0.0"],
             tar::EntryType::Regular
@@ -790,9 +737,7 @@ mod tests {
     }
 
     fn finalize_and_unpack_genesis(archive: tar::Builder<Vec<u8>>) -> Result<()> {
-        with_finalize_and_unpack(archive, |a, b| {
-            unpack_genesis(a, b, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE)
-        })
+        with_finalize_and_unpack(archive, |a, b| unpack_genesis(a, b, 1024))
     }
 
     #[test]

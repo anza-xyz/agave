@@ -38,6 +38,7 @@ used_underscore_binding = "deny"
 [workspace.dependencies]
 agave-banking-stage-ingress-types = { path = "../banking-stage-ingress-types", version = "=3.1.0", features = ["agave-unstable-api"] }
 agave-feature-set = { path = "../feature-set", version = "=3.1.0", features = ["agave-unstable-api"] }
+agave-logger = { path = "../logger", version = "=3.1.0", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "../reserved-account-keys", version = "=3.1.0", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "../snapshots", version = "=3.1.0", features = ["agave-unstable-api"] }
 agave-syscalls = { path = "../syscalls", version = "=3.1.0", features = ["agave-unstable-api"] }
@@ -92,6 +93,7 @@ solana-feature-gate-interface = "3.0.0"
 solana-fee-calculator = "3.0.0"
 solana-genesis = { path = "../genesis", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-genesis-config = "3.0.0"
+solana-genesis-utils = { path = "../genesis-utils", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-geyser-plugin-manager = { path = "../geyser-plugin-manager", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-gossip = { path = "../gossip", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-hash = "3.0.0"
@@ -101,7 +103,6 @@ solana-keypair = "3.0.1"
 solana-ledger = { path = "../ledger", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-loader-v3-interface = "6.1.0"
 solana-local-cluster = { path = "../local-cluster", version = "=3.1.0", features = ["agave-unstable-api"] }
-solana-logger = "3.0.0"
 solana-measure = { path = "../measure", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-message = "3.0.1"
 solana-metrics = { path = "../metrics", version = "=3.1.0", features = ["agave-unstable-api"] }

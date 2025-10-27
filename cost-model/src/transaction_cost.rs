@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn test_vote_transaction_cost() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         // Create a sanitized vote transaction.
         let vote_transaction = RuntimeTransaction::try_create(
@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn test_non_vote_transaction_cost() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         // Create a sanitized non-vote transaction.
         let non_vote_transaction = RuntimeTransaction::try_create(

@@ -41,7 +41,7 @@ fn new_accounts_db(account_paths: Vec<PathBuf>) -> AccountsDb {
 
 #[bench]
 fn bench_delete_dependencies(bencher: &mut Bencher) {
-    solana_logger::setup();
+    agave_logger::setup();
     let accounts_db = new_accounts_db(vec![PathBuf::from("accounts_delete_deps")]);
     let accounts = Accounts::new(Arc::new(accounts_db));
     let mut old_pubkey = Pubkey::default();

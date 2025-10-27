@@ -4532,7 +4532,7 @@ mod tests {
 
     #[test]
     fn test_cli_keypair_file() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let default_keypair = Keypair::new();
         let program_pubkey = Keypair::new();
