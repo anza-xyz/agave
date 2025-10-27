@@ -36,8 +36,8 @@ use {
     solana_rent::Rent,
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::genesis_utils::{
-        create_genesis_config_with_vote_accounts_and_cluster_type, GenesisConfigInfo,
-        ValidatorVoteKeypairs,
+        create_genesis_config_with_vote_accounts_and_cluster_type, stakes::StakedNodesMap,
+        GenesisConfigInfo, ValidatorVoteKeypairs,
     },
     solana_signer::{signers::Signers, Signer},
     solana_stake_interface::{
@@ -206,10 +206,12 @@ impl LocalCluster {
             }
 
             let total_stake = config.node_stakes.iter().sum::<u64>();
-            let stakes = HashMap::from([
+            let stakes = [
                 (client_keypair.pubkey(), stake),
                 (Pubkey::new_unique(), total_stake.saturating_sub(stake)),
-            ]);
+            ]
+            .into_iter()
+            .collect::<StakedNodesMap>();
             let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(
                 Arc::new(stakes),
                 HashMap::<Pubkey, u64>::default(), // overrides

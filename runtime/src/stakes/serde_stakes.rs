@@ -1,5 +1,5 @@
 use {
-    super::{StakeAccount, Stakes},
+    super::{StakeAccount, StakedNodesMap, Stakes},
     crate::stake_history::StakeHistory,
     im::HashMap as ImHashMap,
     serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer},
@@ -7,7 +7,7 @@ use {
     solana_pubkey::Pubkey,
     solana_stake_interface::state::Stake,
     solana_vote::vote_account::VoteAccounts,
-    std::{collections::HashMap, sync::Arc},
+    std::sync::Arc,
 };
 
 /// Wrapper struct with custom serialization to support serializing
@@ -28,7 +28,7 @@ impl SerdeStakesToStakeFormat {
         }
     }
 
-    pub fn staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
+    pub fn staked_nodes(&self) -> Arc<StakedNodesMap> {
         match self {
             Self::Stake(stakes) => stakes.staked_nodes(),
             Self::Account(stakes) => stakes.staked_nodes(),

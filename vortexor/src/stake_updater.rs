@@ -5,7 +5,7 @@ use {
     crate::rpc_load_balancer::RpcLoadBalancer,
     log::{info, warn},
     solana_client::client_error,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_streamer::streamer::StakedNodes,
     std::{
         collections::HashMap,
@@ -85,7 +85,7 @@ impl StakeUpdater {
                             vote_account.activated_stake,
                         ))
                     })
-                    .collect::<HashMap<Pubkey, u64>>(),
+                    .collect::<HashMap<Pubkey, u64, PubkeyHasherBuilder>>(),
             );
 
             *last_refresh = Some(Instant::now());

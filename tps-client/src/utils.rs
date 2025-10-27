@@ -2,7 +2,7 @@ use {
     log::{error, info},
     solana_client::connection_cache::ConnectionCache as ClientConnectionCache,
     solana_keypair::Keypair,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
     solana_streamer::streamer::StakedNodes,
@@ -113,13 +113,15 @@ fn create_connection_cache_with_client_socket_option(
     let (stake, total_stake) =
         find_node_activated_stake(rpc_client, client_node_id.pubkey()).unwrap_or_default();
     info!("Stake for specified client_node_id: {stake}, total stake: {total_stake}");
-    let stakes = HashMap::from([
+    let stakes = [
         (client_node_id.pubkey(), stake),
         (
             Pubkey::new_unique(),
             total_stake.checked_sub(stake).unwrap(),
         ),
-    ]);
+    ]
+    .into_iter()
+    .collect::<HashMap<_, _, PubkeyHasherBuilder>>();
     let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(
         Arc::new(stakes),
         HashMap::<Pubkey, u64>::default(), // overrides

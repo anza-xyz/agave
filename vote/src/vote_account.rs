@@ -7,7 +7,7 @@ use {
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     std::{
         cmp::Ordering,
         collections::{hash_map::Entry, HashMap},
@@ -46,14 +46,7 @@ pub struct VoteAccounts {
     vote_accounts: Arc<VoteAccountsHashMap>,
     // Inner Arc is meant to implement copy-on-write semantics.
     #[serde(skip)]
-    staked_nodes: OnceLock<
-        Arc<
-            HashMap<
-                Pubkey, // VoteAccount.vote_state.node_pubkey.
-                u64,    // Total stake across all vote-accounts.
-            >,
-        >,
-    >,
+    staked_nodes: OnceLock<Arc<StakedNodesMap>>,
 }
 
 impl Clone for VoteAccounts {
@@ -127,6 +120,8 @@ impl VoteAccount {
     }
 }
 
+type StakedNodesMap = HashMap<Pubkey, u64, PubkeyHasherBuilder>;
+
 impl VoteAccounts {
     pub fn len(&self) -> usize {
         self.vote_accounts.len()
@@ -136,7 +131,7 @@ impl VoteAccounts {
         self.vote_accounts.is_empty()
     }
 
-    pub fn staked_nodes(&self) -> Arc<HashMap</*node_pubkey:*/ Pubkey, /*stake:*/ u64>> {
+    pub fn staked_nodes(&self) -> Arc<StakedNodesMap> {
         self.staked_nodes
             .get_or_init(|| {
                 // Count non-zero stake accounts for optimal capacity allocation
@@ -146,7 +141,10 @@ impl VoteAccounts {
                     .filter(|(stake, _)| *stake != 0)
                     .count();
 
-                let mut staked_nodes = HashMap::with_capacity(non_zero_count);
+                let mut staked_nodes = HashMap::with_capacity_and_hasher(
+                    non_zero_count,
+                    PubkeyHasherBuilder::default(),
+                );
 
                 for (stake, vote_account) in self.vote_accounts.values() {
                     if *stake != 0 {
@@ -263,11 +261,7 @@ impl VoteAccounts {
         VoteAccounts::do_add_node_stake(staked_nodes, stake, *vote_account.node_pubkey());
     }
 
-    fn do_add_node_stake(
-        staked_nodes: &mut Arc<HashMap<Pubkey, u64>>,
-        stake: u64,
-        node_pubkey: Pubkey,
-    ) {
+    fn do_add_node_stake(staked_nodes: &mut Arc<StakedNodesMap>, stake: u64, node_pubkey: Pubkey) {
         if stake == 0u64 {
             return;
         }
@@ -286,11 +280,7 @@ impl VoteAccounts {
         VoteAccounts::do_sub_node_stake(staked_nodes, stake, vote_account.node_pubkey());
     }
 
-    fn do_sub_node_stake(
-        staked_nodes: &mut Arc<HashMap<Pubkey, u64>>,
-        stake: u64,
-        node_pubkey: &Pubkey,
-    ) {
+    fn do_sub_node_stake(staked_nodes: &mut Arc<StakedNodesMap>, stake: u64, node_pubkey: &Pubkey) {
         if stake == 0u64 {
             return;
         }
@@ -505,11 +495,11 @@ mod tests {
         })
     }
 
-    fn staked_nodes<'a, I>(vote_accounts: I) -> HashMap<Pubkey, u64>
+    fn staked_nodes<'a, I>(vote_accounts: I) -> StakedNodesMap
     where
         I: IntoIterator<Item = &'a (Pubkey, (u64, VoteAccount))>,
     {
-        let mut staked_nodes = HashMap::new();
+        let mut staked_nodes = HashMap::default();
         for (_, (stake, vote_account)) in vote_accounts
             .into_iter()
             .filter(|(_, (stake, _))| *stake != 0)

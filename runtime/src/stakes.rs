@@ -12,7 +12,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::utils::create_account_shared_data,
     solana_clock::Epoch,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_stake_interface::{
         program as stake_program,
         state::{Delegation, StakeActivationStatus},
@@ -30,6 +30,9 @@ use {
 mod serde_stakes;
 pub(crate) use serde_stakes::serialize_stake_accounts_to_delegation_format;
 pub use serde_stakes::SerdeStakesToStakeFormat;
+
+/// Mapping from node pubkey to total stake across all vote accounts.
+pub type StakedNodesMap = HashMap<Pubkey, u64, PubkeyHasherBuilder>;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -184,7 +187,7 @@ impl<T: Clone> Stakes<T> {
         &self.vote_accounts
     }
 
-    pub(crate) fn staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
+    pub(crate) fn staked_nodes(&self) -> Arc<StakedNodesMap> {
         self.vote_accounts.staked_nodes()
     }
 }
