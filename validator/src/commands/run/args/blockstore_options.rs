@@ -1,19 +1,30 @@
 use {
     crate::{
-        cli::thread_args::{RocksdbCompactionThreadsArg, RocksdbFlushThreadsArg, ThreadArg},
+        cli::thread_args::{RocksdbFlushThreadsArg, ThreadArg},
         commands::{FromClapArgMatches, Result},
     },
     clap::{value_t, Arg, ArgMatches},
-    solana_clap_utils::{hidden_unless_forced, input_validators::is_parsable},
+    solana_clap_utils::{
+        hidden_unless_forced,
+        input_validators::{is_parsable, is_within_range},
+    },
     solana_ledger::blockstore_options::{
         AccessType, BlockstoreCompressionType, BlockstoreOptions, BlockstoreRecoveryMode,
         LedgerColumnOptions,
     },
-    std::num::NonZeroUsize,
+    std::{num::NonZeroUsize, ops::RangeInclusive, sync::LazyLock},
 };
+
+static VALID_RANGE_ROCKSDB_COMPACTION_THREADS: LazyLock<RangeInclusive<usize>> =
+    LazyLock::new(|| RangeInclusive::new(1, num_cpus::get()));
 
 const DEFAULT_ROCKSDB_LEDGER_COMPRESSION: &str = "none";
 const DEFAULT_ROCKSDB_PERF_SAMPLE_INTERVAL: &str = "0";
+static DEFAULT_ROCKSDB_COMPACTION_THREADS: LazyLock<String> = LazyLock::new(|| {
+    solana_ledger::blockstore::default_num_compaction_threads()
+        .get()
+        .to_string()
+});
 
 impl FromClapArgMatches for BlockstoreOptions {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
@@ -41,8 +52,8 @@ impl FromClapArgMatches for BlockstoreOptions {
             rocks_perf_sample_interval: value_t!(matches, "rocksdb_perf_sample_interval", usize)?,
         };
 
-        let rocksdb_compaction_threads: std::num::NonZero<usize> =
-            value_t!(matches, RocksdbCompactionThreadsArg::NAME, NonZeroUsize)?;
+        let rocksdb_compaction_threads =
+            value_t!(matches, "rocksdb_compaction_threads", NonZeroUsize)?;
 
         let rocksdb_flush_threads = value_t!(matches, RocksdbFlushThreadsArg::NAME, NonZeroUsize)?;
 
@@ -92,6 +103,14 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
                 "Controls how often RocksDB read/write performance samples are collected. Perf \
                  samples are collected in 1 / ROCKS_PERF_SAMPLE_INTERVAL sampling rate.",
             ),
+        Arg::with_name("rocksdb_compaction_threads")
+            .long("rocksdb-compaction-threads")
+            .takes_value(true)
+            .value_name("NUMBER")
+            .default_value(&DEFAULT_ROCKSDB_COMPACTION_THREADS)
+            .validator(|num| is_within_range(num, VALID_RANGE_ROCKSDB_COMPACTION_THREADS.clone()))
+            .hidden(hidden_unless_forced())
+            .help("Number of threads to use for rocksdb (Blockstore) compactions"),
     ]
 }
 
@@ -250,5 +269,21 @@ mod tests {
     #[test]
     fn test_default_rocksdb_perf_sample_interval_unchanged() {
         assert_eq!(DEFAULT_ROCKSDB_PERF_SAMPLE_INTERVAL, "0");
+    }
+
+    #[test]
+    fn test_default_rocksdb_compaction_threads_unchanged() {
+        assert_eq!(
+            *DEFAULT_ROCKSDB_COMPACTION_THREADS,
+            num_cpus::get().to_string(),
+        );
+    }
+
+    #[test]
+    fn test_valid_range_rocksdb_compaction_threads_unchanged() {
+        assert_eq!(
+            *VALID_RANGE_ROCKSDB_COMPACTION_THREADS,
+            RangeInclusive::new(1, num_cpus::get()),
+        );
     }
 }
