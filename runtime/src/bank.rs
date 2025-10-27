@@ -1542,9 +1542,7 @@ impl Bank {
                     program_cache.assign_program(&upcoming_environments, key, recompiled);
                 }
             }
-        } else if self.epoch != epoch_boundary_preparation.latest_root_epoch
-            || slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch
-        {
+        } else if slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch {
             // Anticipate the upcoming program runtime environment for the next epoch,
             // so we can try to recompile loaded programs before the feature transition hits.
             let new_environments = self.create_program_runtime_environments(&upcoming_feature_set);
@@ -1559,6 +1557,7 @@ impl Bank {
             if changed_program_runtime_v2 {
                 upcoming_environments.program_runtime_v2 = new_environments.program_runtime_v2;
             }
+            epoch_boundary_preparation.upcoming_epoch = self.epoch.saturating_add(1);
             epoch_boundary_preparation.upcoming_environments = Some(upcoming_environments);
             epoch_boundary_preparation.programs_to_recompile = program_cache
                 .get_flattened_entries(changed_program_runtime_v1, changed_program_runtime_v2);
@@ -4129,7 +4128,7 @@ impl Bank {
             .epoch_boundary_preparation
             .write()
             .unwrap()
-            .latest_root_epoch = self.epoch;
+            .upcoming_epoch = self.epoch;
         self.transaction_processor.environments = environments;
     }
 

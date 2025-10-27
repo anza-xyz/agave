@@ -546,8 +546,8 @@ impl Default for ProgramRuntimeEnvironments {
 /// Globally manages the transition between environments at the epoch boundary
 #[derive(Debug, Default)]
 pub struct EpochBoundaryPreparation {
-    /// The epoch of the last rerooting
-    pub latest_root_epoch: Epoch,
+    /// The epoch of the upcoming_environments
+    pub upcoming_epoch: Epoch,
     /// Anticipated replacement for `environments` at the next epoch
     ///
     /// This is `None` during most of an epoch, and only `Some` around the boundaries (at the end and beginning of an epoch).
@@ -559,9 +559,9 @@ pub struct EpochBoundaryPreparation {
 }
 
 impl EpochBoundaryPreparation {
-    pub fn new(root_epoch: Epoch) -> Self {
+    pub fn new(epoch: Epoch) -> Self {
         Self {
-            latest_root_epoch: root_epoch,
+            upcoming_epoch: epoch,
             upcoming_environments: None,
             programs_to_recompile: Vec::default(),
         }
@@ -572,16 +572,15 @@ impl EpochBoundaryPreparation {
         &self,
         epoch: Epoch,
     ) -> Option<ProgramRuntimeEnvironments> {
-        if epoch != self.latest_root_epoch {
+        if epoch == self.upcoming_epoch {
             return self.upcoming_environments.clone();
         }
         None
     }
 
     /// Before rerooting the blockstore this concludes the epoch boundary preparation
-    pub fn reroot(&mut self, new_root_epoch: Epoch) -> Option<ProgramRuntimeEnvironments> {
-        if self.latest_root_epoch != new_root_epoch {
-            self.latest_root_epoch = new_root_epoch;
+    pub fn reroot(&mut self, epoch: Epoch) -> Option<ProgramRuntimeEnvironments> {
+        if epoch == self.upcoming_epoch {
             if let Some(upcoming_environments) = self.upcoming_environments.take() {
                 self.programs_to_recompile.clear();
                 return Some(upcoming_environments);

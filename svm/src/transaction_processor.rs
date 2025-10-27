@@ -261,7 +261,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .epoch_boundary_preparation
             .write()
             .unwrap()
-            .latest_root_epoch = processor.epoch;
+            .upcoming_epoch = processor.epoch;
         processor.environments.program_runtime_v1 =
             program_runtime_environment_v1.unwrap_or(empty_loader());
         processor.environments.program_runtime_v2 =
