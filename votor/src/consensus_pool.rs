@@ -1025,12 +1025,42 @@ mod tests {
         assert!(pool.make_start_leader_decision(my_leader_slot, parent_slot, first_alpenglow_slot));
     }
 
-    #[test_case(Vote::new_finalization_vote(5), vec![CertificateType::Finalize(5)])]
-    #[test_case(Vote::new_notarization_vote(6, Hash::default()), vec![CertificateType::Notarize(6, Hash::default()), CertificateType::NotarizeFallback(6, Hash::default())])]
-    #[test_case(Vote::new_notarization_fallback_vote(7, Hash::default()), vec![CertificateType::NotarizeFallback(7, Hash::default())])]
-    #[test_case(Vote::new_skip_vote(8), vec![CertificateType::Skip(8)])]
-    #[test_case(Vote::new_skip_fallback_vote(9), vec![CertificateType::Skip(9)])]
-    fn test_add_vote_and_create_new_certificate_with_types(
+    #[test]
+    fn test_add_vote_and_create_new_certificate_with_types() {
+        let mut votes = vec![];
+        let mut expected_cert_types = vec![];
+
+        let slot = 5;
+        votes.push(Vote::new_finalization_vote(slot));
+        expected_cert_types.push(vec![CertificateType::Finalize(slot)]);
+
+        let slot = 6;
+        let block_id = Hash::new_unique();
+        votes.push(Vote::new_notarization_vote(slot, block_id));
+        expected_cert_types.push(vec![
+            CertificateType::Notarize(slot, block_id),
+            CertificateType::NotarizeFallback(slot, block_id),
+        ]);
+
+        let slot = 7;
+        let block_id = Hash::new_unique();
+        votes.push(Vote::new_notarization_fallback_vote(slot, block_id));
+        expected_cert_types.push(vec![CertificateType::NotarizeFallback(slot, block_id)]);
+
+        let slot = 8;
+        votes.push(Vote::new_skip_vote(slot));
+        expected_cert_types.push(vec![CertificateType::Skip(slot)]);
+
+        let slot = 9;
+        votes.push(Vote::new_skip_fallback_vote(slot));
+        expected_cert_types.push(vec![CertificateType::Skip(slot)]);
+
+        for (vote, cert_types) in votes.into_iter().zip(expected_cert_types) {
+            do_test_add_vote_and_create_new_certificate_with_types(vote, cert_types);
+        }
+    }
+
+    fn do_test_add_vote_and_create_new_certificate_with_types(
         vote: Vote,
         expected_cert_types: Vec<CertificateType>,
     ) {
@@ -1099,9 +1129,9 @@ mod tests {
         }
         // Assert certs_to_send contains the expected certificate types
         for expected_cert_type in expected_cert_types {
-            assert!(certs_to_send.iter().any(|cert| {
-                cert.cert_type == expected_cert_type && cert.cert_type.slot() == slot
-            }));
+            assert!(certs_to_send
+                .iter()
+                .any(|cert| { cert.cert_type == expected_cert_type }));
         }
         assert_eq!(highest_slot_fn(&pool), slot);
         // Now add the same certificate again, this should silently exit.
