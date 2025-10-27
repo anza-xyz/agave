@@ -231,18 +231,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Launch validator without voting"),
     )
     .arg(
-        Arg::with_name("check_vote_account")
-            .long("check-vote-account")
-            .takes_value(true)
-            .value_name("RPC_URL")
-            .requires("entrypoint")
-            .conflicts_with_all(&["no_voting"])
-            .help(
-                "Sanity check vote account state at startup. The JSON RPC endpoint at RPC_URL \
-                 must expose `--full-rpc-api`",
-            ),
-    )
-    .arg(
         Arg::with_name("restricted_repair_only_mode")
             .long("restricted-repair-only-mode")
             .takes_value(false)

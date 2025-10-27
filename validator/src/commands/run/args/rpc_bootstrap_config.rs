@@ -65,6 +65,16 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
                 "Do not attempt to fetch a snapshot from the cluster, start from a local snapshot \
                  if present",
             ),
+        Arg::with_name("check_vote_account")
+            .long("check-vote-account")
+            .takes_value(true)
+            .value_name("RPC_URL")
+            .requires("entrypoint")
+            .conflicts_with_all(&["no_voting"])
+            .help(
+                "Sanity check vote account state at startup. The JSON RPC endpoint at RPC_URL \
+                 must expose `--full-rpc-api`",
+            ),
     ]
 }
 
