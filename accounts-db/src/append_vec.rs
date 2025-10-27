@@ -1010,7 +1010,7 @@ impl AppendVec {
     /// Prefer scan_accounts() when possible, as it does not contain file format
     /// implementation details, and thus potentially can read less and be faster.
     #[allow(clippy::blocks_in_conditions)]
-    pub(crate) fn scan_accounts_stored_meta<'a>(
+    fn scan_accounts_stored_meta<'a>(
         &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
         mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
@@ -1073,6 +1073,19 @@ impl AppendVec {
             }
         }
         Ok(())
+    }
+
+    /// Scans accounts with StoredAccountMeta
+    ///
+    /// Only intended to be called by agave-store-tool.
+    /// Refer to `scan_accounts_stored_meta` for further documentation.
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn scan_accounts_stored_meta_for_store_tool(
+        &self,
+        callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
+    ) -> Result<()> {
+        let mut reader = new_scan_accounts_reader();
+        self.scan_accounts_stored_meta(&mut reader, callback)
     }
 
     /// Calculate the amount of storage required for an account with the passed

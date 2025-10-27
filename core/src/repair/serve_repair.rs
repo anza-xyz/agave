@@ -431,6 +431,7 @@ impl ServeRepair {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn my_id(&self) -> Pubkey {
         self.cluster_info.id()
     }
@@ -1065,7 +1066,7 @@ impl ServeRepair {
     ) -> Result<Vec<u8>> {
         let header = RepairRequestHeader {
             signature: Signature::default(),
-            sender: self.my_id(),
+            sender: keypair.pubkey(),
             recipient: *repair_peer_id,
             timestamp: timestamp(),
             nonce,
@@ -1097,7 +1098,8 @@ impl ServeRepair {
             Some(entry) if entry.asof.elapsed() < REPAIR_PEERS_CACHE_TTL => entry,
             _ => {
                 peers_cache.pop(&slot);
-                let repair_peers = self.repair_peers(repair_validators, slot);
+                let repair_peers =
+                    self.repair_peers(repair_validators, slot, &identity_keypair.pubkey());
                 let weights = cluster_slots.compute_weights(slot, &repair_peers);
                 let repair_peers = RepairPeers::new(Instant::now(), &repair_peers, &weights)?;
                 peers_cache.put(slot, repair_peers);
@@ -1136,8 +1138,9 @@ impl ServeRepair {
         cluster_slots: &ClusterSlots,
         repair_validators: &Option<HashSet<Pubkey>>,
         repair_protocol: Protocol,
+        my_pubkey: &Pubkey,
     ) -> Result<Vec<(Pubkey, SocketAddr)>> {
-        let repair_peers: Vec<_> = self.repair_peers(repair_validators, slot);
+        let repair_peers: Vec<_> = self.repair_peers(repair_validators, slot, my_pubkey);
         if repair_peers.is_empty() {
             return Err(ClusterInfoError::NoPeers.into());
         }
@@ -1160,8 +1163,9 @@ impl ServeRepair {
         slot: Slot,
         cluster_slots: &ClusterSlots,
         repair_validators: &Option<HashSet<Pubkey>>,
+        my_pubkey: &Pubkey,
     ) -> Option<(Pubkey, SocketAddr)> {
-        let repair_peers: Vec<_> = self.repair_peers(repair_validators, slot);
+        let repair_peers: Vec<_> = self.repair_peers(repair_validators, slot, my_pubkey);
         if repair_peers.is_empty() {
             return None;
         }
@@ -1186,7 +1190,7 @@ impl ServeRepair {
     ) -> Result<Vec<u8>> {
         let header = RepairRequestHeader {
             signature: Signature::default(),
-            sender: self.my_id(),
+            sender: identity_keypair.pubkey(),
             recipient: *repair_peer_id,
             timestamp: timestamp(),
             nonce,
@@ -1284,12 +1288,13 @@ impl ServeRepair {
         &self,
         repair_validators: &Option<HashSet<Pubkey>>,
         slot: Slot,
+        my_pubkey: &Pubkey,
     ) -> Vec<ContactInfo> {
         if let Some(repair_validators) = repair_validators {
             repair_validators
                 .iter()
                 .filter_map(|key| {
-                    if *key != self.my_id() {
+                    if key != my_pubkey {
                         self.cluster_info.lookup_contact_info(key, |ci| ci.clone())
                     } else {
                         None
@@ -2205,7 +2210,9 @@ mod tests {
         // then no repairs should be generated
         for pubkey in &[solana_pubkey::new_rand(), *me.pubkey()] {
             let known_validators = Some(vec![*pubkey].into_iter().collect());
-            assert!(serve_repair.repair_peers(&known_validators, 1).is_empty());
+            assert!(serve_repair
+                .repair_peers(&known_validators, 1, &identity_keypair.pubkey())
+                .is_empty());
             assert_matches!(
                 serve_repair.repair_request(
                     &cluster_slots,
@@ -2224,7 +2231,8 @@ mod tests {
 
         // If known validator exists in gossip, should return repair successfully
         let known_validators = Some(vec![*contact_info2.pubkey()].into_iter().collect());
-        let repair_peers = serve_repair.repair_peers(&known_validators, 1);
+        let repair_peers =
+            serve_repair.repair_peers(&known_validators, 1, &identity_keypair.pubkey());
         assert_eq!(repair_peers.len(), 1);
         assert_eq!(repair_peers[0].pubkey(), contact_info2.pubkey());
         assert_matches!(
@@ -2245,7 +2253,7 @@ mod tests {
         // Using no known validators should default to all
         // validator's available in gossip, excluding myself
         let repair_peers: HashSet<Pubkey> = serve_repair
-            .repair_peers(&None, 1)
+            .repair_peers(&None, 1, &identity_keypair.pubkey())
             .into_iter()
             .map(|node| *node.pubkey())
             .collect();

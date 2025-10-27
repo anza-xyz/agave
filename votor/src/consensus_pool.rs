@@ -16,9 +16,7 @@ use {
         event::VotorEvent,
     },
     agave_votor_messages::{
-        consensus_message::{
-            Block, Certificate, CertificateMessage, CertificateType, ConsensusMessage, VoteMessage,
-        },
+        consensus_message::{Block, Certificate, CertificateType, ConsensusMessage, VoteMessage},
         vote::Vote,
     },
     log::{error, trace},
@@ -64,7 +62,7 @@ pub enum AddVoteError {
     ChannelDisconnected(String),
 
     #[error("Voting Service queue full")]
-    VotingServiceChannelFull,
+    VotingServiceQueueFull,
 
     #[error("Invalid rank: {0}")]
     InvalidRank(u16),
@@ -105,7 +103,7 @@ pub struct ConsensusPool {
     // Vote pools to do bean counting for votes.
     vote_pools: BTreeMap<PoolId, VotePool>,
     /// Completed certificates
-    completed_certificates: BTreeMap<Certificate, Arc<CertificateMessage>>,
+    completed_certificates: BTreeMap<CertificateType, Arc<Certificate>>,
     /// Tracks slots which have reached the parent ready condition:
     /// - They have a potential parent block with a NotarizeFallback certificate
     /// - All slots from the parent have a Skip certificate
@@ -186,16 +184,16 @@ impl ConsensusPool {
         block_id: Option<Hash>,
         events: &mut Vec<VotorEvent>,
         total_stake: Stake,
-    ) -> Result<Vec<Arc<CertificateMessage>>, AddVoteError> {
+    ) -> Result<Vec<Arc<Certificate>>, AddVoteError> {
         let slot = vote.slot();
         let mut new_certificates_to_send = Vec::new();
-        for cert_id in vote_to_certificate_ids(vote) {
+        for cert_type in vote_to_certificate_ids(vote) {
             // If the certificate is already complete, skip it
-            if self.completed_certificates.contains_key(&cert_id) {
+            if self.completed_certificates.contains_key(&cert_type) {
                 continue;
             }
             // Otherwise check whether the certificate is complete
-            let (limit, vote_types) = certificate_limits_and_vote_types(cert_id);
+            let (limit, vote_types) = certificate_limits_and_vote_types(&cert_type);
             let accumulated_stake = vote_types
                 .iter()
                 .filter_map(|vote_type| {
@@ -204,7 +202,7 @@ impl ConsensusPool {
                         VotePool::DuplicateBlockVotePool(pool) => {
                             pool.total_stake_by_block_id(block_id.as_ref().expect(
                                 "Duplicate block pool for {vote_type:?} expects a block id for \
-                                 certificate {cert_id:?}",
+                                 certificate {cert_type:?}",
                             ))
                         }
                     })
@@ -213,28 +211,28 @@ impl ConsensusPool {
             if accumulated_stake as f64 / (total_stake as f64) < limit {
                 continue;
             }
-            let mut vote_certificate_builder = VoteCertificateBuilder::new(cert_id);
+            let mut cert_builder = VoteCertificateBuilder::new(cert_type);
             vote_types.iter().for_each(|vote_type| {
                 if let Some(vote_pool) = self.vote_pools.get(&(slot, *vote_type)) {
                     match vote_pool {
                         VotePool::SimpleVotePool(pool) => {
-                            vote_certificate_builder.aggregate(pool.votes()).unwrap();
+                            cert_builder.aggregate(pool.votes()).unwrap();
                         }
                         VotePool::DuplicateBlockVotePool(pool) => {
-                            if let Some(votes) = pool.votes(block_id.as_ref().expect(
+                            let block_id = block_id.as_ref().expect(
                                 "Duplicate block pool for {vote_type:?} expects a block id for \
-                                 certificate {cert_id:?}",
-                            )) {
-                                vote_certificate_builder.aggregate(votes).unwrap();
+                                 certificate {cert_type:?}",
+                            );
+                            if let Some(votes) = pool.votes(block_id) {
+                                cert_builder.aggregate(votes).unwrap();
                             }
                         }
                     };
                 }
             });
-            let new_cert = Arc::new(vote_certificate_builder.build()?);
-            self.insert_certificate(cert_id, new_cert.clone(), events);
-            self.stats
-                .incr_cert_type(new_cert.certificate.certificate_type(), true);
+            let new_cert = Arc::new(cert_builder.build()?);
+            self.insert_certificate(cert_type, new_cert.clone(), events);
+            self.stats.incr_cert_type(&new_cert.cert_type, true);
             new_certificates_to_send.push(new_cert);
         }
         Ok(new_certificates_to_send)
@@ -278,19 +276,19 @@ impl ConsensusPool {
 
     fn insert_certificate(
         &mut self,
-        cert_id: Certificate,
-        cert: Arc<CertificateMessage>,
+        cert_type: CertificateType,
+        cert: Arc<Certificate>,
         events: &mut Vec<VotorEvent>,
     ) {
-        trace!("{}: Inserting certificate {:?}", self.my_pubkey, cert_id);
-        self.completed_certificates.insert(cert_id, cert);
-        match cert_id {
-            Certificate::NotarizeFallback(slot, block_id) => {
+        trace!("{}: Inserting certificate {:?}", self.my_pubkey, cert_type);
+        self.completed_certificates.insert(cert_type, cert);
+        match cert_type {
+            CertificateType::NotarizeFallback(slot, block_id) => {
                 self.parent_ready_tracker
                     .add_new_notar_fallback_or_stronger((slot, block_id), events);
             }
-            Certificate::Skip(slot) => self.parent_ready_tracker.add_new_skip(slot, events),
-            Certificate::Notarize(slot, block_id) => {
+            CertificateType::Skip(slot) => self.parent_ready_tracker.add_new_skip(slot, events),
+            CertificateType::Notarize(slot, block_id) => {
                 events.push(VotorEvent::BlockNotarized((slot, block_id)));
                 self.parent_ready_tracker
                     .add_new_notar_fallback_or_stronger((slot, block_id), events);
@@ -306,7 +304,7 @@ impl ConsensusPool {
                     }
                 }
             }
-            Certificate::Finalize(slot) => {
+            CertificateType::Finalize(slot) => {
                 if let Some(block) = self.get_notarized_block(slot) {
                     events.push(VotorEvent::Finalized(block, false));
                     if self
@@ -320,7 +318,7 @@ impl ConsensusPool {
                     self.highest_finalized_slot = Some(slot);
                 }
             }
-            Certificate::FinalizeFast(slot, block_id) => {
+            CertificateType::FinalizeFast(slot, block_id) => {
                 events.push(VotorEvent::Finalized((slot, block_id), true));
                 self.parent_ready_tracker
                     .add_new_notar_fallback_or_stronger((slot, block_id), events);
@@ -337,7 +335,7 @@ impl ConsensusPool {
         }
     }
 
-    /// Adds the new vote the the certificate pool. If a new certificate is created
+    /// Adds the new vote the the consensus pool. If a new certificate is created
     /// as a result of this, send it via the `self.certificate_sender`
     ///
     /// Any new votor events that are a result of adding this new vote will be added
@@ -353,7 +351,7 @@ impl ConsensusPool {
         my_vote_pubkey: &Pubkey,
         message: ConsensusMessage,
         events: &mut Vec<VotorEvent>,
-    ) -> Result<(Option<Slot>, Vec<Arc<CertificateMessage>>), AddVoteError> {
+    ) -> Result<(Option<Slot>, Vec<Arc<Certificate>>), AddVoteError> {
         let current_highest_finalized_slot = self.highest_finalized_slot;
         let new_certficates_to_send = match message {
             ConsensusMessage::Vote(vote_message) => self.add_vote(
@@ -364,9 +362,7 @@ impl ConsensusPool {
                 vote_message,
                 events,
             )?,
-            ConsensusMessage::Certificate(certificate_message) => {
-                self.add_certificate(root_slot, &certificate_message, events)?
-            }
+            ConsensusMessage::Certificate(cert) => self.add_certificate(root_slot, cert, events)?,
         };
         // If we have a new highest finalized slot, return it
         let new_finalized_slot = if self.highest_finalized_slot > current_highest_finalized_slot {
@@ -385,7 +381,7 @@ impl ConsensusPool {
         my_vote_pubkey: &Pubkey,
         vote_message: VoteMessage,
         events: &mut Vec<VotorEvent>,
-    ) -> Result<Vec<Arc<CertificateMessage>>, AddVoteError> {
+    ) -> Result<Vec<Arc<Certificate>>, AddVoteError> {
         let vote = &vote_message.vote;
         let rank = vote_message.rank;
         let vote_slot = vote.slot();
@@ -449,34 +445,33 @@ impl ConsensusPool {
     fn add_certificate(
         &mut self,
         root_slot: Slot,
-        certificate_message: &CertificateMessage,
+        cert: Certificate,
         events: &mut Vec<VotorEvent>,
-    ) -> Result<Vec<Arc<CertificateMessage>>, AddVoteError> {
-        let certificate_id = certificate_message.certificate;
+    ) -> Result<Vec<Arc<Certificate>>, AddVoteError> {
+        let cert_type = cert.cert_type;
         self.stats.incoming_certs = self.stats.incoming_certs.saturating_add(1);
-        if certificate_id.slot() < root_slot {
+        if cert_type.slot() < root_slot {
             self.stats.out_of_range_certs = self.stats.out_of_range_certs.saturating_add(1);
             return Err(AddVoteError::UnrootedSlot);
         }
-        if self.completed_certificates.contains_key(&certificate_id) {
+        if self.completed_certificates.contains_key(&cert_type) {
             self.stats.exist_certs = self.stats.exist_certs.saturating_add(1);
             return Ok(vec![]);
         }
-        let new_certificate = Arc::new(certificate_message.clone());
-        self.insert_certificate(certificate_id, new_certificate.clone(), events);
+        let cert = Arc::new(cert);
+        self.insert_certificate(cert_type, cert.clone(), events);
 
-        self.stats
-            .incr_cert_type(certificate_id.certificate_type(), false);
+        self.stats.incr_cert_type(&cert_type, false);
 
-        Ok(vec![new_certificate])
+        Ok(vec![cert])
     }
 
     /// Get the notarized block in `slot`
     pub fn get_notarized_block(&self, slot: Slot) -> Option<Block> {
         self.completed_certificates
             .iter()
-            .find_map(|(cert_id, _)| match cert_id {
-                Certificate::Notarize(s, block_id) if slot == *s => Some((*s, *block_id)),
+            .find_map(|(cert_type, _)| match cert_type {
+                CertificateType::Notarize(s, block_id) if slot == *s => Some((*s, *block_id)),
                 _ => None,
             })
     }
@@ -486,9 +481,9 @@ impl ConsensusPool {
         // Return the max of CertificateType::Notarize and CertificateType::NotarizeFallback
         self.completed_certificates
             .iter()
-            .filter_map(|(cert_id, _)| match cert_id {
-                Certificate::Notarize(s, _) => Some(s),
-                Certificate::NotarizeFallback(s, _) => Some(s),
+            .filter_map(|(cert_type, _)| match cert_type {
+                CertificateType::Notarize(s, _) => Some(s),
+                CertificateType::NotarizeFallback(s, _) => Some(s),
                 _ => None,
             })
             .max()
@@ -500,8 +495,8 @@ impl ConsensusPool {
     fn highest_skip_slot(&self) -> Slot {
         self.completed_certificates
             .iter()
-            .filter_map(|(cert_id, _)| match cert_id {
-                Certificate::Skip(s) => Some(s),
+            .filter_map(|(cert_type, _)| match cert_type {
+                CertificateType::Skip(s) => Some(s),
                 _ => None,
             })
             .max()
@@ -512,9 +507,9 @@ impl ConsensusPool {
     pub fn highest_finalized_slot(&self) -> Slot {
         self.completed_certificates
             .iter()
-            .filter_map(|(cert_id, _)| match cert_id {
-                Certificate::Finalize(s) => Some(s),
-                Certificate::FinalizeFast(s, _) => Some(s),
+            .filter_map(|(cert_type, _)| match cert_type {
+                CertificateType::Finalize(s) => Some(s),
+                CertificateType::FinalizeFast(s, _) => Some(s),
                 _ => None,
             })
             .max()
@@ -524,8 +519,8 @@ impl ConsensusPool {
 
     /// Checks if any block in the slot `s` is finalized
     pub fn is_finalized(&self, slot: Slot) -> bool {
-        self.completed_certificates.keys().any(|cert_id| {
-            matches!(cert_id, Certificate::Finalize(s) | Certificate::FinalizeFast(s, _) if *s == slot)
+        self.completed_certificates.keys().any(|cert_type| {
+            matches!(cert_type, CertificateType::Finalize(s) | CertificateType::FinalizeFast(s, _) if *s == slot)
         })
     }
 
@@ -533,15 +528,15 @@ impl ConsensusPool {
     /// the size of the certificate
     #[cfg(test)]
     pub fn slot_has_notarized_fallback(&self, slot: Slot) -> bool {
-        self.completed_certificates
-            .iter()
-            .any(|(cert_id, _)| matches!(cert_id, Certificate::NotarizeFallback(s,_) if *s == slot))
+        self.completed_certificates.iter().any(
+            |(cert_type, _)| matches!(cert_type, CertificateType::NotarizeFallback(s,_) if *s == slot),
+        )
     }
 
     /// Checks if `slot` has a `Skip` certificate
     pub fn skip_certified(&self, slot: Slot) -> bool {
         self.completed_certificates
-            .contains_key(&Certificate::Skip(slot))
+            .contains_key(&CertificateType::Skip(slot))
     }
 
     #[cfg(test)]
@@ -557,9 +552,9 @@ impl ConsensusPool {
         first_alpenglow_slot: Slot,
     ) -> bool {
         // TODO: for GCE tests we WFSM on 1 so slot 1 is exempt
-        let needs_notarization_certificate = parent_slot >= first_alpenglow_slot && parent_slot > 1;
+        let needs_notar_cert = parent_slot >= first_alpenglow_slot && parent_slot > 1;
 
-        if needs_notarization_certificate
+        if needs_notar_cert
             && !self.slot_has_notarized_fallback(parent_slot)
             && !self.is_finalized(parent_slot)
         {
@@ -567,13 +562,13 @@ impl ConsensusPool {
             return false;
         }
 
-        let needs_skip_certificate =
+        let needs_skip_cert =
             // handles cases where we are entering the alpenglow epoch, where the first
             // slot in the epoch will pass my_leader_slot == parent_slot
             my_leader_slot != first_alpenglow_slot &&
             my_leader_slot != parent_slot.saturating_add(1);
 
-        if needs_skip_certificate {
+        if needs_skip_cert {
             let begin_skip_slot = first_alpenglow_slot.max(parent_slot.saturating_add(1));
             for slot in begin_skip_slot..my_leader_slot {
                 if !self.skip_certified(slot) {
@@ -593,12 +588,12 @@ impl ConsensusPool {
     pub fn prune_old_state(&mut self, root_slot: Slot) {
         // `completed_certificates`` now only contains entries >= `slot`
         self.completed_certificates
-            .retain(|cert_id, _| match cert_id {
-                Certificate::Finalize(s)
-                | Certificate::FinalizeFast(s, _)
-                | Certificate::Notarize(s, _)
-                | Certificate::NotarizeFallback(s, _)
-                | Certificate::Skip(s) => s >= &root_slot,
+            .retain(|cert_type, _| match cert_type {
+                CertificateType::Finalize(s)
+                | CertificateType::FinalizeFast(s, _)
+                | CertificateType::Notarize(s, _)
+                | CertificateType::NotarizeFallback(s, _)
+                | CertificateType::Skip(s) => s >= &root_slot,
             });
         self.vote_pools = self.vote_pools.split_off(&(root_slot, VoteType::Finalize));
         self.slot_stake_counters_map = self.slot_stake_counters_map.split_off(&root_slot);
@@ -617,31 +612,33 @@ impl ConsensusPool {
         self.stats.maybe_report();
     }
 
-    pub fn get_certs_for_standstill(&self) -> Vec<Arc<CertificateMessage>> {
+    pub fn get_certs_for_standstill(&self) -> Vec<Arc<Certificate>> {
         let (highest_finalized_with_notarize_slot, has_fast_finalize) =
             self.highest_finalized_with_notarize.unwrap_or((0, false));
         self.completed_certificates
             .iter()
-            .filter_map(|(cert_id, cert)| {
+            .filter_map(|(cert_type, cert)| {
                 let cert_to_send = match (
-                    cert_id.slot().cmp(&highest_finalized_with_notarize_slot),
-                    cert_id.certificate_type(),
+                    cert_type.slot().cmp(&highest_finalized_with_notarize_slot),
+                    cert_type,
                     has_fast_finalize,
                 ) {
                     (Ordering::Greater, _, _)
                     | (
                         Ordering::Equal,
-                        CertificateType::Finalize | CertificateType::Notarize,
+                        CertificateType::Finalize(_) | CertificateType::Notarize(_, _),
                         false,
                     )
-                    | (Ordering::Equal, CertificateType::FinalizeFast, true) => Some(cert.clone()),
-                    (Ordering::Equal, CertificateType::FinalizeFast, false) => {
+                    | (Ordering::Equal, CertificateType::FinalizeFast(_, _), true) => {
+                        Some(cert.clone())
+                    }
+                    (Ordering::Equal, CertificateType::FinalizeFast(_, _), false) => {
                         panic!("Should not happen while certificate pool is single threaded")
                     }
                     _ => None,
                 };
                 if cert_to_send.is_some() {
-                    trace!("{}: Refreshing certificate {:?}", self.my_pubkey, cert_id);
+                    trace!("{}: Refreshing certificate {:?}", self.my_pubkey, cert_type);
                 }
                 cert_to_send
             })
@@ -653,9 +650,7 @@ impl ConsensusPool {
 mod tests {
     use {
         super::*,
-        agave_votor_messages::consensus_message::{
-            CertificateType, VoteMessage, BLS_KEYPAIR_DERIVE_SEED,
-        },
+        agave_votor_messages::consensus_message::{VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
         solana_bls_signatures::{
             keypair::Keypair as BLSKeypair, Pubkey as BLSPubkey, Signature as BLSSignature,
             VerifiableSignature,
@@ -1030,14 +1025,14 @@ mod tests {
         assert!(pool.make_start_leader_decision(my_leader_slot, parent_slot, first_alpenglow_slot));
     }
 
-    #[test_case(Vote::new_finalization_vote(5), vec![CertificateType::Finalize])]
-    #[test_case(Vote::new_notarization_vote(6, Hash::new_unique()), vec![CertificateType::Notarize, CertificateType::NotarizeFallback])]
-    #[test_case(Vote::new_notarization_fallback_vote(7, Hash::new_unique()), vec![CertificateType::NotarizeFallback])]
-    #[test_case(Vote::new_skip_vote(8), vec![CertificateType::Skip])]
-    #[test_case(Vote::new_skip_fallback_vote(9), vec![CertificateType::Skip])]
+    #[test_case(Vote::new_finalization_vote(5), vec![CertificateType::Finalize(5)])]
+    #[test_case(Vote::new_notarization_vote(6, Hash::default()), vec![CertificateType::Notarize(6, Hash::default()), CertificateType::NotarizeFallback(6, Hash::default())])]
+    #[test_case(Vote::new_notarization_fallback_vote(7, Hash::default()), vec![CertificateType::NotarizeFallback(7, Hash::default())])]
+    #[test_case(Vote::new_skip_vote(8), vec![CertificateType::Skip(8)])]
+    #[test_case(Vote::new_skip_fallback_vote(9), vec![CertificateType::Skip(9)])]
     fn test_add_vote_and_create_new_certificate_with_types(
         vote: Vote,
-        expected_certificate_types: Vec<CertificateType>,
+        expected_cert_types: Vec<CertificateType>,
     ) {
         let (validator_keypairs, mut pool, bank_forks) = create_initial_state();
         let my_validator_ix = 5;
@@ -1103,9 +1098,9 @@ mod tests {
             assert!(new_finalized_slot.is_none());
         }
         // Assert certs_to_send contains the expected certificate types
-        for cert_type in expected_certificate_types {
+        for expected_cert_type in expected_cert_types {
             assert!(certs_to_send.iter().any(|cert| {
-                cert.certificate.certificate_type() == cert_type && cert.certificate.slot() == slot
+                cert.cert_type == expected_cert_type && cert.cert_type.slot() == slot
             }));
         }
         assert_eq!(highest_slot_fn(&pool), slot);
@@ -1126,32 +1121,30 @@ mod tests {
         }
     }
 
-    #[test_case(CertificateType::Finalize, Vote::new_finalization_vote(5))]
+    #[test_case(CertificateType::Finalize(5), Vote::new_finalization_vote(5))]
     #[test_case(
-        CertificateType::FinalizeFast,
-        Vote::new_notarization_vote(6, Hash::new_unique())
+        CertificateType::FinalizeFast(6, Hash::default()),
+        Vote::new_notarization_vote(6, Hash::default())
     )]
     #[test_case(
-        CertificateType::Notarize,
-        Vote::new_notarization_vote(6, Hash::new_unique())
+        CertificateType::Notarize(6, Hash::default()),
+        Vote::new_notarization_vote(6, Hash::default())
     )]
     #[test_case(
-        CertificateType::NotarizeFallback,
-        Vote::new_notarization_fallback_vote(7, Hash::new_unique())
+        CertificateType::NotarizeFallback(7, Hash::default()),
+        Vote::new_notarization_fallback_vote(7, Hash::default())
     )]
-    #[test_case(CertificateType::Skip, Vote::new_skip_vote(8))]
-    fn test_add_certificate_with_types(certificate_type: CertificateType, vote: Vote) {
+    #[test_case(CertificateType::Skip(8), Vote::new_skip_vote(8))]
+    fn test_add_certificate_with_types(cert_type: CertificateType, vote: Vote) {
         let (validator_keypairs, mut pool, bank_forks) = create_initial_state();
 
-        let certificate = Certificate::new(certificate_type, vote.slot(), vote.block_id().copied());
-
-        let certificate_message = CertificateMessage {
-            certificate,
+        let cert = Certificate {
+            cert_type,
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
         let bank = bank_forks.read().unwrap().root_bank();
-        let message = ConsensusMessage::Certificate(certificate_message.clone());
+        let message = ConsensusMessage::Certificate(cert.clone());
         // Add the certificate to the pool
         let (new_finalized_slot, certs_to_send) = pool
             .add_message(
@@ -1164,15 +1157,15 @@ mod tests {
             )
             .unwrap();
         // Because this is the first certificate of this type, it should be sent out.
-        if certificate_type == CertificateType::Finalize
-            || certificate_type == CertificateType::FinalizeFast
+        if matches!(cert_type, CertificateType::Finalize(_))
+            || matches!(cert_type, CertificateType::FinalizeFast(_, _))
         {
-            assert_eq!(new_finalized_slot, Some(certificate.slot()));
+            assert_eq!(new_finalized_slot, Some(cert_type.slot()));
         } else {
             assert!(new_finalized_slot.is_none());
         }
         assert_eq!(certs_to_send.len(), 1);
-        assert_eq!(*certs_to_send[0], certificate_message);
+        assert_eq!(*certs_to_send[0], cert);
 
         // Adding the cert again will not trigger another send
         let (new_finalized_slot, certs_to_send) = pool
@@ -1202,7 +1195,7 @@ mod tests {
                 .unwrap();
             assert!(!certs_to_send
                 .iter()
-                .any(|cert| { cert.certificate.certificate_type() == certificate_type }));
+                .any(|cert| { cert.cert_type == cert_type }));
         }
     }
 
@@ -1845,8 +1838,8 @@ mod tests {
 
         let root_bank = bank_forks.read().unwrap().root_bank();
         // Add a skip cert on slot 1 and finalize cert on slot 2
-        let cert_1 = CertificateMessage {
-            certificate: Certificate::new(CertificateType::Skip, 1, None),
+        let cert_1 = Certificate {
+            cert_type: CertificateType::Skip(1),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
@@ -1860,12 +1853,8 @@ mod tests {
                 &mut vec![]
             )
             .is_ok());
-        let cert_2 = CertificateMessage {
-            certificate: Certificate::new(
-                CertificateType::FinalizeFast,
-                2,
-                Some(Hash::new_unique()),
-            ),
+        let cert_2 = Certificate {
+            cert_type: CertificateType::FinalizeFast(2, Hash::new_unique()),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
@@ -1906,10 +1895,9 @@ mod tests {
             .is_err());
 
         // Send a cert on slot 2, it should be rejected
-        let certificate = Certificate::new(CertificateType::Notarize, 2, Some(Hash::new_unique()));
-
-        let cert = ConsensusMessage::Certificate(CertificateMessage {
-            certificate,
+        let cert_type = CertificateType::Notarize(2, Hash::new_unique());
+        let cert = ConsensusMessage::Certificate(Certificate {
+            cert_type,
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         });
@@ -1933,12 +1921,8 @@ mod tests {
         assert!(pool.get_certs_for_standstill().is_empty());
 
         // Add notar-fallback cert on 3 and finalize cert on 4
-        let cert_3 = CertificateMessage {
-            certificate: Certificate::new(
-                CertificateType::NotarizeFallback,
-                3,
-                Some(Hash::new_unique()),
-            ),
+        let cert_3 = Certificate {
+            cert_type: CertificateType::NotarizeFallback(3, Hash::new_unique()),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
@@ -1953,8 +1937,8 @@ mod tests {
                 &mut vec![]
             )
             .is_ok());
-        let cert_4 = CertificateMessage {
-            certificate: Certificate::new(CertificateType::Finalize, 4, None),
+        let cert_4 = Certificate {
+            cert_type: CertificateType::Finalize(4),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
@@ -1971,14 +1955,14 @@ mod tests {
         // Should return both certificates
         let certs = pool.get_certs_for_standstill();
         assert_eq!(certs.len(), 2);
-        assert!(certs.iter().any(|cert| cert.certificate.slot() == 3
-            && cert.certificate.certificate_type() == CertificateType::NotarizeFallback));
-        assert!(certs.iter().any(|cert| cert.certificate.slot() == 4
-            && cert.certificate.certificate_type() == CertificateType::Finalize));
+        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 3
+            && matches!(cert.cert_type, CertificateType::NotarizeFallback(_, _))));
+        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 4
+            && matches!(cert.cert_type, CertificateType::Finalize(_))));
 
         // Add Notarize cert on 5
-        let cert_5 = CertificateMessage {
-            certificate: Certificate::new(CertificateType::Notarize, 5, Some(Hash::new_unique())),
+        let cert_5 = Certificate {
+            cert_type: CertificateType::Notarize(5, Hash::new_unique()),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
@@ -1994,8 +1978,8 @@ mod tests {
             .is_ok());
 
         // Add Finalize cert on 5
-        let cert_5_finalize = CertificateMessage {
-            certificate: Certificate::new(CertificateType::Finalize, 5, None),
+        let cert_5_finalize = Certificate {
+            cert_type: CertificateType::Finalize(5),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
@@ -2011,12 +1995,8 @@ mod tests {
             .is_ok());
 
         // Add FinalizeFast cert on 5
-        let cert_5 = CertificateMessage {
-            certificate: Certificate::new(
-                CertificateType::FinalizeFast,
-                5,
-                Some(Hash::new_unique()),
-            ),
+        let cert_5 = Certificate {
+            cert_type: CertificateType::FinalizeFast(5, Hash::new_unique()),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
@@ -2034,13 +2014,13 @@ mod tests {
         let certs = pool.get_certs_for_standstill();
         assert_eq!(certs.len(), 1);
         assert!(
-            certs[0].certificate.slot() == 5
-                && certs[0].certificate.certificate_type() == CertificateType::FinalizeFast
+            certs[0].cert_type.slot() == 5
+                && matches!(certs[0].cert_type, CertificateType::FinalizeFast(_, _))
         );
 
         // Now add Notarize cert on 6
-        let cert_6 = CertificateMessage {
-            certificate: Certificate::new(CertificateType::Notarize, 6, Some(Hash::new_unique())),
+        let cert_6 = Certificate {
+            cert_type: CertificateType::Notarize(6, Hash::new_unique()),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
@@ -2057,14 +2037,14 @@ mod tests {
         // Should return certs on 5 and 6
         let certs = pool.get_certs_for_standstill();
         assert_eq!(certs.len(), 2);
-        assert!(certs.iter().any(|cert| cert.certificate.slot() == 5
-            && cert.certificate.certificate_type() == CertificateType::FinalizeFast));
-        assert!(certs.iter().any(|cert| cert.certificate.slot() == 6
-            && cert.certificate.certificate_type() == CertificateType::Notarize));
+        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 5
+            && matches!(cert.cert_type, CertificateType::FinalizeFast(_, _))));
+        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 6
+            && matches!(cert.cert_type, CertificateType::Notarize(_, _))));
 
         // Add another Finalize cert on 6
-        let cert_6_finalize = CertificateMessage {
-            certificate: Certificate::new(CertificateType::Finalize, 6, None),
+        let cert_6_finalize = Certificate {
+            cert_type: CertificateType::Finalize(6),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
@@ -2079,12 +2059,8 @@ mod tests {
             )
             .is_ok());
         // Add a NotarizeFallback cert on 6
-        let cert_6_notarize_fallback = CertificateMessage {
-            certificate: Certificate::new(
-                CertificateType::NotarizeFallback,
-                6,
-                Some(Hash::new_unique()),
-            ),
+        let cert_6_notarize_fallback = Certificate {
+            cert_type: CertificateType::NotarizeFallback(6, Hash::new_unique()),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
@@ -2102,14 +2078,14 @@ mod tests {
         // only Notarize/Finalze/FinalizeFast should be returned
         let certs = pool.get_certs_for_standstill();
         assert_eq!(certs.len(), 2);
-        assert!(certs.iter().any(|cert| cert.certificate.slot() == 6
-            && cert.certificate.certificate_type() == CertificateType::Finalize));
-        assert!(certs.iter().any(|cert| cert.certificate.slot() == 6
-            && cert.certificate.certificate_type() == CertificateType::Notarize));
+        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 6
+            && matches!(cert.cert_type, CertificateType::Finalize(_))));
+        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 6
+            && matches!(cert.cert_type, CertificateType::Notarize(_, _))));
 
         // Add another skip on 7
-        let cert_7 = CertificateMessage {
-            certificate: Certificate::new(CertificateType::Skip, 7, None),
+        let cert_7 = Certificate {
+            cert_type: CertificateType::Skip(7),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
@@ -2126,16 +2102,18 @@ mod tests {
         // Should return certs on 6 and 7
         let certs = pool.get_certs_for_standstill();
         assert_eq!(certs.len(), 3);
-        assert!(certs.iter().any(|cert| cert.certificate.slot() == 6
-            && cert.certificate.certificate_type() == CertificateType::Finalize));
-        assert!(certs.iter().any(|cert| cert.certificate.slot() == 6
-            && cert.certificate.certificate_type() == CertificateType::Notarize));
-        assert!(certs.iter().any(|cert| cert.certificate.slot() == 7
-            && cert.certificate.certificate_type() == CertificateType::Skip));
+        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 6
+            && matches!(cert.cert_type, CertificateType::Finalize(_))));
+        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 6
+            && matches!(cert.cert_type, CertificateType::Notarize(_, _))));
+        assert!(certs
+            .iter()
+            .any(|cert| cert.cert_type.slot() == 7
+                && matches!(cert.cert_type, CertificateType::Skip(_))));
 
         // Add Finalize then Notarize cert on 8
-        let cert_8_finalize = CertificateMessage {
-            certificate: Certificate::new(CertificateType::Finalize, 8, None),
+        let cert_8_finalize = Certificate {
+            cert_type: CertificateType::Finalize(8),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
@@ -2149,8 +2127,8 @@ mod tests {
                 &mut vec![]
             )
             .is_ok());
-        let cert_8_notarize = CertificateMessage {
-            certificate: Certificate::new(CertificateType::Notarize, 8, Some(Hash::new_unique())),
+        let cert_8_notarize = Certificate {
+            cert_type: CertificateType::Notarize(8, Hash::new_unique()),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
@@ -2168,10 +2146,10 @@ mod tests {
         // Should only return certs on 8 now
         let certs = pool.get_certs_for_standstill();
         assert_eq!(certs.len(), 2);
-        assert!(certs.iter().any(|cert| cert.certificate.slot() == 8
-            && cert.certificate.certificate_type() == CertificateType::Finalize));
-        assert!(certs.iter().any(|cert| cert.certificate.slot() == 8
-            && cert.certificate.certificate_type() == CertificateType::Notarize));
+        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 8
+            && matches!(cert.cert_type, CertificateType::Finalize(_))));
+        assert!(certs.iter().any(|cert| cert.cert_type.slot() == 8
+            && matches!(cert.cert_type, CertificateType::Notarize(_, _))));
     }
 
     #[test]
@@ -2183,8 +2161,8 @@ mod tests {
         // Add a notarization cert on slot 1 to 3
         let hash = Hash::new_unique();
         for slot in 1..=3 {
-            let cert = CertificateMessage {
-                certificate: Certificate::new(CertificateType::Notarize, slot, Some(hash)),
+            let cert = Certificate {
+                cert_type: CertificateType::Notarize(slot, hash),
                 signature: BLSSignature::default(),
                 bitmap: Vec::new(),
             };
@@ -2211,8 +2189,8 @@ mod tests {
 
         // Also works if we add FinalizeFast for slot 4 to 7
         for slot in 4..=7 {
-            let cert = CertificateMessage {
-                certificate: Certificate::new(CertificateType::FinalizeFast, slot, Some(hash)),
+            let cert = Certificate {
+                cert_type: CertificateType::FinalizeFast(slot, hash),
                 signature: BLSSignature::default(),
                 bitmap: Vec::new(),
             };
@@ -2239,8 +2217,8 @@ mod tests {
 
         // NotarizeFallback on slot 8 to 10 and FinalizeFast on slot 11
         for slot in 8..=10 {
-            let cert = CertificateMessage {
-                certificate: Certificate::new(CertificateType::NotarizeFallback, slot, Some(hash)),
+            let cert = Certificate {
+                cert_type: CertificateType::NotarizeFallback(slot, hash),
                 signature: BLSSignature::default(),
                 bitmap: Vec::new(),
             };
@@ -2255,8 +2233,8 @@ mod tests {
                 )
                 .is_ok());
         }
-        let cert = CertificateMessage {
-            certificate: Certificate::new(CertificateType::FinalizeFast, 11, Some(hash)),
+        let cert = Certificate {
+            cert_type: CertificateType::FinalizeFast(11, hash),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };

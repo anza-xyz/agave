@@ -1,5 +1,3 @@
-#[cfg(feature = "dev-context-only-utils")]
-use crate::append_vec::{self, StoredAccountMeta};
 use {
     crate::{
         account_info::{AccountInfo, Offset},
@@ -270,25 +268,6 @@ impl AccountsFile {
                 if let Some(reader) = ts.reader() {
                     reader.scan_accounts(callback)?;
                 }
-            }
-        }
-        Ok(())
-    }
-
-    /// Iterate over all accounts and call `callback` with each account.
-    ///
-    /// Prefer scan_accounts() when possible, as it does not contain file format
-    /// implementation details, and thus potentially can read less and be faster.
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn scan_accounts_stored_meta(
-        &self,
-        callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
-    ) -> Result<()> {
-        let mut reader = append_vec::new_scan_accounts_reader();
-        match self {
-            Self::AppendVec(av) => av.scan_accounts_stored_meta(&mut reader, callback)?,
-            Self::TieredStorage(_) => {
-                unimplemented!("StoredAccountMeta is only implemented for AppendVec")
             }
         }
         Ok(())
