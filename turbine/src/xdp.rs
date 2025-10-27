@@ -113,13 +113,13 @@ impl XdpRetransmitter {
     pub fn new(config: XdpConfig, src_port: u16) -> Result<(Self, XdpSender), Box<dyn Error>> {
         use caps::{
             CapSet,
-            Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW},
+            Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON},
         };
         const DROP_CHANNEL_CAP: usize = 1_000_000;
 
         // switch to higher caps while we setup XDP. We assume that an error in
         // this function is irrecoverable so we don't try to drop on errors.
-        for cap in [CAP_NET_ADMIN, CAP_NET_RAW, CAP_BPF] {
+        for cap in [CAP_NET_ADMIN, CAP_NET_RAW, CAP_BPF, CAP_PERFMON] {
             caps::raise(None, CapSet::Effective, cap)
                 .map_err(|e| format!("failed to raise {cap:?} capability: {e}"))?;
         }
@@ -139,7 +139,7 @@ impl XdpRetransmitter {
             None
         };
 
-        for cap in [CAP_NET_ADMIN, CAP_NET_RAW, CAP_BPF] {
+        for cap in [CAP_NET_ADMIN, CAP_NET_RAW, CAP_BPF, CAP_PERFMON] {
             caps::drop(None, CapSet::Effective, cap).unwrap();
         }
 
