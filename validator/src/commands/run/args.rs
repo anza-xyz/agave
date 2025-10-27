@@ -234,12 +234,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("no_genesis_fetch")
-            .long("no-genesis-fetch")
-            .takes_value(false)
-            .help("Do not fetch genesis from the cluster"),
-    )
-    .arg(
         Arg::with_name("no_voting")
             .long("no-voting")
             .takes_value(false)

@@ -53,7 +53,10 @@ impl FromClapArgMatches for RpcBootstrapConfig {
 }
 
 pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
-    vec![]
+    vec![Arg::with_name("no_genesis_fetch")
+        .long("no-genesis-fetch")
+        .takes_value(false)
+        .help("Do not fetch genesis from the cluster")]
 }
 
 #[cfg(test)]
