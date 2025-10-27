@@ -5,9 +5,17 @@ use {
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
     crate::banking_stage::consumer::RetryableIndex,
+    agave_scheduler_bindings::{
+        PackToWorkerMessage, TransactionResponseRegion, WorkerToPackMessage,
+        MAX_TRANSACTIONS_PER_MESSAGE,
+    },
+    agave_scheduling_utils::transaction_ptr::TransactionPtr,
+    agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
     crossbeam_channel::{Receiver, SendError, Sender, TryRecvError},
     solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
-    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    solana_runtime_transaction::{
+        runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
+    },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     solana_time_utils::AtomicInterval,
     std::{
@@ -26,6 +34,12 @@ pub enum ConsumeWorkerError<Tx> {
     Recv(#[from] TryRecvError),
     #[error("Failed to send finalized consume work to scheduler: {0}")]
     Send(#[from] SendError<FinishedConsumeWork<Tx>>),
+}
+
+#[derive(Debug, Error)]
+pub enum ExternalConsumeWorkerError {
+    #[error("Sender disconnected")]
+    SenderDisconnected,
 }
 
 enum ProcessingStatus<Tx> {
@@ -68,8 +82,6 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     }
 
     pub fn run(self) -> Result<(), ConsumeWorkerError<Tx>> {
-        const STARTING_SLEEP_DURATION: Duration = Duration::from_micros(250);
-
         let mut did_work = false;
         let mut last_empty_time = Instant::now();
         let mut sleep_duration = STARTING_SLEEP_DURATION;
@@ -173,6 +185,128 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     }
 }
 
+pub(crate) struct ExternalWorker {
+    exit: Arc<AtomicBool>,
+    receiver: shaq::Consumer<PackToWorkerMessage>,
+    consumer: Consumer,
+    sender: shaq::Producer<WorkerToPackMessage>,
+    allocator: rts_alloc::Allocator,
+
+    metrics: Arc<ConsumeWorkerMetrics>,
+}
+
+type Tx = RuntimeTransaction<ResolvedTransactionView<TransactionPtr>>;
+impl ExternalWorker {
+    pub fn new(
+        id: u32,
+        exit: Arc<AtomicBool>,
+        receiver: shaq::Consumer<PackToWorkerMessage>,
+        consumer: Consumer,
+        sender: shaq::Producer<WorkerToPackMessage>,
+        allocator: rts_alloc::Allocator,
+    ) -> Self {
+        Self {
+            exit,
+            receiver,
+            consumer,
+            sender,
+            allocator,
+            metrics: Arc::new(ConsumeWorkerMetrics::new(id)),
+        }
+    }
+
+    pub fn metrics_handle(&self) -> Arc<ConsumeWorkerMetrics> {
+        self.metrics.clone()
+    }
+
+    pub fn run(mut self) -> Result<(), ExternalConsumeWorkerError> {
+        let mut did_work = false;
+        let mut last_empty_time = Instant::now();
+        let mut sleep_duration = STARTING_SLEEP_DURATION;
+
+        while !self.exit.load(Ordering::Relaxed) {
+            if self.receiver.is_empty() {
+                self.receiver.sync();
+            }
+
+            match self.receiver.try_read() {
+                Some(message) => {
+                    did_work = true;
+                    self.sender.sync();
+                    // SAFETY: `try_read` gives a ptr to a properly aligned
+                    //         region for a `PackToWorkerMessage`
+                    self.process_message(unsafe { message.as_ref() })?;
+                    self.sender.commit();
+                    self.receiver.finalize();
+                }
+                None => {
+                    let now = Instant::now();
+
+                    if did_work {
+                        last_empty_time = now;
+                    }
+                    did_work = false;
+                    let idle_duration = now.duration_since(last_empty_time);
+                    backoff(idle_duration, &mut sleep_duration);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn process_message(
+        &mut self,
+        message: &PackToWorkerMessage,
+    ) -> Result<(), ExternalConsumeWorkerError> {
+        if !Self::validate_message(message) {
+            return self.return_invalid_message(message);
+        }
+
+        self.metrics
+            .count_metrics
+            .num_messages_processed
+            .fetch_add(1, Ordering::Relaxed);
+        unimplemented!("No flags are currently valid");
+    }
+
+    fn return_invalid_message(
+        &mut self,
+        message: &PackToWorkerMessage,
+    ) -> Result<(), ExternalConsumeWorkerError> {
+        let invalid_message = WorkerToPackMessage {
+            batch: message.batch,
+            processed: 0,
+            responses: TransactionResponseRegion {
+                tag: 0,
+                num_transaction_responses: 0,
+                transaction_responses_offset: 0,
+            },
+        };
+
+        let Some(send_ptr) = self.sender.reserve() else {
+            return Err(ExternalConsumeWorkerError::SenderDisconnected);
+        };
+
+        // SAFETY: `reserve` guarantees a properly aligned space
+        //         for a `WorkerToPackMessage`
+        unsafe { send_ptr.write(invalid_message) };
+
+        Ok(())
+    }
+
+    /// Returns `true` if a message is valid and can be processed.
+    fn validate_message(message: &PackToWorkerMessage) -> bool {
+        message.batch.num_transactions > 0
+            && usize::from(message.batch.num_transactions) <= MAX_TRANSACTIONS_PER_MESSAGE
+            && Self::validate_message_flags(message.flags)
+    }
+
+    fn validate_message_flags(_flags: u16) -> bool {
+        false // no flags are valid currently
+    }
+}
+
 /// Helper function to create an non-blocking iterator over work in the receiver,
 /// starting with the given work item.
 fn try_drain_iter<T>(work: T, receiver: &Receiver<T>) -> impl Iterator<Item = T> + '_ {
@@ -222,6 +356,8 @@ fn active_leader_state(
         Some(guard)
     }
 }
+
+const STARTING_SLEEP_DURATION: Duration = Duration::from_micros(250);
 
 fn backoff(idle_duration: Duration, sleep_duration: &mut Duration) {
     const MAX_SLEEP_DURATION: Duration = Duration::from_millis(1);
