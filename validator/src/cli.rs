@@ -297,7 +297,6 @@ pub struct DefaultArgs {
     pub snapshot_zstd_compression_level: String,
 
     pub rocksdb_shred_compaction: String,
-    pub rocksdb_ledger_compression: String,
     pub rocksdb_perf_sample_interval: String,
 
     pub accounts_shrink_optimize_total_space: String,
@@ -351,7 +350,6 @@ impl DefaultArgs {
             contact_debug_interval: "120000".to_string(),
             snapshot_version: SnapshotVersion::default(),
             rocksdb_shred_compaction: "level".to_string(),
-            rocksdb_ledger_compression: "none".to_string(),
             rocksdb_perf_sample_interval: "0".to_string(),
             accounts_shrink_optimize_total_space: DEFAULT_ACCOUNTS_SHRINK_OPTIMIZE_TOTAL_SPACE
                 .to_string(),

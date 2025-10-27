@@ -584,19 +584,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("rocksdb_ledger_compression")
-            .hidden(hidden_unless_forced())
-            .long("rocksdb-ledger-compression")
-            .value_name("COMPRESSION_TYPE")
-            .takes_value(true)
-            .possible_values(&["none", "lz4", "snappy", "zlib"])
-            .default_value(&default_args.rocksdb_ledger_compression)
-            .help(
-                "The compression algorithm that is used to compress transaction status data. \
-                 Turning on compression can save ~10% of the ledger size.",
-            ),
-    )
-    .arg(
         Arg::with_name("rocksdb_perf_sample_interval")
             .hidden(hidden_unless_forced())
             .long("rocksdb-perf-sample-interval")

@@ -4,12 +4,15 @@ use {
         commands::{FromClapArgMatches, Result},
     },
     clap::{value_t, Arg, ArgMatches},
+    solana_clap_utils::hidden_unless_forced,
     solana_ledger::blockstore_options::{
         AccessType, BlockstoreCompressionType, BlockstoreOptions, BlockstoreRecoveryMode,
         LedgerColumnOptions,
     },
     std::num::NonZeroUsize,
 };
+
+const DEFAULT_ROCKSDB_LEDGER_COMPRESSION: &str = "none";
 
 impl FromClapArgMatches for BlockstoreOptions {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
@@ -54,17 +57,30 @@ impl FromClapArgMatches for BlockstoreOptions {
 }
 
 pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
-    vec![Arg::with_name("wal_recovery_mode")
-        .long("wal-recovery-mode")
-        .value_name("MODE")
-        .takes_value(true)
-        .possible_values(&[
-            "tolerate_corrupted_tail_records",
-            "absolute_consistency",
-            "point_in_time",
-            "skip_any_corrupted_record",
-        ])
-        .help("Mode to recovery the ledger db write ahead log.")]
+    vec![
+        Arg::with_name("wal_recovery_mode")
+            .long("wal-recovery-mode")
+            .value_name("MODE")
+            .takes_value(true)
+            .possible_values(&[
+                "tolerate_corrupted_tail_records",
+                "absolute_consistency",
+                "point_in_time",
+                "skip_any_corrupted_record",
+            ])
+            .help("Mode to recovery the ledger db write ahead log."),
+        Arg::with_name("rocksdb_ledger_compression")
+            .hidden(hidden_unless_forced())
+            .long("rocksdb-ledger-compression")
+            .value_name("COMPRESSION_TYPE")
+            .takes_value(true)
+            .possible_values(&["none", "lz4", "snappy", "zlib"])
+            .default_value(DEFAULT_ROCKSDB_LEDGER_COMPRESSION)
+            .help(
+                "The compression algorithm that is used to compress transaction status data. \
+                 Turning on compression can save ~10% of the ledger size.",
+            ),
+    ]
 }
 
 #[cfg(test)]
@@ -212,5 +228,10 @@ mod tests {
                 expected_args,
             );
         }
+    }
+
+    #[test]
+    fn test_default_rocksdb_ledger_compression_unchanged() {
+        assert_eq!(DEFAULT_ROCKSDB_LEDGER_COMPRESSION, "none");
     }
 }
