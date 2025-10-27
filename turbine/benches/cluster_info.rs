@@ -26,7 +26,7 @@ use {
 };
 
 fn broadcast_shreds_bench(b: &mut Bencher) {
-    solana_logger::setup();
+    agave_logger::setup();
     let leader_keypair = Arc::new(Keypair::new());
     let (quic_endpoint_sender, _quic_endpoint_receiver) =
         tokio::sync::mpsc::channel(/*capacity:*/ 128);

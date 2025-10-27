@@ -9,6 +9,7 @@ use {
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
     agave_snapshots::{
+        error::SnapshotError,
         snapshot_config::SnapshotConfig,
         snapshot_hash::{FullSnapshotHash, IncrementalSnapshotHash, StartingSnapshotHashes},
     },
@@ -40,7 +41,7 @@ pub enum BankForksUtilsError {
          incremental snapshot archive: {incremental_snapshot_archive}"
     )]
     BankFromSnapshotsArchive {
-        source: Box<snapshot_utils::SnapshotError>,
+        source: Box<SnapshotError>,
         full_snapshot_archive: String,
         incremental_snapshot_archive: String,
     },
@@ -53,7 +54,7 @@ pub enum BankForksUtilsError {
 
     #[error("failed to load bank from snapshot '{path}': {source}")]
     BankFromSnapshotsDirectory {
-        source: snapshot_utils::SnapshotError,
+        source: SnapshotError,
         path: PathBuf,
     },
 

@@ -208,7 +208,7 @@ mod tests {
     }
 
     fn test_aggregate_init() -> TestAggregateInitResult {
-        solana_logger::setup();
+        agave_logger::setup();
         let validator_voting_keypairs: Vec<_> = (0..TOTAL_VALIDATOR_COUNT)
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect();

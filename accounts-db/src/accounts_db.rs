@@ -52,15 +52,16 @@ use {
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
         append_vec::{self, aligned_stored_size, STORE_META_OVERHEAD},
-        buffered_reader::RequiredLenBufFileRead,
         contains::Contains,
         is_zero_lamport::IsZeroLamport,
         obsolete_accounts::ObsoleteAccounts,
         partitioned_rewards::PartitionedEpochRewardsConfig,
         read_only_accounts_cache::ReadOnlyAccountsCache,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
-        u64_align, utils,
+        u64_align,
+        utils::{self, create_account_shared_data},
     },
+    agave_fs::buffered_reader::RequiredLenBufFileRead,
     dashmap::{DashMap, DashSet},
     log::*,
     rand::{thread_rng, Rng},
@@ -298,8 +299,7 @@ struct LoadAccountsIndexForShrink<'a, T: ShrinkCollectRefs<'a>> {
     all_are_zero_lamports: bool,
 }
 
-/// reference an account found during scanning a storage. This is a byval struct to replace
-/// `StoredAccountMeta`
+/// reference an account found during scanning a storage.
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub struct AccountFromStorage {
     pub index_info: AccountInfo,
@@ -625,7 +625,7 @@ pub enum LoadHint {
 
 #[derive(Debug)]
 pub enum LoadedAccountAccessor<'a> {
-    // StoredAccountMeta can't be held directly here due to its lifetime dependency to
+    // StoredAccountInfo can't be held directly here due to its lifetime dependency on
     // AccountStorageEntry
     Stored(Option<(Arc<AccountStorageEntry>, usize)>),
     // None value in Cached variant means the cache was flushed
@@ -733,7 +733,7 @@ impl LoadedAccount<'_> {
 
     pub fn take_account(&self) -> AccountSharedData {
         match self {
-            LoadedAccount::Stored(stored_account) => stored_account.to_account_shared_data(),
+            LoadedAccount::Stored(stored_account) => create_account_shared_data(stored_account),
             LoadedAccount::Cached(cached_account) => match cached_account {
                 Cow::Owned(cached_account) => cached_account.account.clone(),
                 Cow::Borrowed(cached_account) => cached_account.account.clone(),
@@ -5976,7 +5976,7 @@ impl AccountsDb {
             .map(|index| {
                 let txn = txs.map(|txs| *txs.get(index).expect("txs must be present if provided"));
                 accounts_and_meta_to_store.account_default_if_zero_lamport(index, |account| {
-                    let account_shared_data = account.to_account_shared_data();
+                    let account_shared_data = account.take_account();
                     let pubkey = account.pubkey();
                     let account_info =
                         AccountInfo::new(StorageLocation::Cached, account.is_zero_lamport());

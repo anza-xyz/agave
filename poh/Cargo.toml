@@ -42,13 +42,13 @@ solana-transaction = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
 solana-entry = { workspace = true, features = ["dev-context-only-utils"] }
 solana-keypair = { workspace = true }
-solana-logger = { workspace = true }
 solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-poh = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }

@@ -414,7 +414,7 @@ pub(crate) mod tests {
     #[test_case(1; "single_vote_account")]
     #[test_case(2; "multiple_vote_accounts")]
     fn test_bls_pubkey_rank_map(num_vote_accounts_per_node: usize) {
-        solana_logger::setup();
+        agave_logger::setup();
         let num_nodes = 10;
         let num_vote_accounts = num_nodes * num_vote_accounts_per_node;
 

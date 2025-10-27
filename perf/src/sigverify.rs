@@ -865,7 +865,7 @@ mod tests {
 
     #[test]
     fn test_pubkey_too_small() {
-        solana_logger::setup();
+        agave_logger::setup();
         let mut tx = test_tx();
         let sig = tx.signatures[0];
         const NUM_SIG: usize = 18;
@@ -889,7 +889,7 @@ mod tests {
     fn test_pubkey_len() {
         // See that the verify cannot walk off the end of the packet
         // trying to index into the account_keys to access pubkey.
-        solana_logger::setup();
+        agave_logger::setup();
 
         const NUM_SIG: usize = 17;
         let keypair1 = Keypair::new();
@@ -1235,7 +1235,7 @@ mod tests {
 
     #[test]
     fn test_verify_multisig() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let tx = test_multisig_tx();
         let mut data = bincode::serialize(&tx).unwrap();
@@ -1273,7 +1273,7 @@ mod tests {
 
     #[test]
     fn test_verify_fuzz() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let tx = test_multisig_tx();
         let packet = BytesPacket::from_data(None, tx).unwrap();
@@ -1333,7 +1333,7 @@ mod tests {
 
     #[test]
     fn test_get_checked_scalar() {
-        solana_logger::setup();
+        agave_logger::setup();
         if perf_libs::api().is_none() {
             return;
         }
@@ -1368,7 +1368,7 @@ mod tests {
 
     #[test]
     fn test_ge_small_order() {
-        solana_logger::setup();
+        agave_logger::setup();
         if perf_libs::api().is_none() {
             return;
         }
@@ -1410,7 +1410,7 @@ mod tests {
 
     #[test]
     fn test_is_simple_vote_transaction() {
-        solana_logger::setup();
+        agave_logger::setup();
         let mut rng = rand::thread_rng();
 
         // transfer tx is not
@@ -1493,7 +1493,7 @@ mod tests {
 
     #[test]
     fn test_is_simple_vote_transaction_with_offsets() {
-        solana_logger::setup();
+        agave_logger::setup();
         let mut rng = rand::thread_rng();
 
         // batch of legacy messages

@@ -3,12 +3,15 @@ use {
         hardened_unpack::{self, UnpackError},
         ArchiveFormat, ArchiveFormatDecompressor,
     },
+    agave_fs::buffered_reader,
+    bzip2::bufread::BzDecoder,
     crossbeam_channel::Sender,
     std::{
         fs,
-        io::{self, BufRead},
+        io::{self, BufRead, BufReader},
         path::{Path, PathBuf},
         thread::{self, JoinHandle},
+        time::Instant,
     },
 };
 
@@ -48,12 +51,32 @@ pub fn streaming_unarchive_snapshot(
         .unwrap()
 }
 
+pub fn unpack_genesis_archive(
+    archive_filename: &Path,
+    destination_dir: &Path,
+    max_genesis_archive_unpacked_size: u64,
+) -> Result<(), UnpackError> {
+    log::info!("Extracting {archive_filename:?}...");
+    let extract_start = Instant::now();
+
+    fs::create_dir_all(destination_dir)?;
+    let tar_bz2 = fs::File::open(archive_filename)?;
+    let tar = BzDecoder::new(BufReader::new(tar_bz2));
+    hardened_unpack::unpack_genesis(tar, destination_dir, max_genesis_archive_unpacked_size)?;
+    log::info!(
+        "Extracted {:?} in {:?}",
+        archive_filename,
+        Instant::now().duration_since(extract_start)
+    );
+    Ok(())
+}
+
 fn decompressed_tar_reader(
     archive_format: ArchiveFormat,
     archive_path: impl AsRef<Path>,
     buf_size: u64,
 ) -> io::Result<ArchiveFormatDecompressor<impl BufRead>> {
     let buf_reader =
-        solana_accounts_db::large_file_buf_reader(archive_path.as_ref(), buf_size as usize)?;
+        buffered_reader::large_file_buf_reader(archive_path.as_ref(), buf_size as usize)?;
     ArchiveFormatDecompressor::new(archive_format, buf_reader)
 }

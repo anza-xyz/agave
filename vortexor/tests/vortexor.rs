@@ -39,7 +39,7 @@ use {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_vortexor() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let bind_address = solana_net_utils::parse_host("127.0.0.1").expect("invalid bind_address");
     let keypair = Keypair::new();
@@ -98,7 +98,7 @@ fn get_server_urls(validator: &ClusterValidatorInfo) -> (Url, Url) {
 
 #[test]
 fn test_stake_update() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     // Create a local cluster with 3 validators
     let default_node_stake = 10 * LAMPORTS_PER_SOL; // Define a default value for node stake

@@ -6,8 +6,8 @@ use {
         commands::{run::args::RunArgs, FromClapArgMatches},
         ledger_lockfile, lock_ledger,
     },
+    agave_logger::redirect_stderr_to_file,
     agave_snapshots::{
-        hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
         ArchiveFormat, SnapshotInterval, SnapshotVersion,
     },
@@ -41,6 +41,7 @@ use {
             ValidatorTpuConfig,
         },
     },
+    solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     solana_gossip::{
         cluster_info::{NodeConfig, DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS},
         contact_info::ContactInfo,
@@ -52,7 +53,6 @@ use {
         blockstore_cleanup_service::{DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS},
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
-    solana_logger::redirect_stderr_to_file,
     solana_net_utils::multihomed_sockets::BindIpAddrs,
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
@@ -223,17 +223,31 @@ pub fn execute(
         BindIpAddrs::new(parsed).map_err(|err| format!("invalid bind_addresses: {err}"))?
     };
 
-    if bind_addresses.len() > 1 && matches.is_present("use_connection_cache") {
-        Err(String::from(
-            "Connection cache can not be used in a multihoming context",
-        ))?;
-    }
-
-    if bind_addresses.len() > 1 && matches.is_present("advertised_ip") {
-        Err(String::from(
-            "--advertised-ip cannot be used in a multihoming context. In multihoming, the \
-             validator will advertise the first --bind-address as this node's public IP address.",
-        ))?;
+    if bind_addresses.len() > 1 {
+        for (flag, msg) in [
+            (
+                "use_connection_cache",
+                "Connection cache can not be used in a multihoming context",
+            ),
+            (
+                "advertised_ip",
+                "--advertised-ip cannot be used in a multihoming context. In multihoming, the \
+                 validator will advertise the first --bind-address as this node's public IP \
+                 address.",
+            ),
+            (
+                "tpu_vortexor_receiver_address",
+                "--tpu-vortexor-receiver-address can not be used in a multihoming context",
+            ),
+            (
+                "public_tpu_addr",
+                "--public-tpu-address can not be used in a multihoming context",
+            ),
+        ] {
+            if matches.is_present(flag) {
+                Err(String::from(msg))?;
+            }
+        }
     }
 
     let rpc_bind_address = if matches.is_present("rpc_bind_address") {

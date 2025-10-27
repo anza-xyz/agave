@@ -3,7 +3,6 @@
 
 use {
     agave_feature_set::FEATURE_NAMES,
-    agave_snapshots::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     base64::{prelude::BASE64_STANDARD, Engine},
     clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches},
     itertools::Itertools,
@@ -29,6 +28,7 @@ use {
         ValidatorAccountsFile,
     },
     solana_genesis_config::GenesisConfig,
+    solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     solana_inflation::Inflation,
     solana_keypair::{read_keypair_file, Keypair},
     solana_ledger::{blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions},
@@ -878,7 +878,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         }
     }
 
-    solana_logger::setup();
+    agave_logger::setup();
     create_new_ledger(
         &ledger_path,
         &genesis_config,
