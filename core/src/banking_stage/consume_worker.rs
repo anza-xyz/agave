@@ -105,7 +105,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
                     }
                     did_work = false;
                     let idle_duration = now.duration_since(last_empty_time);
-                    backoff(idle_duration, &mut sleep_duration);
+                    sleep_duration = backoff(idle_duration, &sleep_duration);
                 }
                 Err(TryRecvError::Disconnected) => {
                     return Err(ConsumeWorkerError::Recv(TryRecvError::Disconnected))
@@ -247,7 +247,7 @@ impl ExternalWorker {
                     }
                     did_work = false;
                     let idle_duration = now.duration_since(last_empty_time);
-                    backoff(idle_duration, &mut sleep_duration);
+                    sleep_duration = backoff(idle_duration, &sleep_duration);
                 }
             }
         }
@@ -358,16 +358,17 @@ fn active_leader_state(
 }
 
 const STARTING_SLEEP_DURATION: Duration = Duration::from_micros(250);
+const MAX_SLEEP_DURATION: Duration = Duration::from_millis(1);
+const IDLE_SLEEP_THRESHOLD: Duration = Duration::from_millis(1);
 
-fn backoff(idle_duration: Duration, sleep_duration: &mut Duration) {
-    const MAX_SLEEP_DURATION: Duration = Duration::from_millis(1);
-    const IDLE_SLEEP_THRESHOLD: Duration = Duration::from_millis(1);
-
+/// Sleeps for the specified time. Returns the next sleep duration to use.
+fn backoff(idle_duration: Duration, sleep_duration: &Duration) -> Duration {
     if idle_duration < IDLE_SLEEP_THRESHOLD {
         core::hint::spin_loop();
+        *sleep_duration
     } else {
         std::thread::sleep(*sleep_duration);
-        *sleep_duration = sleep_duration.saturating_mul(2).min(MAX_SLEEP_DURATION);
+        sleep_duration.saturating_mul(2).min(MAX_SLEEP_DURATION)
     }
 }
 
@@ -1436,5 +1437,23 @@ mod tests {
 
         drop(test_frame);
         let _ = worker_thread.join().unwrap();
+    }
+
+    #[test]
+    fn test_backoff() {
+        let sleep_duration = STARTING_SLEEP_DURATION;
+
+        // No idle time - does not increase duration for next sleep.
+        let sleep_duration = backoff(Duration::ZERO, &sleep_duration);
+        assert_eq!(sleep_duration, STARTING_SLEEP_DURATION);
+
+        // Longer time idling we sleep and double the next time.
+        let sleep_duration = backoff(IDLE_SLEEP_THRESHOLD, &sleep_duration);
+        assert_eq!(sleep_duration, STARTING_SLEEP_DURATION.saturating_mul(2));
+
+        // Maximum sleep time
+        let sleep_duration = Duration::from_micros(900);
+        let sleep_duration = backoff(IDLE_SLEEP_THRESHOLD, &sleep_duration);
+        assert_eq!(sleep_duration, MAX_SLEEP_DURATION);
     }
 }
