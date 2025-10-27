@@ -5,6 +5,8 @@ use {
     agave_xdp::{
         device::{NetworkDevice, QueueId},
         load_xdp_program,
+        route::AtomicRouter,
+        route_monitor::RouteMonitor,
         tx_loop::tx_loop,
     },
     crossbeam_channel::TryRecvError,
@@ -147,7 +149,12 @@ impl XdpRetransmitter {
             .map(|_| crossbeam_channel::bounded(config.rtx_channel_cap))
             .unzip::<_, _, Vec<_>, Vec<_>>();
 
-        let mut threads = vec![];
+        // Create atomic router for lock-free updates
+        let atomic_router = Arc::new(AtomicRouter::new()?);
+        let monitor_handle =
+            RouteMonitor::start(Arc::clone(&atomic_router), Duration::from_secs(60));
+
+        let mut threads = vec![monitor_handle];
 
         let (drop_sender, drop_receiver) = crossbeam_channel::bounded(DROP_CHANNEL_CAP);
         threads.push(
@@ -180,6 +187,10 @@ impl XdpRetransmitter {
         {
             let dev = Arc::clone(&dev);
             let drop_sender = drop_sender.clone();
+            let atomic_router = Arc::clone(&atomic_router);
+            
+            log::info!("greg: Using queue {} for interface {}", i, dev.name());
+            
             threads.push(
                 Builder::new()
                     .name(format!("solRetransmIO{i:02}"))
@@ -195,6 +206,7 @@ impl XdpRetransmitter {
                             None,
                             receiver,
                             drop_sender,
+                            atomic_router,
                         )
                     })
                     .unwrap(),
