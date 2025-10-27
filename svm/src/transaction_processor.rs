@@ -35,8 +35,7 @@ use {
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
             EpochBoundaryPreparation, ForkGraph, ProgramCache, ProgramCacheEntry,
-            ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
-            ProgramRuntimeEnvironments,
+            ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironments,
         },
         sysvar_cache::SysvarCache,
     },
@@ -61,7 +60,10 @@ use {
 #[cfg(feature = "dev-context-only-utils")]
 use {
     qualifier_attr::{field_qualifiers, qualifiers},
-    solana_program_runtime::solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
+    solana_program_runtime::{
+        loaded_programs::ProgramRuntimeEnvironment,
+        solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
+    },
     std::sync::Weak,
 };
 
@@ -250,10 +252,20 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .unwrap()
             .set_fork_graph(fork_graph);
         let empty_loader = || Arc::new(BuiltinProgram::new_loader(VmConfig::default()));
-        processor.configure_program_runtime_environments(
-            program_runtime_environment_v1.unwrap_or(empty_loader()),
-            program_runtime_environment_v2.unwrap_or(empty_loader()),
-        );
+        processor
+            .global_program_cache
+            .write()
+            .unwrap()
+            .latest_root_slot = processor.slot;
+        processor
+            .epoch_boundary_preparation
+            .write()
+            .unwrap()
+            .latest_root_epoch = processor.epoch;
+        processor.environments.program_runtime_v1 =
+            program_runtime_environment_v1.unwrap_or(empty_loader());
+        processor.environments.program_runtime_v2 =
+            program_runtime_environment_v2.unwrap_or(empty_loader());
         processor
     }
 
@@ -280,21 +292,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     /// will execute.
     pub fn set_execution_cost(&mut self, cost: SVMTransactionExecutionCost) {
         self.execution_cost = cost;
-    }
-
-    /// Configures the program runtime environments (loaders).
-    pub fn configure_program_runtime_environments(
-        &mut self,
-        program_runtime_environment_v1: ProgramRuntimeEnvironment,
-        program_runtime_environment_v2: ProgramRuntimeEnvironment,
-    ) {
-        self.global_program_cache.write().unwrap().latest_root_slot = self.slot;
-        self.epoch_boundary_preparation
-            .write()
-            .unwrap()
-            .latest_root_epoch = self.epoch;
-        self.environments.program_runtime_v1 = program_runtime_environment_v1;
-        self.environments.program_runtime_v2 = program_runtime_environment_v2;
     }
 
     /// Returns the current environments depending on the given epoch

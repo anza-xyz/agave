@@ -4123,10 +4123,17 @@ impl Bank {
         let (program_runtime_environment_v1, program_runtime_environment_v2) =
             self.create_program_runtime_environments(&self.feature_set);
         self.transaction_processor
-            .configure_program_runtime_environments(
-                program_runtime_environment_v1,
-                program_runtime_environment_v2,
-            );
+            .global_program_cache
+            .write()
+            .unwrap()
+            .latest_root_slot = self.slot;
+        self.transaction_processor
+            .epoch_boundary_preparation
+            .write()
+            .unwrap()
+            .latest_root_epoch = self.epoch;
+        self.transaction_processor.environments.program_runtime_v1 = program_runtime_environment_v1;
+        self.transaction_processor.environments.program_runtime_v2 = program_runtime_environment_v2;
     }
 
     fn create_program_runtime_environments(
