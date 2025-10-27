@@ -420,12 +420,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Disable all snapshot generation"),
     )
     .arg(
-        Arg::with_name("no_incremental_snapshots")
-            .long("no-incremental-snapshots")
-            .takes_value(false)
-            .help("Disable incremental snapshots"),
-    )
-    .arg(
         Arg::with_name("snapshot_interval_slots")
             .long("snapshot-interval-slots")
             .alias("incremental-snapshot-interval-slots")

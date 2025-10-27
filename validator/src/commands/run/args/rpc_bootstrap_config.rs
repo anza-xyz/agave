@@ -92,6 +92,10 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .takes_value(true)
             .default_value(&DEFAULT_MAX_GENESIS_ARCHIVE_UNPACKED_SIZE)
             .help("maximum total uncompressed file size of downloaded genesis archive"),
+        Arg::with_name("no_incremental_snapshots")
+            .long("no-incremental-snapshots")
+            .takes_value(false)
+            .help("Disable incremental snapshots"),
     ]
 }
 
