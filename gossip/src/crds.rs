@@ -44,7 +44,7 @@ use {
     rayon::{prelude::*, ThreadPool},
     solana_clock::Slot,
     solana_hash::Hash,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     std::{
         cmp::Ordering,
         collections::{hash_map, BTreeMap, HashMap, VecDeque},
@@ -633,7 +633,7 @@ impl Crds {
         // Set of pubkeys to never drop.
         // e.g. known validators, self pubkey, ...
         keep: &[Pubkey],
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
         now: u64,
     ) -> Result</*num purged:*/ usize, CrdsError> {
         if self.should_trim(cap) {
@@ -649,7 +649,7 @@ impl Crds {
         &mut self,
         size: usize,
         keep: &[Pubkey],
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
         now: u64,
     ) -> Result</*num purged:*/ usize, CrdsError> {
         if stakes.values().all(|&stake| stake == 0) {
@@ -886,7 +886,8 @@ mod tests {
             Ok(())
         );
         let pubkey = Pubkey::new_unique();
-        let stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
+        let mut stakes = HashMap::with_hasher(PubkeyHasherBuilder::default());
+        stakes.insert(Pubkey::new_unique(), 1u64);
         let epoch_duration = Duration::from_secs(48 * 3600);
         let timeouts = CrdsTimeouts::new(
             pubkey,
@@ -922,7 +923,8 @@ mod tests {
         let mut rng = thread_rng();
         let mut crds = Crds::default();
         let val = CrdsValue::new_rand(&mut rng, None);
-        let mut stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
+        let mut stakes = HashMap::with_hasher(PubkeyHasherBuilder::default());
+        stakes.insert(Pubkey::new_unique(), 1u64);
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),
             3,                              // default_timeout
@@ -981,7 +983,8 @@ mod tests {
             crds.insert(val.clone(), 1, GossipRoute::LocalMessage),
             Ok(_)
         );
-        let stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
+        let mut stakes = HashMap::with_hasher(PubkeyHasherBuilder::default());
+        stakes.insert(Pubkey::new_unique(), 1u64);
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),
             1,                              // default_timeout
@@ -1007,7 +1010,8 @@ mod tests {
             crds.insert(val.clone(), 1, GossipRoute::LocalMessage),
             Ok(())
         );
-        let mut stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
+        let mut stakes = HashMap::with_hasher(PubkeyHasherBuilder::default());
+        stakes.insert(Pubkey::new_unique(), 1u64);
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),
             0,                              // default_timeout
@@ -1395,7 +1399,8 @@ mod tests {
             crds.insert(val.clone(), 1, GossipRoute::LocalMessage),
             Ok(_)
         );
-        let stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
+        let mut stakes = HashMap::with_hasher(PubkeyHasherBuilder::default());
+        stakes.insert(Pubkey::new_unique(), 1u64);
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),
             1,                        // default_timeout

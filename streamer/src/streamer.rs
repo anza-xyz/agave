@@ -77,7 +77,7 @@ pub(crate) const SOCKET_READ_TIMEOUT: Duration = Duration::from_secs(1);
 // Total stake and nodes => stake map
 #[derive(Default)]
 pub struct StakedNodes {
-    stakes: Arc<HashMap<Pubkey, u64>>,
+    stakes: Arc<HashMap<Pubkey, u64, solana_pubkey::PubkeyHasherBuilder>>,
     overrides: HashMap<Pubkey, u64>,
     total_stake: u64,
     max_stake: u64,
@@ -431,7 +431,7 @@ impl StreamerSendStats {
 impl StakedNodes {
     /// Calculate the stake stats: return the new (total_stake, min_stake and max_stake) tuple
     fn calculate_stake_stats(
-        stakes: &Arc<HashMap<Pubkey, u64>>,
+        stakes: &Arc<HashMap<Pubkey, u64, solana_pubkey::PubkeyHasherBuilder>>,
         overrides: &HashMap<Pubkey, u64>,
     ) -> (u64, u64, u64) {
         let values = stakes
@@ -445,7 +445,7 @@ impl StakedNodes {
         (total_stake, min_stake, max_stake)
     }
 
-    pub fn new(stakes: Arc<HashMap<Pubkey, u64>>, overrides: HashMap<Pubkey, u64>) -> Self {
+    pub fn new(stakes: Arc<HashMap<Pubkey, u64, solana_pubkey::PubkeyHasherBuilder>>, overrides: HashMap<Pubkey, u64>) -> Self {
         let (total_stake, min_stake, max_stake) = Self::calculate_stake_stats(&stakes, &overrides);
         Self {
             stakes,
@@ -480,7 +480,7 @@ impl StakedNodes {
     }
 
     // Update the stake map given a new stakes map
-    pub fn update_stake_map(&mut self, stakes: Arc<HashMap<Pubkey, u64>>) {
+    pub fn update_stake_map(&mut self, stakes: Arc<HashMap<Pubkey, u64, solana_pubkey::PubkeyHasherBuilder>>) {
         let (total_stake, min_stake, max_stake) =
             Self::calculate_stake_stats(&stakes, &self.overrides);
 

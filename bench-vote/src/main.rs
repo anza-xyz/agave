@@ -229,10 +229,12 @@ fn main() -> Result<()> {
         let stake: u64 = 1024;
         let total_stake: u64 = 1024;
 
-        let stakes = HashMap::from([
+        let stakes = [
             (identity_keypair.pubkey(), stake),
             (Pubkey::new_unique(), total_stake.saturating_sub(stake)),
-        ]);
+        ]
+        .into_iter()
+        .collect::<HashMap<_, _, solana_pubkey::PubkeyHasherBuilder>>();
         let staked_nodes: Arc<RwLock<StakedNodes>> = Arc::new(RwLock::new(StakedNodes::new(
             Arc::new(stakes),
             HashMap::<Pubkey, u64>::default(), // overrides

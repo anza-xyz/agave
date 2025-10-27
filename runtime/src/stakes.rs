@@ -12,7 +12,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::utils::create_account_shared_data,
     solana_clock::Epoch,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_stake_interface::state::{Delegation, StakeActivationStatus},
     solana_vote::vote_account::{VoteAccount, VoteAccounts},
     solana_vote_interface::state::VoteStateVersions,
@@ -181,7 +181,7 @@ impl<T: Clone> Stakes<T> {
         &self.vote_accounts
     }
 
-    pub(crate) fn staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
+    pub(crate) fn staked_nodes(&self) -> Arc<HashMap<Pubkey, u64, PubkeyHasherBuilder>> {
         self.vote_accounts.staked_nodes()
     }
 }

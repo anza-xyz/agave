@@ -1,7 +1,7 @@
 use {
     itertools::Itertools,
     lru::LruCache,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     std::{cmp::Reverse, collections::HashMap},
 };
 
@@ -40,7 +40,7 @@ impl ReceivedCache {
         origin: Pubkey,  // CRDS value owner.
         stake_threshold: f64,
         min_ingress_nodes: usize,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
     ) -> impl Iterator<Item = Pubkey> {
         match self.0.peek_mut(&origin) {
             None => None,
@@ -96,7 +96,7 @@ impl ReceivedCacheEntry {
         origin: &Pubkey, // CRDS value owner.
         stake_threshold: f64,
         min_ingress_nodes: usize,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
     ) -> impl Iterator<Item = Pubkey> {
         debug_assert!((0.0..=1.0).contains(&stake_threshold));
         debug_assert!(self.num_upserts >= ReceivedCache::MIN_NUM_UPSERTS);

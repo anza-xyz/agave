@@ -33,7 +33,7 @@ use {
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_packet::PACKET_DATA_SIZE,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     std::{
@@ -241,7 +241,7 @@ impl CrdsGossipPull {
         self_shred_version: u16,
         now: u64,
         gossip_validators: Option<&HashSet<Pubkey>>,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
         bloom_size: usize,
         ping_cache: &Mutex<PingCache>,
         pings: &mut Vec<(SocketAddr, Ping)>,
@@ -519,7 +519,7 @@ impl CrdsGossipPull {
     pub(crate) fn make_timeouts<'a>(
         &self,
         self_pubkey: Pubkey,
-        stakes: &'a HashMap<Pubkey, u64>,
+        stakes: &'a HashMap<Pubkey, u64, PubkeyHasherBuilder>,
         epoch_duration: Duration,
     ) -> CrdsTimeouts<'a> {
         CrdsTimeouts::new(self_pubkey, self.crds_timeout, epoch_duration, stakes)
@@ -570,7 +570,7 @@ impl CrdsGossipPull {
 
 pub struct CrdsTimeouts<'a> {
     pubkey: Pubkey,
-    stakes: &'a HashMap<Pubkey, /*lamports:*/ u64>,
+    stakes: &'a HashMap<Pubkey, /*lamports:*/ u64, PubkeyHasherBuilder>,
     default_timeout: u64,
     extended_timeout: u64,
 }
@@ -580,7 +580,7 @@ impl<'a> CrdsTimeouts<'a> {
         pubkey: Pubkey,
         default_timeout: u64,
         epoch_duration: Duration,
-        stakes: &'a HashMap<Pubkey, u64>,
+        stakes: &'a HashMap<Pubkey, u64, PubkeyHasherBuilder>,
     ) -> Self {
         let extended_timeout = default_timeout.max(epoch_duration.as_millis() as u64);
         let default_timeout = if stakes.values().all(|&stake| stake == 0u64) {
@@ -701,7 +701,7 @@ pub(crate) mod tests {
             self_shred_version: u16,
             now: u64,
             gossip_validators: Option<&HashSet<Pubkey>>,
-            stakes: &HashMap<Pubkey, u64>,
+            stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
             bloom_size: usize,
             ping_cache: &Mutex<PingCache>,
             pings: &mut Vec<(SocketAddr, Ping)>,
@@ -925,7 +925,9 @@ pub(crate) mod tests {
                 0,
                 0,
                 None,
-                &HashMap::new(),
+                &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
+                    PubkeyHasherBuilder::default()
+                ),
                 PACKET_DATA_SIZE,
                 &ping_cache,
                 &mut pings,
@@ -946,7 +948,9 @@ pub(crate) mod tests {
                 0,
                 0,
                 None,
-                &HashMap::new(),
+                &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
+                    PubkeyHasherBuilder::default()
+                ),
                 PACKET_DATA_SIZE,
                 &ping_cache,
                 &mut pings,
@@ -973,7 +977,9 @@ pub(crate) mod tests {
             0,
             now,
             None,
-            &HashMap::new(),
+            &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
+                PubkeyHasherBuilder::default()
+            ),
             PACKET_DATA_SIZE,
             &ping_cache,
             &mut pings,
@@ -996,7 +1002,9 @@ pub(crate) mod tests {
             0,
             now,
             None,
-            &HashMap::new(),
+            &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
+                PubkeyHasherBuilder::default()
+            ),
             PACKET_DATA_SIZE,
             &ping_cache,
             &mut pings,
@@ -1051,7 +1059,9 @@ pub(crate) mod tests {
                     0, // self_shred_version
                     now,
                     None,             // gossip_validators
-                    &HashMap::new(),  // stakes
+                    &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
+                    PubkeyHasherBuilder::default()
+                ),  // stakes
                     PACKET_DATA_SIZE, // bloom_size
                     &ping_cache,
                     &mut pings,
@@ -1098,7 +1108,9 @@ pub(crate) mod tests {
             0, // self_shred_version
             now,
             None,             // gossip_validators
-            &HashMap::new(),  // stakes
+            &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
+                PubkeyHasherBuilder::default()
+            ),  // stakes
             PACKET_DATA_SIZE, // bloom_size
             &Mutex::new(ping_cache),
             &mut pings,
@@ -1246,7 +1258,9 @@ pub(crate) mod tests {
                 0,
                 0,
                 None,
-                &HashMap::new(),
+                &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
+                    PubkeyHasherBuilder::default()
+                ),
                 PACKET_DATA_SIZE,
                 &ping_cache,
                 &mut pings,
@@ -1284,7 +1298,13 @@ pub(crate) mod tests {
             let failed = node
                 .process_pull_response(
                     &node_crds,
-                    &node.make_timeouts(node_pubkey, &HashMap::new(), Duration::default()),
+                    &node.make_timeouts(
+                        node_pubkey,
+                        &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
+                            PubkeyHasherBuilder::default()
+                        ),
+                        Duration::default()
+                    ),
                     rsp.into_iter().flatten().collect(),
                     1,
                 )
@@ -1335,7 +1355,8 @@ pub(crate) mod tests {
         );
         // purge
         let node_crds = RwLock::new(node_crds);
-        let stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
+        let mut stakes = HashMap::with_hasher(PubkeyHasherBuilder::default());
+        stakes.insert(Pubkey::new_unique(), 1u64);
         let timeouts = node.make_timeouts(node_pubkey, &stakes, Duration::default());
         CrdsGossipPull::purge_active(&thread_pool, &node_crds, node.crds_timeout, &timeouts);
 
@@ -1450,7 +1471,8 @@ pub(crate) mod tests {
         let peer_pubkey = solana_pubkey::new_rand();
         let peer_entry =
             CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(&peer_pubkey, 0)));
-        let stakes = HashMap::from([(peer_pubkey, 1u64)]);
+        let mut stakes = HashMap::with_hasher(PubkeyHasherBuilder::default());
+        stakes.insert(peer_pubkey, 1u64);
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),
             node.crds_timeout, // default_timeout

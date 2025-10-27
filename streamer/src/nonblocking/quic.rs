@@ -1992,7 +1992,8 @@ pub mod test {
         agave_logger::setup();
 
         let client_keypair = Keypair::new();
-        let stakes = HashMap::from([(client_keypair.pubkey(), 100_000)]);
+        let mut stakes = HashMap::with_hasher(solana_pubkey::PubkeyHasherBuilder::default());
+        stakes.insert(client_keypair.pubkey(), 100_000);
         let staked_nodes = StakedNodes::new(
             Arc::new(stakes),
             HashMap::<Pubkey, u64>::default(), // overrides
@@ -2024,7 +2025,8 @@ pub mod test {
         agave_logger::setup();
 
         let client_keypair = Keypair::new();
-        let stakes = HashMap::from([(client_keypair.pubkey(), 0)]);
+        let mut stakes = HashMap::with_hasher(solana_pubkey::PubkeyHasherBuilder::default());
+        stakes.insert(client_keypair.pubkey(), 0);
         let staked_nodes = StakedNodes::new(
             Arc::new(stakes),
             HashMap::<Pubkey, u64>::default(), // overrides
