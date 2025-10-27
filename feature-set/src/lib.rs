@@ -1155,6 +1155,7 @@ pub mod static_instruction_limit {
 pub mod discard_unexpected_data_complete_shreds {
     solana_pubkey::declare_id!("8MhfKhoZEoiySpVe248bDkisyEcBA7JQLyUS94xoTSqN");
 }
+
 pub mod vote_state_v4 {
     solana_pubkey::declare_id!("Gx4XFcrVMt4HUvPzTpTSVkdDVgcDSjKhDN1RqRS6KDuZ");
 
@@ -1168,7 +1169,7 @@ pub mod switch_to_chacha8_turbine {
 }
 
 pub mod increase_cpi_account_info_limit {
-    solana_pubkey::declare_id!("7wM2pdjwmSXviEdsorpcBY3T4YWUPQXDMepZudub7nGQ"); // Placeholder ID HAVE TO CHANGE BEFORE USE
+    solana_pubkey::declare_id!("H6iVbVaDZgDphcPbcZwc5LoznMPWQfnJ1AM7L1xzqvt5");
 }
 
 pub mod deprecate_rent_exemption_threshold {
@@ -2108,7 +2109,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             increase_cpi_account_info_limit::id(),
-            "SIMD-0339: increase CPI info account limit",
+            "SIMD-0339: Increase CPI Account Infos Limit",
         ),
         (
             deprecate_rent_exemption_threshold::id(),

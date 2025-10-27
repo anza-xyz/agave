@@ -548,23 +548,25 @@ pub fn translate_instruction_rust(
 
     check_instruction_size(account_metas.len(), data.len())?;
 
-    let mut total_cu_translation_cost = data.len() as u64;
+    let mut total_cu_translation_cost: u64 = (data.len() as u64)
+        .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+        .unwrap_or(u64::MAX);
 
     if invoke_context
         .get_feature_set()
         .increase_cpi_account_info_limit
     {
         // Each account meta is 34 bytes (32 for pubkey, 1 for is_signer, 1 for is_writable)
-        total_cu_translation_cost = total_cu_translation_cost
-            .saturating_add(account_metas.len().saturating_mul(size_of::<AccountMeta>()) as u64);
+        let account_meta_total_bytes =
+            (account_metas.len().saturating_mul(size_of::<AccountMeta>()) as u64)
+                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+                .unwrap_or(u64::MAX);
+
+        total_cu_translation_cost =
+            total_cu_translation_cost.saturating_add(account_meta_total_bytes);
     }
 
-    consume_compute_meter(
-        invoke_context,
-        (total_cu_translation_cost)
-            .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-            .unwrap_or(u64::MAX),
-    )?;
+    consume_compute_meter(invoke_context, total_cu_translation_cost)?;
 
     let mut accounts = Vec::with_capacity(account_metas.len());
     #[allow(clippy::needless_range_loop)]
@@ -677,27 +679,26 @@ pub fn translate_instruction_c(
 
     check_instruction_size(ix_c.accounts_len as usize, data.len())?;
 
-    let mut total_cu_translation_cost = data.len() as u64;
+    let mut total_cu_translation_cost: u64 = (data.len() as u64)
+        .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+        .unwrap_or(u64::MAX);
 
     if invoke_context
         .get_feature_set()
         .increase_cpi_account_info_limit
     {
         // Each account meta is 34 bytes (32 for pubkey, 1 for is_signer, 1 for is_writable)
+        let account_meta_total_bytes = (ix_c
+            .accounts_len
+            .saturating_mul(size_of::<AccountMeta>() as u64))
+        .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+        .unwrap_or(u64::MAX);
+
         total_cu_translation_cost =
-            total_cu_translation_cost.saturating_add(ix_c.accounts_len.saturating_mul(size_of::<
-                AccountMeta,
-            >(
-            )
-                as u64));
+            total_cu_translation_cost.saturating_add(account_meta_total_bytes);
     }
 
-    consume_compute_meter(
-        invoke_context,
-        (total_cu_translation_cost)
-            .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-            .unwrap_or(u64::MAX),
-    )?;
+    consume_compute_meter(invoke_context, total_cu_translation_cost)?;
 
     let mut accounts = Vec::with_capacity(ix_c.accounts_len as usize);
     #[allow(clippy::needless_range_loop)]
