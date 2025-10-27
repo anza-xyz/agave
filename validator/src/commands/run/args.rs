@@ -723,14 +723,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Log when transactions are processed which reference a given key."),
     )
     .arg(
-        Arg::with_name("only_known_rpc")
-            .alias("no-untrusted-rpc")
-            .long("only-known-rpc")
-            .takes_value(false)
-            .requires("known_validators")
-            .help("Use the RPC service of known validators only"),
-    )
-    .arg(
         Arg::with_name("repair_validators")
             .long("repair-validator")
             .validator(is_pubkey)

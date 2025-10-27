@@ -75,6 +75,12 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
                 "Sanity check vote account state at startup. The JSON RPC endpoint at RPC_URL \
                  must expose `--full-rpc-api`",
             ),
+        Arg::with_name("only_known_rpc")
+            .alias("no-untrusted-rpc")
+            .long("only-known-rpc")
+            .takes_value(false)
+            .requires("known_validators")
+            .help("Use the RPC service of known validators only"),
     ]
 }
 
