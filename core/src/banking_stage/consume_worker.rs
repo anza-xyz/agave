@@ -5,17 +5,9 @@ use {
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
     crate::banking_stage::consumer::RetryableIndex,
-    agave_scheduler_bindings::{
-        PackToWorkerMessage, TransactionResponseRegion, WorkerToPackMessage,
-        MAX_TRANSACTIONS_PER_MESSAGE,
-    },
-    agave_scheduling_utils::transaction_ptr::TransactionPtr,
-    agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
     crossbeam_channel::{Receiver, SendError, Sender, TryRecvError},
     solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
-    solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
-    },
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     solana_time_utils::AtomicInterval,
     std::{
@@ -26,6 +18,16 @@ use {
         time::{Duration, Instant},
     },
     thiserror::Error,
+};
+#[cfg(unix)]
+use {
+    agave_scheduler_bindings::{
+        PackToWorkerMessage, TransactionResponseRegion, WorkerToPackMessage,
+        MAX_TRANSACTIONS_PER_MESSAGE,
+    },
+    agave_scheduling_utils::transaction_ptr::TransactionPtr,
+    agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
 };
 
 #[derive(Debug, Error)]
@@ -185,6 +187,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     }
 }
 
+#[cfg(unix)]
 pub(crate) struct ExternalWorker {
     exit: Arc<AtomicBool>,
     receiver: shaq::Consumer<PackToWorkerMessage>,
@@ -195,7 +198,9 @@ pub(crate) struct ExternalWorker {
     metrics: Arc<ConsumeWorkerMetrics>,
 }
 
+#[cfg(unix)]
 type Tx = RuntimeTransaction<ResolvedTransactionView<TransactionPtr>>;
+#[cfg(unix)]
 impl ExternalWorker {
     pub fn new(
         id: u32,
@@ -923,7 +928,6 @@ mod tests {
             scheduler_messages::{MaxAge, TransactionBatchId},
             tests::{create_slow_genesis_config, sanitize_transactions},
         },
-        agave_scheduler_bindings::{pack_message_flags, SharableTransactionBatchRegion},
         crossbeam_channel::unbounded,
         solana_clock::{Slot, MAX_PROCESSING_AGE},
         solana_genesis_config::GenesisConfig,
@@ -1458,12 +1462,13 @@ mod tests {
         assert_eq!(sleep_duration, MAX_SLEEP_DURATION);
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_validate_message() {
         let mut message = PackToWorkerMessage {
-            flags: pack_message_flags::NONE,
+            flags: agave_scheduler_bindings::pack_message_flags::NONE,
             max_execution_slot: u64::MAX,
-            batch: SharableTransactionBatchRegion {
+            batch: agave_scheduler_bindings::SharableTransactionBatchRegion {
                 num_transactions: 0,
                 transactions_offset: 0,
             },
@@ -1481,13 +1486,14 @@ mod tests {
         assert!(!ExternalWorker::validate_message(&message));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_validate_message_flags() {
         assert!(!ExternalWorker::validate_message_flags(
-            pack_message_flags::NONE
+            agave_scheduler_bindings::pack_message_flags::NONE
         ));
         assert!(!ExternalWorker::validate_message_flags(
-            pack_message_flags::RESOLVE
+            agave_scheduler_bindings::pack_message_flags::RESOLVE
         ));
     }
 }
