@@ -370,7 +370,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            bank::tests::{create_genesis_config, new_bank_from_parent_with_bank_forks},
+            bank::tests::create_genesis_config,
             bank_forks::BankForks,
             genesis_utils::{
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
@@ -579,7 +579,7 @@ mod tests {
         // Advance some num slots; usually to the next epoch boundary to update
         // EpochStakes
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let bank = new_bank_from_parent_with_bank_forks(
+        let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
             &Pubkey::default(),
@@ -757,7 +757,7 @@ mod tests {
         // simulate block progress
         for slot in starting_slot..=(2 * SLOTS_PER_EPOCH) + 2 {
             let pre_cap = previous_bank.capitalization();
-            let curr_bank = new_bank_from_parent_with_bank_forks(
+            let curr_bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
                 &Pubkey::default(),
@@ -850,7 +850,7 @@ mod tests {
             let pre_epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
                 solana_account::from_account(&pre_sysvar_account).unwrap_or_default();
             let pre_distributed_rewards = pre_epoch_rewards.distributed_rewards;
-            let curr_bank = new_bank_from_parent_with_bank_forks(
+            let curr_bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
                 &Pubkey::default(),
@@ -990,7 +990,7 @@ mod tests {
         let transfer_amount = 5_000;
 
         for slot in 1..=num_slots_in_epoch + 2 {
-            let bank = new_bank_from_parent_with_bank_forks(
+            let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
                 &Pubkey::default(),

@@ -4480,21 +4480,6 @@ pub(crate) mod tests {
         trees::{tr, Tree},
     };
 
-    fn new_bank_from_parent_with_bank_forks(
-        bank_forks: &RwLock<BankForks>,
-        parent: Arc<Bank>,
-        collector_id: &Pubkey,
-        slot: Slot,
-    ) -> Arc<Bank> {
-        let bank = Bank::new_from_parent(parent, collector_id, slot);
-        bank.set_block_id(Some(Hash::new_unique()));
-        bank_forks
-            .write()
-            .unwrap()
-            .insert(bank)
-            .clone_without_scheduler()
-    }
-
     #[test]
     fn test_is_partition_detected() {
         let (VoteSimulator { bank_forks, .. }, _) = setup_default_forks(1, None::<GenerateVotes>);
@@ -5306,7 +5291,7 @@ pub(crate) mod tests {
         for i in 1..=3 {
             let prev_bank = bank_forks.read().unwrap().get(i - 1).unwrap();
             let slot = prev_bank.slot() + 1;
-            let bank = new_bank_from_parent_with_bank_forks(
+            let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 prev_bank,
                 &Pubkey::default(),
@@ -5512,7 +5497,7 @@ pub(crate) mod tests {
             assert!(confirmed_forks.is_empty());
         }
 
-        let bank1 = new_bank_from_parent_with_bank_forks(
+        let bank1 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank0.clone(),
             &my_node_pubkey,
@@ -7730,7 +7715,7 @@ pub(crate) mod tests {
         let (voting_sender, voting_receiver) = unbounded();
 
         // Simulate landing a vote for slot 0 landing in slot 1
-        let bank1 = new_bank_from_parent_with_bank_forks(
+        let bank1 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank0.clone(),
             &Pubkey::default(),
@@ -7801,7 +7786,7 @@ pub(crate) mod tests {
 
         // Trying to refresh the vote for bank 0 in bank 1 or bank 2 won't succeed because
         // the last vote has landed already
-        let bank2 = new_bank_from_parent_with_bank_forks(
+        let bank2 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank1.clone(),
             &Pubkey::default(),
@@ -7943,7 +7928,7 @@ pub(crate) mod tests {
             let mut parent_bank = bank2.clone();
             for _ in 0..REFRESH_VOTE_BLOCKHEIGHT {
                 let slot = parent_bank.slot() + 1;
-                parent_bank = new_bank_from_parent_with_bank_forks(
+                parent_bank = Bank::new_from_parent_with_bank_forks(
                     bank_forks.as_ref(),
                     parent_bank,
                     &Pubkey::default(),
@@ -8035,7 +8020,7 @@ pub(crate) mod tests {
 
         // Processing the vote transaction should be valid
         let expired_bank_child_slot = expired_bank.slot() + 1;
-        let expired_bank_child = new_bank_from_parent_with_bank_forks(
+        let expired_bank_child = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             expired_bank.clone(),
             &Pubkey::default(),
@@ -8064,7 +8049,7 @@ pub(crate) mod tests {
             let mut parent_bank = bank2.clone();
             for i in 0..expired_bank_child_slot {
                 let slot = expired_bank_child.slot() + i + 1;
-                parent_bank = new_bank_from_parent_with_bank_forks(
+                parent_bank = Bank::new_from_parent_with_bank_forks(
                     bank_forks.as_ref(),
                     parent_bank,
                     &Pubkey::default(),
@@ -8173,7 +8158,7 @@ pub(crate) mod tests {
             BlockhashStatus::Blockhash(parent_bank.last_blockhash())
         );
         assert_eq!(tower.last_voted_slot().unwrap(), parent_bank.slot());
-        let bank = new_bank_from_parent_with_bank_forks(
+        let bank = Bank::new_from_parent_with_bank_forks(
             bank_forks,
             parent_bank,
             &Pubkey::default(),
@@ -8232,7 +8217,7 @@ pub(crate) mod tests {
         // Add a new fork starting from 0 with bigger slot number, we assume it has a bigger
         // weight, but we cannot switch because of lockout.
         let other_fork_slot = 1;
-        let other_fork_bank = new_bank_from_parent_with_bank_forks(
+        let other_fork_bank = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank0.clone(),
             &Pubkey::default(),
@@ -8295,7 +8280,7 @@ pub(crate) mod tests {
         let last_voted_slot = tower.last_voted_slot().unwrap();
         while new_bank.is_in_slot_hashes_history(&last_voted_slot) {
             let new_slot = new_bank.slot() + 1;
-            let bank = new_bank_from_parent_with_bank_forks(
+            let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 new_bank,
                 &Pubkey::default(),

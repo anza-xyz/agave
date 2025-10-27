@@ -814,7 +814,6 @@ mod tests {
         super::*,
         crate::{
             bank::{tests::create_simple_test_bank, BankTestConfig},
-            bank_forks::BankForks,
             snapshot_utils::{
                 clean_orphaned_account_snapshot_dirs, create_tmp_accounts_dir_for_tests,
                 get_bank_snapshot_dir, get_bank_snapshots, get_highest_bank_snapshot,
@@ -840,7 +839,7 @@ mod tests {
         solana_transaction::sanitized::SanitizedTransaction,
         std::{
             fs, slice,
-            sync::{atomic::Ordering, Arc, RwLock},
+            sync::{atomic::Ordering, Arc},
         },
         test_case::test_case,
     };
@@ -874,20 +873,6 @@ mod tests {
         }
 
         Arc::into_inner(bank).unwrap()
-    }
-
-    fn new_bank_from_parent_with_bank_forks(
-        bank_forks: &RwLock<BankForks>,
-        parent: Arc<Bank>,
-        collector_id: &Pubkey,
-        slot: Slot,
-    ) -> Arc<Bank> {
-        let bank = Bank::new_from_parent(parent, collector_id, slot);
-        bank_forks
-            .write()
-            .unwrap()
-            .insert(bank)
-            .clone_without_scheduler()
     }
 
     /// Test roundtrip of bank to a full snapshot, then back again.  This test creates the simplest
@@ -975,7 +960,7 @@ mod tests {
         // Create a new slot, and invalidate the account for key1 in slot0
         let slot = 1;
         let bank1 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1
             .transfer(LAMPORTS_PER_SOL, &key3, &key1.pubkey())
             .unwrap();
@@ -1044,7 +1029,7 @@ mod tests {
 
         let slot = 1;
         let bank1 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1
             .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
@@ -1058,7 +1043,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank2 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         bank2
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1066,7 +1051,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank3 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
         bank3
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1074,7 +1059,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank4 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
         bank4
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1149,7 +1134,7 @@ mod tests {
 
         let slot = 1;
         let bank1 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1
             .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
@@ -1180,7 +1165,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank2 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         bank2
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1188,7 +1173,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank3 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
         bank3
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1196,7 +1181,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank4 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
         bank4
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1256,7 +1241,7 @@ mod tests {
 
         let slot = 1;
         let bank1 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1287,7 +1272,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank2 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         bank2
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1295,7 +1280,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank3 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
         bank3
             .transfer(2 * LAMPORTS_PER_SOL, &mint_keypair, &key2.pubkey())
             .unwrap();
@@ -1303,7 +1288,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank4 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
         bank4
             .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
@@ -1394,7 +1379,7 @@ mod tests {
 
         let slot = 1;
         let bank1 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1
             .transfer(lamports_to_transfer, &key2, &key1.pubkey())
             .unwrap();
@@ -1413,7 +1398,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank2 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         let blockhash = bank2.last_blockhash();
         let tx = SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
             &key1,
@@ -1472,7 +1457,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank3 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
         // Update Account2 so that it no longer holds a reference to slot2
         bank3
             .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
@@ -1481,7 +1466,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank4 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
         bank4.fill_bank_with_ticks_for_tests();
 
         // Ensure account1 has been cleaned/purged from everywhere
@@ -1546,7 +1531,7 @@ mod tests {
 
         let slot = 1;
         let bank1 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1.fill_bank_with_ticks_for_tests();
 
         let all_snapshots_dir = tempfile::TempDir::new().unwrap();
@@ -1565,7 +1550,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank2 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         bank2
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1867,7 +1852,7 @@ mod tests {
 
         let slot = 1;
         let bank1 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1
             .transfer(lamports_to_transfer, &key2, &key1.pubkey())
             .unwrap();
@@ -1883,7 +1868,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank2 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         let blockhash = bank2.last_blockhash();
         let tx = SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
             &key1,
@@ -1906,7 +1891,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank3 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
         // Update Account2 so that it no longer holds a reference to slot2
         bank3
             .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
@@ -2010,7 +1995,7 @@ mod tests {
         // In slot 1 transfer from key1 to key2, such that key1 becomes zero lamport
         let slot = 1;
         let bank1 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1.transfer(lamports, &key1, &key2.pubkey()).unwrap();
         assert_eq!(bank1.get_balance(&key1.pubkey()), 0,);
         bank1.fill_bank_with_ticks_for_tests();
@@ -2018,7 +2003,7 @@ mod tests {
         // In slot 2 transfer into key2 to mint such that key2 becomes zero lamport
         let slot = slot + 1;
         let bank2 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         bank2.transfer(lamports * 2, &key2, &mint.pubkey()).unwrap();
         bank2.fill_bank_with_ticks_for_tests();
         assert_eq!(bank2.get_balance(&key2.pubkey()), 0);
