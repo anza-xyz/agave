@@ -177,7 +177,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
                         let num_pruned =
                             connection_table_l.prune_random(PRUNE_RANDOM_SAMPLE_SIZE, stake);
 
-                        println!(
+                        debug!(
                             "Pruned {} staked connections to make room for new staked connection \
                              from {}",
                             num_pruned,
