@@ -34,7 +34,7 @@ struct VoteStats {
 }
 
 impl VoteStats {
-    fn increment(&mut self, vote: &Vote) {
+    fn record(&mut self, vote: &Vote) {
         match vote {
             Vote::Notarize(_) => self.notarize = self.notarize.saturating_add(1),
             Vote::NotarizeFallback(_) => {
@@ -46,14 +46,14 @@ impl VoteStats {
         }
     }
 
-    fn record(&self, header: &'static str) {
+    fn submit(&self) {
         datapoint_info!(
-            header,
-            ("finalize", self.finalize, i64),
-            ("notarize", self.notarize, i64),
-            ("notarize_fallback", self.notarize_fallback, i64),
-            ("skip", self.skip, i64),
-            ("skip_fallback", self.skip_fallback, i64),
+            "consensus_ingested_votes",
+            ("num_finalize_votes", self.finalize, i64),
+            ("num_notarize_votes", self.notarize, i64),
+            ("num_notarize_fallback_votes", self.notarize_fallback, i64),
+            ("num_skip_votes", self.skip, i64),
+            ("num_skip_fallback_votes", self.skip_fallback, i64),
         )
     }
 }
@@ -87,7 +87,7 @@ impl ConsensusPoolStats {
     }
 
     pub fn incr_ingested_vote(&mut self, vote: &Vote) {
-        self.ingested_votes.increment(vote);
+        self.ingested_votes.record(vote);
     }
 
     pub fn incr_cert_type(&mut self, cert_type: CertificateType, is_generated: bool) {
@@ -119,7 +119,7 @@ impl ConsensusPoolStats {
             ("out_of_range_certs", self.out_of_range_certs as i64, i64),
         );
 
-        self.ingested_votes.record("consensus_ingested_votes");
+        self.ingested_votes.submit();
         datapoint_info!(
             "certfificate_pool_ingested_certs",
             (
