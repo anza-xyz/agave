@@ -157,7 +157,7 @@ fn run_bank_forks_snapshot_n<F>(last_slot: Slot, f: F, set_root_interval: u64)
 where
     F: Fn(&Bank, &Keypair),
 {
-    solana_logger::setup();
+    agave_logger::setup();
     // Set up snapshotting config
     let snapshot_test_config = SnapshotTestConfig::new(
         SnapshotInterval::Slots(NonZeroU64::new(set_root_interval).unwrap()),
@@ -263,7 +263,7 @@ fn goto_end_of_slot(bank: &Bank) {
 
 #[test]
 fn test_slots_to_snapshot() {
-    solana_logger::setup();
+    agave_logger::setup();
     let num_set_roots = MAX_CACHE_ENTRIES * 2;
 
     for add_root_interval in &[1, 3, 9] {
@@ -355,7 +355,7 @@ fn test_bank_forks_status_cache_snapshot() {
 
 #[test]
 fn test_bank_forks_incremental_snapshot() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     const SET_ROOT_INTERVAL: Slot = 2;
     const INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: Slot = SET_ROOT_INTERVAL * 2;
@@ -484,7 +484,7 @@ fn test_bank_forks_incremental_snapshot() {
 fn make_full_snapshot_archive(
     bank: &Bank,
     snapshot_config: &SnapshotConfig,
-) -> snapshot_utils::Result<()> {
+) -> agave_snapshots::Result<()> {
     info!(
         "Making full snapshot archive from bank at slot: {}",
         bank.slot(),
@@ -504,7 +504,7 @@ fn make_incremental_snapshot_archive(
     bank: &Bank,
     incremental_snapshot_base_slot: Slot,
     snapshot_config: &SnapshotConfig,
-) -> snapshot_utils::Result<()> {
+) -> agave_snapshots::Result<()> {
     info!(
         "Making incremental snapshot archive from bank at slot: {}, and base slot: {}",
         bank.slot(),
@@ -527,7 +527,7 @@ fn restore_from_snapshots_and_check_banks_are_equal(
     snapshot_config: &SnapshotConfig,
     accounts_dir: PathBuf,
     genesis_config: &GenesisConfig,
-) -> snapshot_utils::Result<()> {
+) -> agave_snapshots::Result<()> {
     let (deserialized_bank, ..) = snapshot_bank_utils::bank_from_latest_snapshot_archives(
         &snapshot_config.bank_snapshots_dir,
         &snapshot_config.full_snapshot_archives_dir,
@@ -553,7 +553,7 @@ fn restore_from_snapshots_and_check_banks_are_equal(
 /// Spin up the background services fully then test taking & verifying snapshots
 #[test]
 fn test_snapshots_with_background_services() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     const SET_ROOT_INTERVAL_SLOTS: Slot = 2;
     const BANK_SNAPSHOT_INTERVAL_SLOTS: Slot = SET_ROOT_INTERVAL_SLOTS * 2;

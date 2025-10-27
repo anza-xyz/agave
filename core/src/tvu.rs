@@ -485,7 +485,7 @@ pub mod tests {
     };
 
     fn test_tvu_exit(enable_wen_restart: bool) {
-        solana_logger::setup();
+        agave_logger::setup();
         let leader = Node::new_localhost();
         let target1_keypair = Keypair::new();
         let target1 = Node::new_localhost_with_pubkey(&target1_keypair.pubkey());

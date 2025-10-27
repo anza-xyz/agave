@@ -23,7 +23,7 @@ use {
 
 #[test]
 fn test_syscall_get_epoch_stake() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     // Two vote accounts with stake.
     let stakes = vec![100_000_000, 500_000_000];

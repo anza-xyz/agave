@@ -52,6 +52,7 @@ shuttle-test = ["dep:shuttle"]
 
 [dependencies]
 agave-feature-set = { workspace = true }
+agave-fs = { workspace = true }
 agave-precompiles = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }
@@ -191,6 +192,7 @@ thiserror = { workspace = true }
 zstd = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { workspace = true }
 agave-transaction-view = { workspace = true }
 ed25519-dalek = { workspace = true }
 libsecp256k1 = { workspace = true }
@@ -200,7 +202,6 @@ rand_chacha = { workspace = true }
 solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }
 solana-builtins = { workspace = true, features = ["dev-context-only-utils"] }
 solana-instruction-error = { workspace = true }
-solana-logger = { workspace = true }
 solana-program-binaries = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-runtime = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }

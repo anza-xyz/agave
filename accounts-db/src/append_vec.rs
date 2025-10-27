@@ -16,15 +16,17 @@ use {
         account_info::Offset,
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_file::{InternalsForArchive, StorageAccess, StoredAccountsInfo},
+        is_zero_lamport::IsZeroLamport,
+        storable_accounts::StorableAccounts,
+        u64_align,
+        utils::create_account_shared_data,
+    },
+    agave_fs::{
         buffered_reader::{
             BufReaderWithOverflow, BufferedReader, FileBufRead as _, RequiredLenBufFileRead,
             RequiredLenBufRead as _,
         },
         file_io::{read_into_buffer, write_buffer_to_file},
-        is_zero_lamport::IsZeroLamport,
-        storable_accounts::StorableAccounts,
-        u64_align,
-        utils::create_account_shared_data,
     },
     log::*,
     memmap2::MmapMut,
@@ -1008,7 +1010,7 @@ impl AppendVec {
     /// Prefer scan_accounts() when possible, as it does not contain file format
     /// implementation details, and thus potentially can read less and be faster.
     #[allow(clippy::blocks_in_conditions)]
-    pub(crate) fn scan_accounts_stored_meta<'a>(
+    fn scan_accounts_stored_meta<'a>(
         &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
         mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
@@ -1071,6 +1073,19 @@ impl AppendVec {
             }
         }
         Ok(())
+    }
+
+    /// Scans accounts with StoredAccountMeta
+    ///
+    /// Only intended to be called by agave-store-tool.
+    /// Refer to `scan_accounts_stored_meta` for further documentation.
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn scan_accounts_stored_meta_for_store_tool(
+        &self,
+        callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
+    ) -> Result<()> {
+        let mut reader = new_scan_accounts_reader();
+        self.scan_accounts_stored_meta(&mut reader, callback)
     }
 
     /// Calculate the amount of storage required for an account with the passed
@@ -1726,7 +1741,7 @@ pub mod tests {
         // So, the sanitizing on load behavior can be tested by capturing [u8] that would be created if such a write was possible (as it used to be).
         // The contents of [u8] written by an append vec cannot easily or reasonably change frequently since it has released a long time.
         /*
-            solana_logger::setup();
+            agave_logger::setup();
             // uncomment this code to generate the invalid append vec that will fail on load
             let file = get_append_vec_path("test_append");
             let path = &file.path;

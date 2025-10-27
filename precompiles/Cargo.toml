@@ -34,13 +34,13 @@ solana-secp256k1-program = { workspace = true, features = ["serde"] }
 solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
 
 [dev-dependencies]
+agave-logger = { workspace = true }
 agave-precompiles = { path = ".", features = ["agave-unstable-api"] }
 bytemuck = { workspace = true }
 hex = { workspace = true }
 rand0-7 = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keccak-hasher = { workspace = true, features = ["sha3"] }
-solana-logger = { workspace = true }
 solana-secp256k1-program = { workspace = true, features = ["bincode"] }
 
 [lints]

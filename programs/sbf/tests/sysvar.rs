@@ -25,7 +25,7 @@ use {
 
 #[test]
 fn test_sysvar_syscalls() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         mut genesis_config,

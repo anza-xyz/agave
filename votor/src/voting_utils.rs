@@ -559,7 +559,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "The bank 0 doesn't have its own epoch_stakes for")]
     fn test_panic_on_future_slot() {
-        solana_logger::setup();
+        agave_logger::setup();
         let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::unbounded();
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
@@ -576,7 +576,7 @@ mod tests {
 
     #[test]
     fn test_zero_staked_validator_fails_voting() {
-        solana_logger::setup();
+        agave_logger::setup();
         let (own_vote_sender, _own_vote_receiver) = crossbeam_channel::unbounded();
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)

@@ -18,7 +18,7 @@ pub unsafe extern "C" fn sol_compat_init(_log_level: i32) {
     env::set_var("RAYON_NUM_THREADS", "1");
     if env::var("ENABLE_SOLANA_LOGGER").is_ok() {
         /* Pairs with RUST_LOG={trace,debug,info,etc} */
-        solana_logger::setup();
+        agave_logger::setup();
     }
 }
 

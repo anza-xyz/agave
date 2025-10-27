@@ -760,7 +760,7 @@ fn run_dos<T: 'static + TpsClient + Send + Sync>(
 }
 
 fn main() {
-    solana_logger::setup_with_default_filter();
+    agave_logger::setup_with_default_filter();
     let mut cmd_params = build_cli_parameters();
 
     if !cmd_params.skip_gossip && cmd_params.shred_version.is_none() {
@@ -943,7 +943,7 @@ pub mod test {
 
     #[test]
     fn test_dos_random() {
-        solana_logger::setup();
+        agave_logger::setup();
         let num_nodes = 1;
         let cluster =
             LocalCluster::new_with_equal_stakes(num_nodes, 100, 3, SocketAddrSpace::Unspecified);
@@ -977,7 +977,7 @@ pub mod test {
 
     #[test]
     fn test_dos_without_blockhash() {
-        solana_logger::setup();
+        agave_logger::setup();
         let num_nodes = 1;
         let cluster =
             LocalCluster::new_with_equal_stakes(num_nodes, 100, 3, SocketAddrSpace::Unspecified);
@@ -1081,7 +1081,7 @@ pub mod test {
     }
 
     fn run_dos_with_blockhash_and_payer(tpu_use_quic: bool) {
-        solana_logger::setup();
+        agave_logger::setup();
 
         // 1. Create faucet thread
         let faucet_keypair = Keypair::new();

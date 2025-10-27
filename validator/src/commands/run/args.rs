@@ -1380,7 +1380,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .args(&pub_sub_config::args())
-    .args(&json_rpc_config::args(default_args))
+    .args(&json_rpc_config::args())
     .args(&rpc_bigtable_config::args())
     .args(&send_transaction_config::args())
 }
@@ -1416,7 +1416,6 @@ mod tests {
         super::*,
         crate::cli::thread_args::thread_args,
         scopeguard::defer,
-        solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,
         std::{
             fs,
             net::{IpAddr, Ipv4Addr},
@@ -1432,6 +1431,9 @@ mod tests {
             let entrypoints = vec![];
             let known_validators = None;
 
+            let json_rpc_config =
+                crate::commands::run::args::json_rpc_config::tests::default_json_rpc_config();
+
             RunArgs {
                 identity_keypair,
                 ledger_path,
@@ -1441,14 +1443,7 @@ mod tests {
                 socket_addr_space: SocketAddrSpace::Global,
                 rpc_bootstrap_config: RpcBootstrapConfig::default(),
                 blockstore_options: BlockstoreOptions::default(),
-                json_rpc_config: JsonRpcConfig {
-                    health_check_slot_distance: 128,
-                    max_multiple_accounts: Some(100),
-                    rpc_threads: num_cpus::get(),
-                    rpc_blocking_threads: 1.max(num_cpus::get() / 4),
-                    max_request_body_size: Some(MAX_REQUEST_BODY_SIZE),
-                    ..JsonRpcConfig::default()
-                },
+                json_rpc_config,
                 pub_sub_config: PubSubConfig {
                     worker_threads: 4,
                     notification_threads: None,

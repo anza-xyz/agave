@@ -17,6 +17,7 @@ agave-unstable-api = []
 dev-context-only-utils = ["solana-core/dev-context-only-utils"]
 
 [dependencies]
+agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
@@ -39,7 +40,6 @@ solana-hard-forks = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
-solana-logger = { workspace = true }
 solana-message = { workspace = true }
 solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true }
@@ -82,6 +82,7 @@ gag = { workspace = true }
 serial_test = { workspace = true }
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }
 solana-download-utils = { workspace = true }
+solana-genesis-utils = { workspace = true }
 solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
 solana-local-cluster = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }

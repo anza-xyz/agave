@@ -273,7 +273,7 @@ mod tests {
     }
 
     fn test_aggregate_init() -> TestAggregateInitResult {
-        solana_logger::setup();
+        agave_logger::setup();
         let validator_voting_keypairs: Vec<_> = (0..TOTAL_VALIDATOR_COUNT)
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect();
@@ -688,7 +688,7 @@ mod tests {
 
     #[test]
     fn test_aggregate_from_record_failures() {
-        solana_logger::setup();
+        agave_logger::setup();
         let mut test_state = test_aggregate_init();
         let last_vote_bankhash = Hash::new_unique();
         let mut last_voted_fork_slots_record = LastVotedForkSlotsRecord {

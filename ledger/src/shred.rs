@@ -1111,7 +1111,7 @@ mod tests {
     #[test_case(true ; "last_in_slot")]
     #[test_case(false ; "not_last_in_slot")]
     fn test_should_discard_shred(is_last_in_slot: bool) {
-        solana_logger::setup();
+        agave_logger::setup();
         let mut rng = rand::thread_rng();
         let slot = 18_291;
         let shreds = make_merkle_shreds_for_tests(
@@ -1375,7 +1375,7 @@ mod tests {
     #[test_case(true; "enforce_fixed_fec_set")]
     #[test_case(false ; "do_not_enforce_fixed_fec_set")]
     fn test_should_discard_shred_fec_set_checks(enforce_fixed_fec_set: bool) {
-        solana_logger::setup();
+        agave_logger::setup();
         let mut rng = rand::thread_rng();
         let slot = 18_291;
         let shreds = make_merkle_shreds_for_tests(
@@ -1969,7 +1969,7 @@ mod tests {
 
     #[test]
     fn test_data_complete_shred_index_validation() {
-        solana_logger::setup();
+        agave_logger::setup();
         let mut rng = rand::thread_rng();
         let slot = 18_291;
         let shreds = make_merkle_shreds_for_tests(
