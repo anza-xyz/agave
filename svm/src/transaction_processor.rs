@@ -294,6 +294,33 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.execution_cost = cost;
     }
 
+    /// Updates the environments when entering a new Epoch.
+    pub fn set_environments(&mut self, new_environments: ProgramRuntimeEnvironments) {
+        // First update the parts of the environments which changed
+        if self.environments.program_runtime_v1 != new_environments.program_runtime_v1 {
+            self.environments.program_runtime_v1 = new_environments.program_runtime_v1;
+        }
+        if self.environments.program_runtime_v2 != new_environments.program_runtime_v2 {
+            self.environments.program_runtime_v2 = new_environments.program_runtime_v2;
+        }
+        // Then try to consolidate with the upcoming environments (to reuse their address)
+        if let Some(upcoming_environments) = &self
+            .epoch_boundary_preparation
+            .read()
+            .unwrap()
+            .upcoming_environments
+        {
+            if self.environments.program_runtime_v1 == upcoming_environments.program_runtime_v1 {
+                self.environments.program_runtime_v1 =
+                    upcoming_environments.program_runtime_v1.clone();
+            }
+            if self.environments.program_runtime_v2 == upcoming_environments.program_runtime_v2 {
+                self.environments.program_runtime_v2 =
+                    upcoming_environments.program_runtime_v2.clone();
+            }
+        }
+    }
+
     /// Returns the current environments depending on the given epoch
     /// Returns None if the call could result in a deadlock
     pub fn get_environments_for_epoch(&self, epoch: Epoch) -> ProgramRuntimeEnvironments {
