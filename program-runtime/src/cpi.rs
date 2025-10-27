@@ -557,13 +557,13 @@ pub fn translate_instruction_rust(
         .increase_cpi_account_info_limit
     {
         // Each account meta is 34 bytes (32 for pubkey, 1 for is_signer, 1 for is_writable)
-        let account_meta_total_bytes =
+        let account_meta_translation_cost =
             (account_metas.len().saturating_mul(size_of::<AccountMeta>()) as u64)
                 .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
                 .unwrap_or(u64::MAX);
 
         total_cu_translation_cost =
-            total_cu_translation_cost.saturating_add(account_meta_total_bytes);
+            total_cu_translation_cost.saturating_add(account_meta_translation_cost);
     }
 
     consume_compute_meter(invoke_context, total_cu_translation_cost)?;
@@ -688,14 +688,14 @@ pub fn translate_instruction_c(
         .increase_cpi_account_info_limit
     {
         // Each account meta is 34 bytes (32 for pubkey, 1 for is_signer, 1 for is_writable)
-        let account_meta_total_bytes = (ix_c
+        let account_meta_translation_cost = (ix_c
             .accounts_len
             .saturating_mul(size_of::<AccountMeta>() as u64))
         .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
         .unwrap_or(u64::MAX);
 
         total_cu_translation_cost =
-            total_cu_translation_cost.saturating_add(account_meta_total_bytes);
+            total_cu_translation_cost.saturating_add(account_meta_translation_cost);
     }
 
     consume_compute_meter(invoke_context, total_cu_translation_cost)?;
