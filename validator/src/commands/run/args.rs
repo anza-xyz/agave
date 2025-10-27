@@ -80,9 +80,14 @@ pub struct RunArgs {
 
 impl FromClapArgMatches for RunArgs {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
-        let identity_keypair =
-            keypair_of(matches, "identity").ok_or(clap::Error::with_description(
-                "The --identity <KEYPAIR> argument is required",
+        let identity_keypair = keypair_of(matches, "identity")
+            .or_else(|| {
+                std::env::var("AGAVE_IDENTITY")
+                    .ok()
+                    .and_then(|path| solana_keypair::read_keypair_file(&path).ok())
+            })
+            .ok_or(clap::Error::with_description(
+                "The --identity <KEYPAIR> argument is required (or set AGAVE_IDENTITY env var)",
                 clap::ErrorKind::ArgumentNotFound,
             ))?;
 
@@ -104,22 +109,61 @@ impl FromClapArgMatches for RunArgs {
         let logfile = matches
             .value_of("logfile")
             .map(|s| s.into())
+            .or_else(|| {
+                if std::env::var("AGAVE_CONFIG_ACTIVE").ok().as_deref() == Some("1") {
+                    std::env::var("AGAVE_LOG").ok()
+                } else { None }
+            })
             .unwrap_or_else(|| format!("agave-validator-{}.log", identity_keypair.pubkey()));
 
-        let mut entrypoints = values_t!(matches, "entrypoint", String).unwrap_or_default();
-        // sort() + dedup() to yield a vector of unique elements
-        entrypoints.sort();
-        entrypoints.dedup();
-        let entrypoints = entrypoints
-            .into_iter()
-            .map(|entrypoint| {
-                solana_net_utils::parse_host_port(&entrypoint).map_err(|err| {
-                    crate::commands::Error::Dynamic(Box::<dyn std::error::Error>::from(format!(
-                        "failed to parse entrypoint address: {err}"
-                    )))
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let entrypoints_from_cli: Result<Vec<String>, _> = values_t!(matches, "entrypoint", String);
+        let entrypoints = match entrypoints_from_cli {
+            Ok(mut eps) => {
+                eps.sort();
+                eps.dedup();
+                eps.into_iter()
+                    .map(|entrypoint| {
+                        solana_net_utils::parse_host_port(&entrypoint).map_err(|err| {
+                            crate::commands::Error::Dynamic(
+                                Box::<dyn std::error::Error>::from(format!(
+                                    "failed to parse entrypoint address: {err}"
+                                )),
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?
+            }
+            Err(_) => {
+                if std::env::var("AGAVE_CONFIG_ACTIVE").ok().as_deref() == Some("1") {
+                    let mut ok_addrs = Vec::new();
+                    let mut invalid: Vec<String> = Vec::new();
+                    if let Ok(s) = std::env::var("AGAVE_ENTRYPOINT") {
+                        let mut eps: Vec<String> = s
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                        eps.sort();
+                        eps.dedup();
+                        for ep in eps {
+                            match solana_net_utils::parse_host_port(&ep) {
+                                Ok(addr) => ok_addrs.push(addr),
+                                Err(_) => invalid.push(ep),
+                            }
+                        }
+                    }
+                    if !invalid.is_empty() {
+                        eprintln!(
+                            "Warning: ignoring invalid AGAVE_ENTRYPOINT value(s): {}",
+                            invalid.join(", ")
+                        );
+                    }
+                    ok_addrs
+                } else {
+                    Vec::new()
+                }
+            }
+        };
 
         let known_validators = validators_set(
             &identity_keypair.pubkey(),
@@ -127,6 +171,33 @@ impl FromClapArgMatches for RunArgs {
             "known_validators",
             "known validator",
         )?;
+        let known_validators = if known_validators.is_none() {
+            if std::env::var("AGAVE_CONFIG_ACTIVE").ok().as_deref() == Some("1") {
+                if let Ok(list) = std::env::var("AGAVE_KNOWN_VALIDATORS") {
+                let mut set = std::collections::HashSet::new();
+                let mut invalid: Vec<String> = Vec::new();
+                for s in list.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                    match solana_pubkey::Pubkey::from_str(s) {
+                        Ok(pk) => {
+                            set.insert(pk);
+                        }
+                        Err(_) => {
+                            invalid.push(s.to_string());
+                        }
+                    }
+                }
+                if !invalid.is_empty() {
+                    eprintln!(
+                        "Warning: ignoring invalid AGAVE_KNOWN_VALIDATORS pubkey(s): {}",
+                        invalid.join(", ")
+                    );
+                }
+                if set.is_empty() { None } else { Some(set) }
+                } else { None }
+            } else { None }
+        } else {
+            known_validators
+        };
 
         let socket_addr_space = SocketAddrSpace::new(matches.is_present("allow_private_addr"));
 
@@ -197,6 +268,17 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(
                 "Create this file if it doesn't already exist once validator initialization is \
                  complete",
+            ),
+    )
+    .arg(
+        Arg::with_name("config")
+            .long("config")
+            .value_name("FILE")
+            .takes_value(true)
+            .help(
+                "Configuration file (TOML). Supported keys: ledger (path), identity (keypair path), \
+entrypoint ([host:port,...]), known_validators ([pubkey,...]), rpc_port (u16), log (path). \
+Precedence: CLI arguments > config file > defaults.",
             ),
     )
     .arg(
@@ -1564,6 +1646,133 @@ mod tests {
                 &args[..],
             ]
             .concat(),
+        );
+    }
+
+    #[test]
+    fn verify_error_on_bad_entrypoint_host_port() {
+        let default_run_args = RunArgs::default();
+        verify_args_struct_by_command_run_is_error_with_identity_setup(
+            default_run_args,
+            vec!["--entrypoint", "not-a-host:abc"],
+        );
+    }
+
+    #[test]
+    fn verify_error_on_invalid_known_validator_pubkey_env() {
+        let default_run_args = RunArgs::default();
+        std::env::set_var("AGAVE_CONFIG_ACTIVE", "1");
+        defer! { std::env::remove_var("AGAVE_CONFIG_ACTIVE"); }
+        std::env::set_var("AGAVE_KNOWN_VALIDATORS", "invalid_pubkey");
+        defer! { std::env::remove_var("AGAVE_KNOWN_VALIDATORS"); }
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args.clone(),
+            vec![],
+            RunArgs { known_validators: None, ..default_run_args },
+        );
+    }
+
+    #[test]
+    fn verify_error_on_out_of_range_rpc_port_env() {
+        let default_run_args = RunArgs::default();
+        std::env::set_var("AGAVE_CONFIG_ACTIVE", "1");
+        defer! { std::env::remove_var("AGAVE_CONFIG_ACTIVE"); }
+        std::env::set_var("AGAVE_RPC_PORT", "0");
+        defer! { std::env::remove_var("AGAVE_RPC_PORT"); }
+          
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec![],
+            RunArgs::default(),
+        );
+    }
+
+    #[test]
+    fn verify_precedence_log_cli_over_env() {
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs { logfile: "/tmp/cli.log".to_string(), ..default_run_args.clone() };
+        std::env::set_var("AGAVE_CONFIG_ACTIVE", "1");
+        defer! { std::env::remove_var("AGAVE_CONFIG_ACTIVE"); }
+        std::env::set_var("AGAVE_LOG", "/tmp/env.log");
+        defer! { std::env::remove_var("AGAVE_LOG"); }
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--log", "/tmp/cli.log"],
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_precedence_known_validators_cli_over_env() {
+        let default_run_args = RunArgs::default();
+        std::env::set_var("AGAVE_CONFIG_ACTIVE", "1");
+        defer! { std::env::remove_var("AGAVE_CONFIG_ACTIVE"); }
+        let pk_env = solana_pubkey::Pubkey::new_unique();
+        std::env::set_var("AGAVE_KNOWN_VALIDATORS", &pk_env.to_string());
+        defer! { std::env::remove_var("AGAVE_KNOWN_VALIDATORS"); }
+        let pk_cli = solana_pubkey::Pubkey::new_unique();
+
+       
+        let expected_args = RunArgs { ..default_run_args.clone() };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--known-validator", &pk_cli.to_string()],
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_lenient_env_entrypoints_parsing() {
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+        let default_run_args = RunArgs::default();
+        std::env::set_var("AGAVE_CONFIG_ACTIVE", "1");
+        defer! { std::env::remove_var("AGAVE_CONFIG_ACTIVE"); }
+        std::env::set_var(
+            "AGAVE_ENTRYPOINT",
+            "127.0.0.1:8000, invalid, 1.2.3.4:abcd, 1.2.3.4:8001,127.0.0.1:8000",
+        );
+        defer! { std::env::remove_var("AGAVE_ENTRYPOINT"); }
+
+        let expected_args = RunArgs {
+            entrypoints: vec![
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)), 8001),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8000),
+            ],
+            ..default_run_args.clone()
+        };
+        
+        let mut sorted = expected_args.entrypoints.clone();
+        sorted.sort();
+        let expected_args = RunArgs { entrypoints: sorted, ..expected_args };
+
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec![],
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_lenient_env_known_validators_parsing() {
+        use std::collections::HashSet;
+        let default_run_args = RunArgs::default();
+        std::env::set_var("AGAVE_CONFIG_ACTIVE", "1");
+        defer! { std::env::remove_var("AGAVE_CONFIG_ACTIVE"); }
+        let good = solana_pubkey::Pubkey::new_unique();
+        std::env::set_var(
+            "AGAVE_KNOWN_VALIDATORS",
+            &format!("{}, bad, ", good),
+        );
+        defer! { std::env::remove_var("AGAVE_KNOWN_VALIDATORS"); }
+
+        let expected_args = RunArgs {
+            known_validators: Some(HashSet::from([good])),
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec![],
+            expected_args,
         );
     }
 
