@@ -274,9 +274,8 @@ mod tests {
         solana_account::{state_traits::StateMut, Account, ReadableAccount},
         solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
         solana_pubkey::Pubkey,
-        solana_runtime::{
-            bank_forks::BankForks,
-            genesis_utils::{create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs},
+        solana_runtime::genesis_utils::{
+            create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs,
         },
         solana_signer::Signer,
         solana_stake_program::stake_state,
@@ -286,20 +285,6 @@ mod tests {
             MAX_LOCKOUT_HISTORY,
         },
     };
-
-    fn new_bank_from_parent_with_bank_forks(
-        bank_forks: &RwLock<BankForks>,
-        parent: Arc<Bank>,
-        collector_id: &Pubkey,
-        slot: Slot,
-    ) -> Arc<Bank> {
-        let bank = Bank::new_from_parent(parent, collector_id, slot);
-        bank_forks
-            .write()
-            .unwrap()
-            .insert(bank)
-            .clone_without_scheduler()
-    }
 
     #[test]
     fn test_get_highest_super_majority_root() {
@@ -591,7 +576,7 @@ mod tests {
         // Create enough banks such that vote account will root slots 0 and 1
         for x in 0..33 {
             let previous_bank = bank_forks.read().unwrap().get(x).unwrap();
-            let bank = new_bank_from_parent_with_bank_forks(
+            let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
                 &Pubkey::default(),
@@ -620,7 +605,7 @@ mod tests {
 
         // Add an additional bank/vote that will root slot 2
         let bank33 = bank_forks.read().unwrap().get(33).unwrap();
-        let bank34 = new_bank_from_parent_with_bank_forks(
+        let bank34 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank33.clone(),
             &Pubkey::default(),
@@ -666,7 +651,7 @@ mod tests {
         // Add a forked bank. Because the vote for bank 33 landed in the non-ancestor, the vote
         // account's root (and thus the highest_super_majority_root) rolls back to slot 1
         let bank33 = bank_forks.read().unwrap().get(33).unwrap();
-        let _bank35 = new_bank_from_parent_with_bank_forks(
+        let _bank35 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank33,
             &Pubkey::default(),
@@ -697,7 +682,7 @@ mod tests {
         // continues normally
         for x in 35..=37 {
             let previous_bank = bank_forks.read().unwrap().get(x).unwrap();
-            let bank = new_bank_from_parent_with_bank_forks(
+            let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
                 &Pubkey::default(),
