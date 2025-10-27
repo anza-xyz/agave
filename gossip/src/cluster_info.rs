@@ -708,7 +708,7 @@ impl ClusterInfo {
                 let entry = CrdsValue::new(epoch_slots, &keypair);
                 entries.push(entry);
             }
-            epoch_slot_index += 1;
+            epoch_slot_index = epoch_slot_index.wrapping_add(1);
             reset = true;
         }
         let mut gossip_crds = self.gossip.crds.write().unwrap();
