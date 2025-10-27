@@ -2679,7 +2679,7 @@ mod tests {
         let mut missing = get_entries_to_load(&cache, 22, &[program1]);
         let mut extracted = ProgramCacheForTxBatch::new(22);
         cache.extract(&mut missing, &mut extracted, &other_envs, true, true);
-        assert!(match_slot(&extracted, &program1, 10, 22));
+        assert!(match_missing(&missing, &program1, true));
     }
 
     #[test]
