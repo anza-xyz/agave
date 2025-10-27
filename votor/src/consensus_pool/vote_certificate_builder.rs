@@ -1,6 +1,6 @@
 use {
     crate::common::{certificate_limits_and_vote_types, VoteType},
-    agave_votor_messages::consensus_message::{Certificate, CertificateMessage, VoteMessage},
+    agave_votor_messages::consensus_message::{Certificate, CertificateType, VoteMessage},
     bitvec::prelude::*,
     solana_bls_signatures::{BlsError, SignatureProjective},
     solana_signer_store::{encode_base2, encode_base3, DecodeError, EncodeError},
@@ -29,12 +29,10 @@ pub enum CertificateError {
     ValidatorDoesNotExist(u16),
 }
 
-// TODO(wen): remove dead_code when we migrate consensus_pool
-#[allow(dead_code)]
 /// A builder for creating a `CertificateMessage` by efficiently aggregating BLS signatures.
 #[derive(Clone)]
 pub struct VoteCertificateBuilder {
-    certificate: Certificate,
+    cert_type: CertificateType,
     signature: SignatureProjective,
     // For some certificates we need two bitmaps, for example, NotarizeFallback
     // certificates have Notarize and NotarizeFallback votes, so we need two bitmaps
@@ -48,11 +46,10 @@ pub struct VoteCertificateBuilder {
     input_bitmap_2: BitVec<u8, Lsb0>,
 }
 
-#[allow(dead_code)]
 impl VoteCertificateBuilder {
-    pub fn new(certificate_id: Certificate) -> Self {
+    pub fn new(cert_type: CertificateType) -> Self {
         Self {
-            certificate: certificate_id,
+            cert_type,
             signature: SignatureProjective::identity(),
             input_bitmap_1: BitVec::repeat(false, MAXIMUM_VALIDATORS),
             input_bitmap_2: BitVec::repeat(false, MAXIMUM_VALIDATORS),
@@ -65,7 +62,7 @@ impl VoteCertificateBuilder {
             return Ok(());
         }
 
-        let vote_types = certificate_limits_and_vote_types(self.certificate).1;
+        let vote_types = certificate_limits_and_vote_types(&self.cert_type).1;
         for vote_message in messages {
             let rank = vote_message.rank as usize;
             if MAXIMUM_VALIDATORS <= rank {
@@ -86,7 +83,7 @@ impl VoteCertificateBuilder {
             .aggregate_with(messages.iter().map(|m| &m.signature))?)
     }
 
-    pub fn build(self) -> Result<CertificateMessage, CertificateError> {
+    pub fn build(self) -> Result<Certificate, CertificateError> {
         let mut input_bitmap_1 = self.input_bitmap_1;
         let mut input_bitmap_2 = self.input_bitmap_2;
 
@@ -114,8 +111,8 @@ impl VoteCertificateBuilder {
             // If we only have one bitmap, use Base2 encoding
             encode_base2(&input_bitmap_1).map_err(CertificateError::EncodeError)?
         };
-        Ok(CertificateMessage {
-            certificate: self.certificate,
+        Ok(Certificate {
+            cert_type: self.cert_type,
             signature: self.signature.into(),
             bitmap,
         })
@@ -127,7 +124,7 @@ mod tests {
     use {
         super::*,
         agave_votor_messages::{
-            consensus_message::{Certificate, CertificateType, VoteMessage},
+            consensus_message::{CertificateType, VoteMessage},
             vote::Vote,
         },
         solana_bls_signatures::{
@@ -141,8 +138,8 @@ mod tests {
     #[test]
     fn test_normal_build() {
         let hash = Hash::new_unique();
-        let certificate = Certificate::new(CertificateType::NotarizeFallback, 1, Some(hash));
-        let mut builder = VoteCertificateBuilder::new(certificate);
+        let cert_type = CertificateType::NotarizeFallback(1, hash);
+        let mut builder = VoteCertificateBuilder::new(cert_type);
         // Test building the certificate from Notarize and NotarizeFallback votes
         // Create Notarize on validator 1, 4, 6
         let vote = Vote::new_notarization_vote(1, hash);
@@ -181,11 +178,9 @@ mod tests {
             .aggregate(&messages_2)
             .expect("Failed to aggregate notarization fallback votes");
 
-        let certificate_message = builder.build().expect("Failed to build certificate");
-        assert_eq!(certificate_message.certificate, certificate);
-        match decode(&certificate_message.bitmap, MAXIMUM_VALIDATORS)
-            .expect("Failed to decode bitmap")
-        {
+        let cert = builder.build().expect("Failed to build certificate");
+        assert_eq!(cert.cert_type, cert_type);
+        match decode(&cert.bitmap, MAXIMUM_VALIDATORS).expect("Failed to decode bitmap") {
             Decoded::Base3(bitmap1, bitmap2) => {
                 assert_eq!(bitmap1.len(), 8);
                 assert_eq!(bitmap2.len(), 8);
@@ -202,15 +197,13 @@ mod tests {
         }
 
         // Build a new certificate with only Notarize votes, we should get Base2 encoding
-        let mut builder = VoteCertificateBuilder::new(certificate);
+        let mut builder = VoteCertificateBuilder::new(cert_type);
         builder
             .aggregate(&messages_1)
             .expect("Failed to aggregate notarization votes");
-        let certificate_message = builder.build().expect("Failed to build certificate");
-        assert_eq!(certificate_message.certificate, certificate);
-        match decode(&certificate_message.bitmap, MAXIMUM_VALIDATORS)
-            .expect("Failed to decode bitmap")
-        {
+        let cert = builder.build().expect("Failed to build certificate");
+        assert_eq!(cert.cert_type, cert_type);
+        match decode(&cert.bitmap, MAXIMUM_VALIDATORS).expect("Failed to decode bitmap") {
             Decoded::Base2(bitmap1) => {
                 assert_eq!(bitmap1.len(), 7);
                 for i in rank_1 {
@@ -223,15 +216,13 @@ mod tests {
 
         // Base2 encoding only applies when the first bitmap is non-empty, if we build another
         // certificate with only NotarizeFallback votes, we should still get Base3 encoding
-        let mut builder = VoteCertificateBuilder::new(certificate);
+        let mut builder = VoteCertificateBuilder::new(cert_type);
         builder
             .aggregate(&messages_2)
             .expect("Failed to aggregate notarization fallback votes");
-        let certificate_message = builder.build().expect("Failed to build certificate");
-        assert_eq!(certificate_message.certificate, certificate);
-        match decode(&certificate_message.bitmap, MAXIMUM_VALIDATORS)
-            .expect("Failed to decode bitmap")
-        {
+        let cert = builder.build().expect("Failed to build certificate");
+        assert_eq!(cert.cert_type, cert_type);
+        match decode(&cert.bitmap, MAXIMUM_VALIDATORS).expect("Failed to decode bitmap") {
             Decoded::Base3(bitmap1, bitmap2) => {
                 assert_eq!(bitmap1.count_ones(), 0);
                 assert_eq!(bitmap2.len(), 8);
@@ -247,8 +238,8 @@ mod tests {
     #[test]
     fn test_builder_with_errors() {
         let hash = Hash::new_unique();
-        let certificate = Certificate::new(CertificateType::NotarizeFallback, 1, Some(hash));
-        let mut builder = VoteCertificateBuilder::new(certificate);
+        let cert_type = CertificateType::NotarizeFallback(1, hash);
+        let mut builder = VoteCertificateBuilder::new(cert_type);
 
         // Test with a rank that exceeds the maximum allowed
         let vote = Vote::new_notarization_vote(1, hash);
@@ -287,7 +278,7 @@ mod tests {
             signature: signature.into(),
             rank: 1,
         }];
-        let mut builder = VoteCertificateBuilder::new(certificate);
+        let mut builder = VoteCertificateBuilder::new(cert_type);
         builder
             .aggregate(&messages_1)
             .expect("Failed to aggregate notarization votes");
@@ -311,7 +302,7 @@ mod tests {
     fn test_certificate_verification_base2_encoding() {
         let slot = 10;
         let hash = Hash::new_unique();
-        let certificate_id = Certificate::new(CertificateType::Notarize, slot, Some(hash));
+        let cert_type = CertificateType::Notarize(slot, hash);
 
         // 1. Setup: Create keypairs and a single vote object.
         // All validators will sign the same message, resulting in a single bitmap.
@@ -334,7 +325,7 @@ mod tests {
 
         // 2. Generation: Aggregate votes and build the certificate. This will
         // use base2 encoding because it only contains one type of vote.
-        let mut builder = VoteCertificateBuilder::new(certificate_id);
+        let mut builder = VoteCertificateBuilder::new(cert_type);
         builder
             .aggregate(&vote_messages)
             .expect("Failed to aggregate votes");
@@ -359,7 +350,7 @@ mod tests {
         let hash = Hash::new_unique();
         // A NotarizeFallback certificate can be composed of both Notarize and NotarizeFallback
         // votes.
-        let certificate_id = Certificate::new(CertificateType::NotarizeFallback, slot, Some(hash));
+        let cert_type = CertificateType::NotarizeFallback(slot, hash);
 
         // 1. Setup: Create two groups of validators signing two different vote types.
         let mut all_vote_messages = Vec::new();
@@ -398,7 +389,7 @@ mod tests {
 
         // 2. Generation: Aggregate votes. Because there are two vote types, this will use
         //    base3 encoding.
-        let mut builder = VoteCertificateBuilder::new(certificate_id);
+        let mut builder = VoteCertificateBuilder::new(cert_type);
         builder
             .aggregate(&all_vote_messages)
             .expect("Failed to aggregate votes");

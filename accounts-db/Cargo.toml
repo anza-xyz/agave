@@ -104,6 +104,7 @@ tempfile = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 assert_matches = { workspace = true }
 criterion = { workspace = true }
@@ -115,7 +116,6 @@ serde_bytes = { workspace = true }
 solana-accounts-db = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-compute-budget = { workspace = true }
 solana-instruction = { workspace = true }
-solana-logger = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true, features = ["rand"] }
 solana-slot-history = { workspace = true }

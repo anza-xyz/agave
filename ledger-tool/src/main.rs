@@ -859,7 +859,7 @@ fn main() {
         unsafe { signal_hook::low_level::register(signal_hook::consts::SIGUSR1, || {}) }.unwrap();
     }
 
-    solana_logger::setup_with_default_filter();
+    agave_logger::setup_with_default_filter();
 
     let load_genesis_config_arg = load_genesis_arg();
     let accounts_db_config_args = accounts_db_args();
@@ -1786,7 +1786,7 @@ fn main() {
                     create_new_ledger(
                         &output_directory,
                         &genesis_config,
-                        agave_snapshots::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+                        solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
                         LedgerColumnOptions::default(),
                     )
                     .unwrap_or_else(|err| {

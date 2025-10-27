@@ -857,7 +857,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_normal_termination() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let bank = Arc::new(Bank::default_for_tests());
         let bank = BankWithScheduler::new(
@@ -875,7 +875,7 @@ mod tests {
 
     #[test]
     fn test_no_scheduler_termination() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let bank = Arc::new(Bank::default_for_tests());
         let bank = BankWithScheduler::new_without_scheduler(bank);
@@ -887,7 +887,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_termination_from_drop() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let bank = Arc::new(Bank::default_for_tests());
         let bank = BankWithScheduler::new(
@@ -899,7 +899,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_pause() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let bank = Arc::new(crate::bank::tests::create_simple_test_bank(42));
         let bank = BankWithScheduler::new(
@@ -920,7 +920,7 @@ mod tests {
     }
 
     fn do_test_schedule_execution(should_succeed: bool) {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let GenesisConfigInfo {
             genesis_config,

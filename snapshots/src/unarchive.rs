@@ -4,12 +4,14 @@ use {
         ArchiveFormat, ArchiveFormatDecompressor,
     },
     agave_fs::buffered_reader,
+    bzip2::bufread::BzDecoder,
     crossbeam_channel::Sender,
     std::{
         fs,
-        io::{self, BufRead},
+        io::{self, BufRead, BufReader},
         path::{Path, PathBuf},
         thread::{self, JoinHandle},
+        time::Instant,
     },
 };
 
@@ -47,6 +49,26 @@ pub fn streaming_unarchive_snapshot(
                 .map_err(|err| UnpackError::Unpack(Box::new(err), snapshot_archive_path))
         })
         .unwrap()
+}
+
+pub fn unpack_genesis_archive(
+    archive_filename: &Path,
+    destination_dir: &Path,
+    max_genesis_archive_unpacked_size: u64,
+) -> Result<(), UnpackError> {
+    log::info!("Extracting {archive_filename:?}...");
+    let extract_start = Instant::now();
+
+    fs::create_dir_all(destination_dir)?;
+    let tar_bz2 = fs::File::open(archive_filename)?;
+    let tar = BzDecoder::new(BufReader::new(tar_bz2));
+    hardened_unpack::unpack_genesis(tar, destination_dir, max_genesis_archive_unpacked_size)?;
+    log::info!(
+        "Extracted {:?} in {:?}",
+        archive_filename,
+        Instant::now().duration_since(extract_start)
+    );
+    Ok(())
 }
 
 fn decompressed_tar_reader(

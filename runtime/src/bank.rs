@@ -5862,6 +5862,20 @@ impl Bank {
         )
     }
 
+    pub fn new_from_parent_with_bank_forks(
+        bank_forks: &RwLock<BankForks>,
+        parent: Arc<Bank>,
+        collector_id: &Pubkey,
+        slot: Slot,
+    ) -> Arc<Self> {
+        let bank = Bank::new_from_parent(parent, collector_id, slot);
+        bank_forks
+            .write()
+            .unwrap()
+            .insert(bank)
+            .clone_without_scheduler()
+    }
+
     /// Prepare a transaction batch from a list of legacy transactions. Used for tests only.
     #[cfg(feature = "dev-context-only-utils")]
     pub fn prepare_batch_for_tests(

@@ -110,6 +110,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
 solana-genesis-config = { workspace = true }
+solana-genesis-utils = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
 solana-gossip = { workspace = true, features = ["agave-unstable-api"] }
 solana-hard-forks = { workspace = true }
@@ -189,6 +190,7 @@ shaq = { workspace = true }
 sysctl = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 bencher = { workspace = true }
 criterion = { workspace = true }
@@ -205,7 +207,6 @@ solana-core = { path = ".", features = ["agave-unstable-api", "dev-context-only-
 solana-cost-model = { workspace = true, features = ["dev-context-only-utils"] }
 solana-keypair = { workspace = true }
 solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
-solana-logger = { workspace = true }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 solana-poh = { workspace = true, features = ["dev-context-only-utils"] }
 solana-program-binaries = { workspace = true }

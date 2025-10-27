@@ -1,10 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     agave_feature_set::{alpenglow, raise_cpi_nesting_limit_to_8, FeatureSet, FEATURE_NAMES},
-    agave_snapshots::{
-        hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, snapshot_config::SnapshotConfig,
-        SnapshotInterval,
-    },
+    agave_snapshots::{snapshot_config::SnapshotConfig, SnapshotInterval},
     base64::{prelude::BASE64_STANDARD, Engine},
     crossbeam_channel::Receiver,
     log::*,
@@ -24,6 +21,7 @@ use {
     },
     solana_epoch_schedule::EpochSchedule,
     solana_fee_calculator::FeeRateGovernor,
+    solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     solana_geyser_plugin_manager::{
         geyser_plugin_manager::GeyserPluginManager, GeyserPluginManagerRequest,
     },

@@ -759,7 +759,7 @@ mod tests {
 
     #[test]
     fn test_banking_stage_tick() {
-        solana_logger::setup();
+        agave_logger::setup();
         let GenesisConfigInfo {
             mut genesis_config, ..
         } = create_genesis_config(2);
@@ -834,7 +834,7 @@ mod tests {
 
     #[test]
     fn test_banking_stage_entries_only_central_scheduler() {
-        solana_logger::setup();
+        agave_logger::setup();
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -960,7 +960,7 @@ mod tests {
 
     #[test]
     fn test_banking_stage_entryfication() {
-        solana_logger::setup();
+        agave_logger::setup();
         // In this attack we'll demonstrate that a verifier can interpret the ledger
         // differently if either the server doesn't signal the ledger to add an
         // Entry OR if the verifier tries to parallelize across multiple Entries.
@@ -1072,7 +1072,7 @@ mod tests {
 
     #[test]
     fn test_bank_record_transactions() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let GenesisConfigInfo {
             genesis_config,
@@ -1134,7 +1134,7 @@ mod tests {
 
     #[test]
     fn test_vote_storage_full_send() {
-        solana_logger::setup();
+        agave_logger::setup();
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,

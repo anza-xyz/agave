@@ -26,3 +26,4 @@ solana-download-utils = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-hash = { workspace = true }
 solana-rpc-client = { workspace = true }
+thiserror = { workspace = true }
