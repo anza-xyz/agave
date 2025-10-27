@@ -319,6 +319,9 @@ pub fn execute(
     if let Ok(bins) = value_t!(matches, "accounts_index_bins", usize) {
         accounts_index_config.bins = Some(bins);
     }
+    if let Ok(estimated_accounts) = value_t!(matches, "estimated_accounts", usize) {
+        accounts_index_config.estimated_accounts = Some(estimated_accounts);
+    }
 
     accounts_index_config.index_limit_mb = if !matches.is_present("enable_accounts_disk_index") {
         IndexLimitMb::InMemOnly

@@ -176,8 +176,20 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let bin_calc = PubkeyBinCalculator24::new(storage.bins);
         let lowest_pubkey = bin_calc.lowest_pubkey_from_bin(bin);
         let highest_pubkey = bin_calc.highest_pubkey_from_bin(bin);
+
+        // Pre-allocate HashMap capacity based on estimated accounts divided by bins
+        let map_internal = if let Some(estimated_total) = storage.estimated_accounts {
+            let capacity_per_bin = estimated_total / storage.bins;
+            RwLock::new(HashMap::with_capacity_and_hasher(
+                capacity_per_bin,
+                ahash::RandomState::default(),
+            ))
+        } else {
+            RwLock::default()
+        };
+
         Self {
-            map_internal: RwLock::default(),
+            map_internal,
             storage: Arc::clone(storage),
             _bin: bin,
             lowest_pubkey,
