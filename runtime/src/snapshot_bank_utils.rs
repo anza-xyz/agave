@@ -25,21 +25,24 @@ use {
         snapshot_utils::{
             self, get_highest_bank_snapshot, get_highest_full_snapshot_archive_info,
             get_highest_incremental_snapshot_archive_info, rebuild_storages_from_snapshot_dir,
-            verify_and_unarchive_snapshots, BankSnapshotInfo, SnapshotError,
-            StorageAndNextAccountsFileId, UnarchivedSnapshots, VerifyEpochStakesError,
-            VerifySlotDeltasError, VerifySlotHistoryError,
+            verify_and_unarchive_snapshots, BankSnapshotInfo, StorageAndNextAccountsFileId,
+            UnarchivedSnapshots,
         },
         status_cache,
     },
+    agave_fs::dirs,
     agave_snapshots::{
-        snapshot_config::SnapshotConfig, snapshot_hash::SnapshotHash, ArchiveFormat,
-        SnapshotVersion,
+        error::{
+            SnapshotError, VerifyEpochStakesError, VerifySlotDeltasError, VerifySlotHistoryError,
+        },
+        snapshot_config::SnapshotConfig,
+        snapshot_hash::SnapshotHash,
+        ArchiveFormat, SnapshotVersion,
     },
     log::*,
     solana_accounts_db::{
         accounts_db::{AccountsDbConfig, AtomicAccountsFileId},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
-        utils::remove_dir_contents,
     },
     solana_clock::{Epoch, Slot},
     solana_genesis_config::GenesisConfig,
@@ -61,7 +64,7 @@ pub fn bank_fields_from_snapshot_archives(
     full_snapshot_archives_dir: impl AsRef<Path>,
     incremental_snapshot_archives_dir: impl AsRef<Path>,
     accounts_db_config: &AccountsDbConfig,
-) -> snapshot_utils::Result<BankFieldsToDeserialize> {
+) -> agave_snapshots::Result<BankFieldsToDeserialize> {
     let full_snapshot_archive_info =
         get_highest_full_snapshot_archive_info(&full_snapshot_archives_dir).ok_or_else(|| {
             SnapshotError::NoSnapshotArchives(full_snapshot_archives_dir.as_ref().to_path_buf())
@@ -104,7 +107,7 @@ fn bank_fields_from_snapshots(
     incremental_snapshot_unpacked_snapshots_dir_and_version: Option<
         &UnpackedSnapshotsDirAndVersion,
     >,
-) -> snapshot_utils::Result<BankFieldsToDeserialize> {
+) -> agave_snapshots::Result<BankFieldsToDeserialize> {
     let (snapshot_version, snapshot_root_paths) = snapshot_version_and_root_paths(
         full_snapshot_unpacked_snapshots_dir_and_version,
         incremental_snapshot_unpacked_snapshots_dir_and_version,
@@ -142,7 +145,7 @@ pub fn bank_from_snapshot_archives(
     accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> snapshot_utils::Result<Bank> {
+) -> agave_snapshots::Result<Bank> {
     info!(
         "Loading bank from full snapshot archive: {}, and incremental snapshot archive: {:?}",
         full_snapshot_archive_info.path().display(),
@@ -285,7 +288,7 @@ pub fn bank_from_latest_snapshot_archives(
     accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> snapshot_utils::Result<(
+) -> agave_snapshots::Result<(
     Bank,
     FullSnapshotArchiveInfo,
     Option<IncrementalSnapshotArchiveInfo>,
@@ -337,7 +340,7 @@ pub fn bank_from_snapshot_dir(
     accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> snapshot_utils::Result<Bank> {
+) -> agave_snapshots::Result<Bank> {
     info!(
         "Loading bank from snapshot dir: {}",
         bank_snapshot.snapshot_dir.display()
@@ -346,7 +349,7 @@ pub fn bank_from_snapshot_dir(
     // Clear the contents of the account paths run directories.  When constructing the bank, the appendvec
     // files will be extracted from the snapshot hardlink directories into these run/ directories.
     for path in account_paths {
-        remove_dir_contents(path);
+        dirs::remove_dir_contents(path);
     }
 
     let next_append_vec_id = Arc::new(AtomicAccountsFileId::new(0));
@@ -435,7 +438,7 @@ pub fn bank_from_latest_snapshot_dir(
     accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> snapshot_utils::Result<Bank> {
+) -> agave_snapshots::Result<Bank> {
     let bank_snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).ok_or_else(|| {
         SnapshotError::NoSnapshotSlotDir(bank_snapshots_dir.as_ref().to_path_buf())
     })?;
@@ -460,7 +463,7 @@ fn verify_bank_against_expected_slot_hash(
     bank: &Bank,
     snapshot_slot: Slot,
     snapshot_hash: SnapshotHash,
-) -> snapshot_utils::Result<()> {
+) -> agave_snapshots::Result<()> {
     let bank_slot = bank.slot();
     if bank_slot != snapshot_slot {
         return Err(SnapshotError::MismatchedSlot(bank_slot, snapshot_slot));
@@ -481,7 +484,7 @@ fn snapshot_version_and_root_paths(
     incremental_snapshot_unpacked_snapshots_dir_and_version: Option<
         &UnpackedSnapshotsDirAndVersion,
     >,
-) -> snapshot_utils::Result<(SnapshotVersion, SnapshotRootPaths)> {
+) -> agave_snapshots::Result<(SnapshotVersion, SnapshotRootPaths)> {
     let (full_snapshot_version, full_snapshot_root_paths) =
         verify_unpacked_snapshots_dir_and_version(
             full_snapshot_unpacked_snapshots_dir_and_version,
@@ -680,7 +683,7 @@ pub fn bank_to_full_snapshot_archive(
     full_snapshot_archives_dir: impl AsRef<Path>,
     incremental_snapshot_archives_dir: impl AsRef<Path>,
     archive_format: ArchiveFormat,
-) -> snapshot_utils::Result<FullSnapshotArchiveInfo> {
+) -> agave_snapshots::Result<FullSnapshotArchiveInfo> {
     let snapshot_version = snapshot_version.unwrap_or_default();
     let temp_bank_snapshots_dir = tempfile::tempdir_in(bank_snapshots_dir)?;
     bank_to_full_snapshot_archive_with(
@@ -706,7 +709,7 @@ fn bank_to_full_snapshot_archive_with(
     incremental_snapshot_archives_dir: impl AsRef<Path>,
     archive_format: ArchiveFormat,
     should_flush_and_hard_link_storages: bool,
-) -> snapshot_utils::Result<FullSnapshotArchiveInfo> {
+) -> agave_snapshots::Result<FullSnapshotArchiveInfo> {
     assert!(bank.is_complete());
     // set accounts-db's latest full snapshot slot here to ensure zero lamport
     // accounts are handled properly.
@@ -758,7 +761,7 @@ pub fn bank_to_incremental_snapshot_archive(
     full_snapshot_archives_dir: impl AsRef<Path>,
     incremental_snapshot_archives_dir: impl AsRef<Path>,
     archive_format: ArchiveFormat,
-) -> snapshot_utils::Result<IncrementalSnapshotArchiveInfo> {
+) -> agave_snapshots::Result<IncrementalSnapshotArchiveInfo> {
     let snapshot_version = snapshot_version.unwrap_or_default();
 
     assert!(bank.is_complete());
@@ -811,7 +814,6 @@ mod tests {
         super::*,
         crate::{
             bank::{tests::create_simple_test_bank, BankTestConfig},
-            bank_forks::BankForks,
             snapshot_utils::{
                 clean_orphaned_account_snapshot_dirs, create_tmp_accounts_dir_for_tests,
                 get_bank_snapshot_dir, get_bank_snapshots, get_highest_bank_snapshot,
@@ -823,6 +825,7 @@ mod tests {
             },
             status_cache::Status,
         },
+        agave_snapshots::error::VerifySlotDeltasError,
         semver::Version,
         solana_accounts_db::{
             accounts_db::{MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING},
@@ -836,7 +839,7 @@ mod tests {
         solana_transaction::sanitized::SanitizedTransaction,
         std::{
             fs, slice,
-            sync::{atomic::Ordering, Arc, RwLock},
+            sync::{atomic::Ordering, Arc},
         },
         test_case::test_case,
     };
@@ -870,20 +873,6 @@ mod tests {
         }
 
         Arc::into_inner(bank).unwrap()
-    }
-
-    fn new_bank_from_parent_with_bank_forks(
-        bank_forks: &RwLock<BankForks>,
-        parent: Arc<Bank>,
-        collector_id: &Pubkey,
-        slot: Slot,
-    ) -> Arc<Bank> {
-        let bank = Bank::new_from_parent(parent, collector_id, slot);
-        bank_forks
-            .write()
-            .unwrap()
-            .insert(bank)
-            .clone_without_scheduler()
     }
 
     /// Test roundtrip of bank to a full snapshot, then back again.  This test creates the simplest
@@ -971,7 +960,7 @@ mod tests {
         // Create a new slot, and invalidate the account for key1 in slot0
         let slot = 1;
         let bank1 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1
             .transfer(LAMPORTS_PER_SOL, &key3, &key1.pubkey())
             .unwrap();
@@ -1040,7 +1029,7 @@ mod tests {
 
         let slot = 1;
         let bank1 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1
             .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
@@ -1054,7 +1043,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank2 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         bank2
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1062,7 +1051,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank3 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
         bank3
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1070,7 +1059,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank4 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
         bank4
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1145,7 +1134,7 @@ mod tests {
 
         let slot = 1;
         let bank1 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1
             .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
@@ -1176,7 +1165,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank2 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         bank2
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1184,7 +1173,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank3 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
         bank3
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1192,7 +1181,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank4 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
         bank4
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1252,7 +1241,7 @@ mod tests {
 
         let slot = 1;
         let bank1 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1283,7 +1272,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank2 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         bank2
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1291,7 +1280,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank3 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
         bank3
             .transfer(2 * LAMPORTS_PER_SOL, &mint_keypair, &key2.pubkey())
             .unwrap();
@@ -1299,7 +1288,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank4 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
         bank4
             .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
@@ -1390,7 +1379,7 @@ mod tests {
 
         let slot = 1;
         let bank1 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1
             .transfer(lamports_to_transfer, &key2, &key1.pubkey())
             .unwrap();
@@ -1409,7 +1398,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank2 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         let blockhash = bank2.last_blockhash();
         let tx = SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
             &key1,
@@ -1468,7 +1457,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank3 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
         // Update Account2 so that it no longer holds a reference to slot2
         bank3
             .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
@@ -1477,7 +1466,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank4 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
         bank4.fill_bank_with_ticks_for_tests();
 
         // Ensure account1 has been cleaned/purged from everywhere
@@ -1542,7 +1531,7 @@ mod tests {
 
         let slot = 1;
         let bank1 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1.fill_bank_with_ticks_for_tests();
 
         let all_snapshots_dir = tempfile::TempDir::new().unwrap();
@@ -1561,7 +1550,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank2 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         bank2
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -1863,7 +1852,7 @@ mod tests {
 
         let slot = 1;
         let bank1 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1
             .transfer(lamports_to_transfer, &key2, &key1.pubkey())
             .unwrap();
@@ -1879,7 +1868,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank2 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         let blockhash = bank2.last_blockhash();
         let tx = SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
             &key1,
@@ -1902,7 +1891,7 @@ mod tests {
 
         let slot = slot + 1;
         let bank3 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
         // Update Account2 so that it no longer holds a reference to slot2
         bank3
             .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
@@ -2006,7 +1995,7 @@ mod tests {
         // In slot 1 transfer from key1 to key2, such that key1 becomes zero lamport
         let slot = 1;
         let bank1 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1.transfer(lamports, &key1, &key2.pubkey()).unwrap();
         assert_eq!(bank1.get_balance(&key1.pubkey()), 0,);
         bank1.fill_bank_with_ticks_for_tests();
@@ -2014,7 +2003,7 @@ mod tests {
         // In slot 2 transfer into key2 to mint such that key2 becomes zero lamport
         let slot = slot + 1;
         let bank2 =
-            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+            Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         bank2.transfer(lamports * 2, &key2, &mint.pubkey()).unwrap();
         bank2.fill_bank_with_ticks_for_tests();
         assert_eq!(bank2.get_balance(&key2.pubkey()), 0);

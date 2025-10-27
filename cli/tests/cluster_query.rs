@@ -20,7 +20,7 @@ use {
 #[test_case(None; "base")]
 #[test_case(Some(1_000_000); "with_compute_unit_price")]
 fn test_ping(compute_unit_price: Option<u64>) {
-    solana_logger::setup();
+    agave_logger::setup();
     let fee = FeeStructure::default().get_max_fee(1, 0);
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();

@@ -1,7 +1,6 @@
 use {
     crate::LEDGER_TOOL_DIRECTORY,
     agave_snapshots::{
-        hardened_unpack::open_genesis_config,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
         snapshot_hash::StartingSnapshotHashes,
     },
@@ -14,6 +13,7 @@ use {
     solana_clock::Slot,
     solana_core::validator::BlockVerificationMethod,
     solana_genesis_config::GenesisConfig,
+    solana_genesis_utils::open_genesis_config,
     solana_geyser_plugin_manager::geyser_plugin_service::{
         GeyserPluginService, GeyserPluginServiceError,
     },

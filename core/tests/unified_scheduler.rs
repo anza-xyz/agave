@@ -51,7 +51,7 @@ use {
 
 #[test]
 fn test_scheduler_waited_by_drop_bank_service() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     static LOCK_TO_STALL: Mutex<()> = Mutex::new(());
 
@@ -206,7 +206,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
 
 #[test]
 fn test_scheduler_producing_blocks() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let GenesisConfigInfo {
         genesis_config,
