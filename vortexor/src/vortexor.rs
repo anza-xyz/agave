@@ -119,7 +119,7 @@ impl Vortexor {
         cancel: CancellationToken,
     ) -> Self {
         let mut quic_server_params = QuicServerParams {
-            max_connections_per_peer,
+            max_connections_per_staked_peer: max_connections_per_peer,
             max_staked_connections: max_tpu_staked_connections,
             max_unstaked_connections: max_tpu_unstaked_connections,
             max_streams_per_ms,

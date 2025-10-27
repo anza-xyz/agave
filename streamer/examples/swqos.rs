@@ -118,7 +118,7 @@ async fn main() -> anyhow::Result<()> {
         sender,
         staked_nodes,
         QuicServerParams {
-            max_connections_per_peer: cli.max_connections_per_peer,
+            max_connections_per_staked_peer: cli.max_connections_per_peer,
             ..QuicServerParams::default()
         },
         cancel.clone(),
