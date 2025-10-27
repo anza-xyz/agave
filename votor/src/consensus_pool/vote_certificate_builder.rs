@@ -3,7 +3,7 @@ use {
     agave_votor_messages::consensus_message::{Certificate, CertificateMessage, VoteMessage},
     bitvec::prelude::*,
     solana_bls_signatures::{BlsError, SignatureProjective},
-    solana_signer_store::{decode, encode_base2, encode_base3, DecodeError, Decoded, EncodeError},
+    solana_signer_store::{encode_base2, encode_base3, DecodeError, EncodeError},
     thiserror::Error,
 };
 
@@ -46,31 +46,6 @@ pub struct VoteCertificateBuilder {
     // will be empty.
     input_bitmap_1: BitVec<u8, Lsb0>,
     input_bitmap_2: BitVec<u8, Lsb0>,
-}
-
-impl TryFrom<CertificateMessage> for VoteCertificateBuilder {
-    type Error = CertificateError;
-
-    fn try_from(message: CertificateMessage) -> Result<Self, Self::Error> {
-        let projective_signature = SignatureProjective::try_from(message.signature)?;
-        let decoded_bitmap =
-            decode(&message.bitmap, MAXIMUM_VALIDATORS).map_err(CertificateError::DecodeError)?;
-        let (mut input_bitmap_1, mut input_bitmap_2) = match decoded_bitmap {
-            Decoded::Base2(bitmap) => (
-                bitmap,
-                BitVec::<u8, Lsb0>::repeat(false, MAXIMUM_VALIDATORS),
-            ),
-            Decoded::Base3(bitmap1, bitmap2) => (bitmap1, bitmap2),
-        };
-        input_bitmap_1.resize(MAXIMUM_VALIDATORS, false);
-        input_bitmap_2.resize(MAXIMUM_VALIDATORS, false);
-        Ok(VoteCertificateBuilder {
-            certificate: message.certificate,
-            signature: projective_signature,
-            input_bitmap_1,
-            input_bitmap_2,
-        })
-    }
 }
 
 #[allow(dead_code)]
@@ -160,6 +135,7 @@ mod tests {
             Signature as BLSSignature, SignatureProjective, VerifiablePubkey,
         },
         solana_hash::Hash,
+        solana_signer_store::{decode, Decoded},
     };
 
     #[test]
@@ -327,19 +303,6 @@ mod tests {
             builder.build(),
             Err(CertificateError::EncodeError(
                 EncodeError::InvalidBitCombination
-            ))
-        );
-
-        // Test decoding error
-        let corrupt_certificate_message = CertificateMessage {
-            certificate: Certificate::new(CertificateType::NotarizeFallback, 1, Some(hash)),
-            signature: signature.into(),
-            bitmap: vec![0xFF; 100], // Corrupted bitmap
-        };
-        assert_eq!(
-            VoteCertificateBuilder::try_from(corrupt_certificate_message).err(),
-            Some(CertificateError::DecodeError(
-                DecodeError::UnsupportedEncoding
             ))
         );
     }
