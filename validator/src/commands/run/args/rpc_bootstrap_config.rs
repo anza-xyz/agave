@@ -53,10 +53,19 @@ impl FromClapArgMatches for RpcBootstrapConfig {
 }
 
 pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
-    vec![Arg::with_name("no_genesis_fetch")
-        .long("no-genesis-fetch")
-        .takes_value(false)
-        .help("Do not fetch genesis from the cluster")]
+    vec![
+        Arg::with_name("no_genesis_fetch")
+            .long("no-genesis-fetch")
+            .takes_value(false)
+            .help("Do not fetch genesis from the cluster"),
+        Arg::with_name("no_snapshot_fetch")
+            .long("no-snapshot-fetch")
+            .takes_value(false)
+            .help(
+                "Do not attempt to fetch a snapshot from the cluster, start from a local snapshot \
+                 if present",
+            ),
+    ]
 }
 
 #[cfg(test)]

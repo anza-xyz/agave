@@ -225,15 +225,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Rendezvous with the cluster at this gossip entrypoint"),
     )
     .arg(
-        Arg::with_name("no_snapshot_fetch")
-            .long("no-snapshot-fetch")
-            .takes_value(false)
-            .help(
-                "Do not attempt to fetch a snapshot from the cluster, start from a local snapshot \
-                 if present",
-            ),
-    )
-    .arg(
         Arg::with_name("no_voting")
             .long("no-voting")
             .takes_value(false)
