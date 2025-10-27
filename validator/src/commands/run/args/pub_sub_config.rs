@@ -54,7 +54,10 @@ pub(crate) fn args<'a, 'b>(test_validator: bool) -> Vec<Arg<'a, 'b>> {
             "The maximum number of threads that RPC PubSub will use for generating notifications. \
              0 will disable RPC PubSub notifications",
         );
-    let (rpc_pubsub_notification_threads, strings) = if test_validator {
+    let (
+        rpc_pubsub_notification_threads,
+        [default_rpc_pubsub_max_active_subscriptions, default_rpc_pubsub_queue_capacity_items, default_rpc_pubsub_queue_capacity_bytes],
+    ) = if test_validator {
         (
             rpc_pubsub_notification_threads.default_value(&DEFAULT_TEST_RPC_PUBSUB_WORKER_THREADS),
             [
@@ -79,8 +82,6 @@ pub(crate) fn args<'a, 'b>(test_validator: bool) -> Vec<Arg<'a, 'b>> {
             ],
         )
     };
-    let [default_rpc_pubsub_max_active_subscriptions, default_rpc_pubsub_queue_capacity_items, default_rpc_pubsub_queue_capacity_bytes] =
-        strings;
 
     vec![
         Arg::with_name("rpc_pubsub_enable_block_subscription")
