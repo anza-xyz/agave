@@ -584,19 +584,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("rocksdb_perf_sample_interval")
-            .hidden(hidden_unless_forced())
-            .long("rocksdb-perf-sample-interval")
-            .value_name("ROCKS_PERF_SAMPLE_INTERVAL")
-            .takes_value(true)
-            .validator(is_parsable::<usize>)
-            .default_value(&default_args.rocksdb_perf_sample_interval)
-            .help(
-                "Controls how often RocksDB read/write performance samples are collected. Perf \
-                 samples are collected in 1 / ROCKS_PERF_SAMPLE_INTERVAL sampling rate.",
-            ),
-    )
-    .arg(
         Arg::with_name("skip_startup_ledger_verification")
             .long("skip-startup-ledger-verification")
             .takes_value(false)

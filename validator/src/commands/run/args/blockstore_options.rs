@@ -4,7 +4,7 @@ use {
         commands::{FromClapArgMatches, Result},
     },
     clap::{value_t, Arg, ArgMatches},
-    solana_clap_utils::hidden_unless_forced,
+    solana_clap_utils::{hidden_unless_forced, input_validators::is_parsable},
     solana_ledger::blockstore_options::{
         AccessType, BlockstoreCompressionType, BlockstoreOptions, BlockstoreRecoveryMode,
         LedgerColumnOptions,
@@ -13,6 +13,7 @@ use {
 };
 
 const DEFAULT_ROCKSDB_LEDGER_COMPRESSION: &str = "none";
+const DEFAULT_ROCKSDB_PERF_SAMPLE_INTERVAL: &str = "0";
 
 impl FromClapArgMatches for BlockstoreOptions {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
@@ -79,6 +80,17 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .help(
                 "The compression algorithm that is used to compress transaction status data. \
                  Turning on compression can save ~10% of the ledger size.",
+            ),
+        Arg::with_name("rocksdb_perf_sample_interval")
+            .hidden(hidden_unless_forced())
+            .long("rocksdb-perf-sample-interval")
+            .value_name("ROCKS_PERF_SAMPLE_INTERVAL")
+            .takes_value(true)
+            .validator(is_parsable::<usize>)
+            .default_value(DEFAULT_ROCKSDB_PERF_SAMPLE_INTERVAL)
+            .help(
+                "Controls how often RocksDB read/write performance samples are collected. Perf \
+                 samples are collected in 1 / ROCKS_PERF_SAMPLE_INTERVAL sampling rate.",
             ),
     ]
 }
@@ -233,5 +245,10 @@ mod tests {
     #[test]
     fn test_default_rocksdb_ledger_compression_unchanged() {
         assert_eq!(DEFAULT_ROCKSDB_LEDGER_COMPRESSION, "none");
+    }
+
+    #[test]
+    fn test_default_rocksdb_perf_sample_interval_unchanged() {
+        assert_eq!(DEFAULT_ROCKSDB_PERF_SAMPLE_INTERVAL, "0");
     }
 }
