@@ -1,8 +1,5 @@
 use {
-    crate::{
-        cli::thread_args::{RocksdbFlushThreadsArg, ThreadArg},
-        commands::{FromClapArgMatches, Result},
-    },
+    crate::commands::{FromClapArgMatches, Result},
     clap::{value_t, Arg, ArgMatches},
     solana_clap_utils::{
         hidden_unless_forced,
@@ -17,11 +14,18 @@ use {
 
 static VALID_RANGE_ROCKSDB_COMPACTION_THREADS: LazyLock<RangeInclusive<usize>> =
     LazyLock::new(|| RangeInclusive::new(1, num_cpus::get()));
+static VALID_RANGE_ROCKSDB_FLUSH_THREADS: LazyLock<RangeInclusive<usize>> =
+    LazyLock::new(|| RangeInclusive::new(1, num_cpus::get()));
 
 const DEFAULT_ROCKSDB_LEDGER_COMPRESSION: &str = "none";
 const DEFAULT_ROCKSDB_PERF_SAMPLE_INTERVAL: &str = "0";
 static DEFAULT_ROCKSDB_COMPACTION_THREADS: LazyLock<String> = LazyLock::new(|| {
     solana_ledger::blockstore::default_num_compaction_threads()
+        .get()
+        .to_string()
+});
+static DEFAULT_ROCKSDB_FLUSH_THREADS: LazyLock<String> = LazyLock::new(|| {
+    solana_ledger::blockstore::default_num_flush_threads()
         .get()
         .to_string()
 });
@@ -55,7 +59,7 @@ impl FromClapArgMatches for BlockstoreOptions {
         let rocksdb_compaction_threads =
             value_t!(matches, "rocksdb_compaction_threads", NonZeroUsize)?;
 
-        let rocksdb_flush_threads = value_t!(matches, RocksdbFlushThreadsArg::NAME, NonZeroUsize)?;
+        let rocksdb_flush_threads = value_t!(matches, "rocksdb_flush_threads", NonZeroUsize)?;
 
         Ok(BlockstoreOptions {
             recovery_mode,
@@ -111,6 +115,14 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .validator(|num| is_within_range(num, VALID_RANGE_ROCKSDB_COMPACTION_THREADS.clone()))
             .hidden(hidden_unless_forced())
             .help("Number of threads to use for rocksdb (Blockstore) compactions"),
+        Arg::with_name("rocksdb_flush_threads")
+            .long("rocksdb-flush-threads")
+            .takes_value(true)
+            .value_name("NUMBER")
+            .default_value(&DEFAULT_ROCKSDB_FLUSH_THREADS)
+            .validator(|num| is_within_range(num, VALID_RANGE_ROCKSDB_FLUSH_THREADS.clone()))
+            .hidden(hidden_unless_forced())
+            .help("Number of threads to use for rocksdb (Blockstore) memtable flushes"),
     ]
 }
 
@@ -283,6 +295,22 @@ mod tests {
     fn test_valid_range_rocksdb_compaction_threads_unchanged() {
         assert_eq!(
             *VALID_RANGE_ROCKSDB_COMPACTION_THREADS,
+            RangeInclusive::new(1, num_cpus::get()),
+        );
+    }
+
+    #[test]
+    fn test_default_rocksdb_flush_threads_unchanged() {
+        assert_eq!(
+            *DEFAULT_ROCKSDB_FLUSH_THREADS,
+            (num_cpus::get() / 4).max(1).to_string()
+        );
+    }
+
+    #[test]
+    fn test_valid_range_rocksdb_flush_threads_unchanged() {
+        assert_eq!(
+            *VALID_RANGE_ROCKSDB_FLUSH_THREADS,
             RangeInclusive::new(1, num_cpus::get()),
         );
     }

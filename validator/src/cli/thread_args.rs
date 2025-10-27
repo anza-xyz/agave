@@ -19,7 +19,6 @@ pub struct DefaultThreadArgs {
     pub rayon_global_threads: String,
     pub replay_forks_threads: String,
     pub replay_transactions_threads: String,
-    pub rocksdb_flush_threads: String,
     pub tpu_transaction_forward_receive_threads: String,
     pub tpu_transaction_receive_threads: String,
     pub tpu_vote_transaction_receive_threads: String,
@@ -43,7 +42,6 @@ impl Default for DefaultThreadArgs {
             replay_forks_threads: ReplayForksThreadsArg::bounded_default().to_string(),
             replay_transactions_threads: ReplayTransactionsThreadsArg::bounded_default()
                 .to_string(),
-            rocksdb_flush_threads: RocksdbFlushThreadsArg::bounded_default().to_string(),
             tpu_transaction_forward_receive_threads:
                 TpuTransactionForwardReceiveThreadArgs::bounded_default().to_string(),
             tpu_transaction_receive_threads: TpuTransactionReceiveThreads::bounded_default()
@@ -67,7 +65,6 @@ pub fn thread_args<'a>(defaults: &DefaultThreadArgs) -> Vec<Arg<'_, 'a>> {
         new_thread_arg::<RayonGlobalThreadsArg>(&defaults.rayon_global_threads),
         new_thread_arg::<ReplayForksThreadsArg>(&defaults.replay_forks_threads),
         new_thread_arg::<ReplayTransactionsThreadsArg>(&defaults.replay_transactions_threads),
-        new_thread_arg::<RocksdbFlushThreadsArg>(&defaults.rocksdb_flush_threads),
         new_thread_arg::<TpuTransactionForwardReceiveThreadArgs>(
             &defaults.tpu_transaction_forward_receive_threads,
         ),
@@ -310,17 +307,6 @@ impl ThreadArg for ReplayTransactionsThreadsArg {
 
     fn default() -> usize {
         num_cpus::get()
-    }
-}
-
-pub struct RocksdbFlushThreadsArg;
-impl ThreadArg for RocksdbFlushThreadsArg {
-    const NAME: &'static str = "rocksdb_flush_threads";
-    const LONG_NAME: &'static str = "rocksdb-flush-threads";
-    const HELP: &'static str = "Number of threads to use for rocksdb (Blockstore) memtable flushes";
-
-    fn default() -> usize {
-        solana_ledger::blockstore::default_num_flush_threads().get()
     }
 }
 
