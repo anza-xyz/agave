@@ -3,7 +3,7 @@ use {
         bootstrap::RpcBootstrapConfig,
         commands::{FromClapArgMatches, Result},
     },
-    clap::{value_t, ArgMatches},
+    clap::{value_t, Arg, ArgMatches},
 };
 
 #[cfg(test)]
@@ -50,6 +50,10 @@ impl FromClapArgMatches for RpcBootstrapConfig {
             incremental_snapshot_fetch: !no_incremental_snapshots,
         })
     }
+}
+
+pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
+    vec![]
 }
 
 #[cfg(test)]
