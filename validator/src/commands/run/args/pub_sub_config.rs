@@ -56,15 +56,15 @@ pub(crate) fn args<'a, 'b>(test_validator: bool) -> Vec<Arg<'a, 'b>> {
         );
     let (
         rpc_pubsub_notification_threads,
-        [default_rpc_pubsub_max_active_subscriptions, default_rpc_pubsub_queue_capacity_items, default_rpc_pubsub_queue_capacity_bytes],
+        default_rpc_pubsub_max_active_subscriptions,
+        default_rpc_pubsub_queue_capacity_items,
+        default_rpc_pubsub_queue_capacity_bytes,
     ) = if test_validator {
         (
             rpc_pubsub_notification_threads.default_value(&DEFAULT_TEST_RPC_PUBSUB_WORKER_THREADS),
-            [
-                &DEFAULT_TEST_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS,
-                &DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS,
-                &DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_BYTES,
-            ],
+            &DEFAULT_TEST_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS,
+            &DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS,
+            &DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_BYTES,
         )
     } else {
         (
@@ -75,11 +75,9 @@ pub(crate) fn args<'a, 'b>(test_validator: bool) -> Vec<Arg<'a, 'b>> {
                     &DEFAULT_RPC_PUBSUB_NUM_NOTIFICATION_THREADS,
                 )
                 .requires("full_rpc_api"),
-            [
-                &DEFAULT_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS,
-                &DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS,
-                &DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_BYTES,
-            ],
+            &DEFAULT_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS,
+            &DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS,
+            &DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_BYTES,
         )
     };
 
