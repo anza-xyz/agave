@@ -1341,6 +1341,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
     .args(&rpc_bigtable_config::args())
     .args(&send_transaction_config::args())
     .args(&rpc_bootstrap_config::args())
+    .args(&blockstore_options::args())
 }
 
 fn validators_set(

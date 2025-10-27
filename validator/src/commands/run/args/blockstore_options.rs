@@ -3,7 +3,7 @@ use {
         cli::thread_args::{RocksdbCompactionThreadsArg, RocksdbFlushThreadsArg, ThreadArg},
         commands::{FromClapArgMatches, Result},
     },
-    clap::{value_t, ArgMatches},
+    clap::{value_t, Arg, ArgMatches},
     solana_ledger::blockstore_options::{
         AccessType, BlockstoreCompressionType, BlockstoreOptions, BlockstoreRecoveryMode,
         LedgerColumnOptions,
@@ -37,7 +37,7 @@ impl FromClapArgMatches for BlockstoreOptions {
             rocks_perf_sample_interval: value_t!(matches, "rocksdb_perf_sample_interval", usize)?,
         };
 
-        let rocksdb_compaction_threads =
+        let rocksdb_compaction_threads: std::num::NonZero<usize> =
             value_t!(matches, RocksdbCompactionThreadsArg::NAME, NonZeroUsize)?;
 
         let rocksdb_flush_threads = value_t!(matches, RocksdbFlushThreadsArg::NAME, NonZeroUsize)?;
@@ -51,6 +51,10 @@ impl FromClapArgMatches for BlockstoreOptions {
             num_rocksdb_flush_threads: rocksdb_flush_threads,
         })
     }
+}
+
+pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
+    vec![]
 }
 
 #[cfg(test)]
