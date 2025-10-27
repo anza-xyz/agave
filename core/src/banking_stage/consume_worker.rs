@@ -923,6 +923,7 @@ mod tests {
             scheduler_messages::{MaxAge, TransactionBatchId},
             tests::{create_slow_genesis_config, sanitize_transactions},
         },
+        agave_scheduler_bindings::{pack_message_flags, SharableTransactionBatchRegion},
         crossbeam_channel::unbounded,
         solana_clock::{Slot, MAX_PROCESSING_AGE},
         solana_genesis_config::GenesisConfig,
@@ -1455,5 +1456,38 @@ mod tests {
         let sleep_duration = Duration::from_micros(900);
         let sleep_duration = backoff(IDLE_SLEEP_THRESHOLD, &sleep_duration);
         assert_eq!(sleep_duration, MAX_SLEEP_DURATION);
+    }
+
+    #[test]
+    fn test_validate_message() {
+        let mut message = PackToWorkerMessage {
+            flags: pack_message_flags::NONE,
+            max_execution_slot: u64::MAX,
+            batch: SharableTransactionBatchRegion {
+                num_transactions: 0,
+                transactions_offset: 0,
+            },
+        };
+
+        // No transactions = invalid
+        assert!(!ExternalWorker::validate_message(&message));
+
+        // Too many transactions = invalid.
+        message.batch.num_transactions = MAX_TRANSACTIONS_PER_MESSAGE as u8 + 1;
+        assert!(!ExternalWorker::validate_message(&message));
+
+        // Bad flags = invalid
+        message.batch.num_transactions = 1;
+        assert!(!ExternalWorker::validate_message(&message));
+    }
+
+    #[test]
+    fn test_validate_message_flags() {
+        assert!(!ExternalWorker::validate_message_flags(
+            pack_message_flags::NONE
+        ));
+        assert!(!ExternalWorker::validate_message_flags(
+            pack_message_flags::RESOLVE
+        ));
     }
 }
