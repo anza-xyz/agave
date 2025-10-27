@@ -1,3 +1,4 @@
+#![cfg(unix)]
 #![allow(clippy::arithmetic_side_effects)]
 #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
 use jemallocator::Jemalloc;

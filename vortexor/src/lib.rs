@@ -1,3 +1,4 @@
+#![cfg(unix)]
 #![cfg_attr(
     not(feature = "agave-unstable-api"),
     deprecated(
