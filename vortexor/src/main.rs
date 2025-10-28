@@ -23,6 +23,7 @@ use {
         collections::HashMap,
         env,
         net::{IpAddr, SocketAddr},
+        path::PathBuf,
         sync::{atomic::AtomicBool, Arc, RwLock},
     },
     tokio_util::sync::CancellationToken,
@@ -54,7 +55,7 @@ pub fn main() {
             None
         } else {
             println!("log file: {logfile}");
-            Some(logfile)
+            Some(PathBuf::from(logfile))
         }
     };
     let _logger_thread = redirect_stderr_to_file(logfile);

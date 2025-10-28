@@ -118,13 +118,7 @@ fn main() {
         let _ = fs::remove_file(&validator_log_symlink);
         symlink::symlink_file(&validator_log_with_timestamp, &validator_log_symlink).unwrap();
 
-        Some(
-            ledger_path
-                .join(validator_log_with_timestamp)
-                .into_os_string()
-                .into_string()
-                .unwrap(),
-        )
+        Some(ledger_path.join(validator_log_with_timestamp))
     } else {
         None
     };

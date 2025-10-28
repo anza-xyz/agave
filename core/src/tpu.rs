@@ -49,7 +49,10 @@ use {
         vote_sender_types::{ReplayVoteReceiver, ReplayVoteSender},
     },
     solana_streamer::{
-        quic::{spawn_server_with_cancel, QuicServerParams, SpawnServerResult},
+        quic::{
+            spawn_server_with_cancel, spawn_simple_qos_server_with_cancel,
+            SimpleQosQuicStreamerConfig, SpawnServerResult, SwQosQuicStreamerConfig,
+        },
         streamer::StakedNodes,
     },
     solana_turbine::{
@@ -95,6 +98,9 @@ impl SigVerifier {
         }
     }
 }
+
+// Conservatively allow 20 TPS per validator.
+pub const MAX_VOTES_PER_SECOND: u64 = 20;
 
 pub struct Tpu {
     fetch_stage: FetchStage,
@@ -146,9 +152,9 @@ impl Tpu {
         banking_tracer_channels: Channels,
         tracer_thread_hdl: TracerThread,
         tpu_enable_udp: bool,
-        tpu_quic_server_config: QuicServerParams,
-        tpu_fwd_quic_server_config: QuicServerParams,
-        vote_quic_server_config: QuicServerParams,
+        tpu_quic_server_config: SwQosQuicStreamerConfig,
+        tpu_fwd_quic_server_config: SwQosQuicStreamerConfig,
+        vote_quic_server_config: SimpleQosQuicStreamerConfig,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         block_production_method: BlockProductionMethod,
         block_production_num_workers: NonZeroUsize,
@@ -209,14 +215,15 @@ impl Tpu {
             endpoints: _,
             thread: tpu_vote_quic_t,
             key_updater: vote_streamer_key_updater,
-        } = spawn_server_with_cancel(
+        } = spawn_simple_qos_server_with_cancel(
             "solQuicTVo",
             "quic_streamer_tpu_vote",
             tpu_vote_quic_sockets,
             keypair,
             vote_packet_sender.clone(),
             staked_nodes.clone(),
-            vote_quic_server_config,
+            vote_quic_server_config.quic_streamer_config,
+            vote_quic_server_config.qos_config,
             cancel.clone(),
         )
         .unwrap();
@@ -234,7 +241,8 @@ impl Tpu {
                 keypair,
                 packet_sender,
                 staked_nodes.clone(),
-                tpu_quic_server_config,
+                tpu_quic_server_config.quic_streamer_config,
+                tpu_quic_server_config.qos_config,
                 cancel.clone(),
             )
             .unwrap();
@@ -256,7 +264,8 @@ impl Tpu {
                 keypair,
                 forwarded_packet_sender,
                 staked_nodes.clone(),
-                tpu_fwd_quic_server_config,
+                tpu_fwd_quic_server_config.quic_streamer_config,
+                tpu_fwd_quic_server_config.qos_config,
                 cancel,
             )
             .unwrap();

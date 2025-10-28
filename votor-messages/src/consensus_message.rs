@@ -13,19 +13,19 @@ pub const BLS_KEYPAIR_DERIVE_SEED: &[u8; 9] = b"alpenglow";
 /// Block, a (slot, hash) tuple
 pub type Block = (Slot, Hash);
 
+/// A consensus vote.
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
     frozen_abi(digest = "5SPmMTisBngyvNzKsXYbo1rbhefNYeGAgVJSYF5Su6N5")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-/// BLS vote message, we need rank to look up pubkey
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VoteMessage {
-    /// The vote
+    /// The type of the vote.
     pub vote: Vote,
-    /// The signature
+    /// The signature.
     pub signature: BLSSignature,
-    /// The rank of the validator
+    /// The rank of the validator.
     pub rank: u16,
 }
 

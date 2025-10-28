@@ -9,7 +9,10 @@ use {
         rpc_cache::LargestAccountsCache,
         rpc_health::*,
     },
-    agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig, SnapshotInterval},
+    agave_snapshots::{
+        paths as snapshot_paths, snapshot_archive_info::SnapshotArchiveInfoGetter,
+        snapshot_config::SnapshotConfig, SnapshotInterval,
+    },
     crossbeam_channel::unbounded,
     jsonrpc_core::{futures::prelude::*, MetaIoHandler},
     jsonrpc_http_server::{
@@ -38,7 +41,6 @@ use {
         bank::Bank, bank_forks::BankForks, commitment::BlockCommitmentCache,
         non_circulating_supply::calculate_non_circulating_supply,
         prioritization_fee_cache::PrioritizationFeeCache,
-        snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_utils,
     },
     solana_send_transaction_service::{
         send_transaction_service::{self, SendTransactionService},
@@ -348,7 +350,7 @@ impl RequestMiddleware for RpcRequestMiddleware {
             {
                 // Convenience redirect to the latest snapshot
                 let full_snapshot_archive_info =
-                    snapshot_utils::get_highest_full_snapshot_archive_info(
+                    snapshot_paths::get_highest_full_snapshot_archive_info(
                         &snapshot_config.full_snapshot_archives_dir,
                     );
                 let snapshot_archive_info =
@@ -356,7 +358,7 @@ impl RequestMiddleware for RpcRequestMiddleware {
                         if request.uri().path() == FULL_SNAPSHOT_REQUEST_PATH {
                             Some(full_snapshot_archive_info.snapshot_archive_info().clone())
                         } else {
-                            snapshot_utils::get_highest_incremental_snapshot_archive_info(
+                            snapshot_paths::get_highest_incremental_snapshot_archive_info(
                                 &snapshot_config.incremental_snapshot_archives_dir,
                                 full_snapshot_archive_info.slot(),
                             )
