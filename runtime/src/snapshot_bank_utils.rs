@@ -18,13 +18,9 @@ use {
         serde_snapshot::{
             self, reconstruct_bank_from_fields, SnapshotAccountsDbFields, SnapshotBankFields,
         },
-        snapshot_archive_info::{
-            FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfoGetter,
-        },
         snapshot_package::{SnapshotKind, SnapshotPackage},
         snapshot_utils::{
-            self, get_highest_bank_snapshot, get_highest_full_snapshot_archive_info,
-            get_highest_incremental_snapshot_archive_info, rebuild_storages_from_snapshot_dir,
+            self, get_highest_bank_snapshot, rebuild_storages_from_snapshot_dir,
             verify_and_unarchive_snapshots, BankSnapshotInfo, StorageAndNextAccountsFileId,
             UnarchivedSnapshots,
         },
@@ -35,7 +31,13 @@ use {
         error::{
             SnapshotError, VerifyEpochStakesError, VerifySlotDeltasError, VerifySlotHistoryError,
         },
-        paths as snapshot_paths,
+        paths::{
+            self as snapshot_paths, get_highest_full_snapshot_archive_info,
+            get_highest_incremental_snapshot_archive_info,
+        },
+        snapshot_archive_info::{
+            FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfoGetter,
+        },
         snapshot_config::SnapshotConfig,
         snapshot_hash::SnapshotHash,
         ArchiveFormat, SnapshotVersion,
