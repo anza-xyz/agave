@@ -1572,7 +1572,7 @@ mod tests {
             .pop()
             .unwrap()
         else {
-            panic!("The transaction was not commited");
+            panic!("The transaction was not committed");
         };
         let tx_cost = CostModel::calculate_cost_for_executed_transaction(
             &sanitized_tx,

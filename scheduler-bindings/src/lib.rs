@@ -344,7 +344,7 @@ pub mod worker_message_types {
         /// u64::MAX if no ALTs or deactivation.
         pub min_alt_deactivation_slot: u64,
         /// Resolved pubkeys - writable then readonly.
-        /// Freeing this memory is the responsiblity of the external
+        /// Freeing this memory is the responsibility of the external
         /// pack process.
         pub resolved_pubkeys: SharablePubkeys,
     }

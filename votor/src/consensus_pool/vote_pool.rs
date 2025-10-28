@@ -7,8 +7,8 @@ use {
 };
 
 /// There are two types of vote pools:
-/// - SimpleVotePool: Tracks all votes of a specfic vote type made by validators for some slot N, but only one vote per block.
-/// - DuplicateBlockVotePool: Tracks all votes of a specfic vote type made by validators for some slot N,
+/// - SimpleVotePool: Tracks all votes of a specific vote type made by validators for some slot N, but only one vote per block.
+/// - DuplicateBlockVotePool: Tracks all votes of a specific vote type made by validators for some slot N,
 ///   but allows votes for different blocks by the same validator. Only relevant for VotePool's that are of type
 ///   Notarization or NotarizationFallback
 pub(super) enum VotePool {

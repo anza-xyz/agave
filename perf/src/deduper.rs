@@ -1,4 +1,4 @@
-//! Utility to deduplicate baches of incoming network packets.
+//! Utility to deduplicate batches of incoming network packets.
 
 use {
     crate::packet::PacketBatch,
