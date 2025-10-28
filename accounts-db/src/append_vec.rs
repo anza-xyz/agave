@@ -1047,6 +1047,10 @@ impl AppendVec {
 
                     let (meta, next) = Self::get_type::<StoredMeta>(bytes, 0).unwrap();
                     let (account_meta, next) = Self::get_type::<AccountMeta>(bytes, next).unwrap();
+                    if account_meta.lamports == 0 && meta.pubkey == Pubkey::default() {
+                        // we passed the last useful account
+                        break;
+                    }
                     let (_hash, next) = Self::get_type::<ObsoleteAccountHash>(bytes, next).unwrap();
                     let data_len = meta.data_len as usize;
                     let leftover = bytes.len() - next;
@@ -1357,8 +1361,9 @@ pub mod tests {
         super::{test_utils::*, *},
         assert_matches::assert_matches,
         memoffset::offset_of,
-        rand::{thread_rng, Rng},
-        solana_account::{Account, AccountSharedData},
+        rand::prelude::*,
+        rand_chacha::ChaChaRng,
+        solana_account::{accounts_equal, Account, AccountSharedData},
         solana_clock::Slot,
         std::{mem::ManuallyDrop, time::Instant},
         test_case::{test_case, test_matrix},
@@ -1607,6 +1612,7 @@ pub mod tests {
         num_accounts: usize,
     ) -> (
         ManuallyDrop<AppendVec>,
+        StoredAccountsInfo,
         Vec<(Pubkey, AccountSharedData)>,
         TempFile,
     ) {
@@ -1650,19 +1656,21 @@ pub mod tests {
             &path.path,
             true,
             file_size,
-            StorageAccess::File,
+            StorageAccess::Mmap,
         ));
         let slot = 42;
-        av.append_accounts(&(slot, test_accounts.as_slice()), 0)
+        let stored_accounts_info = av
+            .append_accounts(&(slot, test_accounts.as_slice()), 0)
             .unwrap();
         av.flush().unwrap();
-        (av, test_accounts, path)
+        (av, stored_accounts_info, test_accounts, path)
     }
 
-    /// Test that `scan_accounts_stored_meta` correctly reads back all accounts that were written.
+    /// Test that scanning accounts correctly reads back all accounts that were written.
     #[test]
-    fn test_scan_accounts_stored_meta_correctness() {
-        let (av_mmap, test_accounts, path) = rand_exhaustive_append_vec(100);
+    fn test_scan_accounts_correctness() {
+        let num_accounts = 100;
+        let (av_mmap, _, test_accounts, path) = rand_exhaustive_append_vec(num_accounts);
         let av_file = AppendVec::new_from_file(&path.path, av_mmap.len(), StorageAccess::File)
             .unwrap()
             .0;
@@ -1677,6 +1685,102 @@ pub mod tests {
                 index += 1;
             })
             .expect("must scan accounts storage");
+            assert_eq!(index, num_accounts);
+        }
+        for av in [&av_mmap, &av_file] {
+            let mut index = 0;
+            av.scan_stored_accounts_no_data(|stored_account| {
+                let (pubkey, account) = &test_accounts[index];
+                assert_eq!(stored_account.pubkey(), pubkey);
+                assert_eq!(stored_account.lamports(), account.lamports());
+                assert_eq!(stored_account.owner(), account.owner());
+                assert_eq!(stored_account.data_len(), account.data().len() as u64);
+                assert_eq!(stored_account.executable(), account.executable());
+                assert_eq!(stored_account.rent_epoch(), account.rent_epoch());
+                index += 1;
+            })
+            .expect("must scan accounts storage");
+            assert_eq!(index, num_accounts);
+        }
+    }
+
+    /// Test that scanning accounts correctly handles useless accounts.
+    #[test]
+    fn test_scan_useless_accounts() {
+        let num_accounts = 33;
+        let num_new_accounts = num_accounts - 2;
+        let (av_mmap, stored_accounts_info, test_accounts, path) =
+            rand_exhaustive_append_vec(num_accounts);
+        let av_current_len = av_mmap.len();
+
+        // Rewrite the append vec to mark account at num_new_accounts as useless.
+        // This will also "hide" any accounts later in the file.
+        if let AppendVecFileBacking::Mmap(mmap) = &av_mmap.backing {
+            let slice = av_mmap.get_valid_slice_from_mmap(mmap);
+            let mut stored_meta_offset = stored_accounts_info.offsets[num_new_accounts];
+            let (stored_meta, mut account_meta_offset) =
+                AppendVec::get_type::<StoredMeta>(slice, stored_meta_offset).unwrap();
+            let (account_meta, _next) =
+                AppendVec::get_type::<AccountMeta>(slice, account_meta_offset).unwrap();
+            assert_eq!(stored_meta.pubkey, test_accounts[num_new_accounts].0);
+
+            let new_stored_meta = StoredMeta {
+                pubkey: Pubkey::default(),
+                ..stored_meta.clone()
+            };
+            let new_account_meta = AccountMeta {
+                lamports: 0,
+                ..account_meta.clone()
+            };
+            av_mmap
+                .append_ptr(
+                    &mut stored_meta_offset,
+                    ptr::from_ref(&new_stored_meta).cast(),
+                    size_of::<StoredMeta>(),
+                )
+                .unwrap();
+            av_mmap
+                .append_ptr(
+                    &mut account_meta_offset,
+                    ptr::from_ref(&new_account_meta).cast(),
+                    size_of::<AccountMeta>(),
+                )
+                .unwrap();
+            av_mmap.flush().unwrap();
+        } else {
+            panic!("append vec must be mmap");
+        }
+
+        let av_file =
+            AppendVec::new_from_file_unchecked(&path.path, av_current_len, StorageAccess::File)
+                .unwrap();
+        let mut reader = new_scan_accounts_reader();
+        for av in [&av_mmap, &av_file] {
+            let mut index = 0;
+            av.scan_accounts_stored_meta(&mut reader, |stored_account| {
+                let (pubkey, account) = &test_accounts[index];
+                let recovered = create_account_shared_data(&stored_account);
+                assert_eq!(stored_account.pubkey(), pubkey);
+                assert_eq!(recovered, *account);
+                index += 1;
+            })
+            .expect("must scan accounts storage");
+            assert_eq!(index, num_new_accounts);
+        }
+        for av in [&av_mmap, &av_file] {
+            let mut index = 0;
+            av.scan_stored_accounts_no_data(|stored_account| {
+                let (pubkey, account) = &test_accounts[index];
+                assert_eq!(stored_account.pubkey(), pubkey);
+                assert_eq!(stored_account.lamports(), account.lamports());
+                assert_eq!(stored_account.owner(), account.owner());
+                assert_eq!(stored_account.data_len(), account.data().len() as u64);
+                assert_eq!(stored_account.executable(), account.executable());
+                assert_eq!(stored_account.rent_epoch(), account.rent_epoch());
+                index += 1;
+            })
+            .expect("must scan accounts storage");
+            assert_eq!(index, num_new_accounts);
         }
     }
 
@@ -2102,7 +2206,7 @@ pub mod tests {
             .take(NUM_ACCOUNTS)
             .collect();
 
-        let mut rng = thread_rng();
+        let mut rng = ChaChaRng::seed_from_u64(1337);
         let mut accounts = Vec::with_capacity(pubkeys.len());
         let mut total_stored_size = 0;
         for _ in &pubkeys {
@@ -2293,6 +2397,104 @@ pub mod tests {
     #[test_case(StorageAccess::File)]
     fn test_scan_stored_accounts_no_data_missing_account_data(storage_access: StorageAccess) {
         test_scan_stored_accounts_no_data_helper(storage_access, |path, size| {
+            let fake_stored_meta = StoredMeta {
+                write_version_obsolete: 0,
+                data_len: 100,
+                pubkey: solana_pubkey::new_rand(),
+            };
+            let fake_account_meta = AccountMeta {
+                lamports: 100,
+                rent_epoch: 10,
+                owner: solana_pubkey::new_rand(),
+                executable: false,
+            };
+
+            let stored_meta_slice: &[u8] = unsafe {
+                std::slice::from_raw_parts(
+                    (&fake_stored_meta as *const StoredMeta) as *const u8,
+                    mem::size_of::<StoredMeta>(),
+                )
+            };
+            let account_meta_slice: &[u8] = unsafe {
+                std::slice::from_raw_parts(
+                    (&fake_account_meta as *const AccountMeta) as *const u8,
+                    mem::size_of::<AccountMeta>(),
+                )
+            };
+
+            let mut f = OpenOptions::new()
+                .read(true)
+                .append(true)
+                .open(path)
+                .unwrap();
+
+            f.write_all(stored_meta_slice).unwrap();
+            f.write_all(account_meta_slice).unwrap();
+
+            size + mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>()
+        });
+    }
+
+    /// A helper fn to test scan_accounts_stored_meta
+    ///
+    /// `modify_fn` is used to (optionally) modify the append vec before checks are performed.
+    fn test_scan_accounts_stored_meta_helper(
+        storage_access: StorageAccess,
+        modify_fn: impl Fn(&PathBuf, usize) -> usize,
+    ) {
+        test_scan_helper(
+            storage_access,
+            modify_fn,
+            |append_vec, pubkeys, account_offsets, accounts| {
+                let mut reader = new_scan_accounts_reader();
+                let mut i = 0;
+                append_vec
+                    .scan_accounts_stored_meta(&mut reader, |stored_account| {
+                        let pubkey = pubkeys.get(i).unwrap();
+                        let offset = account_offsets.get(i).unwrap();
+                        let account = accounts.get(i).unwrap();
+
+                        assert_eq!(stored_account.pubkey(), pubkey);
+                        assert_eq!(stored_account.offset(), *offset);
+                        assert!(accounts_equal(&stored_account, account));
+
+                        i += 1;
+                    })
+                    .expect("must scan accounts storage");
+                assert_eq!(i, accounts.len());
+            },
+        )
+    }
+
+    /// Test `scan_accounts_stored_meta` for a normal/good storage.
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    fn test_scan_accounts_stored_meta(storage_access: StorageAccess) {
+        test_scan_accounts_stored_meta_helper(storage_access, |_, size| size);
+    }
+
+    /// Test `scan_accounts_stored_meta` for a storage with incomplete account meta data.
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    fn test_scan_accounts_stored_meta_incomplete_meta_data(storage_access: StorageAccess) {
+        test_scan_accounts_stored_meta_helper(storage_access, |path, size| {
+            // Append 1 byte of data at the end of the storage file to simulate
+            // incomplete account's meta data.
+            let mut f = OpenOptions::new()
+                .read(true)
+                .append(true)
+                .open(path)
+                .unwrap();
+            f.write_all(&[0xFF]).unwrap();
+            size + 1
+        });
+    }
+
+    /// Test `scan_accounts_stored_meta` for a storage that is missing the last account data.
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    fn test_scan_accounts_stored_meta_missing_account_data(storage_access: StorageAccess) {
+        test_scan_accounts_stored_meta_helper(storage_access, |path, size| {
             let fake_stored_meta = StoredMeta {
                 write_version_obsolete: 0,
                 data_len: 100,

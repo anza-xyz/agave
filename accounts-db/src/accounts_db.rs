@@ -467,7 +467,6 @@ impl Default for SlotLtHash {
 struct GenerateIndexTimings {
     pub total_time_us: u64,
     pub index_time: u64,
-    pub scan_time: u64,
     pub insertion_time_us: u64,
     pub storage_size_storages_us: u64,
     pub index_flush_us: u64,
@@ -504,7 +503,6 @@ impl GenerateIndexTimings {
             ("overall_us", self.total_time_us, i64),
             // we cannot accurately measure index insertion time because of many threads and lock contention
             ("total_us", self.index_time, i64),
-            ("scan_stores_us", self.scan_time, i64),
             ("insertion_time_us", self.insertion_time_us, i64),
             (
                 "storage_size_storages_us",
@@ -6712,7 +6710,6 @@ impl AccountsDb {
 
         let mut timings = GenerateIndexTimings {
             index_flush_us,
-            scan_time: 0,
             index_time: index_time.as_us(),
             insertion_time_us: total_accum.insert_us,
             total_duplicate_slot_keys: total_duplicate_slot_keys.load(Ordering::Relaxed),

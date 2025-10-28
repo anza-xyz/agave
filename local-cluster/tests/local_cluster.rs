@@ -1,6 +1,9 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    agave_snapshots::{snapshot_config::SnapshotConfig, SnapshotInterval},
+    agave_snapshots::{
+        paths as snapshot_paths, snapshot_archive_info::SnapshotArchiveInfoGetter,
+        snapshot_config::SnapshotConfig, SnapshotInterval,
+    },
     assert_matches::assert_matches,
     crossbeam_channel::{unbounded, Receiver},
     gag::BufferRedirect,
@@ -69,11 +72,8 @@ use {
         response::RpcSignatureResult,
     },
     solana_runtime::{
-        commitment::VOTE_THRESHOLD_SIZE,
-        snapshot_archive_info::SnapshotArchiveInfoGetter,
-        snapshot_bank_utils,
-        snapshot_package::SnapshotKind,
-        snapshot_utils::{self, BANK_SNAPSHOTS_DIR},
+        commitment::VOTE_THRESHOLD_SIZE, snapshot_bank_utils, snapshot_package::SnapshotKind,
+        snapshot_utils,
     },
     solana_signer::Signer,
     solana_stake_interface::{self as stake, state::NEW_WARMUP_COOLDOWN_RATE},
@@ -844,7 +844,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
         &mut None,
     )
     .unwrap();
-    let downloaded_full_snapshot_archive = snapshot_utils::get_highest_full_snapshot_archive_info(
+    let downloaded_full_snapshot_archive = snapshot_paths::get_highest_full_snapshot_archive_info(
         validator_snapshot_test_config
             .full_snapshot_archives_dir
             .path(),
@@ -882,7 +882,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
     )
     .unwrap();
     let downloaded_incremental_snapshot_archive =
-        snapshot_utils::get_highest_incremental_snapshot_archive_info(
+        snapshot_paths::get_highest_incremental_snapshot_archive_info(
             validator_snapshot_test_config
                 .incremental_snapshot_archives_dir
                 .path(),
@@ -937,8 +937,8 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
     let copy_files_with_remote = |from: &Path, to: &Path| {
         copy_files(from, to);
-        let remote_from = snapshot_utils::build_snapshot_archives_remote_dir(from);
-        let remote_to = snapshot_utils::build_snapshot_archives_remote_dir(to);
+        let remote_from = snapshot_paths::build_snapshot_archives_remote_dir(from);
+        let remote_to = snapshot_paths::build_snapshot_archives_remote_dir(to);
         let _ = fs::create_dir_all(&remote_from);
         let _ = fs::create_dir_all(&remote_to);
         copy_files(&remote_from, &remote_to);
@@ -946,7 +946,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
     let delete_files_with_remote = |from: &Path| {
         delete_files(from);
-        let remote_dir = snapshot_utils::build_snapshot_archives_remote_dir(from);
+        let remote_dir = snapshot_paths::build_snapshot_archives_remote_dir(from);
         let _ = fs::create_dir_all(&remote_dir);
         delete_files(&remote_dir);
     };
@@ -1031,7 +1031,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
     //
     // Putting this all in its own block so its clear we're only intended to keep the leader's info
     let leader_full_snapshot_archive_for_comparison = {
-        let validator_full_snapshot = snapshot_utils::get_highest_full_snapshot_archive_info(
+        let validator_full_snapshot = snapshot_paths::get_highest_full_snapshot_archive_info(
             validator_snapshot_test_config
                 .full_snapshot_archives_dir
                 .path(),
@@ -1039,7 +1039,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
         .unwrap();
 
         // Now get the same full snapshot on the LEADER that we just got from the validator
-        let mut leader_full_snapshots = snapshot_utils::get_full_snapshot_archives(
+        let mut leader_full_snapshots = snapshot_paths::get_full_snapshot_archives(
             leader_snapshot_test_config
                 .full_snapshot_archives_dir
                 .path(),
@@ -1101,7 +1101,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
     // Get the highest full snapshot slot *before* restarting, as a comparison
     let validator_full_snapshot_slot_at_startup =
-        snapshot_utils::get_highest_full_snapshot_archive_slot(
+        snapshot_paths::get_highest_full_snapshot_archive_slot(
             validator_snapshot_test_config
                 .full_snapshot_archives_dir
                 .path(),
@@ -1132,14 +1132,14 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
     );
     let timer = Instant::now();
     loop {
-        if let Some(full_snapshot_slot) = snapshot_utils::get_highest_full_snapshot_archive_slot(
+        if let Some(full_snapshot_slot) = snapshot_paths::get_highest_full_snapshot_archive_slot(
             validator_snapshot_test_config
                 .full_snapshot_archives_dir
                 .path(),
         ) {
             if full_snapshot_slot >= validator_next_full_snapshot_slot {
                 if let Some(incremental_snapshot_slot) =
-                    snapshot_utils::get_highest_incremental_snapshot_archive_slot(
+                    snapshot_paths::get_highest_incremental_snapshot_archive_slot(
                         validator_snapshot_test_config
                             .incremental_snapshot_archives_dir
                             .path(),
@@ -1173,7 +1173,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
     // Check to make sure that the full snapshot the validator created during startup is the same
     // or one greater than the snapshot the leader created.
-    let validator_full_snapshot_archives = snapshot_utils::get_full_snapshot_archives(
+    let validator_full_snapshot_archives = snapshot_paths::get_full_snapshot_archives(
         validator_snapshot_test_config
             .full_snapshot_archives_dir
             .path(),
@@ -1278,7 +1278,7 @@ fn test_snapshot_restart_tower() {
     );
 
     // Copy archive to validator's snapshot output directory
-    let validator_archive_path = snapshot_utils::build_full_snapshot_archive_path(
+    let validator_archive_path = snapshot_paths::build_full_snapshot_archive_path(
         validator_snapshot_test_config
             .full_snapshot_archives_dir
             .keep(),
@@ -1339,7 +1339,7 @@ fn test_snapshots_blockstore_floor() {
 
     let archive_info = loop {
         let archive =
-            snapshot_utils::get_highest_full_snapshot_archive_info(full_snapshot_archives_dir);
+            snapshot_paths::get_highest_full_snapshot_archive_info(full_snapshot_archives_dir);
         if archive.is_some() {
             trace!("snapshot exists");
             break archive.unwrap();
@@ -1348,7 +1348,7 @@ fn test_snapshots_blockstore_floor() {
     };
 
     // Copy archive to validator's snapshot output directory
-    let validator_archive_path = snapshot_utils::build_full_snapshot_archive_path(
+    let validator_archive_path = snapshot_paths::build_full_snapshot_archive_path(
         validator_snapshot_test_config
             .full_snapshot_archives_dir
             .keep(),
@@ -2320,7 +2320,7 @@ fn test_run_test_load_program_accounts_root() {
 fn create_simple_snapshot_config(ledger_path: &Path) -> SnapshotConfig {
     SnapshotConfig {
         full_snapshot_archives_dir: ledger_path.to_path_buf(),
-        bank_snapshots_dir: ledger_path.join(BANK_SNAPSHOTS_DIR),
+        bank_snapshots_dir: ledger_path.join(snapshot_paths::BANK_SNAPSHOTS_DIR),
         ..SnapshotConfig::default()
     }
 }
@@ -2691,6 +2691,7 @@ fn run_test_load_program_accounts_partition(scan_commitment: CommitmentConfig) {
         on_partition_before_resolved,
         on_partition_resolved,
         None,
+        false,
         additional_accounts,
     );
 }
@@ -3841,6 +3842,7 @@ fn test_kill_heaviest_partition() {
         empty,
         on_partition_resolved,
         None,
+        true,
         vec![],
     )
 }
@@ -4422,6 +4424,7 @@ fn test_cluster_partition_1_1() {
         empty,
         on_partition_resolved,
         None,
+        false,
         vec![],
     )
 }
@@ -4441,6 +4444,7 @@ fn test_cluster_partition_1_1_1() {
         empty,
         on_partition_resolved,
         None,
+        false,
         vec![],
     )
 }
@@ -5178,12 +5182,12 @@ fn test_boot_from_local_state() {
         let timer = Instant::now();
         loop {
             if let Some(other_full_snapshot_slot) =
-                snapshot_utils::get_highest_full_snapshot_archive_slot(
+                snapshot_paths::get_highest_full_snapshot_archive_slot(
                     &other_validator_config.full_snapshot_archives_dir,
                 )
             {
                 let other_incremental_snapshot_slot =
-                    snapshot_utils::get_highest_incremental_snapshot_archive_slot(
+                    snapshot_paths::get_highest_incremental_snapshot_archive_slot(
                         &other_validator_config.incremental_snapshot_archives_dir,
                         other_full_snapshot_slot,
                     );
@@ -5199,7 +5203,7 @@ fn test_boot_from_local_state() {
             );
             std::thread::yield_now();
         }
-        let other_full_snapshot_archives = snapshot_utils::get_full_snapshot_archives(
+        let other_full_snapshot_archives = snapshot_paths::get_full_snapshot_archives(
             &other_validator_config.full_snapshot_archives_dir,
         );
         debug!("validator{i} full snapshot archives: {other_full_snapshot_archives:?}");
@@ -5224,7 +5228,7 @@ fn test_boot_from_local_state() {
                 .collect::<Vec<_>>(),
         );
 
-        let other_incremental_snapshot_archives = snapshot_utils::get_incremental_snapshot_archives(
+        let other_incremental_snapshot_archives = snapshot_paths::get_incremental_snapshot_archives(
             &other_validator_config.incremental_snapshot_archives_dir,
         );
         debug!(
@@ -5314,10 +5318,10 @@ fn test_boot_from_local_state_missing_archive() {
     );
     debug!(
         "snapshot archives:\n\tfull: {:?}\n\tincr: {:?}",
-        snapshot_utils::get_full_snapshot_archives(
+        snapshot_paths::get_full_snapshot_archives(
             validator_config.full_snapshot_archives_dir.path()
         ),
-        snapshot_utils::get_incremental_snapshot_archives(
+        snapshot_paths::get_incremental_snapshot_archives(
             validator_config.incremental_snapshot_archives_dir.path()
         ),
     );
@@ -5331,7 +5335,7 @@ fn test_boot_from_local_state_missing_archive() {
     info!("Stopping validator... DONE");
 
     info!("Deleting latest full snapshot archive...");
-    let highest_full_snapshot = snapshot_utils::get_highest_full_snapshot_archive_info(
+    let highest_full_snapshot = snapshot_paths::get_highest_full_snapshot_archive_info(
         validator_config.full_snapshot_archives_dir.path(),
     )
     .unwrap();

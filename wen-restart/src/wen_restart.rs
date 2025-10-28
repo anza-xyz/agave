@@ -14,6 +14,12 @@ use {
             LastVotedForkSlotsRecord, State as RestartState, WenRestartProgress,
         },
     },
+    agave_snapshots::{
+        paths::{
+            get_highest_full_snapshot_archive_slot, get_highest_incremental_snapshot_archive_slot,
+        },
+        snapshot_archive_info::SnapshotArchiveInfoGetter,
+    },
     anyhow::Result,
     log::*,
     prost::Message,
@@ -35,15 +41,11 @@ use {
         accounts_background_service::AbsStatus,
         bank::Bank,
         bank_forks::BankForks,
-        snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils::{
             bank_to_full_snapshot_archive, bank_to_incremental_snapshot_archive,
         },
         snapshot_controller::SnapshotController,
-        snapshot_utils::{
-            get_highest_full_snapshot_archive_slot, get_highest_incremental_snapshot_archive_slot,
-            purge_all_bank_snapshots,
-        },
+        snapshot_utils::purge_all_bank_snapshots,
     },
     solana_shred_version::compute_shred_version,
     solana_svm_timings::ExecuteTimings,
@@ -1410,6 +1412,7 @@ mod tests {
     use {
         crate::wen_restart::{tests::wen_restart_proto::LastVotedForkSlotsAggregateFinal, *},
         agave_snapshots::{
+            paths::build_incremental_snapshot_archive_path,
             snapshot_config::{SnapshotConfig, SnapshotUsage},
             snapshot_hash::SnapshotHash,
         },
@@ -1439,7 +1442,6 @@ mod tests {
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
             snapshot_bank_utils::bank_to_full_snapshot_archive,
-            snapshot_utils::build_incremental_snapshot_archive_path,
         },
         solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,

@@ -9,11 +9,12 @@ use {
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_signer::Signer,
     solana_streamer::{
-        nonblocking::testing_utilities::{
-            make_client_endpoint, setup_quic_server, SpawnTestServerResult,
+        nonblocking::{
+            swqos::SwQosConfig,
+            testing_utilities::{make_client_endpoint, setup_quic_server, SpawnTestServerResult},
         },
         packet::PacketBatch,
-        quic::QuicServerParams,
+        quic::QuicStreamerConfig,
         streamer::StakedNodes,
     },
     solana_tpu_client_next::{
@@ -200,7 +201,11 @@ async fn test_basic_transactions_sending() {
         server_address,
         stats: _stats,
         cancel,
-    } = setup_quic_server(None, QuicServerParams::default_for_tests());
+    } = setup_quic_server(
+        None,
+        QuicStreamerConfig::default_for_tests(),
+        SwQosConfig::default(),
+    );
 
     // Setup sending txs
     let tx_size = 1;
@@ -290,7 +295,11 @@ async fn test_connection_denied_until_allowed() {
         server_address,
         stats: _stats,
         cancel,
-    } = setup_quic_server(None, QuicServerParams::default_for_tests());
+    } = setup_quic_server(
+        None,
+        QuicStreamerConfig::default_for_tests(),
+        SwQosConfig::default(),
+    );
 
     // To prevent server from accepting a new connection, we use the following observation.
     // Since max_connections_per_peer == 1 (< max_unstaked_connections == 500), if we create a first
@@ -353,11 +362,12 @@ async fn test_connection_pruned_and_reopened() {
         cancel,
     } = setup_quic_server(
         None,
-        QuicServerParams {
+        QuicStreamerConfig {
             max_connections_per_peer: 100,
             max_unstaked_connections: 1,
-            ..QuicServerParams::default_for_tests()
+            ..QuicStreamerConfig::default_for_tests()
         },
+        SwQosConfig::default(),
     );
 
     // Setup sending txs
@@ -409,14 +419,15 @@ async fn test_staked_connection() {
         cancel,
     } = setup_quic_server(
         Some(staked_nodes),
-        QuicServerParams {
+        QuicStreamerConfig {
             // Must use at least the number of endpoints (10) because
             // `max_staked_connections` and `max_unstaked_connections` are
             // cumulative for all the endpoints.
             max_staked_connections: 10,
             max_unstaked_connections: 0,
-            ..QuicServerParams::default_for_tests()
+            ..QuicStreamerConfig::default_for_tests()
         },
+        SwQosConfig::default(),
     );
 
     // Setup sending txs
@@ -462,7 +473,11 @@ async fn test_connection_throttling() {
         server_address,
         stats: _stats,
         cancel,
-    } = setup_quic_server(None, QuicServerParams::default_for_tests());
+    } = setup_quic_server(
+        None,
+        QuicStreamerConfig::default_for_tests(),
+        SwQosConfig::default(),
+    );
 
     // Setup sending txs
     let tx_size = 1;
@@ -555,11 +570,12 @@ async fn test_rate_limiting() {
         cancel,
     } = setup_quic_server(
         None,
-        QuicServerParams {
+        QuicStreamerConfig {
             max_connections_per_peer: 100,
             max_connections_per_ipaddr_per_min: 1,
-            ..QuicServerParams::default_for_tests()
+            ..QuicStreamerConfig::default_for_tests()
         },
+        SwQosConfig::default(),
     );
 
     // open a connection to consume the limit
@@ -619,11 +635,12 @@ async fn test_rate_limiting_establish_connection() {
         cancel,
     } = setup_quic_server(
         None,
-        QuicServerParams {
+        QuicStreamerConfig {
             max_connections_per_peer: 100,
             max_connections_per_ipaddr_per_min: 1,
-            ..QuicServerParams::default_for_tests()
+            ..QuicStreamerConfig::default_for_tests()
         },
+        SwQosConfig::default(),
     );
 
     let connection_to_reach_limit = make_client_endpoint(&server_address, None).await;
@@ -700,15 +717,16 @@ async fn test_update_identity() {
         cancel,
     } = setup_quic_server(
         Some(staked_nodes),
-        QuicServerParams {
+        QuicStreamerConfig {
             // Must use at least the number of endpoints (10) because
             // `max_staked_connections` and `max_unstaked_connections` are
             // cumulative for all the endpoints.
             max_staked_connections: 10,
             // Deny all unstaked connections.
             max_unstaked_connections: 0,
-            ..QuicServerParams::default_for_tests()
+            ..QuicStreamerConfig::default_for_tests()
         },
+        SwQosConfig::default(),
     );
 
     // Setup sending txs
@@ -763,11 +781,12 @@ async fn test_proactive_connection_close_detection() {
         cancel,
     } = setup_quic_server(
         None,
-        QuicServerParams {
+        QuicStreamerConfig {
             max_connections_per_peer: 1,
             max_unstaked_connections: 1,
-            ..QuicServerParams::default_for_tests()
+            ..QuicStreamerConfig::default_for_tests()
         },
+        SwQosConfig::default(),
     );
 
     // Setup controlled transaction sending

@@ -1,8 +1,7 @@
 //! Information about snapshot archives
 
 use {
-    crate::snapshot_utils,
-    agave_snapshots::{snapshot_hash::SnapshotHash, ArchiveFormat, Result},
+    crate::{paths as snapshot_paths, snapshot_hash::SnapshotHash, ArchiveFormat, Result},
     solana_clock::Slot,
     std::{cmp::Ordering, path::PathBuf},
 };
@@ -31,7 +30,7 @@ pub trait SnapshotArchiveInfoGetter {
         self.snapshot_archive_info()
             .path
             .parent()
-            .is_some_and(|p| p.ends_with(snapshot_utils::SNAPSHOT_ARCHIVE_DOWNLOAD_DIR))
+            .is_some_and(|p| p.ends_with(snapshot_paths::SNAPSHOT_ARCHIVE_DOWNLOAD_DIR))
     }
 }
 
@@ -58,9 +57,9 @@ pub struct FullSnapshotArchiveInfo(SnapshotArchiveInfo);
 impl FullSnapshotArchiveInfo {
     /// Parse the path to a full snapshot archive and return a new `FullSnapshotArchiveInfo`
     pub fn new_from_path(path: PathBuf) -> Result<Self> {
-        let filename = snapshot_utils::path_to_file_name_str(path.as_path())?;
+        let filename = snapshot_paths::path_to_file_name_str(path.as_path())?;
         let (slot, hash, archive_format) =
-            snapshot_utils::parse_full_snapshot_archive_filename(filename)?;
+            snapshot_paths::parse_full_snapshot_archive_filename(filename)?;
 
         Ok(Self::new(SnapshotArchiveInfo {
             path,
@@ -70,7 +69,7 @@ impl FullSnapshotArchiveInfo {
         }))
     }
 
-    pub(crate) fn new(snapshot_archive_info: SnapshotArchiveInfo) -> Self {
+    pub fn new(snapshot_archive_info: SnapshotArchiveInfo) -> Self {
         Self(snapshot_archive_info)
     }
 }
@@ -109,9 +108,9 @@ pub struct IncrementalSnapshotArchiveInfo {
 impl IncrementalSnapshotArchiveInfo {
     /// Parse the path to an incremental snapshot archive and return a new `IncrementalSnapshotArchiveInfo`
     pub fn new_from_path(path: PathBuf) -> Result<Self> {
-        let filename = snapshot_utils::path_to_file_name_str(path.as_path())?;
+        let filename = snapshot_paths::path_to_file_name_str(path.as_path())?;
         let (base_slot, slot, hash, archive_format) =
-            snapshot_utils::parse_incremental_snapshot_archive_filename(filename)?;
+            snapshot_paths::parse_incremental_snapshot_archive_filename(filename)?;
 
         Ok(Self::new(
             base_slot,
@@ -124,7 +123,7 @@ impl IncrementalSnapshotArchiveInfo {
         ))
     }
 
-    pub(crate) fn new(base_slot: Slot, snapshot_archive_info: SnapshotArchiveInfo) -> Self {
+    pub fn new(base_slot: Slot, snapshot_archive_info: SnapshotArchiveInfo) -> Self {
         Self {
             base_slot,
             inner: snapshot_archive_info,

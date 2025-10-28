@@ -67,7 +67,7 @@ pub mod send_transaction_config;
 pub struct RunArgs {
     pub identity_keypair: Keypair,
     pub ledger_path: PathBuf,
-    pub logfile: String,
+    pub logfile: Option<PathBuf>,
     pub entrypoints: Vec<SocketAddr>,
     pub known_validators: Option<HashSet<Pubkey>>,
     pub socket_addr_space: SocketAddrSpace,
@@ -103,8 +103,13 @@ impl FromClapArgMatches for RunArgs {
 
         let logfile = matches
             .value_of("logfile")
-            .map(|s| s.into())
+            .map(String::from)
             .unwrap_or_else(|| format!("agave-validator-{}.log", identity_keypair.pubkey()));
+        let logfile = if logfile == "-" {
+            None
+        } else {
+            Some(PathBuf::from(logfile))
+        };
 
         let mut entrypoints = values_t!(matches, "entrypoint", String).unwrap_or_default();
         // sort() + dedup() to yield a vector of unique elements
@@ -791,14 +796,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("tpu_coalesce_ms")
-            .long("tpu-coalesce-ms")
-            .value_name("MILLISECS")
-            .takes_value(true)
-            .validator(is_parsable::<u64>)
-            .help("Milliseconds to wait in the TPU receiver for packet coalescing."),
-    )
-    .arg(
         Arg::with_name("tpu_connection_pool_size")
             .long("tpu-connection-pool-size")
             .takes_value(true)
@@ -1427,7 +1424,8 @@ mod tests {
         fn default() -> Self {
             let identity_keypair = Keypair::new();
             let ledger_path = absolute(PathBuf::from("ledger")).unwrap();
-            let logfile = format!("agave-validator-{}.log", identity_keypair.pubkey());
+            let logfile =
+                PathBuf::from(format!("agave-validator-{}.log", identity_keypair.pubkey()));
             let entrypoints = vec![];
             let known_validators = None;
 
@@ -1437,7 +1435,7 @@ mod tests {
             RunArgs {
                 identity_keypair,
                 ledger_path,
-                logfile,
+                logfile: Some(logfile),
                 entrypoints,
                 known_validators,
                 socket_addr_space: SocketAddrSpace::Global,
@@ -1660,9 +1658,10 @@ mod tests {
         // default
         {
             let expected_args = RunArgs {
-                logfile: "agave-validator-".to_string()
-                    + &default_run_args.identity_keypair.pubkey().to_string()
-                    + ".log",
+                logfile: Some(PathBuf::from(format!(
+                    "agave-validator-{}.log",
+                    default_run_args.identity_keypair.pubkey()
+                ))),
                 ..default_run_args.clone()
             };
             verify_args_struct_by_command_run_with_identity_setup(
@@ -1675,7 +1674,7 @@ mod tests {
         // short arg
         {
             let expected_args = RunArgs {
-                logfile: "-".to_string(),
+                logfile: None,
                 ..default_run_args.clone()
             };
             verify_args_struct_by_command_run_with_identity_setup(
@@ -1688,7 +1687,7 @@ mod tests {
         // long arg
         {
             let expected_args = RunArgs {
-                logfile: "custom_log.log".to_string(),
+                logfile: Some(PathBuf::from("custom_log.log")),
                 ..default_run_args.clone()
             };
             verify_args_struct_by_command_run_with_identity_setup(

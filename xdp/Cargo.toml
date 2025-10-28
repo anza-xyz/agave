@@ -18,5 +18,6 @@ log = { workspace = true }
 thiserror = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+agave-xdp-ebpf = { workspace = true }
 aya = { workspace = true }
 caps = { workspace = true }

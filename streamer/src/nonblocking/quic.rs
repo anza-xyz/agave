@@ -1,22 +1,21 @@
+#[allow(deprecated)]
+use crate::quic::QuicServerParams;
 use {
     crate::{
         nonblocking::{
             connection_rate_limiter::{ConnectionRateLimiter, TotalConnectionRateLimiter},
-            stream_throttle::{
-                ConnectionStreamCounter, StakedStreamLoadEMA, STREAM_THROTTLING_INTERVAL,
-                STREAM_THROTTLING_INTERVAL_MS,
-            },
+            qos::{ConnectionContext, QosController},
+            stream_throttle::ConnectionStreamCounter,
+            swqos::{SwQos, SwQosConfig},
         },
-        quic::{configure_server, QuicServerError, QuicServerParams, StreamerStats},
+        quic::{configure_server, QuicServerError, QuicStreamerConfig, StreamerStats},
         streamer::StakedNodes,
     },
     bytes::{BufMut, Bytes, BytesMut},
-    crossbeam_channel::{bounded, Receiver, Sender, TrySendError},
+    crossbeam_channel::{bounded, Receiver, Sender, TryRecvError, TrySendError},
     futures::{stream::FuturesUnordered, Future, StreamExt as _},
     indexmap::map::{Entry, IndexMap},
-    percentage::Percentage,
-    quinn::{Accept, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime, VarInt},
-    quinn_proto::VarIntBoundsExceeded,
+    quinn::{Accept, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime},
     rand::{thread_rng, Rng},
     smallvec::SmallVec,
     solana_keypair::Keypair,
@@ -24,14 +23,7 @@ use {
     solana_packet::{Meta, PACKET_DATA_SIZE},
     solana_perf::packet::{BytesPacket, BytesPacketBatch, PacketBatch, PACKETS_PER_BATCH},
     solana_pubkey::Pubkey,
-    solana_quic_definitions::{
-        QUIC_MAX_STAKED_CONCURRENT_STREAMS, QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO,
-        QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS, QUIC_MIN_STAKED_CONCURRENT_STREAMS,
-        QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO, QUIC_TOTAL_STAKED_CONCURRENT_STREAMS,
-        QUIC_UNSTAKED_RECEIVE_WINDOW_RATIO,
-    },
     solana_signature::Signature,
-    solana_time_utils as timing,
     solana_tls_utils::get_pubkey_from_tls_certificate,
     solana_transaction_metrics_tracker::signature_if_should_track_packet,
     std::{
@@ -58,7 +50,6 @@ use {
         // (i.e. lock order is always async Mutex -> RwLock). Also, be careful not to
         // introduce any other awaits while holding the RwLock.
         select,
-        sync::{Mutex, MutexGuard},
         task::{self, JoinHandle},
         time::{sleep, timeout},
     },
@@ -72,11 +63,12 @@ pub const ALPN_TPU_PROTOCOL_ID: &[u8] = b"solana-tpu";
 const CONNECTION_CLOSE_CODE_DROPPED_ENTRY: u32 = 1;
 const CONNECTION_CLOSE_REASON_DROPPED_ENTRY: &[u8] = b"dropped";
 
-const CONNECTION_CLOSE_CODE_DISALLOWED: u32 = 2;
-const CONNECTION_CLOSE_REASON_DISALLOWED: &[u8] = b"disallowed";
+pub(crate) const CONNECTION_CLOSE_CODE_DISALLOWED: u32 = 2;
+pub(crate) const CONNECTION_CLOSE_REASON_DISALLOWED: &[u8] = b"disallowed";
 
-const CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT: u32 = 3;
-const CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT: &[u8] = b"exceed_max_stream_count";
+pub(crate) const CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT: u32 = 3;
+pub(crate) const CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT: &[u8] =
+    b"exceed_max_stream_count";
 
 const CONNECTION_CLOSE_CODE_TOO_MANY: u32 = 4;
 const CONNECTION_CLOSE_REASON_TOO_MANY: &[u8] = b"too_many";
@@ -140,6 +132,7 @@ pub struct SpawnNonBlockingServerResult {
 }
 
 #[deprecated(since = "3.0.0", note = "Use spawn_server instead")]
+#[allow(deprecated)]
 pub fn spawn_server_multi(
     name: &'static str,
     sockets: impl IntoIterator<Item = UdpSocket>,
@@ -162,6 +155,7 @@ pub fn spawn_server_multi(
 }
 
 #[deprecated(since = "3.1.0", note = "Use spawn_server_with_cancel instead")]
+#[allow(deprecated)]
 pub fn spawn_server(
     name: &'static str,
     sockets: impl IntoIterator<Item = UdpSocket>,
@@ -184,14 +178,18 @@ pub fn spawn_server(
             }
         }
     });
-
+    let quic_server_config = QuicStreamerConfig::from(&quic_server_params);
+    let qos_config = SwQosConfig {
+        max_streams_per_ms: quic_server_params.max_streams_per_ms,
+    };
     spawn_server_with_cancel(
         name,
         sockets,
         keypair,
         packet_sender,
         staked_nodes,
-        quic_server_params,
+        quic_server_config,
+        qos_config,
         cancel,
     )
 }
@@ -203,9 +201,51 @@ pub fn spawn_server_with_cancel(
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
-    quic_server_params: QuicServerParams,
+    quic_server_params: QuicStreamerConfig,
+    qos_config: SwQosConfig,
     cancel: CancellationToken,
-) -> Result<SpawnNonBlockingServerResult, QuicServerError> {
+) -> Result<SpawnNonBlockingServerResult, QuicServerError>
+where
+{
+    let stats = Arc::<StreamerStats>::default();
+
+    let swqos = Arc::new(SwQos::new(
+        qos_config,
+        quic_server_params.max_staked_connections,
+        quic_server_params.max_unstaked_connections,
+        quic_server_params.max_connections_per_peer,
+        stats.clone(),
+        staked_nodes,
+        cancel.clone(),
+    ));
+
+    spawn_server_with_cancel_and_qos(
+        name,
+        stats,
+        sockets,
+        keypair,
+        packet_sender,
+        quic_server_params,
+        swqos,
+        cancel,
+    )
+}
+
+/// Spawn a streamer instance in the current tokio runtime.
+pub(crate) fn spawn_server_with_cancel_and_qos<Q, C>(
+    name: &'static str,
+    stats: Arc<StreamerStats>,
+    sockets: impl IntoIterator<Item = UdpSocket>,
+    keypair: &Keypair,
+    packet_sender: Sender<PacketBatch>,
+    quic_server_params: QuicStreamerConfig,
+    qos: Arc<Q>,
+    cancel: CancellationToken,
+) -> Result<SpawnNonBlockingServerResult, QuicServerError>
+where
+    Q: QosController<C> + Send + Sync + 'static,
+    C: ConnectionContext + Send + Sync + 'static,
+{
     let sockets: Vec<_> = sockets.into_iter().collect();
     info!("Start {name} quic server on {sockets:?}");
     let (config, _) = configure_server(keypair)?;
@@ -222,20 +262,13 @@ pub fn spawn_server_with_cancel(
             .map_err(QuicServerError::EndpointFailed)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let stats = Arc::<StreamerStats>::default();
     let (packet_batch_sender, packet_batch_receiver) =
-        bounded(quic_server_params.coalesce_channel_size);
+        bounded(quic_server_params.accumulator_channel_size);
     task::spawn_blocking({
         let cancel = cancel.clone();
         let stats = stats.clone();
         move || {
-            run_packet_batch_sender(
-                packet_sender,
-                packet_batch_receiver,
-                stats,
-                quic_server_params.coalesce,
-                cancel,
-            );
+            run_packet_batch_sender(packet_sender, packet_batch_receiver, stats, cancel);
         }
     });
 
@@ -248,10 +281,10 @@ pub fn spawn_server_with_cancel(
                 name,
                 endpoints.clone(),
                 packet_batch_sender,
-                staked_nodes,
                 stats.clone(),
                 quic_server_params,
                 cancel,
+                qos,
             )
             .await;
             tasks.close();
@@ -271,8 +304,8 @@ pub fn spawn_server_with_cancel(
 /// litter the code with open connection tracking. This is added into the
 /// connection table as part of the ConnectionEntry. The reference is auto
 /// reduced when it is dropped.
-struct ClientConnectionTracker {
-    stats: Arc<StreamerStats>,
+pub struct ClientConnectionTracker {
+    pub(crate) stats: Arc<StreamerStats>,
 }
 
 /// This is required by ConnectionEntry for supporting debug format.
@@ -313,15 +346,20 @@ impl ClientConnectionTracker {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn run_server(
+async fn run_server<Q, C>(
     name: &'static str,
     endpoints: Vec<Endpoint>,
     packet_batch_sender: Sender<PacketAccumulator>,
-    staked_nodes: Arc<RwLock<StakedNodes>>,
     stats: Arc<StreamerStats>,
-    quic_server_params: QuicServerParams,
+    quic_server_params: QuicStreamerConfig,
     cancel: CancellationToken,
-) -> TaskTracker {
+    qos: Arc<Q>,
+) -> TaskTracker
+where
+    Q: QosController<C> + Send + Sync + 'static,
+    C: ConnectionContext + Send + Sync + 'static,
+{
+    let quic_server_params = Arc::new(quic_server_params);
     let rate_limiter = Arc::new(ConnectionRateLimiter::new(
         quic_server_params.max_connections_per_ipaddr_per_min,
     ));
@@ -332,20 +370,9 @@ async fn run_server(
     const WAIT_FOR_CONNECTION_TIMEOUT: Duration = Duration::from_secs(1);
     debug!("spawn quic server");
     let mut last_datapoint = Instant::now();
-    let unstaked_connection_table: Arc<Mutex<ConnectionTable>> = Arc::new(Mutex::new(
-        ConnectionTable::new(ConnectionTableType::Unstaked, cancel.clone()),
-    ));
-    let stream_load_ema = Arc::new(StakedStreamLoadEMA::new(
-        stats.clone(),
-        quic_server_params.max_unstaked_connections,
-        quic_server_params.max_streams_per_ms,
-    ));
     stats
         .quic_endpoints_count
         .store(endpoints.len(), Ordering::Relaxed);
-    let staked_connection_table: Arc<Mutex<ConnectionTable>> = Arc::new(Mutex::new(
-        ConnectionTable::new(ConnectionTableType::Staked, cancel.clone()),
-    ));
 
     let mut accepts = endpoints
         .iter()
@@ -423,13 +450,10 @@ async fn run_server(
                         rate_limiter,
                         overall_connection_rate_limiter,
                         client_connection_tracker,
-                        unstaked_connection_table.clone(),
-                        staked_connection_table.clone(),
                         packet_batch_sender.clone(),
-                        staked_nodes.clone(),
                         stats.clone(),
-                        stream_load_ema.clone(),
                         quic_server_params.clone(),
+                        qos.clone(),
                         tasks.clone(),
                     ));
                 }
@@ -447,23 +471,6 @@ async fn run_server(
     tasks
 }
 
-fn prune_unstaked_connection_table(
-    unstaked_connection_table: &mut ConnectionTable,
-    max_unstaked_connections: usize,
-    stats: Arc<StreamerStats>,
-) {
-    if unstaked_connection_table.total_size >= max_unstaked_connections {
-        const PRUNE_TABLE_TO_PERCENTAGE: u8 = 90;
-        let max_percentage_full = Percentage::from(PRUNE_TABLE_TO_PERCENTAGE);
-
-        let max_connections = max_percentage_full.apply_to(max_unstaked_connections);
-        let num_pruned = unstaked_connection_table.prune_oldest(max_connections);
-        stats
-            .num_evictions_unstaked
-            .fetch_add(num_pruned, Ordering::Relaxed);
-    }
-}
-
 pub fn get_remote_pubkey(connection: &Connection) -> Option<Pubkey> {
     // Use the client cert only if it is self signed and the chain length is 1.
     connection
@@ -475,7 +482,7 @@ pub fn get_remote_pubkey(connection: &Connection) -> Option<Pubkey> {
         .and_then(get_pubkey_from_tls_certificate)
 }
 
-fn get_connection_stake(
+pub fn get_connection_stake(
     connection: &Connection,
     staked_nodes: &RwLock<StakedNodes>,
 ) -> Option<(Pubkey, u64, u64, u64, u64)> {
@@ -491,76 +498,16 @@ fn get_connection_stake(
     ))
 }
 
-fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stake: u64) -> usize {
-    match peer_type {
-        ConnectionPeerType::Staked(peer_stake) => {
-            // No checked math for f64 type. So let's explicitly check for 0 here
-            if total_stake == 0 || peer_stake > total_stake {
-                warn!(
-                    "Invalid stake values: peer_stake: {peer_stake:?}, total_stake: \
-                     {total_stake:?}"
-                );
-
-                QUIC_MIN_STAKED_CONCURRENT_STREAMS
-            } else {
-                let delta = (QUIC_TOTAL_STAKED_CONCURRENT_STREAMS
-                    - QUIC_MIN_STAKED_CONCURRENT_STREAMS) as f64;
-
-                (((peer_stake as f64 / total_stake as f64) * delta) as usize
-                    + QUIC_MIN_STAKED_CONCURRENT_STREAMS)
-                    .clamp(
-                        QUIC_MIN_STAKED_CONCURRENT_STREAMS,
-                        QUIC_MAX_STAKED_CONCURRENT_STREAMS,
-                    )
-            }
-        }
-        ConnectionPeerType::Unstaked => QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
-    }
-}
-
-enum ConnectionHandlerError {
+#[derive(Debug)]
+pub(crate) enum ConnectionHandlerError {
     ConnectionAddError,
     MaxStreamError,
 }
 
-#[derive(Clone)]
-struct NewConnectionHandlerParams {
-    packet_sender: Sender<PacketAccumulator>,
-    remote_pubkey: Option<Pubkey>,
-    peer_type: ConnectionPeerType,
-    total_stake: u64,
-    max_connections_per_peer: usize,
-    stats: Arc<StreamerStats>,
-    max_stake: u64,
-    min_stake: u64,
-    max_connections: usize,
-    wait_for_chunk_timeout: Duration,
-}
-
-impl NewConnectionHandlerParams {
-    fn new_unstaked(
-        packet_sender: Sender<PacketAccumulator>,
-        max_connections_per_peer: usize,
-        stats: Arc<StreamerStats>,
-        wait_for_chunk_timeout: Duration,
-        max_connections: usize,
-    ) -> NewConnectionHandlerParams {
-        NewConnectionHandlerParams {
-            packet_sender,
-            remote_pubkey: None,
-            peer_type: ConnectionPeerType::Unstaked,
-            total_stake: 0,
-            max_connections_per_peer,
-            stats,
-            max_stake: 0,
-            min_stake: 0,
-            max_connections,
-            wait_for_chunk_timeout,
-        }
-    }
-}
-
-fn update_open_connections_stat(stats: &StreamerStats, connection_table: &ConnectionTable) {
+pub(crate) fn update_open_connections_stat(
+    stats: &StreamerStats,
+    connection_table: &ConnectionTable,
+) {
     if connection_table.is_staked() {
         stats
             .open_staked_connections
@@ -572,173 +519,21 @@ fn update_open_connections_stat(stats: &StreamerStats, connection_table: &Connec
     }
 }
 
-fn handle_and_cache_new_connection(
-    client_connection_tracker: ClientConnectionTracker,
-    connection: Connection,
-    mut connection_table_l: MutexGuard<ConnectionTable>,
-    connection_table: Arc<Mutex<ConnectionTable>>,
-    params: &NewConnectionHandlerParams,
-    stream_load_ema: Arc<StakedStreamLoadEMA>,
-    tasks: TaskTracker,
-) -> Result<(), ConnectionHandlerError> {
-    if let Ok(max_uni_streams) = VarInt::from_u64(compute_max_allowed_uni_streams(
-        params.peer_type,
-        params.total_stake,
-    ) as u64)
-    {
-        let remote_addr = connection.remote_address();
-        let receive_window =
-            compute_recieve_window(params.max_stake, params.min_stake, params.peer_type);
-
-        debug!(
-            "Peer type {:?}, total stake {}, max streams {} receive_window {:?} from peer {}",
-            params.peer_type,
-            params.total_stake,
-            max_uni_streams.into_inner(),
-            receive_window,
-            remote_addr,
-        );
-
-        if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
-            .try_add_connection(
-                ConnectionTableKey::new(remote_addr.ip(), params.remote_pubkey),
-                remote_addr.port(),
-                client_connection_tracker,
-                Some(connection.clone()),
-                params.peer_type,
-                timing::timestamp(),
-                params.max_connections_per_peer,
-            )
-        {
-            update_open_connections_stat(&params.stats, &connection_table_l);
-            drop(connection_table_l);
-
-            if let Ok(receive_window) = receive_window {
-                connection.set_receive_window(receive_window);
-            }
-            connection.set_max_concurrent_uni_streams(max_uni_streams);
-
-            tasks.spawn(handle_connection(
-                connection,
-                remote_addr,
-                last_update,
-                connection_table,
-                params.clone(),
-                stream_load_ema,
-                stream_counter,
-                cancel_connection,
-            ));
-            Ok(())
-        } else {
-            params
-                .stats
-                .connection_add_failed
-                .fetch_add(1, Ordering::Relaxed);
-            Err(ConnectionHandlerError::ConnectionAddError)
-        }
-    } else {
-        connection.close(
-            CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT.into(),
-            CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT,
-        );
-        params
-            .stats
-            .connection_add_failed_invalid_stream_count
-            .fetch_add(1, Ordering::Relaxed);
-        Err(ConnectionHandlerError::MaxStreamError)
-    }
-}
-
-async fn prune_unstaked_connections_and_add_new_connection(
-    client_connection_tracker: ClientConnectionTracker,
-    connection: Connection,
-    connection_table: Arc<Mutex<ConnectionTable>>,
-    params: &NewConnectionHandlerParams,
-    stream_load_ema: Arc<StakedStreamLoadEMA>,
-    tasks: TaskTracker,
-) -> Result<(), ConnectionHandlerError> {
-    let stats = params.stats.clone();
-    if params.max_connections > 0 {
-        let connection_table_clone = connection_table.clone();
-        let mut connection_table = connection_table.lock().await;
-        prune_unstaked_connection_table(&mut connection_table, params.max_connections, stats);
-        handle_and_cache_new_connection(
-            client_connection_tracker,
-            connection,
-            connection_table,
-            connection_table_clone,
-            params,
-            stream_load_ema,
-            tasks,
-        )
-    } else {
-        connection.close(
-            CONNECTION_CLOSE_CODE_DISALLOWED.into(),
-            CONNECTION_CLOSE_REASON_DISALLOWED,
-        );
-        Err(ConnectionHandlerError::ConnectionAddError)
-    }
-}
-
-/// Calculate the ratio for per connection receive window from a staked peer
-fn compute_receive_window_ratio_for_staked_node(max_stake: u64, min_stake: u64, stake: u64) -> u64 {
-    // Testing shows the maximum throughput from a connection is achieved at receive_window =
-    // PACKET_DATA_SIZE * 10. Beyond that, there is not much gain. We linearly map the
-    // stake to the ratio range from QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO to
-    // QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO. Where the linear algebra of finding the ratio 'r'
-    // for stake 's' is,
-    // r(s) = a * s + b. Given the max_stake, min_stake, max_ratio, min_ratio, we can find
-    // a and b.
-
-    if stake > max_stake {
-        return QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO;
-    }
-
-    let max_ratio = QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO;
-    let min_ratio = QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO;
-    if max_stake > min_stake {
-        let a = (max_ratio - min_ratio) as f64 / (max_stake - min_stake) as f64;
-        let b = max_ratio as f64 - ((max_stake as f64) * a);
-        let ratio = (a * stake as f64) + b;
-        ratio.round() as u64
-    } else {
-        QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO
-    }
-}
-
-fn compute_recieve_window(
-    max_stake: u64,
-    min_stake: u64,
-    peer_type: ConnectionPeerType,
-) -> Result<VarInt, VarIntBoundsExceeded> {
-    match peer_type {
-        ConnectionPeerType::Unstaked => {
-            VarInt::from_u64(PACKET_DATA_SIZE as u64 * QUIC_UNSTAKED_RECEIVE_WINDOW_RATIO)
-        }
-        ConnectionPeerType::Staked(peer_stake) => {
-            let ratio =
-                compute_receive_window_ratio_for_staked_node(max_stake, min_stake, peer_stake);
-            VarInt::from_u64(PACKET_DATA_SIZE as u64 * ratio)
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
-async fn setup_connection(
+async fn setup_connection<Q, C>(
     connecting: Connecting,
     rate_limiter: Arc<ConnectionRateLimiter>,
     overall_connection_rate_limiter: Arc<TotalConnectionRateLimiter>,
     client_connection_tracker: ClientConnectionTracker,
-    unstaked_connection_table: Arc<Mutex<ConnectionTable>>,
-    staked_connection_table: Arc<Mutex<ConnectionTable>>,
     packet_sender: Sender<PacketAccumulator>,
-    staked_nodes: Arc<RwLock<StakedNodes>>,
     stats: Arc<StreamerStats>,
-    stream_load_ema: Arc<StakedStreamLoadEMA>,
-    quic_server_params: QuicServerParams,
+    server_params: Arc<QuicStreamerConfig>,
+    qos: Arc<Q>,
     tasks: TaskTracker,
-) {
-    const PRUNE_RANDOM_SAMPLE_SIZE: usize = 2;
+) where
+    Q: QosController<C> + Send + Sync + 'static,
+    C: ConnectionContext + Send + Sync + 'static,
+{
     let from = connecting.remote_address();
     let res = timeout(QUIC_CONNECTION_HANDSHAKE_TIMEOUT, connecting).await;
     stats
@@ -759,7 +554,6 @@ async fn setup_connection(
                     );
                     return;
                 }
-                stats.total_new_connections.fetch_add(1, Ordering::Relaxed);
 
                 if !overall_connection_rate_limiter.is_allowed() {
                     debug!(
@@ -776,120 +570,26 @@ async fn setup_connection(
                     return;
                 }
 
-                let params = get_connection_stake(&new_connection, &staked_nodes).map_or(
-                    NewConnectionHandlerParams::new_unstaked(
+                stats.total_new_connections.fetch_add(1, Ordering::Relaxed);
+
+                let mut conn_context = qos.build_connection_context(&new_connection);
+                if let Some(cancel_connection) = qos
+                    .try_add_connection(
+                        client_connection_tracker,
+                        &new_connection,
+                        &mut conn_context,
+                    )
+                    .await
+                {
+                    tasks.spawn(handle_connection(
                         packet_sender.clone(),
-                        quic_server_params.max_connections_per_peer,
-                        stats.clone(),
-                        quic_server_params.wait_for_chunk_timeout,
-                        quic_server_params.max_unstaked_connections,
-                    ),
-                    |(pubkey, stake, total_stake, max_stake, min_stake)| {
-                        // The heuristic is that the stake should be large enough to have 1 stream pass through within one throttle
-                        // interval during which we allow max (MAX_STREAMS_PER_MS * STREAM_THROTTLING_INTERVAL_MS) streams.
-                        let min_stake_ratio = 1_f64
-                            / (quic_server_params.max_streams_per_ms
-                                * STREAM_THROTTLING_INTERVAL_MS)
-                                as f64;
-                        let stake_ratio = stake as f64 / total_stake as f64;
-                        let peer_type = if stake_ratio < min_stake_ratio {
-                            // If it is a staked connection with ultra low stake ratio, treat it as unstaked.
-                            ConnectionPeerType::Unstaked
-                        } else {
-                            ConnectionPeerType::Staked(stake)
-                        };
-                        NewConnectionHandlerParams {
-                            packet_sender,
-                            remote_pubkey: Some(pubkey),
-                            peer_type,
-                            total_stake,
-                            max_connections_per_peer: quic_server_params.max_connections_per_peer,
-                            stats: stats.clone(),
-                            max_stake,
-                            min_stake,
-                            wait_for_chunk_timeout: quic_server_params.wait_for_chunk_timeout,
-                            max_connections: quic_server_params.max_staked_connections,
-                        }
-                    },
-                );
-
-                match params.peer_type {
-                    ConnectionPeerType::Staked(stake) => {
-                        let mut connection_table_l = staked_connection_table.lock().await;
-
-                        if connection_table_l.total_size
-                            >= quic_server_params.max_staked_connections
-                        {
-                            let num_pruned =
-                                connection_table_l.prune_random(PRUNE_RANDOM_SAMPLE_SIZE, stake);
-                            stats
-                                .num_evictions_staked
-                                .fetch_add(num_pruned, Ordering::Relaxed);
-                            update_open_connections_stat(&stats, &connection_table_l);
-                        }
-
-                        if connection_table_l.total_size < quic_server_params.max_staked_connections
-                        {
-                            if let Ok(()) = handle_and_cache_new_connection(
-                                client_connection_tracker,
-                                new_connection,
-                                connection_table_l,
-                                staked_connection_table.clone(),
-                                &params,
-                                stream_load_ema.clone(),
-                                tasks,
-                            ) {
-                                stats
-                                    .connection_added_from_staked_peer
-                                    .fetch_add(1, Ordering::Relaxed);
-                            }
-                        } else {
-                            // If we couldn't prune a connection in the staked connection table, let's
-                            // put this connection in the unstaked connection table. If needed, prune a
-                            // connection from the unstaked connection table.
-                            if let Ok(()) = prune_unstaked_connections_and_add_new_connection(
-                                client_connection_tracker,
-                                new_connection,
-                                unstaked_connection_table.clone(),
-                                &params,
-                                stream_load_ema.clone(),
-                                tasks,
-                            )
-                            .await
-                            {
-                                stats
-                                    .connection_added_from_staked_peer
-                                    .fetch_add(1, Ordering::Relaxed);
-                            } else {
-                                stats
-                                    .connection_add_failed_on_pruning
-                                    .fetch_add(1, Ordering::Relaxed);
-                                stats
-                                    .connection_add_failed_staked_node
-                                    .fetch_add(1, Ordering::Relaxed);
-                            }
-                        }
-                    }
-                    ConnectionPeerType::Unstaked => {
-                        if let Ok(()) = prune_unstaked_connections_and_add_new_connection(
-                            client_connection_tracker,
-                            new_connection,
-                            unstaked_connection_table.clone(),
-                            &params,
-                            stream_load_ema.clone(),
-                            tasks,
-                        )
-                        .await
-                        {
-                            stats
-                                .connection_added_from_unstaked_peer
-                                .fetch_add(1, Ordering::Relaxed);
-                        } else {
-                            stats
-                                .connection_add_failed_unstaked_node
-                                .fetch_add(1, Ordering::Relaxed);
-                        }
-                    }
+                        new_connection,
+                        stats,
+                        server_params.wait_for_chunk_timeout,
+                        conn_context.clone(),
+                        qos,
+                        cancel_connection,
+                    ));
                 }
             }
             Err(e) => {
@@ -947,11 +647,10 @@ fn run_packet_batch_sender(
     packet_sender: Sender<PacketBatch>,
     packet_receiver: Receiver<PacketAccumulator>,
     stats: Arc<StreamerStats>,
-    coalesce: Duration,
     cancel: CancellationToken,
 ) {
+    let mut channel_disconnected = false;
     trace!("enter packet_batch_sender");
-    let mut batch_start_time = Instant::now();
     loop {
         let mut packet_perf_measure: Vec<([u8; 64], Instant)> = Vec::default();
         let mut packet_batch = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);
@@ -965,13 +664,10 @@ fn run_packet_batch_sender(
             .fetch_add(PACKETS_PER_BATCH, Ordering::Relaxed);
 
         loop {
-            if cancel.is_cancelled() {
+            if cancel.is_cancelled() || channel_disconnected {
                 return;
             }
-            let elapsed = batch_start_time.elapsed();
-            if packet_batch.len() >= PACKETS_PER_BATCH
-                || (!packet_batch.is_empty() && elapsed >= coalesce)
-            {
+            if !packet_batch.is_empty() {
                 let len = packet_batch.len();
                 track_streamer_fetch_packet_performance(&packet_perf_measure, &stats);
 
@@ -1004,28 +700,28 @@ fn run_packet_batch_sender(
                 break;
             }
 
-            let timeout_res = if !packet_batch.is_empty() {
-                // If we get here, elapsed < coalesce (see above if condition)
-                packet_receiver.recv_timeout(coalesce - elapsed)
-            } else {
-                // Small bit of non-idealness here: the holder(s) of the other end
-                // of packet_receiver must drop it (without waiting for us to exit)
-                // or we have a chance of sleeping here forever
-                // and never polling exit. Not a huge deal in practice as the
-                // only time this happens is when we tear down the server
-                // and at that time the other end does indeed not wait for us
-                // to exit here
-                packet_receiver
-                    .recv()
-                    .map_err(|_| crossbeam_channel::RecvTimeoutError::Disconnected)
-            };
-
-            if let Ok(mut packet_accumulator) = timeout_res {
-                // Start the timeout from when the packet batch first becomes non-empty
-                if packet_batch.is_empty() {
-                    batch_start_time = Instant::now();
+            // On the first receive, we block on recv not to use excessive CPU when the channel is idle.
+            // This will not block the exit as the channel will be dropped on the sender's side.
+            //
+            // On subsequent receives, we call try_recv, so that we do not get blocked waiting for packets
+            // when we already have something in the batch.
+            //
+            // For setting channel_disconnected, we can ignore TryRecvError::Disconnected on try_recv and
+            // set it on the next iteration (if we don't exit early anyway from cancel token)
+            let mut first = true;
+            let mut recv = || {
+                if first {
+                    first = false;
+                    // recv is only an error if empty and disconnected
+                    packet_receiver.recv().map_err(|_| {
+                        channel_disconnected = true;
+                        TryRecvError::Disconnected
+                    })
+                } else {
+                    packet_receiver.try_recv()
                 }
-
+            };
+            while let Ok(mut packet_accumulator) = recv() {
                 // 86% of transactions/packets come in one chunk. In that case,
                 // we can just move the chunk to the `Packet` and no copy is
                 // made.
@@ -1058,6 +754,11 @@ fn run_packet_batch_sender(
                 stats
                     .total_chunks_processed_by_batcher
                     .fetch_add(num_chunks, Ordering::Relaxed);
+
+                // prevent getting stuck in loop
+                if packet_batch.len() >= PACKETS_PER_BATCH {
+                    break;
+                }
             }
         }
     }
@@ -1092,25 +793,20 @@ fn track_streamer_fetch_packet_performance(
         .fetch_add(measure.as_us(), Ordering::Relaxed);
 }
 
-async fn handle_connection(
+async fn handle_connection<Q, C>(
+    packet_sender: Sender<PacketAccumulator>,
     connection: Connection,
-    remote_addr: SocketAddr,
-    last_update: Arc<AtomicU64>,
-    connection_table: Arc<Mutex<ConnectionTable>>,
-    params: NewConnectionHandlerParams,
-    stream_load_ema: Arc<StakedStreamLoadEMA>,
-    stream_counter: Arc<ConnectionStreamCounter>,
+    stats: Arc<StreamerStats>,
+    wait_for_chunk_timeout: Duration,
+    context: C,
+    qos: Arc<Q>,
     cancel: CancellationToken,
-) {
-    let NewConnectionHandlerParams {
-        packet_sender,
-        peer_type,
-        remote_pubkey,
-        stats,
-        total_stake,
-        ..
-    } = params;
-
+) where
+    Q: QosController<C> + Send + Sync + 'static,
+    C: ConnectionContext + Send + Sync + 'static,
+{
+    let peer_type = context.peer_type();
+    let remote_addr = connection.remote_address();
     debug!(
         "quic new connection {} streams: {} connections: {}",
         remote_addr,
@@ -1133,42 +829,8 @@ async fn handle_connection(
             _ = cancel.cancelled() => break,
         };
 
-        let max_streams_per_throttling_interval =
-            stream_load_ema.available_load_capacity_in_throttling_duration(peer_type, total_stake);
-
-        let throttle_interval_start = stream_counter.reset_throttling_params_if_needed();
-        let streams_read_in_throttle_interval = stream_counter.stream_count.load(Ordering::Relaxed);
-        if streams_read_in_throttle_interval >= max_streams_per_throttling_interval {
-            // The peer is sending faster than we're willing to read. Sleep for what's
-            // left of this read interval so the peer backs off.
-            let throttle_duration =
-                STREAM_THROTTLING_INTERVAL.saturating_sub(throttle_interval_start.elapsed());
-
-            if !throttle_duration.is_zero() {
-                debug!(
-                    "Throttling stream from {remote_addr:?}, peer type: {peer_type:?}, total \
-                     stake: {total_stake}, max_streams_per_interval: \
-                     {max_streams_per_throttling_interval}, read_interval_streams: \
-                     {streams_read_in_throttle_interval} throttle_duration: {throttle_duration:?}"
-                );
-                stats.throttled_streams.fetch_add(1, Ordering::Relaxed);
-                match peer_type {
-                    ConnectionPeerType::Unstaked => {
-                        stats
-                            .throttled_unstaked_streams
-                            .fetch_add(1, Ordering::Relaxed);
-                    }
-                    ConnectionPeerType::Staked(_) => {
-                        stats
-                            .throttled_staked_streams
-                            .fetch_add(1, Ordering::Relaxed);
-                    }
-                }
-                sleep(throttle_duration).await;
-            }
-        }
-        stream_load_ema.increment_load(peer_type);
-        stream_counter.stream_count.fetch_add(1, Ordering::Relaxed);
+        qos.on_new_stream(&context).await;
+        qos.on_stream_accepted(&context);
         stats.active_streams.fetch_add(1, Ordering::Relaxed);
         stats.total_new_streams.fetch_add(1, Ordering::Relaxed);
 
@@ -1193,7 +855,7 @@ async fn handle_connection(
             // packet loss or the peer stops sending for whatever reason.
             let n_chunks = match tokio::select! {
                 chunk = tokio::time::timeout(
-                    params.wait_for_chunk_timeout,
+                    wait_for_chunk_timeout,
                     stream.read_chunks(&mut chunks)) => chunk,
 
                 // If the peer gets disconnected stop the task right away.
@@ -1229,7 +891,7 @@ async fn handle_connection(
             ) {
                 // The stream is finished, break out of the loop and close the stream.
                 Ok(StreamState::Finished) => {
-                    last_update.store(timing::timestamp(), Ordering::Relaxed);
+                    qos.on_stream_finished(&context);
                     break;
                 }
                 // The stream is still active, continue reading.
@@ -1241,28 +903,17 @@ async fn handle_connection(
                         CONNECTION_CLOSE_REASON_INVALID_STREAM,
                     );
                     stats.active_streams.fetch_sub(1, Ordering::Relaxed);
-                    stream_load_ema.update_ema_if_needed();
+                    qos.on_stream_error(&context);
                     break 'conn;
                 }
             }
         }
 
         stats.active_streams.fetch_sub(1, Ordering::Relaxed);
-        stream_load_ema.update_ema_if_needed();
+        qos.on_stream_closed(&context);
     }
 
-    let stable_id = connection.stable_id();
-    let removed_connection_count = {
-        let mut connection_table = connection_table.lock().await;
-        let removed_connection_count = connection_table.remove_connection(
-            ConnectionTableKey::new(remote_addr.ip(), remote_pubkey),
-            remote_addr.port(),
-            stable_id,
-        );
-        update_open_connections_stat(&stats, &connection_table);
-        removed_connection_count
-    };
-
+    let removed_connection_count = qos.remove_connection(&context, connection).await;
     if removed_connection_count > 0 {
         stats
             .connection_removed
@@ -1438,28 +1089,28 @@ impl Drop for ConnectionEntry {
 }
 
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
-enum ConnectionTableKey {
+pub(crate) enum ConnectionTableKey {
     IP(IpAddr),
     Pubkey(Pubkey),
 }
 
 impl ConnectionTableKey {
-    fn new(ip: IpAddr, maybe_pubkey: Option<Pubkey>) -> Self {
+    pub(crate) fn new(ip: IpAddr, maybe_pubkey: Option<Pubkey>) -> Self {
         maybe_pubkey.map_or(ConnectionTableKey::IP(ip), |pubkey| {
             ConnectionTableKey::Pubkey(pubkey)
         })
     }
 }
 
-enum ConnectionTableType {
+pub(crate) enum ConnectionTableType {
     Staked,
     Unstaked,
 }
 
 // Map of IP to list of connection entries
-struct ConnectionTable {
+pub(crate) struct ConnectionTable {
     table: IndexMap<ConnectionTableKey, Vec<ConnectionEntry>>,
-    total_size: usize,
+    pub(crate) total_size: usize,
     table_type: ConnectionTableType,
     cancel: CancellationToken,
 }
@@ -1468,7 +1119,7 @@ struct ConnectionTable {
 ///
 /// Return number pruned
 impl ConnectionTable {
-    fn new(table_type: ConnectionTableType, cancel: CancellationToken) -> Self {
+    pub(crate) fn new(table_type: ConnectionTableType, cancel: CancellationToken) -> Self {
         Self {
             table: IndexMap::default(),
             total_size: 0,
@@ -1485,7 +1136,7 @@ impl ConnectionTable {
         matches!(self.table_type, ConnectionTableType::Staked)
     }
 
-    fn prune_oldest(&mut self, max_size: usize) -> usize {
+    pub(crate) fn prune_oldest(&mut self, max_size: usize) -> usize {
         let mut num_pruned = 0;
         let key = |(_, connections): &(_, &Vec<_>)| {
             connections.iter().map(ConnectionEntry::last_update).min()
@@ -1507,7 +1158,7 @@ impl ConnectionTable {
     // lowest stake, and returns the number of pruned connections.
     // If the stakes of all the sampled connections are higher than the
     // threshold_stake, rejects the pruning attempt, and returns 0.
-    fn prune_random(&mut self, sample_size: usize, threshold_stake: u64) -> usize {
+    pub(crate) fn prune_random(&mut self, sample_size: usize, threshold_stake: u64) -> usize {
         let num_pruned = std::iter::once(self.table.len())
             .filter(|&size| size > 0)
             .flat_map(|size| {
@@ -1529,14 +1180,14 @@ impl ConnectionTable {
         num_pruned
     }
 
-    fn try_add_connection(
+    pub(crate) fn try_add_connection(
         &mut self,
         key: ConnectionTableKey,
         port: u16,
         client_connection_tracker: ClientConnectionTracker,
         connection: Option<Connection>,
         peer_type: ConnectionPeerType,
-        last_update: u64,
+        last_update: Arc<AtomicU64>,
         max_connections_per_peer: usize,
     ) -> Option<(
         Arc<AtomicU64>,
@@ -1551,7 +1202,6 @@ impl ConnectionTable {
             .unwrap_or(false);
         if has_connection_capacity {
             let cancel = self.cancel.child_token();
-            let last_update = Arc::new(AtomicU64::new(last_update));
             let stream_counter = connection_entry
                 .first()
                 .map(|entry| entry.stream_counter.clone())
@@ -1579,7 +1229,12 @@ impl ConnectionTable {
     }
 
     // Returns number of connections that were removed
-    fn remove_connection(&mut self, key: ConnectionTableKey, port: u16, stable_id: usize) -> usize {
+    pub(crate) fn remove_connection(
+        &mut self,
+        key: ConnectionTableKey,
+        port: u16,
+        stable_id: usize,
+    ) -> usize {
         if let Entry::Occupied(mut e) = self.table.entry(key) {
             let e_ref = e.get_mut();
             let old_size = e_ref.len();
@@ -1633,15 +1288,9 @@ impl Future for EndpointAccept<'_> {
 pub mod test {
     use {
         super::*,
-        crate::{
-            nonblocking::{
-                quic::compute_max_allowed_uni_streams,
-                testing_utilities::{
-                    check_multiple_streams, get_client_config, make_client_endpoint,
-                    setup_quic_server, SpawnTestServerResult,
-                },
-            },
-            quic::DEFAULT_TPU_COALESCE,
+        crate::nonblocking::testing_utilities::{
+            check_multiple_streams, get_client_config, make_client_endpoint, setup_quic_server,
+            SpawnTestServerResult,
         },
         assert_matches::assert_matches,
         crossbeam_channel::{unbounded, Receiver},
@@ -1716,6 +1365,34 @@ pub mod test {
         }
         s1.finish().unwrap();
 
+        check_received_packets(receiver, num_expected_packets, num_bytes).await;
+    }
+
+    pub async fn check_multiple_packets(
+        receiver: Receiver<PacketBatch>,
+        server_address: SocketAddr,
+        client_keypair: Option<&Keypair>,
+        num_expected_packets: usize,
+    ) {
+        let conn1 = Arc::new(make_client_endpoint(&server_address, client_keypair).await);
+
+        // Send a full size packet with single byte writes.
+        let num_bytes = PACKET_DATA_SIZE;
+        let packet = vec![1u8; num_bytes];
+        for _ in 0..num_expected_packets {
+            let mut s1 = conn1.open_uni().await.unwrap();
+            s1.write_all(&packet).await.unwrap();
+            s1.finish().unwrap();
+        }
+
+        check_received_packets(receiver, num_expected_packets, num_bytes).await;
+    }
+
+    async fn check_received_packets(
+        receiver: Receiver<PacketBatch>,
+        num_expected_packets: usize,
+        num_bytes: usize,
+    ) {
         let mut all_packets = vec![];
         let now = Instant::now();
         let mut total_packets = 0;
@@ -1762,7 +1439,11 @@ pub mod test {
             server_address: _,
             stats: _,
             cancel,
-        } = setup_quic_server(None, QuicServerParams::default_for_tests());
+        } = setup_quic_server(
+            None,
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
+        );
         cancel.cancel();
         join_handle.await.unwrap();
         // test that it is stopped by cancel, not due to receiver
@@ -1779,7 +1460,11 @@ pub mod test {
             server_address,
             stats: _,
             cancel,
-        } = setup_quic_server(None, QuicServerParams::default_for_tests());
+        } = setup_quic_server(
+            None,
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
+        );
 
         check_timeout(receiver, server_address).await;
         cancel.cancel();
@@ -1797,13 +1482,7 @@ pub mod test {
         let handle = task::spawn_blocking({
             let cancel = cancel.clone();
             move || {
-                run_packet_batch_sender(
-                    pkt_batch_sender,
-                    pkt_receiver,
-                    stats,
-                    DEFAULT_TPU_COALESCE,
-                    cancel,
-                );
+                run_packet_batch_sender(pkt_batch_sender, pkt_receiver, stats, cancel);
             }
         });
 
@@ -1846,7 +1525,11 @@ pub mod test {
             server_address,
             stats,
             cancel,
-        } = setup_quic_server(None, QuicServerParams::default_for_tests());
+        } = setup_quic_server(
+            None,
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
+        );
 
         let conn1 = make_client_endpoint(&server_address, None).await;
         assert_eq!(stats.active_streams.load(Ordering::Relaxed), 0);
@@ -1882,7 +1565,11 @@ pub mod test {
             server_address,
             stats: _,
             cancel,
-        } = setup_quic_server(None, QuicServerParams::default_for_tests());
+        } = setup_quic_server(
+            None,
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
+        );
         check_block_multiple_connections(server_address).await;
         cancel.cancel();
         drop(receiver);
@@ -1901,10 +1588,11 @@ pub mod test {
             cancel,
         } = setup_quic_server(
             None,
-            QuicServerParams {
+            QuicStreamerConfig {
                 max_connections_per_peer: 2,
-                ..QuicServerParams::default_for_tests()
+                ..QuicStreamerConfig::default_for_tests()
             },
+            SwQosConfig::default(),
         );
 
         let client_socket = bind_to_localhost_unique().expect("should bind - client");
@@ -1981,7 +1669,11 @@ pub mod test {
             server_address,
             stats: _,
             cancel,
-        } = setup_quic_server(None, QuicServerParams::default_for_tests());
+        } = setup_quic_server(
+            None,
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
+        );
         check_multiple_writes(receiver, server_address, None).await;
         cancel.cancel();
         join_handle.await.unwrap();
@@ -2003,16 +1695,20 @@ pub mod test {
             server_address,
             stats,
             cancel,
-        } = setup_quic_server(Some(staked_nodes), QuicServerParams::default_for_tests());
+        } = setup_quic_server(
+            Some(staked_nodes),
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
+        );
         check_multiple_writes(receiver, server_address, Some(&client_keypair)).await;
         cancel.cancel();
         join_handle.await.unwrap();
 
         assert_eq!(
             stats
-                .connection_added_from_unstaked_peer
+                .connection_added_from_staked_peer
                 .load(Ordering::Relaxed),
-            0
+            1
         );
         assert_eq!(stats.connection_removed.load(Ordering::Relaxed), 1);
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
@@ -2035,7 +1731,11 @@ pub mod test {
             server_address,
             stats,
             cancel,
-        } = setup_quic_server(Some(staked_nodes), QuicServerParams::default_for_tests());
+        } = setup_quic_server(
+            Some(staked_nodes),
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
+        );
         check_multiple_writes(receiver, server_address, Some(&client_keypair)).await;
         cancel.cancel();
         join_handle.await.unwrap();
@@ -2059,7 +1759,11 @@ pub mod test {
             server_address,
             stats,
             cancel,
-        } = setup_quic_server(None, QuicServerParams::default_for_tests());
+        } = setup_quic_server(
+            None,
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
+        );
         check_multiple_writes(receiver, server_address, None).await;
         cancel.cancel();
         join_handle.await.unwrap();
@@ -2094,10 +1798,11 @@ pub mod test {
             &keypair,
             sender,
             staked_nodes,
-            QuicServerParams {
+            QuicStreamerConfig {
                 max_unstaked_connections: 0, // Do not allow any connection from unstaked clients/nodes
-                ..QuicServerParams::default_for_tests()
+                ..QuicStreamerConfig::default_for_tests()
             },
+            SwQosConfig::default(),
             cancel.clone(),
         )
         .unwrap();
@@ -2127,10 +1832,11 @@ pub mod test {
             &keypair,
             sender,
             staked_nodes,
-            QuicServerParams {
+            QuicStreamerConfig {
                 max_connections_per_peer: 2,
-                ..QuicServerParams::default_for_tests()
+                ..QuicStreamerConfig::default_for_tests()
             },
+            SwQosConfig::default(),
             cancel.clone(),
         )
         .unwrap();
@@ -2167,7 +1873,7 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Unstaked,
-                    i as u64,
+                    Arc::new(AtomicU64::new(i as u64)),
                     max_connections_per_peer,
                 )
                 .unwrap();
@@ -2180,7 +1886,7 @@ pub mod test {
                 ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                 None,
                 ConnectionPeerType::Unstaked,
-                5,
+                Arc::new(AtomicU64::new(5)),
                 max_connections_per_peer,
             )
             .unwrap();
@@ -2223,7 +1929,7 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Unstaked,
-                    i as u64,
+                    Arc::new(AtomicU64::new(i as u64)),
                     max_connections_per_peer,
                 )
                 .unwrap();
@@ -2259,7 +1965,7 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Unstaked,
-                    i as u64,
+                    Arc::new(AtomicU64::new(i as u64)),
                     max_connections_per_peer,
                 )
                 .unwrap();
@@ -2274,7 +1980,7 @@ pub mod test {
                 ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                 None,
                 ConnectionPeerType::Unstaked,
-                10,
+                Arc::new(AtomicU64::new(10)),
                 max_connections_per_peer,
             )
             .is_none());
@@ -2289,7 +1995,7 @@ pub mod test {
                 ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                 None,
                 ConnectionPeerType::Unstaked,
-                10,
+                Arc::new(AtomicU64::new(10)),
                 max_connections_per_peer,
             )
             .is_some());
@@ -2329,7 +2035,7 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Staked((i + 1) as u64),
-                    i as u64,
+                    Arc::new(AtomicU64::new(i as u64)),
                     max_connections_per_peer,
                 )
                 .unwrap();
@@ -2373,7 +2079,7 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Unstaked,
-                    (i * 2) as u64,
+                    Arc::new(AtomicU64::new((i * 2) as u64)),
                     max_connections_per_peer,
                 )
                 .unwrap();
@@ -2385,7 +2091,7 @@ pub mod test {
                     ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                     None,
                     ConnectionPeerType::Unstaked,
-                    (i * 2 + 1) as u64,
+                    Arc::new(AtomicU64::new((i * 2 + 1) as u64)),
                     max_connections_per_peer,
                 )
                 .unwrap();
@@ -2400,7 +2106,7 @@ pub mod test {
                 ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
                 None,
                 ConnectionPeerType::Unstaked,
-                (num_ips * 2) as u64,
+                Arc::new(AtomicU64::new((num_ips * 2) as u64)),
                 max_connections_per_peer,
             )
             .unwrap();
@@ -2418,68 +2124,6 @@ pub mod test {
         assert_eq!(stats.open_connections.load(Ordering::Relaxed), 0);
     }
 
-    #[test]
-
-    fn test_max_allowed_uni_streams() {
-        assert_eq!(
-            compute_max_allowed_uni_streams(ConnectionPeerType::Unstaked, 0),
-            QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS
-        );
-        assert_eq!(
-            compute_max_allowed_uni_streams(ConnectionPeerType::Staked(10), 0),
-            QUIC_MIN_STAKED_CONCURRENT_STREAMS
-        );
-        let delta =
-            (QUIC_TOTAL_STAKED_CONCURRENT_STREAMS - QUIC_MIN_STAKED_CONCURRENT_STREAMS) as f64;
-        assert_eq!(
-            compute_max_allowed_uni_streams(ConnectionPeerType::Staked(1000), 10000),
-            QUIC_MAX_STAKED_CONCURRENT_STREAMS,
-        );
-        assert_eq!(
-            compute_max_allowed_uni_streams(ConnectionPeerType::Staked(100), 10000),
-            ((delta / (100_f64)) as usize + QUIC_MIN_STAKED_CONCURRENT_STREAMS)
-                .min(QUIC_MAX_STAKED_CONCURRENT_STREAMS)
-        );
-        assert_eq!(
-            compute_max_allowed_uni_streams(ConnectionPeerType::Unstaked, 10000),
-            QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS
-        );
-    }
-
-    #[test]
-    fn test_cacluate_receive_window_ratio_for_staked_node() {
-        let mut max_stake = 10000;
-        let mut min_stake = 0;
-        let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, min_stake);
-        assert_eq!(ratio, QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO);
-
-        let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake);
-        let max_ratio = QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO;
-        assert_eq!(ratio, max_ratio);
-
-        let ratio =
-            compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake / 2);
-        let average_ratio =
-            (QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO + QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO) / 2;
-        assert_eq!(ratio, average_ratio);
-
-        max_stake = 10000;
-        min_stake = 10000;
-        let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake);
-        assert_eq!(ratio, max_ratio);
-
-        max_stake = 0;
-        min_stake = 0;
-        let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake);
-        assert_eq!(ratio, max_ratio);
-
-        max_stake = 1000;
-        min_stake = 10;
-        let ratio =
-            compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake + 10);
-        assert_eq!(ratio, max_ratio);
-    }
-
     #[tokio::test(flavor = "multi_thread")]
     async fn test_throttling_check_no_packet_drop() {
         agave_logger::setup_with_default_filter();
@@ -2490,7 +2134,11 @@ pub mod test {
             server_address,
             stats,
             cancel,
-        } = setup_quic_server(None, QuicServerParams::default_for_tests());
+        } = setup_quic_server(
+            None,
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
+        );
 
         let client_connection = make_client_endpoint(&server_address, None).await;
 
@@ -2548,7 +2196,11 @@ pub mod test {
             stats,
             cancel,
             ..
-        } = setup_quic_server(None, QuicServerParams::default_for_tests());
+        } = setup_quic_server(
+            None,
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
+        );
 
         let client_connection = make_client_endpoint(&server_address, None).await;
 

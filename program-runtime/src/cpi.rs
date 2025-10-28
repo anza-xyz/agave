@@ -60,6 +60,12 @@ type Error = Box<dyn std::error::Error>;
 const SUCCESS: u64 = 0;
 /// Maximum signers
 const MAX_SIGNERS: usize = 16;
+///SIMD-0339 based calculation of AccountInfo translation byte size. Fixed size of **80 bytes** for each AccountInfo broken down as:
+/// - 32 bytes for account address
+/// - 32 bytes for owner address
+/// - 8 bytes for lamport balance
+/// - 8 bytes for data length
+const ACCOUNT_INFO_BYTE_SIZE: usize = 80;
 
 /// Rust representation of C's SolInstruction
 #[derive(Debug)]
@@ -114,6 +120,8 @@ struct SolSignerSeedsC {
 
 /// Maximum number of account info structs that can be used in a single CPI invocation
 const MAX_CPI_ACCOUNT_INFOS: usize = 128;
+/// Maximum number of account info structs that can be used in a single CPI invocation with SIMD-0339 active
+const MAX_CPI_ACCOUNT_INFOS_SIMD_0339: usize = 255;
 
 /// Check that an account info pointer field points to the expected address
 fn check_account_info_pointer(
@@ -158,6 +166,11 @@ fn check_account_infos(
     invoke_context: &mut InvokeContext,
 ) -> Result<(), Error> {
     let max_cpi_account_infos = if invoke_context
+        .get_feature_set()
+        .increase_cpi_account_info_limit
+    {
+        MAX_CPI_ACCOUNT_INFOS_SIMD_0339
+    } else if invoke_context
         .get_feature_set()
         .increase_tx_account_lock_limit
     {
@@ -531,17 +544,29 @@ pub fn translate_instruction_rust(
         ix.data.as_vaddr(),
         ix.data.len(),
         check_aligned,
-    )?
-    .to_vec();
+    )?;
 
     check_instruction_size(account_metas.len(), data.len())?;
 
-    consume_compute_meter(
-        invoke_context,
-        (data.len() as u64)
-            .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-            .unwrap_or(u64::MAX),
-    )?;
+    let mut total_cu_translation_cost: u64 = (data.len() as u64)
+        .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+        .unwrap_or(u64::MAX);
+
+    if invoke_context
+        .get_feature_set()
+        .increase_cpi_account_info_limit
+    {
+        // Each account meta is 34 bytes (32 for pubkey, 1 for is_signer, 1 for is_writable)
+        let account_meta_translation_cost =
+            (account_metas.len().saturating_mul(size_of::<AccountMeta>()) as u64)
+                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+                .unwrap_or(u64::MAX);
+
+        total_cu_translation_cost =
+            total_cu_translation_cost.saturating_add(account_meta_translation_cost);
+    }
+
+    consume_compute_meter(invoke_context, total_cu_translation_cost)?;
 
     let mut accounts = Vec::with_capacity(account_metas.len());
     #[allow(clippy::needless_range_loop)]
@@ -559,7 +584,7 @@ pub fn translate_instruction_rust(
 
     Ok(Instruction {
         accounts,
-        data,
+        data: data.to_vec(),
         program_id: ix.program_id,
     })
 }
@@ -650,17 +675,30 @@ pub fn translate_instruction_c(
         ix_c.accounts_len,
         check_aligned,
     )?;
-    let data = translate_slice::<u8>(memory_mapping, ix_c.data_addr, ix_c.data_len, check_aligned)?
-        .to_vec();
+    let data = translate_slice::<u8>(memory_mapping, ix_c.data_addr, ix_c.data_len, check_aligned)?;
 
     check_instruction_size(ix_c.accounts_len as usize, data.len())?;
 
-    consume_compute_meter(
-        invoke_context,
-        (data.len() as u64)
-            .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-            .unwrap_or(u64::MAX),
-    )?;
+    let mut total_cu_translation_cost: u64 = (data.len() as u64)
+        .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+        .unwrap_or(u64::MAX);
+
+    if invoke_context
+        .get_feature_set()
+        .increase_cpi_account_info_limit
+    {
+        // Each account meta is 34 bytes (32 for pubkey, 1 for is_signer, 1 for is_writable)
+        let account_meta_translation_cost = (ix_c
+            .accounts_len
+            .saturating_mul(size_of::<AccountMeta>() as u64))
+        .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+        .unwrap_or(u64::MAX);
+
+        total_cu_translation_cost =
+            total_cu_translation_cost.saturating_add(account_meta_translation_cost);
+    }
+
+    consume_compute_meter(invoke_context, total_cu_translation_cost)?;
 
     let mut accounts = Vec::with_capacity(ix_c.accounts_len as usize);
     #[allow(clippy::needless_range_loop)]
@@ -684,7 +722,7 @@ pub fn translate_instruction_c(
 
     Ok(Instruction {
         accounts,
-        data,
+        data: data.to_vec(),
         program_id: *program_id,
     })
 }
@@ -926,6 +964,21 @@ where
         check_aligned,
     )?;
     check_account_infos(account_infos.len(), invoke_context)?;
+
+    if invoke_context
+        .get_feature_set()
+        .increase_cpi_account_info_limit
+    {
+        let account_infos_bytes = account_infos.len().saturating_mul(ACCOUNT_INFO_BYTE_SIZE);
+
+        consume_compute_meter(
+            invoke_context,
+            (account_infos_bytes as u64)
+                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+                .unwrap_or(u64::MAX),
+        )?;
+    }
+
     let mut account_info_keys = Vec::with_capacity(account_infos_len as usize);
     #[allow(clippy::needless_range_loop)]
     for account_index in 0..account_infos_len as usize {
