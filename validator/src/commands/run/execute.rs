@@ -63,9 +63,7 @@ use {
     solana_signer::Signer,
     solana_streamer::{
         nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
-        quic::{
-            QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig,
-        },
+        quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
     },
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_turbine::{
@@ -954,7 +952,6 @@ pub fn execute(
             max_staked_connections: tpu_max_staked_connections.try_into().unwrap(),
             max_unstaked_connections: tpu_max_unstaked_connections.try_into().unwrap(),
             max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-            coalesce: tpu_coalesce,
             num_threads: tpu_transaction_receive_threads,
             ..Default::default()
         },
@@ -967,7 +964,6 @@ pub fn execute(
             max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
             max_unstaked_connections: tpu_max_fwd_unstaked_connections.try_into().unwrap(),
             max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-            coalesce: tpu_coalesce,
             num_threads: tpu_transaction_forward_receive_threads,
             ..Default::default()
         },
@@ -979,7 +975,6 @@ pub fn execute(
             max_connections_per_peer: 1,
             max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
             max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-            coalesce: tpu_coalesce,
             num_threads: tpu_vote_transaction_receive_threads,
             ..Default::default()
         },

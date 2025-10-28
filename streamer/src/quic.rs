@@ -647,8 +647,7 @@ pub struct QuicStreamerConfig {
     pub max_unstaked_connections: usize,
     pub max_connections_per_ipaddr_per_min: u64,
     pub wait_for_chunk_timeout: Duration,
-    pub coalesce: Duration,
-    pub coalesce_channel_size: usize,
+    pub accumulator_channel_size: usize,
     pub num_threads: NonZeroUsize,
 }
 
@@ -703,8 +702,7 @@ impl Default for QuicStreamerConfig {
             max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-            coalesce: DEFAULT_TPU_COALESCE,
-            coalesce_channel_size: DEFAULT_MAX_COALESCE_CHANNEL_SIZE,
+            accumulator_channel_size: DEFAULT_ACCUMULATOR_CHANNEL_SIZE,
             num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
         }
     }
@@ -718,7 +716,7 @@ impl QuicStreamerConfig {
     pub fn default_for_tests() -> Self {
         // Shrink the channel size to avoid a massive allocation for tests
         Self {
-            coalesce_channel_size: 100_000,
+            accumulator_channel_size: 100_000,
             num_threads: Self::DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
             ..Self::default()
         }
@@ -739,8 +737,7 @@ impl From<&QuicServerParams> for QuicStreamerConfig {
             max_unstaked_connections: params.max_unstaked_connections,
             max_connections_per_ipaddr_per_min: params.max_connections_per_ipaddr_per_min,
             wait_for_chunk_timeout: params.wait_for_chunk_timeout,
-            coalesce: params.coalesce,
-            coalesce_channel_size: params.coalesce_channel_size,
+            accumulator_channel_size: params.accumulator_channel_size,
             num_threads: params.num_threads,
         }
     }
@@ -1079,7 +1076,7 @@ mod test {
         // Send multiple writes from a staked node with SimpleStreamsPerSecond QoS mode
         // with a super low staked client stake to ensure it can send all packets
         // within the rate limit.
-        solana_logger::setup();
+        agave_logger::setup();
         let client_keypair = Keypair::new();
         let rich_node_keypair = Keypair::new();
 

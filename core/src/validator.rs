@@ -581,7 +581,7 @@ impl ValidatorTpuConfig {
         let tpu_quic_server_config = SwQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
                 max_connections_per_ipaddr_per_min: 32,
-                coalesce_channel_size: 100_000, // smaller channel size for faster test
+                accumulator_channel_size: 100_000, // smaller channel size for faster test
                 ..Default::default()
             },
             qos_config: SwQosConfig::default(),
@@ -591,7 +591,7 @@ impl ValidatorTpuConfig {
             quic_streamer_config: QuicStreamerConfig {
                 max_connections_per_ipaddr_per_min: 32,
                 max_unstaked_connections: 0,
-                coalesce_channel_size: 100_000, // smaller channel size for faster test
+                accumulator_channel_size: 100_000, // smaller channel size for faster test
                 ..Default::default()
             },
             qos_config: SwQosConfig::default(),
@@ -602,7 +602,7 @@ impl ValidatorTpuConfig {
             quic_streamer_config: QuicStreamerConfig {
                 max_connections_per_ipaddr_per_min: 32,
                 max_unstaked_connections: 0,
-                coalesce_channel_size: 100_000, // smaller channel size for faster test
+                accumulator_channel_size: 100_000, // smaller channel size for faster test
                 ..Default::default()
             },
             qos_config: SimpleQosConfig::default(),

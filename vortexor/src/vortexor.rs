@@ -126,7 +126,6 @@ impl Vortexor {
                 max_unstaked_connections: max_tpu_unstaked_connections,
                 max_connections_per_ipaddr_per_min,
                 wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-                coalesce: tpu_coalesce,
                 ..Default::default()
             },
             qos_config: SwQosConfig { max_streams_per_ms },

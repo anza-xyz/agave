@@ -1289,12 +1289,9 @@ impl Future for EndpointAccept<'_> {
 pub mod test {
     use {
         super::*,
-        crate::{
-            nonblocking::testing_utilities::{
-                check_multiple_streams, get_client_config, make_client_endpoint, setup_quic_server,
-                SpawnTestServerResult,
-            },
-            quic::DEFAULT_TPU_COALESCE,
+        crate::nonblocking::testing_utilities::{
+            check_multiple_streams, get_client_config, make_client_endpoint, setup_quic_server,
+            SpawnTestServerResult,
         },
         assert_matches::assert_matches,
         crossbeam_channel::{unbounded, Receiver},
