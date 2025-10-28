@@ -175,7 +175,7 @@ impl Consumer {
         let pre_results = txs
             .iter()
             .zip(max_ages)
-            .map(|(tx, max_age)| bank.resanitize_transaction_if_needed(tx, max_age));
+            .map(|(tx, max_age)| bank.resanitize_transaction_minimally(tx, max_age));
         self.process_and_record_transactions_with_pre_results(bank, txs, pre_results)
     }
 
