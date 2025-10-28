@@ -310,11 +310,21 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .unwrap()
             .upcoming_environments
         {
-            if self.environments.program_runtime_v1 == upcoming_environments.program_runtime_v1 {
+            if self.environments.program_runtime_v1 == upcoming_environments.program_runtime_v1
+                && !Arc::ptr_eq(
+                    &self.environments.program_runtime_v1,
+                    &upcoming_environments.program_runtime_v1,
+                )
+            {
                 self.environments.program_runtime_v1 =
                     upcoming_environments.program_runtime_v1.clone();
             }
-            if self.environments.program_runtime_v2 == upcoming_environments.program_runtime_v2 {
+            if self.environments.program_runtime_v2 == upcoming_environments.program_runtime_v2
+                && !Arc::ptr_eq(
+                    &self.environments.program_runtime_v2,
+                    &upcoming_environments.program_runtime_v2,
+                )
+            {
                 self.environments.program_runtime_v2 =
                     upcoming_environments.program_runtime_v2.clone();
             }
