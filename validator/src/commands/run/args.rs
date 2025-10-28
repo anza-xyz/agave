@@ -1177,16 +1177,13 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Number of bins to divide the accounts index into"),
     )
     .arg(
-        Arg::with_name("estimated_accounts")
-            .long("estimated-accounts")
+        Arg::with_name("accounts_index_initial_accounts")
+            .long("accounts-index-initial-accounts")
             .value_name("NUMBER")
             .validator(is_parsable::<usize>)
             .takes_value(true)
-            .help(
-                "Estimated total number of accounts in the ledger. Used to pre-allocate HashMap \
-                 capacity in the accounts index (divided by number of bins). Helps reduce memory \
-                 allocations and overallocations during initialization and runtime.",
-            ),
+            .help("Pre-allocate the accounts index, assuming this many number of accounts")
+            .hidden(..),
     )
     .arg(
         Arg::with_name("accounts_index_path")
