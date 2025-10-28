@@ -744,11 +744,11 @@ mod tests {
             )
             .is_ok());
         match vote {
-            Vote::Notarize(vote) => assert_eq!(pool.highest_notarized_slot(), vote.slot()),
-            Vote::NotarizeFallback(vote) => assert_eq!(pool.highest_notarized_slot(), vote.slot()),
-            Vote::Skip(vote) => assert_eq!(pool.highest_skip_slot(), vote.slot()),
-            Vote::SkipFallback(vote) => assert_eq!(pool.highest_skip_slot(), vote.slot()),
-            Vote::Finalize(vote) => assert_eq!(pool.highest_finalized_slot(), vote.slot()),
+            Vote::Notarize(vote) => assert_eq!(pool.highest_notarized_slot(), vote.slot),
+            Vote::NotarizeFallback(vote) => assert_eq!(pool.highest_notarized_slot(), vote.slot),
+            Vote::Skip(vote) => assert_eq!(pool.highest_skip_slot(), vote.slot),
+            Vote::SkipFallback(vote) => assert_eq!(pool.highest_skip_slot(), vote.slot),
+            Vote::Finalize(vote) => assert_eq!(pool.highest_finalized_slot(), vote.slot),
         }
     }
 
