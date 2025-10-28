@@ -19,16 +19,6 @@ use {
     },
     thiserror::Error,
 };
-#[cfg(unix)]
-use {
-    agave_scheduler_bindings::{
-        PackToWorkerMessage, TransactionResponseRegion, WorkerToPackMessage,
-        MAX_TRANSACTIONS_PER_MESSAGE,
-    },
-    agave_scheduling_utils::transaction_ptr::TransactionPtr,
-    agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-};
 
 #[derive(Debug, Error)]
 pub enum ConsumeWorkerError<Tx> {
@@ -188,130 +178,179 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
 }
 
 #[cfg(unix)]
-pub(crate) struct ExternalWorker {
-    exit: Arc<AtomicBool>,
-    receiver: shaq::Consumer<PackToWorkerMessage>,
-    consumer: Consumer,
-    sender: shaq::Producer<WorkerToPackMessage>,
-    allocator: rts_alloc::Allocator,
+mod external {
+    use {
+        super::*,
+        agave_scheduler_bindings::{
+            PackToWorkerMessage, TransactionResponseRegion, WorkerToPackMessage,
+            MAX_TRANSACTIONS_PER_MESSAGE,
+        },
+        agave_scheduling_utils::transaction_ptr::TransactionPtr,
+        agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    };
 
-    metrics: Arc<ConsumeWorkerMetrics>,
-}
-
-#[cfg(unix)]
-type Tx = RuntimeTransaction<ResolvedTransactionView<TransactionPtr>>;
-#[cfg(unix)]
-impl ExternalWorker {
-    pub fn new(
-        id: u32,
+    pub(crate) struct ExternalWorker {
         exit: Arc<AtomicBool>,
         receiver: shaq::Consumer<PackToWorkerMessage>,
         consumer: Consumer,
         sender: shaq::Producer<WorkerToPackMessage>,
         allocator: rts_alloc::Allocator,
-    ) -> Self {
-        Self {
-            exit,
-            receiver,
-            consumer,
-            sender,
-            allocator,
-            metrics: Arc::new(ConsumeWorkerMetrics::new(id)),
-        }
+
+        metrics: Arc<ConsumeWorkerMetrics>,
     }
 
-    pub fn metrics_handle(&self) -> Arc<ConsumeWorkerMetrics> {
-        self.metrics.clone()
-    }
+    type Tx = RuntimeTransaction<ResolvedTransactionView<TransactionPtr>>;
 
-    pub fn run(mut self) -> Result<(), ExternalConsumeWorkerError> {
-        let mut did_work = false;
-        let mut last_empty_time = Instant::now();
-        let mut sleep_duration = STARTING_SLEEP_DURATION;
-
-        while !self.exit.load(Ordering::Relaxed) {
-            if self.receiver.is_empty() {
-                self.receiver.sync();
+    impl ExternalWorker {
+        pub fn new(
+            id: u32,
+            exit: Arc<AtomicBool>,
+            receiver: shaq::Consumer<PackToWorkerMessage>,
+            consumer: Consumer,
+            sender: shaq::Producer<WorkerToPackMessage>,
+            allocator: rts_alloc::Allocator,
+        ) -> Self {
+            Self {
+                exit,
+                receiver,
+                consumer,
+                sender,
+                allocator,
+                metrics: Arc::new(ConsumeWorkerMetrics::new(id)),
             }
+        }
 
-            match self.receiver.try_read() {
-                Some(message) => {
-                    did_work = true;
-                    self.sender.sync();
-                    // SAFETY: `try_read` gives a ptr to a properly aligned
-                    //         region for a `PackToWorkerMessage`
-                    self.process_message(unsafe { message.as_ref() })?;
-                    self.sender.commit();
-                    self.receiver.finalize();
+        pub fn metrics_handle(&self) -> Arc<ConsumeWorkerMetrics> {
+            self.metrics.clone()
+        }
+
+        pub fn run(mut self) -> Result<(), ExternalConsumeWorkerError> {
+            let mut did_work = false;
+            let mut last_empty_time = Instant::now();
+            let mut sleep_duration = STARTING_SLEEP_DURATION;
+
+            while !self.exit.load(Ordering::Relaxed) {
+                if self.receiver.is_empty() {
+                    self.receiver.sync();
                 }
-                None => {
-                    let now = Instant::now();
 
-                    if did_work {
-                        last_empty_time = now;
+                match self.receiver.try_read() {
+                    Some(message) => {
+                        did_work = true;
+                        self.sender.sync();
+                        // SAFETY: `try_read` gives a ptr to a properly aligned
+                        //         region for a `PackToWorkerMessage`
+                        self.process_message(unsafe { message.as_ref() })?;
+                        self.sender.commit();
+                        self.receiver.finalize();
                     }
-                    did_work = false;
-                    let idle_duration = now.duration_since(last_empty_time);
-                    sleep_duration = backoff(idle_duration, &sleep_duration);
+                    None => {
+                        let now = Instant::now();
+
+                        if did_work {
+                            last_empty_time = now;
+                        }
+                        did_work = false;
+                        let idle_duration = now.duration_since(last_empty_time);
+                        sleep_duration = backoff(idle_duration, &sleep_duration);
+                    }
                 }
             }
+
+            Ok(())
         }
 
-        Ok(())
-    }
+        fn process_message(
+            &mut self,
+            message: &PackToWorkerMessage,
+        ) -> Result<(), ExternalConsumeWorkerError> {
+            if !Self::validate_message(message) {
+                return self.return_invalid_message(message);
+            }
 
-    fn process_message(
-        &mut self,
-        message: &PackToWorkerMessage,
-    ) -> Result<(), ExternalConsumeWorkerError> {
-        if !Self::validate_message(message) {
-            return self.return_invalid_message(message);
+            self.metrics
+                .count_metrics
+                .num_messages_processed
+                .fetch_add(1, Ordering::Relaxed);
+            unimplemented!("No flags are currently valid");
         }
 
-        self.metrics
-            .count_metrics
-            .num_messages_processed
-            .fetch_add(1, Ordering::Relaxed);
-        unimplemented!("No flags are currently valid");
+        fn return_invalid_message(
+            &mut self,
+            message: &PackToWorkerMessage,
+        ) -> Result<(), ExternalConsumeWorkerError> {
+            let invalid_message = WorkerToPackMessage {
+                batch: message.batch,
+                processed: 0,
+                responses: TransactionResponseRegion {
+                    tag: 0,
+                    num_transaction_responses: 0,
+                    transaction_responses_offset: 0,
+                },
+            };
+
+            let Some(send_ptr) = self.sender.reserve() else {
+                return Err(ExternalConsumeWorkerError::SenderDisconnected);
+            };
+
+            // SAFETY: `reserve` guarantees a properly aligned space
+            //         for a `WorkerToPackMessage`
+            unsafe { send_ptr.write(invalid_message) };
+
+            Ok(())
+        }
+
+        /// Returns `true` if a message is valid and can be processed.
+        fn validate_message(message: &PackToWorkerMessage) -> bool {
+            message.batch.num_transactions > 0
+                && usize::from(message.batch.num_transactions) <= MAX_TRANSACTIONS_PER_MESSAGE
+                && Self::validate_message_flags(message.flags)
+        }
+
+        fn validate_message_flags(_flags: u16) -> bool {
+            false // no flags are valid currently
+        }
     }
 
-    fn return_invalid_message(
-        &mut self,
-        message: &PackToWorkerMessage,
-    ) -> Result<(), ExternalConsumeWorkerError> {
-        let invalid_message = WorkerToPackMessage {
-            batch: message.batch,
-            processed: 0,
-            responses: TransactionResponseRegion {
-                tag: 0,
-                num_transaction_responses: 0,
-                transaction_responses_offset: 0,
-            },
-        };
+    #[cfg(test)]
+    mod tests {
+        use super::*;
 
-        let Some(send_ptr) = self.sender.reserve() else {
-            return Err(ExternalConsumeWorkerError::SenderDisconnected);
-        };
+        #[test]
+        fn test_validate_message() {
+            let mut message = PackToWorkerMessage {
+                flags: agave_scheduler_bindings::pack_message_flags::NONE,
+                max_execution_slot: u64::MAX,
+                batch: agave_scheduler_bindings::SharableTransactionBatchRegion {
+                    num_transactions: 0,
+                    transactions_offset: 0,
+                },
+            };
 
-        // SAFETY: `reserve` guarantees a properly aligned space
-        //         for a `WorkerToPackMessage`
-        unsafe { send_ptr.write(invalid_message) };
+            // No transactions = invalid
+            assert!(!ExternalWorker::validate_message(&message));
 
-        Ok(())
-    }
+            // Too many transactions = invalid.
+            message.batch.num_transactions = MAX_TRANSACTIONS_PER_MESSAGE as u8 + 1;
+            assert!(!ExternalWorker::validate_message(&message));
 
-    /// Returns `true` if a message is valid and can be processed.
-    fn validate_message(message: &PackToWorkerMessage) -> bool {
-        message.batch.num_transactions > 0
-            && usize::from(message.batch.num_transactions) <= MAX_TRANSACTIONS_PER_MESSAGE
-            && Self::validate_message_flags(message.flags)
-    }
+            // Bad flags = invalid
+            message.batch.num_transactions = 1;
+            assert!(!ExternalWorker::validate_message(&message));
+        }
 
-    fn validate_message_flags(_flags: u16) -> bool {
-        false // no flags are valid currently
+        #[test]
+        fn test_validate_message_flags() {
+            assert!(!ExternalWorker::validate_message_flags(
+                agave_scheduler_bindings::pack_message_flags::NONE
+            ));
+            assert!(!ExternalWorker::validate_message_flags(
+                agave_scheduler_bindings::pack_message_flags::RESOLVE
+            ));
+        }
     }
 }
-
 /// Helper function to create an non-blocking iterator over work in the receiver,
 /// starting with the given work item.
 fn try_drain_iter<T>(work: T, receiver: &Receiver<T>) -> impl Iterator<Item = T> + '_ {
@@ -1460,40 +1499,5 @@ mod tests {
         let sleep_duration = Duration::from_micros(900);
         let sleep_duration = backoff(IDLE_SLEEP_THRESHOLD, &sleep_duration);
         assert_eq!(sleep_duration, MAX_SLEEP_DURATION);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_validate_message() {
-        let mut message = PackToWorkerMessage {
-            flags: agave_scheduler_bindings::pack_message_flags::NONE,
-            max_execution_slot: u64::MAX,
-            batch: agave_scheduler_bindings::SharableTransactionBatchRegion {
-                num_transactions: 0,
-                transactions_offset: 0,
-            },
-        };
-
-        // No transactions = invalid
-        assert!(!ExternalWorker::validate_message(&message));
-
-        // Too many transactions = invalid.
-        message.batch.num_transactions = MAX_TRANSACTIONS_PER_MESSAGE as u8 + 1;
-        assert!(!ExternalWorker::validate_message(&message));
-
-        // Bad flags = invalid
-        message.batch.num_transactions = 1;
-        assert!(!ExternalWorker::validate_message(&message));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_validate_message_flags() {
-        assert!(!ExternalWorker::validate_message_flags(
-            agave_scheduler_bindings::pack_message_flags::NONE
-        ));
-        assert!(!ExternalWorker::validate_message_flags(
-            agave_scheduler_bindings::pack_message_flags::RESOLVE
-        ));
     }
 }
