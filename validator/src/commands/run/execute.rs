@@ -319,8 +319,8 @@ pub fn execute(
     if let Ok(bins) = value_t!(matches, "accounts_index_bins", usize) {
         accounts_index_config.bins = Some(bins);
     }
-    if let Ok(initial_accounts) = value_t!(matches, "accounts_index_initial_accounts", usize) {
-        accounts_index_config.initial_accounts = Some(initial_accounts);
+    if let Ok(num_initial_accounts) = value_t!(matches, "accounts_index_initial_accounts", usize) {
+        accounts_index_config.num_initial_accounts = Some(num_initial_accounts);
     }
 
     accounts_index_config.index_limit_mb = if !matches.is_present("enable_accounts_disk_index") {

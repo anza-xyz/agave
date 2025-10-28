@@ -220,7 +220,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
         Self {
             disk,
             ages_to_stay_in_cache,
-            num_initial_accounts: config.initial_accounts,
+            num_initial_accounts: config.num_initial_accounts,
             count_buckets_flushed: AtomicUsize::default(),
             // age = 0
             age: AtomicAge::default(),
