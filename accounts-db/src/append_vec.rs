@@ -1639,16 +1639,7 @@ pub mod tests {
         }
 
         let path = get_append_vec_path("test_scan_accounts_stored_meta_correctness");
-<<<<<<< HEAD
         let av = ManuallyDrop::new(AppendVec::new(&path.path, true, file_size));
-=======
-        let av = ManuallyDrop::new(AppendVec::new(
-            &path.path,
-            true,
-            file_size,
-            StorageAccess::Mmap,
-        ));
->>>>>>> a6131a57f (Breaks loop early in AppendVec::scan_accounts_stored_meta() (#8707))
         let slot = 42;
         let stored_accounts_info = av
             .append_accounts(&(slot, test_accounts.as_slice()), 0)
@@ -1723,20 +1714,16 @@ pub mod tests {
                 lamports: 0,
                 ..account_meta.clone()
             };
-            av_mmap
-                .append_ptr(
-                    &mut stored_meta_offset,
-                    ptr::from_ref(&new_stored_meta).cast(),
-                    size_of::<StoredMeta>(),
-                )
-                .unwrap();
-            av_mmap
-                .append_ptr(
-                    &mut account_meta_offset,
-                    ptr::from_ref(&new_account_meta).cast(),
-                    size_of::<AccountMeta>(),
-                )
-                .unwrap();
+            av_mmap.append_ptr(
+                &mut stored_meta_offset,
+                ptr::from_ref(&new_stored_meta).cast(),
+                size_of::<StoredMeta>(),
+            );
+            av_mmap.append_ptr(
+                &mut account_meta_offset,
+                ptr::from_ref(&new_account_meta).cast(),
+                size_of::<AccountMeta>(),
+            );
             av_mmap.flush().unwrap();
         } else {
             panic!("append vec must be mmap");
@@ -1750,7 +1737,7 @@ pub mod tests {
             let mut index = 0;
             av.scan_accounts_stored_meta(&mut reader, |stored_account| {
                 let (pubkey, account) = &test_accounts[index];
-                let recovered = create_account_shared_data(&stored_account);
+                let recovered = stored_account.to_account_shared_data();
                 assert_eq!(stored_account.pubkey(), pubkey);
                 assert_eq!(recovered, *account);
                 index += 1;
