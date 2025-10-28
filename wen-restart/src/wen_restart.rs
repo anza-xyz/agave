@@ -14,6 +14,12 @@ use {
             LastVotedForkSlotsRecord, State as RestartState, WenRestartProgress,
         },
     },
+    agave_snapshots::{
+        paths::{
+            get_highest_full_snapshot_archive_slot, get_highest_incremental_snapshot_archive_slot,
+        },
+        snapshot_archive_info::SnapshotArchiveInfoGetter,
+    },
     anyhow::Result,
     log::*,
     prost::Message,
@@ -35,15 +41,11 @@ use {
         accounts_background_service::AbsStatus,
         bank::Bank,
         bank_forks::BankForks,
-        snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils::{
             bank_to_full_snapshot_archive, bank_to_incremental_snapshot_archive,
         },
         snapshot_controller::SnapshotController,
-        snapshot_utils::{
-            get_highest_full_snapshot_archive_slot, get_highest_incremental_snapshot_archive_slot,
-            purge_all_bank_snapshots,
-        },
+        snapshot_utils::purge_all_bank_snapshots,
     },
     solana_shred_version::compute_shred_version,
     solana_svm_timings::ExecuteTimings,

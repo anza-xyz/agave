@@ -1,7 +1,7 @@
 use {
     crate::LEDGER_TOOL_DIRECTORY,
     agave_snapshots::{
-        paths::BANK_SNAPSHOTS_DIR,
+        paths::{self as snapshot_paths, BANK_SNAPSHOTS_DIR},
         snapshot_config::{SnapshotConfig, SnapshotUsage},
         snapshot_hash::StartingSnapshotHashes,
     },
@@ -155,10 +155,10 @@ pub fn load_and_process_ledger(
             .map(PathBuf::from)
             .unwrap_or_else(|| snapshots_dir.clone());
         if let Some(full_snapshot_slot) =
-            snapshot_utils::get_highest_full_snapshot_archive_slot(&full_snapshot_archives_dir)
+            snapshot_paths::get_highest_full_snapshot_archive_slot(&full_snapshot_archives_dir)
         {
             let incremental_snapshot_slot =
-                snapshot_utils::get_highest_incremental_snapshot_archive_slot(
+                snapshot_paths::get_highest_incremental_snapshot_archive_slot(
                     &incremental_snapshot_archives_dir,
                     full_snapshot_slot,
                 )

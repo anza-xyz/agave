@@ -35,7 +35,8 @@ use {
         tvu::{Tvu, TvuConfig, TvuSockets},
     },
     agave_snapshots::{
-        snapshot_config::SnapshotConfig, snapshot_hash::StartingSnapshotHashes, SnapshotInterval,
+        snapshot_archive_info::SnapshotArchiveInfoGetter as _, snapshot_config::SnapshotConfig,
+        snapshot_hash::StartingSnapshotHashes, SnapshotInterval,
     },
     anyhow::{anyhow, Context, Result},
     crossbeam_channel::{bounded, unbounded, Receiver},
@@ -126,7 +127,6 @@ use {
         dependency_tracker::DependencyTracker,
         prioritization_fee_cache::PrioritizationFeeCache,
         runtime_config::RuntimeConfig,
-        snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils,
         snapshot_controller::SnapshotController,
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},

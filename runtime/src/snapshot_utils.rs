@@ -8,10 +8,6 @@ use {
             SerializableAccountStorageEntry, SnapshotAccountsDbFields, SnapshotBankFields,
             SnapshotStreams,
         },
-        snapshot_archive_info::{
-            FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfo,
-            SnapshotArchiveInfoGetter,
-        },
         snapshot_package::{SnapshotKind, SnapshotPackage},
         snapshot_utils::snapshot_storage_rebuilder::{
             get_slot_and_append_vec_id, SnapshotStorageRebuilder,
@@ -23,7 +19,11 @@ use {
             HardLinkStoragesToSnapshotError, SnapshotError, SnapshotFastbootError,
             SnapshotNewFromDirError,
         },
-        paths as snapshot_paths,
+        paths::{self as snapshot_paths, get_incremental_snapshot_archives},
+        snapshot_archive_info::{
+            FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfo,
+            SnapshotArchiveInfoGetter,
+        },
         snapshot_config::SnapshotConfig,
         snapshot_hash::SnapshotHash,
         streaming_unarchive_snapshot, ArchiveFormat, Result, SnapshotVersion,
@@ -1802,105 +1802,6 @@ fn check_are_snapshots_compatible(
         })
 }
 
-/// Walk down the snapshot archive to collect snapshot archive file info
-fn get_snapshot_archives<T, F>(snapshot_archives_dir: &Path, cb: F) -> Vec<T>
-where
-    F: Fn(PathBuf) -> Result<T>,
-{
-    let walk_dir = |dir: &Path| -> Vec<T> {
-        let entry_iter = fs::read_dir(dir);
-        match entry_iter {
-            Err(err) => {
-                info!(
-                    "Unable to read snapshot archives directory '{}': {err}",
-                    dir.display(),
-                );
-                vec![]
-            }
-            Ok(entries) => entries
-                .filter_map(|entry| entry.map_or(None, |entry| cb(entry.path()).ok()))
-                .collect(),
-        }
-    };
-
-    let mut ret = walk_dir(snapshot_archives_dir);
-    let remote_dir = snapshot_paths::build_snapshot_archives_remote_dir(snapshot_archives_dir);
-    if remote_dir.exists() {
-        ret.append(&mut walk_dir(remote_dir.as_ref()));
-    }
-    ret
-}
-
-/// Get a list of the full snapshot archives from a directory
-pub fn get_full_snapshot_archives(
-    full_snapshot_archives_dir: impl AsRef<Path>,
-) -> Vec<FullSnapshotArchiveInfo> {
-    get_snapshot_archives(
-        full_snapshot_archives_dir.as_ref(),
-        FullSnapshotArchiveInfo::new_from_path,
-    )
-}
-
-/// Get a list of the incremental snapshot archives from a directory
-pub fn get_incremental_snapshot_archives(
-    incremental_snapshot_archives_dir: impl AsRef<Path>,
-) -> Vec<IncrementalSnapshotArchiveInfo> {
-    get_snapshot_archives(
-        incremental_snapshot_archives_dir.as_ref(),
-        IncrementalSnapshotArchiveInfo::new_from_path,
-    )
-}
-
-/// Get the highest slot of the full snapshot archives in a directory
-pub fn get_highest_full_snapshot_archive_slot(
-    full_snapshot_archives_dir: impl AsRef<Path>,
-) -> Option<Slot> {
-    get_highest_full_snapshot_archive_info(full_snapshot_archives_dir)
-        .map(|full_snapshot_archive_info| full_snapshot_archive_info.slot())
-}
-
-/// Get the highest slot of the incremental snapshot archives in a directory, for a given full
-/// snapshot slot
-pub fn get_highest_incremental_snapshot_archive_slot(
-    incremental_snapshot_archives_dir: impl AsRef<Path>,
-    full_snapshot_slot: Slot,
-) -> Option<Slot> {
-    get_highest_incremental_snapshot_archive_info(
-        incremental_snapshot_archives_dir,
-        full_snapshot_slot,
-    )
-    .map(|incremental_snapshot_archive_info| incremental_snapshot_archive_info.slot())
-}
-
-/// Get the path (and metadata) for the full snapshot archive with the highest slot in a directory
-pub fn get_highest_full_snapshot_archive_info(
-    full_snapshot_archives_dir: impl AsRef<Path>,
-) -> Option<FullSnapshotArchiveInfo> {
-    let mut full_snapshot_archives = get_full_snapshot_archives(full_snapshot_archives_dir);
-    full_snapshot_archives.sort_unstable();
-    full_snapshot_archives.into_iter().next_back()
-}
-
-/// Get the path for the incremental snapshot archive with the highest slot, for a given full
-/// snapshot slot, in a directory
-pub fn get_highest_incremental_snapshot_archive_info(
-    incremental_snapshot_archives_dir: impl AsRef<Path>,
-    full_snapshot_slot: Slot,
-) -> Option<IncrementalSnapshotArchiveInfo> {
-    // Since we want to filter down to only the incremental snapshot archives that have the same
-    // full snapshot slot as the value passed in, perform the filtering before sorting to avoid
-    // doing unnecessary work.
-    let mut incremental_snapshot_archives =
-        get_incremental_snapshot_archives(incremental_snapshot_archives_dir)
-            .into_iter()
-            .filter(|incremental_snapshot_archive_info| {
-                incremental_snapshot_archive_info.base_slot() == full_snapshot_slot
-            })
-            .collect::<Vec<_>>();
-    incremental_snapshot_archives.sort_unstable();
-    incremental_snapshot_archives.into_iter().next_back()
-}
-
 pub fn purge_old_snapshot_archives(
     full_snapshot_archives_dir: impl AsRef<Path>,
     incremental_snapshot_archives_dir: impl AsRef<Path>,
@@ -1913,7 +1814,8 @@ pub fn purge_old_snapshot_archives(
         maximum_full_snapshot_archives_to_retain
     );
 
-    let mut full_snapshot_archives = get_full_snapshot_archives(&full_snapshot_archives_dir);
+    let mut full_snapshot_archives =
+        snapshot_paths::get_full_snapshot_archives(&full_snapshot_archives_dir);
     full_snapshot_archives.sort_unstable();
     full_snapshot_archives.reverse();
 
@@ -2153,9 +2055,15 @@ pub fn create_tmp_accounts_dir_for_tests() -> (TempDir, PathBuf) {
 mod tests {
     use {
         super::*,
-        agave_snapshots::snapshot_config::{
-            DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
-            DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+        agave_snapshots::{
+            paths::{
+                get_full_snapshot_archives, get_highest_full_snapshot_archive_slot,
+                get_highest_incremental_snapshot_archive_slot,
+            },
+            snapshot_config::{
+                DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+                DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+            },
         },
         assert_matches::assert_matches,
         bincode::{deserialize_from, serialize_into},
