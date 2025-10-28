@@ -1136,7 +1136,6 @@ mod tests {
 
     #[test]
     fn test_identity_accounts_for_staked_nodes_remove_zero_stake() {
-        solana_logger::setup();
         let mut rng = rand::thread_rng();
         let num_nodes = 10;
         // Make sure our vote account to identity mapping is 1:1.
