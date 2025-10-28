@@ -35,7 +35,12 @@ pub mod leader_schedule_cache;
 pub mod leader_schedule_utils;
 pub mod next_slots_iterator;
 pub mod rooted_slot_iterator;
-conditional_mod::conditional_vis_mod!(shred, feature="agave-unstable-api", pub,pub(crate));
+
+#[cfg(feature = "agave-unstable-api")]
+pub mod shred;
+#[cfg(not(feature = "agave-unstable-api"))]
+pub(crate) mod shred;
+
 mod shredder;
 pub mod sigverify_shreds;
 pub mod slot_stats;
@@ -57,9 +62,9 @@ extern crate log;
 #[cfg(feature = "frozen-abi")]
 extern crate solana_frozen_abi_macro;
 
+mod wire_format_tests;
+
 #[doc(hidden)]
 pub mod macro_reexports {
-    pub use agave_snapshots::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE;
+    pub use solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE;
 }
-
-mod wire_format_tests;

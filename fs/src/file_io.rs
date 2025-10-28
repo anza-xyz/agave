@@ -1,3 +1,5 @@
+#![allow(clippy::arithmetic_side_effects)]
+
 //! File i/o helper functions.
 use std::{
     fs::{self, File, OpenOptions},

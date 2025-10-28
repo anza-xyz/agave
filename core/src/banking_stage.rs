@@ -24,7 +24,6 @@ use {
         validator::BlockProductionMethod,
     },
     agave_banking_stage_ingress_types::BankingPacketReceiver,
-    conditional_mod::conditional_vis_mod,
     crossbeam_channel::{unbounded, Receiver, Sender},
     histogram::Histogram,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery},
@@ -67,14 +66,29 @@ pub mod vote_storage;
 
 mod consume_worker;
 mod vote_worker;
-conditional_vis_mod!(decision_maker, feature = "dev-context-only-utils", pub);
+
+#[cfg(feature = "dev-context-only-utils")]
+pub mod decision_maker;
+#[cfg(not(feature = "dev-context-only-utils"))]
+mod decision_maker;
+
 mod latest_validator_vote_packet;
 mod leader_slot_timing_metrics;
 mod read_write_account_set;
 mod vote_packet_receiver;
-conditional_vis_mod!(scheduler_messages, feature = "dev-context-only-utils", pub);
+
+#[cfg(feature = "dev-context-only-utils")]
+pub mod scheduler_messages;
+#[cfg(not(feature = "dev-context-only-utils"))]
+mod scheduler_messages;
+
 pub mod transaction_scheduler;
-conditional_vis_mod!(unified_scheduler, feature = "dev-context-only-utils", pub, pub(crate));
+
+#[cfg(feature = "dev-context-only-utils")]
+pub mod unified_scheduler;
+#[cfg(not(feature = "dev-context-only-utils"))]
+pub(crate) mod unified_scheduler;
+
 #[allow(dead_code)]
 #[cfg(unix)]
 mod progress_tracker;
@@ -745,7 +759,7 @@ mod tests {
 
     #[test]
     fn test_banking_stage_tick() {
-        solana_logger::setup();
+        agave_logger::setup();
         let GenesisConfigInfo {
             mut genesis_config, ..
         } = create_genesis_config(2);
@@ -820,7 +834,7 @@ mod tests {
 
     #[test]
     fn test_banking_stage_entries_only_central_scheduler() {
-        solana_logger::setup();
+        agave_logger::setup();
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -946,7 +960,7 @@ mod tests {
 
     #[test]
     fn test_banking_stage_entryfication() {
-        solana_logger::setup();
+        agave_logger::setup();
         // In this attack we'll demonstrate that a verifier can interpret the ledger
         // differently if either the server doesn't signal the ledger to add an
         // Entry OR if the verifier tries to parallelize across multiple Entries.
@@ -1058,7 +1072,7 @@ mod tests {
 
     #[test]
     fn test_bank_record_transactions() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let GenesisConfigInfo {
             genesis_config,
@@ -1120,7 +1134,7 @@ mod tests {
 
     #[test]
     fn test_vote_storage_full_send() {
-        solana_logger::setup();
+        agave_logger::setup();
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,

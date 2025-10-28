@@ -66,6 +66,7 @@ solana-transaction-error = { workspace = true }
 solana-vote-program = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 itertools = { workspace = true }
 rand = "0.8.5"
@@ -78,7 +79,6 @@ solana-compute-budget-program = { workspace = true }
 solana-cost-model = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
-solana-logger = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-runtime-transaction = { workspace = true, features = [
     "dev-context-only-utils",

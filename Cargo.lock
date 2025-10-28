@@ -78,6 +78,7 @@ dependencies = [
 name = "agave-cargo-registry"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "clap 2.33.3",
  "flate2",
  "hex",
@@ -92,7 +93,6 @@ dependencies = [
  "solana-cli-output",
  "solana-commitment-config",
  "solana-keypair",
- "solana-logger",
  "solana-pubkey",
  "solana-remote-wallet",
  "solana-rpc-client",
@@ -120,6 +120,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-fs"
+version = "3.1.0"
+dependencies = [
+ "agave-io-uring",
+ "io-uring",
+ "libc",
+ "log",
+ "rand 0.8.5",
+ "slab",
+ "smallvec",
+ "tempfile",
+ "test-case",
+]
+
+[[package]]
 name = "agave-geyser-plugin-interface"
 version = "3.1.0"
 dependencies = [
@@ -136,6 +151,7 @@ dependencies = [
 name = "agave-install"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "atty",
  "bincode",
  "bzip2",
@@ -157,7 +173,6 @@ dependencies = [
  "solana-config-interface",
  "solana-hash",
  "solana-keypair",
- "solana-logger",
  "solana-message",
  "solana-pubkey",
  "solana-rpc-client",
@@ -185,87 +200,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "agave-ledger-tool"
+name = "agave-logger"
 version = "3.1.0"
 dependencies = [
- "agave-feature-set",
- "agave-reserved-account-keys",
- "agave-snapshots",
- "agave-syscalls",
- "assert_cmd",
- "bs58",
- "chrono",
- "clap 2.33.3",
- "crossbeam-channel",
- "csv",
- "dashmap",
- "futures 0.3.31",
- "histogram",
- "itertools 0.12.1",
+ "env_logger",
+ "libc",
  "log",
- "num_cpus",
- "pretty-hex",
- "rayon",
- "regex",
- "serde",
- "serde_bytes",
- "serde_json",
  "signal-hook",
- "solana-account",
- "solana-account-decoder",
- "solana-accounts-db",
- "solana-bpf-loader-program",
- "solana-clap-utils",
- "solana-cli-output",
- "solana-clock",
- "solana-cluster-type",
- "solana-compute-budget",
- "solana-core",
- "solana-cost-model",
- "solana-entry",
- "solana-feature-gate-interface",
- "solana-genesis-config",
- "solana-geyser-plugin-manager",
- "solana-gossip",
- "solana-hash",
- "solana-inflation",
- "solana-instruction",
- "solana-keypair",
- "solana-ledger",
- "solana-loader-v3-interface",
- "solana-logger",
- "solana-measure",
- "solana-message",
- "solana-native-token",
- "solana-program-runtime",
- "solana-pubkey",
- "solana-rent",
- "solana-rpc",
- "solana-runtime",
- "solana-runtime-transaction",
- "solana-sbpf",
- "solana-sdk-ids",
- "solana-shred-version",
- "solana-signature",
- "solana-stake-interface",
- "solana-stake-program",
- "solana-storage-bigtable",
- "solana-streamer",
- "solana-svm-callback",
- "solana-svm-feature-set",
- "solana-svm-log-collector",
- "solana-svm-type-overrides",
- "solana-system-interface",
- "solana-transaction",
- "solana-transaction-context",
- "solana-transaction-status",
- "solana-unified-scheduler-pool",
- "solana-version",
- "solana-vote",
- "solana-vote-program",
- "thiserror 2.0.17",
- "tikv-jemallocator",
- "tokio",
 ]
 
 [[package]]
@@ -273,6 +214,7 @@ name = "agave-precompiles"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-logger",
  "agave-precompiles",
  "bincode",
  "bytemuck",
@@ -286,7 +228,6 @@ dependencies = [
  "solana-ed25519-program",
  "solana-instruction",
  "solana-keccak-hasher",
- "solana-logger",
  "solana-message",
  "solana-precompile-error",
  "solana-pubkey",
@@ -319,26 +260,35 @@ dependencies = [
  "agave-scheduler-bindings",
  "agave-transaction-view",
  "ahash 0.8.11",
+ "libc",
+ "nix",
  "rts-alloc",
+ "shaq",
  "solana-pubkey",
+ "tempfile",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
 name = "agave-snapshots"
 version = "3.1.0"
 dependencies = [
+ "agave-fs",
+ "agave-logger",
  "assert_matches",
+ "bincode",
  "bzip2",
  "crossbeam-channel",
  "log",
  "lz4",
  "rand 0.8.5",
+ "regex",
+ "semver 1.0.27",
  "solana-accounts-db",
  "solana-clock",
  "solana-genesis-config",
  "solana-hash",
  "solana-lattice-hash",
- "solana-logger",
  "strum",
  "tar",
  "tempfile",
@@ -351,20 +301,6 @@ name = "agave-store-histogram"
 version = "3.1.0"
 dependencies = [
  "clap 2.33.3",
- "solana-version",
-]
-
-[[package]]
-name = "agave-store-tool"
-version = "3.1.0"
-dependencies = [
- "ahash 0.8.11",
- "clap 2.33.3",
- "rayon",
- "solana-account",
- "solana-accounts-db",
- "solana-pubkey",
- "solana-system-interface",
  "solana-version",
 ]
 
@@ -470,6 +406,7 @@ name = "agave-validator"
 version = "3.1.0"
 dependencies = [
  "agave-geyser-plugin-interface",
+ "agave-logger",
  "agave-snapshots",
  "assert_cmd",
  "chrono",
@@ -518,7 +455,6 @@ dependencies = [
  "solana-inflation",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
  "solana-metrics",
  "solana-native-token",
  "solana-net-utils",
@@ -572,6 +508,7 @@ dependencies = [
 name = "agave-votor"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "agave-votor-messages",
  "anyhow",
  "bincode",
@@ -605,7 +542,6 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
  "solana-measure",
  "solana-metrics",
  "solana-net-utils",
@@ -633,19 +569,20 @@ dependencies = [
 name = "agave-votor-messages"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "serde",
  "solana-bls-signatures",
  "solana-clock",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-hash",
- "solana-logger",
 ]
 
 [[package]]
 name = "agave-watchtower"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "clap 2.33.3",
  "humantime",
  "log",
@@ -653,7 +590,6 @@ dependencies = [
  "solana-cli-config",
  "solana-cli-output",
  "solana-hash",
- "solana-logger",
  "solana-metrics",
  "solana-native-token",
  "solana-notifier",
@@ -667,12 +603,21 @@ dependencies = [
 name = "agave-xdp"
 version = "3.1.0"
 dependencies = [
+ "agave-xdp-ebpf",
  "aya",
  "caps",
  "crossbeam-channel",
  "libc",
  "log",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "agave-xdp-ebpf"
+version = "3.1.0"
+dependencies = [
+ "aya",
+ "aya-ebpf",
 ]
 
 [[package]]
@@ -1241,6 +1186,45 @@ dependencies = [
  "object",
  "once_cell",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "aya-ebpf"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8dbaf5409a1a0982e5c9bdc0f499a55fe5ead39fe9c846012053faf0d404f73"
+dependencies = [
+ "aya-ebpf-bindings",
+ "aya-ebpf-cty",
+ "aya-ebpf-macros",
+ "rustversion",
+]
+
+[[package]]
+name = "aya-ebpf-bindings"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "783dc1a82a3d71d83286165381dcc1b1d41643f4b110733d135547527c000a9a"
+dependencies = [
+ "aya-ebpf-cty",
+]
+
+[[package]]
+name = "aya-ebpf-cty"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2cce099aaf3abb89f9a1f8594ffe07fa53738ebc2882fac624d10d9ba31a1b10"
+
+[[package]]
+name = "aya-ebpf-macros"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72f47f7b4a75eb5f1d7ba0fb5628d247b1cf20388658899177875dabdda66865"
+dependencies = [
+ "proc-macro-error",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
 ]
 
 [[package]]
@@ -1859,7 +1843,6 @@ checksum = "71655c45cb9845d3270c9d6df84ebe72b4dad3c2ba3f7023ad47c144e4e473a5"
 dependencies = [
  "atty",
  "bitflags 1.3.2",
- "clap_derive 3.2.18",
  "clap_lex 0.2.4",
  "indexmap 1.9.3",
  "once_cell",
@@ -1875,7 +1858,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "027bb0d98429ae334a8698531da7077bdf906419543a35a55c2cb1b66437d767"
 dependencies = [
  "clap_builder",
- "clap_derive 4.5.28",
+ "clap_derive",
 ]
 
 [[package]]
@@ -1888,19 +1871,6 @@ dependencies = [
  "anstyle",
  "clap_lex 0.7.4",
  "strsim 0.11.1",
-]
-
-[[package]]
-name = "clap_derive"
-version = "3.2.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea0c8bce528c4be4da13ea6fead8965e95b6073585a2f05204bd8f4119f82a65"
-dependencies = [
- "heck 0.4.0",
- "proc-macro-error",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -1967,12 +1937,6 @@ checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
 dependencies = [
  "crossbeam-utils",
 ]
-
-[[package]]
-name = "conditional-mod"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67935045d95e19071aae6ee98d649f2a5593e510802040c622200c8d6666a9ca"
 
 [[package]]
 name = "console"
@@ -3166,20 +3130,6 @@ checksum = "a713bee13966e9fbffdf7193af71d54a6b35a0bb34997cd6c9519ebeb5005972"
 dependencies = [
  "filedescriptor",
  "tempfile",
-]
-
-[[package]]
-name = "gdbstub"
-version = "0.6.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32c95766e0414f8bfc1d07055574c621b67739466d6ba516c4fef8e99d30d2e6"
-dependencies = [
- "bitflags 1.3.2",
- "cfg-if 1.0.4",
- "log",
- "managed",
- "num-traits",
- "paste",
 ]
 
 [[package]]
@@ -4533,12 +4483,6 @@ dependencies = [
  "cc",
  "libc",
 ]
-
-[[package]]
-name = "managed"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ca88d725a0a943b096803bd34e73a4437208b6077654cc4ecb2947a5f91618d"
 
 [[package]]
 name = "maplit"
@@ -6175,9 +6119,9 @@ dependencies = [
 
 [[package]]
 name = "rts-alloc"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7ccc6c6ddf12ced79aeae78454bcb4d0f5e31e5bc0aaca490e2f1b012f56b9d"
+checksum = "9c55727ea58e2c9c131d8f003dab5aaa7056d99f8292bc6a5dfb299cefe55e60"
 dependencies = [
  "libc",
 ]
@@ -6758,9 +6702,9 @@ dependencies = [
 
 [[package]]
 name = "shaq"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c451e9289cd55fd2406917d16abe8af5f83c74b3ba3736398f6aadd2ab1fba2"
+checksum = "014fb38bb8370732f76c67752106d2a4b25cc1891ec489c7fc5ab23b27e90a75"
 dependencies = [
  "libc",
 ]
@@ -7026,6 +6970,7 @@ dependencies = [
 name = "solana-accounts-cluster-bench"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "clap 2.33.3",
  "log",
  "rand 0.8.5",
@@ -7044,7 +6989,6 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-local-cluster",
- "solana-logger",
  "solana-measure",
  "solana-message",
  "solana-native-token",
@@ -7072,7 +7016,8 @@ dependencies = [
 name = "solana-accounts-db"
 version = "3.1.0"
 dependencies = [
- "agave-io-uring",
+ "agave-fs",
+ "agave-logger",
  "agave-reserved-account-keys",
  "ahash 0.8.11",
  "assert_matches",
@@ -7085,9 +7030,7 @@ dependencies = [
  "crossbeam-channel",
  "dashmap",
  "indexmap 2.11.4",
- "io-uring",
  "itertools 0.12.1",
- "libc",
  "libsecp256k1",
  "log",
  "lz4",
@@ -7103,7 +7046,6 @@ dependencies = [
  "seqlock",
  "serde",
  "serde_bytes",
- "slab",
  "smallvec",
  "solana-account",
  "solana-accounts-db",
@@ -7120,7 +7062,6 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-lattice-hash",
- "solana-logger",
  "solana-measure",
  "solana-message",
  "solana-metrics",
@@ -7205,42 +7146,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a933ff1e50aff72d02173cfcd7511bd8540b027ee720b75f353f594f834216d0"
 dependencies = [
  "parking_lot 0.12.3",
-]
-
-[[package]]
-name = "solana-banking-bench"
-version = "3.1.0"
-dependencies = [
- "agave-banking-stage-ingress-types",
- "assert_matches",
- "clap 3.2.23",
- "crossbeam-channel",
- "log",
- "rand 0.8.5",
- "rayon",
- "solana-client",
- "solana-compute-budget-interface",
- "solana-core",
- "solana-gossip",
- "solana-hash",
- "solana-keypair",
- "solana-ledger",
- "solana-logger",
- "solana-measure",
- "solana-message",
- "solana-perf",
- "solana-poh",
- "solana-pubkey",
- "solana-runtime",
- "solana-signature",
- "solana-signer",
- "solana-streamer",
- "solana-system-interface",
- "solana-system-transaction",
- "solana-time-utils",
- "solana-tpu-client",
- "solana-transaction",
- "solana-version",
 ]
 
 [[package]]
@@ -7332,76 +7237,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-bench-tps"
-version = "3.1.0"
-dependencies = [
- "agave-feature-set",
- "chrono",
- "clap 2.33.3",
- "crossbeam-channel",
- "csv",
- "log",
- "rand 0.8.5",
- "rayon",
- "serde",
- "serde_json",
- "serde_yaml 0.9.34+deprecated",
- "serial_test",
- "solana-account",
- "solana-clap-utils",
- "solana-cli-config",
- "solana-client",
- "solana-clock",
- "solana-commitment-config",
- "solana-compute-budget-interface",
- "solana-connection-cache",
- "solana-core",
- "solana-faucet",
- "solana-fee-calculator",
- "solana-genesis",
- "solana-genesis-config",
- "solana-gossip",
- "solana-hash",
- "solana-instruction",
- "solana-keypair",
- "solana-local-cluster",
- "solana-logger",
- "solana-measure",
- "solana-message",
- "solana-metrics",
- "solana-native-token",
- "solana-net-utils",
- "solana-nonce",
- "solana-pubkey",
- "solana-quic-client",
- "solana-rent",
- "solana-rpc",
- "solana-rpc-client",
- "solana-rpc-client-api",
- "solana-rpc-client-nonce-utils",
- "solana-runtime",
- "solana-sdk-ids",
- "solana-signature",
- "solana-signer",
- "solana-streamer",
- "solana-system-interface",
- "solana-test-validator",
- "solana-time-utils",
- "solana-tps-client",
- "solana-tpu-client",
- "solana-transaction",
- "solana-transaction-status",
- "solana-version",
- "spl-instruction-padding-interface",
- "tempfile",
- "thiserror 2.0.17",
- "tikv-jemallocator",
-]
-
-[[package]]
 name = "solana-bench-vote"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "bincode",
  "clap 2.33.3",
  "crossbeam-channel",
@@ -7410,7 +7249,6 @@ dependencies = [
  "solana-connection-cache",
  "solana-hash",
  "solana-keypair",
- "solana-logger",
  "solana-message",
  "solana-net-utils",
  "solana-pubkey",
@@ -7591,6 +7429,7 @@ dependencies = [
 name = "solana-bucket-map"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "bv",
  "bytemuck",
  "bytemuck_derive",
@@ -7602,7 +7441,6 @@ dependencies = [
  "rayon",
  "solana-bucket-map",
  "solana-clock",
- "solana-logger",
  "solana-measure",
  "solana-pubkey",
  "tempfile",
@@ -7652,6 +7490,7 @@ dependencies = [
 name = "solana-cargo-build-sbf"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "assert_cmd",
  "bzip2",
  "cargo_metadata",
@@ -7666,7 +7505,6 @@ dependencies = [
  "serial_test",
  "solana-file-download",
  "solana-keypair",
- "solana-logger",
  "tar",
 ]
 
@@ -7674,12 +7512,12 @@ dependencies = [
 name = "solana-cargo-test-sbf"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "cargo_metadata",
  "clap 3.2.23",
  "itertools 0.12.1",
  "log",
  "regex",
- "solana-logger",
 ]
 
 [[package]]
@@ -7751,6 +7589,7 @@ name = "solana-cli"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-logger",
  "agave-syscalls",
  "assert_matches",
  "bincode",
@@ -7795,7 +7634,6 @@ dependencies = [
  "solana-loader-v3-interface",
  "solana-loader-v4-interface",
  "solana-loader-v4-program",
- "solana-logger",
  "solana-message",
  "solana-native-token",
  "solana-nonce",
@@ -7948,6 +7786,7 @@ dependencies = [
 name = "solana-client-test"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "futures-util",
  "serde_json",
  "solana-client",
@@ -7955,7 +7794,6 @@ dependencies = [
  "solana-commitment-config",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
  "solana-measure",
  "solana-merkle-tree",
  "solana-message",
@@ -8130,6 +7968,7 @@ dependencies = [
 name = "solana-connection-cache"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "async-trait",
  "bincode",
  "crossbeam-channel",
@@ -8141,7 +7980,6 @@ dependencies = [
  "rand_chacha 0.3.1",
  "rayon",
  "solana-keypair",
- "solana-logger",
  "solana-measure",
  "solana-metrics",
  "solana-net-utils",
@@ -8157,6 +7995,7 @@ version = "3.1.0"
 dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-feature-set",
+ "agave-logger",
  "agave-reserved-account-keys",
  "agave-scheduler-bindings",
  "agave-scheduling-utils",
@@ -8177,7 +8016,6 @@ dependencies = [
  "bytemuck",
  "bytes",
  "chrono",
- "conditional-mod",
  "criterion",
  "crossbeam-channel",
  "dashmap",
@@ -8232,6 +8070,7 @@ dependencies = [
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-genesis-config",
+ "solana-genesis-utils",
  "solana-geyser-plugin-manager",
  "solana-gossip",
  "solana-hard-forks",
@@ -8240,7 +8079,6 @@ dependencies = [
  "solana-keypair",
  "solana-ledger",
  "solana-loader-v3-interface",
- "solana-logger",
  "solana-measure",
  "solana-message",
  "solana-metrics",
@@ -8317,6 +8155,7 @@ name = "solana-cost-model"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-logger",
  "agave-reserved-account-keys",
  "ahash 0.8.11",
  "itertools 0.12.1",
@@ -8337,7 +8176,6 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
- "solana-logger",
  "solana-message",
  "solana-metrics",
  "solana-packet",
@@ -8422,49 +8260,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-dos"
-version = "3.1.0"
-dependencies = [
- "bincode",
- "clap 3.2.23",
- "crossbeam-channel",
- "itertools 0.12.1",
- "log",
- "rand 0.8.5",
- "serde",
- "solana-bench-tps",
- "solana-client",
- "solana-connection-cache",
- "solana-core",
- "solana-faucet",
- "solana-gossip",
- "solana-hash",
- "solana-instruction",
- "solana-keypair",
- "solana-local-cluster",
- "solana-logger",
- "solana-measure",
- "solana-message",
- "solana-net-utils",
- "solana-perf",
- "solana-pubkey",
- "solana-quic-client",
- "solana-rpc",
- "solana-rpc-client",
- "solana-runtime",
- "solana-signature",
- "solana-signer",
- "solana-stake-interface",
- "solana-streamer",
- "solana-system-interface",
- "solana-time-utils",
- "solana-tps-client",
- "solana-tpu-client",
- "solana-transaction",
- "solana-version",
-]
-
-[[package]]
 name = "solana-download-utils"
 version = "3.1.0"
 dependencies = [
@@ -8508,6 +8303,7 @@ dependencies = [
 name = "solana-entry"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "agave-reserved-account-keys",
  "assert_matches",
  "bincode",
@@ -8523,7 +8319,6 @@ dependencies = [
  "solana-entry",
  "solana-hash",
  "solana-keypair",
- "solana-logger",
  "solana-measure",
  "solana-merkle-tree",
  "solana-message",
@@ -8627,6 +8422,7 @@ dependencies = [
 name = "solana-faucet"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "bincode",
  "clap 2.33.3",
  "crossbeam-channel",
@@ -8639,7 +8435,6 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
- "solana-logger",
  "solana-message",
  "solana-metrics",
  "solana-net-utils",
@@ -8721,9 +8516,9 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f19aad3b79cf84cd24de85e711ed1718de1e5bf46a710fa73179efa6a117d707"
+checksum = "497caf6b5b0ad5fbf3879d4417cd520e11f19c34f183d052e42370d9a585c79a"
 dependencies = [
  "boxcar",
  "bs58",
@@ -8743,9 +8538,9 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi-macro"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d42809b90c84963eb5f2e17afafb1384892341b0d8ec12ae8f4a8c69a96138e4"
+checksum = "38e4bb0f5232668866a7f6f5cbc3222bbd9eebbff6afe392e3394498e8c9b1fa"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8757,6 +8552,7 @@ name = "solana-genesis"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-logger",
  "agave-snapshots",
  "base64 0.22.1",
  "bincode",
@@ -8779,11 +8575,11 @@ dependencies = [
  "solana-fee-calculator",
  "solana-genesis",
  "solana-genesis-config",
+ "solana-genesis-utils",
  "solana-inflation",
  "solana-keypair",
  "solana-ledger",
  "solana-loader-v3-interface",
- "solana-logger",
  "solana-native-token",
  "solana-poh-config",
  "solana-pubkey",
@@ -8842,6 +8638,7 @@ dependencies = [
  "solana-genesis-config",
  "solana-hash",
  "solana-rpc-client",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -8879,6 +8676,7 @@ name = "solana-gossip"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-logger",
  "anyhow",
  "arrayvec",
  "assert_matches",
@@ -8919,7 +8717,6 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
  "solana-measure",
  "solana-metrics",
  "solana-native-token",
@@ -9129,6 +8926,7 @@ name = "solana-ledger"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-logger",
  "agave-reserved-account-keys",
  "agave-snapshots",
  "anyhow",
@@ -9140,7 +8938,6 @@ dependencies = [
  "bzip2",
  "chrono",
  "chrono-humanize",
- "conditional-mod",
  "criterion",
  "crossbeam-channel",
  "dashmap",
@@ -9178,11 +8975,11 @@ dependencies = [
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-genesis-config",
+ "solana-genesis-utils",
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
  "solana-measure",
  "solana-message",
  "solana-metrics",
@@ -9308,6 +9105,7 @@ dependencies = [
 name = "solana-local-cluster"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "agave-snapshots",
  "assert_matches",
  "crossbeam-channel",
@@ -9330,13 +9128,13 @@ dependencies = [
  "solana-entry",
  "solana-epoch-schedule",
  "solana-genesis-config",
+ "solana-genesis-utils",
  "solana-gossip",
  "solana-hard-forks",
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
  "solana-local-cluster",
- "solana-logger",
  "solana-message",
  "solana-native-token",
  "solana-net-utils",
@@ -9458,6 +9256,7 @@ checksum = "ae8dd4c280dca9d046139eb5b7a5ac9ad10403fbd64964c7d7571214950d758f"
 name = "solana-net-utils"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "anyhow",
  "bincode",
  "bytes",
@@ -9472,7 +9271,6 @@ dependencies = [
  "serde",
  "shuttle",
  "socket2 0.6.1",
- "solana-logger",
  "solana-net-utils",
  "solana-serde",
  "solana-svm-type-overrides",
@@ -9558,6 +9356,7 @@ dependencies = [
 name = "solana-perf"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "ahash 0.8.11",
  "assert_matches",
  "bencher",
@@ -9580,7 +9379,6 @@ dependencies = [
  "solana-frozen-abi-macro",
  "solana-hash",
  "solana-keypair",
- "solana-logger",
  "solana-message",
  "solana-metrics",
  "solana-packet",
@@ -9606,6 +9404,7 @@ dependencies = [
 name = "solana-poh"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "arc-swap",
  "assert_matches",
  "bincode",
@@ -9621,7 +9420,6 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
  "solana-measure",
  "solana-metrics",
  "solana-perf",
@@ -9642,12 +9440,12 @@ dependencies = [
 name = "solana-poh-bench"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "clap 3.2.23",
  "log",
  "num_cpus",
  "rayon",
  "solana-entry",
- "solana-logger",
  "solana-measure",
  "solana-perf",
  "solana-sha256-hasher",
@@ -9859,6 +9657,7 @@ name = "solana-program-test"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-logger",
  "assert_matches",
  "async-trait",
  "base64 0.22.1",
@@ -9886,7 +9685,6 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-loader-v3-interface",
- "solana-logger",
  "solana-message",
  "solana-msg",
  "solana-native-token",
@@ -9962,6 +9760,7 @@ dependencies = [
 name = "solana-quic-client"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "async-lock",
  "async-trait",
  "crossbeam-channel",
@@ -9973,7 +9772,6 @@ dependencies = [
  "rustls 0.23.34",
  "solana-connection-cache",
  "solana-keypair",
- "solana-logger",
  "solana-measure",
  "solana-metrics",
  "solana-net-utils",
@@ -10294,6 +10092,7 @@ dependencies = [
 name = "solana-rpc-test"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "bincode",
  "bs58",
  "crossbeam-channel",
@@ -10309,7 +10108,6 @@ dependencies = [
  "solana-connection-cache",
  "solana-hash",
  "solana-keypair",
- "solana-logger",
  "solana-net-utils",
  "solana-pubkey",
  "solana-pubsub-client",
@@ -10333,6 +10131,8 @@ name = "solana-runtime"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-fs",
+ "agave-logger",
  "agave-precompiles",
  "agave-reserved-account-keys",
  "agave-snapshots",
@@ -10417,7 +10217,6 @@ dependencies = [
  "solana-lattice-hash",
  "solana-loader-v3-interface",
  "solana-loader-v4-interface",
- "solana-logger",
  "solana-measure",
  "solana-message",
  "solana-metrics",
@@ -10526,7 +10325,6 @@ checksum = "1b17d5d12dd959f2b219dabad634a7994ad2434b5c91b9d0025a77acdce45f41"
 dependencies = [
  "byteorder",
  "combine 3.8.1",
- "gdbstub",
  "hash32",
  "libc",
  "log",
@@ -10622,6 +10420,7 @@ dependencies = [
 name = "solana-send-transaction-service"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "async-trait",
  "crossbeam-channel",
  "itertools 0.12.1",
@@ -10634,7 +10433,6 @@ dependencies = [
  "solana-genesis-config",
  "solana-hash",
  "solana-keypair",
- "solana-logger",
  "solana-measure",
  "solana-metrics",
  "solana-net-utils",
@@ -10938,6 +10736,7 @@ dependencies = [
 name = "solana-streamer"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "anyhow",
  "arc-swap",
  "assert_matches",
@@ -10964,7 +10763,6 @@ dependencies = [
  "smallvec",
  "socket2 0.6.1",
  "solana-keypair",
- "solana-logger",
  "solana-measure",
  "solana-metrics",
  "solana-net-utils",
@@ -10989,6 +10787,7 @@ dependencies = [
 name = "solana-svm"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "agave-syscalls",
  "ahash 0.8.11",
  "assert_matches",
@@ -11021,7 +10820,6 @@ dependencies = [
  "solana-loader-v3-interface",
  "solana-loader-v4-interface",
  "solana-loader-v4-program",
- "solana-logger",
  "solana-message",
  "solana-native-token",
  "solana-nonce",
@@ -11076,10 +10874,22 @@ name = "solana-svm-feature-set"
 version = "3.1.0"
 
 [[package]]
-name = "solana-svm-fuzz-harness"
+name = "solana-svm-log-collector"
+version = "3.1.0"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "solana-svm-measure"
+version = "3.1.0"
+
+[[package]]
+name = "solana-svm-test-harness"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-logger",
  "agave-precompiles",
  "agave-syscalls",
  "bincode",
@@ -11092,11 +10902,9 @@ dependencies = [
  "solana-clock",
  "solana-compute-budget",
  "solana-epoch-schedule",
- "solana-hash",
  "solana-instruction",
  "solana-instruction-error",
  "solana-last-restart-slot",
- "solana-logger",
  "solana-precompile-error",
  "solana-program-runtime",
  "solana-pubkey",
@@ -11111,17 +10919,6 @@ dependencies = [
  "solana-transaction-context",
  "thiserror 2.0.17",
 ]
-
-[[package]]
-name = "solana-svm-log-collector"
-version = "3.1.0"
-dependencies = [
- "log",
-]
-
-[[package]]
-name = "solana-svm-measure"
-version = "3.1.0"
 
 [[package]]
 name = "solana-svm-timings"
@@ -11289,6 +11086,7 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-feature-gate-interface",
  "solana-fee-calculator",
+ "solana-genesis-utils",
  "solana-geyser-plugin-manager",
  "solana-gossip",
  "solana-inflation",
@@ -11296,7 +11094,6 @@ dependencies = [
  "solana-keypair",
  "solana-ledger",
  "solana-loader-v3-interface",
- "solana-logger",
  "solana-message",
  "solana-native-token",
  "solana-net-utils",
@@ -11338,6 +11135,7 @@ dependencies = [
 name = "solana-tokens"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "assert_matches",
  "bincode",
  "chrono",
@@ -11358,7 +11156,6 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
- "solana-logger",
  "solana-message",
  "solana-native-token",
  "solana-program-error",
@@ -11529,6 +11326,7 @@ dependencies = [
 name = "solana-transaction-dos"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "bincode",
  "clap 2.33.3",
  "log",
@@ -11545,7 +11343,6 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-local-cluster",
- "solana-logger",
  "solana-measure",
  "solana-message",
  "solana-net-utils",
@@ -11667,6 +11464,7 @@ name = "solana-turbine"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-logger",
  "agave-votor",
  "agave-xdp",
  "assert_matches",
@@ -11675,7 +11473,6 @@ dependencies = [
  "bs58",
  "bytes",
  "caps",
- "conditional-mod",
  "crossbeam-channel",
  "futures 0.3.31",
  "itertools 0.12.1",
@@ -11695,7 +11492,6 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
  "solana-measure",
  "solana-metrics",
  "solana-native-token",
@@ -11760,6 +11556,7 @@ name = "solana-unified-scheduler-pool"
 version = "3.1.0"
 dependencies = [
  "agave-banking-stage-ingress-types",
+ "agave-logger",
  "aquamarine",
  "assert_matches",
  "crossbeam-channel",
@@ -11776,7 +11573,6 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
  "solana-metrics",
  "solana-poh",
  "solana-pubkey",
@@ -11820,6 +11616,7 @@ name = "solana-vortexor"
 version = "3.1.0"
 dependencies = [
  "agave-banking-stage-ingress-types",
+ "agave-logger",
  "assert_matches",
  "bytes",
  "clap 4.5.31",
@@ -11850,7 +11647,6 @@ dependencies = [
  "solana-core",
  "solana-keypair",
  "solana-local-cluster",
- "solana-logger",
  "solana-measure",
  "solana-metrics",
  "solana-native-token",
@@ -11873,6 +11669,7 @@ dependencies = [
 name = "solana-vote"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "arbitrary",
  "bencher",
  "bincode",
@@ -11888,7 +11685,6 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
- "solana-logger",
  "solana-packet",
  "solana-pubkey",
  "solana-sdk-ids",
@@ -11938,6 +11734,7 @@ name = "solana-vote-program"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
+ "agave-logger",
  "assert_matches",
  "bincode",
  "criterion",
@@ -11955,7 +11752,6 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
- "solana-logger",
  "solana-metrics",
  "solana-packet",
  "solana-program-runtime",
@@ -11978,6 +11774,7 @@ dependencies = [
 name = "solana-wen-restart"
 version = "3.1.0"
 dependencies = [
+ "agave-logger",
  "agave-snapshots",
  "anyhow",
  "assert_matches",
@@ -11992,11 +11789,11 @@ dependencies = [
  "serial_test",
  "solana-clock",
  "solana-entry",
+ "solana-genesis-utils",
  "solana-gossip",
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
  "solana-pubkey",
  "solana-runtime",
  "solana-shred-version",
@@ -12213,18 +12010,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "233df81b75ab99b42f002b5cdd6e65a7505ffa930624f7096a7580a56765e9cf"
 dependencies = [
  "bytemuck",
- "solana-pubkey",
-]
-
-[[package]]
-name = "spl-instruction-padding-interface"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c3a77c0c9b83b111ee29bc6aa6eaab54b82e1ed5db40ba9786527b80283c3ef"
-dependencies = [
- "num_enum",
- "solana-instruction",
- "solana-program-error",
  "solana-pubkey",
 ]
 

@@ -140,7 +140,7 @@ fn main() -> Result<()> {
                 packet_sender,
                 recycler.clone(),
                 stats.clone(),
-                Some(Duration::from_millis(1)), // coalesce
+                None, // coalesce
                 true,
                 None,
                 false,

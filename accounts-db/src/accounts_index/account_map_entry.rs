@@ -10,7 +10,7 @@ use {
         ops::Deref,
         sync::{
             atomic::{AtomicBool, Ordering},
-            Arc, RwLock, RwLockReadGuard, RwLockWriteGuard,
+            RwLock, RwLockReadGuard, RwLockWriteGuard,
         },
     },
 };
@@ -239,7 +239,7 @@ impl AccountMapEntryMeta {
 
 /// can be used to pre-allocate structures for insertion into accounts index outside of lock
 pub enum PreAllocatedAccountMapEntry<T: IndexValue> {
-    Entry(Arc<AccountMapEntry<T>>),
+    Entry(Box<AccountMapEntry<T>>),
     Raw((Slot, T)),
 }
 
@@ -286,11 +286,11 @@ impl<T: IndexValue> PreAllocatedAccountMapEntry<T> {
         slot: Slot,
         account_info: T,
         storage: &BucketMapHolder<T, U>,
-    ) -> Arc<AccountMapEntry<T>> {
+    ) -> Box<AccountMapEntry<T>> {
         let is_cached = account_info.is_cached();
         let ref_count = RefCount::from(!is_cached);
         let meta = AccountMapEntryMeta::new_dirty(storage, is_cached);
-        Arc::new(AccountMapEntry::new(
+        Box::new(AccountMapEntry::new(
             SlotList::from([(slot, account_info)]),
             ref_count,
             meta,
@@ -300,7 +300,7 @@ impl<T: IndexValue> PreAllocatedAccountMapEntry<T> {
     pub fn into_account_map_entry<U: DiskIndexValue + From<T> + Into<T>>(
         self,
         storage: &BucketMapHolder<T, U>,
-    ) -> Arc<AccountMapEntry<T>> {
+    ) -> Box<AccountMapEntry<T>> {
         match self {
             Self::Entry(entry) => entry,
             Self::Raw((slot, account_info)) => Self::allocate(slot, account_info, storage),

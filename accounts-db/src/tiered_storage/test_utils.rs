@@ -3,7 +3,7 @@
 use {
     super::footer::TieredStorageFooter,
     crate::{
-        account_storage::stored_account_info::StoredAccountInfo, append_vec::StoredMeta,
+        account_storage::stored_account_info::StoredAccountInfo,
         tiered_storage::hot::RENT_EXEMPT_RENT_EPOCH,
     },
     solana_account::{Account, AccountSharedData, ReadableAccount},
@@ -16,7 +16,7 @@ use {
 ///
 /// When the seed is zero, then a zero-lamport test account will be
 /// created.
-pub(super) fn create_test_account(seed: u64) -> (StoredMeta, AccountSharedData) {
+pub(super) fn create_test_account(seed: u64) -> (Pubkey, AccountSharedData) {
     let data_byte = seed as u8;
     let owner_byte = u8::MAX - data_byte;
     let account = Account {
@@ -31,13 +31,7 @@ pub(super) fn create_test_account(seed: u64) -> (StoredMeta, AccountSharedData) 
             RENT_EXEMPT_RENT_EPOCH
         },
     };
-
-    let stored_meta = StoredMeta {
-        write_version_obsolete: u64::MAX,
-        pubkey: Pubkey::new_unique(),
-        data_len: seed,
-    };
-    (stored_meta, AccountSharedData::from(account))
+    (Pubkey::new_unique(), AccountSharedData::from(account))
 }
 
 pub(super) fn verify_test_account(

@@ -6,18 +6,19 @@
 use {
     crate::fixture::{instr_context::InstrContext, instr_effects::InstrEffects},
     agave_precompiles::{get_precompile, is_precompile},
-    solana_account::AccountSharedData,
+    agave_syscalls::create_program_runtime_environment_v1,
+    solana_account::{Account, AccountSharedData},
+    solana_clock::Clock,
     solana_compute_budget::compute_budget::{ComputeBudget, SVMTransactionExecutionCost},
-    solana_hash::Hash,
     solana_instruction::AccountMeta,
     solana_instruction_error::InstructionError,
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::ProgramCacheForTxBatch,
-        sysvar_cache::SysvarCache,
+        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
     },
     solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_stable_layout::stable_vec::StableVec,
     solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
     solana_svm_log_collector::LogCollector,
@@ -26,7 +27,7 @@ use {
         transaction_accounts::KeyedAccountSharedData, IndexOfAccount, InstructionAccount,
         TransactionContext,
     },
-    std::collections::HashSet,
+    std::{collections::HashSet, sync::Arc},
 };
 
 /// Implement the callback trait so that the SVM API can be used to load
@@ -66,27 +67,11 @@ impl TransactionProcessingCallback for InstrContextCallback<'_> {
     }
 }
 
-fn create_invoke_context_fields(
+fn create_program_cache(
     input: &mut InstrContext,
-) -> Option<(
-    TransactionContext,
-    SysvarCache,
-    ProgramCacheForTxBatch,
-    Hash,
-    u64,
-    ComputeBudget,
-)> {
-    let compute_budget = {
-        let mut budget = ComputeBudget::new_with_defaults(false);
-        budget.compute_unit_limit = input.cu_avail;
-        budget
-    };
-
-    let sysvar_cache = crate::sysvar_cache::setup_sysvar_cache(&input.accounts);
-
-    let clock = sysvar_cache.get_clock().unwrap();
-    let rent = sysvar_cache.get_rent().unwrap();
-
+    clock: &Clock,
+    compute_budget: &ComputeBudget,
+) -> Option<(ProgramRuntimeEnvironments, ProgramCacheForTxBatch)> {
     if !input
         .accounts
         .iter()
@@ -98,32 +83,22 @@ fn create_invoke_context_fields(
         ));
     }
 
-    let transaction_accounts: Vec<KeyedAccountSharedData> = input
-        .accounts
-        .iter()
-        .map(|(pubkey, account)| (*pubkey, AccountSharedData::from(account.clone())))
-        .collect();
-
-    let transaction_context = TransactionContext::new(
-        transaction_accounts.clone(),
-        (*rent).clone(),
-        compute_budget.max_instruction_stack_depth,
-        compute_budget.max_instruction_trace_length,
-    );
+    let environments = ProgramRuntimeEnvironments {
+        program_runtime_v1: Arc::new(
+            create_program_runtime_environment_v1(
+                &input.feature_set.runtime_features(),
+                &compute_budget.to_budget(),
+                false, /* deployment */
+                false, /* debugging_features */
+            )
+            .unwrap(),
+        ),
+        ..ProgramRuntimeEnvironments::default()
+    };
 
     // Set up the program cache, which will include all builtins by default.
     let mut program_cache =
-        crate::program_cache::setup_program_cache(&input.feature_set, &compute_budget, clock.slot);
-
-    let environments = program_cache.environments.clone();
-
-    #[allow(deprecated)]
-    let (blockhash, lamports_per_signature) = sysvar_cache
-        .get_recent_blockhashes()
-        .ok()
-        .and_then(|x| (*x).last().cloned())
-        .map(|x| (x.blockhash, x.fee_calculator.lamports_per_signature))
-        .unwrap_or_default();
+        crate::program_cache::setup_program_cache(&input.feature_set, clock.slot);
 
     let mut newly_loaded_programs = HashSet::<Pubkey>::new();
 
@@ -165,17 +140,10 @@ fn create_invoke_context_fields(
         }
     }
 
-    Some((
-        transaction_context,
-        sysvar_cache,
-        program_cache,
-        blockhash,
-        lamports_per_signature,
-        compute_budget,
-    ))
+    Some((environments, program_cache))
 }
 
-fn get_instr_accounts(
+fn create_instruction_accounts(
     txn_context: &TransactionContext,
     acct_metas: &StableVec<AccountMeta>,
 ) -> Vec<InstructionAccount> {
@@ -195,30 +163,65 @@ fn get_instr_accounts(
     instruction_accounts
 }
 
+fn create_transaction_context(
+    accounts: &[(Pubkey, Account)],
+    compute_budget: &ComputeBudget,
+    rent: Rent,
+) -> TransactionContext {
+    let transaction_accounts: Vec<KeyedAccountSharedData> = accounts
+        .iter()
+        .map(|(pubkey, account)| (*pubkey, AccountSharedData::from(account.clone())))
+        .collect();
+
+    TransactionContext::new(
+        transaction_accounts.clone(),
+        rent,
+        compute_budget.max_instruction_stack_depth,
+        compute_budget.max_instruction_trace_length,
+    )
+}
+
 /// Execute a single instruction against the Solana VM.
 pub fn execute_instr(mut input: InstrContext) -> Option<InstrEffects> {
-    let log_collector = LogCollector::new_ref();
-
-    let (
-        mut transaction_context,
-        sysvar_cache,
-        mut program_cache,
-        blockhash,
-        lamports_per_signature,
-        compute_budget,
-    ) = create_invoke_context_fields(&mut input)?;
-
     let mut compute_units_consumed = 0u64;
+
     let runtime_features = input.feature_set.runtime_features();
+    let sysvar_cache = crate::sysvar_cache::setup_sysvar_cache(&input.accounts);
+
+    let log_collector = LogCollector::new_ref();
+    let compute_budget = {
+        let mut budget = ComputeBudget::new_with_defaults(false, false);
+        budget.compute_unit_limit = input.cu_avail;
+        budget
+    };
+
+    let clock = sysvar_cache.get_clock().unwrap();
+    let rent = sysvar_cache.get_rent().unwrap();
+
+    let (environments, mut program_cache) =
+        create_program_cache(&mut input, &clock, &compute_budget)?;
+
+    let mut transaction_context =
+        create_transaction_context(&input.accounts, &compute_budget, (*rent).clone());
 
     let result = {
         let callback = InstrContextCallback(&input);
 
+        #[allow(deprecated)]
+        let (blockhash, blockhash_lamports_per_signature) = sysvar_cache
+            .get_recent_blockhashes()
+            .ok()
+            .and_then(|x| (*x).last().cloned())
+            .map(|x| (x.blockhash, x.fee_calculator.lamports_per_signature))
+            .unwrap_or_default();
+
         let environment_config = EnvironmentConfig::new(
             blockhash,
-            lamports_per_signature,
+            blockhash_lamports_per_signature,
             &callback,
             &runtime_features,
+            &environments,
+            &environments,
             &sysvar_cache,
         );
 
@@ -226,7 +229,7 @@ pub fn execute_instr(mut input: InstrContext) -> Option<InstrEffects> {
             transaction_context.find_index_of_account(&input.instruction.program_id)?;
 
         let instruction_accounts =
-            get_instr_accounts(&transaction_context, &input.instruction.accounts);
+            create_instruction_accounts(&transaction_context, &input.instruction.accounts);
 
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,

@@ -1,9 +1,7 @@
 //! The `tpu` module implements the Transaction Processing Unit, a
 //! multi-stage transaction processing pipeline in software.
 
-pub use {
-    crate::forwarding_stage::ForwardingClientOption, solana_streamer::quic::DEFAULT_TPU_COALESCE,
-};
+pub use crate::forwarding_stage::ForwardingClientOption;
 use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
@@ -51,7 +49,10 @@ use {
         vote_sender_types::{ReplayVoteReceiver, ReplayVoteSender},
     },
     solana_streamer::{
-        quic::{spawn_server_with_cancel, QuicServerParams, SpawnServerResult},
+        quic::{
+            spawn_server_with_cancel, spawn_simple_qos_server_with_cancel,
+            SimpleQosQuicStreamerConfig, SpawnServerResult, SwQosQuicStreamerConfig,
+        },
         streamer::StakedNodes,
     },
     solana_turbine::{
@@ -98,6 +99,9 @@ impl SigVerifier {
     }
 }
 
+// Conservatively allow 20 TPS per validator.
+pub const MAX_VOTES_PER_SECOND: u64 = 20;
+
 pub struct Tpu {
     fetch_stage: FetchStage,
     sig_verifier: SigVerifier,
@@ -138,7 +142,6 @@ impl Tpu {
         replay_vote_receiver: ReplayVoteReceiver,
         replay_vote_sender: ReplayVoteSender,
         bank_notification_sender: Option<BankNotificationSenderConfig>,
-        tpu_coalesce: Duration,
         duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
         client: ForwardingClientOption,
         turbine_quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
@@ -149,9 +152,9 @@ impl Tpu {
         banking_tracer_channels: Channels,
         tracer_thread_hdl: TracerThread,
         tpu_enable_udp: bool,
-        tpu_quic_server_config: QuicServerParams,
-        tpu_fwd_quic_server_config: QuicServerParams,
-        vote_quic_server_config: QuicServerParams,
+        tpu_quic_server_config: SwQosQuicStreamerConfig,
+        tpu_fwd_quic_server_config: SwQosQuicStreamerConfig,
+        vote_quic_server_config: SimpleQosQuicStreamerConfig,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         block_production_method: BlockProductionMethod,
         block_production_num_workers: NonZeroUsize,
@@ -186,7 +189,7 @@ impl Tpu {
             &forwarded_packet_sender,
             forwarded_packet_receiver,
             poh_recorder,
-            Some(tpu_coalesce),
+            None, // coalesce
             Some(bank_forks.read().unwrap().get_vote_only_mode_signal()),
             tpu_enable_udp,
         );
@@ -212,14 +215,15 @@ impl Tpu {
             endpoints: _,
             thread: tpu_vote_quic_t,
             key_updater: vote_streamer_key_updater,
-        } = spawn_server_with_cancel(
+        } = spawn_simple_qos_server_with_cancel(
             "solQuicTVo",
             "quic_streamer_tpu_vote",
             tpu_vote_quic_sockets,
             keypair,
             vote_packet_sender.clone(),
             staked_nodes.clone(),
-            vote_quic_server_config,
+            vote_quic_server_config.quic_streamer_config,
+            vote_quic_server_config.qos_config,
             cancel.clone(),
         )
         .unwrap();
@@ -237,7 +241,8 @@ impl Tpu {
                 keypair,
                 packet_sender,
                 staked_nodes.clone(),
-                tpu_quic_server_config,
+                tpu_quic_server_config.quic_streamer_config,
+                tpu_quic_server_config.qos_config,
                 cancel.clone(),
             )
             .unwrap();
@@ -259,7 +264,8 @@ impl Tpu {
                 keypair,
                 forwarded_packet_sender,
                 staked_nodes.clone(),
-                tpu_fwd_quic_server_config,
+                tpu_fwd_quic_server_config.quic_streamer_config,
+                tpu_fwd_quic_server_config.qos_config,
                 cancel,
             )
             .unwrap();
@@ -275,7 +281,6 @@ impl Tpu {
             let adapter = VortexorReceiverAdapter::new(
                 sockets,
                 Duration::from_millis(5),
-                tpu_coalesce,
                 non_vote_sender,
                 enable_block_production_forwarding.then(|| forward_stage_sender.clone()),
                 exit.clone(),

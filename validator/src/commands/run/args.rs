@@ -26,9 +26,7 @@ use {
     solana_ledger::{blockstore_options::BlockstoreOptions, use_snapshot_archives_at_startup},
     solana_pubkey::Pubkey,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
-    solana_send_transaction_service::send_transaction_service::{
-        Config as SendTransactionServiceConfig, MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
-    },
+    solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
@@ -69,7 +67,7 @@ pub mod send_transaction_config;
 pub struct RunArgs {
     pub identity_keypair: Keypair,
     pub ledger_path: PathBuf,
-    pub logfile: String,
+    pub logfile: Option<PathBuf>,
     pub entrypoints: Vec<SocketAddr>,
     pub known_validators: Option<HashSet<Pubkey>>,
     pub socket_addr_space: SocketAddrSpace,
@@ -105,8 +103,13 @@ impl FromClapArgMatches for RunArgs {
 
         let logfile = matches
             .value_of("logfile")
-            .map(|s| s.into())
+            .map(String::from)
             .unwrap_or_else(|| format!("agave-validator-{}.log", identity_keypair.pubkey()));
+        let logfile = if logfile == "-" {
+            None
+        } else {
+            Some(PathBuf::from(logfile))
+        };
 
         let mut entrypoints = values_t!(matches, "entrypoint", String).unwrap_or_default();
         // sort() + dedup() to yield a vector of unique elements
@@ -793,14 +796,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("tpu_coalesce_ms")
-            .long("tpu-coalesce-ms")
-            .value_name("MILLISECS")
-            .takes_value(true)
-            .validator(is_parsable::<u64>)
-            .help("Milliseconds to wait in the TPU receiver for packet coalescing."),
-    )
-    .arg(
         Arg::with_name("tpu_connection_pool_size")
             .long("tpu-connection-pool-size")
             .takes_value(true)
@@ -927,97 +922,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(
                 "IP address to bind the RPC port [default: 127.0.0.1 if --private-rpc is present, \
                  otherwise use --bind-address]",
-            ),
-    )
-    .arg(
-        Arg::with_name("rpc_send_transaction_retry_ms")
-            .long("rpc-send-retry-ms")
-            .value_name("MILLISECS")
-            .takes_value(true)
-            .validator(is_parsable::<u64>)
-            .default_value(&default_args.rpc_send_transaction_retry_ms)
-            .help("The rate at which transactions sent via rpc service are retried."),
-    )
-    .arg(
-        Arg::with_name("rpc_send_transaction_batch_ms")
-            .long("rpc-send-batch-ms")
-            .value_name("MILLISECS")
-            .hidden(hidden_unless_forced())
-            .takes_value(true)
-            .validator(|s| is_within_range(s, 1..=MAX_BATCH_SEND_RATE_MS))
-            .default_value(&default_args.rpc_send_transaction_batch_ms)
-            .help("The rate at which transactions sent via rpc service are sent in batch."),
-    )
-    .arg(
-        Arg::with_name("rpc_send_transaction_leader_forward_count")
-            .long("rpc-send-leader-count")
-            .value_name("NUMBER")
-            .takes_value(true)
-            .validator(is_parsable::<u64>)
-            .default_value(&default_args.rpc_send_transaction_leader_forward_count)
-            .help(
-                "The number of upcoming leaders to which to forward transactions sent via rpc \
-                 service.",
-            ),
-    )
-    .arg(
-        Arg::with_name("rpc_send_transaction_default_max_retries")
-            .long("rpc-send-default-max-retries")
-            .value_name("NUMBER")
-            .takes_value(true)
-            .validator(is_parsable::<usize>)
-            .help(
-                "The maximum number of transaction broadcast retries when unspecified by the \
-                 request, otherwise retried until expiration.",
-            ),
-    )
-    .arg(
-        Arg::with_name("rpc_send_transaction_service_max_retries")
-            .long("rpc-send-service-max-retries")
-            .value_name("NUMBER")
-            .takes_value(true)
-            .validator(is_parsable::<usize>)
-            .default_value(&default_args.rpc_send_transaction_service_max_retries)
-            .help(
-                "The maximum number of transaction broadcast retries, regardless of requested \
-                 value.",
-            ),
-    )
-    .arg(
-        Arg::with_name("rpc_send_transaction_batch_size")
-            .long("rpc-send-batch-size")
-            .value_name("NUMBER")
-            .hidden(hidden_unless_forced())
-            .takes_value(true)
-            .validator(|s| is_within_range(s, 1..=MAX_TRANSACTION_BATCH_SIZE))
-            .default_value(&default_args.rpc_send_transaction_batch_size)
-            .help("The size of transactions to be sent in batch."),
-    )
-    .arg(
-        Arg::with_name("rpc_send_transaction_retry_pool_max_size")
-            .long("rpc-send-transaction-retry-pool-max-size")
-            .value_name("NUMBER")
-            .takes_value(true)
-            .validator(is_parsable::<usize>)
-            .default_value(&default_args.rpc_send_transaction_retry_pool_max_size)
-            .help("The maximum size of transactions retry pool."),
-    )
-    .arg(
-        Arg::with_name("rpc_send_transaction_tpu_peer")
-            .long("rpc-send-transaction-tpu-peer")
-            .takes_value(true)
-            .number_of_values(1)
-            .multiple(true)
-            .value_name("HOST:PORT")
-            .validator(solana_net_utils::is_host_port)
-            .help("Peer(s) to broadcast transactions to instead of the current leader"),
-    )
-    .arg(
-        Arg::with_name("rpc_send_transaction_also_leader")
-            .long("rpc-send-transaction-also-leader")
-            .requires("rpc_send_transaction_tpu_peer")
-            .help(
-                "With `--rpc-send-transaction-tpu-peer HOST:PORT`, also send to the current leader",
             ),
     )
     .arg(
@@ -1473,8 +1377,9 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .args(&pub_sub_config::args())
-    .args(&json_rpc_config::args(default_args))
+    .args(&json_rpc_config::args())
     .args(&rpc_bigtable_config::args())
+    .args(&send_transaction_config::args())
 }
 
 fn validators_set(
@@ -1508,7 +1413,6 @@ mod tests {
         super::*,
         crate::cli::thread_args::thread_args,
         scopeguard::defer,
-        solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,
         std::{
             fs,
             net::{IpAddr, Ipv4Addr},
@@ -1520,27 +1424,24 @@ mod tests {
         fn default() -> Self {
             let identity_keypair = Keypair::new();
             let ledger_path = absolute(PathBuf::from("ledger")).unwrap();
-            let logfile = format!("agave-validator-{}.log", identity_keypair.pubkey());
+            let logfile =
+                PathBuf::from(format!("agave-validator-{}.log", identity_keypair.pubkey()));
             let entrypoints = vec![];
             let known_validators = None;
+
+            let json_rpc_config =
+                crate::commands::run::args::json_rpc_config::tests::default_json_rpc_config();
 
             RunArgs {
                 identity_keypair,
                 ledger_path,
-                logfile,
+                logfile: Some(logfile),
                 entrypoints,
                 known_validators,
                 socket_addr_space: SocketAddrSpace::Global,
                 rpc_bootstrap_config: RpcBootstrapConfig::default(),
                 blockstore_options: BlockstoreOptions::default(),
-                json_rpc_config: JsonRpcConfig {
-                    health_check_slot_distance: 128,
-                    max_multiple_accounts: Some(100),
-                    rpc_threads: num_cpus::get(),
-                    rpc_blocking_threads: 1.max(num_cpus::get() / 4),
-                    max_request_body_size: Some(MAX_REQUEST_BODY_SIZE),
-                    ..JsonRpcConfig::default()
-                },
+                json_rpc_config,
                 pub_sub_config: PubSubConfig {
                     worker_threads: 4,
                     notification_threads: None,
@@ -1757,9 +1658,10 @@ mod tests {
         // default
         {
             let expected_args = RunArgs {
-                logfile: "agave-validator-".to_string()
-                    + &default_run_args.identity_keypair.pubkey().to_string()
-                    + ".log",
+                logfile: Some(PathBuf::from(format!(
+                    "agave-validator-{}.log",
+                    default_run_args.identity_keypair.pubkey()
+                ))),
                 ..default_run_args.clone()
             };
             verify_args_struct_by_command_run_with_identity_setup(
@@ -1772,7 +1674,7 @@ mod tests {
         // short arg
         {
             let expected_args = RunArgs {
-                logfile: "-".to_string(),
+                logfile: None,
                 ..default_run_args.clone()
             };
             verify_args_struct_by_command_run_with_identity_setup(
@@ -1785,7 +1687,7 @@ mod tests {
         // long arg
         {
             let expected_args = RunArgs {
-                logfile: "custom_log.log".to_string(),
+                logfile: Some(PathBuf::from("custom_log.log")),
                 ..default_run_args.clone()
             };
             verify_args_struct_by_command_run_with_identity_setup(

@@ -13,30 +13,30 @@ pub const BLS_KEYPAIR_DERIVE_SEED: &[u8; 9] = b"alpenglow";
 /// Block, a (slot, hash) tuple
 pub type Block = (Slot, Hash);
 
+/// A consensus vote.
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
     frozen_abi(digest = "5SPmMTisBngyvNzKsXYbo1rbhefNYeGAgVJSYF5Su6N5")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-/// BLS vote message, we need rank to look up pubkey
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VoteMessage {
-    /// The vote
+    /// The type of the vote.
     pub vote: Vote,
-    /// The signature
+    /// The signature.
     pub signature: BLSSignature,
-    /// The rank of the validator
+    /// The rank of the validator.
     pub rank: u16,
 }
 
+/// The different types of certificates and their relevant state.
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "APmpbbqEiJtCrxgjSs8FuMNcM1Qyzc5HtMW7KR79DGcF")
+    frozen_abi(digest = "8RmeGAzMoXh7ENiFCG1iHDh8ejokjR1hqJ2m4Ba7Uxgo")
 )]
-/// Certificate details
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
-pub enum Certificate {
+pub enum CertificateType {
     /// Finalize certificate
     Finalize(Slot),
     /// Fast finalize certificate
@@ -49,123 +49,60 @@ pub enum Certificate {
     Skip(Slot),
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "3en2tmFekuD3SWbBnNPqeJSrxDeTJkKJe3CCimANrrpQ")
-)]
-/// Certificate type
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
-pub enum CertificateType {
-    /// Finalize certificate
-    Finalize,
-    /// Fast finalize certificate
-    FinalizeFast,
-    /// Notarize certificate
-    Notarize,
-    /// Notarize fallback certificate
-    NotarizeFallback,
-    /// Skip certificate
-    Skip,
-}
-
-impl Certificate {
-    /// Create a new certificate from a CertificateType, Slot, and Option<Hash>
-    pub fn new(certificate_type: CertificateType, slot: Slot, hash: Option<Hash>) -> Self {
-        match (certificate_type, hash) {
-            (CertificateType::Finalize, None) => Certificate::Finalize(slot),
-            (CertificateType::FinalizeFast, Some(hash)) => Certificate::FinalizeFast(slot, hash),
-            (CertificateType::Notarize, Some(hash)) => Certificate::Notarize(slot, hash),
-            (CertificateType::NotarizeFallback, Some(hash)) => {
-                Certificate::NotarizeFallback(slot, hash)
-            }
-            (CertificateType::Skip, None) => Certificate::Skip(slot),
-            _ => panic!("Invalid certificate type and hash combination"),
-        }
-    }
-
-    /// Get the certificate type
-    pub fn certificate_type(&self) -> CertificateType {
-        match self {
-            Certificate::Finalize(_) => CertificateType::Finalize,
-            Certificate::FinalizeFast(_, _) => CertificateType::FinalizeFast,
-            Certificate::Notarize(_, _) => CertificateType::Notarize,
-            Certificate::NotarizeFallback(_, _) => CertificateType::NotarizeFallback,
-            Certificate::Skip(_) => CertificateType::Skip,
-        }
-    }
-
+impl CertificateType {
     /// Get the slot of the certificate
     pub fn slot(&self) -> Slot {
         match self {
-            Certificate::Finalize(slot)
-            | Certificate::FinalizeFast(slot, _)
-            | Certificate::Notarize(slot, _)
-            | Certificate::NotarizeFallback(slot, _)
-            | Certificate::Skip(slot) => *slot,
+            Self::Finalize(slot)
+            | Self::FinalizeFast(slot, _)
+            | Self::Notarize(slot, _)
+            | Self::NotarizeFallback(slot, _)
+            | Self::Skip(slot) => *slot,
         }
-    }
-
-    /// Is this a fast finalize certificate?
-    pub fn is_fast_finalization(&self) -> bool {
-        matches!(self, Self::FinalizeFast(_, _))
-    }
-
-    /// Is this a finalize / fast finalize certificate?
-    pub fn is_finalization(&self) -> bool {
-        matches!(self, Self::Finalize(_) | Self::FinalizeFast(_, _))
-    }
-
-    /// Is this a notarize fallback certificate?
-    pub fn is_notarize_fallback(&self) -> bool {
-        matches!(self, Self::NotarizeFallback(_, _))
-    }
-
-    /// Is this a skip certificate?
-    pub fn is_skip(&self) -> bool {
-        matches!(self, Self::Skip(_))
     }
 
     /// Gets the block associated with this certificate, if present
     pub fn to_block(self) -> Option<Block> {
         match self {
-            Certificate::Finalize(_) | Certificate::Skip(_) => None,
-            Certificate::Notarize(slot, block_id)
-            | Certificate::NotarizeFallback(slot, block_id)
-            | Certificate::FinalizeFast(slot, block_id) => Some((slot, block_id)),
+            Self::Finalize(_) | Self::Skip(_) => None,
+            Self::Notarize(slot, block_id)
+            | Self::NotarizeFallback(slot, block_id)
+            | Self::FinalizeFast(slot, block_id) => Some((slot, block_id)),
         }
     }
 }
 
+/// The actual certificate with the aggregate signature and bitmap for which validators are included in the aggregate.
+/// BLS vote message, we need rank to look up pubkey
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "4pnAg6WpCFLfDL8w3uujV6k7uqw3RThCLQiD6whTxhbN")
+    frozen_abi(digest = "2jUyAYKXdK7gfncAx3JxhdUfA8DrkVkcbDB6J5tsiuEA")
 )]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-/// BLS vote message, we need rank to look up pubkey
-pub struct CertificateMessage {
-    /// The certificate
-    pub certificate: Certificate,
-    /// The signature
+pub struct Certificate {
+    /// The certificate type.
+    pub cert_type: CertificateType,
+    /// The aggregate signature.
     pub signature: BLSSignature,
-    /// The bitmap for validators, see solana-signer-store for encoding format
+    /// A rank bitmap for validators' signatures included in the aggregate.
+    /// See solana-signer-store for encoding format.
     pub bitmap: Vec<u8>,
 }
 
+/// A consensus message sent between validators.
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "AusWCevDpUnnKrAjJg7NgsiZZn5pTXaLUghGfPHrsAFA")
+    frozen_abi(digest = "7r7dyUzmnYbxug6r7QkggXgBH5WUWvuC2Z9UcXLJfBgm")
 )]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[allow(clippy::large_enum_variant)]
-/// BLS message data in Alpenglow
 pub enum ConsensusMessage {
-    /// Vote message, with the vote and the rank of the validator.
+    /// A vote from a single party.
     Vote(VoteMessage),
-    /// Certificate message
-    Certificate(CertificateMessage),
+    /// A certificate aggregating votes from multiple parties.
+    Certificate(Certificate),
 }
 
 impl ConsensusMessage {
@@ -175,19 +112,6 @@ impl ConsensusMessage {
             vote,
             signature,
             rank,
-        })
-    }
-
-    /// Create a new certificate message
-    pub fn new_certificate(
-        certificate: Certificate,
-        bitmap: Vec<u8>,
-        signature: BLSSignature,
-    ) -> Self {
-        Self::Certificate(CertificateMessage {
-            certificate,
-            signature,
-            bitmap,
         })
     }
 }

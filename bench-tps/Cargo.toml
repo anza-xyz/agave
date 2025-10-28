@@ -7,6 +7,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+workspace = "../dev-bins"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -15,8 +16,11 @@ targets = ["x86_64-unknown-linux-gnu"]
 default = ["agave-unstable-api"]
 agave-unstable-api = []
 dev-context-only-utils = []
+dummy-for-ci-check = []
+frozen-abi = []
 
 [dependencies]
+agave-logger = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 crossbeam-channel = { workspace = true }
@@ -27,7 +31,6 @@ rayon = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-
 solana-account = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
@@ -44,7 +47,6 @@ solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
-solana-logger = "=3.0.0"
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }

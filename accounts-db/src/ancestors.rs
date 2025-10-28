@@ -129,7 +129,7 @@ pub mod tests {
 
     #[test]
     fn test_ancestors_permutations() {
-        solana_logger::setup();
+        agave_logger::setup();
         let mut ancestors = Ancestors::default();
         let mut hash = HashMap::new();
 
@@ -194,7 +194,7 @@ pub mod tests {
 
     #[test]
     fn test_ancestors_smaller() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         for width in 0..34 {
             let mut hash = HashSet::new();

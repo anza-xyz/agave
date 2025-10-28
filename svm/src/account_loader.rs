@@ -401,12 +401,14 @@ pub fn validate_fee_payer(
             TransactionError::InsufficientFundsForFee
         })?;
 
-    let payer_pre_rent_state = get_account_rent_state(rent, payer_account);
+    let payer_pre_rent_state =
+        get_account_rent_state(rent, payer_account.lamports(), payer_account.data().len());
     payer_account
         .checked_sub_lamports(fee)
         .map_err(|_| TransactionError::InsufficientFundsForFee)?;
 
-    let payer_post_rent_state = get_account_rent_state(rent, payer_account);
+    let payer_post_rent_state =
+        get_account_rent_state(rent, payer_account.lamports(), payer_account.data().len());
     check_rent_state_with_account(
         &payer_pre_rent_state,
         &payer_post_rent_state,
@@ -1266,7 +1268,7 @@ mod tests {
 
     #[test]
     fn test_instructions() {
-        solana_logger::setup();
+        agave_logger::setup();
         let instructions_key = solana_sdk_ids::sysvar::instructions::id();
         let keypair = Keypair::new();
         let instructions = vec![CompiledInstruction::new(1, &(), vec![0, 1])];
@@ -1290,7 +1292,7 @@ mod tests {
 
     #[test]
     fn test_overrides() {
-        solana_logger::setup();
+        agave_logger::setup();
         let mut account_overrides = AccountOverrides::default();
         let slot_history_id = sysvar::slot_history::id();
         let account = AccountSharedData::new(42, 0, &Pubkey::default());

@@ -5,14 +5,11 @@ members = [
     "accounts-cluster-bench",
     "accounts-db",
     "accounts-db/store-histogram",
-    "accounts-db/store-tool",
-    "banking-bench",
     "banking-stage-ingress-types",
     "banks-client",
     "banks-interface",
     "banks-server",
     "bench-streamer",
-    "bench-tps",
     "bench-vote",
     "bloom",
     "bucket_map",
@@ -32,12 +29,12 @@ members = [
     "core",
     "cost-model",
     "curves/curve25519",
-    "dos",
     "download-utils",
     "entry",
     "faucet",
     "feature-set",
     "fee",
+    "fs",
     "genesis",
     "genesis-utils",
     "geyser-plugin-interface",
@@ -48,8 +45,8 @@ members = [
     "keygen",
     "lattice-hash",
     "ledger",
-    "ledger-tool",
     "local-cluster",
+    "logger",
     "measure",
     "merkle-tree",
     "metrics",
@@ -104,9 +101,9 @@ members = [
     "svm",
     "svm-callback",
     "svm-feature-set",
-    "svm-fuzz-harness",
     "svm-log-collector",
     "svm-measure",
+    "svm-test-harness",
     "svm-timings",
     "svm-transaction",
     "svm-type-overrides",
@@ -139,10 +136,20 @@ members = [
     "watchtower",
     "wen-restart",
     "xdp",
+    "xdp-ebpf",
     "zk-token-sdk",
 ]
 
-exclude = ["ci/xtask", "programs/sbf", "svm/tests/example-programs"]
+exclude = [
+    # solana-dos depends on bench-tps. ignore bench-tps here to avoid confusing cargo's
+    # workspace resolution logic, which expects it in the top-level worspace rather than
+    # dev-bins
+    "bench-tps",
+    "ci/xtask",
+    "dev-bins",
+    "programs/sbf",
+    "svm/tests/example-programs",
+]
 
 resolver = "2"
 
@@ -178,8 +185,10 @@ aes-gcm-siv = "0.11.1"
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=3.1.0", features = ["agave-unstable-api"] }
 agave-cargo-registry = { path = "cargo-registry", version = "=3.1.0" }
 agave-feature-set = { path = "feature-set", version = "=3.1.0", features = ["agave-unstable-api"] }
+agave-fs = { path = "fs", version = "=3.1.0", features = ["agave-unstable-api"] }
 agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=3.1.0", features = ["agave-unstable-api"] }
 agave-io-uring = { path = "io-uring", version = "=3.1.0", features = ["agave-unstable-api"] }
+agave-logger = { path = "logger", version = "=3.1.0", features = ["agave-unstable-api"] }
 agave-precompiles = { path = "precompiles", version = "=3.1.0", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=3.1.0", features = ["agave-unstable-api"] }
 agave-scheduler-bindings = { path = "scheduler-bindings", version = "=3.1.0", features = ["agave-unstable-api"] }
@@ -192,15 +201,13 @@ agave-verified-packet-receiver = { path = "verified-packet-receiver", version = 
 agave-votor = { path = "votor", version = "=3.1.0", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "votor-messages", version = "=3.1.0", features = ["agave-unstable-api"] }
 agave-xdp = { path = "xdp", version = "=3.1.0", features = ["agave-unstable-api"] }
+agave-xdp-ebpf = { path = "xdp-ebpf", version = "=3.1.0", features = ["agave-unstable-api"] }
 ahash = "0.8.11"
 anyhow = "1.0.100"
 aquamarine = "0.6.0"
 arbitrary = "1.4.2"
 arc-swap = "1.7.1"
 ark-bn254 = "0.4.0"
-ark-ec = "0.4.0"
-ark-ff = "0.4.0"
-ark-serialize = "0.4.0"
 array-bytes = "=1.4.1"
 arrayref = "0.3.9"
 arrayvec = "0.7.6"
@@ -211,6 +218,7 @@ async-trait = "0.1.89"
 atty = "0.2.11"
 axum = "0.8.6"
 aya = "0.13"
+aya-ebpf = "0.1.1"
 backoff = "0.4.0"
 base64 = "0.22.1"
 bencher = "0.1.5"
@@ -233,8 +241,6 @@ cfg_eval = "0.1.2"
 chrono = { version = "0.4.42", default-features = false }
 chrono-humanize = "0.2.3"
 clap = "2.33.1"
-# Remove this dependency when procedural macros will support non-inline modules.
-conditional-mod = "0.1.0"
 console = "0.16.1"
 console_error_panic_hook = "0.1.7"
 console_log = "0.2.2"
@@ -354,7 +360,7 @@ reqwest = { version = "0.12.24", default-features = false }
 reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.4"
-rts-alloc = { version = "0.1.1" }
+rts-alloc = { version = "0.2.0" }
 rustls = { version = "0.23.34", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.27"
@@ -368,7 +374,7 @@ serde_yaml = "0.9.34"
 serial_test = "2.0.0"
 sha2 = "0.10.9"
 sha3 = "0.10.8"
-shaq = { version = "0.1.0" }
+shaq = { version = "0.2.0" }
 shuttle = "0.7.1"
 signal-hook = "0.3.18"
 siphasher = "1.0.1"
@@ -388,7 +394,6 @@ solana-atomic-u64 = "3.0.0"
 solana-banks-client = { path = "banks-client", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-banks-interface = { path = "banks-interface", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-banks-server = { path = "banks-server", version = "=3.1.0", features = ["agave-unstable-api"] }
-solana-bench-tps = { path = "bench-tps", version = "=3.1.0" }
 solana-big-mod-exp = "3.0.0"
 solana-bincode = "3.0.0"
 solana-blake3-hasher = "3.0.0"
@@ -436,8 +441,8 @@ solana-fee = { path = "fee", version = "=3.1.0", features = ["agave-unstable-api
 solana-fee-calculator = "3.0.0"
 solana-fee-structure = "3.0.0"
 solana-file-download = "3.1.0"
-solana-frozen-abi = "3.0.0"
-solana-frozen-abi-macro = "3.0.0"
+solana-frozen-abi = "3.0.1"
+solana-frozen-abi-macro = "3.0.1"
 solana-genesis = { path = "genesis", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-genesis-config = "3.0.0"
 solana-genesis-utils = { path = "genesis-utils", version = "=3.1.0", features = ["agave-unstable-api"] }
@@ -459,7 +464,6 @@ solana-loader-v3-interface = "6.1.0"
 solana-loader-v4-interface = "3.1.0"
 solana-loader-v4-program = { path = "programs/loader-v4", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-local-cluster = { path = "local-cluster", version = "=3.1.0", features = ["agave-unstable-api"] }
-solana-logger = "3.0.0"
 solana-measure = { path = "measure", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-merkle-tree = { path = "merkle-tree", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-message = "3.0.1"
@@ -532,9 +536,9 @@ solana-streamer = { path = "streamer", version = "=3.1.0", features = ["agave-un
 solana-svm = { path = "svm", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-svm-callback = { path = "svm-callback", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-svm-feature-set = { path = "svm-feature-set", version = "=3.1.0", features = ["agave-unstable-api"] }
-solana-svm-fuzz-harness = { path = "svm-fuzz-harness", version = "=3.1.0" }
 solana-svm-log-collector = { path = "svm-log-collector", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-svm-measure = { path = "svm-measure", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-svm-test-harness = { path = "svm-test-harness", version = "=3.1.0" }
 solana-svm-timings = { path = "svm-timings", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-svm-transaction = { path = "svm-transaction", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-svm-type-overrides = { path = "svm-type-overrides", version = "=3.1.0", features = ["agave-unstable-api"] }

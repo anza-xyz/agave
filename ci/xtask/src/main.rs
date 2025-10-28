@@ -5,6 +5,7 @@ use {
 };
 
 mod commands;
+mod common;
 
 #[derive(Parser)]
 #[command(name = "xtask", about = "Build tasks", version)]
@@ -20,6 +21,8 @@ struct Xtask {
 enum Commands {
     #[command(about = "Hello")]
     Hello,
+    #[command(about = "Bump version")]
+    BumpVersion(commands::bump_version::CommandArgs),
 }
 
 #[derive(Args, Debug)]
@@ -55,6 +58,9 @@ async fn try_main() -> Result<()> {
     // run the command
     match xtask.command {
         Commands::Hello => commands::hello::run()?,
+        Commands::BumpVersion(args) => {
+            commands::bump_version::run(args)?;
+        }
     }
 
     Ok(())

@@ -28,6 +28,7 @@ prost-types = { workspace = true }
 rayon = { workspace = true }
 solana-clock = { workspace = true }
 solana-entry = { workspace = true }
+solana-genesis-utils = { workspace = true }
 solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-ledger = { workspace = true }
@@ -49,6 +50,7 @@ prost-build = { workspace = true }
 protobuf-src = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
 assert_matches = { workspace = true }
 crossbeam-channel = { workspace = true }
@@ -57,7 +59,6 @@ serial_test = { workspace = true }
 solana-entry = { workspace = true }
 solana-keypair = { workspace = true }
 solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
-solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true }

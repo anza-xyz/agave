@@ -1543,7 +1543,7 @@ mod tests {
         // Writing to shared writable account makes it unique (CoW logic)
         assert!(transaction_context
             .accounts()
-            .try_borrow(1)
+            .try_borrow_mut(1)
             .unwrap()
             .is_shared());
         memory_mapping
@@ -1551,7 +1551,7 @@ mod tests {
             .unwrap();
         assert!(!transaction_context
             .accounts()
-            .try_borrow(1)
+            .try_borrow_mut(1)
             .unwrap()
             .is_shared());
         assert_eq!(

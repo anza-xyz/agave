@@ -134,18 +134,10 @@ impl Bank {
         let elf = &programdata[progradata_metadata_size..];
         // Set up the two `LoadedProgramsForTxBatch` instances, as if
         // processing a new transaction batch.
-        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new_from_cache(
-            self.slot,
-            self.epoch,
-            self.transaction_processor
-                .epoch_boundary_preparation
-                .clone(),
-            &self
-                .transaction_processor
-                .global_program_cache
-                .read()
-                .unwrap(),
-        );
+        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
+        let program_runtime_environments = self
+            .transaction_processor
+            .get_environments_for_epoch(self.epoch);
 
         // Configure a dummy `InvokeContext` from the runtime's current
         // environment, as well as the two `ProgramCacheForTxBatch`
@@ -154,7 +146,7 @@ impl Bank {
             let compute_budget = self
                 .compute_budget()
                 .unwrap_or(ComputeBudget::new_with_defaults(
-                    /* simd_0268_active */ false,
+                    /* simd_0268_active */ false, /* simd_0339_active */ false,
                 ));
             let mut sysvar_cache = SysvarCache::default();
             sysvar_cache.fill_missing_entries(|pubkey, set_sysvar| {
@@ -181,6 +173,8 @@ impl Bank {
                     0,
                     &MockCallback {},
                     &feature_set,
+                    &program_runtime_environments,
+                    &program_runtime_environments,
                     &sysvar_cache,
                 ),
                 None,
@@ -188,19 +182,10 @@ impl Bank {
                 compute_budget.to_cost(),
             );
 
-            let environments = dummy_invoke_context
-                .get_environments_for_slot(self.slot.saturating_add(
-                    solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
-                ))
-                .map_err(|_err| {
-                    // This will never fail since the epoch schedule is already configured.
-                    InstructionError::ProgramEnvironmentSetupFailure
-                })?;
-
             let load_program_metrics = solana_bpf_loader_program::deploy_program(
                 dummy_invoke_context.get_log_collector(),
                 dummy_invoke_context.program_cache_for_tx_batch,
-                environments.program_runtime_v1.clone(),
+                program_runtime_environments.program_runtime_v1.clone(),
                 program_id,
                 &bpf_loader_upgradeable::id(),
                 data_len,
@@ -216,7 +201,10 @@ impl Bank {
             .global_program_cache
             .write()
             .unwrap()
-            .merge(&program_cache_for_tx_batch.drain_modified_entries());
+            .merge(
+                &self.transaction_processor.environments,
+                &program_cache_for_tx_batch.drain_modified_entries(),
+            );
 
         Ok(())
     }
@@ -403,10 +391,7 @@ pub(crate) mod tests {
         super::*,
         crate::bank::{
             test_utils::goto_end_of_slot,
-            tests::{
-                create_genesis_config, create_simple_test_bank,
-                new_bank_from_parent_with_bank_forks,
-            },
+            tests::{create_genesis_config, create_simple_test_bank},
             Bank,
         },
         agave_feature_set::FeatureSet,
@@ -1228,7 +1213,7 @@ pub(crate) mod tests {
 
         // Advance to the next epoch without activating the feature.
         let mut first_slot_in_next_epoch = slots_per_epoch + 1;
-        let bank = new_bank_from_parent_with_bank_forks(
+        let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
             &Pubkey::default(),
@@ -1251,7 +1236,7 @@ pub(crate) mod tests {
         goto_end_of_slot(bank.clone());
         first_slot_in_next_epoch += slots_per_epoch;
         let migration_slot = first_slot_in_next_epoch;
-        let bank = new_bank_from_parent_with_bank_forks(
+        let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
             &Pubkey::default(),
@@ -1267,7 +1252,7 @@ pub(crate) mod tests {
         goto_end_of_slot(bank.clone());
         let next_slot = bank.slot() + 1;
         let bank =
-            new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), next_slot);
+            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), next_slot);
 
         // Successfully invoke the new BPF builtin program.
         bank.process_transaction(&Transaction::new(
@@ -1298,7 +1283,7 @@ pub(crate) mod tests {
         // Simulate crossing another epoch boundary for a new bank.
         goto_end_of_slot(bank.clone());
         first_slot_in_next_epoch += slots_per_epoch;
-        let bank = new_bank_from_parent_with_bank_forks(
+        let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
             &Pubkey::default(),
@@ -1381,7 +1366,7 @@ pub(crate) mod tests {
         // Advance the bank to cross the epoch boundary and activate the
         // feature.
         goto_end_of_slot(bank.clone());
-        let bank = new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 33);
+        let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 33);
 
         // Assert the feature _was_ activated but the program was not migrated.
         assert!(bank.feature_set.is_active(feature_id));
@@ -1398,7 +1383,7 @@ pub(crate) mod tests {
 
         // Simulate crossing an epoch boundary again.
         goto_end_of_slot(bank.clone());
-        let bank = new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 96);
+        let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 96);
 
         // Again, assert the feature is still active and the program still was
         // not migrated.
@@ -1485,7 +1470,7 @@ pub(crate) mod tests {
         // Simulate crossing an epoch boundary for a new bank.
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         goto_end_of_slot(bank.clone());
-        let bank = new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 33);
+        let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 33);
 
         // Assert the feature is active but the builtin was not migrated.
         assert!(bank.feature_set.is_active(feature_id));

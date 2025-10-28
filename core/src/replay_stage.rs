@@ -4139,6 +4139,7 @@ impl ReplayStage {
                 )
             },
         )
+        .expect("rooting must succeed")
     }
 
     // To avoid code duplication and keep compatibility with alpenglow, we add this
@@ -4478,21 +4479,6 @@ pub(crate) mod tests {
         test_case::test_case,
         trees::{tr, Tree},
     };
-
-    fn new_bank_from_parent_with_bank_forks(
-        bank_forks: &RwLock<BankForks>,
-        parent: Arc<Bank>,
-        collector_id: &Pubkey,
-        slot: Slot,
-    ) -> Arc<Bank> {
-        let bank = Bank::new_from_parent(parent, collector_id, slot);
-        bank.set_block_id(Some(Hash::new_unique()));
-        bank_forks
-            .write()
-            .unwrap()
-            .insert(bank)
-            .clone_without_scheduler()
-    }
 
     #[test]
     fn test_is_partition_detected() {
@@ -4989,7 +4975,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_dead_fork_invalid_slot_tick_count() {
-        solana_logger::setup();
+        agave_logger::setup();
         // Too many ticks per slot
         let res = check_dead_fork(|_keypair, bank| {
             let blockhash = bank.last_blockhash();
@@ -5305,7 +5291,7 @@ pub(crate) mod tests {
         for i in 1..=3 {
             let prev_bank = bank_forks.read().unwrap().get(i - 1).unwrap();
             let slot = prev_bank.slot() + 1;
-            let bank = new_bank_from_parent_with_bank_forks(
+            let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 prev_bank,
                 &Pubkey::default(),
@@ -5511,7 +5497,7 @@ pub(crate) mod tests {
             assert!(confirmed_forks.is_empty());
         }
 
-        let bank1 = new_bank_from_parent_with_bank_forks(
+        let bank1 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank0.clone(),
             &my_node_pubkey,
@@ -7729,7 +7715,7 @@ pub(crate) mod tests {
         let (voting_sender, voting_receiver) = unbounded();
 
         // Simulate landing a vote for slot 0 landing in slot 1
-        let bank1 = new_bank_from_parent_with_bank_forks(
+        let bank1 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank0.clone(),
             &Pubkey::default(),
@@ -7800,7 +7786,7 @@ pub(crate) mod tests {
 
         // Trying to refresh the vote for bank 0 in bank 1 or bank 2 won't succeed because
         // the last vote has landed already
-        let bank2 = new_bank_from_parent_with_bank_forks(
+        let bank2 = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank1.clone(),
             &Pubkey::default(),
@@ -7942,7 +7928,7 @@ pub(crate) mod tests {
             let mut parent_bank = bank2.clone();
             for _ in 0..REFRESH_VOTE_BLOCKHEIGHT {
                 let slot = parent_bank.slot() + 1;
-                parent_bank = new_bank_from_parent_with_bank_forks(
+                parent_bank = Bank::new_from_parent_with_bank_forks(
                     bank_forks.as_ref(),
                     parent_bank,
                     &Pubkey::default(),
@@ -8034,7 +8020,7 @@ pub(crate) mod tests {
 
         // Processing the vote transaction should be valid
         let expired_bank_child_slot = expired_bank.slot() + 1;
-        let expired_bank_child = new_bank_from_parent_with_bank_forks(
+        let expired_bank_child = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             expired_bank.clone(),
             &Pubkey::default(),
@@ -8063,7 +8049,7 @@ pub(crate) mod tests {
             let mut parent_bank = bank2.clone();
             for i in 0..expired_bank_child_slot {
                 let slot = expired_bank_child.slot() + i + 1;
-                parent_bank = new_bank_from_parent_with_bank_forks(
+                parent_bank = Bank::new_from_parent_with_bank_forks(
                     bank_forks.as_ref(),
                     parent_bank,
                     &Pubkey::default(),
@@ -8172,7 +8158,7 @@ pub(crate) mod tests {
             BlockhashStatus::Blockhash(parent_bank.last_blockhash())
         );
         assert_eq!(tower.last_voted_slot().unwrap(), parent_bank.slot());
-        let bank = new_bank_from_parent_with_bank_forks(
+        let bank = Bank::new_from_parent_with_bank_forks(
             bank_forks,
             parent_bank,
             &Pubkey::default(),
@@ -8198,7 +8184,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_replay_stage_last_vote_outside_slot_hashes() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ReplayBlockstoreComponents {
             cluster_info,
             poh_recorder,
@@ -8231,7 +8217,7 @@ pub(crate) mod tests {
         // Add a new fork starting from 0 with bigger slot number, we assume it has a bigger
         // weight, but we cannot switch because of lockout.
         let other_fork_slot = 1;
-        let other_fork_bank = new_bank_from_parent_with_bank_forks(
+        let other_fork_bank = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank0.clone(),
             &Pubkey::default(),
@@ -8294,7 +8280,7 @@ pub(crate) mod tests {
         let last_voted_slot = tower.last_voted_slot().unwrap();
         while new_bank.is_in_slot_hashes_history(&last_voted_slot) {
             let new_slot = new_bank.slot() + 1;
-            let bank = new_bank_from_parent_with_bank_forks(
+            let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 new_bank,
                 &Pubkey::default(),
@@ -8659,7 +8645,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_dumped_slot_not_causing_panic() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ReplayBlockstoreComponents {
             validator_node_to_vote_keys,
             leader_schedule_cache,
@@ -8955,7 +8941,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_tower_sync_from_bank_failed_switch() {
-        solana_logger::setup_with_default(
+        agave_logger::setup_with_default(
             "error,solana_core::replay_stage=info,solana_core::consensus=info",
         );
         /*
@@ -9036,7 +9022,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_tower_sync_from_bank_failed_lockout() {
-        solana_logger::setup_with_default(
+        agave_logger::setup_with_default(
             "error,solana_core::replay_stage=info,solana_core::consensus=info",
         );
         /*
@@ -9107,7 +9093,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_tower_adopt_from_bank_cache_only_computed() {
-        solana_logger::setup_with_default(
+        agave_logger::setup_with_default(
             "error,solana_core::replay_stage=info,solana_core::consensus=info",
         );
         /*
@@ -9240,7 +9226,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_initialize_progress_and_fork_choice_with_duplicates() {
-        solana_logger::setup();
+        agave_logger::setup();
         let GenesisConfigInfo {
             mut genesis_config, ..
         } = create_genesis_config(123);
@@ -9364,7 +9350,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_skip_leader_slot_for_existing_slot() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let ReplayBlockstoreComponents {
             blockstore,
@@ -9729,7 +9715,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_alpenglow_poh_migration_from_leader() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let ReplayBlockstoreComponents {
             blockstore,
@@ -9848,7 +9834,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_alpenglow_poh_migration_from_replay() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let ReplayBlockstoreComponents {
             blockstore,

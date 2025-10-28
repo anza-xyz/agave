@@ -1,19 +1,16 @@
 use {
-    bzip2::bufread::BzDecoder,
-    crossbeam_channel::Sender,
+    agave_fs::file_io::{self, FileCreator},
     log::*,
     rand::{thread_rng, Rng},
-    solana_accounts_db::{file_creator, set_path_permissions, FileCreator},
-    solana_genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
+    solana_genesis_config::DEFAULT_GENESIS_FILE,
     std::{
         fs::{self, File},
-        io::{self, BufReader, Read},
+        io::{self, Read},
         path::{
             Component::{self, CurDir, Normal},
             Path, PathBuf,
         },
         sync::Arc,
-        time::Instant,
     },
     tar::{
         Archive,
@@ -46,14 +43,7 @@ const MAX_SNAPSHOT_ARCHIVE_UNPACKED_APPARENT_SIZE: u64 = 64 * 1024 * 1024 * 1024
 const MAX_SNAPSHOT_ARCHIVE_UNPACKED_ACTUAL_SIZE: u64 = 4 * 1024 * 1024 * 1024 * 1024;
 
 const MAX_SNAPSHOT_ARCHIVE_UNPACKED_COUNT: u64 = 5_000_000;
-pub const MAX_GENESIS_ARCHIVE_UNPACKED_SIZE: u64 = 10 * 1024 * 1024; // 10 MiB
 const MAX_GENESIS_ARCHIVE_UNPACKED_COUNT: u64 = 100;
-
-// The buffer should be large enough to saturate write I/O bandwidth, while also accommodating:
-// - Many small files: each file consumes at least one write-capacity-sized chunk (0.5-1 MiB).
-// - Large files: their data may accumulate in backlog buffers while waiting for file open
-//   operations to complete.
-const MAX_UNPACK_WRITE_BUF_SIZE: usize = 512 * 1024 * 1024;
 
 fn checked_total_size_sum(total_size: u64, entry_size: u64, limit_size: u64) -> Result<u64> {
     trace!("checked_total_size_sum: {total_size} + {entry_size} < {limit_size}");
@@ -94,18 +84,16 @@ enum UnpackPath<'a> {
 }
 
 #[allow(clippy::arithmetic_side_effects)]
-fn unpack_archive<'a, C, D>(
+fn unpack_archive<'a, C>(
     input: impl Read,
-    memlock_budget_size: usize,
+    mut file_creator: Box<dyn FileCreator>,
     apparent_limit_size: u64,
     actual_limit_size: u64,
     limit_count: u64,
-    mut entry_checker: C,   // checks if entry is valid
-    file_path_processor: D, // processes file paths after writing
+    mut entry_checker: C, // checks if entry is valid
 ) -> Result<()>
 where
     C: FnMut(&[&str], tar::EntryType) -> UnpackPath<'a>,
-    D: FnMut(PathBuf),
 {
     let mut apparent_total_size: u64 = 0;
     let mut actual_total_size: u64 = 0;
@@ -113,12 +101,6 @@ where
 
     let mut total_entries = 0;
     let mut open_dirs = Vec::new();
-
-    // Bound the buffer based on provided limit of unpacked data and input archive size
-    // (decompression multiplies content size, but buffering more than origin isn't necessary).
-    let buf_size =
-        (memlock_budget_size.min(actual_limit_size as usize)).min(MAX_UNPACK_WRITE_BUF_SIZE);
-    let mut files_creator = file_creator(buf_size, file_path_processor)?;
 
     let mut archive = Archive::new(input);
     for entry in archive.entries()? {
@@ -193,12 +175,12 @@ where
             continue; // skip it
         };
 
-        let unpack = unpack_entry(&mut files_creator, entry, entry_path, open_dir);
+        let unpack = unpack_entry(&mut file_creator, entry, entry_path, open_dir);
         check_unpack_result(unpack, path_str)?;
 
         total_entries += 1;
     }
-    files_creator.drain()?;
+    file_creator.drain()?;
 
     info!("unpacked {total_entries} entries total");
     Ok(())
@@ -217,7 +199,7 @@ fn unpack_entry<'a, R: Read>(
     if should_fallback_to_tar_unpack(&entry) {
         entry.unpack(&dst)?;
         // Sanitize permissions.
-        set_path_permissions(&dst, mode)?;
+        file_io::set_path_permissions(&dst, mode)?;
 
         if !entry.header().entry_type().is_dir() {
             // Process file after setting permissions
@@ -330,46 +312,28 @@ fn validate_inside_dst(dst: &Path, file_dst: &Path) -> Result<PathBuf> {
 /// sends entry file paths through the `sender` channel
 pub(super) fn streaming_unpack_snapshot(
     input: impl Read,
-    memlock_budget_size: usize,
+    file_creator: Box<dyn FileCreator>,
     ledger_dir: &Path,
     account_paths: &[PathBuf],
-    sender: &Sender<PathBuf>,
 ) -> Result<()> {
-    unpack_snapshot_with_processors(
-        input,
-        memlock_budget_size,
-        ledger_dir,
-        account_paths,
-        |_, _| {},
-        |file_path| {
-            let result = sender.send(file_path);
-            if let Err(err) = result {
-                panic!(
-                    "failed to send path '{}' from unpacker to rebuilder: {err}",
-                    err.0.display(),
-                );
-            }
-        },
-    )
+    unpack_snapshot_with_processors(input, file_creator, ledger_dir, account_paths, |_, _| {})
 }
 
-fn unpack_snapshot_with_processors<F, G>(
+fn unpack_snapshot_with_processors<F>(
     input: impl Read,
-    memlock_budget_size: usize,
+    file_creator: Box<dyn FileCreator>,
     ledger_dir: &Path,
     account_paths: &[PathBuf],
     mut accounts_path_processor: F,
-    file_path_processor: G,
 ) -> Result<()>
 where
     F: FnMut(&str, &Path),
-    G: FnMut(PathBuf),
 {
     assert!(!account_paths.is_empty());
 
     unpack_archive(
         input,
-        memlock_budget_size,
+        file_creator,
         MAX_SNAPSHOT_ARCHIVE_UNPACKED_APPARENT_SIZE,
         MAX_SNAPSHOT_ARCHIVE_UNPACKED_ACTUAL_SIZE,
         MAX_SNAPSHOT_ARCHIVE_UNPACKED_COUNT,
@@ -395,7 +359,6 @@ where
                 UnpackPath::Invalid
             }
         },
-        file_path_processor,
     )
 }
 
@@ -449,70 +412,19 @@ fn is_valid_snapshot_archive_entry(parts: &[&str], kind: tar::EntryType) -> bool
     }
 }
 
-#[derive(Error, Debug)]
-pub enum OpenGenesisConfigError {
-    #[error("unpack error: {0}")]
-    Unpack(#[from] UnpackError),
-    #[error("Genesis load error: {0}")]
-    Load(#[from] std::io::Error),
-}
-
-pub fn open_genesis_config(
-    ledger_path: &Path,
-    max_genesis_archive_unpacked_size: u64,
-) -> std::result::Result<GenesisConfig, OpenGenesisConfigError> {
-    match GenesisConfig::load(ledger_path) {
-        Ok(genesis_config) => Ok(genesis_config),
-        Err(load_err) => {
-            warn!(
-                "Failed to load genesis_config at {ledger_path:?}: {load_err}. Will attempt to \
-                 unpack genesis archive and then retry loading."
-            );
-
-            let genesis_package = ledger_path.join(DEFAULT_GENESIS_ARCHIVE);
-            unpack_genesis_archive(
-                &genesis_package,
-                ledger_path,
-                max_genesis_archive_unpacked_size,
-            )?;
-            GenesisConfig::load(ledger_path).map_err(OpenGenesisConfigError::Load)
-        }
-    }
-}
-
-pub fn unpack_genesis_archive(
-    archive_filename: &Path,
-    destination_dir: &Path,
-    max_genesis_archive_unpacked_size: u64,
-) -> std::result::Result<(), UnpackError> {
-    info!("Extracting {archive_filename:?}...");
-    let extract_start = Instant::now();
-
-    fs::create_dir_all(destination_dir)?;
-    let tar_bz2 = File::open(archive_filename)?;
-    let tar = BzDecoder::new(BufReader::new(tar_bz2));
-    unpack_genesis(tar, destination_dir, max_genesis_archive_unpacked_size)?;
-    info!(
-        "Extracted {:?} in {:?}",
-        archive_filename,
-        Instant::now().duration_since(extract_start)
-    );
-    Ok(())
-}
-
-fn unpack_genesis(
+pub(super) fn unpack_genesis(
     input: impl Read,
+    file_creator: Box<dyn FileCreator>,
     unpack_dir: &Path,
     max_genesis_archive_unpacked_size: u64,
 ) -> Result<()> {
     unpack_archive(
         input,
-        0, /* don't provide memlock budget (forces sync IO), since genesis archives are small */
+        file_creator,
         max_genesis_archive_unpacked_size,
         max_genesis_archive_unpacked_size,
         MAX_GENESIS_ARCHIVE_UNPACKED_COUNT,
         |p, k| is_valid_genesis_archive_entry(unpack_dir, p, k),
-        |_| {},
     )
 }
 
@@ -540,7 +452,9 @@ fn is_valid_genesis_archive_entry<'a>(
 mod tests {
     use {
         super::*,
+        agave_fs::file_io::file_creator,
         assert_matches::assert_matches,
+        std::io::BufReader,
         tar::{Builder, Header},
     };
 
@@ -603,7 +517,7 @@ mod tests {
 
     #[test]
     fn test_valid_snapshot_accounts() {
-        solana_logger::setup();
+        agave_logger::setup();
         assert!(is_valid_snapshot_archive_entry(
             &["accounts", "0.0"],
             tar::EntryType::Regular
@@ -770,7 +684,7 @@ mod tests {
 
     fn with_finalize_and_unpack<C>(archive: tar::Builder<Vec<u8>>, checker: C) -> Result<()>
     where
-        C: Fn(&[u8], &Path) -> Result<()>,
+        C: FnOnce(&[u8], &Path) -> Result<()>,
     {
         let data = archive.into_inner().unwrap();
         let temp_dir = tempfile::TempDir::new().unwrap();
@@ -783,15 +697,17 @@ mod tests {
     }
 
     fn finalize_and_unpack_snapshot(archive: tar::Builder<Vec<u8>>) -> Result<()> {
-        with_finalize_and_unpack(archive, |a, b| {
-            unpack_snapshot_with_processors(a, 256, b, &[PathBuf::new()], |_, _| {}, |_| {})
+        let file_creator = file_creator(256, |_| {})?;
+        with_finalize_and_unpack(archive, move |a, b| {
+            unpack_snapshot_with_processors(a, file_creator, b, &[PathBuf::new()], |_, _| {})
                 .map(|_| ())
         })
     }
 
     fn finalize_and_unpack_genesis(archive: tar::Builder<Vec<u8>>) -> Result<()> {
-        with_finalize_and_unpack(archive, |a, b| {
-            unpack_genesis(a, b, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE)
+        let file_creator = file_creator(0, |_| {})?;
+        with_finalize_and_unpack(archive, move |a, b| {
+            unpack_genesis(a, file_creator, b, 1024)
         })
     }
 
@@ -1040,13 +956,17 @@ mod tests {
         let mut archive = Builder::new(Vec::new());
         archive.append(&header, data).unwrap();
         let result = with_finalize_and_unpack(archive, |ar, tmp| {
+            let tmp_path_buf = tmp.to_path_buf();
+            let file_creator = file_creator(256, move |path| {
+                assert_eq!(path, tmp_path_buf.join("accounts_dest/123.456"))
+            })
+            .expect("must make file_creator");
             unpack_snapshot_with_processors(
                 ar,
-                256,
+                file_creator,
                 tmp,
                 &[tmp.join("accounts_dest")],
                 |_, _| {},
-                |path| assert_eq!(path, tmp.join("accounts_dest/123.456")),
             )
         });
         assert_matches!(result, Ok(()));
