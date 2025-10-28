@@ -137,6 +137,7 @@ members = [
     "watchtower",
     "wen-restart",
     "xdp",
+    "xdp-ebpf",
     "zk-keygen",
     "zk-token-sdk",
 ]
@@ -187,6 +188,7 @@ agave-transaction-view = { path = "transaction-view", version = "=3.0.9" }
 agave-verified-packet-receiver = { path = "verified-packet-receiver", version = "=3.0.9" }
 agave-votor = { path = "votor", version = "=3.0.9" }
 agave-xdp = { path = "xdp", version = "=3.0.9" }
+agave-xdp-ebpf = { path = "xdp-ebpf", version = "=3.0.9", features = ["agave-unstable-api"] }
 ahash = "0.8.11"
 anyhow = "1.0.99"
 aquamarine = "0.6.0"
@@ -207,6 +209,7 @@ async-trait = "0.1.89"
 atty = "0.2.11"
 axum = "0.7.9"
 aya = "0.13"
+aya-ebpf = "0.1.1"
 backoff = "0.4.0"
 base64 = "0.22.1"
 bencher = "0.1.5"
