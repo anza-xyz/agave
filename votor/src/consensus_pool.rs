@@ -1027,37 +1027,35 @@ mod tests {
 
     #[test]
     fn test_add_vote_and_create_new_certificate_with_types() {
-        let mut votes = vec![];
-        let mut expected_cert_types = vec![];
-
         let slot = 5;
-        votes.push(Vote::new_finalization_vote(slot));
-        expected_cert_types.push(vec![CertificateType::Finalize(slot)]);
+        let vote = Vote::new_finalization_vote(slot);
+        let cert_types = vec![CertificateType::Finalize(slot)];
+        do_test_add_vote_and_create_new_certificate_with_types(vote, cert_types);
 
         let slot = 6;
         let block_id = Hash::new_unique();
-        votes.push(Vote::new_notarization_vote(slot, block_id));
-        expected_cert_types.push(vec![
+        let vote = Vote::new_notarization_vote(slot, block_id);
+        let cert_types = vec![
             CertificateType::Notarize(slot, block_id),
             CertificateType::NotarizeFallback(slot, block_id),
-        ]);
+        ];
+        do_test_add_vote_and_create_new_certificate_with_types(vote, cert_types);
 
         let slot = 7;
         let block_id = Hash::new_unique();
-        votes.push(Vote::new_notarization_fallback_vote(slot, block_id));
-        expected_cert_types.push(vec![CertificateType::NotarizeFallback(slot, block_id)]);
+        let vote = Vote::new_notarization_fallback_vote(slot, block_id);
+        let cert_types = vec![CertificateType::NotarizeFallback(slot, block_id)];
+        do_test_add_vote_and_create_new_certificate_with_types(vote, cert_types);
 
         let slot = 8;
-        votes.push(Vote::new_skip_vote(slot));
-        expected_cert_types.push(vec![CertificateType::Skip(slot)]);
+        let vote = Vote::new_skip_vote(slot);
+        let cert_types = vec![CertificateType::Skip(slot)];
+        do_test_add_vote_and_create_new_certificate_with_types(vote, cert_types);
 
         let slot = 9;
-        votes.push(Vote::new_skip_fallback_vote(slot));
-        expected_cert_types.push(vec![CertificateType::Skip(slot)]);
-
-        for (vote, cert_types) in votes.into_iter().zip(expected_cert_types) {
-            do_test_add_vote_and_create_new_certificate_with_types(vote, cert_types);
-        }
+        let vote = Vote::new_skip_fallback_vote(slot);
+        let cert_types = vec![CertificateType::Skip(slot)];
+        do_test_add_vote_and_create_new_certificate_with_types(vote, cert_types);
     }
 
     fn do_test_add_vote_and_create_new_certificate_with_types(
