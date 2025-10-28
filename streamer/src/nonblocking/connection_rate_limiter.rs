@@ -1,28 +1,46 @@
 use {
-    governor::{DefaultDirectRateLimiter, DefaultKeyedRateLimiter, Quota, RateLimiter},
-    std::{net::IpAddr, num::NonZeroU32},
+    solana_net_utils::token_bucket::{KeyedRateLimiter, TokenBucket},
+    std::net::IpAddr,
 };
 
 /// Limits the rate of connections per IP address.
 pub struct ConnectionRateLimiter {
-    limiter: DefaultKeyedRateLimiter<IpAddr>,
+    limiter: KeyedRateLimiter<IpAddr>,
 }
+
+/// The threshold of the size of the connection rate limiter map. When
+/// the map size is above this, we will trigger a cleanup of older
+/// entries used by past requests.
+const CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD: usize = 100_000;
 
 impl ConnectionRateLimiter {
     /// Create a new rate limiter per IpAddr. The rate is specified as the count per minute to allow for
-    /// less frequent connections.
-    pub fn new(limit_per_minute: u64) -> Self {
-        let quota =
-            Quota::per_minute(NonZeroU32::new(u32::try_from(limit_per_minute).unwrap()).unwrap());
+    /// less frequent connections. Higher limit also allows higher bursts.
+    /// num_shards controls how many shards are used in the underlying dashmap,
+    /// should be set >= number of contending threads.
+    pub fn new(limit_per_minute: u64, max_burst: u64, num_shards: usize) -> Self {
         Self {
-            limiter: DefaultKeyedRateLimiter::keyed(quota),
+            limiter: KeyedRateLimiter::new(
+                CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD,
+                TokenBucket::new(limit_per_minute, max_burst, limit_per_minute as f64 / 60.0),
+                num_shards,
+            ),
         }
     }
 
     /// Check if the connection from the said `ip` is allowed.
+    /// Here we assume that only IPs with actual confirmed connections are stored in it,
+    /// since we should only modify server state once source IP is verified
     pub fn is_allowed(&self, ip: &IpAddr) -> bool {
-        // Acquire a permit from the rate limiter for the given IP address
-        if self.limiter.check_key(ip).is_ok() {
+        // Check if we have records in the rate limiter for the given IP address
+        match self.limiter.current_tokens(ip) {
+            Some(r) => r > 0, // we have a record, and rate is not exceeded
+            None => true,     // if we have not seen IP, allow connection request
+        }
+    }
+
+    pub fn register_connection(&self, ip: &IpAddr) -> bool {
+        if self.limiter.consume_tokens(*ip, 1).is_ok() {
             debug!("Request from IP {ip:?} allowed");
             true // Request allowed
         } else {
@@ -30,127 +48,35 @@ impl ConnectionRateLimiter {
             false // Request blocked
         }
     }
-
-    /// retain only keys whose rate-limiting start date is within the rate-limiting interval.
-    /// Otherwise drop them as inactive
-    pub fn retain_recent(&self) {
-        self.limiter.retain_recent()
-    }
-
-    /// Returns the number of "live" keys in the rate limiter.
-    pub fn len(&self) -> usize {
-        self.limiter.len()
-    }
-
-    /// Returns `true` if the rate limiter has no keys in it.
-    pub fn is_empty(&self) -> bool {
-        self.limiter.is_empty()
-    }
-}
-
-/// Connection rate limiter for enforcing connection rates from
-/// all clients.
-pub struct TotalConnectionRateLimiter {
-    limiter: DefaultDirectRateLimiter,
-}
-
-impl TotalConnectionRateLimiter {
-    /// Create a new rate limiter. The rate is specified as the count per second.
-    pub fn new(limit_per_second: u64) -> Self {
-        let quota =
-            Quota::per_second(NonZeroU32::new(u32::try_from(limit_per_second).unwrap()).unwrap());
-        Self {
-            limiter: RateLimiter::direct(quota),
-        }
-    }
-
-    /// Check if a connection is allowed.
-    pub fn is_allowed(&self) -> bool {
-        if self.limiter.check().is_ok() {
-            true // Request allowed
-        } else {
-            false // Request blocked
-        }
-    }
 }
 
 #[cfg(test)]
 pub mod test {
-    use {
-        super::*,
-        std::{
-            net::Ipv4Addr,
-            sync::{
-                atomic::{AtomicUsize, Ordering},
-                Arc,
-            },
-            time::{Duration, Instant},
-        },
-    };
-
-    #[tokio::test]
-    async fn test_total_connection_rate_limiter() {
-        let limiter = TotalConnectionRateLimiter::new(2);
-        assert!(limiter.is_allowed());
-        assert!(limiter.is_allowed());
-        assert!(!limiter.is_allowed());
-    }
+    use {super::*, std::net::Ipv4Addr};
 
     #[tokio::test]
     async fn test_connection_rate_limiter() {
-        let limiter = ConnectionRateLimiter::new(4);
+        let limiter = ConnectionRateLimiter::new(3, 3, 4);
         let ip1 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
         assert!(limiter.is_allowed(&ip1));
+        assert!(limiter.register_connection(&ip1));
+        assert!(limiter.register_connection(&ip1));
         assert!(limiter.is_allowed(&ip1));
-        assert!(limiter.is_allowed(&ip1));
-        assert!(limiter.is_allowed(&ip1));
+        assert!(limiter.register_connection(&ip1));
         assert!(!limiter.is_allowed(&ip1));
+        assert!(!limiter.register_connection(&ip1));
 
-        assert!(limiter.len() == 1);
         let ip2 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2));
+        for _ in 0..100 {
+            assert!(
+                limiter.is_allowed(&ip2),
+                "just checking should not mutate state"
+            );
+        }
+        assert!(limiter.register_connection(&ip2));
+        assert!(limiter.register_connection(&ip2));
         assert!(limiter.is_allowed(&ip2));
-        assert!(limiter.len() == 2);
-        assert!(limiter.is_allowed(&ip2));
-        assert!(limiter.is_allowed(&ip2));
-        assert!(limiter.is_allowed(&ip2));
+        assert!(limiter.register_connection(&ip2));
         assert!(!limiter.is_allowed(&ip2));
-    }
-
-    #[test]
-    fn test_bench_rate_limiter() {
-        let run_duration = Duration::from_secs(3);
-        let limiter = Arc::new(ConnectionRateLimiter::new(60 * 100));
-
-        let accepted = AtomicUsize::new(0);
-        let rejected = AtomicUsize::new(0);
-
-        let start = Instant::now();
-        let ip_pool = 2048;
-        let expected_total_accepts = (run_duration.as_secs() * 100 * ip_pool) as i64;
-        let workers = 8;
-
-        std::thread::scope(|scope| {
-            for _ in 0..workers {
-                scope.spawn(|| {
-                    for i in 1.. {
-                        if Instant::now() > start + run_duration {
-                            break;
-                        }
-                        let ip = IpAddr::V4(Ipv4Addr::from_bits(i % ip_pool as u32));
-                        if limiter.is_allowed(&ip) {
-                            accepted.fetch_add(1, Ordering::Relaxed);
-                        } else {
-                            rejected.fetch_add(1, Ordering::Relaxed);
-                        }
-                    }
-                });
-            }
-        });
-
-        let acc = accepted.load(Ordering::Relaxed);
-        let rej = rejected.load(Ordering::Relaxed);
-        println!("Run complete over {:?} seconds", run_duration.as_secs());
-        println!("Accepted: {acc} (target {expected_total_accepts})");
-        println!("Rejected: {rej}");
     }
 }

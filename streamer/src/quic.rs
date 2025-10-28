@@ -216,7 +216,6 @@ pub struct StreamerStats {
     pub(crate) total_unstaked_packets_sent_for_batching: AtomicUsize,
     pub(crate) throttled_staked_streams: AtomicUsize,
     pub(crate) throttled_unstaked_streams: AtomicUsize,
-    pub(crate) connection_rate_limiter_length: AtomicUsize,
     // All connections in various states such as Incoming, Connecting, Connection
     pub(crate) open_connections: AtomicUsize,
     pub(crate) open_staked_connections: AtomicUsize,
@@ -553,11 +552,6 @@ impl StreamerStats {
             (
                 "perf_track_overhead_us",
                 self.perf_track_overhead_us.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "connection_rate_limiter_length",
-                self.connection_rate_limiter_length.load(Ordering::Relaxed),
                 i64
             ),
             (

@@ -1,7 +1,7 @@
 use {
     crate::{
         nonblocking::{
-            connection_rate_limiter::{ConnectionRateLimiter, TotalConnectionRateLimiter},
+            connection_rate_limiter::ConnectionRateLimiter,
             qos::{ConnectionContext, QosController},
             stream_throttle::ConnectionStreamCounter,
         },
@@ -17,6 +17,7 @@ use {
     smallvec::SmallVec,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
+    solana_net_utils::token_bucket::TokenBucket,
     solana_packet::{Meta, PACKET_DATA_SIZE},
     solana_perf::packet::{BytesPacket, BytesPacketBatch, PacketBatch, PACKETS_PER_BATCH},
     solana_pubkey::Pubkey,
@@ -76,12 +77,10 @@ const CONNECTION_CLOSE_REASON_INVALID_STREAM: &[u8] = b"invalid_stream";
 /// Total new connection counts per second. Heuristically taken from
 /// the default staked and unstaked connection limits. Might be adjusted
 /// later.
-const TOTAL_CONNECTIONS_PER_SECOND: u64 = 2500;
+const TOTAL_CONNECTIONS_PER_SECOND: f64 = 2500.0;
 
-/// The threshold of the size of the connection rate limiter map. When
-/// the map size is above this, we will trigger a cleanup of older
-/// entries used by past requests.
-const CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD: usize = 100_000;
+/// Max burst of connections above sustained rate to pass through
+const MAX_CONNECTION_BURST: u64 = 1000;
 
 /// Timeout for connection handshake. Timer starts once we get Initial from the
 /// peer, and is canceled when we get a Handshake packet from them.
@@ -259,8 +258,14 @@ where
     let quic_server_params = Arc::new(quic_server_params);
     let rate_limiter = Arc::new(ConnectionRateLimiter::new(
         quic_server_params.max_connections_per_ipaddr_per_min,
+        // allow for 10x burst to make sure we can accommodate legitimate
+        // bursts from container environments running multiple pods on same IP
+        quic_server_params.max_connections_per_ipaddr_per_min * 10,
+        quic_server_params.num_threads.get() * 2,
     ));
-    let overall_connection_rate_limiter = Arc::new(TotalConnectionRateLimiter::new(
+    let overall_connection_rate_limiter = Arc::new(TokenBucket::new(
+        MAX_CONNECTION_BURST,
+        MAX_CONNECTION_BURST,
         TOTAL_CONNECTIONS_PER_SECOND,
     ));
 
@@ -315,13 +320,30 @@ where
                 .total_incoming_connection_attempts
                 .fetch_add(1, Ordering::Relaxed);
 
-            // first do per IpAddr rate limiting
-            if rate_limiter.len() > CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD {
-                rate_limiter.retain_recent();
+            // check overall connection request rate limiter
+            if overall_connection_rate_limiter.current_tokens() == 0 {
+                stats
+                    .connection_rate_limited_across_all
+                    .fetch_add(1, Ordering::Relaxed);
+                debug!(
+                    "Ignoring incoming connection from {} due to overall rate limit.",
+                    incoming.remote_address()
+                );
+                incoming.ignore();
+                continue;
             }
-            stats
-                .connection_rate_limiter_length
-                .store(rate_limiter.len(), Ordering::Relaxed);
+            // then perform per IpAddr rate limiting
+            if !rate_limiter.is_allowed(&incoming.remote_address().ip()) {
+                stats
+                    .connection_rate_limited_per_ipaddr
+                    .fetch_add(1, Ordering::Relaxed);
+                debug!(
+                    "Ignoring incoming connection from {} due to per-IP rate limiting.",
+                    incoming.remote_address()
+                );
+                incoming.ignore();
+                continue;
+            }
 
             let Ok(client_connection_tracker) = ClientConnectionTracker::new(
                 stats.clone(),
@@ -420,7 +442,7 @@ pub(crate) fn update_open_connections_stat(
 async fn setup_connection<Q, C>(
     connecting: Connecting,
     rate_limiter: Arc<ConnectionRateLimiter>,
-    overall_connection_rate_limiter: Arc<TotalConnectionRateLimiter>,
+    overall_connection_rate_limiter: Arc<TokenBucket>,
     client_connection_tracker: ClientConnectionTracker,
     packet_sender: Sender<PacketAccumulator>,
     stats: Arc<StreamerStats>,
@@ -440,7 +462,10 @@ async fn setup_connection<Q, C>(
         match connecting_result {
             Ok(new_connection) => {
                 debug!("Got a connection {from:?}");
-                if !rate_limiter.is_allowed(&from.ip()) {
+                // now that we have observed the handshake we can be certain
+                // that the initiator owns an IP address, we can update rate
+                // limiters on the server
+                if !rate_limiter.register_connection(&from.ip()) {
                     debug!("Reject connection from {from:?} -- rate limiting exceeded");
                     stats
                         .connection_rate_limited_per_ipaddr
@@ -452,7 +477,7 @@ async fn setup_connection<Q, C>(
                     return;
                 }
 
-                if !overall_connection_rate_limiter.is_allowed() {
+                if overall_connection_rate_limiter.consume_tokens(1).is_err() {
                     debug!(
                         "Reject connection from {:?} -- total rate limiting exceeded",
                         from.ip()
