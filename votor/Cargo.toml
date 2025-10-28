@@ -61,7 +61,7 @@ solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
-solana-pubkey = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rpc = { workspace = true }
 solana-runtime = { workspace = true }
 solana-signature = { workspace = true }
