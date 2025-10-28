@@ -43,6 +43,9 @@ const SOCKET_TAG_TPU_QUIC: u8 = 8;
 const SOCKET_TAG_TPU_VOTE: u8 = 9;
 const SOCKET_TAG_TPU_VOTE_QUIC: u8 = 12;
 const SOCKET_TAG_TVU: u8 = 10;
+/// When multicast is enabled, this port has to be used for TVU
+/// by all validators to ensure they can actually leverage multicasting
+const TVU_MULTICAST_PORT: u16 = 8002;
 const SOCKET_TAG_TVU_QUIC: u8 = 11;
 const SOCKET_TAG_ALPENGLOW: u8 = 13;
 const_assert_eq!(SOCKET_CACHE_SIZE, 14);
@@ -330,7 +333,7 @@ impl ContactInfo {
                             num_addrs: self.addrs.len(),
                         })?;
                 let socket = SocketAddr::new(*addr, port);
-                sanitize_socket(&socket)?;
+                sanitize_socket(&socket, key)?;
                 return Ok(socket);
             }
         }
@@ -350,7 +353,7 @@ impl ContactInfo {
     }
 
     pub fn set_socket(&mut self, key: u8, socket: SocketAddr) -> Result<(), Error> {
-        sanitize_socket(&socket)?;
+        sanitize_socket(&socket, key)?;
         // Remove the old entry associated with this key (if any).
         self.remove_socket(key);
         // Find the index at which the new socket entry would be inserted into
@@ -464,7 +467,7 @@ impl ContactInfo {
     // Only for tests and simulations.
     pub fn new_with_socketaddr(pubkey: &Pubkey, socket: &SocketAddr) -> Self {
         use Protocol::{QUIC, UDP};
-        assert_matches!(sanitize_socket(socket), Ok(()));
+        assert_matches!(sanitize_socket(socket, SOCKET_TAG_GOSSIP), Ok(()));
         let mut node = Self::new(
             *pubkey,
             solana_time_utils::timestamp(), // wallclock,
@@ -577,7 +580,7 @@ impl TryFrom<ContactInfoLite> for ContactInfo {
                 continue;
             };
             let socket = SocketAddr::new(addr, port);
-            if sanitize_socket(&socket).is_ok() {
+            if sanitize_socket(&socket, key).is_ok() {
                 *entry = socket;
             }
         }
@@ -594,7 +597,7 @@ impl Sanitize for ContactInfo {
     }
 }
 
-pub(crate) fn sanitize_socket(socket: &SocketAddr) -> Result<(), Error> {
+pub(crate) fn sanitize_socket(socket: &SocketAddr, key: u8) -> Result<(), Error> {
     if socket.port() == 0u16 {
         return Err(Error::InvalidPort(socket.port()));
     }
@@ -602,8 +605,13 @@ pub(crate) fn sanitize_socket(socket: &SocketAddr) -> Result<(), Error> {
     if addr.is_unspecified() {
         return Err(Error::UnspecifiedIpAddr(addr));
     }
+
     if addr.is_multicast() {
-        return Err(Error::MulticastIpAddr(addr));
+        if key != SOCKET_TAG_TVU {
+            return Err(Error::MulticastIpAddr(addr));
+        } else if socket.port() != TVU_MULTICAST_PORT {
+            return Err(Error::InvalidPort(socket.port()));
+        }
     }
     Ok(())
 }
@@ -864,7 +872,7 @@ mod tests {
             let addr = addrs.choose(&mut rng).unwrap();
             let socket = SocketAddr::new(*addr, new_rand_port(&mut rng));
             let key = rng.gen_range(KEYS.start..KEYS.end);
-            if sanitize_socket(&socket).is_ok() {
+            if sanitize_socket(&socket, key).is_ok() {
                 sockets.insert(key, socket);
                 assert_matches!(node.set_socket(key, socket), Ok(()));
                 assert_matches!(sanitize_entries(&node.addrs, &node.sockets), Ok(()));
@@ -878,7 +886,7 @@ mod tests {
                     assert_eq!(
                         node.cache[usize::from(key)],
                         socket
-                            .filter(|socket| sanitize_socket(socket).is_ok())
+                            .filter(|socket| sanitize_socket(socket, key).is_ok())
                             .copied()
                             .unwrap_or(SOCKET_ADDR_UNSPECIFIED),
                     );
@@ -1037,7 +1045,7 @@ mod tests {
     fn test_new_with_socketaddr() {
         let mut rng = rand::thread_rng();
         let socket = repeat_with(|| new_rand_socket(&mut rng))
-            .filter(|socket| matches!(sanitize_socket(socket), Ok(())))
+            .filter(|socket| matches!(sanitize_socket(socket, SOCKET_TAG_GOSSIP), Ok(())))
             .find(|socket| socket.port().checked_add(11).is_some())
             .unwrap();
         let node = ContactInfo::new_with_socketaddr(&Keypair::new().pubkey(), &socket);
@@ -1048,7 +1056,7 @@ mod tests {
     fn test_sanitize_quic_offset() {
         let mut rng = rand::thread_rng();
         let socket = repeat_with(|| new_rand_socket(&mut rng))
-            .filter(|socket| matches!(sanitize_socket(socket), Ok(())))
+            .filter(|socket| matches!(sanitize_socket(socket, SOCKET_TAG_GOSSIP), Ok(())))
             .find(|socket| socket.port().checked_add(QUIC_PORT_OFFSET).is_some())
             .unwrap();
         let mut other = get_quic_socket(&socket).unwrap();
@@ -1080,7 +1088,7 @@ mod tests {
             rng.gen(), // shred_version
         );
         let socket = repeat_with(|| new_rand_socket(&mut rng))
-            .filter(|socket| matches!(sanitize_socket(socket), Ok(())))
+            .filter(|socket| matches!(sanitize_socket(socket, SOCKET_TAG_GOSSIP), Ok(())))
             .find(|socket| socket.port().checked_add(QUIC_PORT_OFFSET).is_some())
             .unwrap();
         // TPU socket.
