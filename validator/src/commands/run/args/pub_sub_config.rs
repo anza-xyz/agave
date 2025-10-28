@@ -12,7 +12,7 @@ use {
 static DEFAULT_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS: LazyLock<String> =
     LazyLock::new(|| PubSubConfig::default().max_active_subscriptions.to_string());
 static DEFAULT_TEST_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS: LazyLock<String> = LazyLock::new(|| {
-    PubSubConfig::default_for_test_validator()
+    PubSubConfig::default_for_tests()
         .max_active_subscriptions
         .to_string()
 });
@@ -20,7 +20,7 @@ static DEFAULT_TEST_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS: LazyLock<String> = Lazy
 static DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS: LazyLock<String> =
     LazyLock::new(|| PubSubConfig::default().queue_capacity_items.to_string());
 static DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS: LazyLock<String> = LazyLock::new(|| {
-    PubSubConfig::default_for_test_validator()
+    PubSubConfig::default_for_tests()
         .queue_capacity_items
         .to_string()
 });
@@ -28,14 +28,14 @@ static DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS: LazyLock<String> = LazyLock
 static DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_BYTES: LazyLock<String> =
     LazyLock::new(|| PubSubConfig::default().queue_capacity_bytes.to_string());
 static DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_BYTES: LazyLock<String> = LazyLock::new(|| {
-    PubSubConfig::default_for_test_validator()
+    PubSubConfig::default_for_tests()
         .queue_capacity_bytes
         .to_string()
 });
 
 const DEFAULT_RPC_PUBSUB_WORKER_THREADS: &str = "4";
 static DEFAULT_TEST_RPC_PUBSUB_WORKER_THREADS: LazyLock<String> = LazyLock::new(|| {
-    PubSubConfig::default_for_test_validator()
+    PubSubConfig::default_for_tests()
         .worker_threads
         .to_string()
 });
