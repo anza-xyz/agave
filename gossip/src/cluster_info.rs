@@ -862,7 +862,8 @@ impl ClusterInfo {
         }
     }
 
-    pub fn push_vote(&self, tower: &[Slot], vote: Transaction, keypair: &Keypair) {
+    pub fn push_vote(&self, tower: &[Slot], vote: Transaction) {
+        let keypair = self.keypair();
         debug_assert!(tower.iter().tuple_windows().all(|(a, b)| a < b));
         // Find the oldest crds vote by wallclock that has a lower slot than `tower`
         // and recycle its vote-index. If the crds buffer is not full we instead add a new vote-index.
@@ -880,7 +881,7 @@ impl ClusterInfo {
             );
         };
         debug_assert!(vote_index < MAX_VOTES);
-        self.push_vote_at_index(vote, vote_index, keypair);
+        self.push_vote_at_index(vote, vote_index, &keypair);
     }
 
     pub fn refresh_vote(&self, refresh_vote: Transaction, refresh_vote_slot: Slot) {
@@ -3028,7 +3029,7 @@ mod tests {
             if first_vote.is_none() {
                 first_vote = Some(vote_tx.clone());
             }
-            cluster_info.push_vote(&prev_votes, vote_tx, &keypair);
+            cluster_info.push_vote(&prev_votes, vote_tx);
         }
 
         let initial_votes = cluster_info.get_votes(&mut Cursor::default());
@@ -3091,7 +3092,7 @@ mod tests {
             &[unrefresh_ix], // instructions
             None,            // payer
         );
-        cluster_info.push_vote(&unrefresh_tower, unrefresh_tx.clone(), &keypair);
+        cluster_info.push_vote(&unrefresh_tower, unrefresh_tx.clone());
         let mut cursor = Cursor::default();
         let votes = cluster_info.get_votes(&mut cursor);
         assert_eq!(votes, vec![unrefresh_tx.clone()]);
@@ -3180,7 +3181,7 @@ mod tests {
             None,  // payer
         );
         let tower = vec![7]; // Last slot in the vote.
-        cluster_info.push_vote(&tower, tx.clone(), &keypair);
+        cluster_info.push_vote(&tower, tx.clone());
 
         let (labels, votes) = cluster_info.get_votes_with_labels(&mut cursor);
         assert_eq!(votes, vec![tx]);
@@ -3234,7 +3235,7 @@ mod tests {
             let slot = k as Slot;
             tower.push(slot);
             let vote = new_vote_transaction(vec![slot]);
-            cluster_info.push_vote(&tower, vote, &keypair);
+            cluster_info.push_vote(&tower, vote);
 
             let vote_slots = get_vote_slots(&cluster_info);
             let min_vote = k.saturating_sub(MAX_VOTES as usize - 1) as u64;
@@ -3247,7 +3248,7 @@ mod tests {
         tower.clear();
         tower.extend(0..=slot);
         let vote = new_vote_transaction(vec![slot]);
-        assert!(panic::catch_unwind(|| cluster_info.push_vote(&tower, vote, &keypair))
+        assert!(panic::catch_unwind(|| cluster_info.push_vote(&tower, vote))
             .err()
             .and_then(|a| a
                 .downcast_ref::<String>()
