@@ -124,6 +124,12 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
         let mut num_unschedulable_conflicts: usize = 0;
         let mut num_unschedulable_threads: usize = 0;
 
+        // Main scheduling loop: greedily schedule transactions in priority order.
+        // The loop continues while:
+        // - We have budget remaining (compute units)
+        // - We haven't exceeded the scan limit (prevents infinite loops)
+        // - There are schedulable threads available
+        // - There are transactions in the container
         while budget > 0
             && num_scanned < self.config.max_scanned_transactions_per_scheduling_pass
             && !schedulable_threads.is_empty()
@@ -141,8 +147,9 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                 panic!("transaction state must exist")
             };
 
-            // If there is a conflict with any of the transactions in the current batches,
-            // we should immediately send out the batches, so this transaction may be scheduled.
+            // Check for account conflicts with currently scheduled transactions.
+            // If there's a conflict, we must send out the current batches first
+            // to free up the locked accounts before this transaction can be scheduled.
             if !self
                 .working_account_set
                 .check_locks(transaction_state.transaction())
@@ -151,7 +158,8 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                 num_sent += self.common.send_batches()?;
             }
 
-            // Now check if the transaction can actually be scheduled.
+            // Attempt to schedule the transaction by acquiring account locks
+            // and selecting an appropriate worker thread based on load balancing.
             match try_schedule_transaction(
                 transaction_state,
                 &pre_lock_filter,
@@ -195,7 +203,8 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                     );
                     budget = budget.saturating_sub(cost);
 
-                    // If target batch size is reached, send all the batches
+                    // Send batches when target batch size is reached to maintain
+                    // optimal batch sizes for worker thread processing.
                     if self.common.batches.transactions()[thread_id].len()
                         >= self.config.target_transactions_per_batch
                     {
@@ -203,8 +212,8 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                         num_sent += self.common.send_batches()?;
                     }
 
-                    // if the thread is at target_cu_per_thread, remove it from the schedulable threads
-                    // if there are no more schedulable threads, stop scheduling.
+                    // Remove thread from schedulable set when it reaches compute unit limit.
+                    // This ensures load balancing and prevents overloading individual threads.
                     if self.common.in_flight_tracker.cus_in_flight_per_thread()[thread_id]
                         + self.common.batches.total_cus()[thread_id]
                         >= target_cu_per_thread
