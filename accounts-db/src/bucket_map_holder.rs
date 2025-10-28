@@ -62,7 +62,7 @@ pub struct BucketMapHolder<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
     pub ages_to_stay_in_cache: Age,
 
     /// estimated total number of accounts for calculating per-bin HashMap capacity
-    pub(crate) estimated_accounts: Option<usize>,
+    pub(crate) initial_accounts: Option<usize>,
 
     /// startup is a special time for flush to focus on moving everything to disk as fast and efficiently as possible
     /// with less thread count limitations. LRU and access patterns are not important. Freeing memory
@@ -220,7 +220,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
         Self {
             disk,
             ages_to_stay_in_cache,
-            estimated_accounts: config.estimated_accounts,
+            initial_accounts: config.initial_accounts,
             count_buckets_flushed: AtomicUsize::default(),
             // age = 0
             age: AtomicAge::default(),

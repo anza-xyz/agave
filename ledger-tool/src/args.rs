@@ -53,16 +53,13 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .validator(is_pow2)
             .takes_value(true)
             .help("Number of bins to divide the accounts index into"),
-        Arg::with_name("estimated_accounts")
-            .long("estimated-accounts")
+        Arg::with_name("accounts_index_initial_accounts")
+            .long("accounts-index-initial-accounts")
             .value_name("NUMBER")
             .validator(is_parsable::<usize>)
             .takes_value(true)
-            .help(
-                "Estimated total number of accounts in the ledger. Used to pre-allocate HashMap \
-                 capacity in the accounts index (divided by number of bins). Helps reduce memory \
-                 allocations and overallocations during initialization and runtime.",
-            ),
+            .help("Pre-allocate the accounts index, assuming this many number of accounts")
+            .hidden(hidden_unless_forced()),
         Arg::with_name("enable_accounts_disk_index")
             .long("enable-accounts-disk-index")
             .help("Enables the disk-based accounts index")
@@ -252,7 +249,7 @@ pub fn get_accounts_db_config(
     let ledger_tool_ledger_path = ledger_path.join(LEDGER_TOOL_DIRECTORY);
 
     let accounts_index_bins = value_t!(arg_matches, "accounts_index_bins", usize).ok();
-    let estimated_accounts = value_t!(arg_matches, "estimated_accounts", usize).ok();
+    let initial_accounts = value_t!(arg_matches, "accounts_index_initial_accounts", usize).ok();
     let accounts_index_index_limit_mb = if !arg_matches.is_present("enable_accounts_disk_index") {
         IndexLimitMb::InMemOnly
     } else {
@@ -264,7 +261,7 @@ pub fn get_accounts_db_config(
         .unwrap_or_else(|| vec![ledger_tool_ledger_path.join("accounts_index")]);
     let accounts_index_config = AccountsIndexConfig {
         bins: accounts_index_bins,
-        estimated_accounts,
+        initial_accounts,
         index_limit_mb: accounts_index_index_limit_mb,
         drives: Some(accounts_index_drives),
         ..AccountsIndexConfig::default()

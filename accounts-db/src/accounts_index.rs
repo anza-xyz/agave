@@ -59,7 +59,7 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_TESTING: AccountsIndexConfig = AccountsIndex
     index_limit_mb: IndexLimitMb::InMemOnly,
     ages_to_stay_in_cache: None,
     scan_results_limit_bytes: None,
-    estimated_accounts: None,
+    initial_accounts: None,
 };
 pub const ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS: AccountsIndexConfig = AccountsIndexConfig {
     bins: Some(BINS_FOR_BENCHMARKS),
@@ -68,7 +68,7 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS: AccountsIndexConfig = AccountsIn
     index_limit_mb: IndexLimitMb::InMemOnly,
     ages_to_stay_in_cache: None,
     scan_results_limit_bytes: None,
-    estimated_accounts: None,
+    initial_accounts: None,
 };
 pub type ScanResult<T> = Result<T, ScanError>;
 pub type SlotList<T> = SmallVec<[(Slot, T); 1]>;
@@ -244,7 +244,7 @@ pub struct AccountsIndexConfig {
     pub scan_results_limit_bytes: Option<usize>,
     /// Estimated total number of accounts, used to pre-allocate HashMap capacity
     /// per bin (divided by number of bins) to reduce resizing overhead.
-    pub estimated_accounts: Option<usize>,
+    pub initial_accounts: Option<usize>,
 }
 
 impl Default for AccountsIndexConfig {
@@ -256,7 +256,7 @@ impl Default for AccountsIndexConfig {
             index_limit_mb: IndexLimitMb::InMemOnly,
             ages_to_stay_in_cache: None,
             scan_results_limit_bytes: None,
-            estimated_accounts: None,
+            initial_accounts: None,
         }
     }
 }
