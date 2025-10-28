@@ -2057,7 +2057,7 @@ mod tests {
     #[test_case(false ; "VoteStateV3")]
     #[test_case(true ; "VoteStateV4")]
     fn test_vote_process_instruction(vote_state_v4_enabled: bool) {
-        solana_logger::setup();
+        agave_logger::setup();
         let instructions = create_account_with_config(
             &Pubkey::new_unique(),
             &Pubkey::new_unique(),

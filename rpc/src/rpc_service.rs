@@ -9,7 +9,7 @@ use {
         rpc_cache::LargestAccountsCache,
         rpc_health::*,
     },
-    agave_snapshots::{snapshot_config::SnapshotConfig, SnapshotInterval},
+    agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig, SnapshotInterval},
     crossbeam_channel::unbounded,
     jsonrpc_core::{futures::prelude::*, MetaIoHandler},
     jsonrpc_http_server::{
@@ -141,11 +141,11 @@ impl RpcRequestMiddleware {
         Self {
             ledger_path,
             full_snapshot_archive_path_regex: Regex::new(
-                snapshot_utils::FULL_SNAPSHOT_ARCHIVE_FILENAME_REGEX,
+                snapshot_paths::FULL_SNAPSHOT_ARCHIVE_FILENAME_REGEX,
             )
             .unwrap(),
             incremental_snapshot_archive_path_regex: Regex::new(
-                snapshot_utils::INCREMENTAL_SNAPSHOT_ARCHIVE_FILENAME_REGEX,
+                snapshot_paths::INCREMENTAL_SNAPSHOT_ARCHIVE_FILENAME_REGEX,
             )
             .unwrap(),
             snapshot_config,
@@ -239,7 +239,7 @@ impl RpcRequestMiddleware {
             local_path
         } else {
             // remote snapshot archive path
-            snapshot_utils::build_snapshot_archives_remote_dir(root).join(stem)
+            snapshot_paths::build_snapshot_archives_remote_dir(root).join(stem)
         };
         (
             path,

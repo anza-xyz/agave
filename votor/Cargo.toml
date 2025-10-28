@@ -22,6 +22,7 @@ frozen-abi = [
 ]
 
 [dependencies]
+agave-logger = { workspace = true }
 agave-votor-messages = { workspace = true }
 anyhow = { workspace = true }
 bincode = { workspace = true }
@@ -58,7 +59,6 @@ solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
-solana-logger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-pubkey = { workspace = true }

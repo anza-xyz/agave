@@ -80,7 +80,7 @@ fn handle_init(matches: &ArgMatches<'_>, config_file: &str) -> Result<(), String
 }
 
 pub fn main() -> Result<(), String> {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let matches = App::new(crate_name!())
         .about(crate_description!())
@@ -276,7 +276,7 @@ pub fn main() -> Result<(), String> {
 }
 
 pub fn main_init() -> Result<(), String> {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let matches = App::new("agave-install-init")
         .about("Initializes a new installation")

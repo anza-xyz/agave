@@ -1427,7 +1427,7 @@ mod tests {
 
     #[test]
     fn test_received_finalized() {
-        solana_logger::setup();
+        agave_logger::setup();
         let test_context = EventHandlerTestContext::setup();
 
         let root_bank = test_context
@@ -1464,7 +1464,7 @@ mod tests {
 
     #[test]
     fn test_parent_ready_in_middle_of_window() {
-        solana_logger::setup();
+        agave_logger::setup();
         let test_context = EventHandlerTestContext::setup();
 
         // We just woke up and received finalize for slot 5
@@ -1503,7 +1503,7 @@ mod tests {
 
     #[test]
     fn test_received_standstill() {
-        solana_logger::setup();
+        agave_logger::setup();
         let test_context = EventHandlerTestContext::setup();
 
         // Send notarize vote for slot 1 then skip rest of the window
@@ -1549,7 +1549,7 @@ mod tests {
 
     #[test]
     fn test_received_set_identity() {
-        solana_logger::setup();
+        agave_logger::setup();
         let test_context = EventHandlerTestContext::setup();
         let old_identity = test_context.cluster_info.keypair().insecure_clone();
         let new_identity = Keypair::new();
@@ -1604,7 +1604,7 @@ mod tests {
     #[test_case("commitment_receiver")]
     #[test_case("own_vote_receiver")]
     fn test_channel_disconnection(channel_name: &str) {
-        solana_logger::setup();
+        agave_logger::setup();
         let mut test_context = EventHandlerTestContext::setup();
         match channel_name {
             "bls_receiver" => {

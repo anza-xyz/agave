@@ -2572,7 +2572,7 @@ pub mod test {
 
     #[test]
     fn test_check_vote_threshold_no_skip_lockout_with_new_root() {
-        solana_logger::setup();
+        agave_logger::setup();
         let mut tower = Tower::new_for_tests(4, 0.67);
         let mut stakes = HashMap::new();
         for i in 0..(MAX_LOCKOUT_HISTORY as u64 + 1) {
@@ -2793,7 +2793,7 @@ pub mod test {
 
     #[test]
     fn test_check_vote_threshold_lockouts_not_updated() {
-        solana_logger::setup();
+        agave_logger::setup();
         let mut tower = Tower::new_for_tests(1, 0.67);
         let stakes = vec![(0, 1), (1, 2)].into_iter().collect();
         tower.record_vote(0, Hash::default());
@@ -3005,7 +3005,7 @@ pub mod test {
 
     #[test]
     fn test_switch_threshold_across_tower_reload() {
-        solana_logger::setup();
+        agave_logger::setup();
         // Init state
         let mut vote_simulator = VoteSimulator::new(2);
         let other_vote_account = vote_simulator.vote_pubkeys[1];
@@ -3262,7 +3262,7 @@ pub mod test {
 
     #[test]
     fn test_reconcile_blockstore_roots_with_tower_normal() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
@@ -3298,7 +3298,7 @@ pub mod test {
                     1) from external root (Tower(4))!?"
     )]
     fn test_reconcile_blockstore_roots_with_tower_panic_no_common_root() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
@@ -3326,7 +3326,7 @@ pub mod test {
 
     #[test]
     fn test_reconcile_blockstore_roots_with_tower_nop_no_parent() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
@@ -3352,7 +3352,7 @@ pub mod test {
 
     #[test]
     fn test_adjust_lockouts_after_replay_future_slots() {
-        solana_logger::setup();
+        agave_logger::setup();
         let mut tower = Tower::new_for_tests(10, 0.9);
         tower.record_vote(0, Hash::default());
         tower.record_vote(1, Hash::default());

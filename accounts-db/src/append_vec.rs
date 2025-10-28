@@ -16,15 +16,17 @@ use {
         account_info::Offset,
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_file::{InternalsForArchive, StorageAccess, StoredAccountsInfo},
+        is_zero_lamport::IsZeroLamport,
+        storable_accounts::StorableAccounts,
+        u64_align,
+        utils::create_account_shared_data,
+    },
+    agave_fs::{
         buffered_reader::{
             BufReaderWithOverflow, BufferedReader, FileBufRead as _, RequiredLenBufFileRead,
             RequiredLenBufRead as _,
         },
         file_io::{read_into_buffer, write_buffer_to_file},
-        is_zero_lamport::IsZeroLamport,
-        storable_accounts::StorableAccounts,
-        u64_align,
-        utils::create_account_shared_data,
     },
     log::*,
     memmap2::MmapMut,
@@ -1008,7 +1010,7 @@ impl AppendVec {
     /// Prefer scan_accounts() when possible, as it does not contain file format
     /// implementation details, and thus potentially can read less and be faster.
     #[allow(clippy::blocks_in_conditions)]
-    pub(crate) fn scan_accounts_stored_meta<'a>(
+    fn scan_accounts_stored_meta<'a>(
         &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
         mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
@@ -1071,6 +1073,19 @@ impl AppendVec {
             }
         }
         Ok(())
+    }
+
+    /// Scans accounts with StoredAccountMeta
+    ///
+    /// Only intended to be called by agave-store-tool.
+    /// Refer to `scan_accounts_stored_meta` for further documentation.
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn scan_accounts_stored_meta_for_store_tool(
+        &self,
+        callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
+    ) -> Result<()> {
+        let mut reader = new_scan_accounts_reader();
+        self.scan_accounts_stored_meta(&mut reader, callback)
     }
 
     /// Calculate the amount of storage required for an account with the passed
@@ -1342,8 +1357,9 @@ pub mod tests {
         super::{test_utils::*, *},
         assert_matches::assert_matches,
         memoffset::offset_of,
-        rand::{thread_rng, Rng},
-        solana_account::{Account, AccountSharedData},
+        rand::prelude::*,
+        rand_chacha::ChaChaRng,
+        solana_account::{accounts_equal, Account, AccountSharedData},
         solana_clock::Slot,
         std::{mem::ManuallyDrop, time::Instant},
         test_case::{test_case, test_matrix},
@@ -1726,7 +1742,7 @@ pub mod tests {
         // So, the sanitizing on load behavior can be tested by capturing [u8] that would be created if such a write was possible (as it used to be).
         // The contents of [u8] written by an append vec cannot easily or reasonably change frequently since it has released a long time.
         /*
-            solana_logger::setup();
+            agave_logger::setup();
             // uncomment this code to generate the invalid append vec that will fail on load
             let file = get_append_vec_path("test_append");
             let path = &file.path;
@@ -2087,7 +2103,7 @@ pub mod tests {
             .take(NUM_ACCOUNTS)
             .collect();
 
-        let mut rng = thread_rng();
+        let mut rng = ChaChaRng::seed_from_u64(1337);
         let mut accounts = Vec::with_capacity(pubkeys.len());
         let mut total_stored_size = 0;
         for _ in &pubkeys {
@@ -2278,6 +2294,104 @@ pub mod tests {
     #[test_case(StorageAccess::File)]
     fn test_scan_stored_accounts_no_data_missing_account_data(storage_access: StorageAccess) {
         test_scan_stored_accounts_no_data_helper(storage_access, |path, size| {
+            let fake_stored_meta = StoredMeta {
+                write_version_obsolete: 0,
+                data_len: 100,
+                pubkey: solana_pubkey::new_rand(),
+            };
+            let fake_account_meta = AccountMeta {
+                lamports: 100,
+                rent_epoch: 10,
+                owner: solana_pubkey::new_rand(),
+                executable: false,
+            };
+
+            let stored_meta_slice: &[u8] = unsafe {
+                std::slice::from_raw_parts(
+                    (&fake_stored_meta as *const StoredMeta) as *const u8,
+                    mem::size_of::<StoredMeta>(),
+                )
+            };
+            let account_meta_slice: &[u8] = unsafe {
+                std::slice::from_raw_parts(
+                    (&fake_account_meta as *const AccountMeta) as *const u8,
+                    mem::size_of::<AccountMeta>(),
+                )
+            };
+
+            let mut f = OpenOptions::new()
+                .read(true)
+                .append(true)
+                .open(path)
+                .unwrap();
+
+            f.write_all(stored_meta_slice).unwrap();
+            f.write_all(account_meta_slice).unwrap();
+
+            size + mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>()
+        });
+    }
+
+    /// A helper fn to test scan_accounts_stored_meta
+    ///
+    /// `modify_fn` is used to (optionally) modify the append vec before checks are performed.
+    fn test_scan_accounts_stored_meta_helper(
+        storage_access: StorageAccess,
+        modify_fn: impl Fn(&PathBuf, usize) -> usize,
+    ) {
+        test_scan_helper(
+            storage_access,
+            modify_fn,
+            |append_vec, pubkeys, account_offsets, accounts| {
+                let mut reader = new_scan_accounts_reader();
+                let mut i = 0;
+                append_vec
+                    .scan_accounts_stored_meta(&mut reader, |stored_account| {
+                        let pubkey = pubkeys.get(i).unwrap();
+                        let offset = account_offsets.get(i).unwrap();
+                        let account = accounts.get(i).unwrap();
+
+                        assert_eq!(stored_account.pubkey(), pubkey);
+                        assert_eq!(stored_account.offset(), *offset);
+                        assert!(accounts_equal(&stored_account, account));
+
+                        i += 1;
+                    })
+                    .expect("must scan accounts storage");
+                assert_eq!(i, accounts.len());
+            },
+        )
+    }
+
+    /// Test `scan_accounts_stored_meta` for a normal/good storage.
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    fn test_scan_accounts_stored_meta(storage_access: StorageAccess) {
+        test_scan_accounts_stored_meta_helper(storage_access, |_, size| size);
+    }
+
+    /// Test `scan_accounts_stored_meta` for a storage with incomplete account meta data.
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    fn test_scan_accounts_stored_meta_incomplete_meta_data(storage_access: StorageAccess) {
+        test_scan_accounts_stored_meta_helper(storage_access, |path, size| {
+            // Append 1 byte of data at the end of the storage file to simulate
+            // incomplete account's meta data.
+            let mut f = OpenOptions::new()
+                .read(true)
+                .append(true)
+                .open(path)
+                .unwrap();
+            f.write_all(&[0xFF]).unwrap();
+            size + 1
+        });
+    }
+
+    /// Test `scan_accounts_stored_meta` for a storage that is missing the last account data.
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    fn test_scan_accounts_stored_meta_missing_account_data(storage_access: StorageAccess) {
+        test_scan_accounts_stored_meta_helper(storage_access, |path, size| {
             let fake_stored_meta = StoredMeta {
                 write_version_obsolete: 0,
                 data_len: 100,

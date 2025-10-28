@@ -1136,7 +1136,7 @@ fn run_accounts_bench(
 }
 
 fn main() {
-    solana_logger::setup_with_default("solana=info");
+    agave_logger::setup_with_default("solana=info");
     let matches = App::new(crate_name!())
         .about(crate_description!())
         .version(solana_version::version!())
@@ -1458,7 +1458,7 @@ pub mod test {
 
     #[test]
     fn test_accounts_cluster_bench() {
-        solana_logger::setup();
+        agave_logger::setup();
         let mut validator_config = ValidatorConfig::default_for_test();
         initialize_and_add_secondary_indexes(&mut validator_config);
         let num_nodes = 1;
@@ -1508,7 +1508,7 @@ pub mod test {
 
     #[test]
     fn test_halt_accounts_creation_at_max() {
-        solana_logger::setup();
+        agave_logger::setup();
         let mut validator_config = ValidatorConfig::default_for_test();
         initialize_and_add_secondary_indexes(&mut validator_config);
         let num_nodes = 1;
@@ -1558,7 +1558,7 @@ pub mod test {
 
     #[test]
     fn test_create_then_reclaim_spl_token_accounts() {
-        solana_logger::setup();
+        agave_logger::setup();
         let mint_keypair = Keypair::new();
         let mint_pubkey = mint_keypair.pubkey();
         let faucet_addr = run_local_faucet_for_tests(

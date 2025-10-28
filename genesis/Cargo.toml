@@ -25,6 +25,7 @@ agave-unstable-api = []
 
 [dependencies]
 agave-feature-set = { workspace = true }
+agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
@@ -44,11 +45,11 @@ solana-epoch-schedule = "=3.0.0"
 solana-feature-gate-interface = "=3.0.0"
 solana-fee-calculator = "=3.0.0"
 solana-genesis-config = "=3.0.0"
+solana-genesis-utils = { workspace = true }
 solana-inflation = "=3.0.0"
 solana-keypair = "=3.0.1"
 solana-ledger = { workspace = true }
 solana-loader-v3-interface = "6.1.0"
-solana-logger = "=3.0.0"
 solana-native-token = "=3.0.0"
 solana-poh-config = "=3.0.0"
 solana-pubkey = { version = "=3.0.0", default-features = false }

@@ -187,7 +187,7 @@ mod test {
 
     #[test]
     fn test_notarization_fallback_pool() {
-        solana_logger::setup();
+        agave_logger::setup();
         let mut vote_pool = DuplicateBlockVotePool::new(3);
         let my_pubkey = Pubkey::new_unique();
 
