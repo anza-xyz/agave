@@ -19,7 +19,6 @@ use {
         net::{SocketAddr, UdpSocket},
         sync::{Arc, Mutex, RwLock},
         thread::{self, JoinHandle},
-        time::Duration,
     },
     tokio_util::sync::CancellationToken,
 };
@@ -114,7 +113,6 @@ impl Vortexor {
         max_fwd_unstaked_connections: usize,
         max_streams_per_ms: u64,
         max_connections_per_ipaddr_per_min: u64,
-        tpu_coalesce: Duration,
         identity_keypair: &Keypair,
         cancel: CancellationToken,
     ) -> Self {
@@ -125,7 +123,6 @@ impl Vortexor {
             max_streams_per_ms,
             max_connections_per_ipaddr_per_min,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-            coalesce: tpu_coalesce,
             ..Default::default()
         };
 

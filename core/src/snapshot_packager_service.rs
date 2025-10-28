@@ -1,6 +1,9 @@
 mod snapshot_gossip_manager;
 use {
-    agave_snapshots::{snapshot_config::SnapshotConfig, snapshot_hash::StartingSnapshotHashes},
+    agave_snapshots::{
+        paths as snapshot_paths, snapshot_config::SnapshotConfig,
+        snapshot_hash::StartingSnapshotHashes,
+    },
     snapshot_gossip_manager::SnapshotGossipManager,
     solana_accounts_db::accounts_db::AccountStorageEntry,
     solana_clock::Slot,
@@ -188,7 +191,7 @@ impl SnapshotPackagerService {
         }
         info!("Flushing account storages... Done in {:?}", start.elapsed());
 
-        let bank_snapshot_dir = snapshot_utils::get_bank_snapshot_dir(
+        let bank_snapshot_dir = snapshot_paths::get_bank_snapshot_dir(
             &snapshot_config.bank_snapshots_dir,
             state.snapshot_slot,
         );

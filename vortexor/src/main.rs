@@ -24,7 +24,6 @@ use {
         env,
         net::{IpAddr, SocketAddr},
         sync::{atomic::AtomicBool, Arc, RwLock},
-        time::Duration,
     },
     tokio_util::sync::CancellationToken,
 };
@@ -77,7 +76,6 @@ pub fn main() {
 
     let max_connections_per_ipaddr_per_min = args.max_connections_per_ipaddr_per_minute;
     let num_quic_endpoints = args.num_quic_endpoints;
-    let tpu_coalesce = Duration::from_millis(args.tpu_coalesce_ms);
     let dynamic_port_range = args.dynamic_port_range;
 
     let tpu_address = args.tpu_address;
@@ -202,7 +200,6 @@ pub fn main() {
         max_fwd_unstaked_connections,
         max_streams_per_ms,
         max_connections_per_ipaddr_per_min,
-        tpu_coalesce,
         &identity_keypair,
         cancel.clone(),
     );

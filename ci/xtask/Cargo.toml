@@ -9,6 +9,9 @@ license = "Apache-2.0"
 edition = "2021"
 publish = false
 
+# Prevents auto-detection of parent workspace (ie. git worktrees).
+[workspace]
+
 [features]
 agave-unstable-api = []
 dummy-for-ci-check = []

@@ -27,6 +27,7 @@ crossbeam-channel = { workspace = true }
 log = { workspace = true }
 lz4 = { workspace = true }
 rand = { workspace = true }
+regex = { workspace = true }
 semver = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-clock = { workspace = true }

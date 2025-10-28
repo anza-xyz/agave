@@ -1410,6 +1410,7 @@ mod tests {
     use {
         crate::wen_restart::{tests::wen_restart_proto::LastVotedForkSlotsAggregateFinal, *},
         agave_snapshots::{
+            paths::build_incremental_snapshot_archive_path,
             snapshot_config::{SnapshotConfig, SnapshotUsage},
             snapshot_hash::SnapshotHash,
         },
@@ -1439,7 +1440,6 @@ mod tests {
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
             snapshot_bank_utils::bank_to_full_snapshot_archive,
-            snapshot_utils::build_incremental_snapshot_archive_path,
         },
         solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,

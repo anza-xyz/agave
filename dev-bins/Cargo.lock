@@ -264,6 +264,7 @@ dependencies = [
  "log",
  "lz4",
  "rand 0.8.5",
+ "regex",
  "semver",
  "solana-accounts-db",
  "solana-clock",

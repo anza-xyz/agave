@@ -31,7 +31,7 @@ use {
         system_monitor_service::{
             verify_net_stats_access, SystemMonitorService, SystemMonitorStatsReportConfig,
         },
-        tpu::{ForwardingClientOption, Tpu, TpuSockets, DEFAULT_TPU_COALESCE},
+        tpu::{ForwardingClientOption, Tpu, TpuSockets},
         tvu::{Tvu, TvuConfig, TvuSockets},
     },
     agave_snapshots::{
@@ -351,7 +351,6 @@ pub struct ValidatorConfig {
     pub warp_slot: Option<Slot>,
     pub accounts_db_skip_shrink: bool,
     pub accounts_db_force_initial_clean: bool,
-    pub tpu_coalesce: Duration,
     pub staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
     pub validator_exit: Arc<RwLock<Exit>>,
     pub validator_exit_backpressure: HashMap<String, Arc<AtomicBool>>,
@@ -431,7 +430,6 @@ impl ValidatorConfig {
             warp_slot: None,
             accounts_db_skip_shrink: false,
             accounts_db_force_initial_clean: false,
-            tpu_coalesce: DEFAULT_TPU_COALESCE,
             staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
             validator_exit: Arc::new(RwLock::new(Exit::default())),
             validator_exit_backpressure: HashMap::default(),
@@ -577,14 +575,14 @@ impl ValidatorTpuConfig {
     pub fn new_for_tests(tpu_enable_udp: bool) -> Self {
         let tpu_quic_server_config = QuicServerParams {
             max_connections_per_ipaddr_per_min: 32,
-            coalesce_channel_size: 100_000, // smaller channel size for faster test
+            accumulator_channel_size: 100_000, // smaller channel size for faster test
             ..Default::default()
         };
 
         let tpu_fwd_quic_server_config = QuicServerParams {
             max_connections_per_ipaddr_per_min: 32,
             max_unstaked_connections: 0,
-            coalesce_channel_size: 100_000, // smaller channel size for faster test
+            accumulator_channel_size: 100_000, // smaller channel size for faster test
             ..Default::default()
         };
 
@@ -1717,7 +1715,6 @@ impl Validator {
             replay_vote_receiver,
             replay_vote_sender,
             bank_notification_sender,
-            config.tpu_coalesce,
             duplicate_confirmed_slot_sender,
             forwarding_tpu_client,
             turbine_quic_endpoint_sender,
