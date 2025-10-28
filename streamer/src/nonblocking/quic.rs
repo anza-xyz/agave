@@ -1,4 +1,6 @@
 #[allow(deprecated)]
+use crate::quic::QuicServerParams;
+
 use {
     crate::{
         nonblocking::{
@@ -8,7 +10,7 @@ use {
             swqos::{SwQos, SwQosConfig},
         },
         quic::{
-            configure_server, QuicServerError, QuicServerParams, QuicStreamerConfig, StreamerStats,
+            configure_server, QuicServerError, QuicStreamerConfig, StreamerStats,
         },
         streamer::StakedNodes,
     },
