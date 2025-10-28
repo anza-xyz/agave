@@ -1182,7 +1182,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("NUMBER")
             .validator(is_parsable::<usize>)
             .takes_value(true)
-            .help("Pre-allocate the accounts index, assuming this many number of accounts")
+            .help("Pre-allocate the accounts index, assuming this many accounts")
             .hidden(hidden_unless_forced()),
     )
     .arg(
