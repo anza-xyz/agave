@@ -862,7 +862,7 @@ impl ClusterInfo {
     }
 
     pub fn push_vote(&self, tower: &[Slot], vote: Transaction) {
-        let keypair = self.keypair();
+        let self_keypair = self.keypair();
         debug_assert!(tower.iter().tuple_windows().all(|(a, b)| a < b));
         // Find the oldest crds vote by wallclock that has a lower slot than `tower`
         // and recycle its vote-index. If the crds buffer is not full we instead add a new vote-index.
@@ -880,7 +880,7 @@ impl ClusterInfo {
             );
         };
         debug_assert!(vote_index < MAX_VOTES);
-        self.push_vote_at_index(vote, vote_index, &keypair);
+        self.push_vote_at_index(vote, vote_index, &self_keypair);
     }
 
     pub fn refresh_vote(&self, refresh_vote: Transaction, refresh_vote_slot: Slot) {
