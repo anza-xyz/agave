@@ -88,30 +88,24 @@ mod tests {
         let s2 = 11;
         let s3 = 12;
 
-        assert_eq!(Single(s2).requires_update(&Multiple([s1, s2])), true);
+        assert!(Single(s2).requires_update(&Multiple([s1, s2])));
 
-        assert_eq!(Multiple([s1, s2]).requires_update(&Single(s1)), true);
+        assert!(Multiple([s1, s2]).requires_update(&Single(s1)));
 
-        assert_eq!(
-            Multiple([s1, s2]).requires_update(&Multiple([s1, s2])),
-            false
-        );
+        assert!(!Multiple([s1, s2]).requires_update(&Multiple([s1, s2])));
 
-        assert_eq!(
-            Multiple([s2, s3]).requires_update(&Multiple([s1, s2])),
-            true
-        );
+        assert!(Multiple([s2, s3]).requires_update(&Multiple([s1, s2])));
 
-        assert_eq!(Single(s1).requires_update(&Single(s1)), false);
+        assert!(!Single(s1).requires_update(&Single(s1)));
 
-        assert_eq!(Single(s2).requires_update(&Single(s1)), true);
+        assert!(Single(s2).requires_update(&Single(s1)));
 
-        assert_eq!(Single(s1).requires_update(&Single(s2)), false);
+        assert!(!Single(s1).requires_update(&Single(s2)));
 
-        assert_eq!(Single(s1).requires_update(&Multiple([s1, s2])), false);
+        assert!(!Single(s1).requires_update(&Multiple([s1, s2])));
 
-        assert_eq!(Multiple([s1, s2]).requires_update(&Single(s2)), false);
+        assert!(!Multiple([s1, s2]).requires_update(&Single(s2)));
 
-        assert_eq!(Single(s3).requires_update(&Multiple([s1, s2])), true);
+        assert!(Single(s3).requires_update(&Multiple([s1, s2])));
     }
 }
