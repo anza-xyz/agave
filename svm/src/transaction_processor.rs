@@ -379,15 +379,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .then(|| BalanceCollector::new_with_transaction_count(sanitized_txs.len()));
 
         // Create the batch-local program cache.
-        let program_runtime_environments_for_execution =
-            self.get_environments_for_epoch(self.epoch);
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
         let builtins = self.builtin_program_ids.read().unwrap().clone();
         let ((), program_cache_us) = measure_us!({
             self.replenish_program_cache(
                 &account_loader,
                 &builtins,
-                &program_runtime_environments_for_execution,
+                &environment.program_runtime_environments_for_execution,
                 &mut program_cache_for_tx_batch,
                 &mut execute_timings,
                 config.check_program_modification_slot,
@@ -470,7 +468,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         self.replenish_program_cache(
                             &account_loader,
                             &program_accounts_set,
-                            &program_runtime_environments_for_execution,
+                            &environment.program_runtime_environments_for_execution,
                             &mut program_cache_for_tx_batch,
                             &mut execute_timings,
                             config.check_program_modification_slot,
