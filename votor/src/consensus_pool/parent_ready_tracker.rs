@@ -21,14 +21,14 @@ use {
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum BlockProductionParent {
+pub(crate) enum BlockProductionParent {
     MissedWindow,
     ParentNotReady,
     Parent(Block),
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct ParentReadyTracker {
+pub(crate) struct ParentReadyTracker {
     /// Our pubkey for logging
     my_pubkey: Pubkey,
 
@@ -58,7 +58,7 @@ struct ParentReadyStatus {
 
 impl ParentReadyTracker {
     /// Creates a new tracker with the root bank as implicitely notarized fallback
-    pub fn new(my_pubkey: Pubkey, root_block @ (root_slot, _): Block) -> Self {
+    pub(super) fn new(my_pubkey: Pubkey, root_block @ (root_slot, _): Block) -> Self {
         let mut slot_statuses = HashMap::new();
         slot_statuses.insert(
             root_slot,
@@ -85,7 +85,7 @@ impl ParentReadyTracker {
     }
 
     /// Adds a new notarize fallback certificate, we can use Notarize/NotarizeFallback/FastFinalize
-    pub fn add_new_notar_fallback_or_stronger(
+    pub(super) fn add_new_notar_fallback_or_stronger(
         &mut self,
         block @ (slot, _): Block,
         events: &mut Vec<VotorEvent>,
@@ -133,7 +133,7 @@ impl ParentReadyTracker {
     }
 
     /// Adds a new skip certificate
-    pub fn add_new_skip(&mut self, slot: Slot, events: &mut Vec<VotorEvent>) {
+    pub(super) fn add_new_skip(&mut self, slot: Slot, events: &mut Vec<VotorEvent>) {
         if slot <= self.root {
             return;
         }
@@ -199,14 +199,15 @@ impl ParentReadyTracker {
         }
     }
 
-    pub fn parent_ready(&self, slot: Slot, parent: Block) -> bool {
+    #[cfg(test)]
+    fn parent_ready(&self, slot: Slot, parent: Block) -> bool {
         self.slot_statuses
             .get(&slot)
             .is_some_and(|ss| ss.parents_ready.contains(&parent))
     }
 
     /// For our leader slot `slot`, which block should we use as the parent
-    pub fn block_production_parent(&self, slot: Slot) -> BlockProductionParent {
+    pub(crate) fn block_production_parent(&self, slot: Slot) -> BlockProductionParent {
         if self.highest_parent_ready() > slot {
             // This indicates that our block has already received a certificate
             // either because we were too slow, or because we are restarting
@@ -224,17 +225,17 @@ impl ParentReadyTracker {
         }
     }
 
-    pub fn highest_parent_ready(&self) -> Slot {
+    fn highest_parent_ready(&self) -> Slot {
         self.highest_with_parent_ready
     }
 
-    pub fn set_root(&mut self, root: Slot) {
+    pub(super) fn set_root(&mut self, root: Slot) {
         self.root = root;
         self.slot_statuses.retain(|&s, _| s >= root);
     }
 
     /// Updates the pubkey. Note that the pubkey is used for logging purposes only.
-    pub fn update_pubkey(&mut self, new_pubkey: Pubkey) {
+    pub(super) fn update_pubkey(&mut self, new_pubkey: Pubkey) {
         self.my_pubkey = new_pubkey;
     }
 
