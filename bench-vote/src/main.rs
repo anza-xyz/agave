@@ -16,9 +16,10 @@ use {
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_streamer::{
+        nonblocking::swqos::SwQosConfig,
         packet::PacketBatchRecycler,
         quic::{
-            spawn_server_with_cancel, QuicServerParams, DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER,
+            spawn_server_with_cancel, QuicStreamerConfig, DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER,
             DEFAULT_MAX_STAKED_CONNECTIONS,
         },
         streamer::{receiver, PacketBatchReceiver, StakedNodes, StreamerReceiveStats},
@@ -46,7 +47,6 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 const SINK_REPORT_INTERVAL: Duration = Duration::from_secs(5);
 const SINK_RECEIVE_TIMEOUT: Duration = Duration::from_secs(1);
 const SOCKET_RECEIVE_TIMEOUT: Duration = Duration::from_secs(1);
-const COALESCE_TIME: Option<Duration> = Some(Duration::from_millis(1));
 
 fn sink(
     exit: Arc<AtomicBool>,
@@ -263,7 +263,7 @@ fn main() -> Result<()> {
         let stats = Arc::new(StreamerReceiveStats::new("bench-vote-test"));
 
         if let Some(quic_params) = &quic_params {
-            let quic_server_params = QuicServerParams {
+            let quic_server_params = QuicStreamerConfig {
                 max_connections_per_ipaddr_per_min: max_connections_per_ipaddr_per_min
                     .try_into()
                     .unwrap(),
@@ -272,6 +272,7 @@ fn main() -> Result<()> {
                 max_unstaked_connections: 0,
                 ..Default::default()
             };
+            let qos_config = SwQosConfig::default();
             let (s_reader, r_reader) = unbounded();
             read_channels.push(r_reader);
 
@@ -283,6 +284,7 @@ fn main() -> Result<()> {
                 s_reader,
                 quic_params.staked_nodes.clone(),
                 quic_server_params,
+                qos_config,
                 cancel.clone(),
             )
             .unwrap();
@@ -300,10 +302,10 @@ fn main() -> Result<()> {
                     s_reader,
                     recycler.clone(),
                     stats.clone(),
-                    COALESCE_TIME, // coalesce
-                    true,          // use_pinned_memory
-                    None,          // in_vote_only_mode
-                    false,         // is_staked_service
+                    None,  // coalesce
+                    true,  // use_pinned_memory
+                    None,  // in_vote_only_mode
+                    false, // is_staked_service
                 ));
             }
         }

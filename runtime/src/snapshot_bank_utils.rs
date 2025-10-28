@@ -35,6 +35,7 @@ use {
         error::{
             SnapshotError, VerifyEpochStakesError, VerifySlotDeltasError, VerifySlotHistoryError,
         },
+        paths as snapshot_paths,
         snapshot_config::SnapshotConfig,
         snapshot_hash::SnapshotHash,
         ArchiveFormat, SnapshotVersion,
@@ -215,7 +216,7 @@ pub fn bank_from_snapshot_archives(
         .as_ref()
         .unwrap_or(&full_unpacked_snapshots_dir_and_version)
         .unpacked_snapshots_dir
-        .join(snapshot_utils::SNAPSHOT_STATUS_CACHE_FILENAME);
+        .join(snapshot_paths::SNAPSHOT_STATUS_CACHE_FILENAME);
     info!(
         "Rebuilding status cache from {}",
         status_cache_path.display()
@@ -396,7 +397,7 @@ pub fn bank_from_snapshot_dir(
 
     let status_cache_path = bank_snapshot
         .snapshot_dir
-        .join(snapshot_utils::SNAPSHOT_STATUS_CACHE_FILENAME);
+        .join(snapshot_paths::SNAPSHOT_STATUS_CACHE_FILENAME);
     info!(
         "Rebuilding status cache from {}",
         status_cache_path.display()
@@ -816,16 +817,15 @@ mod tests {
             bank::{tests::create_simple_test_bank, BankTestConfig},
             snapshot_utils::{
                 clean_orphaned_account_snapshot_dirs, create_tmp_accounts_dir_for_tests,
-                get_bank_snapshot_dir, get_bank_snapshots, get_highest_bank_snapshot,
-                get_highest_loadable_bank_snapshot, purge_all_bank_snapshots, purge_bank_snapshot,
+                get_bank_snapshots, get_highest_bank_snapshot, get_highest_loadable_bank_snapshot,
+                purge_all_bank_snapshots, purge_bank_snapshot,
                 purge_bank_snapshots_older_than_slot, purge_incomplete_bank_snapshots,
                 purge_old_bank_snapshots, purge_old_bank_snapshots_at_startup,
                 snapshot_storage_rebuilder::get_slot_and_append_vec_id,
-                SNAPSHOT_FULL_SNAPSHOT_SLOT_FILENAME,
             },
             status_cache::Status,
         },
-        agave_snapshots::error::VerifySlotDeltasError,
+        agave_snapshots::{error::VerifySlotDeltasError, paths::get_bank_snapshot_dir},
         semver::Version,
         solana_accounts_db::{
             accounts_db::{MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING},
@@ -1599,7 +1599,7 @@ mod tests {
         .unwrap();
 
         let accounts_hardlinks_dir = get_bank_snapshot_dir(&bank_snapshots_dir, bank.slot())
-            .join(snapshot_utils::SNAPSHOT_ACCOUNTS_HARDLINKS);
+            .join(snapshot_paths::SNAPSHOT_ACCOUNTS_HARDLINKS);
         assert!(fs::metadata(&accounts_hardlinks_dir).is_ok());
 
         let mut hardlink_dirs = Vec::new();
@@ -1643,7 +1643,7 @@ mod tests {
         // than current
         let complete_flag_file = snapshot
             .snapshot_dir
-            .join(snapshot_utils::SNAPSHOT_FASTBOOT_VERSION_FILENAME);
+            .join(snapshot_paths::SNAPSHOT_FASTBOOT_VERSION_FILENAME);
         let version = fs::read_to_string(&complete_flag_file).unwrap();
         let version = Version::parse(&version).unwrap();
         let new_version = Version::new(version.major + 1, version.minor, version.patch);
@@ -1657,7 +1657,7 @@ mod tests {
         // Test 2: Remove the bank snapshot version file
         let complete_flag_file = snapshot
             .snapshot_dir
-            .join(snapshot_utils::SNAPSHOT_VERSION_FILENAME);
+            .join(snapshot_paths::SNAPSHOT_VERSION_FILENAME);
         fs::remove_file(complete_flag_file).unwrap();
 
         // This will now find the previous entry in the directory, which is slot 2
@@ -1667,7 +1667,7 @@ mod tests {
         // Test 3: Remove the fastboot version file
         let fastboot_version_file = snapshot
             .snapshot_dir
-            .join(snapshot_utils::SNAPSHOT_FASTBOOT_VERSION_FILENAME);
+            .join(snapshot_paths::SNAPSHOT_FASTBOOT_VERSION_FILENAME);
         fs::remove_file(fastboot_version_file).unwrap();
 
         // The fastboot file is not found, no loadable snapshot is found
@@ -1692,7 +1692,7 @@ mod tests {
 
         let version_file = snapshot
             .snapshot_dir
-            .join(snapshot_utils::SNAPSHOT_VERSION_FILENAME);
+            .join(snapshot_paths::SNAPSHOT_VERSION_FILENAME);
         fs::remove_file(version_file).unwrap();
         // The incomplete snapshot dir should still exist
         let snapshot_dir_4 = snapshot.snapshot_dir;
@@ -1702,14 +1702,14 @@ mod tests {
 
         let snapshot_version_file = snapshot
             .snapshot_dir
-            .join(snapshot_utils::SNAPSHOT_VERSION_FILENAME);
+            .join(snapshot_paths::SNAPSHOT_VERSION_FILENAME);
         fs::remove_file(snapshot_version_file).unwrap();
         let snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
         assert_eq!(snapshot.slot, 2);
 
         let status_cache_file = snapshot
             .snapshot_dir
-            .join(snapshot_utils::SNAPSHOT_STATUS_CACHE_FILENAME);
+            .join(snapshot_paths::SNAPSHOT_STATUS_CACHE_FILENAME);
         fs::remove_file(status_cache_file).unwrap();
         let snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
         assert_eq!(snapshot.slot, 1);
@@ -1723,7 +1723,7 @@ mod tests {
 
         let snapshot_dir_slot_2 = bank_snapshots_dir.path().join("2");
         let accounts_link_dir_slot_2 =
-            snapshot_dir_slot_2.join(snapshot_utils::SNAPSHOT_ACCOUNTS_HARDLINKS);
+            snapshot_dir_slot_2.join(snapshot_paths::SNAPSHOT_ACCOUNTS_HARDLINKS);
 
         // the symlinks point to the account snapshot hardlink directories <account_path>/snapshot/<slot>/ for slot 2
         // get them via read_link
@@ -1765,13 +1765,13 @@ mod tests {
         let _bank = create_snapshot_dirs_for_tests(&genesis_config, &bank_snapshots_dir, 2, false);
 
         // Ensure the bank snapshot dir does exist.
-        let bank_snapshot_dir = snapshot_utils::get_bank_snapshot_dir(&bank_snapshots_dir, 2);
+        let bank_snapshot_dir = get_bank_snapshot_dir(&bank_snapshots_dir, 2);
         assert!(fs::exists(&bank_snapshot_dir).unwrap());
 
         // Ensure the accounts hard links dir does *not* exist for this bank snapshot
         // (since we asked create_snapshot_dirs_for_tests() to *not* hard link).
         let bank_snapshot_accounts_hard_link_dir =
-            bank_snapshot_dir.join(snapshot_utils::SNAPSHOT_ACCOUNTS_HARDLINKS);
+            bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_ACCOUNTS_HARDLINKS);
         assert!(!fs::exists(&bank_snapshot_accounts_hard_link_dir).unwrap());
 
         // Now make sure clean_orphaned_account_snapshot_dirs() doesn't error.
@@ -1793,7 +1793,7 @@ mod tests {
         // remove the "version" files so the snapshots will be purged
         for slot in [1, 2] {
             let bank_snapshot_dir = get_bank_snapshot_dir(&bank_snapshots_dir, slot);
-            let version_file = bank_snapshot_dir.join(snapshot_utils::SNAPSHOT_VERSION_FILENAME);
+            let version_file = bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_VERSION_FILENAME);
             fs::remove_file(version_file).unwrap();
         }
 
@@ -2062,7 +2062,7 @@ mod tests {
         // Remove the obsolete account file
         let obsolete_accounts_file = bank_snapshot
             .snapshot_dir
-            .join(snapshot_utils::SNAPSHOT_OBSOLETE_ACCOUNTS_FILENAME);
+            .join(snapshot_paths::SNAPSHOT_OBSOLETE_ACCOUNTS_FILENAME);
         fs::remove_file(obsolete_accounts_file).unwrap();
 
         bank_from_snapshot_dir(
@@ -2537,7 +2537,7 @@ mod tests {
         fs::remove_file(
             bank_snapshot
                 .snapshot_dir
-                .join(SNAPSHOT_FULL_SNAPSHOT_SLOT_FILENAME),
+                .join(snapshot_paths::SNAPSHOT_FULL_SNAPSHOT_SLOT_FILENAME),
         )
         .unwrap();
         let bank_snapshot2 = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();

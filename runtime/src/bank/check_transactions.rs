@@ -92,6 +92,8 @@ impl Bank {
         let feature_set: &FeatureSet = &self.feature_set;
         let fee_features = FeeFeatures::from(feature_set);
 
+        let raise_cpi_limit = feature_set.is_active(&raise_cpi_nesting_limit_to_8::id());
+
         sanitized_txs
             .iter()
             .zip(lock_results)
@@ -122,8 +124,7 @@ impl Bank {
                                 limit.get_compute_budget_and_limits(
                                     fee_budget.loaded_accounts_data_size_limit,
                                     fee_details,
-                                    self.feature_set
-                                        .is_active(&raise_cpi_nesting_limit_to_8::id()),
+                                    raise_cpi_limit,
                                 )
                             }
                         });

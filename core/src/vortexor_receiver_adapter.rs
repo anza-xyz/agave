@@ -38,15 +38,13 @@ impl VortexorReceiverAdapter {
     pub fn new(
         sockets: Vec<Arc<UdpSocket>>,
         recv_timeout: Duration,
-        tpu_coalesce: Duration,
         packets_sender: TracedSender,
         forward_stage_sender: Option<Sender<(BankingPacketBatch, bool)>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
         let (batch_sender, batch_receiver) = unbounded();
 
-        let receiver =
-            VerifiedPacketReceiver::new(sockets, &batch_sender, tpu_coalesce, None, exit.clone());
+        let receiver = VerifiedPacketReceiver::new(sockets, &batch_sender, None, exit.clone());
 
         let thread_hdl = Builder::new()
             .name("vtxRcvAdptr".to_string())

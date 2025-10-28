@@ -2,7 +2,7 @@
 
 use {
     crate::snapshot_utils::create_tmp_accounts_dir_for_tests,
-    agave_snapshots::{snapshot_config::SnapshotConfig, SnapshotInterval},
+    agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig, SnapshotInterval},
     crossbeam_channel::unbounded,
     itertools::Itertools,
     log::{info, trace},
@@ -118,7 +118,7 @@ fn restore_from_snapshot(
     let old_bank_forks = old_bank_forks.read().unwrap();
     let old_last_bank = old_bank_forks.get(old_last_slot).unwrap();
 
-    let full_snapshot_archive_path = snapshot_utils::build_full_snapshot_archive_path(
+    let full_snapshot_archive_path = snapshot_paths::build_full_snapshot_archive_path(
         &snapshot_config.full_snapshot_archives_dir,
         old_last_bank.slot(),
         &old_last_bank.get_snapshot_hash(),
