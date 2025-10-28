@@ -4092,7 +4092,7 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
                     );
                     gossip_vote_index += 1;
                     gossip_vote_index %= MAX_VOTES;
-                    cluster_info.push_vote_at_index(vote_tx, gossip_vote_index);
+                    cluster_info.push_vote_at_index(vote_tx, gossip_vote_index, &node_keypair);
                 }
             }
         },
