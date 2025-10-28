@@ -112,12 +112,9 @@ pub fn execute(
     let identity_keypair = Arc::new(run_args.identity_keypair);
 
     let logfile = run_args.logfile;
-    let logfile = if logfile == "-" {
-        None
-    } else {
-        println!("log file: {logfile}");
-        Some(logfile)
-    };
+    if let Some(logfile) = logfile.as_ref() {
+        println!("log file: {}", logfile.display());
+    }
     let use_progress_bar = logfile.is_none();
     let _logger_thread = redirect_stderr_to_file(logfile);
 
