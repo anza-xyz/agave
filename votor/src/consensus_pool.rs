@@ -437,7 +437,7 @@ impl ConsensusPool {
                 );
             }
         }
-        self.stats.incr_ingested_vote_type(vote_type);
+        self.stats.incr_ingested_vote(vote);
 
         self.update_certificates(vote, block_id, events, total_stake)
     }
