@@ -580,7 +580,7 @@ impl ValidatorTpuConfig {
     pub fn new_for_tests(tpu_enable_udp: bool) -> Self {
         let tpu_quic_server_config = SwQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
-                max_connections_per_ipaddr_per_min: 32,
+                max_connections_per_ipaddr_per_min: 256,
                 accumulator_channel_size: 100_000, // smaller channel size for faster test
                 ..Default::default()
             },
@@ -589,7 +589,7 @@ impl ValidatorTpuConfig {
 
         let tpu_fwd_quic_server_config = SwQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
-                max_connections_per_ipaddr_per_min: 32,
+                max_connections_per_ipaddr_per_min: 256,
                 max_unstaked_connections: 0,
                 accumulator_channel_size: 100_000, // smaller channel size for faster test
                 ..Default::default()
