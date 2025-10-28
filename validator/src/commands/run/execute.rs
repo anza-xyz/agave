@@ -120,10 +120,10 @@ pub fn execute(
         None
     } else {
         println!("log file: {logfile}");
+        Validator::redirect_stderr_to_logfile(&logfile)?;
         Some(logfile)
     };
     let use_progress_bar = logfile.is_none();
-    let _logger_thread = redirect_stderr_to_file(logfile);
 
     info!("{} {}", crate_name!(), solana_version);
     info!("Starting validator with: {:#?}", std::env::args_os());
@@ -524,6 +524,7 @@ pub fn execute(
     );
 
     let mut validator_config = ValidatorConfig {
+        logfile,
         require_tower: matches.is_present("require_tower"),
         tower_storage,
         halt_at_slot: value_t!(matches, "dev_halt_at_slot", Slot).ok(),
@@ -1028,6 +1029,10 @@ pub fn execute(
         File::create(filename).map_err(|err| format!("unable to create {filename}: {err}"))?;
     }
     info!("Validator initialized");
+    // Swallow the error in hopes that we can still exit "normally"
+    let _ = validator
+        .listen_for_signals()
+        .map_err(|err| error!("Error while listening for signals: {err}"));
     validator.join();
     info!("Validator exiting..");
 

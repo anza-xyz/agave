@@ -156,15 +156,17 @@ use {
     std::{
         borrow::Cow,
         collections::{HashMap, HashSet},
+        fs,
         net::SocketAddr,
         num::{NonZeroU64, NonZeroUsize},
+        os::fd::AsRawFd,
         path::{Path, PathBuf},
         str::FromStr,
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, Mutex, RwLock,
         },
-        thread::{sleep, Builder, JoinHandle},
+        thread::{self, sleep, Builder, JoinHandle},
         time::{Duration, Instant},
     },
     strum::VariantNames,
@@ -308,6 +310,8 @@ pub struct GeneratorConfig {
 }
 
 pub struct ValidatorConfig {
+    /// The file where logs will be printed to; stderr is used if `None`
+    pub logfile: Option<String>,
     pub halt_at_slot: Option<Slot>,
     pub expected_genesis_hash: Option<Hash>,
     pub expected_bank_hash: Option<Hash>,
@@ -390,6 +394,7 @@ impl ValidatorConfig {
             NonZeroUsize::new(num_cpus::get()).expect("thread count is non-zero");
 
         Self {
+            logfile: None,
             halt_at_slot: None,
             expected_genesis_hash: None,
             expected_bank_hash: None,
@@ -621,6 +626,10 @@ impl ValidatorTpuConfig {
 }
 
 pub struct Validator {
+    logfile: Option<String>,
+    // A global flag that indicates whether threads should continue or stop
+    exit: Arc<AtomicBool>,
+    // A set of operations to execute when the validator is shutting down
     validator_exit: Arc<RwLock<Exit>>,
     json_rpc_service: Option<JsonRpcService>,
     pubsub_service: Option<PubSubService>,
@@ -1725,7 +1734,7 @@ impl Validator {
             blockstore.clone(),
             &config.broadcast_stage_type,
             xdp_sender,
-            exit,
+            exit.clone(),
             node.info.shred_version(),
             vote_tracker,
             bank_forks.clone(),
@@ -1793,6 +1802,8 @@ impl Validator {
         });
 
         Ok(Self {
+            logfile: config.logfile.clone(),
+            exit,
             stats_reporter_service,
             gossip_service,
             serve_repair_service,
@@ -1827,6 +1838,58 @@ impl Validator {
             xdp_retransmitter,
             _tpu_client_next_runtime: tpu_client_next_runtime,
         })
+    }
+
+    pub fn redirect_stderr_to_logfile(logfile: &str) -> Result<()> {
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(logfile)?;
+        unsafe {
+            libc::dup2(file.as_raw_fd(), libc::STDERR_FILENO);
+        }
+
+        Ok(())
+    }
+
+    /// Register and listen for signals that the validator will act on. Also,
+    /// monitor the validator's exit flag incase a shutdown has been initated
+    /// by one of the validator threads
+    pub fn listen_for_signals(&self) -> Result<()> {
+        // Support logrotate which will send SIGUSR1 when it is time to rotate
+        let sigusr1_flag = Arc::new(AtomicBool::new(false));
+        if self.logfile.is_some() {
+            signal_hook::flag::register(libc::SIGUSR1, sigusr1_flag.clone())?;
+        }
+
+        info!("Validator::listen_for_signals() has started");
+        loop {
+            if self.exit.load(Ordering::Relaxed) {
+                break;
+            }
+
+            if let Some(logfile) = self.logfile.as_ref() {
+                if sigusr1_flag.load(Ordering::Relaxed) {
+                    info!("Received SIGUSR1, reopening {logfile}");
+                    Self::redirect_stderr_to_logfile(logfile).inspect_err(|err| {
+                        // Signal to all other threads to teardown
+                        self.exit.store(true, Ordering::Relaxed);
+                        error!("Unable to redirect stderr to {logfile}: {err}");
+                    })?;
+                    // Reset the flag to `false` to allow detection of the
+                    // signal again and to avoid hitting this case every
+                    // iteration
+                    sigusr1_flag.store(false, Ordering::Relaxed);
+                }
+            }
+
+            // One second is a reasonable response time for these signals to
+            // avoid this thread from being overly active
+            thread::sleep(Duration::from_secs(1));
+        }
+        info!("Validator::listen_for_signals() has stopped");
+
+        Ok(())
     }
 
     // Used for notifying many nodes in parallel to exit
