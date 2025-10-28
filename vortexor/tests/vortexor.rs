@@ -14,7 +14,7 @@ use {
         nonblocking::testing_utilities::check_multiple_streams,
         quic::{
             DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STAKED_CONNECTIONS,
-            DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS, DEFAULT_TPU_COALESCE,
+            DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
         },
         socket::SocketAddrSpace,
         streamer::StakedNodes,
@@ -76,7 +76,6 @@ async fn test_vortexor() {
         0, // max_fwd_unstaked_connections
         DEFAULT_MAX_STREAMS_PER_MS,
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
-        DEFAULT_TPU_COALESCE,
         &keypair,
         cancel.clone(),
     );
