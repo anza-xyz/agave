@@ -290,9 +290,9 @@ fn network_simulator(thread_pool: &ThreadPool, network: &mut Network, max_conver
     network_values.par_iter().for_each(|node| {
         node.gossip.refresh_push_active_set(
             &node.keypair,
-            0,               // shred version
+            0,                                                     // shred version
             &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
-            None,            // gossip validators
+            None,                                                  // gossip validators
             &node.ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
@@ -462,9 +462,9 @@ fn network_run_push(
             network_values.par_iter().for_each(|node| {
                 node.gossip.refresh_push_active_set(
                     &node.keypair,
-                    0,               // shred version
+                    0,                                                     // shred version
                     &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
-                    None,            // gossip validators
+                    None,                                                  // gossip validators
                     &node.ping_cache,
                     &mut Vec::new(), // pings
                     &SocketAddrSpace::Unspecified,
@@ -790,9 +790,9 @@ fn test_prune_errors() {
     let ping_cache = new_ping_cache();
     crds_gossip.refresh_push_active_set(
         &keypair,
-        0,               // shred version
+        0,                                                     // shred version
         &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
-        None,            // gossip validators
+        None,                                                  // gossip validators
         &ping_cache,
         &mut Vec::new(), // pings
         &SocketAddrSpace::Unspecified,

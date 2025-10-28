@@ -978,7 +978,7 @@ pub(crate) mod tests {
             now,
             None,
             &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
-                PubkeyHasherBuilder::default()
+                PubkeyHasherBuilder::default(),
             ),
             PACKET_DATA_SIZE,
             &ping_cache,
@@ -1003,7 +1003,7 @@ pub(crate) mod tests {
             now,
             None,
             &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
-                PubkeyHasherBuilder::default()
+                PubkeyHasherBuilder::default(),
             ),
             PACKET_DATA_SIZE,
             &ping_cache,
@@ -1058,10 +1058,10 @@ pub(crate) mod tests {
                     &node_keypair,
                     0, // self_shred_version
                     now,
-                    None,             // gossip_validators
+                    None, // gossip_validators
                     &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
-                    PubkeyHasherBuilder::default()
-                ),  // stakes
+                        PubkeyHasherBuilder::default(),
+                    ), // stakes
                     PACKET_DATA_SIZE, // bloom_size
                     &ping_cache,
                     &mut pings,
@@ -1107,10 +1107,10 @@ pub(crate) mod tests {
             &node_keypair,
             0, // self_shred_version
             now,
-            None,             // gossip_validators
+            None, // gossip_validators
             &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
-                PubkeyHasherBuilder::default()
-            ),  // stakes
+                PubkeyHasherBuilder::default(),
+            ), // stakes
             PACKET_DATA_SIZE, // bloom_size
             &Mutex::new(ping_cache),
             &mut pings,
@@ -1259,7 +1259,7 @@ pub(crate) mod tests {
                 0,
                 None,
                 &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
-                    PubkeyHasherBuilder::default()
+                    PubkeyHasherBuilder::default(),
                 ),
                 PACKET_DATA_SIZE,
                 &ping_cache,
@@ -1301,9 +1301,9 @@ pub(crate) mod tests {
                     &node.make_timeouts(
                         node_pubkey,
                         &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
-                            PubkeyHasherBuilder::default()
+                            PubkeyHasherBuilder::default(),
                         ),
-                        Duration::default()
+                        Duration::default(),
                     ),
                     rsp.into_iter().flatten().collect(),
                     1,

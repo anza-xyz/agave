@@ -1164,7 +1164,8 @@ mod tests {
             .take(50)
             .collect();
         let stakes = std::iter::repeat_with(|| rng.gen_range(0..100u64));
-        let stakes: HashMap<Pubkey, u64, PubkeyHasherBuilder> = pubkeys.iter().copied().zip(stakes).collect();
+        let stakes: HashMap<Pubkey, u64, PubkeyHasherBuilder> =
+            pubkeys.iter().copied().zip(stakes).collect();
         let mut nodes: Vec<Node> = std::iter::repeat_with(|| {
             let pubkey = pubkeys.choose(&mut rng).copied().unwrap();
             let stake = stakes[&pubkey];

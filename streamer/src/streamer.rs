@@ -445,7 +445,10 @@ impl StakedNodes {
         (total_stake, min_stake, max_stake)
     }
 
-    pub fn new(stakes: Arc<HashMap<Pubkey, u64, solana_pubkey::PubkeyHasherBuilder>>, overrides: HashMap<Pubkey, u64>) -> Self {
+    pub fn new(
+        stakes: Arc<HashMap<Pubkey, u64, solana_pubkey::PubkeyHasherBuilder>>,
+        overrides: HashMap<Pubkey, u64>,
+    ) -> Self {
         let (total_stake, min_stake, max_stake) = Self::calculate_stake_stats(&stakes, &overrides);
         Self {
             stakes,
@@ -480,7 +483,10 @@ impl StakedNodes {
     }
 
     // Update the stake map given a new stakes map
-    pub fn update_stake_map(&mut self, stakes: Arc<HashMap<Pubkey, u64, solana_pubkey::PubkeyHasherBuilder>>) {
+    pub fn update_stake_map(
+        &mut self,
+        stakes: Arc<HashMap<Pubkey, u64, solana_pubkey::PubkeyHasherBuilder>>,
+    ) {
         let (total_stake, min_stake, max_stake) =
             Self::calculate_stake_stats(&stakes, &self.overrides);
 

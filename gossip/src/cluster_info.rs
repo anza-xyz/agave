@@ -1547,7 +1547,11 @@ impl ClusterInfo {
             .unwrap()
     }
 
-    fn handle_batch_prune_messages(&self, messages: Vec<PruneData>, stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>) {
+    fn handle_batch_prune_messages(
+        &self,
+        messages: Vec<PruneData>,
+        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+    ) {
         let _st = ScopedTimer::from(&self.stats.handle_batch_prune_messages_time);
         if messages.is_empty() {
             return;
@@ -2795,16 +2799,16 @@ mod tests {
             &cluster_info.keypair(),
             cluster_info.my_shred_version(),
             &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
-            None,            // gossip validators
+            None,                                                  // gossip validators
             &cluster_info.ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
         );
         let mut reqs = cluster_info.generate_new_gossip_requests(
             &thread_pool,
-            None,            // gossip_validators
+            None,                                                  // gossip_validators
             &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
-            true,            // generate_pull_requests
+            true,                                                  // generate_pull_requests
         );
         //assert none of the addrs are invalid.
         assert!(reqs.all(|(addr, _)| {
@@ -3307,11 +3311,7 @@ mod tests {
         let entrypoint = ContactInfo::new_localhost(&entrypoint_pubkey, timestamp());
         cluster_info.set_entrypoint(entrypoint.clone());
         let stakes = HashMap::with_hasher(PubkeyHasherBuilder::default());
-        let (pings, pulls) = cluster_info.old_pull_requests(
-            &thread_pool,
-            None,
-            &stakes,
-        );
+        let (pings, pulls) = cluster_info.old_pull_requests(&thread_pool, None, &stakes);
         assert!(pings.is_empty());
         assert_eq!(pulls.len(), MIN_NUM_BLOOM_FILTERS);
         for (addr, msg) in pulls {
@@ -3336,11 +3336,7 @@ mod tests {
         );
         cluster_info.handle_pull_response(vec![entrypoint_crdsvalue], &timeouts);
         let stakes = HashMap::with_hasher(PubkeyHasherBuilder::default());
-        let (pings, pulls) = cluster_info.old_pull_requests(
-            &thread_pool,
-            None,
-            &stakes,
-        );
+        let (pings, pulls) = cluster_info.old_pull_requests(&thread_pool, None, &stakes);
         assert_eq!(pings.len(), 1);
         assert_eq!(pulls.len(), MIN_NUM_BLOOM_FILTERS);
         assert_eq!(*cluster_info.entrypoints.read().unwrap(), vec![entrypoint]);

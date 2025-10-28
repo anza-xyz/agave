@@ -211,10 +211,8 @@ mod tests {
         let mut rng = ChaChaRng::from_seed([189u8; 32]);
         let pubkey = Pubkey::new_unique();
         let nodes: Vec<_> = repeat_with(Pubkey::new_unique).take(20).collect();
-        let mut stakes = HashMap::with_capacity_and_hasher(
-            nodes.len() + 1,
-            PubkeyHasherBuilder::default(),
-        );
+        let mut stakes =
+            HashMap::with_capacity_and_hasher(nodes.len() + 1, PubkeyHasherBuilder::default());
         let stake_values = repeat_with(|| rng.gen_range(1..MAX_STAKE));
         for (node, stake) in nodes.iter().copied().zip(stake_values).take(nodes.len()) {
             stakes.insert(node, stake);

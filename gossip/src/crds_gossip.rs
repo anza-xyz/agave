@@ -439,9 +439,9 @@ mod test {
         let ping_cache = Mutex::new(ping_cache);
         crds_gossip.refresh_push_active_set(
             &keypair,
-            0,               // shred version
+            0,                                                     // shred version
             &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
-            None,            // gossip validators
+            None,                                                  // gossip validators
             &ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,

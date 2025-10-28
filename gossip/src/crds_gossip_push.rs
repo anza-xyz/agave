@@ -436,7 +436,7 @@ mod tests {
         push.refresh_push_active_set(
             &crds,
             &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
-            None,            // gossip_validtors
+            None,                                                  // gossip_validtors
             &Keypair::new(),
             0, // self_shred_version
             &ping_cache,
@@ -505,7 +505,7 @@ mod tests {
         push.refresh_push_active_set(
             &crds,
             &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
-            None,            // gossip_validators
+            None,                                                  // gossip_validators
             &Keypair::new(),
             0, // self_shred_version
             &ping_cache,
@@ -550,7 +550,7 @@ mod tests {
         push.refresh_push_active_set(
             &crds,
             &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
-            None,            // gossip_validators
+            None,                                                  // gossip_validators
             &Keypair::new(),
             0, // self_shred_version
             &ping_cache,
@@ -600,7 +600,7 @@ mod tests {
         push.refresh_push_active_set(
             &crds,
             &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
-            None,            // gossip_validators
+            None,                                                  // gossip_validators
             &Keypair::new(),
             0, // self_shred_version
             &ping_cache,
