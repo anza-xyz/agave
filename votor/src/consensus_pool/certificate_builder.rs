@@ -1,5 +1,5 @@
 use {
-    crate::common::{certificate_limits_and_vote_types, VoteType},
+    crate::common::certificate_limits_and_votes,
     agave_votor_messages::consensus_message::{Certificate, CertificateType, VoteMessage},
     bitvec::prelude::*,
     solana_bls_signatures::{BlsError, SignatureProjective},
@@ -154,38 +154,38 @@ impl BuilderType {
     /// Aggregates new [`VoteMessage`]s into the builder.
     fn aggregate(
         &mut self,
-        cert_type: &CertificateType,
+        cert_type: CertificateType,
         msgs: &[VoteMessage],
     ) -> Result<(), AggregateError> {
-        let vote_types = certificate_limits_and_vote_types(cert_type).1;
+        let votes = certificate_limits_and_votes(cert_type).1;
         match self {
             Self::Skip {
                 signature0,
                 bitmap0,
                 sig_and_bitmap1,
             } => {
-                assert_eq!(vote_types.len(), 2);
+                assert_eq!(votes.len(), 2);
                 for msg in msgs {
-                    let vote_type = VoteType::get_type(&msg.vote);
-                    if vote_type == vote_types[0] {
+                    if msg.vote == votes[0] {
                         try_set_bitmap(bitmap0, msg.rank)?;
                     } else {
-                        assert_eq!(vote_type, vote_types[1]);
+                        assert_eq!(msg.vote, votes[1]);
                         let (_, bitmap) = sig_and_bitmap1
                             .get_or_insert((SignatureProjective::identity(), default_bitvec()));
                         try_set_bitmap(bitmap, msg.rank)?;
                     }
                 }
-                signature0.aggregate_with(msgs.iter().filter_map(|msg| {
-                    (VoteType::get_type(&msg.vote) == vote_types[0]).then_some(&msg.signature)
-                }))?;
+                signature0.aggregate_with(
+                    msgs.iter()
+                        .filter_map(|msg| (msg.vote == votes[0]).then_some(&msg.signature)),
+                )?;
                 sig_and_bitmap1
                     .as_mut()
                     .map(|(signature, _)| {
-                        signature.aggregate_with(msgs.iter().filter_map(|msg| {
-                            (VoteType::get_type(&msg.vote) == vote_types[1])
-                                .then_some(&msg.signature)
-                        }))
+                        signature.aggregate_with(
+                            msgs.iter()
+                                .filter_map(|msg| (msg.vote == votes[1]).then_some(&msg.signature)),
+                        )
                     })
                     .unwrap_or(Ok(()))?;
                 Ok(())
@@ -196,13 +196,12 @@ impl BuilderType {
                 bitmap0,
                 bitmap1,
             } => {
-                assert_eq!(vote_types.len(), 2);
+                assert_eq!(votes.len(), 2);
                 for msg in msgs {
-                    let vote_type = VoteType::get_type(&msg.vote);
-                    if vote_type == vote_types[0] {
+                    if msg.vote == votes[0] {
                         try_set_bitmap(bitmap0, msg.rank)?;
                     } else {
-                        assert_eq!(vote_type, vote_types[1]);
+                        assert_eq!(msg.vote, votes[1]);
                         let bitmap = bitmap1.get_or_insert(default_bitvec());
                         try_set_bitmap(bitmap, msg.rank)?;
                     }
@@ -211,9 +210,9 @@ impl BuilderType {
             }
 
             Self::SingleVote { signature, bitmap } => {
-                assert_eq!(vote_types.len(), 1);
+                assert_eq!(votes.len(), 1);
                 for msg in msgs {
-                    assert_eq!(VoteType::get_type(&msg.vote), vote_types[0]);
+                    assert_eq!(msg.vote, votes[0]);
                     try_set_bitmap(bitmap, msg.rank)?;
                 }
                 Ok(signature.aggregate_with(msgs.iter().map(|m| &m.signature))?)
@@ -268,7 +267,7 @@ impl CertificateBuilder {
 
     /// Aggregates new [`VoteMessage`]s into the builder.
     pub(super) fn aggregate(&mut self, msgs: &[VoteMessage]) -> Result<(), AggregateError> {
-        self.builder_type.aggregate(&self.cert_type, msgs)
+        self.builder_type.aggregate(self.cert_type, msgs)
     }
 
     /// Builds a [`Certificate`] from the builder.
