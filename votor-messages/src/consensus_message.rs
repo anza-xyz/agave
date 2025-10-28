@@ -25,7 +25,7 @@ pub struct VoteMessage {
     pub vote: Vote,
     /// The signature.
     pub signature: BLSSignature,
-    /// The rank of the validator to help find the validator's [`Pubkey`].
+    /// The rank of the validator.
     pub rank: u16,
 }
 
