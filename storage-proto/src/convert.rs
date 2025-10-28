@@ -423,12 +423,7 @@ impl From<TransactionStatusMeta> for generated::TransactionStatusMeta {
             compute_units_consumed,
             cost_units,
         } = value;
-        let err = match status {
-            Ok(()) => None,
-            Err(err) => Some(generated::TransactionError {
-                err: bincode::serialize(&err).expect("transaction error to serialize to bytes"),
-            }),
-        };
+        let err = status.err().map(Into::into);
         let inner_instructions_none = inner_instructions.is_none();
         let inner_instructions = inner_instructions
             .unwrap_or_default()
@@ -517,9 +512,9 @@ impl TryFrom<generated::TransactionStatusMeta> for TransactionStatusMeta {
             compute_units_consumed,
             cost_units,
         } = value;
-        let status = match &err {
+        let status = match err {
             None => Ok(()),
-            Some(tx_error) => Err(bincode::deserialize(&tx_error.err)?),
+            Some(e) => Err(e.into()),
         };
         let inner_instructions = if inner_instructions_none {
             None
