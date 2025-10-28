@@ -7,8 +7,7 @@
 //! `LeaderUpdaterService` and `PinnedLeaderUpdater`, where
 //! `LeaderUpdaterService` keeps [`LeaderTpuService`] internal to this module.
 //! Yet, it also allows to implement custom leader estimation.
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
+
 use {
     crate::logging::error,
     async_trait::async_trait,
@@ -119,7 +118,6 @@ impl LeaderUpdater for LeaderUpdaterService {
 
 /// `PinnedLeaderUpdater` is an implementation of [`LeaderUpdater`] that always
 /// returns a fixed, "pinned" leader address. It is mainly used for testing.
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 struct PinnedLeaderUpdater {
     pub address: Vec<SocketAddr>,
 }
