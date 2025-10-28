@@ -17,11 +17,13 @@ use {
 
 pub mod error;
 pub mod leader_tpu_cache_service;
+pub mod recent_leader_slots;
 pub mod slot_receiver;
 pub mod websocket_slot_update_service;
 pub use {
     error::NodeAddressServiceError,
     leader_tpu_cache_service::{LeaderTpuCacheService, LeaderTpuCacheServiceConfig},
+    recent_leader_slots::RecentLeaderSlots,
     slot_receiver::SlotReceiver,
     websocket_slot_update_service::WebsocketSlotUpdateService,
 };
@@ -38,6 +40,7 @@ pub struct NodeAddressService {
 }
 
 impl NodeAddressService {
+    /// Run the [`NodeAddressService`].
     pub async fn run(
         rpc_client: Arc<RpcClient>,
         websocket_url: &str,
@@ -61,26 +64,24 @@ impl NodeAddressService {
         })
     }
 
-    pub async fn shutdown(self) -> Result<(), NodeAddressServiceError> {
+    pub async fn shutdown(&mut self) -> Result<(), NodeAddressServiceError> {
         self.slot_update_service.shutdown().await?;
         self.leader_cache_service.shutdown().await?;
         Ok(())
     }
 
     pub fn estimated_current_slot(&self) -> Slot {
-        self.slot_receiver.slot_with_timestamp().0
+        self.slot_receiver.slot().first_slot()
     }
 }
 
 #[async_trait]
 impl LeaderUpdater for NodeAddressService {
-    //TODO(klykov): we need to consier removing next leaders with lookahead_leaders in the future
-    fn next_leaders(&mut self, _lookahead_leaders: usize) -> Vec<SocketAddr> {
-        self.leaders_receiver.leaders()
+    fn next_leaders(&mut self, lookahead_leaders: usize) -> Vec<SocketAddr> {
+        self.leaders_receiver.next_leaders(lookahead_leaders)
     }
 
-    //TODO(klykov): stop should return error to handle join and also stop should
-    //consume the object. We cannot properly implement it because it will break
-    //API.
-    async fn stop(&mut self) {}
+    async fn stop(&mut self) {
+        self.shutdown().await.ok();
+    }
 }

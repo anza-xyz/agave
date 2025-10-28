@@ -22,10 +22,8 @@ use {
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
         },
-        leader_updater::{LeaderUpdater, PinnedLeaderUpdater},
-        node_address_service::{
-            LeaderTpuCacheServiceConfig, NodeAddressService, NodeAddressServiceError,
-        },
+        leader_updater::create_leader_updater_with_config,
+        node_address_service::LeaderTpuCacheServiceConfig,
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
         ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, SendTransactionStats,
@@ -72,25 +70,6 @@ fn test_config(stake_identity: Option<Keypair>) -> ConnectionWorkersSchedulerCon
     }
 }
 
-async fn create_leader_updater(
-    rpc_client: Arc<RpcClient>,
-    websocket_url: String,
-    pinned_address: Option<SocketAddr>,
-    config: Option<LeaderTpuCacheServiceConfig>,
-    cancel: CancellationToken,
-) -> Result<Box<dyn LeaderUpdater>, NodeAddressServiceError> {
-    if let Some(pinned_address) = pinned_address {
-        return Ok(Box::new(PinnedLeaderUpdater {
-            address: vec![pinned_address],
-        }));
-    }
-
-    let node_address_service =
-        NodeAddressService::run(rpc_client, &websocket_url, config.unwrap(), cancel).await?;
-
-    Ok(Box::new(node_address_service))
-}
-
 async fn setup_connection_worker_scheduler(
     tpu_address: SocketAddr,
     transaction_receiver: Receiver<TransactionBatch>,
@@ -113,11 +92,11 @@ async fn setup_connection_worker_scheduler(
     // Setup sending txs
     let cancel = CancellationToken::new();
     let updater_config = LeaderTpuCacheServiceConfig {
-        lookahead_leaders: config.leaders_fanout.connect,
+        lookahead_leaders: config.leaders_fanout.connect as u64,
         refresh_nodes_info_every: Duration::from_millis(DEFAULT_MS_PER_SLOT),
         max_consecutive_failures: 1,
     };
-    let leader_updater = create_leader_updater(
+    let leader_updater = create_leader_updater_with_config(
         rpc_client,
         websocket_url,
         Some(tpu_address),

@@ -1,28 +1,24 @@
+//! Error for [`NodeAddressService`].
 use {
-    solana_pubsub_client::nonblocking::pubsub_client::PubsubClientError,
-    solana_rpc_client_api::client_error::Error as ClientError, thiserror::Error,
+    crate::node_address_service::{
+        leader_tpu_cache_service::LeaderTpuCacheServiceError, slot_receiver::SlotReceiverError,
+        websocket_slot_update_service::WebsocketSlotUpdateServiceError,
+    },
+    solana_rpc_client_api::client_error::Error as ClientError,
+    thiserror::Error,
 };
 
 #[derive(Debug, Error)]
 pub enum NodeAddressServiceError {
     #[error(transparent)]
-    PubsubError(#[from] PubsubClientError),
-
-    #[error(transparent)]
     RpcError(#[from] ClientError),
 
-    #[error("Failed to get slot leaders connecting to: {0}")]
-    SlotLeadersConnectionFailed(String),
-
-    #[error("Failed find any cluster node info for upcoming leaders, timeout: {0}")]
-    ClusterNodeNotFound(String),
+    #[error(transparent)]
+    SlotReceiverError(#[from] SlotReceiverError),
 
     #[error(transparent)]
-    JoinError(#[from] tokio::task::JoinError),
+    WebsocketSlotUpdateServiceError(#[from] WebsocketSlotUpdateServiceError),
 
-    #[error("Unexpectly dropped a channel.")]
-    ChannelClosed,
-
-    #[error("Failed to initialize NodeAddressService.")]
-    InitializationFailed,
+    #[error(transparent)]
+    LeaderTpuCacheServiceError(#[from] LeaderTpuCacheServiceError),
 }

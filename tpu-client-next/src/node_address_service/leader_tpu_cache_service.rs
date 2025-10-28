@@ -1,14 +1,22 @@
+//! This module provides [`LeaderTpuCacheService`] structure along with
+//! [`LeaderUpdateReceiver`], [`LeaderTpuCacheServiceConfig`].
+//! [`LeaderTpuCacheService`] tracks the current and upcoming Solana leader
+//! nodes and their TPU socket addresses.
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    crate::node_address_service::{NodeAddressServiceError, SlotReceiver},
+    crate::{
+        connection_workers_scheduler::extract_send_leaders,
+        logging::{debug, error, info, warn},
+        node_address_service::{slot_receiver::EstimatedSlot, SlotReceiver},
+    },
     async_trait::async_trait,
-    log::*,
     solana_clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_pubkey::Pubkey,
     solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
-    solana_rpc_client_api::response::RpcContactInfo,
+    solana_rpc_client_api::{client_error::Error as ClientError, response::RpcContactInfo},
     std::{collections::HashMap, future::Future, net::SocketAddr, str::FromStr, sync::Arc},
+    thiserror::Error,
     tokio::{
         sync::watch,
         task::JoinHandle,
@@ -23,59 +31,69 @@ const MAX_FANOUT_SLOTS: u64 = 100;
 /// Configuration for the [`LeaderTpuCacheService`].
 #[derive(Debug, Clone)]
 pub struct LeaderTpuCacheServiceConfig {
-    /// max number of leaders to look ahead for
-    pub lookahead_leaders: usize,
-    /// how often to refresh cluster nodes info
+    /// max number of leaders to look ahead for, not necessary unique.
+    pub lookahead_leaders: u64,
+    /// how often to refresh cluster nodes info.
     pub refresh_nodes_info_every: Duration,
-    /// maximum number of consecutive failures to tolerate before
+    /// maximum number of consecutive failures to tolerate.
     pub max_consecutive_failures: usize,
 }
 
 /// [`LeaderTpuCacheService`] is a background task that tracks the current and
-/// upcoming Solana leader nodes and updates their TPU socket addresses in a
-/// watch channel for downstream consumers.
+/// upcoming Solana leader nodes and updates their TPU socket addresses
+/// encapsulated in [`LeaderUpdateReceiver`] for downstream consumers.
 pub struct LeaderTpuCacheService {
-    handle: JoinHandle<Result<(), NodeAddressServiceError>>,
+    handle: Option<JoinHandle<Result<(), LeaderTpuCacheServiceError>>>,
     cancel: CancellationToken,
 }
 
+/// Receiver for leader TPU socket address updates from
+/// [`LeaderTpuCacheService`].
 #[derive(Clone)]
 pub struct LeaderUpdateReceiver {
-    receiver: watch::Receiver<(Slot, Vec<SocketAddr>)>,
+    receiver: watch::Receiver<(Vec<SocketAddr>, bool)>,
 }
 
 impl LeaderUpdateReceiver {
-    pub fn leaders(&self) -> Vec<SocketAddr> {
-        let (_, leaders) = self.receiver.borrow().clone();
-        leaders
+    pub fn next_leaders(&self, lookahead_leaders: usize) -> Vec<SocketAddr> {
+        let (leaders, extended) = self.receiver.borrow().clone();
+        let lookahead_leaders = if extended {
+            lookahead_leaders.saturating_add(1)
+        } else {
+            lookahead_leaders
+        };
+        extract_send_leaders(&leaders, lookahead_leaders)
     }
 }
 
 impl LeaderTpuCacheService {
+    /// Run the [`LeaderTpuCacheService`], returning receiver and the service.
     pub async fn run(
         rpc_client: Arc<impl ClusterInfoProvider + 'static>,
         mut slot_receiver: SlotReceiver,
         config: LeaderTpuCacheServiceConfig,
         cancel: CancellationToken,
-    ) -> Result<(LeaderUpdateReceiver, Self), NodeAddressServiceError> {
-        let lookahead_slots =
-            (config.lookahead_leaders as u64).saturating_mul(NUM_CONSECUTIVE_LEADER_SLOTS);
-
+    ) -> Result<(LeaderUpdateReceiver, Self), LeaderTpuCacheServiceError> {
         let (mut leader_tpu_map, mut epoch_info, mut slot_leaders) = Self::initialize_state(
             rpc_client.as_ref(),
             slot_receiver.clone(),
             config.max_consecutive_failures,
         )
         .await?;
-        let (current_slot, _timestamp) = slot_receiver.slot_with_timestamp();
+        let (current_slot, lookahead_leaders) = get_slot_and_lookahead(
+            slot_receiver.slot(),
+            &slot_leaders,
+            config.lookahead_leaders,
+        );
         let leaders = Self::leader_sockets(
             current_slot,
-            lookahead_slots,
+            lookahead_leaders,
             &slot_leaders,
             &leader_tpu_map,
         );
 
-        let (leaders_sender, leaders_receiver) = watch::channel((current_slot, leaders));
+        let (leaders_sender, leaders_receiver) =
+            watch::channel((leaders, config.lookahead_leaders != lookahead_leaders));
 
         let cancel_clone = cancel.clone();
         let main_loop = async move {
@@ -100,7 +118,7 @@ impl LeaderTpuCacheService {
                             break;
                         }
 
-                        let (estimated_current_slot, _start_time) = slot_receiver.slot_with_timestamp();
+                        let estimated_current_slot = slot_receiver.slot().first_slot();
                         if estimated_current_slot > epoch_info.last_slot_in_epoch {
                             try_update(
                                 "epoch info",
@@ -120,12 +138,16 @@ impl LeaderTpuCacheService {
                             ).await?;
                         }
 
-                        let (current_slot, _timestamp) = slot_receiver.slot_with_timestamp();
-                        let leaders = Self::leader_sockets(current_slot, lookahead_slots, &slot_leaders, &leader_tpu_map);
+                        let (current_slot, lookahead_leaders) = get_slot_and_lookahead(
+                            slot_receiver.slot(),
+                            &slot_leaders,
+                            config.lookahead_leaders,
+                        );
+                        let leaders = Self::leader_sockets(current_slot, lookahead_leaders, &slot_leaders, &leader_tpu_map);
 
-                        if let Err(e) = leaders_sender.send((current_slot, leaders)) {
+                        if let Err(e) = leaders_sender.send((leaders, config.lookahead_leaders != lookahead_leaders)) {
                             warn!("Unexpectedly dropped leaders_sender: {e}");
-                            return Err(NodeAddressServiceError::ChannelClosed);
+                            return Err(LeaderTpuCacheServiceError::ChannelClosed);
                         }
                     }
 
@@ -145,15 +167,18 @@ impl LeaderTpuCacheService {
                 receiver: leaders_receiver,
             },
             Self {
-                handle,
+                handle: Some(handle),
                 cancel: cancel_clone,
             },
         ))
     }
 
-    pub async fn shutdown(self) -> Result<(), NodeAddressServiceError> {
+    /// Gracefully shutdown the [`LeaderTpuCacheService`].
+    pub async fn shutdown(&mut self) -> Result<(), LeaderTpuCacheServiceError> {
         self.cancel.cancel();
-        self.handle.await??;
+        if let Some(handle) = self.handle.take() {
+            handle.await??;
+        }
         Ok(())
     }
 
@@ -161,12 +186,12 @@ impl LeaderTpuCacheService {
     /// fanout size.
     fn leader_sockets(
         estimated_current_slot: Slot,
-        fanout_slots: u64,
+        lookahead_leaders: u64,
         slot_leaders: &SlotLeaders,
         leader_tpu_map: &LeaderTpuMap,
     ) -> Vec<SocketAddr> {
-        let mut leader_sockets =
-            Vec::with_capacity(fanout_slots.div_ceil(NUM_CONSECUTIVE_LEADER_SLOTS) as usize);
+        let fanout_slots = lookahead_leaders.saturating_mul(NUM_CONSECUTIVE_LEADER_SLOTS);
+        let mut leader_sockets = Vec::with_capacity(lookahead_leaders as usize);
         // `first_slot` might have been advanced since caller last read the
         // `estimated_current_slot` value. Take the greater of the two values to
         // ensure we are reading from the latest leader schedule.
@@ -200,7 +225,7 @@ impl LeaderTpuCacheService {
         rpc_client: &impl ClusterInfoProvider,
         slot_receiver: SlotReceiver,
         max_attempts: usize,
-    ) -> Result<(LeaderTpuMap, EpochInfo, SlotLeaders), NodeAddressServiceError> {
+    ) -> Result<(LeaderTpuMap, EpochInfo, SlotLeaders), LeaderTpuCacheServiceError> {
         const ATTEMPTS_SLEEP_DURATION: Duration = Duration::from_millis(1000);
         let mut leader_tpu_map = None;
         let mut epoch_info = None;
@@ -211,7 +236,7 @@ impl LeaderTpuCacheService {
                 leader_tpu_map = LeaderTpuMap::new(rpc_client).await.ok();
             }
             if epoch_info.is_none() {
-                epoch_info = EpochInfo::new(rpc_client, slot_receiver.slot_with_timestamp().0)
+                epoch_info = EpochInfo::new(rpc_client, slot_receiver.slot().first_slot())
                     .await
                     .ok();
             }
@@ -220,7 +245,7 @@ impl LeaderTpuCacheService {
                 if slot_leaders.is_none() {
                     slot_leaders = SlotLeaders::new(
                         rpc_client,
-                        slot_receiver.slot_with_timestamp().0,
+                        slot_receiver.slot().first_slot(),
                         epoch_info.slots_in_epoch,
                     )
                     .await
@@ -234,7 +259,7 @@ impl LeaderTpuCacheService {
             sleep(ATTEMPTS_SLEEP_DURATION).await;
         }
         if num_attempts >= max_attempts {
-            Err(NodeAddressServiceError::InitializationFailed)
+            Err(LeaderTpuCacheServiceError::InitializationFailed)
         } else {
             Ok((
                 leader_tpu_map.unwrap(),
@@ -245,16 +270,70 @@ impl LeaderTpuCacheService {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum LeaderTpuCacheServiceError {
+    #[error(transparent)]
+    RpcError(#[from] ClientError),
+
+    #[error("Failed to get slot leaders connecting to: {0}")]
+    SlotLeadersConnectionFailed(String),
+
+    #[error("Failed find any cluster node info for upcoming leaders, timeout: {0}")]
+    ClusterNodeNotFound(String),
+
+    #[error(transparent)]
+    JoinError(#[from] tokio::task::JoinError),
+
+    #[error("Unexpectly dropped a channel.")]
+    ChannelClosed,
+
+    #[error("Failed to initialize LeaderTpuCacheService.")]
+    InitializationFailed,
+}
+
+#[async_trait]
+pub trait ClusterInfoProvider: Send + Sync {
+    async fn leader_tpu_map(
+        &self,
+    ) -> Result<HashMap<Pubkey, SocketAddr>, LeaderTpuCacheServiceError>;
+    async fn epoch_info(
+        &self,
+        estimated_current_slot: Slot,
+    ) -> Result<(Slot, Slot), LeaderTpuCacheServiceError>;
+    async fn slot_leaders(
+        &self,
+        estimated_current_slot: Slot,
+        slots_in_epoch: Slot,
+    ) -> Result<Vec<Pubkey>, LeaderTpuCacheServiceError>;
+}
+
+fn get_slot_and_lookahead(
+    estimated_slot: EstimatedSlot,
+    slot_leaders: &SlotLeaders,
+    lookahead_leaders: u64,
+) -> (Slot, u64) {
+    match estimated_slot {
+        EstimatedSlot::Single(slot) => {
+            if slot_leaders.is_last_slot_in_window(slot).unwrap_or(false) {
+                (slot, lookahead_leaders.saturating_add(1))
+            } else {
+                (slot, lookahead_leaders)
+            }
+        }
+        EstimatedSlot::Multiple([slot, _]) => (slot, lookahead_leaders.saturating_add(1)),
+    }
+}
+
 async fn try_update<F, Fut, T>(
     label: &str,
     data: &mut T,
     make_call: F,
     num_failures: &mut usize,
     max_failures: usize,
-) -> Result<(), NodeAddressServiceError>
+) -> Result<(), LeaderTpuCacheServiceError>
 where
     F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<T, NodeAddressServiceError>>,
+    Fut: Future<Output = Result<T, LeaderTpuCacheServiceError>>,
 {
     match make_call().await {
         Ok(result) => {
@@ -284,7 +363,9 @@ struct LeaderTpuMap {
 }
 
 impl LeaderTpuMap {
-    async fn new(rpc_client: &impl ClusterInfoProvider) -> Result<Self, NodeAddressServiceError> {
+    async fn new(
+        rpc_client: &impl ClusterInfoProvider,
+    ) -> Result<Self, LeaderTpuCacheServiceError> {
         let leader_tpu_map = rpc_client.leader_tpu_map().await?;
         Ok(Self {
             last_cluster_refresh: Instant::now(),
@@ -308,7 +389,7 @@ impl SlotLeaders {
         rpc_client: &impl ClusterInfoProvider,
         estimated_current_slot: Slot,
         slots_in_epoch: Slot,
-    ) -> Result<Self, NodeAddressServiceError> {
+    ) -> Result<Self, LeaderTpuCacheServiceError> {
         Ok(Self {
             first_slot: estimated_current_slot,
             leaders: rpc_client
@@ -329,6 +410,19 @@ impl SlotLeaders {
             None
         }
     }
+
+    fn is_last_slot_in_window(&self, slot: Slot) -> Option<bool> {
+        if slot >= self.first_slot {
+            let index = (slot - self.first_slot) as usize;
+            if index + 1 < self.leaders.len() {
+                Some(self.leaders[index] != self.leaders[index + 1])
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(PartialEq, Debug)]
@@ -341,7 +435,7 @@ impl EpochInfo {
     async fn new(
         rpc_client: &impl ClusterInfoProvider,
         estimated_current_slot: Slot,
-    ) -> Result<Self, NodeAddressServiceError> {
+    ) -> Result<Self, LeaderTpuCacheServiceError> {
         let (slots_in_epoch, last_slot_in_epoch) =
             rpc_client.epoch_info(estimated_current_slot).await?;
         Ok(Self {
@@ -352,33 +446,21 @@ impl EpochInfo {
 }
 
 #[async_trait]
-pub trait ClusterInfoProvider: Send + Sync {
-    async fn leader_tpu_map(&self) -> Result<HashMap<Pubkey, SocketAddr>, NodeAddressServiceError>;
-    async fn epoch_info(
-        &self,
-        estimated_current_slot: Slot,
-    ) -> Result<(Slot, Slot), NodeAddressServiceError>;
-    async fn slot_leaders(
-        &self,
-        estimated_current_slot: Slot,
-        slots_in_epoch: Slot,
-    ) -> Result<Vec<Pubkey>, NodeAddressServiceError>;
-}
-
-#[async_trait]
 impl ClusterInfoProvider for RpcClient {
-    async fn leader_tpu_map(&self) -> Result<HashMap<Pubkey, SocketAddr>, NodeAddressServiceError> {
+    async fn leader_tpu_map(
+        &self,
+    ) -> Result<HashMap<Pubkey, SocketAddr>, LeaderTpuCacheServiceError> {
         let cluster_nodes = self.get_cluster_nodes().await;
         match cluster_nodes {
             Ok(cluster_nodes) => Ok(extract_cluster_tpu_sockets(cluster_nodes)),
-            Err(err) => Err(NodeAddressServiceError::RpcError(err)),
+            Err(err) => Err(LeaderTpuCacheServiceError::RpcError(err)),
         }
     }
 
     async fn epoch_info(
         &self,
         estimated_current_slot: Slot,
-    ) -> Result<(Slot, Slot), NodeAddressServiceError> {
+    ) -> Result<(Slot, Slot), LeaderTpuCacheServiceError> {
         match self.get_epoch_schedule().await {
             Ok(epoch_schedule) => {
                 let epoch = epoch_schedule.get_epoch(estimated_current_slot);
@@ -390,7 +472,7 @@ impl ClusterInfoProvider for RpcClient {
                 );
                 Ok((slots_in_epoch, last_slot_in_epoch))
             }
-            Err(err) => Err(NodeAddressServiceError::RpcError(err)),
+            Err(err) => Err(LeaderTpuCacheServiceError::RpcError(err)),
         }
     }
 
@@ -398,14 +480,14 @@ impl ClusterInfoProvider for RpcClient {
         &self,
         estimated_current_slot: Slot,
         slots_in_epoch: Slot,
-    ) -> Result<Vec<Pubkey>, NodeAddressServiceError> {
+    ) -> Result<Vec<Pubkey>, LeaderTpuCacheServiceError> {
         let slot_leaders = self
             .get_slot_leaders(estimated_current_slot, fanout(slots_in_epoch))
             .await;
         debug!("Fetched slot leaders from slot {estimated_current_slot} for {slots_in_epoch}. ");
         match slot_leaders {
             Ok(slot_leaders) => Ok(slot_leaders),
-            Err(err) => Err(NodeAddressServiceError::RpcError(err)),
+            Err(err) => Err(LeaderTpuCacheServiceError::RpcError(err)),
         }
     }
 }
@@ -451,7 +533,6 @@ mod tests {
             client_error,
             request::{self, RpcRequest},
         },
-        solana_time_utils::timestamp,
         std::{
             net::{IpAddr, Ipv4Addr},
             sync::{
@@ -744,7 +825,7 @@ mod tests {
         let rpc_client =
             create_mock_rpc_client(state_update_receiver, nodes.clone(), slot, slots_in_epoch);
 
-        let (_tx, receiver) = watch::channel((slot, timestamp()));
+        let (_tx, receiver) = watch::channel(EstimatedSlot::Single(slot));
         let slot_receiver = SlotReceiver::new(receiver);
 
         let (leader_tpu_map, epoch_info, slot_leaders) =
@@ -780,12 +861,7 @@ mod tests {
         let expected_sockets: Vec<SocketAddr> =
             vec![nodes[&sorted_nodes[0]], nodes[&sorted_nodes[1]]];
         assert_eq!(
-            LeaderTpuCacheService::leader_sockets(
-                slot,
-                2 * NUM_CONSECUTIVE_LEADER_SLOTS,
-                &slot_leaders,
-                &leader_tpu_map
-            ),
+            LeaderTpuCacheService::leader_sockets(slot, 2, &slot_leaders, &leader_tpu_map),
             expected_sockets
         );
     }
@@ -815,7 +891,7 @@ mod tests {
         let slot = 0;
         let rpc_client = create_failing_mock_rpc_client(slot, 32, vec![Step::Fail]);
 
-        let (_tx, receiver) = watch::channel((slot, timestamp()));
+        let (_tx, receiver) = watch::channel(EstimatedSlot::Single(slot));
         let slot_receiver = SlotReceiver::new(receiver);
         assert!(
             LeaderTpuCacheService::initialize_state(rpc_client.as_ref(), slot_receiver, 1)
@@ -830,7 +906,7 @@ mod tests {
 
         let rpc_client = create_failing_mock_rpc_client(slot, 32, vec![Step::Fail]);
 
-        let (_slot_sender, slot_receiver) = watch::channel((0u64, timestamp()));
+        let (_slot_sender, slot_receiver) = watch::channel(EstimatedSlot::Single(0));
         let slot_receiver = SlotReceiver::new(slot_receiver);
 
         let cancel = CancellationToken::new();
@@ -856,11 +932,11 @@ mod tests {
         let (_state_update_sender, state_update_receiver) = mpsc::channel(1);
         let rpc_client = create_mock_rpc_client(state_update_receiver, nodes, 0, 32);
 
-        let (_slot_sender, slot_receiver) = watch::channel((0u64, timestamp()));
+        let (_slot_sender, slot_receiver) = watch::channel(EstimatedSlot::Single(0));
         let slot_receiver = SlotReceiver::new(slot_receiver);
 
         let cancel = CancellationToken::new();
-        let (_leader_update_receiver, leader_cache_service) = LeaderTpuCacheService::run(
+        let (_leader_update_receiver, mut leader_cache_service) = LeaderTpuCacheService::run(
             rpc_client.clone(),
             slot_receiver,
             LeaderTpuCacheServiceConfig {
@@ -880,9 +956,9 @@ mod tests {
     fn get_expected_sockets(
         nodes: &HashMap<Pubkey, SocketAddr>,
         start_index: usize,
-        lookahead_leaders: usize,
+        lookahead_leaders: u64,
     ) -> Vec<SocketAddr> {
-        let lookahead_slots = lookahead_leaders * (NUM_CONSECUTIVE_LEADER_SLOTS as usize);
+        let lookahead_slots = lookahead_leaders * NUM_CONSECUTIVE_LEADER_SLOTS;
         let expected_leaders = generate_slot_leaders(nodes);
         debug!("Expected leaders: {expected_leaders:?}");
 
@@ -890,7 +966,7 @@ mod tests {
             .iter()
             .cycle()
             .skip(start_index % expected_leaders.len())
-            .take(lookahead_slots)
+            .take(lookahead_slots as usize)
             .step_by(NUM_CONSECUTIVE_LEADER_SLOTS as usize)
             .cloned()
             .collect();
@@ -904,7 +980,7 @@ mod tests {
     struct TestFixture {
         rpc_client: Arc<RpcClient>,
         nodes: HashMap<Pubkey, SocketAddr>,
-        slot_sender: watch::Sender<(u64, u64)>,
+        slot_sender: watch::Sender<EstimatedSlot>,
         state_update_sender: mpsc::Sender<ClusterStateUpdate>,
         leaders_receiver: LeaderUpdateReceiver,
         leader_cache_service: LeaderTpuCacheService,
@@ -915,7 +991,7 @@ mod tests {
             slots_in_epoch: u64,
             current_slot: u64,
             num_nodes: usize,
-            lookahead_leaders: usize,
+            lookahead_leaders: u64,
             refresh_every: Duration,
             max_consecutive_failures: usize,
         ) -> Self {
@@ -941,7 +1017,7 @@ mod tests {
             slots_in_epoch: u64,
             current_slot: u64,
             num_nodes: usize,
-            lookahead_leaders: usize,
+            lookahead_leaders: u64,
             refresh_every: Duration,
             max_consecutive_failures: usize,
             plans: HashMap<&'static str, Plan>,
@@ -960,7 +1036,7 @@ mod tests {
                 RpcClientConfig::with_commitment(CommitmentConfig::default()),
             ));
 
-            let (slot_sender, slot_receiver) = watch::channel((current_slot, timestamp()));
+            let (slot_sender, slot_receiver) = watch::channel(EstimatedSlot::Single(current_slot));
             let slot_receiver = SlotReceiver::new(slot_receiver);
 
             // run service
@@ -987,7 +1063,7 @@ mod tests {
             }
         }
 
-        async fn teardown(self) -> Result<(), NodeAddressServiceError> {
+        async fn teardown(&mut self) -> Result<(), LeaderTpuCacheServiceError> {
             self.leader_cache_service.shutdown().await?;
             Ok(())
         }
@@ -1012,7 +1088,10 @@ mod tests {
 
         // trigger a new slot update
         let next_slot = current_slot + 1;
-        fixture.slot_sender.send((next_slot, timestamp())).unwrap();
+        fixture
+            .slot_sender
+            .send(EstimatedSlot::Single(next_slot))
+            .unwrap();
 
         // the leaders are updated every `refresh_every` duration when the slot
         // changes. The small epsilon is added to ensure that the timeout is not
@@ -1027,8 +1106,7 @@ mod tests {
             "timed out waiting for leaders update"
         );
 
-        let (emitted_slot, emitted_sockets) = fixture.leaders_receiver.receiver.borrow().clone();
-        assert_eq!(emitted_slot, next_slot);
+        let (emitted_sockets, _) = fixture.leaders_receiver.receiver.borrow().clone();
 
         let expected_sockets = get_expected_sockets(&fixture.nodes, 0, lookahead_leaders);
         assert_eq!(emitted_sockets, expected_sockets);
@@ -1081,7 +1159,10 @@ mod tests {
 
         // trigger a new slot update
         let next_slot = current_slot + 1;
-        fixture.slot_sender.send((next_slot, timestamp())).unwrap();
+        fixture
+            .slot_sender
+            .send(EstimatedSlot::Single(next_slot))
+            .unwrap();
 
         // the leaders are updated every `refresh_every` duration when the slot
         // changes. The small epsilon is added to ensure that the timeout is not
@@ -1096,8 +1177,7 @@ mod tests {
             "timed out waiting for leaders update"
         );
 
-        let (emitted_slot, emitted_sockets) = fixture.leaders_receiver.receiver.borrow().clone();
-        assert_eq!(emitted_slot, next_slot);
+        let (emitted_sockets, _) = fixture.leaders_receiver.receiver.borrow().clone();
 
         let expected_sockets = get_expected_sockets(&fixture.nodes, 0, lookahead_leaders);
         assert_eq!(
@@ -1114,7 +1194,7 @@ mod tests {
         let slots_in_epoch = 32;
         let current_slot: u64 = 101;
         let num_nodes = 1;
-        let lookahead_leaders = 2;
+        let lookahead_leaders: u64 = 2;
         let refresh_every = Duration::from_millis(2 * DEFAULT_MS_PER_SLOT);
 
         let mut fixture = TestFixture::setup(
@@ -1139,7 +1219,10 @@ mod tests {
 
         // trigger a new slot update
         let next_slot = current_slot + 1;
-        fixture.slot_sender.send((next_slot, timestamp())).unwrap();
+        fixture
+            .slot_sender
+            .send(EstimatedSlot::Single(next_slot))
+            .unwrap();
 
         // the leaders are updated every `refresh_every` duration when the slot
         // changes. The small epsilon is added to ensure that the timeout is not
@@ -1154,8 +1237,7 @@ mod tests {
             "timed out waiting for leaders update"
         );
 
-        let (emitted_slot, emitted_sockets) = fixture.leaders_receiver.receiver.borrow().clone();
-        assert_eq!(emitted_slot, next_slot);
+        let (emitted_sockets, _) = fixture.leaders_receiver.receiver.borrow().clone();
 
         let expected_sockets = get_expected_sockets(&fixture.nodes, 0, lookahead_leaders);
         assert_eq!(emitted_sockets, expected_sockets);
@@ -1212,7 +1294,10 @@ mod tests {
 
         let next_slot = current_slot + slots_in_epoch;
         // trigger a new slot update
-        fixture.slot_sender.send((next_slot, timestamp())).unwrap();
+        fixture
+            .slot_sender
+            .send(EstimatedSlot::Single(next_slot))
+            .unwrap();
 
         // the leaders are updated every `refresh_every` duration when the slot
         // changes. The small epsilon is added to ensure that the timeout is not
@@ -1227,10 +1312,9 @@ mod tests {
             "timed out waiting for leaders update"
         );
 
-        let (emitted_slot, emitted_sockets) = fixture.leaders_receiver.receiver.borrow().clone();
-        assert_eq!(emitted_slot, next_slot);
+        let (emitted_sockets, _) = fixture.leaders_receiver.receiver.borrow().clone();
 
-        let expected_sockets = vec![new_socket; lookahead_leaders];
+        let expected_sockets = vec![new_socket; lookahead_leaders as usize];
         assert_eq!(emitted_sockets, expected_sockets);
 
         fixture.teardown().await.unwrap();
@@ -1275,7 +1359,10 @@ mod tests {
 
             // trigger a new slot update
             next_slot = next_slot.saturating_add(1);
-            fixture.slot_sender.send((next_slot, timestamp())).unwrap();
+            fixture
+                .slot_sender
+                .send(EstimatedSlot::Single(next_slot))
+                .unwrap();
             sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT)).await;
         }
 
@@ -1293,9 +1380,8 @@ mod tests {
         );
         assert_eq!(fixture.rpc_client.get_transport_stats().request_count, 49);
 
-        let (emitted_slot, emitted_sockets) = fixture.leaders_receiver.receiver.borrow().clone();
-        debug!("emitted_slot: {emitted_slot}, emitted_sockets: {emitted_sockets:?}");
-        assert_eq!(emitted_slot, next_slot);
+        let (emitted_sockets, _) = fixture.leaders_receiver.receiver.borrow().clone();
+        debug!("emitted_sockets: {emitted_sockets:?}");
 
         let expected_sockets = get_expected_sockets(
             &fixture.nodes,

@@ -5,9 +5,9 @@
 //! The features are mutually exclusive - only one can be enabled at a time.
 
 #[cfg(feature = "log")]
-pub use log::{debug, error, trace, warn};
+pub use log::{debug, error, info, trace, warn};
 #[cfg(feature = "tracing")]
-pub use tracing::{debug, error, trace, warn};
+pub use tracing::{debug, error, info, trace, warn};
 
 #[cfg(not(any(feature = "log", feature = "tracing")))]
 compile_error!("Either 'log' or 'tracing' feature must be enabled");
@@ -25,7 +25,7 @@ mod tests {
         // and can be called without errors
         debug!("Test debug message");
         error!("Test error message");
-        trace!("Test trace message");
+        info!("Test info message");
         warn!("Test warn message");
     }
 }

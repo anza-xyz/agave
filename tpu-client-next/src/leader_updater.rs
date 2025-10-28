@@ -9,7 +9,12 @@
 //! Yet, it also allows to implement custom leader estimation.
 
 use {
-    crate::logging::error,
+    crate::{
+        logging::error,
+        node_address_service::{
+            LeaderTpuCacheServiceConfig, NodeAddressService, NodeAddressServiceError,
+        },
+    },
     async_trait::async_trait,
     solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_connection_cache::connection_cache::Protocol,
@@ -24,6 +29,7 @@ use {
         },
     },
     thiserror::Error,
+    tokio_util::sync::CancellationToken,
 };
 
 /// [`LeaderUpdater`] trait abstracts out functionality required for the
@@ -68,7 +74,10 @@ impl fmt::Debug for LeaderUpdaterError {
 /// always returns the provided address instead of checking leader schedule.
 /// Otherwise, it creates a `LeaderUpdaterService` which dynamically updates the
 /// leaders by connecting to the network via the [`LeaderTpuService`].
-#[deprecated(since = "3.1.0", note = "Use NodeAddressService instead.")]
+#[deprecated(
+    since = "3.1.0",
+    note = "Use create_leader_updater_with_config instead."
+)]
 pub async fn create_leader_updater(
     rpc_client: Arc<RpcClient>,
     websocket_url: String,
@@ -92,6 +101,25 @@ pub async fn create_leader_updater(
         leader_tpu_service,
         exit,
     }))
+}
+
+pub async fn create_leader_updater_with_config(
+    rpc_client: Arc<RpcClient>,
+    websocket_url: String,
+    pinned_address: Option<SocketAddr>,
+    config: Option<LeaderTpuCacheServiceConfig>,
+    cancel: CancellationToken,
+) -> Result<Box<dyn LeaderUpdater>, NodeAddressServiceError> {
+    if let Some(pinned_address) = pinned_address {
+        return Ok(Box::new(PinnedLeaderUpdater {
+            address: vec![pinned_address],
+        }));
+    }
+
+    let node_address_service =
+        NodeAddressService::run(rpc_client, &websocket_url, config.unwrap(), cancel).await?;
+
+    Ok(Box::new(node_address_service))
 }
 
 /// `LeaderUpdaterService` is an implementation of the [`LeaderUpdater`] trait
