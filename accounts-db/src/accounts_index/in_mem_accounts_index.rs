@@ -2239,4 +2239,106 @@ mod tests {
         assert_eq!(test.slot_list_lock_read_len(), len);
         assert_eq!(len, 2);
     }
+
+    #[test]
+    fn test_new_with_initial_accounts_pre_allocation() {
+        // Test that initial_accounts is used to pre-allocate HashMap capacity
+        let num_initial_accounts = 10000;
+        let config = AccountsIndexConfig {
+            num_initial_accounts: Some(num_initial_accounts),
+            ..Default::default()
+        };
+        let holder = Arc::new(BucketMapHolder::new(BINS_FOR_TESTING, &config, 1));
+        let bin = 0;
+        let accounts_index = InMemAccountsIndex::<u64, u64>::new(&holder, bin);
+
+        // Verify the index was created successfully with pre-allocated capacity
+        assert_eq!(
+            accounts_index.storage.num_initial_accounts,
+            Some(num_initial_accounts)
+        );
+
+        // Verify the HashMap was pre-allocated with the expected capacity per bin
+        // HashMap with ahash allocates space based on load factor (typically 7/8 = 0.875)
+        // The actual capacity reported is: next_power_of_two(requested / 0.875) * 0.875
+        let expected_capacity_per_bin = num_initial_accounts / BINS_FOR_TESTING; // 5000
+        let actual_capacity = accounts_index.map_internal.read().unwrap().capacity();
+
+        // Calculate the expected capacity considering the load factor
+        // For ahash HashMap, capacity = (next_power_of_two(requested / 0.875)) * 0.875
+        let with_load_factor = (expected_capacity_per_bin as f64 / 0.875).ceil() as usize; // 5715
+        let expected_actual_capacity = with_load_factor.next_power_of_two() * 7 / 8; // 7168
+
+        assert_eq!(
+            actual_capacity, expected_actual_capacity,
+            "HashMap capacity mismatch. Requested per bin: {}, Expected capacity: {}, Actual: {}",
+            expected_capacity_per_bin, expected_actual_capacity, actual_capacity
+        );
+
+        // Verify basic operations work correctly with pre-allocated map
+        let pubkey = solana_pubkey::new_rand();
+        let slot = 0;
+        let mut callback_called = false;
+        accounts_index.get_or_create_index_entry_for_pubkey(&pubkey, |entry| {
+            assert_eq!(entry.slot_list_lock_read_len(), 0);
+            InMemAccountsIndex::<u64, u64>::cache_entry_at_slot(entry, (slot, 42));
+            callback_called = true;
+        });
+        assert!(callback_called);
+
+        // Verify the entry was inserted successfully
+        let mut found = false;
+        accounts_index.get_only_in_mem(&pubkey, false, |entry| {
+            found = entry.is_some();
+        });
+        assert!(found);
+    }
+
+    #[test]
+    fn test_new_without_initial_accounts_uses_default() {
+        // Test that when initial_accounts is None, default HashMap is used
+        let config = AccountsIndexConfig {
+            num_initial_accounts: None,
+            ..Default::default()
+        };
+        let holder = Arc::new(BucketMapHolder::new(BINS_FOR_TESTING, &config, 1));
+        let bin = 0;
+        let accounts_index = InMemAccountsIndex::<u64, u64>::new(&holder, bin);
+
+        // Verify the index was created with no pre-allocation
+        assert_eq!(accounts_index.storage.num_initial_accounts, None);
+
+        // Verify the HashMap starts with default capacity (0 for empty HashMap)
+        let initial_capacity = accounts_index.map_internal.read().unwrap().capacity();
+        assert_eq!(
+            initial_capacity, 0,
+            "HashMap should have 0 capacity when not pre-allocated, got {}",
+            initial_capacity
+        );
+
+        // Verify basic operations still work correctly
+        let pubkey = solana_pubkey::new_rand();
+        let slot = 0;
+        let mut callback_called = false;
+        accounts_index.get_or_create_index_entry_for_pubkey(&pubkey, |entry| {
+            assert_eq!(entry.slot_list_lock_read_len(), 0);
+            InMemAccountsIndex::<u64, u64>::cache_entry_at_slot(entry, (slot, 42));
+            callback_called = true;
+        });
+        assert!(callback_called);
+
+        // Verify the entry was inserted successfully
+        let mut found = false;
+        accounts_index.get_only_in_mem(&pubkey, false, |entry| {
+            found = entry.is_some();
+        });
+        assert!(found);
+
+        // After insertion, capacity should have grown
+        let capacity_after_insert = accounts_index.map_internal.read().unwrap().capacity();
+        assert!(
+            capacity_after_insert > 0,
+            "HashMap capacity should be > 0 after insertion"
+        );
+    }
 }
