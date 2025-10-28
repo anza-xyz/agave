@@ -1,7 +1,7 @@
 use {
     crate::LEDGER_TOOL_DIRECTORY,
     agave_snapshots::{
-        hardened_unpack::open_genesis_config,
+        paths::{self as snapshot_paths, BANK_SNAPSHOTS_DIR},
         snapshot_config::{SnapshotConfig, SnapshotUsage},
         snapshot_hash::StartingSnapshotHashes,
     },
@@ -14,6 +14,7 @@ use {
     solana_clock::Slot,
     solana_core::validator::BlockVerificationMethod,
     solana_genesis_config::GenesisConfig,
+    solana_genesis_utils::open_genesis_config,
     solana_geyser_plugin_manager::geyser_plugin_service::{
         GeyserPluginService, GeyserPluginServiceError,
     },
@@ -37,7 +38,7 @@ use {
         bank_forks::BankForks,
         prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_controller::SnapshotController,
-        snapshot_utils::{self, clean_orphaned_account_snapshot_dirs, BANK_SNAPSHOTS_DIR},
+        snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
     },
     solana_transaction::versioned::VersionedTransaction,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
@@ -154,10 +155,10 @@ pub fn load_and_process_ledger(
             .map(PathBuf::from)
             .unwrap_or_else(|| snapshots_dir.clone());
         if let Some(full_snapshot_slot) =
-            snapshot_utils::get_highest_full_snapshot_archive_slot(&full_snapshot_archives_dir)
+            snapshot_paths::get_highest_full_snapshot_archive_slot(&full_snapshot_archives_dir)
         {
             let incremental_snapshot_slot =
-                snapshot_utils::get_highest_incremental_snapshot_archive_slot(
+                snapshot_paths::get_highest_incremental_snapshot_archive_slot(
                     &incremental_snapshot_archives_dir,
                     full_snapshot_slot,
                 )

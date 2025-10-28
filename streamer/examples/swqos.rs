@@ -15,7 +15,8 @@ use {
     solana_net_utils::sockets::{bind_to_with_config, SocketConfiguration},
     solana_pubkey::Pubkey,
     solana_streamer::{
-        nonblocking::quic::SpawnNonBlockingServerResult, quic::QuicServerParams,
+        nonblocking::{quic::SpawnNonBlockingServerResult, swqos::SwQosConfig},
+        quic::QuicStreamerConfig,
         streamer::StakedNodes,
     },
     std::{
@@ -85,7 +86,7 @@ struct Cli {
 // number of threads as in fn default_num_tpu_transaction_forward_receive_threads
 #[tokio::main(flavor = "multi_thread", worker_threads = 16)]
 async fn main() -> anyhow::Result<()> {
-    solana_logger::setup();
+    agave_logger::setup();
     let cli = Cli::parse();
     let socket = bind_to_with_config(
         cli.bind_to.ip(),
@@ -117,10 +118,11 @@ async fn main() -> anyhow::Result<()> {
         &keypair,
         sender,
         staked_nodes,
-        QuicServerParams {
+        QuicStreamerConfig {
             max_connections_per_peer: cli.max_connections_per_peer,
-            ..QuicServerParams::default()
+            ..QuicStreamerConfig::default()
         },
+        SwQosConfig::default(),
         cancel.clone(),
     )?;
     info!("Server listening on {}", socket.local_addr()?);

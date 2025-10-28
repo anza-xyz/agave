@@ -139,7 +139,7 @@ fn bench_banking(
     tx_type: TransactionType,
     block_production_method: BlockProductionMethod,
 ) {
-    solana_logger::setup();
+    agave_logger::setup();
     let num_threads = BankingStage::default_num_workers();
     //   a multiple of packet chunk duplicates to avoid races
     const CHUNKS: usize = 8;

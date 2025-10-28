@@ -66,7 +66,6 @@ use {
         instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
     },
     solana_loader_v4_interface::{instruction as loader_v4, state::LoaderV4State},
-    solana_logger,
     solana_message::{
         compiled_instruction::CompiledInstruction, Message, MessageHeader, SanitizedMessage,
     },
@@ -168,20 +167,6 @@ impl VoteReward {
     }
 }
 
-pub(in crate::bank) fn new_bank_from_parent_with_bank_forks(
-    bank_forks: &RwLock<BankForks>,
-    parent: Arc<Bank>,
-    collector_id: &Pubkey,
-    slot: Slot,
-) -> Arc<Bank> {
-    let bank = Bank::new_from_parent(parent, collector_id, slot);
-    bank_forks
-        .write()
-        .unwrap()
-        .insert(bank)
-        .clone_without_scheduler()
-}
-
 fn create_genesis_config_no_tx_fee_no_rent(lamports: u64) -> (GenesisConfig, Keypair) {
     // genesis_util creates config with no tx fee and no rent
     let genesis_config_info = solana_runtime::genesis_utils::create_genesis_config(lamports);
@@ -210,7 +195,7 @@ pub(in crate::bank) fn new_sanitized_message(message: Message) -> SanitizedMessa
 
 #[test]
 fn test_race_register_tick_freeze() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let (mut genesis_config, _) = create_genesis_config(50);
     genesis_config.ticks_per_slot = 1;
@@ -580,7 +565,7 @@ pub(in crate::bank) fn new_from_parent_next_epoch(
         epoch = parent.epoch_schedule().get_epoch(slot);
     }
 
-    new_bank_from_parent_with_bank_forks(bank_forks, parent, &Pubkey::default(), slot)
+    Bank::new_from_parent_with_bank_forks(bank_forks, parent, &Pubkey::default(), slot)
 }
 
 #[test]
@@ -692,7 +677,7 @@ fn check_bank_update_vote_stake_rewards<F>(load_vote_and_stake_accounts: F)
 where
     F: Fn(&Bank) -> StakeDelegationsMap,
 {
-    solana_logger::setup();
+    agave_logger::setup();
 
     // create a bank that ticks really slowly...
     let bank0 = Arc::new(Bank::new_for_tests(&GenesisConfig {
@@ -943,7 +928,7 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
 
 #[test]
 fn test_bank_update_rewards_determinism() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     // The same reward should be distributed given same credits
     let expected_capitalization = do_test_bank_update_rewards_determinism();
@@ -969,7 +954,7 @@ fn test_purge_empty_accounts() {
     // When using the write cache, flushing is destructive/cannot be undone
     //  so we have to stop at various points and restart to actively test.
     for pass in 0..3 {
-        solana_logger::setup();
+        agave_logger::setup();
         let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee(LAMPORTS_PER_SOL);
         let amount = genesis_config.rent.minimum_balance(0);
         let (mut bank, bank_forks) =
@@ -1182,7 +1167,7 @@ fn test_detect_failed_duplicate_transactions() {
 
 #[test]
 fn test_account_not_found() {
-    solana_logger::setup();
+    agave_logger::setup();
     let (genesis_config, mint_keypair) = create_genesis_config(0);
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let keypair = Keypair::new();
@@ -1248,7 +1233,7 @@ fn test_executed_transaction_count_post_bank_transaction_count_fix() {
     assert_eq!(bank.executed_transaction_count(), 2);
     assert_eq!(bank.transaction_error_count(), 1);
 
-    let bank2 = new_bank_from_parent_with_bank_forks(
+    let bank2 = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank,
         &Pubkey::default(),
@@ -1271,7 +1256,7 @@ fn test_executed_transaction_count_post_bank_transaction_count_fix() {
 
 #[test]
 fn test_transfer_to_newb() {
-    solana_logger::setup();
+    agave_logger::setup();
     let (genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let amount = genesis_config.rent.minimum_balance(0);
@@ -1282,7 +1267,7 @@ fn test_transfer_to_newb() {
 
 #[test]
 fn test_transfer_to_sysvar() {
-    solana_logger::setup();
+    agave_logger::setup();
     let (genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let amount = genesis_config.rent.minimum_balance(0);
@@ -1368,7 +1353,7 @@ fn test_bank_withdraw_from_nonce_account() {
 
 #[test]
 fn test_bank_tx_fee() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let arbitrary_transfer_amount = 42_000;
     let mint = arbitrary_transfer_amount * 100;
@@ -1436,7 +1421,7 @@ fn test_bank_tx_fee() {
     );
 
     // Verify that an InstructionError collects fees, too
-    let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &leader, 1);
+    let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &leader, 1);
     let mut tx = system_transaction::transfer(&mint_keypair, &key, 1, bank.last_blockhash());
     // Create a bogus instruction to system_program to cause an instruction error
     tx.message.instructions[0].data[0] = 40;
@@ -1473,7 +1458,7 @@ fn test_bank_tx_fee() {
 
 #[test]
 fn test_bank_tx_compute_unit_fee() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let key = solana_pubkey::new_rand();
     let arbitrary_transfer_amount = 42;
@@ -1546,7 +1531,7 @@ fn test_bank_tx_compute_unit_fee() {
     );
 
     // Verify that an InstructionError collects fees, too
-    let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &leader, 1);
+    let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &leader, 1);
     let mut tx = system_transaction::transfer(&mint_keypair, &key, 1, bank.last_blockhash());
     // Create a bogus instruction to system_program to cause an instruction error
     tx.message.instructions[0].data[0] = 40;
@@ -1583,7 +1568,7 @@ fn test_bank_tx_compute_unit_fee() {
 
 #[test]
 fn test_bank_blockhash_fee_structure() {
-    //solana_logger::setup();
+    //agave_logger::setup();
 
     let leader = solana_pubkey::new_rand();
     let GenesisConfigInfo {
@@ -1602,13 +1587,13 @@ fn test_bank_blockhash_fee_structure() {
     let cheap_lamports_per_signature = bank.get_lamports_per_signature();
     assert_eq!(cheap_lamports_per_signature, 0);
 
-    let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &leader, 1);
+    let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &leader, 1);
     goto_end_of_slot(bank.clone());
     let expensive_blockhash = bank.last_blockhash();
     let expensive_lamports_per_signature = bank.get_lamports_per_signature();
     assert!(cheap_lamports_per_signature < expensive_lamports_per_signature);
 
-    let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &leader, 2);
+    let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &leader, 2);
 
     // Send a transfer using cheap_blockhash
     let key = solana_pubkey::new_rand();
@@ -1645,7 +1630,7 @@ fn test_bank_blockhash_fee_structure() {
 
 #[test]
 fn test_bank_blockhash_compute_unit_fee_structure() {
-    //solana_logger::setup();
+    //agave_logger::setup();
 
     let leader = solana_pubkey::new_rand();
     let GenesisConfigInfo {
@@ -1664,13 +1649,13 @@ fn test_bank_blockhash_compute_unit_fee_structure() {
     let cheap_lamports_per_signature = bank.get_lamports_per_signature();
     assert_eq!(cheap_lamports_per_signature, 0);
 
-    let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &leader, 1);
+    let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &leader, 1);
     goto_end_of_slot(bank.clone());
     let expensive_blockhash = bank.last_blockhash();
     let expensive_lamports_per_signature = bank.get_lamports_per_signature();
     assert!(cheap_lamports_per_signature < expensive_lamports_per_signature);
 
-    let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &leader, 2);
+    let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &leader, 2);
 
     // Send a transfer using cheap_blockhash
     let key = solana_pubkey::new_rand();
@@ -2226,7 +2211,7 @@ fn new_from_parent(parent: Arc<Bank>) -> Bank {
 
 fn new_from_parent_with_fork_next_slot(parent: Arc<Bank>, fork: &RwLock<BankForks>) -> Arc<Bank> {
     let slot = parent.slot() + 1;
-    new_bank_from_parent_with_bank_forks(fork, parent, &Pubkey::default(), slot)
+    Bank::new_from_parent_with_bank_forks(fork, parent, &Pubkey::default(), slot)
 }
 
 /// Verify that the parent's vector is computed correctly
@@ -2354,7 +2339,7 @@ fn test_bank_hash_internal_state_verify() {
 
         let bank0_state = bank0.hash_internal_state();
         // Checkpointing should result in a new state while freezing the parent
-        let bank2 = new_bank_from_parent_with_bank_forks(
+        let bank2 = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank0.clone(),
             &solana_pubkey::new_rand(),
@@ -2374,7 +2359,7 @@ fn test_bank_hash_internal_state_verify() {
             add_root_and_flush_write_cache(&bank2);
             assert!(bank2.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
         }
-        let bank3 = new_bank_from_parent_with_bank_forks(
+        let bank3 = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank0.clone(),
             &solana_pubkey::new_rand(),
@@ -2429,7 +2414,7 @@ fn test_verify_hash_unfrozen() {
 
 #[test]
 fn test_verify_snapshot_bank() {
-    solana_logger::setup();
+    agave_logger::setup();
     let pubkey = solana_pubkey::new_rand();
     let (genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
@@ -2451,7 +2436,7 @@ fn test_verify_snapshot_bank() {
 // Test that two bank forks with the same transactions should not hash to the same value.
 #[test]
 fn test_bank_hash_same_transactions_different_fork() {
-    solana_logger::setup();
+    agave_logger::setup();
     let (genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
     let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     bank0.freeze();
@@ -2460,7 +2445,7 @@ fn test_bank_hash_same_transactions_different_fork() {
     let pubkey = solana_pubkey::new_rand();
     let amount = genesis_config.rent.minimum_balance(0);
 
-    let bank1 = new_bank_from_parent_with_bank_forks(
+    let bank1 = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank0.clone(),
         &Pubkey::default(),
@@ -2469,7 +2454,7 @@ fn test_bank_hash_same_transactions_different_fork() {
     bank1.transfer(amount, &mint_keypair, &pubkey).unwrap();
     bank1.freeze();
 
-    let bank2 = new_bank_from_parent_with_bank_forks(
+    let bank2 = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank0.clone(),
         &Pubkey::default(),
@@ -2515,7 +2500,7 @@ fn test_hash_internal_state_order() {
 
 #[test]
 fn test_hash_internal_state_error() {
-    solana_logger::setup();
+    agave_logger::setup();
     let (genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
     let amount = genesis_config.rent.minimum_balance(0);
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
@@ -2556,7 +2541,7 @@ fn test_bank_hash_internal_state_squash() {
 /// Verifies that last ids and accounts are correctly referenced from parent
 #[test]
 fn test_bank_squash() {
-    solana_logger::setup();
+    agave_logger::setup();
     let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee(2 * LAMPORTS_PER_SOL);
     let key1 = Keypair::new();
     let key2 = Keypair::new();
@@ -2645,7 +2630,7 @@ fn test_bank_get_account_in_parent_after_squash() {
 
 #[test]
 fn test_bank_get_account_in_parent_after_squash2() {
-    solana_logger::setup();
+    agave_logger::setup();
     let (genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
     let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let amount = genesis_config.rent.minimum_balance(0);
@@ -2657,7 +2642,7 @@ fn test_bank_get_account_in_parent_after_squash2() {
         .unwrap();
     assert_eq!(bank0.get_balance(&key1.pubkey()), amount);
 
-    let bank1 = new_bank_from_parent_with_bank_forks(
+    let bank1 = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank0.clone(),
         &Pubkey::default(),
@@ -2666,7 +2651,7 @@ fn test_bank_get_account_in_parent_after_squash2() {
     bank1
         .transfer(3 * amount, &mint_keypair, &key1.pubkey())
         .unwrap();
-    let bank2 = new_bank_from_parent_with_bank_forks(
+    let bank2 = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank0.clone(),
         &Pubkey::default(),
@@ -2676,7 +2661,7 @@ fn test_bank_get_account_in_parent_after_squash2() {
         .transfer(2 * amount, &mint_keypair, &key1.pubkey())
         .unwrap();
 
-    let bank3 = new_bank_from_parent_with_bank_forks(
+    let bank3 = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank1.clone(),
         &Pubkey::default(),
@@ -2693,7 +2678,7 @@ fn test_bank_get_account_in_parent_after_squash2() {
     bank3.squash();
     assert_eq!(bank1.get_balance(&key1.pubkey()), 4 * amount);
 
-    let bank4 = new_bank_from_parent_with_bank_forks(
+    let bank4 = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank3.clone(),
         &Pubkey::default(),
@@ -2705,7 +2690,7 @@ fn test_bank_get_account_in_parent_after_squash2() {
     assert_eq!(bank4.get_balance(&key1.pubkey()), 8 * amount);
     assert_eq!(bank3.get_balance(&key1.pubkey()), 4 * amount);
     bank4.squash();
-    let bank5 = new_bank_from_parent_with_bank_forks(
+    let bank5 = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank4.clone(),
         &Pubkey::default(),
@@ -2713,7 +2698,7 @@ fn test_bank_get_account_in_parent_after_squash2() {
     );
     bank5.squash();
     let bank6 =
-        new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank5, &Pubkey::default(), 6);
+        Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank5, &Pubkey::default(), 6);
     bank6.squash();
 
     // This picks up the values from 4 which is the highest root:
@@ -2739,7 +2724,7 @@ fn test_bank_get_account_modified_since_parent_with_fixed_root() {
     assert_eq!(account.lamports(), amount);
     assert_eq!(slot, 0);
 
-    let bank2 = new_bank_from_parent_with_bank_forks(
+    let bank2 = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank1.clone(),
         &Pubkey::default(),
@@ -2763,7 +2748,7 @@ fn test_bank_get_account_modified_since_parent_with_fixed_root() {
     bank1.squash();
 
     let bank3 =
-        new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &Pubkey::default(), 3);
+        Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &Pubkey::default(), 3);
     assert_eq!(
         None,
         bank3.get_account_modified_since_parent_with_fixed_root(&pubkey)
@@ -2772,7 +2757,7 @@ fn test_bank_get_account_modified_since_parent_with_fixed_root() {
 
 #[test]
 fn test_bank_update_sysvar_account() {
-    solana_logger::setup();
+    agave_logger::setup();
     // flushing the write cache is destructive, so test has to restart each time we flush and want to do 'illegal' operations once flushed
     for pass in 0..5 {
         use sysvar::clock::Clock;
@@ -3031,7 +3016,7 @@ fn test_bank_epoch_vote_accounts() {
 
 #[test]
 fn test_zero_signatures() {
-    solana_logger::setup();
+    agave_logger::setup();
     let (genesis_config, mint_keypair) = create_genesis_config(500);
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.fee_rate_governor.lamports_per_signature = 2;
@@ -3113,14 +3098,14 @@ fn test_bank_inherit_tx_count() {
     let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     // Bank 1
-    let bank1 = new_bank_from_parent_with_bank_forks(
+    let bank1 = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank0.clone(),
         &solana_pubkey::new_rand(),
         1,
     );
     // Bank 2
-    let bank2 = new_bank_from_parent_with_bank_forks(
+    let bank2 = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank0.clone(),
         &solana_pubkey::new_rand(),
@@ -3154,7 +3139,7 @@ fn test_bank_inherit_tx_count() {
     assert_eq!(bank1.transaction_count(), 1);
     assert_eq!(bank1.non_vote_transaction_count_since_restart(), 1);
 
-    let bank6 = new_bank_from_parent_with_bank_forks(
+    let bank6 = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank1.clone(),
         &solana_pubkey::new_rand(),
@@ -3551,7 +3536,7 @@ fn test_get_filtered_indexed_accounts() {
 
 #[test]
 fn test_status_cache_ancestors() {
-    solana_logger::setup();
+    agave_logger::setup();
     let (parent, _bank_forks) = create_simple_test_arc_bank(500);
     let bank1 = Arc::new(new_from_parent(parent));
     let mut bank = bank1;
@@ -3864,7 +3849,7 @@ fn test_banks_leak() {
             );
         });
     }
-    solana_logger::setup();
+    agave_logger::setup();
     let (mut genesis_config, _) = create_genesis_config(100_000_000_000_000);
     add_lotsa_stake_accounts(&mut genesis_config);
     let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
@@ -4327,7 +4312,7 @@ fn test_nonce_transaction_with_tx_wide_caps() {
 
 #[test]
 fn test_nonce_authority() {
-    solana_logger::setup();
+    agave_logger::setup();
     let (mut bank, _mint_keypair, custodian_keypair, nonce_keypair, bank_forks) =
         setup_nonce_with_bank(
             10_000_000,
@@ -4388,7 +4373,7 @@ fn test_nonce_authority() {
 
 #[test]
 fn test_nonce_payer() {
-    solana_logger::setup();
+    agave_logger::setup();
     let nonce_starting_balance = 250_000;
     let (mut bank, _mint_keypair, custodian_keypair, nonce_keypair, bank_forks) =
         setup_nonce_with_bank(
@@ -4452,7 +4437,7 @@ fn test_nonce_payer() {
 
 #[test]
 fn test_nonce_payer_tx_wide_cap() {
-    solana_logger::setup();
+    agave_logger::setup();
     let nonce_starting_balance =
         250_000 + FeeStructure::default().compute_fee_bins.last().unwrap().fee;
     let feature_set = FeatureSet::all_enabled();
@@ -4928,7 +4913,7 @@ fn test_transaction_with_program_ids_passed_to_programs() {
 
 #[test]
 fn test_account_ids_after_program_ids() {
-    solana_logger::setup();
+    agave_logger::setup();
     let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee_no_rent(500);
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
@@ -4972,7 +4957,7 @@ fn test_incinerator() {
     let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     // Move to the first normal slot so normal rent behaviour applies
-    let bank = new_bank_from_parent_with_bank_forks(
+    let bank = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank0,
         &Pubkey::default(),
@@ -4997,7 +4982,7 @@ fn test_incinerator() {
 
 #[test]
 fn test_duplicate_account_key() {
-    solana_logger::setup();
+    agave_logger::setup();
     let (genesis_config, mint_keypair) = create_genesis_config(500);
     let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
         &genesis_config,
@@ -5028,7 +5013,7 @@ fn test_duplicate_account_key() {
 
 #[test]
 fn test_process_transaction_with_too_many_account_locks() {
-    solana_logger::setup();
+    agave_logger::setup();
     let (genesis_config, mint_keypair) = create_genesis_config(500);
     let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
         &genesis_config,
@@ -5063,7 +5048,7 @@ fn test_process_transaction_with_too_many_account_locks() {
 
 #[test]
 fn test_program_id_as_payer() {
-    solana_logger::setup();
+    agave_logger::setup();
     let (genesis_config, mint_keypair) = create_genesis_config(500);
     let mut bank = Bank::new_for_tests(&genesis_config);
 
@@ -5146,7 +5131,7 @@ fn test_ref_account_key_after_program_id() {
 
 #[test]
 fn test_fuzz_instructions() {
-    solana_logger::setup();
+    agave_logger::setup();
     use rand::{thread_rng, Rng};
     let bank = create_simple_test_bank(1_000_000_000);
 
@@ -5403,7 +5388,7 @@ fn test_same_program_id_uses_unique_executable_accounts() {
 
 #[test]
 fn test_clean_nonrooted() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000_000);
     let pubkey0 = Pubkey::from([0; 32]);
@@ -5476,7 +5461,7 @@ fn test_clean_nonrooted() {
 
 #[test]
 fn test_shrink_candidate_slots_cached() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000_000);
     let pubkey0 = solana_pubkey::new_rand();
@@ -5915,7 +5900,7 @@ fn test_add_precompiled_account_after_frozen() {
 
 #[test]
 fn test_reconfigure_token2_native_mint() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let genesis_config =
         create_genesis_config_with_leader(5, &solana_pubkey::new_rand(), 0).genesis_config;
@@ -5928,14 +5913,14 @@ fn test_reconfigure_token2_native_mint() {
 
 #[test]
 fn test_bank_load_program() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee(1_000_000_000);
     let bank = Bank::new_for_tests(&genesis_config);
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
     goto_end_of_slot(bank.clone());
-    let bank = new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 42);
-    let bank = new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 50);
+    let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 42);
+    let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 50);
 
     let program_key = solana_pubkey::new_rand();
     let programdata_key = solana_pubkey::new_rand();
@@ -7408,7 +7393,7 @@ fn test_store_scan_consistency<F>(
         ) + std::marker::Send
         + 'static,
 {
-    solana_logger::setup();
+    agave_logger::setup();
     // Set up initial bank
     let mut genesis_config =
         create_genesis_config_with_leader(10, &solana_pubkey::new_rand(), 374_999_998_287_840)
@@ -8352,7 +8337,7 @@ fn test_vote_epoch_panic() {
     ));
     assert!(result.is_ok());
 
-    let _bank = new_bank_from_parent_with_bank_forks(
+    let _bank = Bank::new_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank,
         &mint_keypair.pubkey(),
@@ -8458,7 +8443,7 @@ fn test_tx_log_order(relax_intrabatch_account_locks: bool) {
 
 #[test]
 fn test_tx_return_data() {
-    solana_logger::setup();
+    agave_logger::setup();
     let GenesisConfigInfo {
         genesis_config,
         mint_keypair,
@@ -8654,7 +8639,7 @@ fn test_get_largest_accounts() {
 
 #[test]
 fn test_transfer_sysvar() {
-    solana_logger::setup();
+    agave_logger::setup();
     let GenesisConfigInfo {
         genesis_config,
         mint_keypair,
@@ -8714,13 +8699,13 @@ fn test_transfer_sysvar() {
 
 #[test]
 fn test_clean_dropped_unrooted_frozen_banks() {
-    solana_logger::setup();
+    agave_logger::setup();
     do_test_clean_dropped_unrooted_banks(FreezeBank1::Yes);
 }
 
 #[test]
 fn test_clean_dropped_unrooted_unfrozen_banks() {
-    solana_logger::setup();
+    agave_logger::setup();
     do_test_clean_dropped_unrooted_banks(FreezeBank1::No);
 }
 
@@ -8772,7 +8757,7 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
 
     let slot = 1;
     let bank1 =
-        new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0.clone(), &collector, slot);
+        Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0.clone(), &collector, slot);
     add_root_and_flush_write_cache(&bank0);
     bank1
         .transfer(amount, &mint_keypair, &key1.pubkey())
@@ -8785,7 +8770,7 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
     }
 
     let slot = slot + 1;
-    let bank2 = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+    let bank2 = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
     bank2
         .transfer(amount * 2, &mint_keypair, &key2.pubkey())
         .unwrap();
@@ -8831,7 +8816,7 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
 
 #[test]
 fn test_compute_budget_program_noop() {
-    solana_logger::setup();
+    agave_logger::setup();
     let GenesisConfigInfo {
         genesis_config,
         mint_keypair,
@@ -8860,7 +8845,10 @@ fn test_compute_budget_program_noop() {
                 ..ComputeBudget::new_with_defaults(
                     invoke_context
                         .get_feature_set()
-                        .raise_cpi_nesting_limit_to_8
+                        .raise_cpi_nesting_limit_to_8,
+                    invoke_context
+                        .get_feature_set()
+                        .increase_cpi_account_info_limit
                 )
             }
         );
@@ -8883,7 +8871,7 @@ fn test_compute_budget_program_noop() {
 
 #[test]
 fn test_compute_request_instruction() {
-    solana_logger::setup();
+    agave_logger::setup();
     let GenesisConfigInfo {
         genesis_config,
         mint_keypair,
@@ -8912,7 +8900,10 @@ fn test_compute_request_instruction() {
                 ..ComputeBudget::new_with_defaults(
                     invoke_context
                         .get_feature_set()
-                        .raise_cpi_nesting_limit_to_8
+                        .raise_cpi_nesting_limit_to_8,
+                    invoke_context
+                        .get_feature_set()
+                        .increase_cpi_account_info_limit
                 )
             }
         );
@@ -8935,7 +8926,7 @@ fn test_compute_request_instruction() {
 
 #[test]
 fn test_failed_compute_request_instruction() {
-    solana_logger::setup();
+    agave_logger::setup();
     let GenesisConfigInfo {
         genesis_config,
         mint_keypair,
@@ -8971,7 +8962,10 @@ fn test_failed_compute_request_instruction() {
                 ..ComputeBudget::new_with_defaults(
                     invoke_context
                         .get_feature_set()
-                        .raise_cpi_nesting_limit_to_8
+                        .raise_cpi_nesting_limit_to_8,
+                    invoke_context
+                        .get_feature_set()
+                        .increase_cpi_account_info_limit
                 )
             }
         );
@@ -10733,7 +10727,7 @@ fn test_accounts_data_size_from_genesis() {
     // Create accounts over a number of banks and ensure the accounts data size remains correct
     for _ in 0..10 {
         let slot = bank.slot() + 1;
-        bank = new_bank_from_parent_with_bank_forks(
+        bank = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank,
             &Pubkey::default(),
@@ -10893,7 +10887,7 @@ fn test_is_in_slot_hashes_history() {
 fn test_feature_activation_loaded_programs_cache_preparation_phase(
     formalize_loaded_transaction_data_size: bool,
 ) {
-    solana_logger::setup();
+    agave_logger::setup();
 
     // Bank Setup
     let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
@@ -10944,7 +10938,7 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase(
 
     // Advance the bank to middle of epoch to start the recompilation phase.
     goto_end_of_slot(bank.clone());
-    let bank = new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 16);
+    let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 16);
     let current_env = bank
         .transaction_processor
         .get_environments_for_epoch(0)
@@ -10990,7 +10984,7 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase(
 
     // Advance the bank to cross the epoch boundary and activate the feature.
     goto_end_of_slot(bank.clone());
-    let bank = new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 33);
+    let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 33);
 
     // Load the program with the new environment.
     let transaction = Transaction::new(&signers, message, bank.last_blockhash());
@@ -11006,7 +11000,7 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase(
 
 #[test]
 fn test_feature_activation_loaded_programs_epoch_transition() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     // Bank Setup
     let (mut genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
@@ -11054,7 +11048,7 @@ fn test_feature_activation_loaded_programs_epoch_transition() {
 
     // Advance the bank to cross the epoch boundary and activate the feature.
     goto_end_of_slot(bank.clone());
-    let bank = new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 33);
+    let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 33);
 
     // Load the program with the new environment.
     let transaction = Transaction::new(&signers, message.clone(), bank.last_blockhash());
@@ -11127,7 +11121,7 @@ fn test_verify_accounts() {
     // make some banks, do some transactions, ensure there's some zero-lamport accounts
     for _ in 0..4 {
         let slot = bank.slot() + 1;
-        bank = new_bank_from_parent_with_bank_forks(
+        bank = Bank::new_from_parent_with_bank_forks(
             bank_forks.as_ref(),
             bank,
             &Pubkey::new_unique(),
@@ -11211,7 +11205,7 @@ fn with_create_zero_lamport<F>(callback: F)
 where
     F: Fn(&Bank),
 {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let alice_keypair = Keypair::new();
     let bob_keypair = Keypair::new();
@@ -11239,17 +11233,17 @@ where
 
     // create the next bank in the current epoch
     let slot = bank.slot() + 1;
-    let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
+    let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
 
     // create the next bank where we will store a zero-lamport account to be cleaned
     let slot = bank.slot() + 1;
-    let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
+    let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
     let account = AccountSharedData::new(0, len1, &program);
     bank.store_account(&bob_pubkey, &account);
 
     // transfer some to bogus pubkey just to make previous bank (=slot) really cleanable
     let slot = bank.slot() + 1;
-    let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
+    let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
     let bank_client = BankClient::new_shared(bank.clone());
     bank_client
         .transfer_and_confirm(
@@ -11261,13 +11255,13 @@ where
 
     // super fun time; callback chooses to .clean_accounts() or not
     let slot = bank.slot() + 1;
-    let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
+    let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
     callback(&bank);
 
     // create a normal account at the same pubkey as the zero-lamports account
     let lamports = genesis_config.rent.minimum_balance(len2);
     let slot = bank.slot() + 1;
-    let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
+    let bank = Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
     let bank_client = BankClient::new_shared(bank);
     let ix = system_instruction::create_account(
         &alice_pubkey,
@@ -11691,7 +11685,7 @@ fn test_filter_program_errors_and_collect_fee_details() {
 
 #[test]
 fn test_deploy_last_epoch_slot() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     // Bank Setup
     let (mut genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
@@ -11704,7 +11698,7 @@ fn test_deploy_last_epoch_slot() {
     // go to the last slot in the epoch
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let slots_in_epoch = bank.epoch_schedule().get_slots_in_epoch(0);
-    let bank = new_bank_from_parent_with_bank_forks(
+    let bank = Bank::new_from_parent_with_bank_forks(
         &bank_forks,
         bank,
         &Pubkey::default(),
@@ -11776,8 +11770,12 @@ fn test_deploy_last_epoch_slot() {
     goto_end_of_slot(bank.clone());
 
     // go to the first slot in the new epoch
-    let bank =
-        new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slots_in_epoch);
+    let bank = Bank::new_from_parent_with_bank_forks(
+        &bank_forks,
+        bank,
+        &Pubkey::default(),
+        slots_in_epoch,
+    );
     eprintln!("now at slot {} epoch {}", bank.slot(), bank.epoch());
 
     let instruction = Instruction::new_with_bytes(program_keypair.pubkey(), &[], Vec::new());
@@ -11792,7 +11790,7 @@ fn test_deploy_last_epoch_slot() {
 #[test_case(false; "informal_loaded_size")]
 #[test_case(true; "simd186_loaded_size")]
 fn test_loader_v3_to_v4_migration(formalize_loaded_transaction_data_size: bool) {
-    solana_logger::setup();
+    agave_logger::setup();
 
     // Bank Setup
     let (mut genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
@@ -11940,7 +11938,7 @@ fn test_loader_v3_to_v4_migration(formalize_loaded_transaction_data_size: bool) 
         TransactionError::InstructionError(0, InstructionError::InvalidArgument)
     );
 
-    let bank = new_bank_from_parent_with_bank_forks(
+    let bank = Bank::new_from_parent_with_bank_forks(
         &bank_forks,
         bank.clone(),
         &Pubkey::default(),
@@ -12066,7 +12064,7 @@ fn test_loader_v3_to_v4_migration(formalize_loaded_transaction_data_size: bool) 
             Ok(()),
         ),
     ] {
-        let bank = new_bank_from_parent_with_bank_forks(
+        let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank.clone(),
             &Pubkey::default(),
@@ -12089,7 +12087,7 @@ fn test_loader_v3_to_v4_migration(formalize_loaded_transaction_data_size: bool) 
 
         goto_end_of_slot(bank.clone());
         let bank =
-            new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), next_slot);
+            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), next_slot);
         next_slot += 1;
 
         let instruction = Instruction::new_with_bytes(program_keypair.pubkey(), &[], Vec::new());
@@ -12152,7 +12150,7 @@ fn test_blockhash_last_valid_block_height() {
 
 #[test]
 fn test_bank_epoch_stakes() {
-    solana_logger::setup();
+    agave_logger::setup();
     let num_of_nodes: u64 = 30;
     let stakes = (1..num_of_nodes.checked_add(1).expect("Shouldn't be big")).collect::<Vec<_>>();
     let voting_keypairs = stakes

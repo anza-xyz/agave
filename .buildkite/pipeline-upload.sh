@@ -14,6 +14,7 @@ source ci/_
 if [[ $BUILDKITE_BRANCH == gh-readonly-queue* ]]; then
   # github merge queue
   cat <<EOF | tee /dev/tty | buildkite-agent pipeline upload
+priority: 10
 steps:
   - name: "sanity"
     command: "ci/docker-run-default-image.sh ci/test-sanity.sh"

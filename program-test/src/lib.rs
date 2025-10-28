@@ -13,7 +13,9 @@
 // Export tokio for test clients
 pub use tokio;
 use {
-    agave_feature_set::{raise_cpi_nesting_limit_to_8, FEATURE_NAMES},
+    agave_feature_set::{
+        increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8, FEATURE_NAMES,
+    },
     async_trait::async_trait,
     base64::{prelude::BASE64_STANDARD, Engine},
     chrono_humanize::{Accuracy, HumanTime, Tense},
@@ -504,7 +506,7 @@ impl Default for ProgramTest {
     /// * the current working directory
     ///
     fn default() -> Self {
-        solana_logger::setup_with_default(
+        agave_logger::setup_with_default(
             "solana_sbpf::vm=debug,solana_runtime::message_processor=debug,\
              solana_runtime::system_instruction_processor=trace,solana_program_test=info",
         );
@@ -859,6 +861,9 @@ impl ProgramTest {
                         genesis_config
                             .accounts
                             .contains_key(&raise_cpi_nesting_limit_to_8::id()),
+                        genesis_config
+                            .accounts
+                            .contains_key(&increase_cpi_account_info_limit::id()),
                     )
                 }),
                 transaction_account_lock_limit: self.transaction_account_lock_limit,

@@ -46,6 +46,7 @@ impl RingDirRemover {
         self.remove(path, false)
     }
 
+    #[allow(clippy::arithmetic_side_effects)]
     fn remove(&mut self, path: impl Into<PathBuf>, remove_root: bool) -> io::Result<()> {
         let path = path.into();
 
@@ -178,6 +179,7 @@ impl UnlinkOp {
         opcode::UnlinkAt::new(types::Fd(self.dir_fd), self.path.as_ptr() as _).build()
     }
 
+    #[allow(clippy::arithmetic_side_effects)]
     fn complete(
         &mut self,
         comp: &mut Completion<State, Op>,

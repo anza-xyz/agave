@@ -31,16 +31,12 @@ use {
         system_monitor_service::{
             verify_net_stats_access, SystemMonitorService, SystemMonitorStatsReportConfig,
         },
-        tpu::{ForwardingClientOption, Tpu, TpuSockets, DEFAULT_TPU_COALESCE},
+        tpu::{ForwardingClientOption, Tpu, TpuSockets},
         tvu::{Tvu, TvuConfig, TvuSockets},
     },
     agave_snapshots::{
-        hardened_unpack::{
-            open_genesis_config, OpenGenesisConfigError, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
-        },
-        snapshot_config::SnapshotConfig,
-        snapshot_hash::StartingSnapshotHashes,
-        SnapshotInterval,
+        snapshot_archive_info::SnapshotArchiveInfoGetter as _, snapshot_config::SnapshotConfig,
+        snapshot_hash::StartingSnapshotHashes, SnapshotInterval,
     },
     anyhow::{anyhow, Context, Result},
     crossbeam_channel::{bounded, unbounded, Receiver},
@@ -61,6 +57,9 @@ use {
     solana_entry::poh::compute_hash_time,
     solana_epoch_schedule::MAX_LEADER_SCHEDULE_EPOCH_OFFSET,
     solana_genesis_config::GenesisConfig,
+    solana_genesis_utils::{
+        open_genesis_config, OpenGenesisConfigError, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+    },
     solana_geyser_plugin_manager::{
         geyser_plugin_service::GeyserPluginService, GeyserPluginManagerRequest,
     },
@@ -128,7 +127,6 @@ use {
         dependency_tracker::DependencyTracker,
         prioritization_fee_cache::PrioritizationFeeCache,
         runtime_config::RuntimeConfig,
-        snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils,
         snapshot_controller::SnapshotController,
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
@@ -136,7 +134,12 @@ use {
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_shred_version::compute_shred_version,
     solana_signer::Signer,
-    solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace, streamer::StakedNodes},
+    solana_streamer::{
+        nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
+        quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
+        socket::SocketAddrSpace,
+        streamer::StakedNodes,
+    },
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{
         DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
@@ -353,7 +356,6 @@ pub struct ValidatorConfig {
     pub warp_slot: Option<Slot>,
     pub accounts_db_skip_shrink: bool,
     pub accounts_db_force_initial_clean: bool,
-    pub tpu_coalesce: Duration,
     pub staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
     pub validator_exit: Arc<RwLock<Exit>>,
     pub validator_exit_backpressure: HashMap<String, Arc<AtomicBool>>,
@@ -433,7 +435,6 @@ impl ValidatorConfig {
             warp_slot: None,
             accounts_db_skip_shrink: false,
             accounts_db_force_initial_clean: false,
-            tpu_coalesce: DEFAULT_TPU_COALESCE,
             staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
             validator_exit: Arc::new(RwLock::new(Exit::default())),
             validator_exit_backpressure: HashMap::default(),
@@ -566,32 +567,46 @@ pub struct ValidatorTpuConfig {
     /// Controls if to enable UDP for TPU tansactions.
     pub tpu_enable_udp: bool,
     /// QUIC server config for regular TPU
-    pub tpu_quic_server_config: QuicServerParams,
+    pub tpu_quic_server_config: SwQosQuicStreamerConfig,
     /// QUIC server config for TPU forward
-    pub tpu_fwd_quic_server_config: QuicServerParams,
+    pub tpu_fwd_quic_server_config: SwQosQuicStreamerConfig,
     /// QUIC server config for Vote
-    pub vote_quic_server_config: QuicServerParams,
+    pub vote_quic_server_config: SimpleQosQuicStreamerConfig,
 }
 
 impl ValidatorTpuConfig {
     /// A convenient function to build a ValidatorTpuConfig for testing with good
     /// default.
     pub fn new_for_tests(tpu_enable_udp: bool) -> Self {
-        let tpu_quic_server_config = QuicServerParams {
-            max_connections_per_ipaddr_per_min: 32,
-            coalesce_channel_size: 100_000, // smaller channel size for faster test
-            ..Default::default()
+        let tpu_quic_server_config = SwQosQuicStreamerConfig {
+            quic_streamer_config: QuicStreamerConfig {
+                max_connections_per_ipaddr_per_min: 32,
+                accumulator_channel_size: 100_000, // smaller channel size for faster test
+                ..Default::default()
+            },
+            qos_config: SwQosConfig::default(),
         };
 
-        let tpu_fwd_quic_server_config = QuicServerParams {
-            max_connections_per_ipaddr_per_min: 32,
-            max_unstaked_connections: 0,
-            coalesce_channel_size: 100_000, // smaller channel size for faster test
-            ..Default::default()
+        let tpu_fwd_quic_server_config = SwQosQuicStreamerConfig {
+            quic_streamer_config: QuicStreamerConfig {
+                max_connections_per_ipaddr_per_min: 32,
+                max_unstaked_connections: 0,
+                accumulator_channel_size: 100_000, // smaller channel size for faster test
+                ..Default::default()
+            },
+            qos_config: SwQosConfig::default(),
         };
 
         // vote and tpu_fwd share the same characteristics -- disallow non-staked connections:
-        let vote_quic_server_config = tpu_fwd_quic_server_config.clone();
+        let vote_quic_server_config = SimpleQosQuicStreamerConfig {
+            quic_streamer_config: QuicStreamerConfig {
+                max_connections_per_ipaddr_per_min: 32,
+                max_unstaked_connections: 0,
+                accumulator_channel_size: 100_000, // smaller channel size for faster test
+                ..Default::default()
+            },
+            qos_config: SimpleQosConfig::default(),
+        };
 
         ValidatorTpuConfig {
             use_quic: DEFAULT_TPU_USE_QUIC,
@@ -1719,7 +1734,6 @@ impl Validator {
             replay_vote_receiver,
             replay_vote_sender,
             bank_notification_sender,
-            config.tpu_coalesce,
             duplicate_confirmed_slot_sender,
             forwarding_tpu_client,
             turbine_quic_endpoint_sender,
@@ -2905,7 +2919,7 @@ mod tests {
 
     #[test]
     fn validator_exit() {
-        solana_logger::setup();
+        agave_logger::setup();
         let leader_keypair = Keypair::new();
         let leader_node = Node::new_localhost_with_pubkey(&leader_keypair.pubkey());
 
@@ -2951,7 +2965,7 @@ mod tests {
 
     #[test]
     fn test_should_cleanup_blockstore_incorrect_shred_versions() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
@@ -3086,7 +3100,7 @@ mod tests {
 
     #[test]
     fn test_cleanup_blockstore_incorrect_shred_versions() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let validator_config = ValidatorConfig::default_for_test();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -3182,7 +3196,7 @@ mod tests {
 
     #[test]
     fn test_wait_for_supermajority() {
-        solana_logger::setup();
+        agave_logger::setup();
         let node_keypair = Arc::new(Keypair::new());
         let cluster_info = ClusterInfo::new(
             ContactInfo::new_localhost(&node_keypair.pubkey(), timestamp()),
@@ -3329,7 +3343,7 @@ mod tests {
 
     #[test]
     fn test_poh_speed() {
-        solana_logger::setup();
+        agave_logger::setup();
         let poh_config = PohConfig {
             target_tick_duration: target_tick_duration(),
             // make PoH rate really fast to cause the panic condition
@@ -3346,7 +3360,7 @@ mod tests {
 
     #[test]
     fn test_poh_speed_no_hashes_per_tick() {
-        solana_logger::setup();
+        agave_logger::setup();
         let poh_config = PohConfig {
             target_tick_duration: target_tick_duration(),
             hashes_per_tick: None,

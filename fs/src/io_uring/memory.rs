@@ -153,6 +153,7 @@ impl FixedIoBuffer {
 
     /// Split buffer into `chunk_size` sized `IoFixedBuffer` buffers for use as registered
     /// buffer in io_uring operations.
+    #[allow(clippy::arithmetic_side_effects)]
     pub unsafe fn split_buffer_chunks(
         buffer: &mut [u8],
         chunk_size: usize,

@@ -21,6 +21,7 @@ frozen-abi = []
 
 [dependencies]
 agave-feature-set = { workspace = true }
+agave-logger = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-syscalls = { workspace = true }
@@ -55,6 +56,7 @@ solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
 solana-feature-gate-interface = { workspace = true }
 solana-genesis-config = { workspace = true }
+solana-genesis-utils = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
 solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
@@ -63,7 +65,6 @@ solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-ledger = { workspace = true, features = ["dev-context-only-utils", "agave-unstable-api"] }
 solana-loader-v3-interface = { workspace = true }
-solana-logger = "=3.0.0"
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-native-token = { workspace = true }

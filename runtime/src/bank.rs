@@ -56,7 +56,10 @@ use {
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
     accounts_lt_hash::{CacheValue as AccountsLtHashCacheValue, Stats as AccountsLtHashStats},
-    agave_feature_set::{self as feature_set, raise_cpi_nesting_limit_to_8, FeatureSet},
+    agave_feature_set::{
+        self as feature_set, increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8,
+        FeatureSet,
+    },
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_snapshots::snapshot_hash::SnapshotHash,
@@ -83,6 +86,7 @@ use {
         ancestors::{Ancestors, AncestorsForSerialization},
         blockhash_queue::BlockhashQueue,
         storable_accounts::StorableAccounts,
+        utils::create_account_shared_data,
     },
     solana_builtins::{BUILTINS, STATELESS_BUILTINS},
     solana_clock::{
@@ -2566,7 +2570,8 @@ impl Bank {
                 self.get_account(pubkey).is_none(),
                 "{pubkey} repeated in genesis config"
             );
-            self.store_account(pubkey, &account.to_account_shared_data());
+            let account_shared_data = create_account_shared_data(account);
+            self.store_account(pubkey, &account_shared_data);
             self.capitalization.fetch_add(account.lamports(), Relaxed);
             self.accounts_data_size_initial += account.data().len() as u64;
         }
@@ -2576,7 +2581,8 @@ impl Bank {
                 self.get_account(pubkey).is_none(),
                 "{pubkey} repeated in genesis config"
             );
-            self.store_account(pubkey, &account.to_account_shared_data());
+            let account_shared_data = create_account_shared_data(account);
+            self.store_account(pubkey, &account_shared_data);
             self.accounts_data_size_initial += account.data().len() as u64;
         }
 
@@ -4053,6 +4059,26 @@ impl Bank {
         cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
     }
 
+    fn apply_simd_0339_invoke_cost_changes(&mut self) {
+        let simd_0268_active = self
+            .feature_set
+            .is_active(&raise_cpi_nesting_limit_to_8::id());
+        let simd_0339_active = self
+            .feature_set
+            .is_active(&increase_cpi_account_info_limit::id());
+        let compute_budget = self
+            .compute_budget()
+            .as_ref()
+            .unwrap_or(&ComputeBudget::new_with_defaults(
+                simd_0268_active,
+                simd_0339_active,
+            ))
+            .to_cost();
+
+        self.transaction_processor
+            .set_execution_cost(compute_budget);
+    }
+
     /// This is called from genesis and snapshot restore
     fn apply_activated_features(&mut self) {
         // Update active set of reserved account keys which are not allowed to be write locked
@@ -4087,6 +4113,13 @@ impl Bank {
             self.apply_simd_0306_cost_tracker_changes();
         }
 
+        if self
+            .feature_set
+            .is_active(&feature_set::increase_cpi_account_info_limit::id())
+        {
+            self.apply_simd_0339_invoke_cost_changes();
+        }
+
         let (program_runtime_environment_v1, program_runtime_environment_v2) =
             self.create_program_runtime_environments(&self.feature_set);
         self.transaction_processor
@@ -4101,10 +4134,14 @@ impl Bank {
         feature_set: &FeatureSet,
     ) -> (ProgramRuntimeEnvironment, ProgramRuntimeEnvironment) {
         let simd_0268_active = feature_set.is_active(&raise_cpi_nesting_limit_to_8::id());
+        let simd_0339_active = feature_set.is_active(&increase_cpi_account_info_limit::id());
         let compute_budget = self
             .compute_budget()
             .as_ref()
-            .unwrap_or(&ComputeBudget::new_with_defaults(simd_0268_active))
+            .unwrap_or(&ComputeBudget::new_with_defaults(
+                simd_0268_active,
+                simd_0339_active,
+            ))
             .to_budget();
         (
             Arc::new(
@@ -5260,6 +5297,15 @@ impl Bank {
             Arc::new(reserved_keys)
         };
 
+        if new_feature_activations.contains(&feature_set::deprecate_rent_exemption_threshold::id())
+        {
+            self.rent_collector.rent.lamports_per_byte_year =
+                (self.rent_collector.rent.lamports_per_byte_year as f64
+                    * self.rent_collector.rent.exemption_threshold) as u64;
+            self.rent_collector.rent.exemption_threshold = 1.0;
+            self.update_rent();
+        }
+
         if new_feature_activations.contains(&feature_set::pico_inflation::id()) {
             *self.inflation.write().unwrap() = Inflation::pico();
             self.fee_rate_governor.burn_percent = solana_fee_calculator::DEFAULT_BURN_PERCENT; // 50% fee burn
@@ -5303,6 +5349,9 @@ impl Bank {
             ) {
                 error!("Failed to upgrade Core BPF Stake program: {e}");
             }
+        }
+        if new_feature_activations.contains(&feature_set::increase_cpi_account_info_limit::id()) {
+            self.apply_simd_0339_invoke_cost_changes();
         }
     }
 
@@ -5848,6 +5897,20 @@ impl Bank {
             None,
             None,
         )
+    }
+
+    pub fn new_from_parent_with_bank_forks(
+        bank_forks: &RwLock<BankForks>,
+        parent: Arc<Bank>,
+        collector_id: &Pubkey,
+        slot: Slot,
+    ) -> Arc<Self> {
+        let bank = Bank::new_from_parent(parent, collector_id, slot);
+        bank_forks
+            .write()
+            .unwrap()
+            .insert(bank)
+            .clone_without_scheduler()
     }
 
     /// Prepare a transaction batch from a list of legacy transactions. Used for tests only.

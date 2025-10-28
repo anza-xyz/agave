@@ -6,8 +6,9 @@ use {
         commands::{run::args::RunArgs, FromClapArgMatches},
         ledger_lockfile, lock_ledger,
     },
+    agave_logger::redirect_stderr_to_file,
     agave_snapshots::{
-        hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+        paths::BANK_SNAPSHOTS_DIR,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
         ArchiveFormat, SnapshotInterval, SnapshotVersion,
     },
@@ -35,12 +36,14 @@ use {
         repair::repair_handler::RepairHandlerType,
         snapshot_packager_service::SnapshotPackagerService,
         system_monitor_service::SystemMonitorService,
+        tpu::MAX_VOTES_PER_SECOND,
         validator::{
             is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod,
             SchedulerPacing, Validator, ValidatorConfig, ValidatorError, ValidatorStartProgress,
             ValidatorTpuConfig,
         },
     },
+    solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     solana_gossip::{
         cluster_info::{NodeConfig, DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS},
         contact_info::ContactInfo,
@@ -52,17 +55,16 @@ use {
         blockstore_cleanup_service::{DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS},
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
-    solana_logger::redirect_stderr_to_file,
     solana_net_utils::multihomed_sockets::BindIpAddrs,
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
     solana_pubkey::Pubkey,
-    solana_runtime::{
-        runtime_config::RuntimeConfig,
-        snapshot_utils::{self, BANK_SNAPSHOTS_DIR},
-    },
+    solana_runtime::{runtime_config::RuntimeConfig, snapshot_utils},
     solana_signer::Signer,
-    solana_streamer::quic::{QuicServerParams, DEFAULT_TPU_COALESCE},
+    solana_streamer::{
+        nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
+        quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
+    },
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_turbine::{
         broadcast_stage::BroadcastStageType,
@@ -78,7 +80,6 @@ use {
         process::exit,
         str::FromStr,
         sync::{atomic::AtomicBool, Arc, RwLock},
-        time::Duration,
     },
 };
 
@@ -115,12 +116,9 @@ pub fn execute(
     let identity_keypair = Arc::new(run_args.identity_keypair);
 
     let logfile = run_args.logfile;
-    let logfile = if logfile == "-" {
-        None
-    } else {
-        println!("log file: {logfile}");
-        Some(logfile)
-    };
+    if let Some(logfile) = logfile.as_ref() {
+        println!("log file: {}", logfile.display());
+    }
     let use_progress_bar = logfile.is_none();
     let _logger_thread = redirect_stderr_to_file(logfile);
 
@@ -162,9 +160,6 @@ pub fn execute(
 
     let private_rpc = matches.is_present("private_rpc");
     let do_port_check = !matches.is_present("no_port_check");
-    let tpu_coalesce = value_t!(matches, "tpu_coalesce_ms", u64)
-        .map(Duration::from_millis)
-        .unwrap_or(DEFAULT_TPU_COALESCE);
 
     let ledger_path = run_args.ledger_path;
 
@@ -223,17 +218,31 @@ pub fn execute(
         BindIpAddrs::new(parsed).map_err(|err| format!("invalid bind_addresses: {err}"))?
     };
 
-    if bind_addresses.len() > 1 && matches.is_present("use_connection_cache") {
-        Err(String::from(
-            "Connection cache can not be used in a multihoming context",
-        ))?;
-    }
-
-    if bind_addresses.len() > 1 && matches.is_present("advertised_ip") {
-        Err(String::from(
-            "--advertised-ip cannot be used in a multihoming context. In multihoming, the \
-             validator will advertise the first --bind-address as this node's public IP address.",
-        ))?;
+    if bind_addresses.len() > 1 {
+        for (flag, msg) in [
+            (
+                "use_connection_cache",
+                "Connection cache can not be used in a multihoming context",
+            ),
+            (
+                "advertised_ip",
+                "--advertised-ip cannot be used in a multihoming context. In multihoming, the \
+                 validator will advertise the first --bind-address as this node's public IP \
+                 address.",
+            ),
+            (
+                "tpu_vortexor_receiver_address",
+                "--tpu-vortexor-receiver-address can not be used in a multihoming context",
+            ),
+            (
+                "public_tpu_addr",
+                "--public-tpu-address can not be used in a multihoming context",
+            ),
+        ] {
+            if matches.is_present(flag) {
+                Err(String::from(msg))?;
+            }
+        }
     }
 
     let rpc_bind_address = if matches.is_present("rpc_bind_address") {
@@ -573,7 +582,6 @@ pub fn execute(
         accounts_db_skip_shrink: true,
         accounts_db_force_initial_clean: matches.is_present("no_skip_initial_accounts_db_clean"),
         snapshot_config,
-        tpu_coalesce,
         no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
         wait_to_vote_slot: None,
         runtime_config: RuntimeConfig {
@@ -859,6 +867,7 @@ pub fn execute(
         node.info.remove_tpu_forwards();
         node.info.remove_tvu();
         node.info.remove_serve_repair();
+        node.info.remove_alpenglow();
 
         // A node in this configuration shouldn't be an entrypoint to other nodes
         node.sockets.ip_echo = None;
@@ -934,34 +943,42 @@ pub fn execute(
     // the one pushed by bootstrap.
     node.info.hot_swap_pubkey(identity_keypair.pubkey());
 
-    let tpu_quic_server_config = QuicServerParams {
-        max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
-        max_staked_connections: tpu_max_staked_connections.try_into().unwrap(),
-        max_unstaked_connections: tpu_max_unstaked_connections.try_into().unwrap(),
-        max_streams_per_ms,
-        max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-        coalesce: tpu_coalesce,
-        num_threads: tpu_transaction_receive_threads,
-        ..Default::default()
+    let tpu_quic_server_config = SwQosQuicStreamerConfig {
+        quic_streamer_config: QuicStreamerConfig {
+            max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
+            max_staked_connections: tpu_max_staked_connections.try_into().unwrap(),
+            max_unstaked_connections: tpu_max_unstaked_connections.try_into().unwrap(),
+            max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+            num_threads: tpu_transaction_receive_threads,
+            ..Default::default()
+        },
+        qos_config: SwQosConfig { max_streams_per_ms },
     };
 
-    let tpu_fwd_quic_server_config = QuicServerParams {
-        max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
-        max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
-        max_unstaked_connections: tpu_max_fwd_unstaked_connections.try_into().unwrap(),
-        max_streams_per_ms,
-        max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-        coalesce: tpu_coalesce,
-        num_threads: tpu_transaction_forward_receive_threads,
-        ..Default::default()
+    let tpu_fwd_quic_server_config = SwQosQuicStreamerConfig {
+        quic_streamer_config: QuicStreamerConfig {
+            max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
+            max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
+            max_unstaked_connections: tpu_max_fwd_unstaked_connections.try_into().unwrap(),
+            max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+            num_threads: tpu_transaction_forward_receive_threads,
+            ..Default::default()
+        },
+        qos_config: SwQosConfig { max_streams_per_ms },
     };
 
-    // Vote shares TPU forward's characteristics, except that we accept 1 connection
-    // per peer and no unstaked connections are accepted.
-    let mut vote_quic_server_config = tpu_fwd_quic_server_config.clone();
-    vote_quic_server_config.max_connections_per_peer = 1;
-    vote_quic_server_config.max_unstaked_connections = 0;
-    vote_quic_server_config.num_threads = tpu_vote_transaction_receive_threads;
+    let vote_quic_server_config = SimpleQosQuicStreamerConfig {
+        quic_streamer_config: QuicStreamerConfig {
+            max_connections_per_peer: 1,
+            max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
+            max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+            num_threads: tpu_vote_transaction_receive_threads,
+            ..Default::default()
+        },
+        qos_config: SimpleQosConfig {
+            max_streams_per_second: MAX_VOTES_PER_SECOND,
+        },
+    };
 
     let validator = match Validator::new(
         node,

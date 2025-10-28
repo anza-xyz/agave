@@ -1329,7 +1329,7 @@ mod tests {
 
     #[test]
     fn huge_clean() {
-        solana_logger::setup();
+        agave_logger::setup();
         let accounts_db = AccountsDb::new_single_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         let mut old_pubkey = Pubkey::default();

@@ -12,7 +12,8 @@ mod tests {
         solana_perf::packet::PacketBatch,
         solana_quic_client::nonblocking::quic_client::{QuicClient, QuicLazyInitializedEndpoint},
         solana_streamer::{
-            quic::{QuicServerParams, SpawnServerResult},
+            nonblocking::swqos::SwQosConfig,
+            quic::{QuicStreamerConfig, SpawnServerResult},
             streamer::StakedNodes,
         },
         solana_tls_utils::{new_dummy_x509_certificate, QuicClientCertificate},
@@ -65,7 +66,7 @@ mod tests {
             solana_connection_cache::client_connection::ClientConnection,
             solana_quic_client::quic_client::QuicClientConnection,
         };
-        solana_logger::setup();
+        agave_logger::setup();
         let (sender, receiver) = unbounded();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let (s, cancel, keypair) = server_args();
@@ -80,7 +81,8 @@ mod tests {
             &keypair,
             sender,
             staked_nodes,
-            QuicServerParams::default_for_tests(),
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
             cancel.clone(),
         )
         .unwrap();
@@ -145,7 +147,7 @@ mod tests {
             solana_connection_cache::nonblocking::client_connection::ClientConnection,
             solana_quic_client::nonblocking::quic_client::QuicClientConnection,
         };
-        solana_logger::setup();
+        agave_logger::setup();
         let (sender, receiver) = unbounded();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let (s, cancel, keypair) = server_args();
@@ -160,7 +162,8 @@ mod tests {
             &keypair,
             sender,
             staked_nodes,
-            QuicServerParams::default_for_tests(),
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
             cancel.clone(),
         )
         .unwrap();
@@ -201,7 +204,7 @@ mod tests {
             solana_connection_cache::client_connection::ClientConnection,
             solana_quic_client::quic_client::QuicClientConnection,
         };
-        solana_logger::setup();
+        agave_logger::setup();
 
         // Request Receiver
         let (sender, receiver) = unbounded();
@@ -218,7 +221,8 @@ mod tests {
             &keypair,
             sender,
             staked_nodes.clone(),
-            QuicServerParams::default_for_tests(),
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
             request_recv_cancel.clone(),
         )
         .unwrap();
@@ -242,7 +246,8 @@ mod tests {
             &keypair2,
             sender2,
             staked_nodes,
-            QuicServerParams::default_for_tests(),
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
             response_recv_cancel.clone(),
         )
         .unwrap();
@@ -313,7 +318,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_connection_close() {
-        solana_logger::setup();
+        agave_logger::setup();
         let (sender, receiver) = unbounded();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let (s, cancel, keypair) = server_args();
@@ -328,7 +333,8 @@ mod tests {
             &keypair,
             sender,
             staked_nodes,
-            QuicServerParams::default_for_tests(),
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
             cancel.clone(),
         )
         .unwrap();

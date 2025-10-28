@@ -783,7 +783,7 @@ pub mod test {
 
     #[test]
     fn test_broadcast_ledger() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
 
         // Create the leader scheduler

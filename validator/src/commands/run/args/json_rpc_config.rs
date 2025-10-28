@@ -1,13 +1,23 @@
 use {
-    crate::{
-        cli::DefaultArgs,
-        commands::{FromClapArgMatches, Result},
-    },
+    crate::commands::{FromClapArgMatches, Result},
     clap::{value_t, Arg, ArgMatches},
     solana_accounts_db::accounts_index::AccountSecondaryIndexes,
     solana_clap_utils::input_validators::is_parsable,
     solana_rpc::rpc::{JsonRpcConfig, RpcBigtableConfig},
+    std::sync::LazyLock,
 };
+
+static DEFAULT_HEALTH_CHECK_SLOT_DISTANCE: LazyLock<String> = LazyLock::new(|| {
+    solana_rpc_client_api::request::DELINQUENT_VALIDATOR_SLOT_DISTANCE.to_string()
+});
+static DEFAULT_MAX_MULTIPLE_ACCOUNTS: LazyLock<String> =
+    LazyLock::new(|| solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS.to_string());
+static DEFAULT_RPC_THREADS: LazyLock<String> = LazyLock::new(|| num_cpus::get().to_string());
+static DEFAULT_RPC_BLOCKING_THREADS: LazyLock<String> =
+    LazyLock::new(|| (1.max(num_cpus::get() / 4)).to_string());
+const DEFAULT_RPC_NICENESS_ADJ: &str = "0";
+static DEFAULT_RPC_MAX_REQUEST_BODY_SIZE: LazyLock<String> =
+    LazyLock::new(|| solana_rpc::rpc::MAX_REQUEST_BODY_SIZE.to_string());
 
 impl FromClapArgMatches for JsonRpcConfig {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
@@ -49,7 +59,7 @@ impl FromClapArgMatches for JsonRpcConfig {
     }
 }
 
-pub(crate) fn args<'a>(default_args: &DefaultArgs) -> Vec<Arg<'_, 'a>> {
+pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
     vec![
         Arg::with_name("enable_rpc_transaction_history")
             .long("enable-rpc-transaction-history")
@@ -84,7 +94,7 @@ pub(crate) fn args<'a>(default_args: &DefaultArgs) -> Vec<Arg<'_, 'a>> {
             .long("health-check-slot-distance")
             .value_name("SLOT_DISTANCE")
             .takes_value(true)
-            .default_value(&default_args.health_check_slot_distance)
+            .default_value(&DEFAULT_HEALTH_CHECK_SLOT_DISTANCE)
             .help(
                 "Report this validator as healthy if its latest replayed optimistically confirmed \
                  slot is within the specified number of slots from the cluster's latest \
@@ -98,7 +108,7 @@ pub(crate) fn args<'a>(default_args: &DefaultArgs) -> Vec<Arg<'_, 'a>> {
             .long("rpc-max-multiple-accounts")
             .value_name("MAX ACCOUNTS")
             .takes_value(true)
-            .default_value(&default_args.rpc_max_multiple_accounts)
+            .default_value(&DEFAULT_MAX_MULTIPLE_ACCOUNTS)
             .help(
                 "Override the default maximum accounts accepted by the getMultipleAccounts JSON \
                  RPC method",
@@ -108,7 +118,7 @@ pub(crate) fn args<'a>(default_args: &DefaultArgs) -> Vec<Arg<'_, 'a>> {
             .value_name("NUMBER")
             .validator(is_parsable::<usize>)
             .takes_value(true)
-            .default_value(&default_args.rpc_threads)
+            .default_value(&DEFAULT_RPC_THREADS)
             .help("Number of threads to use for servicing RPC requests"),
         Arg::with_name("rpc_blocking_threads")
             .long("rpc-blocking-threads")
@@ -127,7 +137,7 @@ pub(crate) fn args<'a>(default_args: &DefaultArgs) -> Vec<Arg<'_, 'a>> {
                     })
             })
             .takes_value(true)
-            .default_value(&default_args.rpc_blocking_threads)
+            .default_value(&DEFAULT_RPC_BLOCKING_THREADS)
             .help(
                 "Number of blocking threads to use for servicing CPU bound RPC requests (eg \
                  getMultipleAccounts)",
@@ -137,7 +147,7 @@ pub(crate) fn args<'a>(default_args: &DefaultArgs) -> Vec<Arg<'_, 'a>> {
             .value_name("ADJUSTMENT")
             .takes_value(true)
             .validator(solana_perf::thread::is_niceness_adjustment_valid)
-            .default_value(&default_args.rpc_niceness_adjustment)
+            .default_value(DEFAULT_RPC_NICENESS_ADJ)
             .help(
                 "Add this value to niceness of RPC threads. Negative value increases priority, \
                  positive value decreases priority.",
@@ -156,13 +166,13 @@ pub(crate) fn args<'a>(default_args: &DefaultArgs) -> Vec<Arg<'_, 'a>> {
             .value_name("BYTES")
             .takes_value(true)
             .validator(is_parsable::<usize>)
-            .default_value(&default_args.rpc_max_request_body_size)
+            .default_value(&DEFAULT_RPC_MAX_REQUEST_BODY_SIZE)
             .help("The maximum request body size accepted by rpc service"),
     ]
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     #[cfg(not(target_os = "linux"))]
     use crate::commands::run::args::tests::verify_args_struct_by_command_run_is_error_with_identity_setup;
     use {
@@ -177,6 +187,18 @@ mod tests {
             num::NonZeroUsize,
         },
     };
+
+    pub fn default_json_rpc_config() -> JsonRpcConfig {
+        JsonRpcConfig {
+            health_check_slot_distance: DEFAULT_HEALTH_CHECK_SLOT_DISTANCE.parse().unwrap(),
+            max_multiple_accounts: Some(DEFAULT_MAX_MULTIPLE_ACCOUNTS.parse().unwrap()),
+            rpc_threads: DEFAULT_RPC_THREADS.parse().unwrap(),
+            rpc_blocking_threads: DEFAULT_RPC_BLOCKING_THREADS.parse().unwrap(),
+            rpc_niceness_adj: DEFAULT_RPC_NICENESS_ADJ.parse().unwrap(),
+            max_request_body_size: Some(DEFAULT_RPC_MAX_REQUEST_BODY_SIZE.parse().unwrap()),
+            ..JsonRpcConfig::default()
+        }
+    }
 
     #[test]
     fn verify_args_struct_by_command_run_with_enable_rpc_transaction_history() {
@@ -434,5 +456,38 @@ mod tests {
                 expected_args,
             );
         }
+    }
+
+    #[test]
+    fn test_default_health_check_slot_distance_unchanged() {
+        assert_eq!(*DEFAULT_HEALTH_CHECK_SLOT_DISTANCE, "128");
+    }
+
+    #[test]
+    fn test_default_max_multiple_accounts_unchanged() {
+        assert_eq!(*DEFAULT_MAX_MULTIPLE_ACCOUNTS, "100");
+    }
+
+    #[test]
+    fn test_default_rpc_threads_unchanged() {
+        assert_eq!(*DEFAULT_RPC_THREADS, num_cpus::get().to_string());
+    }
+
+    #[test]
+    fn test_default_rpc_blocking_threads_unchanged() {
+        assert_eq!(
+            *DEFAULT_RPC_BLOCKING_THREADS,
+            (1.max(num_cpus::get() / 4)).to_string(),
+        );
+    }
+
+    #[test]
+    fn test_default_rpc_niceness_adj_unchanged() {
+        assert_eq!(DEFAULT_RPC_NICENESS_ADJ, "0");
+    }
+
+    #[test]
+    fn test_default_rpc_max_request_body_size_unchanged() {
+        assert_eq!(*DEFAULT_RPC_MAX_REQUEST_BODY_SIZE, 51_200.to_string());
     }
 }

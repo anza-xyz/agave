@@ -7,7 +7,7 @@ use {
     dashmap::DashMap,
     rand::Rng,
     rayon::iter::{IntoParallelRefIterator, ParallelIterator},
-    solana_account::{Account, AccountSharedData, ReadableAccount},
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
         account_info::{AccountInfo, StorageLocation},
         accounts::{AccountAddressFilter, Accounts},
@@ -41,7 +41,7 @@ fn new_accounts_db(account_paths: Vec<PathBuf>) -> AccountsDb {
 
 #[bench]
 fn bench_delete_dependencies(bencher: &mut Bencher) {
-    solana_logger::setup();
+    agave_logger::setup();
     let accounts_db = new_accounts_db(vec![PathBuf::from("accounts_delete_deps")]);
     let accounts = Accounts::new(Arc::new(accounts_db));
     let mut old_pubkey = Pubkey::default();
@@ -80,11 +80,7 @@ where
         .take(num_keys)
         .collect();
     let accounts_data: Vec<_> = std::iter::repeat_n(
-        Account {
-            lamports: 1,
-            ..Default::default()
-        }
-        .to_account_shared_data(),
+        AccountSharedData::new(1, 0, &Pubkey::new_from_array([0u8; 32])),
         num_keys,
     )
     .collect();
