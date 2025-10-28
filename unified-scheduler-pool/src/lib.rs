@@ -1049,7 +1049,7 @@ impl TaskHandler for DefaultTaskHandler {
             }
             BlockProduction => {
                 if let Err(error) =
-                    bank.resanitize_transaction_if_needed(transaction, task.max_age())
+                    bank.resanitize_transaction_minimally(transaction, task.max_age())
                 {
                     *result = Err(error);
                     return;

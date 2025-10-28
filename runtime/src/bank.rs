@@ -3046,7 +3046,7 @@ impl Bank {
         self.prepare_sanitized_batch(slice::from_ref(transaction))
     }
 
-    pub fn resanitize_transaction_if_needed(
+    pub fn resanitize_transaction_minimally(
         &self,
         transaction: &impl TransactionWithMeta,
         max_age: &MaxAge,
