@@ -7,10 +7,10 @@ use {
             MAX_ENTRIES_PER_PUBKEY_FOR_OTHER_TYPES,
         },
         consensus_pool::{
+            certificate_builder::{CertificateBuilder, CertificateError},
             parent_ready_tracker::ParentReadyTracker,
             slot_stake_counters::SlotStakeCounters,
             stats::ConsensusPoolStats,
-            vote_certificate_builder::{CertificateError, VoteCertificateBuilder},
             vote_pool::{DuplicateBlockVotePool, SimpleVotePool, VotePool},
         },
         event::VotorEvent,
@@ -33,10 +33,10 @@ use {
     thiserror::Error,
 };
 
+mod certificate_builder;
 pub mod parent_ready_tracker;
 mod slot_stake_counters;
 mod stats;
-mod vote_certificate_builder;
 mod vote_pool;
 
 pub type PoolId = (Slot, VoteType);
@@ -211,7 +211,7 @@ impl ConsensusPool {
             if accumulated_stake as f64 / (total_stake as f64) < limit {
                 continue;
             }
-            let mut cert_builder = VoteCertificateBuilder::new(cert_type);
+            let mut cert_builder = CertificateBuilder::new(cert_type);
             vote_types.iter().for_each(|vote_type| {
                 if let Some(vote_pool) = self.vote_pools.get(&(slot, *vote_type)) {
                     match vote_pool {
