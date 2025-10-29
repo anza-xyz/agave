@@ -15,15 +15,15 @@ use {
 const STATS_INTERVAL_MS: u64 = 10_000;
 
 #[derive(Debug, Default)]
-pub struct BucketMapHeldInMemStats {
+pub struct HeldInMemStats {
     pub ref_count: AtomicU64,
     pub slot_list_len: AtomicU64,
     pub slot_list_cached: AtomicU64,
 }
 
 #[derive(Debug, Default)]
-pub struct BucketMapHolderStats {
-    pub held_in_mem: BucketMapHeldInMemStats,
+pub struct Stats {
+    pub held_in_mem: HeldInMemStats,
     pub get_mem_us: AtomicU64,
     pub gets_from_mem: AtomicU64,
     pub get_missing_us: AtomicU64,
@@ -63,11 +63,11 @@ pub struct BucketMapHolderStats {
     pub flush_read_lock_us: AtomicU64,
 }
 
-impl BucketMapHolderStats {
-    pub fn new(bins: usize) -> BucketMapHolderStats {
-        BucketMapHolderStats {
+impl Stats {
+    pub fn new(bins: usize) -> Stats {
+        Stats {
             bins: bins as u64,
-            ..BucketMapHolderStats::default()
+            ..Stats::default()
         }
     }
 

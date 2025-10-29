@@ -6608,7 +6608,7 @@ impl AccountsDb {
 
         {
             // Update the index stats now.
-            let index_stats = self.accounts_index.bucket_map_holder_stats();
+            let index_stats = self.accounts_index.stats();
 
             // stats for inserted entries that previously did *not* exist
             index_stats.inc_insert_count(total_accum.num_did_not_exist);
@@ -6838,7 +6838,7 @@ impl AccountsDb {
             .map(|bin| bin.capacity_for_startup())
             .sum();
         self.accounts_index
-            .bucket_map_holder_stats()
+            .stats()
             .capacity_in_mem
             .store(index_capacity, Ordering::Relaxed);
 

@@ -1,7 +1,7 @@
 use {
     super::{
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
-        bucket_map_holder_stats::BucketMapHolderStats,
+        stats::Stats,
     },
     crate::{
         accounts_index::{
@@ -1238,7 +1238,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 .collect();
 
             flush_stats.flush_update_us = flush_update_measure.end_as_us();
-            flush_stats.update_to_bucket_map_stats(self.stats());
+            flush_stats.update_to_stats(self.stats());
 
             let m = Measure::start("flush_evict");
             self.evict_from_cache(evictions_age, current_age, startup, ages_flushing_now);
@@ -1306,7 +1306,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         Self::update_stat(&stats.failed_to_evict, failed as u64);
     }
 
-    pub fn stats(&self) -> &BucketMapHolderStats {
+    pub fn stats(&self) -> &Stats {
         &self.storage.stats
     }
 
@@ -1350,7 +1350,7 @@ impl DiskFlushStats {
         Self::default()
     }
 
-    fn update_to_bucket_map_stats(&self, stats: &BucketMapHolderStats) {
+    fn update_to_stats(&self, stats: &Stats) {
         Self::update_stat(&stats.flush_update_us, self.flush_update_us);
         Self::update_stat(&stats.flush_should_evict_us, self.flush_should_evict_us);
         Self::update_stat(
