@@ -7,7 +7,7 @@ use {
             MAX_ENTRIES_PER_PUBKEY_FOR_OTHER_TYPES,
         },
         consensus_pool::{
-            certificate_builder::{CertificateBuilder, CertificateError},
+            certificate_builder::{BuildError as CertificateBuilderError, CertificateBuilder},
             parent_ready_tracker::ParentReadyTracker,
             slot_stake_counters::SlotStakeCounters,
             stats::ConsensusPoolStats,
@@ -55,8 +55,8 @@ pub enum AddVoteError {
     #[error("Slot in the future")]
     SlotInFuture,
 
-    #[error("Certificate error: {0}")]
-    Certificate(#[from] CertificateError),
+    #[error("Certificate builder error: {0}")]
+    CertificateBuilder(#[from] CertificateBuilderError),
 
     #[error("{0} channel disconnected")]
     ChannelDisconnected(String),
