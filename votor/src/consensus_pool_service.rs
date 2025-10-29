@@ -115,12 +115,10 @@ impl ConsensusPoolService {
         stats: &mut Stats,
     ) -> Result<(), AddVoteError> {
         let certs_len = certs.len();
-        for (i, cert) in certs.into_iter().enumerate() {
+        for (i, certificate) in certs.into_iter().enumerate() {
             // The BLS cert channel is expected to be large enough, so we don't
             // handle certificate re-send here.
-            match bls_sender.try_send(BLSOp::PushCertificate {
-                certificate: cert.clone(),
-            }) {
+            match bls_sender.try_send(BLSOp::PushCertificate { certificate }) {
                 Ok(()) => {
                     stats.certificates_sent += 1;
                 }
