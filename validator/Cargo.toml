@@ -45,6 +45,7 @@ rayon = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
+signal-hook = { workspace = true }
 solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-clap-utils = { workspace = true }
@@ -97,10 +98,6 @@ tokio = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
 jemallocator = { workspace = true }
-
-[target."cfg(unix)".dependencies]
-libc = { workspace = true }
-signal-hook = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }
