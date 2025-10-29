@@ -156,7 +156,7 @@ pub fn load_validator_accounts(
         add_validator_accounts(
             genesis_config,
             &mut pubkeys.iter(),
-            bls_pubkeys,
+            &mut bls_pubkeys.iter(),
             account_details.balance_lamports,
             account_details.stake_lamports,
             commission,
@@ -235,7 +235,7 @@ fn features_to_deactivate_for_cluster(
 fn add_validator_accounts(
     genesis_config: &mut GenesisConfig,
     pubkeys_iter: &mut Iter<Pubkey>,
-    bls_pubkeys: Vec<BLSPubkey>,
+    bls_pubkeys_iter: &mut Iter<BLSPubkey>,
     lamports: u64,
     stake_lamports: u64,
     commission: u8,
@@ -247,7 +247,6 @@ fn add_validator_accounts(
         rent.minimum_balance(StakeStateV2::size_of()),
     )?;
 
-    let mut bls_pubkeys_iter = bls_pubkeys.iter();
     loop {
         let Some(identity_pubkey) = pubkeys_iter.next() else {
             break;
@@ -775,7 +774,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     add_validator_accounts(
         &mut genesis_config,
         &mut bootstrap_validator_pubkeys.iter(),
-        bootstrap_validator_bls_pubkeys.unwrap_or_default(),
+        &mut bootstrap_validator_bls_pubkeys.unwrap_or_default().iter(),
         bootstrap_validator_lamports,
         bootstrap_validator_stake_lamports,
         commission,
