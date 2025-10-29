@@ -2659,7 +2659,7 @@ mod tests {
         });
         let entrypoint_pubkey = solana_pubkey::new_rand();
         let data = test_crds_values(entrypoint_pubkey);
-        let mut stakes = HashMap::with_hasher(PubkeyHasherBuilder::default());
+        let mut stakes = HashMap::default();
         stakes.insert(Pubkey::new_unique(), 1u64);
         let timeouts = CrdsTimeouts::new(
             cluster_info.id(),
@@ -2798,17 +2798,17 @@ mod tests {
         cluster_info.gossip.refresh_push_active_set(
             &cluster_info.keypair(),
             cluster_info.my_shred_version(),
-            &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
-            None,                                                  // gossip validators
+            &HashMap::default(), // stakes
+            None,                // gossip validators
             &cluster_info.ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
         );
         let mut reqs = cluster_info.generate_new_gossip_requests(
             &thread_pool,
-            None,                                                  // gossip_validators
-            &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
-            true,                                                  // generate_pull_requests
+            None,                // gossip_validators
+            &HashMap::default(), // stakes
+            true,                // generate_pull_requests
         );
         //assert none of the addrs are invalid.
         assert!(reqs.all(|(addr, _)| {
@@ -2935,7 +2935,7 @@ mod tests {
             Arc::new(keypair),
             SocketAddrSpace::Unspecified,
         );
-        let stakes = HashMap::with_hasher(PubkeyHasherBuilder::default());
+        let stakes = HashMap::default();
         cluster_info.ping_cache.lock().unwrap().mock_pong(
             *peer.pubkey(),
             peer.gossip().unwrap(),
@@ -2981,7 +2981,7 @@ mod tests {
                 cluster_info.my_shred_version(),
                 timestamp(),
                 None,
-                &HashMap::with_hasher(PubkeyHasherBuilder::default()),
+                &HashMap::default(),
                 992, // max_bloom_filter_bytes
                 &cluster_info.ping_cache,
                 &mut pings,
@@ -3310,7 +3310,7 @@ mod tests {
         let entrypoint_pubkey = solana_pubkey::new_rand();
         let entrypoint = ContactInfo::new_localhost(&entrypoint_pubkey, timestamp());
         cluster_info.set_entrypoint(entrypoint.clone());
-        let stakes = HashMap::with_hasher(PubkeyHasherBuilder::default());
+        let stakes = HashMap::default();
         let (pings, pulls) = cluster_info.old_pull_requests(&thread_pool, None, &stakes);
         assert!(pings.is_empty());
         assert_eq!(pulls.len(), MIN_NUM_BLOOM_FILTERS);
@@ -3327,7 +3327,7 @@ mod tests {
         // now add this message back to the table and make sure after the next pull, the entrypoint is unset
         let entrypoint_crdsvalue = CrdsValue::new_unsigned(CrdsData::from(&entrypoint));
         let cluster_info = Arc::new(cluster_info);
-        let mut stakes = HashMap::with_hasher(PubkeyHasherBuilder::default());
+        let mut stakes = HashMap::default();
         stakes.insert(Pubkey::new_unique(), 1u64);
         let timeouts = cluster_info.gossip.make_timeouts(
             cluster_info.id(),
@@ -3335,7 +3335,7 @@ mod tests {
             Duration::from_millis(cluster_info.gossip.pull.crds_timeout),
         );
         cluster_info.handle_pull_response(vec![entrypoint_crdsvalue], &timeouts);
-        let stakes = HashMap::with_hasher(PubkeyHasherBuilder::default());
+        let stakes = HashMap::default();
         let (pings, pulls) = cluster_info.old_pull_requests(&thread_pool, None, &stakes);
         assert_eq!(pings.len(), 1);
         assert_eq!(pulls.len(), MIN_NUM_BLOOM_FILTERS);
@@ -3347,7 +3347,7 @@ mod tests {
         let keypair = Arc::new(Keypair::new());
         let d = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());
         let cluster_info = ClusterInfo::new(d.clone(), keypair, SocketAddrSpace::Unspecified);
-        let mut stakes = HashMap::with_hasher(PubkeyHasherBuilder::default());
+        let mut stakes = HashMap::<_, _, PubkeyHasherBuilder>::default();
 
         // no stake
         let id = Pubkey::from([1u8; 32]);
@@ -3396,7 +3396,7 @@ mod tests {
             .unwrap();
         cluster_info.set_entrypoint(entrypoint.clone());
 
-        let mut stakes = HashMap::with_hasher(PubkeyHasherBuilder::default());
+        let mut stakes = HashMap::default();
 
         let other_node_pubkey = solana_pubkey::new_rand();
         let other_node = ContactInfo::new_localhost(&other_node_pubkey, timestamp());
@@ -3563,7 +3563,7 @@ mod tests {
         })
         .take(NO_ENTRIES)
         .collect();
-        let mut stakes = HashMap::with_hasher(PubkeyHasherBuilder::default());
+        let mut stakes = HashMap::default();
         stakes.insert(Pubkey::new_unique(), 1u64);
         let timeouts = CrdsTimeouts::new(
             cluster_info.id(),

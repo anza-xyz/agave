@@ -515,7 +515,7 @@ mod tests {
     where
         I: IntoIterator<Item = &'a (Pubkey, (u64, VoteAccount))>,
     {
-        let mut staked_nodes = HashMap::with_hasher(PubkeyHasherBuilder::default());
+        let mut staked_nodes = HashMap::default();
         for (_, (stake, vote_account)) in vote_accounts
             .into_iter()
             .filter(|(_, (stake, _))| *stake != 0)

@@ -619,7 +619,7 @@ impl<T: 'static> ClusterNodesCache<T> {
                          {epoch}, slot: {shred_slot}"
                     );
                     inc_new_counter_error!("cluster_nodes-unknown_epoch_staked_nodes", 1);
-                    Arc::new(HashMap::with_hasher(PubkeyHasherBuilder::default()))
+                    Arc::new(HashMap::default())
                 });
             let nodes = new_cluster_nodes::<T>(
                 cluster_info,

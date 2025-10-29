@@ -439,9 +439,9 @@ mod test {
         let ping_cache = Mutex::new(ping_cache);
         crds_gossip.refresh_push_active_set(
             &keypair,
-            0,                                                     // shred version
-            &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
-            None,                                                  // gossip validators
+            0,                   // shred version
+            &HashMap::default(), // stakes
+            None,                // gossip validators
             &ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
@@ -455,7 +455,7 @@ mod test {
             &[prune_pubkey],
             now,
             now,
-            &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
+            &HashMap::default(), // stakes
         );
         assert_eq!(res.err(), Some(CrdsGossipError::BadPruneDestination));
         //correct dest
@@ -466,7 +466,7 @@ mod test {
             &[prune_pubkey], // origins
             now,
             now,
-            &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
+            &HashMap::default(), // stakes
         );
         res.unwrap();
         //test timeout
@@ -478,7 +478,7 @@ mod test {
             &[prune_pubkey], // origins
             now,
             timeout,
-            &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
+            &HashMap::default(), // stakes
         );
         assert_eq!(res.err(), Some(CrdsGossipError::PruneMessageTimeout));
     }

@@ -398,7 +398,7 @@ async fn test_connection_pruned_and_reopened() {
 #[tokio::test]
 async fn test_staked_connection() {
     let stake_identity = Keypair::new();
-    let mut stakes = HashMap::with_hasher(solana_pubkey::PubkeyHasherBuilder::default());
+    let mut stakes = HashMap::default();
     stakes.insert(stake_identity.pubkey(), 100_000);
     let staked_nodes = StakedNodes::new(Arc::new(stakes), HashMap::<Pubkey, u64>::default());
 
@@ -690,7 +690,7 @@ async fn test_rate_limiting_establish_connection() {
 #[tokio::test]
 async fn test_update_identity() {
     let stake_identity = Keypair::new();
-    let mut stakes = HashMap::with_hasher(solana_pubkey::PubkeyHasherBuilder::default());
+    let mut stakes = HashMap::default();
     stakes.insert(stake_identity.pubkey(), 100_000);
     let staked_nodes = StakedNodes::new(Arc::new(stakes), HashMap::<Pubkey, u64>::default());
 

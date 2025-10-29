@@ -13,7 +13,7 @@ use {
         bind_to_unspecified,
         sockets::{multi_bind_in_range_with_config, SocketConfiguration as SocketConfig},
     },
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_signer::Signer,
     solana_streamer::{
         packet::PacketBatchRecycler,
@@ -234,7 +234,7 @@ fn main() -> Result<()> {
             (Pubkey::new_unique(), total_stake.saturating_sub(stake)),
         ]
         .into_iter()
-        .collect::<HashMap<_, _, solana_pubkey::PubkeyHasherBuilder>>();
+        .collect::<HashMap<_, _, PubkeyHasherBuilder>>();
         let staked_nodes: Arc<RwLock<StakedNodes>> = Arc::new(RwLock::new(StakedNodes::new(
             Arc::new(stakes),
             HashMap::<Pubkey, u64>::default(), // overrides

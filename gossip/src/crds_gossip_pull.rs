@@ -1355,7 +1355,7 @@ pub(crate) mod tests {
         );
         // purge
         let node_crds = RwLock::new(node_crds);
-        let mut stakes = HashMap::with_hasher(PubkeyHasherBuilder::default());
+        let mut stakes = HashMap::default();
         stakes.insert(Pubkey::new_unique(), 1u64);
         let timeouts = node.make_timeouts(node_pubkey, &stakes, Duration::default());
         CrdsGossipPull::purge_active(&thread_pool, &node_crds, node.crds_timeout, &timeouts);
@@ -1471,7 +1471,7 @@ pub(crate) mod tests {
         let peer_pubkey = solana_pubkey::new_rand();
         let peer_entry =
             CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(&peer_pubkey, 0)));
-        let mut stakes = HashMap::with_hasher(PubkeyHasherBuilder::default());
+        let mut stakes = HashMap::default();
         stakes.insert(peer_pubkey, 1u64);
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),

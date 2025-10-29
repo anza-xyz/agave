@@ -32,7 +32,7 @@ use {
     solana_net_utils::sockets::bind_to_localhost_unique,
     solana_poh_config::PohConfig,
     solana_program_binaries::core_bpf_programs,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_rent::Rent,
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::{
@@ -215,7 +215,7 @@ impl LocalCluster {
                 (Pubkey::new_unique(), total_stake.saturating_sub(stake)),
             ]
             .into_iter()
-            .collect::<HashMap<_, _, solana_pubkey::PubkeyHasherBuilder>>();
+            .collect::<HashMap<_, _, PubkeyHasherBuilder>>();
             let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(
                 Arc::new(stakes),
                 HashMap::<Pubkey, u64>::default(), // overrides

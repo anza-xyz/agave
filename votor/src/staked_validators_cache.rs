@@ -6,7 +6,7 @@ use {
     solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::cluster_info::ClusterInfo,
-    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_pubkey::Pubkey,
     solana_runtime::bank_forks::BankForks,
     std::{
         collections::HashMap,
@@ -103,7 +103,7 @@ impl StakedValidatorsCache {
                     "StakedValidatorsCache::get: unknown Bank::epoch_staked_nodes for epoch: \
                      {epoch}"
                 );
-                Arc::new(HashMap::with_hasher(PubkeyHasherBuilder::default()))
+                Arc::new(HashMap::default())
             });
 
         struct Node {

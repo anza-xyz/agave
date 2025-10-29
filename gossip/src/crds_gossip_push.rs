@@ -435,8 +435,8 @@ mod tests {
         let ping_cache = Mutex::new(ping_cache);
         push.refresh_push_active_set(
             &crds,
-            &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
-            None,                                                  // gossip_validtors
+            &HashMap::default(), // stakes
+            None,                // gossip_validtors
             &Keypair::new(),
             0, // self_shred_version
             &ping_cache,
@@ -504,8 +504,8 @@ mod tests {
         let ping_cache = Mutex::new(ping_cache);
         push.refresh_push_active_set(
             &crds,
-            &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
-            None,                                                  // gossip_validators
+            &HashMap::default(), // stakes
+            None,                // gossip_validators
             &Keypair::new(),
             0, // self_shred_version
             &ping_cache,
@@ -549,8 +549,8 @@ mod tests {
         let ping_cache = Mutex::new(new_ping_cache());
         push.refresh_push_active_set(
             &crds,
-            &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
-            None,                                                  // gossip_validators
+            &HashMap::default(), // stakes
+            None,                // gossip_validators
             &Keypair::new(),
             0, // self_shred_version
             &ping_cache,
@@ -572,7 +572,7 @@ mod tests {
             &self_id,
             &peer.label().pubkey(),
             &[new_msg.label().pubkey()],
-            &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
+            &HashMap::default(), // stakes
         );
         assert_eq!(
             push.old_new_push_messages(
@@ -599,8 +599,8 @@ mod tests {
         let ping_cache = Mutex::new(new_ping_cache());
         push.refresh_push_active_set(
             &crds,
-            &HashMap::with_hasher(PubkeyHasherBuilder::default()), // stakes
-            None,                                                  // gossip_validators
+            &HashMap::default(), // stakes
+            None,                // gossip_validators
             &Keypair::new(),
             0, // self_shred_version
             &ping_cache,

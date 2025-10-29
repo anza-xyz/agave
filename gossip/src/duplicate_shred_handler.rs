@@ -85,7 +85,7 @@ impl DuplicateShredHandler {
             consumed: HashMap::<Slot, bool>::default(),
             last_root: 0,
             cached_on_epoch: 0,
-            cached_staked_nodes: Arc::new(HashMap::with_hasher(PubkeyHasherBuilder::default())),
+            cached_staked_nodes: Arc::new(HashMap::default()),
             cached_slots_in_epoch: 0,
             blockstore,
             leader_schedule_cache,

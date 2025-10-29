@@ -99,9 +99,7 @@ async fn main() -> anyhow::Result<()> {
 
     let staked_nodes = {
         let nodes = StakedNodes::new(
-            Arc::new(HashMap::with_hasher(
-                solana_pubkey::PubkeyHasherBuilder::default(),
-            )),
+            Arc::new(HashMap::default()),
             load_staked_nodes_overrides(&cli.stake_amounts)?,
         );
         Arc::new(RwLock::new(nodes))
