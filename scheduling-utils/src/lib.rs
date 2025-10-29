@@ -13,4 +13,6 @@ pub mod error;
 #[cfg(unix)]
 pub mod handshake;
 #[cfg(unix)]
+pub mod responses_region;
+#[cfg(unix)]
 pub mod transaction_ptr;

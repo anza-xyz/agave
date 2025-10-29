@@ -4,14 +4,14 @@ use {
 };
 
 /// Translate
-pub fn transaction_result_to_not_included_reason(result: Result<(), TransactionError>) -> u8 {
+pub fn transaction_result_to_not_included_reason(result: &Result<(), TransactionError>) -> u8 {
     match result {
         Ok(()) => not_included_reasons::NONE,
         Err(err) => transaction_error_to_not_included_reason(err),
     }
 }
 
-pub fn transaction_error_to_not_included_reason(error: TransactionError) -> u8 {
+pub fn transaction_error_to_not_included_reason(error: &TransactionError) -> u8 {
     match error {
         TransactionError::AccountInUse => not_included_reasons::ACCOUNT_IN_USE,
         TransactionError::AccountLoadedTwice => not_included_reasons::ACCOUNT_LOADED_TWICE,
