@@ -7,7 +7,7 @@ use {
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         parsed_token_accounts::*, rpc_cache::LargestAccountsCache, rpc_health::*,
     },
-    agave_snapshots::snapshot_config::SnapshotConfig,
+    agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig},
     base64::{prelude::BASE64_STANDARD, Engine},
     bincode::{config::Options, serialize},
     crossbeam_channel::{unbounded, Receiver, Sender},
@@ -70,7 +70,6 @@ use {
         commitment::{BlockCommitmentArray, BlockCommitmentCache},
         non_circulating_supply::{calculate_non_circulating_supply, NonCirculatingSupply},
         prioritization_fee_cache::PrioritizationFeeCache,
-        snapshot_utils,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_send_transaction_service::send_transaction_service::TransactionInfo,
@@ -2857,10 +2856,10 @@ pub mod rpc_minimal {
                 .unwrap();
 
             let full_snapshot_slot =
-                snapshot_utils::get_highest_full_snapshot_archive_slot(full_snapshot_archives_dir)
+                snapshot_paths::get_highest_full_snapshot_archive_slot(full_snapshot_archives_dir)
                     .ok_or(RpcCustomError::NoSnapshot)?;
             let incremental_snapshot_slot =
-                snapshot_utils::get_highest_incremental_snapshot_archive_slot(
+                snapshot_paths::get_highest_incremental_snapshot_archive_slot(
                     incremental_snapshot_archives_dir,
                     full_snapshot_slot,
                 );

@@ -417,6 +417,7 @@ impl ConsensusPool {
                 validator_vote_key,
             ));
         }
+        let vote = vote_message.vote;
         match self.update_vote_pool(vote_message, validator_vote_key, validator_stake) {
             None => {
                 // No new vote pool entry was created, just return empty vec
@@ -429,7 +430,7 @@ impl ConsensusPool {
                     .entry(vote_slot)
                     .or_insert_with(|| SlotStakeCounters::new(total_stake));
                 fallback_vote_counters.add_vote(
-                    vote,
+                    &vote,
                     entry_stake,
                     my_vote_pubkey == &validator_vote_key,
                     events,
@@ -437,9 +438,8 @@ impl ConsensusPool {
                 );
             }
         }
-        self.stats.incr_ingested_vote(vote);
-
-        self.update_certificates(vote, block_id, events, total_stake)
+        self.stats.incr_ingested_vote(&vote);
+        self.update_certificates(&vote, block_id, events, total_stake)
     }
 
     fn add_certificate(
@@ -1025,12 +1025,40 @@ mod tests {
         assert!(pool.make_start_leader_decision(my_leader_slot, parent_slot, first_alpenglow_slot));
     }
 
-    #[test_case(Vote::new_finalization_vote(5), vec![CertificateType::Finalize(5)])]
-    #[test_case(Vote::new_notarization_vote(6, Hash::default()), vec![CertificateType::Notarize(6, Hash::default()), CertificateType::NotarizeFallback(6, Hash::default())])]
-    #[test_case(Vote::new_notarization_fallback_vote(7, Hash::default()), vec![CertificateType::NotarizeFallback(7, Hash::default())])]
-    #[test_case(Vote::new_skip_vote(8), vec![CertificateType::Skip(8)])]
-    #[test_case(Vote::new_skip_fallback_vote(9), vec![CertificateType::Skip(9)])]
-    fn test_add_vote_and_create_new_certificate_with_types(
+    #[test]
+    fn test_add_vote_and_create_new_certificate_with_types() {
+        let slot = 5;
+        let vote = Vote::new_finalization_vote(slot);
+        let cert_types = vec![CertificateType::Finalize(slot)];
+        do_test_add_vote_and_create_new_certificate_with_types(vote, cert_types);
+
+        let slot = 6;
+        let block_id = Hash::new_unique();
+        let vote = Vote::new_notarization_vote(slot, block_id);
+        let cert_types = vec![
+            CertificateType::Notarize(slot, block_id),
+            CertificateType::NotarizeFallback(slot, block_id),
+        ];
+        do_test_add_vote_and_create_new_certificate_with_types(vote, cert_types);
+
+        let slot = 7;
+        let block_id = Hash::new_unique();
+        let vote = Vote::new_notarization_fallback_vote(slot, block_id);
+        let cert_types = vec![CertificateType::NotarizeFallback(slot, block_id)];
+        do_test_add_vote_and_create_new_certificate_with_types(vote, cert_types);
+
+        let slot = 8;
+        let vote = Vote::new_skip_vote(slot);
+        let cert_types = vec![CertificateType::Skip(slot)];
+        do_test_add_vote_and_create_new_certificate_with_types(vote, cert_types);
+
+        let slot = 9;
+        let vote = Vote::new_skip_fallback_vote(slot);
+        let cert_types = vec![CertificateType::Skip(slot)];
+        do_test_add_vote_and_create_new_certificate_with_types(vote, cert_types);
+    }
+
+    fn do_test_add_vote_and_create_new_certificate_with_types(
         vote: Vote,
         expected_cert_types: Vec<CertificateType>,
     ) {
@@ -1099,9 +1127,9 @@ mod tests {
         }
         // Assert certs_to_send contains the expected certificate types
         for expected_cert_type in expected_cert_types {
-            assert!(certs_to_send.iter().any(|cert| {
-                cert.cert_type == expected_cert_type && cert.cert_type.slot() == slot
-            }));
+            assert!(certs_to_send
+                .iter()
+                .any(|cert| { cert.cert_type == expected_cert_type }));
         }
         assert_eq!(highest_slot_fn(&pool), slot);
         // Now add the same certificate again, this should silently exit.

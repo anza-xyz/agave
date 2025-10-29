@@ -168,6 +168,7 @@ impl FeatureSet {
             raise_cpi_nesting_limit_to_8: self.is_active(&raise_cpi_nesting_limit_to_8::id()),
             provide_instruction_data_offset_in_vm_r2: self
                 .is_active(&provide_instruction_data_offset_in_vm_r2::id()),
+            increase_cpi_account_info_limit: self.is_active(&increase_cpi_account_info_limit::id()),
             vote_state_v4: self.is_active(&vote_state_v4::id()),
         }
     }
@@ -1167,6 +1168,10 @@ pub mod switch_to_chacha8_turbine {
     solana_pubkey::declare_id!("CHaChatUnR3s6cPyPMMGNJa3VdQQ8PNH2JqdD4LpCKnB");
 }
 
+pub mod increase_cpi_account_info_limit {
+    solana_pubkey::declare_id!("H6iVbVaDZgDphcPbcZwc5LoznMPWQfnJ1AM7L1xzqvt5");
+}
+
 pub mod deprecate_rent_exemption_threshold {
     solana_pubkey::declare_id!("rent6iVy6PDoViPBeJ6k5EJQrkj62h7DPyLbWGHwjrC");
 }
@@ -2101,6 +2106,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             switch_to_chacha8_turbine::id(),
             "SIMD-0332: Reduce ChaCha rounds for Turbine from 20 to 8",
+        ),
+        (
+            increase_cpi_account_info_limit::id(),
+            "SIMD-0339: Increase CPI Account Infos Limit",
         ),
         (
             deprecate_rent_exemption_threshold::id(),

@@ -190,7 +190,7 @@ pub fn execute_instr(mut input: InstrContext) -> Option<InstrEffects> {
 
     let log_collector = LogCollector::new_ref();
     let compute_budget = {
-        let mut budget = ComputeBudget::new_with_defaults(false);
+        let mut budget = ComputeBudget::new_with_defaults(false, false);
         budget.compute_unit_limit = input.cu_avail;
         budget
     };

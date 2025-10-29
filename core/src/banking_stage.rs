@@ -64,6 +64,7 @@ pub mod leader_slot_metrics;
 pub mod qos_service;
 pub mod vote_storage;
 
+#[allow(dead_code)]
 mod consume_worker;
 mod vote_worker;
 
