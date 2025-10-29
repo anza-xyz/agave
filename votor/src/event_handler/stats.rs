@@ -294,35 +294,35 @@ impl SentVoteStats {
 
 #[derive(Debug)]
 pub(crate) struct EventHandlerStats {
-    // Number of events that were ignored. This includes events that were
-    // received but not processed due to various reasons (e.g., outdated,
-    // irrelevant).
+    /// Number of events that were ignored. This includes events that were
+    /// received but not processed due to various reasons (e.g., outdated,
+    /// irrelevant).
     pub(crate) ignored: usize,
 
-    // Number of times where we are attempting to start a leader window but
-    // there is already a pending window to produce. The older window is
-    // discarded in favor of the newer one.
+    /// Number of times where we are attempting to start a leader window but
+    /// there is already a pending window to produce. The older window is
+    /// discarded in favor of the newer one.
     pub(crate) leader_window_replaced: usize,
 
-    // Number of times we updated the root.
+    /// Number of times we updated the root.
     pub(crate) set_root_count: usize,
 
-    // Number of times we setup timeouts for a new leader window.
+    /// Number of times we setup timeouts for a new leader window.
     pub(crate) timeout_set: usize,
 
-    // Amount of time spent receiving events. Includes waiting for events.
+    /// Amount of time spent receiving events. Includes waiting for events.
     pub(crate) receive_event_time_us: u64,
 
-    // Amount of time spent sending votes.
+    /// Amount of time spent sending votes.
     pub(crate) send_votes_batch_time_us: u64,
 
-    // Number of times we saw each event and time spent processing the event.
+    /// Number of times we saw each event and time spent processing the event.
     received_events_stats: ReceivedEventsStats,
 
-    // Number of votes sent for each vote type.
+    /// Number of votes sent for each vote type.
     sent_votes: SentVoteStats,
 
-    // Timing information for major events for each slot.
+    /// Timing information for major events for each slot.
     slot_tracking_map: BTreeMap<Slot, SlotTracking>,
 
     root_slot: Slot,
