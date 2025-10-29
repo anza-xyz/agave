@@ -171,6 +171,8 @@ impl FeatureSet {
             increase_cpi_account_info_limit: self.is_active(&increase_cpi_account_info_limit::id()),
             vote_state_v4: self.is_active(&vote_state_v4::id()),
             poseidon_enforce_padding: self.is_active(&poseidon_enforce_padding::id()),
+            fix_alt_bn128_pairing_length_check: self
+                .is_active(&fix_alt_bn128_pairing_length_check::id()),
         }
     }
 }
@@ -1179,6 +1181,10 @@ pub mod deprecate_rent_exemption_threshold {
 
 pub mod poseidon_enforce_padding {
     solana_pubkey::declare_id!("poUdAqRXXsNmfqAZ6UqpjbeYgwBygbfQLEvWSqVhSnb");
+
+
+pub mod fix_alt_bn128_pairing_length_check {
+    solana_pubkey::declare_id!("bnYzodLwmybj7e1HAe98yZrdJTd7we69eMMLgCXqKZm");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2123,6 +2129,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             poseidon_enforce_padding::id(),
             "SIMD-0359: Enforce padding in Poseidon hash inputs",
+        ),
+        (
+            fix_alt_bn128_pairing_length_check::id(),
+            "SIMD-0334: Fix alt_bn128_pairing length check",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

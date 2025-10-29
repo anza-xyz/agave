@@ -1633,7 +1633,14 @@ declare_builtin_function!(
                 )
             }
             ALT_BN128_PAIRING_BE => {
-                alt_bn128_versioned_pairing(VersionedPairing::V0, input, Endianness::BE)
+                let version = if invoke_context
+                    .get_feature_set()
+                    .fix_alt_bn128_pairing_length_check {
+                    VersionedPairing::V1
+                } else {
+                    VersionedPairing::V0
+                };
+                alt_bn128_versioned_pairing(version, input, Endianness::BE)
             }
             _ => {
                 return Err(SyscallError::InvalidAttribute.into());
