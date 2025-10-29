@@ -447,11 +447,12 @@ pub(crate) mod external {
                 responses: response_region,
             };
 
-            let Some(send_message) = self.sender.reserve() else {
-                // Should de-allocate the memory, but this is a non-recoverable
-                // error and so it's not needed.
-                return Err(ExternalConsumeWorkerError::SenderDisconnected);
-            };
+            // Should de-allocate the memory, but this is a non-recoverable
+            // error and so it's not needed.
+            let send_message = self
+                .sender
+                .reserve()
+                .ok_or(ExternalConsumeWorkerError::SenderDisconnected)?;
 
             unsafe {
                 send_message.write(response_message);
@@ -473,9 +474,10 @@ pub(crate) mod external {
                 },
             };
 
-            let Some(send_ptr) = self.sender.reserve() else {
-                return Err(ExternalConsumeWorkerError::SenderDisconnected);
-            };
+            let send_ptr = self
+                .sender
+                .reserve()
+                .ok_or(ExternalConsumeWorkerError::SenderDisconnected)?;
 
             // SAFETY: `reserve` guarantees a properly aligned space
             //         for a `WorkerToPackMessage`
