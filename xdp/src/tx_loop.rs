@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        device::{NetworkDevice, QueueId, RingSizes},
+        device::{NetworkDevice, QueueId, RingSizes, TxRing},
         netlink::MacAddress,
         packet::{
             write_eth_header, write_ip_header, write_udp_header, ETH_HEADER_SIZE, IP_HEADER_SIZE,
@@ -10,7 +10,7 @@ use {
         },
         route::Router,
         set_cpu_affinity,
-        socket::{Socket, Tx, TxRing},
+        socket::{Socket, Tx},
         umem::{Frame as _, PageAlignedMemory, SliceUmem, SliceUmemFrame, Umem as _},
     },
     caps::{
