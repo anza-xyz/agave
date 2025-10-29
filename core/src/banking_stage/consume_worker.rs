@@ -362,13 +362,16 @@ pub(crate) mod external {
                     continue; // recording failed, try again on next slot if possible.
                 };
 
-                let responses = self.consume_response_region(
-                    &translation_results,
-                    &transactions,
-                    &commit_results,
-                    bank,
-                )?;
-
+                let responses = execution_responses_from_iter(
+                    &self.allocator,
+                    Self::consume_response_iterator(
+                        &translation_results,
+                        &transactions,
+                        &commit_results,
+                        bank,
+                    ),
+                )
+                .ok_or(ExternalConsumeWorkerError::AllocationFailure)?;
                 let response = WorkerToPackMessage {
                     batch: message.batch,
                     processed: 1,
@@ -390,41 +393,35 @@ pub(crate) mod external {
             self.return_not_included_with_reason(message, not_included_reasons::BANK_NOT_AVAILABLE)
         }
 
-        /// Return response for processed batch of transactions.
-        fn consume_response_region(
-            &mut self,
-            translation_results: &[Result<(), PacketHandlingError>],
-            transactions: &[Tx],
-            commit_results: &[CommitTransactionDetails],
-            bank: &Bank,
-        ) -> Result<TransactionResponseRegion, ExternalConsumeWorkerError> {
+        fn consume_response_iterator<'a>(
+            translation_results: &'a [Result<(), PacketHandlingError>],
+            transactions: &'a [impl TransactionWithMeta],
+            commit_results: &'a [CommitTransactionDetails],
+            bank: &'a Bank,
+        ) -> impl ExactSizeIterator<Item = ExecutionResponse> + 'a {
             assert_eq!(transactions.len(), commit_results.len());
             let mut transactions_iterator = transactions.iter();
             let mut commit_result_iterator = commit_results.iter();
-            let response_iterator =
-                translation_results
-                    .iter()
-                    .map(|translation_result| match translation_result {
-                        Ok(()) => {
-                            let tx = transactions_iterator.next().expect(
-                                "transactions must contain element for each successfully \
-                                 translated result",
-                            );
-                            let commit_details = commit_result_iterator.next().expect(
-                                "commit result iterator must contain element for each sent \
-                                 transaction",
-                            );
-                            Self::response_from_commit_details(tx, commit_details, bank)
-                        }
-                        Err(err) => ExecutionResponse {
-                            not_included_reason: Self::reason_from_packet_handling_error(err),
-                            cost_units: 0,
-                            fee_payer_balance: 0,
-                        },
-                    });
 
-            execution_responses_from_iter(&self.allocator, response_iterator)
-                .ok_or(ExternalConsumeWorkerError::AllocationFailure)
+            translation_results
+                .iter()
+                .map(move |translation_result| match translation_result {
+                    Ok(()) => {
+                        let tx = transactions_iterator.next().expect(
+                            "transactions must contain element for each successfully translated \
+                             result",
+                        );
+                        let commit_details = commit_result_iterator.next().expect(
+                            "commit result iterator must contain element for each sent transaction",
+                        );
+                        Self::response_from_commit_details(tx, commit_details, bank)
+                    }
+                    Err(err) => ExecutionResponse {
+                        not_included_reason: Self::reason_from_packet_handling_error(err),
+                        cost_units: 0,
+                        fee_payer_balance: 0,
+                    },
+                })
         }
 
         /// Return all transactions in the batch as not included with the provided
@@ -554,7 +551,7 @@ pub(crate) mod external {
         }
 
         fn response_from_commit_details(
-            tx: &Tx,
+            tx: &impl TransactionWithMeta,
             commit_details: &CommitTransactionDetails,
             bank: &Bank,
         ) -> ExecutionResponse {
@@ -597,7 +594,7 @@ pub(crate) mod external {
 
     #[cfg(test)]
     mod tests {
-        use super::*;
+        use {super::*, solana_system_transaction::transfer, solana_transaction::TransactionError};
 
         #[test]
         fn test_validate_message() {
@@ -637,31 +634,114 @@ pub(crate) mod external {
         }
 
         #[test]
+        fn test_consume_response_iterator() {
+            let simple_tx = bincode::serialize(&transfer(
+                &solana_keypair::Keypair::new(),
+                &solana_pubkey::Pubkey::new_unique(),
+                1,
+                solana_hash::Hash::default(),
+            ))
+            .unwrap();
+            let bank = Bank::default_for_tests();
+            let txs = (0..3)
+                .map(|_| {
+                    translate_to_runtime_view(
+                        &simple_tx[..],
+                        &bank,
+                        true,
+                        bank.get_transaction_account_lock_limit(),
+                    )
+                    .ok()
+                    .unwrap()
+                    .0
+                })
+                .collect::<Vec<_>>();
+
+            let responses = ExternalWorker::consume_response_iterator(
+                &[
+                    Err(PacketHandlingError::Sanitization),
+                    Ok(()),
+                    Ok(()),
+                    Ok(()),
+                ],
+                &txs,
+                &[
+                    CommitTransactionDetails::Committed {
+                        compute_units: 6,
+                        loaded_accounts_data_size: 1024,
+                        fee_payer_post_balance: 1_000_000,
+                        result: Err(TransactionError::InstructionError(
+                            0,
+                            solana_transaction::InstructionError::Custom(0),
+                        )),
+                    },
+                    CommitTransactionDetails::Committed {
+                        compute_units: 10,
+                        loaded_accounts_data_size: 2048,
+                        fee_payer_post_balance: 2_000_000,
+                        result: Ok(()),
+                    },
+                    CommitTransactionDetails::NotCommitted(
+                        TransactionError::InsufficientFundsForFee,
+                    ),
+                ],
+                &bank,
+            )
+            .collect::<Vec<_>>();
+
+            assert_eq!(
+                responses,
+                &[
+                    ExecutionResponse {
+                        not_included_reason: not_included_reasons::SANITIZE_FAILURE,
+                        cost_units: 0,
+                        fee_payer_balance: 0
+                    },
+                    ExecutionResponse {
+                        not_included_reason: not_included_reasons::NONE,
+                        cost_units: 1337,
+                        fee_payer_balance: 1_000_000,
+                    },
+                    ExecutionResponse {
+                        not_included_reason: not_included_reasons::NONE,
+                        cost_units: 1341,
+                        fee_payer_balance: 2_000_000,
+                    },
+                    ExecutionResponse {
+                        not_included_reason: not_included_reasons::INSUFFICIENT_FUNDS_FOR_FEE,
+                        cost_units: 0,
+                        fee_payer_balance: 0,
+                    }
+                ]
+            )
+        }
+
+        #[test]
         fn test_reason_from_packet_handling_error() {
             assert_eq!(
                 ExternalWorker::reason_from_packet_handling_error(
                     &PacketHandlingError::Sanitization
                 ),
-                not_included_reasons::PARSING_OR_SANITIZATION_FAILURE
+                not_included_reasons::SANITIZE_FAILURE
             );
             assert_eq!(
                 ExternalWorker::reason_from_packet_handling_error(
                     &PacketHandlingError::LockValidation
                 ),
-                not_included_reasons::PARSING_OR_SANITIZATION_FAILURE
+                not_included_reasons::SANITIZE_FAILURE
             );
             assert_eq!(
                 ExternalWorker::reason_from_packet_handling_error(
                     &PacketHandlingError::ComputeBudget
                 ),
-                not_included_reasons::PARSING_OR_SANITIZATION_FAILURE
+                not_included_reasons::SANITIZE_FAILURE
             );
 
             assert_eq!(
                 ExternalWorker::reason_from_packet_handling_error(
                     &PacketHandlingError::ALTResolution
                 ),
-                not_included_reasons::ALT_RESOLUTION_FAILURE
+                not_included_reasons::ADDRESS_LOOKUP_TABLE_NOT_FOUND
             );
         }
     }
