@@ -1,12 +1,7 @@
 SBF_SDK_PATH := ../../platform-tools-sdk/sbf
 SRC_DIR := c/src
 OUT_DIR := target/deploy
-TOOLCHAIN := 1.84.1-sbpf-solana-v1.51
-
-test-v3:
-	mkdir -p target/deploy ; \
-	VER=v3 $(MAKE) rust-new ; \
-	$(MAKE) test-rust
+TOOLCHAIN := 1.89.0-sbpf-solana-v1.52
 
 test-v2:
 	VER=v2 $(MAKE) test-version
@@ -33,10 +28,6 @@ test-version:
 rust-v0:
 	cargo +$(TOOLCHAIN) build --release --target sbpf-solana-solana --workspace ; \
 	cp -r target/sbpf-solana-solana/release/* target/deploy
-
-rust-new:
-	RUSTFLAGS="-C instrument-coverage=no" cargo +$(TOOLCHAIN) build --release --target sbpf$(VER)-solana-solana --workspace ; \
-	cp -r target/sbpf$(VER)-solana-solana/release/* target/deploy
 
 .PHONY: test-v3
 
