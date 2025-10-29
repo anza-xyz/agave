@@ -64,7 +64,6 @@ pub mod leader_slot_metrics;
 pub mod qos_service;
 pub mod vote_storage;
 
-#[allow(dead_code)]
 mod consume_worker;
 mod vote_worker;
 
@@ -90,10 +89,8 @@ pub mod unified_scheduler;
 #[cfg(not(feature = "dev-context-only-utils"))]
 pub(crate) mod unified_scheduler;
 
-#[allow(dead_code)]
 #[cfg(unix)]
 mod progress_tracker;
-#[allow(dead_code)]
 #[cfg(unix)]
 mod tpu_to_pack;
 
@@ -436,7 +433,8 @@ impl BankingStage {
         }
     }
 
-    pub fn spawn_threads(
+    /// Spawns the requested internal scheduler & accompanying worker threads.
+    pub fn spawn_internal_threads(
         &mut self,
         block_production_method: BlockProductionMethod,
         num_workers: NonZeroUsize,
@@ -611,7 +609,7 @@ impl BankingStage {
         DEFAULT_NUM_WORKERS
     }
 
-    pub fn max_num_workers() -> NonZeroUsize {
+    pub const fn max_num_workers() -> NonZeroUsize {
         MAX_NUM_WORKERS
     }
 
@@ -629,6 +627,118 @@ impl BankingStage {
             bank_thread_hdl.join()?;
         }
         Ok(())
+    }
+}
+
+#[cfg(unix)]
+mod external {
+    use {
+        super::*,
+        crate::banking_stage::consume_worker::external::ExternalWorker,
+        agave_scheduling_utils::handshake::server::{AgaveSession, AgaveWorkerSession},
+        tpu_to_pack::BankingPacketReceivers,
+    };
+
+    impl BankingStage {
+        /// Spawns the external workers as specified by the [`AgaveSession`].
+        pub fn spawn_external_threads(
+            &mut self,
+            AgaveSession {
+                tpu_to_pack,
+                progress_tracker,
+                workers,
+            }: AgaveSession,
+        ) -> thread::Result<()> {
+            if let Some(context) = self.context.as_ref() {
+                // Shutdown the previous workers.
+                info!("Shutting down banking stage threads");
+                context.exit_signal.store(true, Ordering::Relaxed);
+                for bank_thread_hdl in self.thread_hdls.drain(..) {
+                    bank_thread_hdl.join()?;
+                }
+
+                context.exit_signal.store(false, Ordering::Relaxed);
+
+                // Spawn the new workers.
+                self.thread_hdls.push(Self::spawn_vote_worker(context));
+                Self::spawn_external_workers(&mut self.thread_hdls, context, workers);
+
+                // Spawn tpu_to_pack.
+                self.thread_hdls.push(tpu_to_pack::spawn(
+                    context.exit_signal.clone(),
+                    BankingPacketReceivers {
+                        non_vote_receiver: context.non_vote_receiver.clone(),
+                        gossip_vote_receiver: None,
+                        tpu_vote_receiver: None,
+                    },
+                    tpu_to_pack,
+                ));
+
+                // Spawn progress tracker.
+                let (shared_leader_state, ticks_per_slot) = {
+                    let poh = context.poh_recorder.read().unwrap();
+
+                    (poh.shared_leader_state(), poh.ticks_per_slot())
+                };
+                self.thread_hdls.push(progress_tracker::spawn(
+                    context.exit_signal.clone(),
+                    progress_tracker,
+                    shared_leader_state,
+                    ticks_per_slot,
+                ));
+            }
+
+            Ok(())
+        }
+
+        fn spawn_external_workers(
+            non_vote_thread_hdls: &mut Vec<JoinHandle<()>>,
+            context: &BankingStageContext,
+            workers: Vec<AgaveWorkerSession>,
+        ) {
+            static_assertions::const_assert!(
+                agave_scheduling_utils::handshake::MAX_WORKERS
+                    == BankingStage::max_num_workers().get()
+            );
+            assert!(workers.len() <= BankingStage::max_num_workers().get());
+
+            // Spawn the worker threads
+            let mut worker_metrics = Vec::with_capacity(workers.len());
+            for (
+                index,
+                AgaveWorkerSession {
+                    allocator,
+                    pack_to_worker,
+                    worker_to_pack,
+                },
+            ) in workers.into_iter().enumerate()
+            {
+                let id = index as u32;
+                let consume_worker = ExternalWorker::new(
+                    id,
+                    context.exit_signal.clone(),
+                    pack_to_worker,
+                    Consumer::new(
+                        context.committer.clone(),
+                        context.transaction_recorder.clone(),
+                        QosService::new(id),
+                        context.log_messages_bytes_limit,
+                    ),
+                    worker_to_pack,
+                    allocator,
+                );
+
+                worker_metrics.push(consume_worker.metrics_handle());
+                non_vote_thread_hdls.push(
+                    Builder::new()
+                        .name(format!("solECoWorker{id:02}"))
+                        .spawn(move || {
+                            let _ = consume_worker.run();
+                        })
+                        .unwrap(),
+                )
+            }
+        }
     }
 }
 

@@ -198,7 +198,7 @@ impl Server {
             AgaveSession {
                 tpu_to_pack: AgaveTpuToPackSession {
                     allocator: tpu_to_pack_allocator,
-                    queue: tpu_to_pack_queue,
+                    producer: tpu_to_pack_queue,
                 },
                 progress_tracker,
                 workers,
@@ -299,7 +299,7 @@ pub struct AgaveSession {
 /// Shared memory objects for the tpu to pack worker.
 pub struct AgaveTpuToPackSession {
     pub allocator: Allocator,
-    pub queue: shaq::Producer<TpuToPackMessage>,
+    pub producer: shaq::Producer<TpuToPackMessage>,
 }
 
 /// Shared memory objects for a single banking worker.

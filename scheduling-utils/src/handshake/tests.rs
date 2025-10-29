@@ -60,9 +60,9 @@ fn message_passing_on_all_queues() {
         let mut session = server.accept().unwrap();
 
         // Send a tpu_to_pack message.
-        let mut slot = session.tpu_to_pack.queue.reserve().unwrap();
+        let mut slot = session.tpu_to_pack.producer.reserve().unwrap();
         unsafe { *slot.as_mut() = tpu_to_pack };
-        session.tpu_to_pack.queue.commit();
+        session.tpu_to_pack.producer.commit();
 
         // Send a progress_tracker message.
         let mut slot = session.progress_tracker.reserve().unwrap();

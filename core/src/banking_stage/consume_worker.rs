@@ -28,12 +28,6 @@ pub enum ConsumeWorkerError<Tx> {
     Send(#[from] SendError<FinishedConsumeWork<Tx>>),
 }
 
-#[derive(Debug, Error)]
-pub enum ExternalConsumeWorkerError {
-    #[error("Sender disconnected")]
-    SenderDisconnected,
-}
-
 enum ProcessingStatus<Tx> {
     Processed,
     /// Work could not be processed due to lack of bank.
@@ -177,8 +171,9 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     }
 }
 
+#[allow(dead_code)]
 #[cfg(unix)]
-mod external {
+pub(crate) mod external {
     use {
         super::*,
         agave_scheduler_bindings::{
@@ -189,6 +184,12 @@ mod external {
         agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     };
+
+    #[derive(Debug, Error)]
+    pub enum ExternalConsumeWorkerError {
+        #[error("Sender disconnected")]
+        SenderDisconnected,
+    }
 
     pub(crate) struct ExternalWorker {
         exit: Arc<AtomicBool>,
