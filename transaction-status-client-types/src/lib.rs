@@ -301,8 +301,16 @@ impl<'de> DeserializeTrait<'de> for UiTransactionError {
                 let instruction_error = arr.get(1).ok_or_else(|| {
                     DeserializeError::invalid_length(1, &"Expected there to be at least 2 elements")
                 })?;
-                let err: InstructionError = from_value(instruction_error.clone())
-                    .map_err(|e| DeserializeError::custom(e.to_string()))?;
+
+                // Handle SDK version compatibility: if it's a v2-style
+                // {"BorshIoError": "Unknown"}, convert it to a v3-style
+                // "BorshIoError"
+                let err: InstructionError = if instruction_error.get("BorshIoError").is_some() {
+                    from_value(serde_json::json!("BorshIoError"))
+                } else {
+                    from_value(instruction_error.clone())
+                }
+                .map_err(|e| DeserializeError::custom(e.to_string()))?;
                 return Ok(UiTransactionError(TransactionError::InstructionError(
                     outer_instruction_index,
                     err,
@@ -956,5 +964,29 @@ mod test {
             from_value::<UiTransactionError>(serialized_value)
                 .expect("Failed to deserialize `UiTransactionError");
         assert_eq!(actual_transaction_error, expected_transaction_error);
+    }
+
+    #[test]
+    fn test_deserialize_instruction_error_string_format() {
+        // Test that we can deserialize new InstructionErrors when serialized as
+        // a string.
+        let new_error = TransactionError::InstructionError(0, InstructionError::BorshIoError);
+        let error_json = to_value(&new_error).unwrap();
+        let result = from_value::<UiTransactionError>(error_json);
+        assert!(matches!(
+            result.unwrap().0,
+            TransactionError::InstructionError(0, InstructionError::BorshIoError)
+        ));
+
+        // This checks compatibility across SDK versions where BorshIoError is
+        // a unit variant in v3 and newtype variant in v2.
+        let old_error =
+            to_value(serde_json::json!({"InstructionError": [0, {"BorshIoError": "Unknown"}]}))
+                .unwrap();
+        let result = from_value::<UiTransactionError>(old_error);
+        assert!(matches!(
+            result.unwrap().0,
+            TransactionError::InstructionError(0, InstructionError::BorshIoError)
+        ));
     }
 }
