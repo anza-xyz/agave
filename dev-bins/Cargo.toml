@@ -7,9 +7,6 @@ members = [
     "../ledger-tool",
 ]
 
-[target.'cfg(unix)']
-
-
 resolver = "2"
 
 [workspace.package]
