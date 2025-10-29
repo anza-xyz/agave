@@ -19,7 +19,8 @@ use {
     solana_keypair::Keypair,
     solana_ledger::shred::ShredId,
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_pubkey::Pubkey,
+    solana_runtime::stakes::StakedNodesMap,
     solana_runtime::bank::Bank,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
@@ -254,7 +255,7 @@ impl ClusterNodes<BroadcastStage> {
     pub fn new(
         cluster_info: &ClusterInfo,
         cluster_type: ClusterType,
-        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+        stakes: &StakedNodesMap,
         use_cha_cha_8: bool,
     ) -> Self {
         new_cluster_nodes(cluster_info, cluster_type, stakes, use_cha_cha_8)
@@ -351,7 +352,7 @@ impl ClusterNodes<RetransmitStage> {
 pub fn new_cluster_nodes<T: 'static>(
     cluster_info: &ClusterInfo,
     cluster_type: ClusterType,
-    stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+    stakes: &StakedNodesMap,
     use_cha_cha_8: bool,
 ) -> ClusterNodes<T> {
     let self_pubkey = cluster_info.id();
@@ -382,7 +383,7 @@ pub fn new_cluster_nodes<T: 'static>(
 fn get_nodes(
     cluster_info: &ClusterInfo,
     cluster_type: ClusterType,
-    stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+    stakes: &StakedNodesMap,
 ) -> Vec<Node> {
     let self_pubkey = cluster_info.id();
     let should_dedup_tvu_addrs = match cluster_type {
@@ -683,7 +684,7 @@ pub fn make_test_cluster<R: Rng>(
     unstaked_ratio: Option<(u32, u32)>,
 ) -> (
     Vec<GossipContactInfo>,
-    HashMap<Pubkey, u64, PubkeyHasherBuilder>, // stakes
+    StakedNodesMap, // stakes
     ClusterInfo,
 ) {
     let (unstaked_numerator, unstaked_denominator) = unstaked_ratio.unwrap_or((1, 7));
@@ -697,7 +698,7 @@ pub fn make_test_cluster<R: Rng>(
     let keypair = Arc::new(Keypair::new());
     nodes[0] = GossipContactInfo::new_localhost(&keypair.pubkey(), /*wallclock:*/ timestamp());
     let this_node = nodes[0].clone();
-    let mut stakes: HashMap<Pubkey, u64, PubkeyHasherBuilder> = nodes
+    let mut stakes: StakedNodesMap = nodes
         .iter()
         .filter_map(|node| {
             if rng.gen_ratio(unstaked_numerator, unstaked_denominator) {
@@ -1164,7 +1165,7 @@ mod tests {
             .take(50)
             .collect();
         let stakes = std::iter::repeat_with(|| rng.gen_range(0..100u64));
-        let stakes: HashMap<Pubkey, u64, PubkeyHasherBuilder> =
+        let stakes: StakedNodesMap =
             pubkeys.iter().copied().zip(stakes).collect();
         let mut nodes: Vec<Node> = std::iter::repeat_with(|| {
             let pubkey = pubkeys.choose(&mut rng).copied().unwrap();

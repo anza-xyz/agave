@@ -1,6 +1,7 @@
 use {
     crate::{crds_data::CrdsData, crds_value::CrdsValue},
-    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_pubkey::Pubkey,
+    solana_runtime::stakes::StakedNodesMap,
     std::collections::HashMap,
 };
 
@@ -25,7 +26,7 @@ pub(crate) const MIN_STAKE_FOR_GOSSIP: u64 = solana_native_token::LAMPORTS_PER_S
 #[must_use]
 pub(crate) fn should_retain_crds_value(
     value: &CrdsValue,
-    stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+    stakes: &StakedNodesMap,
     direction: GossipFilterDirection,
 ) -> bool {
     let retain_if_staked = || {

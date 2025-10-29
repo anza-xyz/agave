@@ -544,7 +544,7 @@ impl ServeRepair {
 
     fn decode_request(
         remote_request: RemoteRequest,
-        epoch_staked_nodes: &Option<Arc<HashMap<Pubkey, u64, PubkeyHasherBuilder>>>,
+        epoch_staked_nodes: &Option<Arc<StakedNodesMap>>,
         whitelist: &HashSet<Pubkey>,
         my_id: &Pubkey,
         socket_addr_space: &SocketAddrSpace,
@@ -616,7 +616,7 @@ impl ServeRepair {
 
     fn decode_requests(
         requests: Vec<RemoteRequest>,
-        epoch_staked_nodes: &Option<Arc<HashMap<Pubkey, u64, PubkeyHasherBuilder>>>,
+        epoch_staked_nodes: &Option<Arc<StakedNodesMap>>,
         whitelist: &HashSet<Pubkey>,
         my_id: &Pubkey,
         socket_addr_space: &SocketAddrSpace,

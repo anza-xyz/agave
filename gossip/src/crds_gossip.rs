@@ -26,7 +26,8 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::Shred,
-    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_pubkey::Pubkey,
+    solana_runtime::stakes::StakedNodesMap,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_time_utils::timestamp,
@@ -62,7 +63,7 @@ impl CrdsGossip {
         &self,
         self_pubkey: &Pubkey,
         origins: I, // Unique pubkeys of crds values' owners.
-        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+        stakes: &StakedNodesMap,
     ) -> HashMap</*gossip peer:*/ Pubkey, /*origins:*/ Vec<Pubkey>>
     where
         I: IntoIterator<Item = Pubkey>,
@@ -74,7 +75,7 @@ impl CrdsGossip {
         &self,
         pubkey: &Pubkey, // This node.
         now: u64,
-        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+        stakes: &StakedNodesMap,
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
     ) -> (
         Vec<CrdsValue>, // unique CrdsValues pushed out to peers
@@ -163,7 +164,7 @@ impl CrdsGossip {
         origin: &[Pubkey],
         wallclock: u64,
         now: u64,
-        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+        stakes: &StakedNodesMap,
     ) -> Result<(), CrdsGossipError> {
         if now > wallclock.saturating_add(self.push.prune_timeout) {
             Err(CrdsGossipError::PruneMessageTimeout)
@@ -181,7 +182,7 @@ impl CrdsGossip {
         &self,
         self_keypair: &Keypair,
         self_shred_version: u16,
-        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+        stakes: &StakedNodesMap,
         gossip_validators: Option<&HashSet<Pubkey>>,
         ping_cache: &Mutex<PingCache>,
         pings: &mut Vec<(SocketAddr, Ping)>,
@@ -208,7 +209,7 @@ impl CrdsGossip {
         self_shred_version: u16,
         now: u64,
         gossip_validators: Option<&HashSet<Pubkey>>,
-        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+        stakes: &StakedNodesMap,
         bloom_size: usize,
         ping_cache: &Mutex<PingCache>,
         pings: &mut Vec<(SocketAddr, Ping)>,
@@ -288,7 +289,7 @@ impl CrdsGossip {
     pub fn make_timeouts<'a>(
         &self,
         self_pubkey: Pubkey,
-        stakes: &'a HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+        stakes: &'a StakedNodesMap,
         epoch_duration: Duration,
     ) -> CrdsTimeouts<'a> {
         self.pull.make_timeouts(self_pubkey, stakes, epoch_duration)
@@ -323,7 +324,7 @@ pub(crate) fn get_gossip_nodes<R: Rng>(
     verify_shred_version: impl Fn(/*shred_version:*/ u16) -> bool,
     crds: &RwLock<Crds>,
     gossip_validators: Option<&HashSet<Pubkey>>,
-    stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+    stakes: &StakedNodesMap,
     socket_addr_space: &SocketAddrSpace,
 ) -> Vec<ContactInfo> {
     // Exclude nodes which have not been active for this long.
@@ -363,7 +364,7 @@ pub(crate) fn get_gossip_nodes<R: Rng>(
 // Dedups gossip addresses, keeping only the one with the highest stake.
 pub(crate) fn dedup_gossip_addresses(
     nodes: impl IntoIterator<Item = ContactInfo>,
-    stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+    stakes: &StakedNodesMap,
 ) -> HashMap</*gossip:*/ SocketAddr, (/*stake:*/ u64, ContactInfo)> {
     nodes
         .into_iter()

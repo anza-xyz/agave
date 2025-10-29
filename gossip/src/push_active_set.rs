@@ -4,7 +4,8 @@ use {
     rand::Rng,
     solana_bloom::bloom::{Bloom, ConcurrentBloom},
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_pubkey::Pubkey,
+    solana_runtime::stakes::StakedNodesMap,
     std::collections::HashMap,
 };
 
@@ -32,7 +33,7 @@ impl PushActiveSet {
         &'a self,
         pubkey: &'a Pubkey, // This node.
         origin: &'a Pubkey, // CRDS value owner.
-        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+        stakes: &StakedNodesMap,
     ) -> impl Iterator<Item = &'a Pubkey> + 'a {
         let stake = stakes.get(pubkey).min(stakes.get(origin));
         self.get_entry(stake).get_nodes(pubkey, origin)
@@ -45,7 +46,7 @@ impl PushActiveSet {
         pubkey: &Pubkey,    // This node.
         node: &Pubkey,      // Gossip node.
         origins: &[Pubkey], // CRDS value owners.
-        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+        stakes: &StakedNodesMap,
     ) {
         let stake = stakes.get(pubkey);
         for origin in origins {
@@ -64,7 +65,7 @@ impl PushActiveSet {
         cluster_size: usize,
         // Gossip nodes to be sampled for each push active set.
         nodes: &[Pubkey],
-        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+        stakes: &StakedNodesMap,
     ) {
         let num_bloom_filter_items = cluster_size.max(Self::MIN_NUM_BLOOM_ITEMS);
         // Active set of nodes to push to are sampled from these gossip nodes,

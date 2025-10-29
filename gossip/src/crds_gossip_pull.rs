@@ -33,7 +33,8 @@ use {
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_packet::PACKET_DATA_SIZE,
-    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_pubkey::Pubkey,
+    solana_runtime::stakes::StakedNodesMap,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     std::{
@@ -241,7 +242,7 @@ impl CrdsGossipPull {
         self_shred_version: u16,
         now: u64,
         gossip_validators: Option<&HashSet<Pubkey>>,
-        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+        stakes: &StakedNodesMap,
         bloom_size: usize,
         ping_cache: &Mutex<PingCache>,
         pings: &mut Vec<(SocketAddr, Ping)>,
@@ -519,7 +520,7 @@ impl CrdsGossipPull {
     pub(crate) fn make_timeouts<'a>(
         &self,
         self_pubkey: Pubkey,
-        stakes: &'a HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+        stakes: &'a StakedNodesMap,
         epoch_duration: Duration,
     ) -> CrdsTimeouts<'a> {
         CrdsTimeouts::new(self_pubkey, self.crds_timeout, epoch_duration, stakes)
@@ -570,7 +571,7 @@ impl CrdsGossipPull {
 
 pub struct CrdsTimeouts<'a> {
     pubkey: Pubkey,
-    stakes: &'a HashMap<Pubkey, /*lamports:*/ u64, PubkeyHasherBuilder>,
+    stakes: &'a StakedNodesMap,
     default_timeout: u64,
     extended_timeout: u64,
 }
@@ -580,7 +581,7 @@ impl<'a> CrdsTimeouts<'a> {
         pubkey: Pubkey,
         default_timeout: u64,
         epoch_duration: Duration,
-        stakes: &'a HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+        stakes: &'a StakedNodesMap,
     ) -> Self {
         let extended_timeout = default_timeout.max(epoch_duration.as_millis() as u64);
         let default_timeout = if stakes.values().all(|&stake| stake == 0u64) {
@@ -701,7 +702,7 @@ pub(crate) mod tests {
             self_shred_version: u16,
             now: u64,
             gossip_validators: Option<&HashSet<Pubkey>>,
-            stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+            stakes: &StakedNodesMap,
             bloom_size: usize,
             ping_cache: &Mutex<PingCache>,
             pings: &mut Vec<(SocketAddr, Ping)>,

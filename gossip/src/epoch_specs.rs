@@ -1,7 +1,8 @@
 use {
     solana_clock::{Epoch, DEFAULT_MS_PER_SLOT},
     solana_epoch_schedule::EpochSchedule,
-    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_pubkey::Pubkey,
+    solana_runtime::stakes::StakedNodesMap,
     solana_runtime::{
         bank::Bank,
         bank_forks::{BankForks, ReadOnlyAtomicSlot},

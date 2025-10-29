@@ -2,7 +2,8 @@ use {
     super::{stake_weighted_slot_leaders, LeaderScheduleVariant},
     itertools::Itertools,
     solana_clock::Epoch,
-    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_pubkey::Pubkey,
+    solana_runtime::stakes::StakedNodesMap,
     std::{collections::HashMap, ops::Index},
 };
 
@@ -16,7 +17,7 @@ pub struct LeaderSchedule {
 impl LeaderSchedule {
     // Note: passing in zero stakers will cause a panic.
     pub fn new(
-        epoch_staked_nodes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+        epoch_staked_nodes: &StakedNodesMap,
         epoch: Epoch,
         len: u64,
         repeat: u64,

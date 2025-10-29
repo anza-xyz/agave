@@ -28,6 +28,9 @@ mod serde_stakes;
 pub(crate) use serde_stakes::serialize_stake_accounts_to_delegation_format;
 pub use serde_stakes::SerdeStakesToStakeFormat;
 
+/// Mapping from node pubkey to total stake across all vote accounts.
+pub type StakedNodesMap = HashMap<Pubkey, u64, PubkeyHasherBuilder>;
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Invalid delegation: {0}")]
@@ -181,7 +184,7 @@ impl<T: Clone> Stakes<T> {
         &self.vote_accounts
     }
 
-    pub(crate) fn staked_nodes(&self) -> Arc<HashMap<Pubkey, u64, PubkeyHasherBuilder>> {
+    pub(crate) fn staked_nodes(&self) -> Arc<StakedNodesMap> {
         self.vote_accounts.staked_nodes()
     }
 }

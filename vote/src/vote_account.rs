@@ -139,7 +139,7 @@ impl VoteAccounts {
 
     pub fn staked_nodes(
         &self,
-    ) -> Arc<HashMap</*node_pubkey:*/ Pubkey, /*stake:*/ u64, PubkeyHasherBuilder>> {
+    ) -> Arc<HashMap<Pubkey, u64, PubkeyHasherBuilder>> {
         self.staked_nodes
             .get_or_init(|| {
                 // Count non-zero stake accounts for optimal capacity allocation

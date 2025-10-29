@@ -44,7 +44,8 @@ use {
     rayon::{prelude::*, ThreadPool},
     solana_clock::Slot,
     solana_hash::Hash,
-    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_pubkey::Pubkey,
+    solana_runtime::stakes::StakedNodesMap,
     std::{
         cmp::Ordering,
         collections::{hash_map, BTreeMap, HashMap, VecDeque},
@@ -633,7 +634,7 @@ impl Crds {
         // Set of pubkeys to never drop.
         // e.g. known validators, self pubkey, ...
         keep: &[Pubkey],
-        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+        stakes: &StakedNodesMap,
         now: u64,
     ) -> Result</*num purged:*/ usize, CrdsError> {
         if self.should_trim(cap) {
@@ -649,7 +650,7 @@ impl Crds {
         &mut self,
         size: usize,
         keep: &[Pubkey],
-        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
+        stakes: &StakedNodesMap,
         now: u64,
     ) -> Result</*num purged:*/ usize, CrdsError> {
         if stakes.values().all(|&stake| stake == 0) {

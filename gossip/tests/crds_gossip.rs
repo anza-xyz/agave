@@ -19,7 +19,8 @@ use {
         crds_value::{CrdsValue, CrdsValueLabel},
     },
     solana_keypair::Keypair,
-    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_pubkey::Pubkey,
+    solana_runtime::stakes::StakedNodesMap,
     solana_rayon_threadlimit::get_thread_count,
     solana_sha256_hasher::hash,
     solana_signer::Signer,
@@ -91,7 +92,7 @@ impl Deref for Network {
     }
 }
 
-fn stakes(network: &Network) -> HashMap<Pubkey, u64, PubkeyHasherBuilder> {
+fn stakes(network: &Network) -> StakedNodesMap {
     let mut stakes = HashMap::default();
     for (key, Node { stake, .. }) in network.iter() {
         stakes.insert(*key, *stake);
