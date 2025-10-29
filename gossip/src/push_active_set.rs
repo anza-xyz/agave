@@ -4,7 +4,7 @@ use {
     rand::Rng,
     solana_bloom::bloom::{Bloom, ConcurrentBloom},
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     std::collections::HashMap,
 };
 
@@ -32,7 +32,7 @@ impl PushActiveSet {
         &'a self,
         pubkey: &'a Pubkey, // This node.
         origin: &'a Pubkey, // CRDS value owner.
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
     ) -> impl Iterator<Item = &'a Pubkey> + 'a {
         let stake = stakes.get(pubkey).min(stakes.get(origin));
         self.get_entry(stake).get_nodes(pubkey, origin)
@@ -45,7 +45,7 @@ impl PushActiveSet {
         pubkey: &Pubkey,    // This node.
         node: &Pubkey,      // Gossip node.
         origins: &[Pubkey], // CRDS value owners.
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
     ) {
         let stake = stakes.get(pubkey);
         for origin in origins {
@@ -64,7 +64,7 @@ impl PushActiveSet {
         cluster_size: usize,
         // Gossip nodes to be sampled for each push active set.
         nodes: &[Pubkey],
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &HashMap<Pubkey, u64, PubkeyHasherBuilder>,
     ) {
         let num_bloom_filter_items = cluster_size.max(Self::MIN_NUM_BLOOM_ITEMS);
         // Active set of nodes to push to are sampled from these gossip nodes,
@@ -211,8 +211,12 @@ mod tests {
         let mut rng = ChaChaRng::from_seed([189u8; 32]);
         let pubkey = Pubkey::new_unique();
         let nodes: Vec<_> = repeat_with(Pubkey::new_unique).take(20).collect();
-        let stakes = repeat_with(|| rng.gen_range(1..MAX_STAKE));
-        let mut stakes: HashMap<_, _> = nodes.iter().copied().zip(stakes).collect();
+        let mut stakes =
+            HashMap::with_capacity_and_hasher(nodes.len() + 1, PubkeyHasherBuilder::default());
+        let stake_values = repeat_with(|| rng.gen_range(1..MAX_STAKE));
+        for (node, stake) in nodes.iter().copied().zip(stake_values).take(nodes.len()) {
+            stakes.insert(node, stake);
+        }
         stakes.insert(pubkey, rng.gen_range(1..MAX_STAKE));
         let mut active_set = PushActiveSet::default();
         assert!(active_set.0.iter().all(|entry| entry.0.is_empty()));

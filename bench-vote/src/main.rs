@@ -13,7 +13,7 @@ use {
         bind_to_unspecified,
         sockets::{multi_bind_in_range_with_config, SocketConfiguration as SocketConfig},
     },
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_signer::Signer,
     solana_streamer::{
         nonblocking::swqos::SwQosConfig,
@@ -229,10 +229,12 @@ fn main() -> Result<()> {
         let stake: u64 = 1024;
         let total_stake: u64 = 1024;
 
-        let stakes = HashMap::from([
+        let stakes = [
             (identity_keypair.pubkey(), stake),
             (Pubkey::new_unique(), total_stake.saturating_sub(stake)),
-        ]);
+        ]
+        .into_iter()
+        .collect::<HashMap<_, _, PubkeyHasherBuilder>>();
         let staked_nodes: Arc<RwLock<StakedNodes>> = Arc::new(RwLock::new(StakedNodes::new(
             Arc::new(stakes),
             HashMap::<Pubkey, u64>::default(), // overrides

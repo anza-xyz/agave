@@ -5007,11 +5007,14 @@ impl Bank {
     }
 
     /// Get the staked nodes map for the current Bank::epoch
-    pub fn current_epoch_staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
+    pub fn current_epoch_staked_nodes(&self) -> Arc<HashMap<Pubkey, u64, PubkeyHasherBuilder>> {
         self.current_epoch_stakes().stakes().staked_nodes()
     }
 
-    pub fn epoch_staked_nodes(&self, epoch: Epoch) -> Option<Arc<HashMap<Pubkey, u64>>> {
+    pub fn epoch_staked_nodes(
+        &self,
+        epoch: Epoch,
+    ) -> Option<Arc<HashMap<Pubkey, u64, PubkeyHasherBuilder>>> {
         Some(self.epoch_stakes.get(&epoch)?.stakes().staked_nodes())
     }
 

@@ -41,7 +41,7 @@ use {
         data_budget::DataBudget,
         packet::{Packet, PacketBatch, PacketBatchRecycler, PinnedPacketBatch},
     },
-    solana_pubkey::{Pubkey, PUBKEY_BYTES},
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder, PUBKEY_BYTES},
     solana_runtime::bank_forks::SharableBanks,
     solana_signature::{Signature, SIGNATURE_BYTES},
     solana_signer::Signer,
@@ -544,7 +544,7 @@ impl ServeRepair {
 
     fn decode_request(
         remote_request: RemoteRequest,
-        epoch_staked_nodes: &Option<Arc<HashMap<Pubkey, u64>>>,
+        epoch_staked_nodes: &Option<Arc<HashMap<Pubkey, u64, PubkeyHasherBuilder>>>,
         whitelist: &HashSet<Pubkey>,
         my_id: &Pubkey,
         socket_addr_space: &SocketAddrSpace,
@@ -616,7 +616,7 @@ impl ServeRepair {
 
     fn decode_requests(
         requests: Vec<RemoteRequest>,
-        epoch_staked_nodes: &Option<Arc<HashMap<Pubkey, u64>>>,
+        epoch_staked_nodes: &Option<Arc<HashMap<Pubkey, u64, PubkeyHasherBuilder>>>,
         whitelist: &HashSet<Pubkey>,
         my_id: &Pubkey,
         socket_addr_space: &SocketAddrSpace,
