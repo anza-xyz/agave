@@ -1,7 +1,7 @@
 use {
-    crate::{
-        accounts_index::{in_mem_accounts_index::InMemAccountsIndex, DiskIndexValue, IndexValue},
-        bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
+    super::bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
+    crate::accounts_index::{
+        in_mem_accounts_index::InMemAccountsIndex, DiskIndexValue, IndexValue,
     },
     solana_clock::Slot,
     solana_time_utils::AtomicInterval,

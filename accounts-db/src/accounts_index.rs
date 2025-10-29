@@ -1,5 +1,7 @@
 mod account_map_entry;
 mod accounts_index_storage;
+mod bucket_map_holder;
+mod bucket_map_holder_stats;
 pub(crate) mod in_mem_accounts_index;
 mod iter;
 mod roots_tracker;
@@ -7,12 +9,13 @@ mod secondary;
 use {
     crate::{
         accounts_index::account_map_entry::SlotListWriteGuard, ancestors::Ancestors,
-        bucket_map_holder::Age, bucket_map_holder_stats::BucketMapHolderStats, contains::Contains,
-        is_zero_lamport::IsZeroLamport, pubkey_bins::PubkeyBinCalculator24,
+        contains::Contains, is_zero_lamport::IsZeroLamport, pubkey_bins::PubkeyBinCalculator24,
         rolling_bit_field::RollingBitField,
     },
     account_map_entry::{AccountMapEntry, PreAllocatedAccountMapEntry},
     accounts_index_storage::AccountsIndexStorage,
+    bucket_map_holder::Age,
+    bucket_map_holder_stats::BucketMapHolderStats,
     in_mem_accounts_index::{
         ExistedLocation, InMemAccountsIndex, InsertNewEntryResults, StartupStats,
     },
@@ -1745,11 +1748,8 @@ pub(crate) enum Startup {
 #[cfg(test)]
 pub mod tests {
     use {
-        super::*,
-        crate::{
-            accounts_index::account_map_entry::AccountMapEntryMeta,
-            bucket_map_holder::BucketMapHolder,
-        },
+        super::{bucket_map_holder::BucketMapHolder, *},
+        crate::accounts_index::account_map_entry::AccountMapEntryMeta,
         solana_account::{AccountSharedData, WritableAccount},
         solana_pubkey::PUBKEY_BYTES,
         spl_generic_token::{spl_token_ids, token::SPL_TOKEN_ACCOUNT_OWNER_OFFSET},

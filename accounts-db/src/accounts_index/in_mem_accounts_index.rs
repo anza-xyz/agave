@@ -1,4 +1,8 @@
 use {
+    super::{
+        bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
+        bucket_map_holder_stats::BucketMapHolderStats,
+    },
     crate::{
         accounts_index::{
             account_map_entry::{
@@ -7,8 +11,6 @@ use {
             },
             DiskIndexValue, IndexValue, ReclaimsSlotList, RefCount, SlotList, UpsertReclaim,
         },
-        bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
-        bucket_map_holder_stats::BucketMapHolderStats,
         pubkey_bins::PubkeyBinCalculator24,
     },
     rand::{thread_rng, Rng},

@@ -29,8 +29,6 @@ pub mod append_vec;
 #[cfg(not(feature = "dev-context-only-utils"))]
 mod append_vec;
 pub mod blockhash_queue;
-mod bucket_map_holder;
-mod bucket_map_holder_stats;
 pub mod contains;
 pub mod is_loadable;
 mod is_zero_lamport;

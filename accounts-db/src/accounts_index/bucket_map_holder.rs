@@ -1,10 +1,10 @@
 use {
+    super::bucket_map_holder_stats::BucketMapHolderStats,
     crate::{
         accounts_index::{
             in_mem_accounts_index::{InMemAccountsIndex, StartupStats},
             AccountsIndexConfig, DiskIndexValue, IndexLimitMb, IndexValue,
         },
-        bucket_map_holder_stats::BucketMapHolderStats,
         waitable_condvar::WaitableCondvar,
     },
     solana_bucket_map::bucket_map::{BucketMap, BucketMapConfig},
