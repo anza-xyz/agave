@@ -45,9 +45,8 @@ use {
         accounts_index::{
             in_mem_accounts_index::StartupStats, AccountSecondaryIndexes, AccountsIndex,
             AccountsIndexRootsStats, AccountsIndexScanResult, IndexKey, IsCached, ReclaimsSlotList,
-            RefCount, ScanConfig, ScanFilter, ScanResult, SlotList, UpsertReclaim,
+            RefCount, ScanConfig, ScanFilter, ScanResult, SlotList, Startup, UpsertReclaim,
         },
-        accounts_index_storage::Startup,
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,

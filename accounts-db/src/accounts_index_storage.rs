@@ -2,7 +2,7 @@ use {
     crate::{
         accounts_index::{
             self, in_mem_accounts_index::InMemAccountsIndex, AccountsIndexConfig, DiskIndexValue,
-            IndexValue,
+            IndexValue, Startup,
         },
         bucket_map_holder::BucketMapHolder,
         waitable_condvar::WaitableCondvar,
@@ -106,27 +106,12 @@ impl BgThreads {
     }
 }
 
-/// modes the system can be in
-#[derive(Debug, Eq, PartialEq)]
-pub enum Startup {
-    /// not startup, but steady state execution
-    Normal,
-    /// startup (not steady state execution)
-    /// requesting 'startup'-like behavior where in-mem acct idx items are flushed asap
-    Startup,
-    /// startup (not steady state execution)
-    /// but also requesting additional threads to be running to flush the acct idx to disk asap
-    /// The idea is that the best perf to ssds will be with multiple threads,
-    ///  but during steady state, we can't allocate as many threads because we'd starve the rest of the system.
-    StartupWithExtraThreads,
-}
-
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexStorage<T, U> {
     /// startup=true causes:
     ///      in mem to act in a way that flushes to disk asap
     ///      also creates some additional bg threads to facilitate flushing to disk asap
     /// startup=false is 'normal' operation
-    pub fn set_startup(&self, startup: Startup) {
+    pub(crate) fn set_startup(&self, startup: Startup) {
         if startup == Startup::StartupWithExtraThreads && self.storage.is_disk_index_enabled() {
             // create some additional bg threads to help get things to the disk index asap
             *self.startup_worker_threads.lock().unwrap() = Some(BgThreads::new(

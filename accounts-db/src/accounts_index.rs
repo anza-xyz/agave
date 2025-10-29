@@ -6,13 +6,9 @@ mod secondary;
 use {
     crate::{
         accounts_index::account_map_entry::SlotListWriteGuard,
-        accounts_index_storage::{AccountsIndexStorage, Startup},
-        ancestors::Ancestors,
-        bucket_map_holder::Age,
-        bucket_map_holder_stats::BucketMapHolderStats,
-        contains::Contains,
-        is_zero_lamport::IsZeroLamport,
-        pubkey_bins::PubkeyBinCalculator24,
+        accounts_index_storage::AccountsIndexStorage, ancestors::Ancestors, bucket_map_holder::Age,
+        bucket_map_holder_stats::BucketMapHolderStats, contains::Contains,
+        is_zero_lamport::IsZeroLamport, pubkey_bins::PubkeyBinCalculator24,
         rolling_bit_field::RollingBitField,
     },
     account_map_entry::{AccountMapEntry, PreAllocatedAccountMapEntry},
@@ -1012,7 +1008,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         &self.storage.storage.startup_stats
     }
 
-    pub fn set_startup(&self, value: Startup) {
+    pub(crate) fn set_startup(&self, value: Startup) {
         self.storage.set_startup(value);
     }
 
@@ -1726,6 +1722,23 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         })
         .unwrap()
     }
+}
+
+/// modes the system can be in
+#[allow(clippy::enum_variant_names)]
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum Startup {
+    /// not startup, but steady state execution
+    Normal,
+    /// startup (not steady state execution)
+    /// requesting 'startup'-like behavior where in-mem acct idx items are flushed asap
+    #[cfg(test)]
+    Startup,
+    /// startup (not steady state execution)
+    /// but also requesting additional threads to be running to flush the acct idx to disk asap
+    /// The idea is that the best perf to ssds will be with multiple threads,
+    ///  but during steady state, we can't allocate as many threads because we'd starve the rest of the system.
+    StartupWithExtraThreads,
 }
 
 #[cfg(test)]
