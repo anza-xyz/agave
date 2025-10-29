@@ -9,6 +9,7 @@
 )]
 pub mod thread_aware_account_locks;
 
+pub mod error;
 #[cfg(unix)]
 pub mod handshake;
 #[cfg(unix)]

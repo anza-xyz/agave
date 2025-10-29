@@ -265,6 +265,7 @@ dependencies = [
  "rts-alloc",
  "shaq",
  "solana-pubkey",
+ "solana-transaction-error",
  "tempfile",
  "thiserror 2.0.17",
 ]
