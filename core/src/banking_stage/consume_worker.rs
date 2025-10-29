@@ -635,6 +635,35 @@ pub(crate) mod external {
                 agave_scheduler_bindings::pack_message_flags::RESOLVE
             ));
         }
+
+        #[test]
+        fn test_reason_from_packet_handling_error() {
+            assert_eq!(
+                ExternalWorker::reason_from_packet_handling_error(
+                    &PacketHandlingError::Sanitization
+                ),
+                not_included_reasons::PARSING_OR_SANITIZATION_FAILURE
+            );
+            assert_eq!(
+                ExternalWorker::reason_from_packet_handling_error(
+                    &PacketHandlingError::LockValidation
+                ),
+                not_included_reasons::PARSING_OR_SANITIZATION_FAILURE
+            );
+            assert_eq!(
+                ExternalWorker::reason_from_packet_handling_error(
+                    &PacketHandlingError::ComputeBudget
+                ),
+                not_included_reasons::PARSING_OR_SANITIZATION_FAILURE
+            );
+
+            assert_eq!(
+                ExternalWorker::reason_from_packet_handling_error(
+                    &PacketHandlingError::ALTResolution
+                ),
+                not_included_reasons::ALT_RESOLUTION_FAILURE
+            );
+        }
     }
 }
 /// Helper function to create an non-blocking iterator over work in the receiver,
