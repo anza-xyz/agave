@@ -32,8 +32,8 @@ impl CertificateStats {
         }
     }
 
-    /// Records the certificate related statistics.
-    fn record(&self, header: &'static str) {
+    /// Reports the certificate related statistics.
+    fn report(&self, header: &'static str) {
         datapoint_info!(
             header,
             ("finalize", self.finalize, i64),
@@ -45,7 +45,7 @@ impl CertificateStats {
     }
 }
 
-/// Struct to hold stats for different votes.
+/// Struct to hold stats for different vote types.
 #[derive(Default)]
 struct VoteStats {
     notarize: u64,
@@ -69,8 +69,8 @@ impl VoteStats {
         }
     }
 
-    /// Records the vote related statistics.
-    fn record(&self) {
+    /// Reports the vote related statistics.
+    fn report(&self) {
         datapoint_info!(
             "consensus_ingested_votes",
             ("finalize", self.finalize, i64),
@@ -157,11 +157,11 @@ impl ConsensusPoolStats {
             ("out_of_range_certs", self.out_of_range_certs as i64, i64),
         );
 
-        self.ingested_votes.record();
+        self.ingested_votes.report();
         self.new_certs_generated
-            .record("consensus_pool_generated_certs");
+            .report("consensus_pool_generated_certs");
         self.new_certs_ingested
-            .record("consensus_pool_ingested_certs");
+            .report("consensus_pool_ingested_certs");
     }
 
     pub fn maybe_report(&mut self) {
