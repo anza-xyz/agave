@@ -28,10 +28,10 @@ pub(super) enum AggregateError {
 /// Different types of errors that can be returned from the [`CertificateBuilder::build()`] function.
 #[derive(Debug, PartialEq, Eq, Error)]
 pub enum BuildError {
-    #[error("Encoding failed: {0:?}")]
-    Encode(EncodeError),
     #[error("BLS error: {0}")]
     Bls(#[from] BlsError),
+    #[error("Encoding failed: {0:?}")]
+    Encode(EncodeError),
     #[error("Validator does not exist for given rank: {0}")]
     ValidatorDoesNotExist(u16),
 }
