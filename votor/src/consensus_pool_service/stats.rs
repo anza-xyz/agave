@@ -6,7 +6,7 @@ use {
     },
 };
 
-const STATS_REPORT_INTERVAL: Duration = Duration::from_secs(10);
+const STATS_REPORT_INTERVAL: Duration = Duration::from_secs(1);
 
 pub(super) struct Stats {
     pub(super) add_message_failed: Saturating<usize>,
@@ -73,7 +73,7 @@ impl Stats {
             ),
             ("received_votes", received_votes, i64),
             ("received_certificates", received_certificates, i64),
-            ("in_standstill_bool", standstill, bool),
+            ("entered_standstill_bool", standstill, bool),
             ("prune_old_state_called", prune_old_state_called, i64),
         );
     }

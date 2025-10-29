@@ -282,7 +282,7 @@ impl ConsensusPoolService {
                         return Err(ConsensusPoolServiceError::ChannelDisconnected(channel_name));
                     }
                     Err(e) => {
-                        error!("{my_pubkey}: process_consensus_message() failed with {e}");
+                        warn!("{my_pubkey}: process_consensus_message() failed with {e}");
                         stats.add_message_failed += 1;
                     }
                 }
