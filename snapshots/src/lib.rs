@@ -8,6 +8,7 @@
     )
 )]
 
+mod archive;
 mod archive_format;
 pub mod error;
 pub mod hardened_unpack;
@@ -23,6 +24,7 @@ mod unarchive;
 pub type Result<T> = std::result::Result<T, error::SnapshotError>;
 
 pub use {
+    archive::archive_snapshot,
     archive_format::*,
     kind::SnapshotKind,
     snapshot_interval::SnapshotInterval,
