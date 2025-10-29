@@ -29,6 +29,10 @@ rust-v0:
 	cargo +$(TOOLCHAIN) build --release --target sbpf-solana-solana --workspace ; \
 	cp -r target/sbpf-solana-solana/release/* target/deploy
 
-.PHONY: test-v3
+rust-new:
+	RUSTFLAGS="-C instrument-coverage=no" cargo +$(TOOLCHAIN) build --release --target sbpf$(VER)-solana-solana --workspace ; \
+	cp -r target/sbpf$(VER)-solana-solana/release/* target/deploy
+
+.PHONY: test-v0
 
 include $(SBF_SDK_PATH)/c/sbf.mk
