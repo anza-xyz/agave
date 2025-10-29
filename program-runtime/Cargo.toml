@@ -9,8 +9,6 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
-[target.'cfg(unix)']
-
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
@@ -24,7 +22,10 @@ dev-context-only-utils = []
 dummy-for-ci-check = ["metrics"]
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 metrics = []
-shuttle-test = ["solana-sbpf/shuttle-test", "solana-svm-type-overrides/shuttle-test"]
+shuttle-test = [
+    "solana-sbpf/shuttle-test",
+    "solana-svm-type-overrides/shuttle-test",
+]
 
 [dependencies]
 base64 = { workspace = true }

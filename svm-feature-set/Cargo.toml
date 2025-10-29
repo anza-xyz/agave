@@ -9,8 +9,6 @@ license = { workspace = true }
 edition = { workspace = true }
 readme = false
 
-[target.'cfg(unix)']
-
 [features]
 agave-unstable-api = []
 
