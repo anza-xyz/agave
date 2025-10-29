@@ -1588,20 +1588,20 @@ fn assert_instruction_count() {
     #[cfg(feature = "sbf_rust")]
     {
         programs.extend_from_slice(&[
-            ("solana_sbf_rust_128bit", 801),
-            ("solana_sbf_rust_alloc", 4983),
-            ("solana_sbf_rust_custom_heap", 339),
+            ("solana_sbf_rust_128bit", 784),
+            ("solana_sbf_rust_alloc", 4934),
+            ("solana_sbf_rust_custom_heap", 343),
             ("solana_sbf_rust_dep_crate", 22),
-            ("solana_sbf_rust_iter", 1414),
+            ("solana_sbf_rust_iter", 1514),
             ("solana_sbf_rust_many_args", 1287),
-            ("solana_sbf_rust_mem", 1322),
+            ("solana_sbf_rust_mem", 1326),
             ("solana_sbf_rust_membuiltins", 329),
-            ("solana_sbf_rust_noop", 334),
-            ("solana_sbf_rust_param_passing", 109),
-            ("solana_sbf_rust_rand", 312),
-            ("solana_sbf_rust_sanity", 17902),
-            ("solana_sbf_rust_secp256k1_recover", 88670),
-            ("solana_sbf_rust_sha", 22175),
+            ("solana_sbf_rust_noop", 342),
+            ("solana_sbf_rust_param_passing", 108),
+            ("solana_sbf_rust_rand", 315),
+            ("solana_sbf_rust_sanity", 14223),
+            ("solana_sbf_rust_secp256k1_recover", 88615),
+            ("solana_sbf_rust_sha", 21998),
         ]);
     }
 
