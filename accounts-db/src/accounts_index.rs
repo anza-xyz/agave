@@ -242,8 +242,7 @@ pub struct AccountsIndexConfig {
     pub index_limit_mb: IndexLimitMb,
     pub ages_to_stay_in_cache: Option<Age>,
     pub scan_results_limit_bytes: Option<usize>,
-    /// Estimated total number of accounts, used to pre-allocate HashMap capacity
-    /// per bin (divided by number of bins) to reduce resizing overhead.
+    /// Initial number of accounts, used to pre-allocate HashMap capacity
     pub num_initial_accounts: Option<usize>,
 }
 
