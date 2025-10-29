@@ -2244,20 +2244,43 @@ mod tests {
         assert_eq!(len, 2);
     }
 
-    #[test_case(Some(10000);  "with pre-allocation")]
+    #[test_case(Some(10000);  "with pre-allocation 10000")]
+    #[test_case(Some(20000);  "with pre-allocation 20000")]
+    #[test_case(Some(30000);  "with pre-allocation 30000")]
     #[test_case(None; "without pre-allocation")]
     fn test_new_with_num_initial_accounts(num_initial_accounts: Option<usize>) {
         let config = AccountsIndexConfig::default();
-        let holder = Arc::new(BucketMapHolder::new(BINS_FOR_TESTING, &config, 1));
-        let bin = 0;
-        let accounts_index =
-            InMemAccountsIndex::<u64, u64>::new(&holder, bin, num_initial_accounts);
 
-        let initial_capacity = accounts_index.map_internal.read().unwrap().capacity();
+        // Test with different bin counts: 2, 4, 8
+        let bin_counts = [2, 4, 8];
+        let mut total_capacities = Vec::new();
+
+        for bins in bin_counts {
+            let holder = Arc::new(BucketMapHolder::new(bins, &config, 1));
+            let mut total_capacity = 0;
+
+            for bin in 0..bins {
+                let accounts_index =
+                    InMemAccountsIndex::<u64, u64>::new(&holder, bin, num_initial_accounts);
+                total_capacity += accounts_index.map_internal.read().unwrap().capacity();
+            }
+
+            total_capacities.push(total_capacity);
+
+            if num_initial_accounts.is_some() {
+                assert!(total_capacity > 0);
+            } else {
+                assert_eq!(total_capacity, 0);
+            }
+        }
+
+        // Verify that total capacity across all bins is the same
+        // regardless of bin count
         if num_initial_accounts.is_some() {
-            assert!(initial_capacity > 0);
-        } else {
-            assert_eq!(initial_capacity, 0);
+            let first_total = total_capacities[0];
+            for &total in &total_capacities[1..] {
+                assert_eq!(total, first_total);
+            }
         }
     }
 }
