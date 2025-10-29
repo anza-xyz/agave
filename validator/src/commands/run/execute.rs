@@ -63,6 +63,7 @@ use {
         nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
         quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
     },
+    solana_tpu_client::tpu_client::DEFAULT_VOTE_USE_QUIC,
     solana_turbine::{
         broadcast_stage::BroadcastStageType,
         xdp::{set_cpu_affinity, XdpConfig},
@@ -259,7 +260,14 @@ pub fn execute(
     let restricted_repair_only_mode = matches.is_present("restricted_repair_only_mode");
     let accounts_shrink_optimize_total_space =
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
-    let vote_use_quic = value_t_or_exit!(matches, "vote_use_quic", bool);
+
+    let vote_use_quic = match matches.value_of("vote_use_quic") {
+        Some(v) => v.parse().expect("Invalid value in vote-use-quic"),
+        None => DEFAULT_VOTE_USE_QUIC,
+    };
+    if !vote_use_quic {
+        warn!("Submission of votes via UDP is deprecated.");
+    };
 
     let tpu_connection_pool_size = value_t_or_exit!(matches, "tpu_connection_pool_size", usize);
 

@@ -156,6 +156,15 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .help(TransactionStructure::cli_message()),
         usage_warning: "Transaction structure is no longer configurable"
     );
+    add_arg!(
+        // deprecated in v4.0.0
+        Arg::with_name("vote_use_quic")
+            .long("vote-use-quic")
+            .takes_value(true)
+            .hidden(hidden_unless_forced())
+            .help("Controls if to use QUIC to send votes."),
+        usage_warning: "QUIC is used by default, submission of votes via UDP is deprecated."
+    );
     res
 }
 
