@@ -13,7 +13,9 @@
 // Export tokio for test clients
 pub use tokio;
 use {
-    agave_feature_set::{raise_cpi_nesting_limit_to_8, FEATURE_NAMES},
+    agave_feature_set::{
+        increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8, FEATURE_NAMES,
+    },
     async_trait::async_trait,
     base64::{prelude::BASE64_STANDARD, Engine},
     chrono_humanize::{Accuracy, HumanTime, Tense},
@@ -107,7 +109,7 @@ fn set_invoke_context(new: &mut InvokeContext) {
         invoke_context.replace(Some(transmute::<&mut InvokeContext, usize>(new)))
     });
 }
-fn get_invoke_context<'a, 'b>() -> &'a mut InvokeContext<'b> {
+fn get_invoke_context<'a, 'b>() -> &'a mut InvokeContext<'b, 'b> {
     let ptr = INVOKE_CONTEXT.with(|invoke_context| match *invoke_context.borrow() {
         Some(val) => val,
         None => panic!("Invoke context not set!"),
@@ -859,6 +861,9 @@ impl ProgramTest {
                         genesis_config
                             .accounts
                             .contains_key(&raise_cpi_nesting_limit_to_8::id()),
+                        genesis_config
+                            .accounts
+                            .contains_key(&increase_cpi_account_info_limit::id()),
                     )
                 }),
                 transaction_account_lock_limit: self.transaction_account_lock_limit,

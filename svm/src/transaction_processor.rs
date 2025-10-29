@@ -1004,7 +1004,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     inner_instructions.push(InnerInstruction {
                         instruction: CompiledInstruction::new_from_raw_parts(
                             ix_in_trace.program_account_index_in_tx as u8,
-                            ix_in_trace.instruction_data,
+                            ix_in_trace.instruction_data.into_owned(),
                             ix_in_trace
                                 .instruction_accounts
                                 .iter()

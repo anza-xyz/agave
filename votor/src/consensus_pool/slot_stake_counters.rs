@@ -49,7 +49,7 @@ impl SlotStakeCounters {
             Vote::Notarize(vote) => {
                 let old_entry_stake = self
                     .notarize_entry_total
-                    .insert(*vote.block_id(), entry_stake)
+                    .insert(vote.block_id, entry_stake)
                     .unwrap_or(0);
                 self.notarize_total = self
                     .notarize_total
@@ -89,7 +89,7 @@ impl SlotStakeCounters {
         // but not to notarize b. Moreover:
         // notar(b) >= 40% or (skip(s) + notar(b) >= 60% and notar(b) >= 20%)
         if let Some(Vote::Notarize(my_vote)) = self.my_first_vote.as_ref() {
-            if my_vote.block_id() == block_id {
+            if &my_vote.block_id == block_id {
                 return false; // I voted for the same block, no need to send NotarizeFallback
             }
         }

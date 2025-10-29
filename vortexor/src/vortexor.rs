@@ -11,8 +11,11 @@ use {
     solana_perf::packet::PacketBatch,
     solana_quic_definitions::NotifyKeyUpdate,
     solana_streamer::{
-        nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-        quic::{spawn_server_with_cancel, EndpointKeyUpdater, QuicServerParams},
+        nonblocking::{quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT, swqos::SwQosConfig},
+        quic::{
+            spawn_server_with_cancel, EndpointKeyUpdater, QuicStreamerConfig,
+            SwQosQuicStreamerConfig,
+        },
         streamer::StakedNodes,
     },
     std::{
@@ -116,15 +119,19 @@ impl Vortexor {
         identity_keypair: &Keypair,
         cancel: CancellationToken,
     ) -> Self {
-        let mut quic_server_params = QuicServerParams {
-            max_connections_per_peer,
-            max_staked_connections: max_tpu_staked_connections,
-            max_unstaked_connections: max_tpu_unstaked_connections,
-            max_streams_per_ms,
-            max_connections_per_ipaddr_per_min,
-            wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-            ..Default::default()
+        let quic_server_params = SwQosQuicStreamerConfig {
+            quic_streamer_config: QuicStreamerConfig {
+                max_connections_per_peer,
+                max_staked_connections: max_tpu_staked_connections,
+                max_unstaked_connections: max_tpu_unstaked_connections,
+                max_connections_per_ipaddr_per_min,
+                wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
+                ..Default::default()
+            },
+            qos_config: SwQosConfig { max_streams_per_ms },
         };
+
+        let mut quic_fwd_server_params = quic_server_params.clone();
 
         let TpuSockets {
             tpu_quic,
@@ -138,15 +145,20 @@ impl Vortexor {
             identity_keypair,
             tpu_sender.clone(),
             staked_nodes.clone(),
-            quic_server_params.clone(),
+            quic_server_params.quic_streamer_config,
+            quic_server_params.qos_config,
             cancel.clone(),
         )
         .unwrap();
 
         // Fot TPU forward -- we disallow unstaked connections. Allocate all connection resources
         // for staked connections:
-        quic_server_params.max_staked_connections = max_fwd_staked_connections;
-        quic_server_params.max_unstaked_connections = max_fwd_unstaked_connections;
+        quic_fwd_server_params
+            .quic_streamer_config
+            .max_staked_connections = max_fwd_staked_connections;
+        quic_fwd_server_params
+            .quic_streamer_config
+            .max_unstaked_connections = max_fwd_unstaked_connections;
         let tpu_fwd_result = spawn_server_with_cancel(
             "solVtxTpuFwd",
             "quic_vortexor_tpu_forwards",
@@ -154,7 +166,8 @@ impl Vortexor {
             identity_keypair,
             tpu_fwd_sender,
             staked_nodes.clone(),
-            quic_server_params,
+            quic_fwd_server_params.quic_streamer_config,
+            quic_fwd_server_params.qos_config,
             cancel.clone(),
         )
         .unwrap();

@@ -2,6 +2,7 @@
 #![cfg(feature = "agave-unstable-api")]
 use std::{
     env,
+    path::{Path, PathBuf},
     sync::{Arc, LazyLock, RwLock},
     thread::JoinHandle,
 };
@@ -61,7 +62,7 @@ pub fn setup() {
 }
 
 // Configures file logging with a default filter if RUST_LOG is not set
-pub fn setup_file_with_default(logfile: &str, filter: &str) {
+pub fn setup_file_with_default(logfile: &Path, filter: &str) {
     use std::fs::OpenOptions;
     let file = OpenOptions::new()
         .create(true)
@@ -76,20 +77,20 @@ pub fn setup_file_with_default(logfile: &str, filter: &str) {
 }
 
 #[cfg(unix)]
-fn redirect_stderr(filename: &str) {
+fn redirect_stderr(filename: &Path) {
     use std::{fs::OpenOptions, os::unix::io::AsRawFd};
     match OpenOptions::new().create(true).append(true).open(filename) {
         Ok(file) => unsafe {
             libc::dup2(file.as_raw_fd(), libc::STDERR_FILENO);
         },
-        Err(err) => eprintln!("Unable to open {filename}: {err}"),
+        Err(err) => eprintln!("Unable to open {}: {err}", filename.display()),
     }
 }
 
 // Redirect stderr to a file with support for logrotate by sending a SIGUSR1 to the process.
 //
 // Upon success, future `log` macros and `eprintln!()` can be found in the specified log file.
-pub fn redirect_stderr_to_file(logfile: Option<String>) -> Option<JoinHandle<()>> {
+pub fn redirect_stderr_to_file(logfile: Option<PathBuf>) -> Option<JoinHandle<()>> {
     // Default to RUST_BACKTRACE=1 for more informative validator logs
     if env::var_os("RUST_BACKTRACE").is_none() {
         env::set_var("RUST_BACKTRACE", "1")

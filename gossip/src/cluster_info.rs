@@ -43,6 +43,7 @@ use {
         },
         weighted_shuffle::WeightedShuffle,
     },
+    arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, TrySendError},
     itertools::{Either, Itertools},
     rand::{seq::SliceRandom, CryptoRng, Rng},
@@ -155,7 +156,7 @@ pub struct ClusterInfo {
     /// The network
     pub gossip: CrdsGossip,
     /// set the keypair that will be used to sign crds values generated. It is unset only in tests.
-    keypair: RwLock<Arc<Keypair>>,
+    keypair: ArcSwap<Keypair>,
     /// Network entrypoints
     entrypoints: RwLock<Vec<ContactInfo>>,
     outbound_budget: DataBudget,
@@ -179,7 +180,7 @@ impl ClusterInfo {
         assert_eq!(contact_info.pubkey(), &keypair.pubkey());
         let me = Self {
             gossip: CrdsGossip::default(),
-            keypair: RwLock::new(keypair),
+            keypair: ArcSwap::from(keypair),
             entrypoints: RwLock::default(),
             outbound_budget: DataBudget::default(),
             my_contact_info: RwLock::new(contact_info),
@@ -381,18 +382,17 @@ impl ClusterInfo {
     }
 
     pub fn id(&self) -> Pubkey {
-        self.keypair.read().unwrap().pubkey()
+        self.keypair.load().pubkey()
     }
 
     pub fn keypair(&self) -> Arc<Keypair> {
-        self.keypair.read().unwrap().clone()
+        self.keypair.load_full()
     }
 
     pub fn set_keypair(&self, new_keypair: Arc<Keypair>) {
         let id = new_keypair.pubkey();
-        *self.keypair.write().unwrap() = new_keypair;
+        self.keypair.store(new_keypair);
         self.my_contact_info.write().unwrap().hot_swap_pubkey(id);
-
         self.refresh_my_gossip_contact_info();
     }
 

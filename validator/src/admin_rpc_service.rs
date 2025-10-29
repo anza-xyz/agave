@@ -786,7 +786,7 @@ impl AdminRpc for AdminRpcImpl {
             };
 
             banking_stage
-                .spawn_threads(
+                .spawn_internal_threads(
                     block_production_method,
                     num_workers,
                     SchedulerConfig { scheduler_pacing },

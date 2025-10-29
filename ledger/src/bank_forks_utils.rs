@@ -10,19 +10,17 @@ use {
     },
     agave_snapshots::{
         error::SnapshotError,
+        paths as snapshot_paths,
+        snapshot_archive_info::{
+            FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfoGetter,
+        },
         snapshot_config::SnapshotConfig,
         snapshot_hash::{FullSnapshotHash, IncrementalSnapshotHash, StartingSnapshotHashes},
     },
     log::*,
     solana_accounts_db::accounts_update_notifier_interface::AccountsUpdateNotifier,
     solana_genesis_config::GenesisConfig,
-    solana_runtime::{
-        bank_forks::BankForks,
-        snapshot_archive_info::{
-            FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfoGetter,
-        },
-        snapshot_bank_utils, snapshot_utils,
-    },
+    solana_runtime::{bank_forks::BankForks, snapshot_bank_utils, snapshot_utils},
     std::{
         path::PathBuf,
         result,
@@ -139,7 +137,7 @@ pub fn load_bank_forks(
         };
 
         let Some(full_snapshot_archive_info) =
-            snapshot_utils::get_highest_full_snapshot_archive_info(
+            snapshot_paths::get_highest_full_snapshot_archive_info(
                 &snapshot_config.full_snapshot_archives_dir,
             )
         else {
@@ -151,7 +149,7 @@ pub fn load_bank_forks(
         };
 
         let incremental_snapshot_archive_info =
-            snapshot_utils::get_highest_incremental_snapshot_archive_info(
+            snapshot_paths::get_highest_incremental_snapshot_archive_info(
                 &snapshot_config.incremental_snapshot_archives_dir,
                 full_snapshot_archive_info.slot(),
             );

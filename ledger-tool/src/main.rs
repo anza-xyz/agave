@@ -15,7 +15,8 @@ use {
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_snapshots::{
-        ArchiveFormat, SnapshotVersion, DEFAULT_ARCHIVE_COMPRESSION, SUPPORTED_ARCHIVE_COMPRESSION,
+        snapshot_archive_info::SnapshotArchiveInfoGetter as _, ArchiveFormat, SnapshotVersion,
+        DEFAULT_ARCHIVE_COMPRESSION, SUPPORTED_ARCHIVE_COMPRESSION,
     },
     clap::{
         crate_description, crate_name, value_t, value_t_or_exit, values_t_or_exit, App,
@@ -67,7 +68,6 @@ use {
         bank_forks::BankForks,
         inflation_rewards::points::{InflationPointCalculationEvent, PointValue},
         installed_scheduler_pool::BankWithScheduler,
-        snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils,
         snapshot_minimizer::SnapshotMinimizer,
     },

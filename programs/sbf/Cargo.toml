@@ -119,7 +119,7 @@ solana-account-info = "=3.0.0"
 solana-accounts-db = { path = "../../accounts-db", version = "=3.1.0" }
 solana-big-mod-exp = "=3.0.0"
 solana-blake3-hasher = { version = "=3.0.0", features = ["blake3"] }
-solana-bn254 = "=3.0.0"
+solana-bn254 = "=3.1.2"
 solana-bpf-loader-program = { path = "../bpf_loader", version = "=3.1.0" }
 solana-cli-output = { path = "../../cli-output", version = "=3.1.0" }
 solana-clock = { version = "=3.0.0", features = ["serde", "sysvar"] }
@@ -249,7 +249,9 @@ solana-svm-type-overrides = { workspace = true }
 solana-system-interface = "2.0"
 solana-sysvar = "3.0.0"
 solana-transaction = "3.0.0"
-solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
+solana-transaction-context = { workspace = true, features = [
+    "dev-context-only-utils",
+] }
 solana-transaction-error = "3.0.0"
 solana-transaction-status = { workspace = true }
 solana-vote = { workspace = true }

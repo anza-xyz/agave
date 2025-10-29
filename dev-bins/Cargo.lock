@@ -271,8 +271,12 @@ dependencies = [
  "solana-genesis-config",
  "solana-hash",
  "solana-lattice-hash",
+ "solana-measure",
+ "solana-metrics",
  "strum",
+ "symlink",
  "tar",
+ "tempfile",
  "thiserror 2.0.17",
  "zstd",
 ]
@@ -421,12 +425,21 @@ dependencies = [
 name = "agave-xdp"
 version = "3.1.0"
 dependencies = [
+ "agave-xdp-ebpf",
  "aya",
  "caps",
  "crossbeam-channel",
  "libc",
  "log",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "agave-xdp-ebpf"
+version = "3.1.0"
+dependencies = [
+ "aya",
+ "aya-ebpf",
 ]
 
 [[package]]
@@ -922,6 +935,45 @@ dependencies = [
  "object",
  "once_cell",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "aya-ebpf"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8dbaf5409a1a0982e5c9bdc0f499a55fe5ead39fe9c846012053faf0d404f73"
+dependencies = [
+ "aya-ebpf-bindings",
+ "aya-ebpf-cty",
+ "aya-ebpf-macros",
+ "rustversion",
+]
+
+[[package]]
+name = "aya-ebpf-bindings"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "783dc1a82a3d71d83286165381dcc1b1d41643f4b110733d135547527c000a9a"
+dependencies = [
+ "aya-ebpf-cty",
+]
+
+[[package]]
+name = "aya-ebpf-cty"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2cce099aaf3abb89f9a1f8594ffe07fa53738ebc2882fac624d10d9ba31a1b10"
+
+[[package]]
+name = "aya-ebpf-macros"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72f47f7b4a75eb5f1d7ba0fb5628d247b1cf20388658899177875dabdda66865"
+dependencies = [
+ "proc-macro-error",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
 ]
 
 [[package]]
@@ -6296,9 +6348,9 @@ dependencies = [
 
 [[package]]
 name = "solana-bn254"
-version = "3.0.0"
+version = "3.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20a5f01e99addb316d95d4ed31aa6eacfda557fffc00ae316b919e8ba0fc5b91"
+checksum = "8d08583be08d2d5f19aa21efbb6fbdb968ba7fd0de74562441437a7d776772bf"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -6405,6 +6457,7 @@ dependencies = [
  "chrono",
  "clap 2.34.0",
  "rpassword",
+ "solana-bls-signatures",
  "solana-clock",
  "solana-cluster-type",
  "solana-commitment-config",
@@ -7144,6 +7197,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "solana-account",
+ "solana-bls-signatures",
  "solana-clap-utils",
  "solana-cli-config",
  "solana-clock",
@@ -7254,6 +7308,7 @@ version = "3.1.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
+ "arc-swap",
  "arrayvec",
  "assert_matches",
  "bincode",
@@ -8521,10 +8576,8 @@ dependencies = [
  "strum",
  "strum_macros",
  "symlink",
- "tar",
  "tempfile",
  "thiserror 2.0.17",
- "zstd",
 ]
 
 [[package]]

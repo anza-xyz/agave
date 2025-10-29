@@ -1,9 +1,7 @@
 //! Information about snapshot archives
 
 use {
-    agave_snapshots::{
-        paths as snapshot_paths, snapshot_hash::SnapshotHash, ArchiveFormat, Result,
-    },
+    crate::{paths as snapshot_paths, snapshot_hash::SnapshotHash, ArchiveFormat, Result},
     solana_clock::Slot,
     std::{cmp::Ordering, path::PathBuf},
 };
@@ -71,7 +69,7 @@ impl FullSnapshotArchiveInfo {
         }))
     }
 
-    pub(crate) fn new(snapshot_archive_info: SnapshotArchiveInfo) -> Self {
+    pub fn new(snapshot_archive_info: SnapshotArchiveInfo) -> Self {
         Self(snapshot_archive_info)
     }
 }
@@ -125,7 +123,7 @@ impl IncrementalSnapshotArchiveInfo {
         ))
     }
 
-    pub(crate) fn new(base_slot: Slot, snapshot_archive_info: SnapshotArchiveInfo) -> Self {
+    pub fn new(base_slot: Slot, snapshot_archive_info: SnapshotArchiveInfo) -> Self {
         Self {
             base_slot,
             inner: snapshot_archive_info,

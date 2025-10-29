@@ -1,8 +1,10 @@
 #![allow(clippy::arithmetic_side_effects)]
 
-#[cfg(target_os = "linux")]
-use aya::{programs::Xdp, Ebpf};
-use std::io::{Cursor, Write};
+use {
+    crate::device::NetworkDevice,
+    aya::{programs::Xdp, Ebpf, EbpfLoader},
+    std::io::{Cursor, Write},
+};
 
 macro_rules! write_fields {
     ($w:expr, $($x:expr),*) => {
@@ -36,15 +38,21 @@ const XDP_PROG: &[u8] = &[
 ];
 
 // the string table
-const STRTAB: &[u8] = b"\0xdp\0.symtab\0.strtab\0";
+const STRTAB: &[u8] = b"\0xdp\0.symtab\0.strtab\0agave_xdp\0";
 
-pub fn load_xdp_program(if_index: u32) -> Result<Ebpf, Box<dyn std::error::Error>> {
-    let elf = generate_xdp_elf();
-    let mut ebpf = Ebpf::load(&elf).unwrap();
-    let p: &mut Xdp = ebpf.program_mut("xdp").unwrap().try_into().unwrap();
+pub fn load_xdp_program(dev: &NetworkDevice) -> Result<Ebpf, Box<dyn std::error::Error>> {
+    let mut loader = EbpfLoader::new();
+    let broken_frags = dev.driver()? == "i40e";
+    let mut ebpf = if broken_frags {
+        loader.set_global("AGAVE_XDP_DROP_MULTI_FRAGS", &1u8, true);
+        loader.load(&agave_xdp_ebpf::AGAVE_XDP_EBPF_PROGRAM)
+    } else {
+        loader.load(&generate_xdp_elf())
+    }?;
+    let p: &mut Xdp = ebpf.program_mut("agave_xdp").unwrap().try_into().unwrap();
     p.load()?;
 
-    p.attach_to_if_index(if_index, aya::programs::xdp::XdpFlags::DRV_MODE)?;
+    p.attach_to_if_index(dev.if_index(), aya::programs::xdp::XdpFlags::DRV_MODE)?;
 
     Ok(ebpf)
 }
@@ -69,7 +77,7 @@ fn generate_xdp_elf() -> Vec<u8> {
     write_symbol(&mut cursor, 0, 0, 0, 0, 0, 0).unwrap();
     write_symbol(
         &mut cursor,
-        1, // index
+        21, // index
         0,
         XDP_PROG.len() as u64,
         STB_GLOBAL | STT_FUNC,

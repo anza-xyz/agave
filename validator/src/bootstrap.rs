@@ -1,4 +1,8 @@
 use {
+    agave_snapshots::{
+        paths as snapshot_paths, snapshot_archive_info::SnapshotArchiveInfoGetter as _,
+        SnapshotKind,
+    },
     itertools::Itertools,
     log::*,
     rand::{seq::SliceRandom, thread_rng, Rng},
@@ -21,10 +25,6 @@ use {
     solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_runtime::{
-        snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_package::SnapshotKind,
-        snapshot_utils,
-    },
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_vote_program::vote_state::VoteStateV4,
@@ -788,10 +788,10 @@ fn get_highest_local_snapshot_hash(
     incremental_snapshot_archives_dir: impl AsRef<Path>,
     incremental_snapshot_fetch: bool,
 ) -> Option<(Slot, Hash)> {
-    snapshot_utils::get_highest_full_snapshot_archive_info(full_snapshot_archives_dir)
+    snapshot_paths::get_highest_full_snapshot_archive_info(full_snapshot_archives_dir)
         .and_then(|full_snapshot_info| {
             if incremental_snapshot_fetch {
-                snapshot_utils::get_highest_incremental_snapshot_archive_info(
+                snapshot_paths::get_highest_incremental_snapshot_archive_info(
                     incremental_snapshot_archives_dir,
                     full_snapshot_info.slot(),
                 )
@@ -1131,7 +1131,7 @@ fn download_snapshots(
     }
 
     // Check and see if we've already got the full snapshot; if not, download it
-    if snapshot_utils::get_full_snapshot_archives(full_snapshot_archives_dir)
+    if snapshot_paths::get_full_snapshot_archives(full_snapshot_archives_dir)
         .into_iter()
         .any(|snapshot_archive| {
             snapshot_archive.slot() == full_snapshot_hash.0
@@ -1160,7 +1160,7 @@ fn download_snapshots(
     if bootstrap_config.incremental_snapshot_fetch {
         // Check and see if we've already got the incremental snapshot; if not, download it
         if let Some(incremental_snapshot_hash) = incremental_snapshot_hash {
-            if snapshot_utils::get_incremental_snapshot_archives(incremental_snapshot_archives_dir)
+            if snapshot_paths::get_incremental_snapshot_archives(incremental_snapshot_archives_dir)
                 .into_iter()
                 .any(|snapshot_archive| {
                     snapshot_archive.slot() == incremental_snapshot_hash.0

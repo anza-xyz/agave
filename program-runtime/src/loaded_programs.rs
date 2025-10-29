@@ -27,7 +27,7 @@ use {
 #[cfg(feature = "metrics")]
 use {solana_svm_measure::measure::Measure, solana_svm_timings::ExecuteDetailsTimings};
 
-pub type ProgramRuntimeEnvironment = Arc<BuiltinProgram<InvokeContext<'static>>>;
+pub type ProgramRuntimeEnvironment = Arc<BuiltinProgram<InvokeContext<'static, 'static>>>;
 pub const MAX_LOADED_ENTRY_COUNT: usize = 512;
 pub const DELAY_VISIBILITY_SLOT_OFFSET: Slot = 1;
 
@@ -144,9 +144,9 @@ pub enum ProgramCacheEntryType {
     /// It continues to track usage statistics even when the compiled executable of the program is evicted from memory.
     Unloaded(ProgramRuntimeEnvironment),
     /// Verified and compiled program
-    Loaded(Executable<InvokeContext<'static>>),
+    Loaded(Executable<InvokeContext<'static, 'static>>),
     /// A built-in program which is not stored on-chain but backed into and distributed with the validator
-    Builtin(BuiltinProgram<InvokeContext<'static>>),
+    Builtin(BuiltinProgram<InvokeContext<'static, 'static>>),
 }
 
 impl Debug for ProgramCacheEntryType {
@@ -341,7 +341,7 @@ impl ProgramCacheEntry {
     /// hasn't changed since it was unloaded.
     pub unsafe fn reload(
         loader_key: &Pubkey,
-        program_runtime_environment: Arc<BuiltinProgram<InvokeContext<'static>>>,
+        program_runtime_environment: Arc<BuiltinProgram<InvokeContext<'static, 'static>>>,
         deployment_slot: Slot,
         effective_slot: Slot,
         elf_bytes: &[u8],
@@ -363,7 +363,7 @@ impl ProgramCacheEntry {
 
     fn new_internal(
         loader_key: &Pubkey,
-        program_runtime_environment: Arc<BuiltinProgram<InvokeContext<'static>>>,
+        program_runtime_environment: Arc<BuiltinProgram<InvokeContext<'static, 'static>>>,
         deployment_slot: Slot,
         effective_slot: Slot,
         elf_bytes: &[u8],

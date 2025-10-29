@@ -10,13 +10,14 @@
 pub use solana_file_download::DownloadProgressRecord;
 use {
     agave_snapshots::{
-        paths as snapshot_paths, snapshot_hash::SnapshotHash, ArchiveFormat, ZstdConfig,
+        paths as snapshot_paths, snapshot_hash::SnapshotHash, ArchiveFormat, SnapshotKind,
+        ZstdConfig,
     },
     log::*,
     solana_clock::Slot,
     solana_file_download::{download_file, DownloadProgressCallbackOption},
     solana_genesis_config::DEFAULT_GENESIS_ARCHIVE,
-    solana_runtime::{snapshot_package::SnapshotKind, snapshot_utils},
+    solana_runtime::snapshot_utils,
     std::{
         fs,
         net::SocketAddr,

@@ -167,34 +167,31 @@ impl VoteHistory {
         // in final version
         match vote {
             Vote::Notarize(vote) => {
-                assert!(self.voted.insert(vote.slot()));
-                assert!(self
-                    .voted_notar
-                    .insert(vote.slot(), *vote.block_id())
-                    .is_none());
+                assert!(self.voted.insert(vote.slot));
+                assert!(self.voted_notar.insert(vote.slot, vote.block_id).is_none());
             }
             Vote::Finalize(vote) => {
-                assert!(!self.skipped(vote.slot()));
-                self.its_over.insert(vote.slot());
+                assert!(!self.skipped(vote.slot));
+                self.its_over.insert(vote.slot);
             }
             Vote::Skip(vote) => {
-                self.voted.insert(vote.slot());
-                self.skipped.insert(vote.slot());
+                self.voted.insert(vote.slot);
+                self.skipped.insert(vote.slot);
             }
             Vote::NotarizeFallback(vote) => {
-                assert!(self.voted(vote.slot()));
-                assert!(!self.its_over(vote.slot()));
-                self.skipped.insert(vote.slot());
+                assert!(self.voted(vote.slot));
+                assert!(!self.its_over(vote.slot));
+                self.skipped.insert(vote.slot);
                 self.voted_notar_fallback
-                    .entry(vote.slot())
+                    .entry(vote.slot)
                     .or_default()
-                    .insert(*vote.block_id());
+                    .insert(vote.block_id);
             }
             Vote::SkipFallback(vote) => {
-                assert!(self.voted(vote.slot()));
-                assert!(!self.its_over(vote.slot()));
-                self.skipped.insert(vote.slot());
-                self.voted_skip_fallback.insert(vote.slot());
+                assert!(self.voted(vote.slot));
+                assert!(!self.its_over(vote.slot));
+                self.skipped.insert(vote.slot);
+                self.voted_skip_fallback.insert(vote.slot);
             }
         }
         self.votes_cast.entry(vote.slot()).or_default().push(vote);

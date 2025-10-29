@@ -4,6 +4,7 @@
 use {
     agave_banking_stage_ingress_types::BankingPacketReceiver,
     agave_scheduler_bindings::{tpu_message_flags, SharableTransactionRegion, TpuToPackMessage},
+    agave_scheduling_utils::handshake::server::AgaveTpuToPackSession,
     rts_alloc::Allocator,
     solana_packet::PacketFlags,
     solana_perf::packet::PacketBatch,
@@ -28,8 +29,10 @@ pub struct BankingPacketReceivers {
 pub fn spawn(
     exit: Arc<AtomicBool>,
     receivers: BankingPacketReceivers,
-    allocator: rts_alloc::Allocator,
-    producer: shaq::Producer<TpuToPackMessage>,
+    AgaveTpuToPackSession {
+        allocator,
+        producer,
+    }: AgaveTpuToPackSession,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("solTpu2Pack".to_string())
