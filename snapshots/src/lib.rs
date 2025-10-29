@@ -11,6 +11,7 @@
 mod archive_format;
 pub mod error;
 pub mod hardened_unpack;
+mod kind;
 pub mod paths;
 pub mod snapshot_archive_info;
 pub mod snapshot_config;
@@ -23,6 +24,7 @@ pub type Result<T> = std::result::Result<T, error::SnapshotError>;
 
 pub use {
     archive_format::*,
+    kind::SnapshotKind,
     snapshot_interval::SnapshotInterval,
     snapshot_version::SnapshotVersion,
     unarchive::{streaming_unarchive_snapshot, unpack_genesis_archive},

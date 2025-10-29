@@ -8,7 +8,7 @@ use {
             SerializableAccountStorageEntry, SnapshotAccountsDbFields, SnapshotBankFields,
             SnapshotStreams,
         },
-        snapshot_package::{SnapshotKind, SnapshotPackage},
+        snapshot_package::SnapshotPackage,
         snapshot_utils::snapshot_storage_rebuilder::{
             get_slot_and_append_vec_id, SnapshotStorageRebuilder,
         },
@@ -26,7 +26,7 @@ use {
         },
         snapshot_config::SnapshotConfig,
         snapshot_hash::SnapshotHash,
-        streaming_unarchive_snapshot, ArchiveFormat, Result, SnapshotVersion,
+        streaming_unarchive_snapshot, ArchiveFormat, Result, SnapshotKind, SnapshotVersion,
     },
     crossbeam_channel::{Receiver, Sender},
     log::*,
