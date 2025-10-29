@@ -28,6 +28,7 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 * The accounts index is now kept entirely in memory by default.
+* The votes are now transported over QUIC and not UDP. The old mode can be manually enabled with `--vote-use-quic false`.
 
 ## 3.0.0
 
