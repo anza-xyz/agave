@@ -8,6 +8,8 @@ license = { workspace = true }
 edition = { workspace = true }
 publish = true
 
+[target.'cfg(unix)']
+
 [features]
 agave-unstable-api = []
 

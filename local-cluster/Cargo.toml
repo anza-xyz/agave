@@ -9,6 +9,8 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[target.'cfg(unix)']
+
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
@@ -84,5 +86,8 @@ solana-core = { workspace = true, features = ["dev-context-only-utils"] }
 solana-download-utils = { workspace = true }
 solana-genesis-utils = { workspace = true }
 solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
-solana-local-cluster = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-local-cluster = { path = ".", features = [
+    "agave-unstable-api",
+    "dev-context-only-utils",
+] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }

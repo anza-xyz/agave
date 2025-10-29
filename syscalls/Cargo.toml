@@ -9,6 +9,8 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[target.'cfg(unix)']
+
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
@@ -67,11 +69,15 @@ solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-last-restart-slot = { workspace = true }
 solana-program = { workspace = true }
-solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-program-runtime = { workspace = true, features = [
+    "dev-context-only-utils",
+] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true }
 solana-slot-hashes = { workspace = true }
-solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
+solana-transaction-context = { workspace = true, features = [
+    "dev-context-only-utils",
+] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 

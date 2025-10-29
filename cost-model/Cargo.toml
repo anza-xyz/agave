@@ -9,6 +9,8 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[target.'cfg(unix)']
+
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
@@ -76,7 +78,10 @@ solana-compute-budget-instruction = { workspace = true, features = [
 ] }
 solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { workspace = true }
-solana-cost-model = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-cost-model = { path = ".", features = [
+    "agave-unstable-api",
+    "dev-context-only-utils",
+] }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }

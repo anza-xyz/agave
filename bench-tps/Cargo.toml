@@ -9,6 +9,8 @@ license = { workspace = true }
 edition = { workspace = true }
 workspace = "../dev-bins"
 
+[target.'cfg(unix)']
+
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 

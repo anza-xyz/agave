@@ -9,6 +9,8 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[target.'cfg(unix)']
+
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
@@ -139,7 +141,10 @@ criterion = { workspace = true }
 proptest = { workspace = true }
 solana-account-decoder = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-ledger = { path = ".", features = ["dev-context-only-utils", "agave-unstable-api"] }
+solana-ledger = { path = ".", features = [
+    "dev-context-only-utils",
+    "agave-unstable-api",
+] }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-program-option = { workspace = true }

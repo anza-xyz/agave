@@ -9,6 +9,8 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[target.'cfg(unix)']
+
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
@@ -113,7 +115,10 @@ memoffset = { workspace = true }
 rand_chacha = { workspace = true }
 serde_bytes = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-accounts-db = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-accounts-db = { path = ".", features = [
+    "agave-unstable-api",
+    "dev-context-only-utils",
+] }
 solana-compute-budget = { workspace = true }
 solana-instruction = { workspace = true }
 solana-sdk-ids = { workspace = true }

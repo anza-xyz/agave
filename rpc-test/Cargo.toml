@@ -10,6 +10,8 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[target.'cfg(unix)']
+
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
@@ -22,7 +24,14 @@ bs58 = { workspace = true }
 crossbeam-channel = { workspace = true }
 futures-util = { workspace = true }
 log = { workspace = true }
-reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "json"] }
+reqwest = { workspace = true, features = [
+    "blocking",
+    "brotli",
+    "deflate",
+    "gzip",
+    "rustls-tls",
+    "json",
+] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 solana-account-decoder = { workspace = true }

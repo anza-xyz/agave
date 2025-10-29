@@ -9,6 +9,8 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[target.'cfg(unix)']
+
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
@@ -44,7 +46,9 @@ solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
 solana-vote-interface = { workspace = true }
-spl-associated-token-account-interface = { workspace = true, features = ["borsh"] }
+spl-associated-token-account-interface = { workspace = true, features = [
+    "borsh",
+] }
 spl-memo-interface = { workspace = true }
 spl-token-2022-interface = { workspace = true }
 spl-token-group-interface = { workspace = true }

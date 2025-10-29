@@ -9,6 +9,8 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[target.'cfg(unix)']
+
 [features]
 agave-unstable-api = []
 
@@ -29,7 +31,9 @@ thiserror = { workspace = true }
 tempfile = { workspace = true }
 
 [target."cfg(unix)".dev-dependencies]
-agave-scheduler-bindings = { workspace = true, features = ["dev-context-only-utils"] }
+agave-scheduler-bindings = { workspace = true, features = [
+    "dev-context-only-utils",
+] }
 
 [lints]
 workspace = true

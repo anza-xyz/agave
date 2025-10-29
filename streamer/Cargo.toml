@@ -9,6 +9,8 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[target.'cfg(unix)']
+
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
@@ -68,4 +70,7 @@ anyhow = { workspace = true }
 assert_matches = { workspace = true }
 clap = { version = "4.5.31", features = ["cargo", "derive", "error-context"] }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
-solana-streamer = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-streamer = { path = ".", features = [
+    "agave-unstable-api",
+    "dev-context-only-utils",
+] }
