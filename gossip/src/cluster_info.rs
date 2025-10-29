@@ -3006,7 +3006,8 @@ mod tests {
     fn test_refresh_vote_eviction() {
         let keypair = Arc::new(Keypair::new());
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
-        let cluster_info = ClusterInfo::new(contact_info, keypair.clone(), SocketAddrSpace::Unspecified);
+        let cluster_info =
+            ClusterInfo::new(contact_info, keypair.clone(), SocketAddrSpace::Unspecified);
 
         // Push MAX_LOCKOUT_HISTORY votes into gossip, one for each slot between
         // [lowest_vote_slot, lowest_vote_slot + MAX_LOCKOUT_HISTORY)
@@ -3077,7 +3078,8 @@ mod tests {
     fn test_refresh_vote() {
         let keypair = Arc::new(Keypair::new());
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
-        let cluster_info = ClusterInfo::new(contact_info, keypair.clone(), SocketAddrSpace::Unspecified);
+        let cluster_info =
+            ClusterInfo::new(contact_info, keypair.clone(), SocketAddrSpace::Unspecified);
 
         // Construct and push a vote for some other slot
         let unrefresh_slot = 5;
@@ -3227,7 +3229,8 @@ mod tests {
         };
         let keypair = Arc::new(Keypair::new());
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
-        let cluster_info = ClusterInfo::new(contact_info, keypair.clone(), SocketAddrSpace::Unspecified);
+        let cluster_info =
+            ClusterInfo::new(contact_info, keypair.clone(), SocketAddrSpace::Unspecified);
         let mut tower = Vec::new();
 
         // Evict the oldest vote
