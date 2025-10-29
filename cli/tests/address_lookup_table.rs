@@ -1,3 +1,4 @@
+#![cfg(unix)]
 use {
     solana_cli::{
         address_lookup_table::{
