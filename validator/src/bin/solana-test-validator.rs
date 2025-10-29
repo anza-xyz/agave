@@ -149,8 +149,8 @@ fn main() {
         });
 
     let rpc_port = value_t_or_exit!(matches, "rpc_port", u16);
-    let pub_sub_config = PubSubConfig::from_clap_arg_match(&matches)
-        .unwrap_or(PubSubConfig::default_for_tests());
+    let pub_sub_config =
+        PubSubConfig::from_clap_arg_match(&matches).unwrap_or(PubSubConfig::default_for_tests());
     let faucet_port = value_t_or_exit!(matches, "faucet_port", u16);
     let ticks_per_slot = value_t!(matches, "ticks_per_slot", u64).ok();
     let slots_per_epoch = value_t!(matches, "slots_per_epoch", Slot).ok();

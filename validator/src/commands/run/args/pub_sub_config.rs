@@ -34,11 +34,8 @@ static DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_BYTES: LazyLock<String> = LazyLock
 });
 
 const DEFAULT_RPC_PUBSUB_WORKER_THREADS: &str = "4";
-static DEFAULT_TEST_RPC_PUBSUB_WORKER_THREADS: LazyLock<String> = LazyLock::new(|| {
-    PubSubConfig::default_for_tests()
-        .worker_threads
-        .to_string()
-});
+static DEFAULT_TEST_RPC_PUBSUB_WORKER_THREADS: LazyLock<String> =
+    LazyLock::new(|| PubSubConfig::default_for_tests().worker_threads.to_string());
 
 #[cfg_attr(test, qualifiers(pub(crate)))]
 static DEFAULT_RPC_PUBSUB_NUM_NOTIFICATION_THREADS: LazyLock<String> =
