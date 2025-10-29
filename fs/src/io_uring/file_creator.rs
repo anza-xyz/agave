@@ -5,7 +5,7 @@ use {
         file_io::FileCreator,
         io_uring::{
             memory::{FixedIoBuffer, LargeBuffer},
-            IO_PRIO_BE_HIGHEST,
+            sqpoll, IO_PRIO_BE_HIGHEST,
         },
     },
     agave_io_uring::{Completion, FixedSlab, Ring, RingOp},
@@ -19,7 +19,7 @@ use {
         fs::File,
         io::{self, Read},
         mem,
-        os::fd::AsRawFd,
+        os::fd::{AsRawFd, BorrowedFd},
         path::PathBuf,
         pin::Pin,
         sync::Arc,
@@ -64,11 +64,13 @@ impl<'a> IoUringFileCreator<'a, LargeBuffer> {
     /// `buf_size` and default write size.
     pub fn with_buffer_capacity<F: FnMut(PathBuf) + 'a>(
         buf_size: usize,
+        shared_sqpoll_fd: Option<BorrowedFd>,
         file_complete: F,
     ) -> io::Result<Self> {
         Self::with_buffer(
             LargeBuffer::new(buf_size),
             DEFAULT_WRITE_SIZE,
+            shared_sqpoll_fd,
             file_complete,
         )
     }
@@ -84,13 +86,15 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
     pub fn with_buffer<F: FnMut(PathBuf) + 'a>(
         mut buffer: B,
         write_capacity: usize,
+        shared_sqpoll_fd: Option<BorrowedFd>,
         file_complete: F,
     ) -> io::Result<Self> {
         // Let submission queue hold half of buffers before we explicitly syscall
         // to submit them for writing (lets kernel start processing before we run out of buffers,
         // but also amortizes number of `submit` syscalls made).
         let ring_qsize = (buffer.as_mut().len() / write_capacity / 2).max(1) as u32;
-        let ring = IoUring::builder().build(ring_qsize)?;
+
+        let ring = sqpoll::io_uring_builder_with(shared_sqpoll_fd).build(ring_qsize)?;
         // Maximum number of spawned [bounded IO, unbounded IO] kernel threads, we don't expect
         // any unbounded work, but limit it to 1 just in case (0 leaves it unlimited).
         ring.submitter()

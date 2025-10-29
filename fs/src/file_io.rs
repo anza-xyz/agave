@@ -1,12 +1,15 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 //! File i/o helper functions.
-use std::{
-    fs::{self, File, OpenOptions},
-    io::{self, BufWriter, Write},
-    ops::Range,
-    path::{Path, PathBuf},
-    sync::Arc,
+use {
+    crate::io_setup::IoSetupState,
+    std::{
+        fs::{self, File, OpenOptions},
+        io::{self, BufWriter, Write},
+        ops::Range,
+        path::{Path, PathBuf},
+        sync::Arc,
+    },
 };
 
 /// `buffer` contains `valid_bytes` of data at its end.
@@ -143,6 +146,7 @@ pub trait FileCreator {
 
 pub fn file_creator<'a>(
     buf_size: usize,
+    io_setup: &IoSetupState,
     file_complete: impl FnMut(PathBuf) + 'a,
 ) -> io::Result<Box<dyn FileCreator + 'a>> {
     #[cfg(target_os = "linux")]
@@ -150,10 +154,17 @@ pub fn file_creator<'a>(
         use crate::io_uring::file_creator::{IoUringFileCreator, DEFAULT_WRITE_SIZE};
 
         if buf_size >= DEFAULT_WRITE_SIZE {
-            let io_uring_creator =
-                IoUringFileCreator::with_buffer_capacity(buf_size, file_complete)?;
+            let io_uring_creator = IoUringFileCreator::with_buffer_capacity(
+                buf_size,
+                io_setup.shared_sqpoll_fd(),
+                file_complete,
+            )?;
             return Ok(Box::new(io_uring_creator));
         }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = io_setup;
     }
     Ok(Box::new(SyncIoFileCreator::new(buf_size, file_complete)))
 }
@@ -357,7 +368,7 @@ mod tests {
         let mut callback_invoked_path = None;
 
         // Instantiate FileCreator
-        let mut creator = file_creator(2 << 20, |path| {
+        let mut creator = file_creator(2 << 20, &IoSetupState::default(), |path| {
             callback_invoked_path.replace(path);
         })?;
 
@@ -382,7 +393,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let mut callback_counter = 0;
 
-        let mut creator = file_creator(2 << 20, |path: PathBuf| {
+        let mut creator = file_creator(2 << 20, &IoSetupState::default(), |path: PathBuf| {
             let contents = read_file_to_string(&path);
             assert!(contents.starts_with("File "));
             callback_counter += 1;
