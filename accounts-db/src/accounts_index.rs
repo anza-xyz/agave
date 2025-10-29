@@ -1,17 +1,18 @@
 mod account_map_entry;
+mod accounts_index_storage;
 pub(crate) mod in_mem_accounts_index;
 mod iter;
 mod roots_tracker;
 mod secondary;
 use {
     crate::{
-        accounts_index::account_map_entry::SlotListWriteGuard,
-        accounts_index_storage::AccountsIndexStorage, ancestors::Ancestors, bucket_map_holder::Age,
-        bucket_map_holder_stats::BucketMapHolderStats, contains::Contains,
+        accounts_index::account_map_entry::SlotListWriteGuard, ancestors::Ancestors,
+        bucket_map_holder::Age, bucket_map_holder_stats::BucketMapHolderStats, contains::Contains,
         is_zero_lamport::IsZeroLamport, pubkey_bins::PubkeyBinCalculator24,
         rolling_bit_field::RollingBitField,
     },
     account_map_entry::{AccountMapEntry, PreAllocatedAccountMapEntry},
+    accounts_index_storage::AccountsIndexStorage,
     in_mem_accounts_index::{
         ExistedLocation, InMemAccountsIndex, InsertNewEntryResults, StartupStats,
     },
