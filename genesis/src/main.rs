@@ -119,7 +119,6 @@ pub fn load_validator_accounts(
     commission: u8,
     rent: &Rent,
     genesis_config: &mut GenesisConfig,
-    is_alpenglow: bool,
 ) -> io::Result<()> {
     let accounts_file = File::open(file)?;
     let validator_genesis_accounts: Vec<StakedValidatorAccountInfo> =
@@ -163,7 +162,6 @@ pub fn load_validator_accounts(
             commission,
             rent,
             None,
-            is_alpenglow,
         )?;
     }
 
@@ -243,7 +241,6 @@ fn add_validator_accounts(
     commission: u8,
     rent: &Rent,
     authorized_pubkey: Option<&Pubkey>,
-    is_alpenglow: bool,
 ) -> io::Result<()> {
     rent_exempt_check(
         stake_lamports,
@@ -263,14 +260,8 @@ fn add_validator_accounts(
             AccountSharedData::new(lamports, 0, &system_program::id()),
         );
 
-        let bls_pubkey_compressed_bytes = if is_alpenglow {
-            let bls_pubkey = bls_pubkeys_iter
-                .next()
-                .expect("Missing BLS pubkey for {identity_pubkey}");
-            Some(bls_pubkey_to_compressed_bytes(bls_pubkey))
-        } else {
-            None
-        };
+        let bls_pubkey_compressed_bytes =
+            bls_pubkeys_iter.next().map(bls_pubkey_to_compressed_bytes);
         let vote_account = vote_state::create_v4_account_with_authorized(
             identity_pubkey,
             identity_pubkey,
@@ -790,7 +781,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         commission,
         &rent,
         bootstrap_stake_authorized_pubkey.as_ref(),
-        is_alpenglow,
     )?;
 
     if let Some(creation_time) = unix_timestamp_from_rfc3339_datetime(&matches, "creation_time") {
@@ -827,7 +817,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     if let Some(files) = matches.values_of("validator_accounts_file") {
         for file in files {
-            load_validator_accounts(file, commission, &rent, &mut genesis_config, is_alpenglow)?;
+            load_validator_accounts(file, commission, &rent, &mut genesis_config)?;
         }
     }
 
@@ -1305,23 +1295,23 @@ mod tests {
         assert_eq!(genesis_config.accounts.len(), 3);
     }
 
-    #[test_case(true ; "alpenglow")]
-    #[test_case(false ; "towerbft")]
-    fn test_append_validator_accounts_to_genesis(is_alpenglow: bool) {
+    #[test_case(true; "add bls pubkey")]
+    #[test_case(false; "no bls pubkey")]
+    // It's wrong to have (true, false) combination, Alpenglow requires BLS keys
+    fn test_append_validator_accounts_to_genesis(add_bls_pubkey: bool) {
         // Test invalid file returns error
         assert!(load_validator_accounts(
             "unknownfile",
             100,
             &Rent::default(),
             &mut GenesisConfig::default(),
-            false,
         )
         .is_err());
 
         let mut genesis_config = GenesisConfig::default();
 
         let generate_bls_pubkey = || {
-            if is_alpenglow {
+            if add_bls_pubkey {
                 Some(BLSKeypair::new().public.to_string())
             } else {
                 None
@@ -1357,24 +1347,18 @@ mod tests {
         let serialized = serde_yaml::to_string(&validator_accounts).unwrap();
 
         // write accounts to file
-        let filename = if is_alpenglow {
-            "test_append_validator_accounts_to_genesis_alpenglow.yml"
+        let filename = if add_bls_pubkey {
+            "test_append_validator_accounts_to_genesis_with_bls.yml"
         } else {
-            "test_append_validator_accounts_to_genesis_towerbft.yml"
+            "test_append_validator_accounts_to_genesis_without_bls.yml"
         };
         let path = Path::new(filename);
         let mut file = File::create(path).unwrap();
         file.write_all(b"validator_accounts:\n").unwrap();
         file.write_all(serialized.as_bytes()).unwrap();
 
-        load_validator_accounts(
-            filename,
-            100,
-            &Rent::default(),
-            &mut genesis_config,
-            is_alpenglow,
-        )
-        .expect("Failed to load validator accounts");
+        load_validator_accounts(filename, 100, &Rent::default(), &mut genesis_config)
+            .expect("Failed to load validator accounts");
 
         remove_file(path).unwrap();
 
@@ -1404,7 +1388,7 @@ mod tests {
                 assert_eq!(vote_state.authorized_withdrawer, identity_pk);
                 let authorized_voters = &vote_state.authorized_voters;
                 assert_eq!(authorized_voters.first().unwrap().1, &identity_pk);
-                if is_alpenglow {
+                if add_bls_pubkey {
                     assert_eq!(
                         bls_pubkey_to_compressed_bytes(
                             &BLSPubkey::from_str(b64_account.bls_pubkey.as_ref().unwrap()).unwrap()
