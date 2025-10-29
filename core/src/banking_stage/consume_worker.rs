@@ -252,6 +252,7 @@ pub(crate) mod external {
             let mut sleep_duration = STARTING_SLEEP_DURATION;
 
             while !self.exit.load(Ordering::Relaxed) {
+                self.allocator.clean_remote_free_lists();
                 if self.receiver.is_empty() {
                     self.receiver.sync();
                 }
