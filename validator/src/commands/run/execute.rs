@@ -269,6 +269,9 @@ pub fn execute(
         );
     }
     let vote_use_quic = value_t_or_exit!(matches, "vote_use_quic", bool);
+    if !vote_use_quic {
+        warn!("Submission of votes via UDP is deprecated.");
+    }
 
     let tpu_enable_udp = if matches.is_present("tpu_enable_udp") {
         warn!("Submission of TPU transactions via UDP is deprecated.");
