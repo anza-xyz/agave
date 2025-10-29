@@ -7528,6 +7528,7 @@ dependencies = [
  "chrono",
  "clap 2.33.3",
  "rpassword",
+ "solana-bls-signatures",
  "solana-clock",
  "solana-cluster-type",
  "solana-commitment-config",
@@ -8561,6 +8562,7 @@ dependencies = [
  "serde_json",
  "serde_yaml 0.9.34+deprecated",
  "solana-account",
+ "solana-bls-signatures",
  "solana-borsh",
  "solana-clap-utils",
  "solana-cli-config",
@@ -8591,8 +8593,10 @@ dependencies = [
  "solana-stake-program",
  "solana-time-utils",
  "solana-version",
+ "solana-vote",
  "solana-vote-program",
  "tempfile",
+ "test-case",
 ]
 
 [[package]]
