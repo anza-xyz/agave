@@ -154,8 +154,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexStorage<
 
         let storage = Arc::new(BucketMapHolder::new(bins, config, num_flush_threads.get()));
 
+        let num_initial_accounts = config.num_initial_accounts;
         let in_mem: Box<_> = (0..bins)
-            .map(|bin| Arc::new(InMemAccountsIndex::new(&storage, bin)))
+            .map(|bin| Arc::new(InMemAccountsIndex::new(&storage, bin, num_initial_accounts)))
             .collect();
 
         Self {

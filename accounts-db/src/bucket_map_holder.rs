@@ -61,9 +61,6 @@ pub struct BucketMapHolder<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
     /// how many ages should elapse from the last time an item is used where the item will remain in the cache
     pub ages_to_stay_in_cache: Age,
 
-    /// initial number of accounts, used to pre-allocate the in-mem index
-    pub(crate) num_initial_accounts: Option<usize>,
-
     /// startup is a special time for flush to focus on moving everything to disk as fast and efficiently as possible
     /// with less thread count limitations. LRU and access patterns are not important. Freeing memory
     /// and writing to disk in parallel are.
@@ -220,7 +217,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
         Self {
             disk,
             ages_to_stay_in_cache,
-            num_initial_accounts: config.num_initial_accounts,
             count_buckets_flushed: AtomicUsize::default(),
             // age = 0
             age: AtomicAge::default(),
