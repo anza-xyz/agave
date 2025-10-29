@@ -163,6 +163,7 @@ solana-svm = { path = "../../svm", version = "=4.0.0-alpha.0" }
 solana-svm-callback = { path = "../../svm-callback", version = "=4.0.0-alpha.0" }
 solana-svm-feature-set = { path = "../../svm-feature-set", version = "=4.0.0-alpha.0" }
 solana-svm-log-collector = { path = "../../svm-log-collector", version = "=4.0.0-alpha.0" }
+solana-svm-test-harness = { path = "../../svm-test-harness", version = "=4.0.0-alpha.0" }
 solana-svm-timings = { path = "../../svm-timings", version = "=4.0.0-alpha.0" }
 solana-svm-transaction = { path = "../../svm-transaction", version = "=4.0.0-alpha.0" }
 solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.0.0-alpha.0" }
@@ -243,6 +244,7 @@ solana-svm = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-svm-log-collector = { workspace = true }
+solana-svm-test-harness = { workspace = true }
 solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
