@@ -60,13 +60,16 @@ pub fn add_program(
     elf: &[u8],
     feature_set: &FeatureSet,
     compute_budget: &ComputeBudget,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let program_runtime_environment = Arc::new(create_program_runtime_environment_v1(
-        &feature_set.runtime_features(),
-        &compute_budget.to_budget(),
-        false, /* reject_deployment_of_broken_elfs */
-        false, /* debugging_features */
-    )?);
+) {
+    let program_runtime_environment = Arc::new(
+        create_program_runtime_environment_v1(
+            &feature_set.runtime_features(),
+            &compute_budget.to_budget(),
+            false, /* reject_deployment_of_broken_elfs */
+            false, /* debugging_features */
+        )
+        .unwrap(),
+    );
 
     let entry = ProgramCacheEntry::new(
         loader_key,
@@ -76,11 +79,10 @@ pub fn add_program(
         elf,
         elf.len(),
         &mut LoadProgramMetrics::default(),
-    )?;
+    )
+    .unwrap();
 
     cache.replenish(*program_id, Arc::new(entry));
-
-    Ok(())
 }
 
 /// Populate a `ProgramCacheForTxBatch` via `load_program_with_pubkey` from any program accounts.
