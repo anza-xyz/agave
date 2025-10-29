@@ -5914,7 +5914,6 @@ impl Bank {
     }
 
     /// Prepare a transaction batch from a list of legacy transactions. Used for tests only.
-    #[cfg(feature = "dev-context-only-utils")]
     pub fn prepare_batch_for_tests(
         &self,
         txs: Vec<Transaction>,
