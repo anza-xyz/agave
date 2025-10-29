@@ -55,11 +55,11 @@ impl InvokeContextCallback for InstrContextCallback<'_> {
     }
 }
 
-fn compile_accounts(
-    input: &InstrContext,
+fn compile_accounts<'a>(
+    input: &'a InstrContext,
     compute_budget: &ComputeBudget,
     rent: Rent,
-) -> (Vec<InstructionAccount>, TransactionContext) {
+) -> (Vec<InstructionAccount>, TransactionContext<'a>) {
     let mut transaction_accounts: Vec<KeyedAccountSharedData> = input
         .accounts
         .iter()
@@ -129,6 +129,7 @@ pub fn execute_instr(
         ..ProgramRuntimeEnvironments::default()
     };
 
+    let instruction_data = input.instruction.data.iter().copied().collect::<Vec<_>>();
     let result = {
         #[allow(deprecated)]
         let (blockhash, blockhash_lamports_per_signature) = sysvar_cache
@@ -170,7 +171,6 @@ pub fn execute_instr(
             .unwrap();
 
         if invoke_context.is_precompile(&input.instruction.program_id) {
-            let instruction_data = input.instruction.data.iter().copied().collect::<Vec<_>>();
             invoke_context.process_precompile(
                 &input.instruction.program_id,
                 &input.instruction.data,

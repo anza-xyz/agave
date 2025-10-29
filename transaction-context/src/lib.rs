@@ -18,7 +18,7 @@ use {
     solana_instructions_sysvar as instructions,
     solana_pubkey::Pubkey,
     solana_sbpf::memory_region::{AccessType, AccessViolationHandler, MemoryRegion},
-    std::{cell::Cell, collections::HashSet, rc::Rc},
+    std::{borrow::Cow, cell::Cell, collections::HashSet, rc::Rc},
 };
 #[cfg(not(target_os = "solana"))]
 use {solana_account::WritableAccount, solana_rent::Rent};
