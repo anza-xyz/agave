@@ -66,21 +66,17 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
 ) -> Option<ProgramAccountLoadResult> {
     let (program_account, _slot) = callbacks.get_account_shared_data(pubkey)?;
 
-    if loader_v4::check_id(program_account.owner()) {
-        return Some(
-            solana_loader_v4_program::get_state(program_account.data())
-                .ok()
-                .and_then(|state| {
-                    (!matches!(state.status, LoaderV4Status::Retracted)).then_some(state.slot)
-                })
-                .map(|slot| ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, slot))
-                .unwrap_or(ProgramAccountLoadResult::InvalidAccountData(
-                    ProgramCacheEntryOwner::LoaderV4,
-                )),
-        );
-    }
-
-    if bpf_loader_upgradeable::check_id(program_account.owner()) {
+    let load_result = if loader_v4::check_id(program_account.owner()) {
+        solana_loader_v4_program::get_state(program_account.data())
+            .ok()
+            .and_then(|state| {
+                (!matches!(state.status, LoaderV4Status::Retracted)).then_some(state.slot)
+            })
+            .map(|slot| ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, slot))
+            .unwrap_or(ProgramAccountLoadResult::InvalidAccountData(
+                ProgramCacheEntryOwner::LoaderV4,
+            ))
+    } else if bpf_loader_upgradeable::check_id(program_account.owner()) {
         if let Ok(UpgradeableLoaderState::Program {
             programdata_address,
         }) = program_account.state()
@@ -93,28 +89,29 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
                     upgrade_authority_address: _,
                 }) = programdata_account.state()
                 {
-                    return Some(ProgramAccountLoadResult::ProgramOfLoaderV3(
+                    ProgramAccountLoadResult::ProgramOfLoaderV3(
                         program_account,
                         programdata_account,
                         slot,
-                    ));
+                    )
+                } else {
+                    ProgramAccountLoadResult::InvalidAccountData(ProgramCacheEntryOwner::LoaderV3)
                 }
+            } else {
+                ProgramAccountLoadResult::InvalidAccountData(ProgramCacheEntryOwner::LoaderV3)
             }
+        } else {
+            ProgramAccountLoadResult::InvalidAccountData(ProgramCacheEntryOwner::LoaderV3)
         }
-        return Some(ProgramAccountLoadResult::InvalidAccountData(
-            ProgramCacheEntryOwner::LoaderV3,
-        ));
-    }
+    } else if bpf_loader::check_id(program_account.owner()) {
+        ProgramAccountLoadResult::ProgramOfLoaderV2(program_account)
+    } else if bpf_loader_deprecated::check_id(program_account.owner()) {
+        ProgramAccountLoadResult::ProgramOfLoaderV1(program_account)
+    } else {
+        return None;
+    };
 
-    if bpf_loader::check_id(program_account.owner()) {
-        return Some(ProgramAccountLoadResult::ProgramOfLoaderV2(program_account));
-    }
-
-    if bpf_loader_deprecated::check_id(program_account.owner()) {
-        return Some(ProgramAccountLoadResult::ProgramOfLoaderV1(program_account));
-    }
-
-    None
+    Some(load_result)
 }
 
 /// Loads the program with the given pubkey.
