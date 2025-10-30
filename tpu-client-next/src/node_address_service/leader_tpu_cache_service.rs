@@ -14,7 +14,8 @@ use {
     solana_pubkey::Pubkey,
     solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
-    solana_rpc_client_api::{client_error::Error as ClientError, response::RpcContactInfo},
+    solana_rpc_client_api::client_error::Error as ClientError,
+    solana_rpc_client_api::response::RpcContactInfo,
     std::{collections::HashMap, future::Future, net::SocketAddr, str::FromStr, sync::Arc},
     thiserror::Error,
     tokio::{
@@ -467,8 +468,7 @@ impl ClusterInfoProvider for RpcClient {
                 let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
                 let last_slot_in_epoch = epoch_schedule.get_last_slot_in_epoch(epoch);
                 debug!(
-                    "Updated slots in epoch: {slots_in_epoch}, last slot in epoch: \
-                     {last_slot_in_epoch}",
+                    "Updated slots in epoch: {slots_in_epoch}, last slot in epoch: {last_slot_in_epoch}",
                 );
                 Ok((slots_in_epoch, last_slot_in_epoch))
             }

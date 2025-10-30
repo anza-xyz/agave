@@ -2,7 +2,6 @@ use {
     crossbeam_channel::Receiver as CrossbeamReceiver,
     futures::future::BoxFuture,
     solana_cli_config::ConfigInput,
-    solana_clock::DEFAULT_MS_PER_SLOT,
     solana_commitment_config::CommitmentConfig,
     solana_keypair::Keypair,
     solana_net_utils::sockets::unique_port_range_for_tests,
@@ -22,8 +21,6 @@ use {
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
         },
-        leader_updater::create_leader_updater_with_config,
-        node_address_service::LeaderTpuCacheServiceConfig,
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
         ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, SendTransactionStats,
@@ -45,6 +42,12 @@ use {
     },
     tokio_util::sync::CancellationToken,
 };
+
+#[allow(deprecated)]
+// Reason: This deprecated function internally creates a
+// PinnedLeaderUpdater. This structure we want to move to tests as soon as
+// we can remove create_leader_updater function.
+use solana_tpu_client_next::leader_updater::create_leader_updater;
 
 fn test_config(stake_identity: Option<Keypair>) -> ConnectionWorkersSchedulerConfig {
     let address = SocketAddr::new(
@@ -91,20 +94,10 @@ async fn setup_connection_worker_scheduler(
 
     // Setup sending txs
     let cancel = CancellationToken::new();
-    let updater_config = LeaderTpuCacheServiceConfig {
-        lookahead_leaders: config.leaders_fanout.connect as u64,
-        refresh_nodes_info_every: Duration::from_millis(DEFAULT_MS_PER_SLOT),
-        max_consecutive_failures: 1,
-    };
-    let leader_updater = create_leader_updater_with_config(
-        rpc_client,
-        websocket_url,
-        Some(tpu_address),
-        Some(updater_config),
-        cancel.clone(),
-    )
-    .await
-    .expect("Leader updates was successfully created");
+    #[allow(deprecated)]
+    let leader_updater = create_leader_updater(rpc_client, websocket_url, Some(tpu_address))
+        .await
+        .expect("Leader updates was successfully created");
 
     let (update_identity_sender, update_identity_receiver) = watch::channel(None);
     let scheduler = ConnectionWorkersScheduler::new(

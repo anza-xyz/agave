@@ -31,15 +31,14 @@ impl WebsocketSlotUpdateService {
         cancel: CancellationToken,
     ) -> Result<(SlotReceiver, Self), WebsocketSlotUpdateServiceError> {
         assert!(!websocket_url.is_empty(), "Websocket URL must not be empty");
-        let (slot_sender, slot_receiver) = watch::channel(EstimatedSlot::Single(current_slot));
-        let slot_receiver_clone = slot_receiver.clone();
+        let mut cached_estimated_slots = EstimatedSlot::Single(current_slot);
+        let (slot_sender, slot_receiver) = watch::channel(cached_estimated_slots.clone());
         let cancel_clone = cancel.clone();
         let main_loop = async move {
             let mut recent_slots = RecentLeaderSlots::new();
             let pubsub_client = PubsubClient::new(&websocket_url).await?;
-
+            let mut result = Ok(());
             let (mut notifications, unsubscribe) = pubsub_client.slot_updates_subscribe().await?;
-
             loop {
                 tokio::select! {
                     // biased to always prefer slot update over fallback slot injection
@@ -61,9 +60,13 @@ impl WebsocketSlotUpdateService {
                                     _ => continue,
                                 }
                                 let estimated_slots = recent_slots.estimate_current_slot();
-                                let cached_estimated_slots = *slot_receiver.borrow();
                                 if estimated_slots.requires_update(&cached_estimated_slots) {
-                                    slot_sender.send(estimated_slots).map_err(|_| WebsocketSlotUpdateServiceError::ChannelClosed)?;
+                                    if let Err(err) = slot_sender.send(estimated_slots).map_err(|_| WebsocketSlotUpdateServiceError::ChannelClosed) {
+                                        result = Err(err);
+                                        break;
+                                    }
+
+                                    cached_estimated_slots = estimated_slots;
                                 }
                             }
                             None => continue,
@@ -83,13 +86,13 @@ impl WebsocketSlotUpdateService {
             drop(notifications);
             unsubscribe().await;
             pubsub_client.shutdown().await?;
-            Ok(())
+            result
         };
 
         let handle = tokio::spawn(main_loop);
 
         Ok((
-            SlotReceiver::new(slot_receiver_clone),
+            SlotReceiver::new(slot_receiver),
             Self {
                 handle: Some(handle),
                 cancel: cancel_clone,

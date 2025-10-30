@@ -43,7 +43,7 @@ impl NodeAddressService {
     /// Run the [`NodeAddressService`].
     pub async fn run(
         rpc_client: Arc<RpcClient>,
-        websocket_url: &str,
+        websocket_url: String,
         config: LeaderTpuCacheServiceConfig,
         cancel: CancellationToken,
     ) -> Result<Self, NodeAddressServiceError> {
@@ -52,7 +52,7 @@ impl NodeAddressService {
             .await?;
 
         let (slot_receiver, slot_update_service) =
-            WebsocketSlotUpdateService::run(start_slot, websocket_url.to_string(), cancel.clone())?;
+            WebsocketSlotUpdateService::run(start_slot, websocket_url, cancel.clone())?;
         let (leaders_receiver, leader_cache_service) =
             LeaderTpuCacheService::run(rpc_client, slot_receiver.clone(), config, cancel).await?;
 
