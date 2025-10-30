@@ -25,7 +25,14 @@ source "$here/../ci/rust-version.sh" nightly
 if [[ -n "${SOLANA_CLI_ONLY+x}" ]]; then
   cargo \
     "+${rust_nightly}" clippy \
-    --workspace --bin solana --bin solana-keygen \
+    --workspace \
+    --bin solana \
+    --bin solana-keygen \
+    --bin agave-install \
+    --bin cargo-build-sbf \
+    --bin cargo-test-sbf \
+    --bin solana-stake-accounts \
+    --bin solana-tokens \
     --features dummy-for-ci-check,frozen-abi -- \
     --deny=warnings \
     --deny=clippy::default_trait_access \
