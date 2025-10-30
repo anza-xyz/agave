@@ -5095,12 +5095,24 @@ impl AccountsDb {
         // flushing. That case is handled by retry_to_get_account_accessor()
         assert!(self.accounts_cache.remove_slot(slot).is_some());
 
-        // Add `accounts` to uncleaned_pubkeys since we know they were written
-        // to a storage and should be visited by `clean`.
-        self.uncleaned_pubkeys
-            .entry(slot)
-            .or_default()
-            .extend(accounts.into_iter().map(|(pubkey, _account)| *pubkey));
+        // Add `accounts` to uncleaned_pubkeys since they were written to storage
+        // and should be visited by `clean`.
+        // If obsolete accounts were marked, accounts were already cleaned,
+        // but zero lamports need to be visited during clean for full removal.
+        if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled && should_flush_f.is_some()
+        {
+            self.uncleaned_pubkeys.entry(slot).or_default().extend(
+                accounts
+                    .into_iter()
+                    .filter(|(_pubkey, account)| account.lamports() == 0)
+                    .map(|(pubkey, _account)| pubkey),
+            );
+        } else {
+            self.uncleaned_pubkeys
+                .entry(slot)
+                .or_default()
+                .extend(accounts.iter().map(|(pubkey, _account)| **pubkey));
+        }
 
         flush_stats
     }
