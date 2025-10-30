@@ -18,7 +18,7 @@ struct CertificateStats {
 
 impl CertificateStats {
     /// Increments the stats associated with the certificate type by one.
-    fn record(&mut self, cert_type: &CertificateType) {
+    fn increment(&mut self, cert_type: &CertificateType) {
         match cert_type {
             CertificateType::Finalize(_) => self.finalize = self.finalize.saturating_add(1),
             CertificateType::FinalizeFast(_, _) => {
@@ -32,8 +32,8 @@ impl CertificateStats {
         }
     }
 
-    /// Submits the certificate related statistics.
-    fn submit(&self, header: &'static str) {
+    /// Reports the certificate related statistics.
+    fn report(&self, header: &'static str) {
         datapoint_info!(
             header,
             ("finalize", self.finalize, i64),
@@ -45,6 +45,7 @@ impl CertificateStats {
     }
 }
 
+/// Struct to hold stats for different vote types.
 #[derive(Default)]
 struct VoteStats {
     notarize: u64,
@@ -55,7 +56,8 @@ struct VoteStats {
 }
 
 impl VoteStats {
-    fn record(&mut self, vote: &Vote) {
+    /// Increments the stats associated with the votes by one.
+    fn increment(&mut self, vote: &Vote) {
         match vote {
             Vote::Notarize(_) => self.notarize = self.notarize.saturating_add(1),
             Vote::NotarizeFallback(_) => {
@@ -67,7 +69,8 @@ impl VoteStats {
         }
     }
 
-    fn submit(&self) {
+    /// Reports the vote related statistics.
+    fn report(&self) {
         datapoint_info!(
             "consensus_ingested_votes",
             ("finalize", self.finalize, i64),
@@ -125,14 +128,14 @@ impl ConsensusPoolStats {
     }
 
     pub fn incr_ingested_vote(&mut self, vote: &Vote) {
-        self.ingested_votes.record(vote);
+        self.ingested_votes.increment(vote);
     }
 
     pub fn incr_cert_type(&mut self, cert_type: &CertificateType, is_generated: bool) {
         if is_generated {
-            self.new_certs_generated.record(cert_type);
+            self.new_certs_generated.increment(cert_type);
         } else {
-            self.new_certs_ingested.record(cert_type);
+            self.new_certs_ingested.increment(cert_type);
         };
     }
 
@@ -154,11 +157,11 @@ impl ConsensusPoolStats {
             ("out_of_range_certs", self.out_of_range_certs as i64, i64),
         );
 
-        self.ingested_votes.submit();
+        self.ingested_votes.report();
         self.new_certs_generated
-            .submit("consensus_pool_generated_certs");
+            .report("consensus_pool_generated_certs");
         self.new_certs_ingested
-            .submit("consensus_pool_ingested_certs");
+            .report("consensus_pool_ingested_certs");
     }
 
     pub fn maybe_report(&mut self) {

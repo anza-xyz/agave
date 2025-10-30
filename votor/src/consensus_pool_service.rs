@@ -183,7 +183,8 @@ impl ConsensusPoolService {
         let mut events = vec![];
         let mut my_pubkey = ctx.cluster_info.id();
         let root_bank = ctx.sharable_banks.root();
-        let mut consensus_pool = ConsensusPool::new_from_root_bank(my_pubkey, &root_bank);
+        let mut consensus_pool =
+            ConsensusPool::new_from_root_bank(ctx.cluster_info.clone(), &root_bank);
 
         // Wait until migration has completed
         info!("{my_pubkey}: Consensus pool loop initialized, waiting for Alpenglow migration");
@@ -209,7 +210,6 @@ impl ConsensusPoolService {
             let new_pubkey = ctx.cluster_info.id();
             if my_pubkey != new_pubkey {
                 my_pubkey = new_pubkey;
-                consensus_pool.update_pubkey(my_pubkey);
                 info!("Consensus pool pubkey updated to {my_pubkey}");
             }
 
@@ -388,10 +388,9 @@ impl ConsensusPoolService {
             }
             BlockProductionParent::ParentNotReady => {
                 // This can't happen, place holder depending on how we hook up optimistic
-                return Err(ConsensusPoolServiceError::FailedToAddBlockEvent(format!(
-                    "Must have a block production parent: {:#?}",
-                    consensus_pool.parent_ready_tracker
-                )));
+                return Err(ConsensusPoolServiceError::FailedToAddBlockEvent(
+                    "Must have a block production parent".to_string(),
+                ));
             }
             BlockProductionParent::Parent(parent_block) => {
                 events.push(VotorEvent::ProduceWindow(LeaderWindowInfo {

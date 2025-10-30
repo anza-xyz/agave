@@ -695,17 +695,16 @@ impl ClusterInfo {
         let mut entries = Vec::default();
         let keypair = self.keypair();
         while !update.is_empty() {
-            let ix = epoch_slot_index % crds_data::MAX_EPOCH_SLOTS;
             let now = timestamp();
             let mut slots = if !reset {
-                self.lookup_epoch_slots(ix)
+                self.lookup_epoch_slots(epoch_slot_index)
             } else {
                 EpochSlots::new(self_pubkey, now)
             };
             let n = slots.fill(update, now);
             update = &update[n..];
             if n > 0 {
-                let epoch_slots = CrdsData::EpochSlots(ix, slots);
+                let epoch_slots = CrdsData::EpochSlots(epoch_slot_index, slots);
                 let entry = CrdsValue::new(epoch_slots, &keypair);
                 entries.push(entry);
             }

@@ -197,7 +197,7 @@ itertools = { workspace = true }
 log = { workspace = true }
 miow = { workspace = true }
 net2 = { workspace = true }
-solana-account = "3.0.0"
+solana-account = "3.2.0"
 solana-account-decoder = { workspace = true }
 solana-account-info = "3.0.0"
 solana-accounts-db = { workspace = true }

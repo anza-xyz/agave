@@ -13,11 +13,12 @@ edition = { workspace = true }
 agave-unstable-api = []
 
 [dependencies]
+agave-scheduler-bindings = { workspace = true }
 ahash = { workspace = true }
 solana-pubkey = { workspace = true }
+solana-transaction-error = { workspace = true }
 
 [target."cfg(unix)".dependencies]
-agave-scheduler-bindings = { workspace = true }
 agave-transaction-view = { workspace = true }
 libc = { workspace = true }
 nix = { workspace = true, features = ["socket", "uio"] }

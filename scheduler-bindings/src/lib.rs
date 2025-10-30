@@ -305,22 +305,97 @@ pub mod worker_message_types {
         /// in the passed message did not match the working bank's slot.
         pub const SLOT_MISMATCH: u8 = 2;
 
-        // The following reasons are mapped from `TransactionError` in
-        // `solana-sdk` crate. See that crate for details.
-        pub const PARSING_OR_SANITIZATION_FAILURE: u8 = 3;
-        pub const ALT_RESOLUTION_FAILURE: u8 = 4;
-        pub const BLOCKHASH_NOT_FOUND: u8 = 5;
-        pub const ALREADY_PROCESSED: u8 = 6;
-        pub const WOULD_EXCEED_VOTE_MAX_LIMIT: u8 = 7;
-        pub const WOULD_EXCEED_BLOCK_MAX_LIMIT: u8 = 8;
-        pub const WOULD_EXCEED_ACCOUNT_MAX_LIMIT: u8 = 9;
-        pub const WOULD_EXCEED_ACCOUNT_DATA_BLOCK_LIMIT: u8 = 10;
-        pub const TOO_MANY_ACCOUNT_LOCKS: u8 = 11;
-        pub const ACCOUNT_LOADED_TWICE: u8 = 12;
-        pub const ACCOUNT_IN_USE: u8 = 13;
-        pub const INVALID_ACCOUNT_FOR_FEE: u8 = 14;
-        pub const INSUFFICIENT_FUNDS_FOR_FEE: u8 = 15;
-        pub const INSUFFICIENT_FUNDS_FOR_RENT: u8 = 16;
+        /// Transaction dropped because the batch was marked as
+        /// all_or_nothing and a different transacation failed.
+        pub const ALL_OR_NOTHING_BATCH_FAILURE: u8 = 3;
+
+        // Remaining errors are translations from SDK.
+        // Moved up to 64 so we have room to add custom reasons in the future.
+        // Also allows for easy distinguishing between custom scheduling errors
+        // and sdk errors.
+
+        /// An account is already being processed in another transaction in a way
+        /// that does not support parallelism
+        pub const ACCOUNT_IN_USE: u8 = 64;
+        /// A `Pubkey` appears twice in the transaction's `account_keys`.  Instructions can reference
+        /// `Pubkey`s more than once but the message must contain a list with no duplicate keys
+        pub const ACCOUNT_LOADED_TWICE: u8 = 65;
+        /// Attempt to debit an account but found no record of a prior credit.
+        pub const ACCOUNT_NOT_FOUND: u8 = 66;
+        /// Attempt to load a program that does not exist
+        pub const PROGRAM_ACCOUNT_NOT_FOUND: u8 = 67;
+        /// The from `Pubkey` does not have sufficient balance to pay the fee to schedule the transaction
+        pub const INSUFFICIENT_FUNDS_FOR_FEE: u8 = 68;
+        /// This account may not be used to pay transaction fees
+        pub const INVALID_ACCOUNT_FOR_FEE: u8 = 69;
+        /// The bank has seen this transaction before. This can occur under normal operation
+        pub const ALREADY_PROCESSED: u8 = 70;
+        /// The bank has not seen the given `recent_blockhash`
+        pub const BLOCKHASH_NOT_FOUND: u8 = 71;
+        /// An error occurred while processing an instruction.
+        pub const INSTRUCTION_ERROR: u8 = 72;
+        /// Loader call chain is too deep
+        pub const CALL_CHAIN_TOO_DEEP: u8 = 73;
+        /// Transaction requires a fee but has no signature present
+        pub const MISSING_SIGNATURE_FOR_FEE: u8 = 74;
+        /// Transaction contains an invalid account reference
+        pub const INVALID_ACCOUNT_INDEX: u8 = 75;
+        /// Transaction did not pass signature verification
+        pub const SIGNATURE_FAILURE: u8 = 76;
+        /// This program may not be used for executing instructions
+        pub const INVALID_PROGRAM_FOR_EXECUTION: u8 = 77;
+        /// Transaction failed to sanitize accounts offsets correctly
+        pub const SANITIZE_FAILURE: u8 = 78;
+        pub const CLUSTER_MAINTENANCE: u8 = 79;
+        /// Transaction processing left an account with an outstanding borrowed reference
+        pub const ACCOUNT_BORROW_OUTSTANDING: u8 = 80;
+        /// Transaction would exceed max Block Cost Limit
+        pub const WOULD_EXCEED_MAX_BLOCK_COST_LIMIT: u8 = 81;
+        /// Transaction version is unsupported
+        pub const UNSUPPORTED_VERSION: u8 = 82;
+        /// Transaction loads a writable account that cannot be written
+        pub const INVALID_WRITABLE_ACCOUNT: u8 = 83;
+        /// Transaction would exceed max account limit within the block
+        pub const WOULD_EXCEED_MAX_ACCOUNT_COST_LIMIT: u8 = 84;
+        /// Transaction would exceed account data limit within the block
+        pub const WOULD_EXCEED_ACCOUNT_DATA_BLOCK_LIMIT: u8 = 85;
+        /// Transaction locked too many accounts
+        pub const TOO_MANY_ACCOUNT_LOCKS: u8 = 86;
+        /// Address lookup table not found
+        pub const ADDRESS_LOOKUP_TABLE_NOT_FOUND: u8 = 87;
+        /// Attempted to lookup addresses from an account owned by the wrong program
+        pub const INVALID_ADDRESS_LOOKUP_TABLE_OWNER: u8 = 88;
+        /// Attempted to lookup addresses from an invalid account
+        pub const INVALID_ADDRESS_LOOKUP_TABLE_DATA: u8 = 89;
+        /// Address table lookup uses an invalid index
+        pub const INVALID_ADDRESS_LOOKUP_TABLE_INDEX: u8 = 90;
+        /// Transaction leaves an account with a lower balance than rent-exempt minimum
+        pub const INVALID_RENT_PAYING_ACCOUNT: u8 = 91;
+        /// Transaction would exceed max Vote Cost Limit
+        pub const WOULD_EXCEED_MAX_VOTE_COST_LIMIT: u8 = 92;
+        /// Transaction would exceed total account data limit
+        pub const WOULD_EXCEED_ACCOUNT_DATA_TOTAL_LIMIT: u8 = 93;
+        /// Transaction contains a duplicate instruction that is not allowed
+        pub const DUPLICATE_INSTRUCTION: u8 = 94;
+        /// Transaction results in an account with insufficient funds for rent
+        pub const INSUFFICIENT_FUNDS_FOR_RENT: u8 = 95;
+        /// Transaction exceeded max loaded accounts data size cap
+        pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_EXCEEDED: u8 = 96;
+        /// LoadedAccountsDataSizeLimit set for transaction must be greater than 0.
+        pub const INVALID_LOADED_ACCOUNTS_DATA_SIZE_LIMIT: u8 = 97;
+        /// Sanitized transaction differed before/after feature activation. Needs to be resanitized.
+        pub const RESANITIZATION_NEEDED: u8 = 98;
+        /// Program execution is temporarily restricted on an account.
+        pub const PROGRAM_EXECUTION_TEMPORARILY_RESTRICTED: u8 = 99;
+        /// The total balance before the transaction does not equal the total balance after the transaction
+        pub const UNBALANCED_TRANSACTION: u8 = 100;
+        /// Program cache hit max limit.
+        pub const PROGRAM_CACHE_HIT_MAX_LIMIT: u8 = 101;
+
+        // This error in agave is only internal, and to avoid updating the sdk
+        // it is re-used for mapping into `ALL_OR_NOTHING_BATCH_FAILURE`.
+        // /// Commit cancelled internally.
+        // pub const COMMIT_CANCELLED: u8 = 102;
     }
 
     /// Tag indicating [`Resolved`] inner message.

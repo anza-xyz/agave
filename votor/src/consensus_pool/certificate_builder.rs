@@ -3,7 +3,7 @@ use {
     agave_votor_messages::consensus_message::{Certificate, CertificateType, VoteMessage},
     bitvec::prelude::*,
     solana_bls_signatures::{BlsError, SignatureProjective},
-    solana_signer_store::{encode_base2, encode_base3, DecodeError, EncodeError},
+    solana_signer_store::{encode_base2, encode_base3, EncodeError},
     thiserror::Error,
 };
 
@@ -16,15 +16,22 @@ use {
 /// length will be less than or equal to this number.
 const MAXIMUM_VALIDATORS: usize = 4096;
 
-#[allow(dead_code)]
-#[derive(Debug, Error, PartialEq)]
-pub enum CertificateError {
+/// Different types of errors that can be returned from the [`CertificateBuilder::aggregate()`] function.
+#[derive(Debug, PartialEq, Eq, Error)]
+pub(super) enum AggregateError {
     #[error("BLS error: {0}")]
-    BlsError(#[from] BlsError),
-    #[error("solana-signer-store decode error: {0:?}")]
-    DecodeError(DecodeError),
-    #[error("solana-signer-store encode error: {0:?}")]
-    EncodeError(EncodeError),
+    Bls(#[from] BlsError),
+    #[error("Validator does not exist for given rank: {0}")]
+    ValidatorDoesNotExist(u16),
+}
+
+/// Different types of errors that can be returned from the [`CertificateBuilder::build()`] function.
+#[derive(Debug, PartialEq, Eq, Error)]
+pub enum BuildError {
+    #[error("BLS error: {0}")]
+    Bls(#[from] BlsError),
+    #[error("Encoding failed: {0:?}")]
+    Encode(EncodeError),
     #[error("Validator does not exist for given rank: {0}")]
     ValidatorDoesNotExist(u16),
 }
@@ -57,7 +64,7 @@ impl CertificateBuilder {
     }
 
     /// Aggregates a slice of `VoteMessage`s into the builder.
-    pub fn aggregate(&mut self, messages: &[VoteMessage]) -> Result<(), CertificateError> {
+    pub fn aggregate(&mut self, messages: &[VoteMessage]) -> Result<(), AggregateError> {
         if messages.is_empty() {
             return Ok(());
         }
@@ -66,7 +73,7 @@ impl CertificateBuilder {
         for vote_message in messages {
             let rank = vote_message.rank as usize;
             if MAXIMUM_VALIDATORS <= rank {
-                return Err(CertificateError::ValidatorDoesNotExist(vote_message.rank));
+                return Err(AggregateError::ValidatorDoesNotExist(vote_message.rank));
             }
 
             let current_vote_type = VoteType::get_type(&vote_message.vote);
@@ -83,7 +90,7 @@ impl CertificateBuilder {
             .aggregate_with(messages.iter().map(|m| &m.signature))?)
     }
 
-    pub fn build(self) -> Result<Certificate, CertificateError> {
+    pub fn build(self) -> Result<Certificate, BuildError> {
         let mut input_bitmap_1 = self.input_bitmap_1;
         let mut input_bitmap_2 = self.input_bitmap_2;
 
@@ -99,17 +106,17 @@ impl CertificateBuilder {
                 "Bitmap length exceeds maximum allowed: {MAXIMUM_VALIDATORS} should be caught \
                  during aggregation"
             );
-            return Err(CertificateError::ValidatorDoesNotExist(new_length as u16));
+            return Err(BuildError::ValidatorDoesNotExist(new_length as u16));
         }
 
         input_bitmap_1.resize(new_length, false);
         input_bitmap_2.resize(new_length, false);
         let bitmap = if input_bitmap_2.count_ones() > 0 {
             // If we have two bitmaps, use Base3 encoding
-            encode_base3(&input_bitmap_1, &input_bitmap_2).map_err(CertificateError::EncodeError)?
+            encode_base3(&input_bitmap_1, &input_bitmap_2).map_err(BuildError::Encode)?
         } else {
             // If we only have one bitmap, use Base2 encoding
-            encode_base2(&input_bitmap_1).map_err(CertificateError::EncodeError)?
+            encode_base2(&input_bitmap_1).map_err(BuildError::Encode)?
         };
         Ok(Certificate {
             cert_type: self.cert_type,
@@ -254,7 +261,7 @@ mod tests {
         };
         assert_eq!(
             builder.aggregate(&[message_out_of_bounds]),
-            Err(CertificateError::ValidatorDoesNotExist(
+            Err(AggregateError::ValidatorDoesNotExist(
                 rank_out_of_bounds as u16
             ))
         );
@@ -267,7 +274,7 @@ mod tests {
         };
         assert_eq!(
             builder.aggregate(&[message_with_invalid_signature]),
-            Err(CertificateError::BlsError(BlsError::PointConversion))
+            Err(AggregateError::Bls(BlsError::PointConversion))
         );
 
         // Test encoding error
@@ -292,9 +299,7 @@ mod tests {
             .expect("Failed to aggregate notarization fallback votes");
         assert_eq!(
             builder.build(),
-            Err(CertificateError::EncodeError(
-                EncodeError::InvalidBitCombination
-            ))
+            Err(BuildError::Encode(EncodeError::InvalidBitCombination))
         );
     }
 

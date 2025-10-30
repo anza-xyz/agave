@@ -1,4 +1,8 @@
 use {
+    super::{
+        bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
+        stats::Stats,
+    },
     crate::{
         accounts_index::{
             account_map_entry::{
@@ -7,8 +11,6 @@ use {
             },
             DiskIndexValue, IndexValue, ReclaimsSlotList, RefCount, SlotList, UpsertReclaim,
         },
-        bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
-        bucket_map_holder_stats::BucketMapHolderStats,
         pubkey_bins::PubkeyBinCalculator24,
     },
     rand::{thread_rng, Rng},
@@ -171,13 +173,28 @@ struct FlushScanResult {
 }
 
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T, U> {
-    pub fn new(storage: &Arc<BucketMapHolder<T, U>>, bin: usize) -> Self {
+    pub fn new(
+        storage: &Arc<BucketMapHolder<T, U>>,
+        bin: usize,
+        num_initial_accounts: Option<usize>,
+    ) -> Self {
         let num_ages_to_distribute_flushes = Age::MAX - storage.ages_to_stay_in_cache;
         let bin_calc = PubkeyBinCalculator24::new(storage.bins);
         let lowest_pubkey = bin_calc.lowest_pubkey_from_bin(bin);
         let highest_pubkey = bin_calc.highest_pubkey_from_bin(bin);
+
+        let map_internal = if let Some(num_initial_accounts) = num_initial_accounts {
+            let capacity_per_bin = num_initial_accounts / storage.bins;
+            RwLock::new(HashMap::with_capacity_and_hasher(
+                capacity_per_bin,
+                ahash::RandomState::default(),
+            ))
+        } else {
+            RwLock::default()
+        };
+
         Self {
-            map_internal: RwLock::default(),
+            map_internal,
             storage: Arc::clone(storage),
             _bin: bin,
             lowest_pubkey,
@@ -1236,7 +1253,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 .collect();
 
             flush_stats.flush_update_us = flush_update_measure.end_as_us();
-            flush_stats.update_to_bucket_map_stats(self.stats());
+            flush_stats.update_to_stats(self.stats());
 
             let m = Measure::start("flush_evict");
             self.evict_from_cache(evictions_age, current_age, startup, ages_flushing_now);
@@ -1304,7 +1321,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         Self::update_stat(&stats.failed_to_evict, failed as u64);
     }
 
-    pub fn stats(&self) -> &BucketMapHolderStats {
+    pub fn stats(&self) -> &Stats {
         &self.storage.stats
     }
 
@@ -1348,7 +1365,7 @@ impl DiskFlushStats {
         Self::default()
     }
 
-    fn update_to_bucket_map_stats(&self, stats: &BucketMapHolderStats) {
+    fn update_to_stats(&self, stats: &Stats) {
         Self::update_stat(&stats.flush_update_us, self.flush_update_us);
         Self::update_stat(&stats.flush_should_evict_us, self.flush_should_evict_us);
         Self::update_stat(
@@ -1412,7 +1429,7 @@ mod tests {
             1,
         ));
         let bin = 0;
-        InMemAccountsIndex::new(&holder, bin)
+        InMemAccountsIndex::new(&holder, bin, None)
     }
 
     fn new_disk_buckets_for_test<T: IndexValue>() -> InMemAccountsIndex<T, T> {
@@ -1422,7 +1439,7 @@ mod tests {
         };
         let holder = Arc::new(BucketMapHolder::new(BINS_FOR_TESTING, &config, 1));
         let bin = 0;
-        let bucket = InMemAccountsIndex::new(&holder, bin);
+        let bucket = InMemAccountsIndex::new(&holder, bin, None);
         assert!(bucket.storage.is_disk_index_enabled());
         bucket
     }
@@ -2227,5 +2244,32 @@ mod tests {
         );
         assert_eq!(test.slot_list_lock_read_len(), len);
         assert_eq!(len, 2);
+    }
+
+    #[test_case(Some(10000);  "with pre-allocation 10000")]
+    #[test_case(Some(20000);  "with pre-allocation 20000")]
+    #[test_case(Some(30000);  "with pre-allocation 30000")]
+    #[test_case(None; "without pre-allocation")]
+    fn test_new_with_num_initial_accounts(num_initial_accounts: Option<usize>) {
+        let config = AccountsIndexConfig::default();
+
+        let bin_counts = [2, 4, 8];
+
+        for bin_count in bin_counts {
+            let holder = Arc::new(BucketMapHolder::new(bin_count, &config, 1));
+            let mut total_capacity = 0;
+
+            for bin in 0..bin_count {
+                let accounts_index =
+                    InMemAccountsIndex::<u64, u64>::new(&holder, bin, num_initial_accounts);
+                total_capacity += accounts_index.map_internal.read().unwrap().capacity();
+            }
+
+            if let Some(num_initial_accounts) = num_initial_accounts {
+                assert!(total_capacity > num_initial_accounts);
+            } else {
+                assert_eq!(total_capacity, 0);
+            }
+        }
     }
 }
