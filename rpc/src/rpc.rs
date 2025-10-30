@@ -1848,6 +1848,7 @@ impl JsonRpcRequestProcessor {
         let SignatureInfosForAddress {
             infos: mut results,
             found_before,
+            found_until,
         } = self
             .blockstore
             .get_confirmed_signatures_for_address2(address, highest_slot, before, until, limit)
@@ -1890,7 +1891,7 @@ impl JsonRpcRequestProcessor {
                         .get_signature_status(&bigtable_before.unwrap())
                         .await
                     {
-                        Err(StorageError::SignatureNotFound) => {
+                        Err(StorageError::SignatureNotFound(_)) => {
                             bigtable_before = None;
                         }
                         Err(err) => {
@@ -1924,11 +1925,33 @@ impl JsonRpcRequestProcessor {
                             }
                         }
                     }
-                    Err(StorageError::SignatureNotFound) => {}
+                    Err(StorageError::SignatureNotFound(not_found_signature)) => {
+                        // bigtable_before is checked above
+                        // SignatureNotFound means the blockstore before was not found, or the until signature was never found.
+                        return Err(RpcCustomError::FilterTransactionNotFound {
+                            signature: not_found_signature.to_string(),
+                        }
+                        .into());
+                    }
                     Err(err) => {
                         warn!("Failed to query Bigtable: {err:?}");
                         return Err(RpcCustomError::LongTermStorageUnreachable.into());
                     }
+                }
+            } else {
+                // Long-term storage is not enabled.
+                // Return an error to the user if either before/until were provided but not found.
+                if before.is_some() && !found_before {
+                    return Err(RpcCustomError::FilterTransactionNotFound {
+                        signature: before.unwrap().to_string(),
+                    }
+                    .into());
+                }
+                if until.is_some() && !found_until {
+                    return Err(RpcCustomError::FilterTransactionNotFound {
+                        signature: until.unwrap().to_string(),
+                    }
+                    .into());
                 }
             }
         }
