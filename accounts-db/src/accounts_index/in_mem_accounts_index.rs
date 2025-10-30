@@ -884,22 +884,59 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         startup: bool,
         current_age: Age,
         ages_flushing_now: Age,
+        total_entries: usize,
+        max_evictions: Option<usize>,
     ) -> Vec<(Pubkey, /*is_dirty*/ bool)> {
         let mut possible_evictions = Vec::new();
-        for (k, v) in iter {
-            if !startup && current_age.wrapping_sub(v.age()) > ages_flushing_now {
-                // not planning to evict this item from memory within 'ages_flushing_now' ages
-                continue;
+
+        if let Some(max) = max_evictions {
+            // Selection sampling: if we know total_entries, we can calculate which entries to select
+            // and break early once we've collected max samples
+            if total_entries == 0 || max == 0 {
+                return possible_evictions;
             }
 
-            // Skip entries with ref_count != 1 early
-            // In 99% of cases, these will be rejected by should_evict_from_mem or evict_from_cache anyway
-            // Filtering here avoids unnecessary work and reduces write lock contention in evict_from_cache
-            if v.ref_count() != 1 {
-                continue;
-            }
+            let mut rng = thread_rng();
+            let mut remaining_to_select = max.min(total_entries);
+            let mut remaining_entries = total_entries;
 
-            possible_evictions.push((*k, v.dirty()));
+            for (k, v) in iter {
+                remaining_entries -= 1;
+
+                // Skip entries with ref_count != 1 early
+                if v.ref_count() != 1 {
+                    continue;
+                }
+
+                // Selection probability: remaining_to_select / remaining_entries
+                let select_probability =
+                    remaining_to_select as f64 / (remaining_entries + 1) as f64;
+                if rng.gen::<f64>() < select_probability {
+                    possible_evictions.push((*k, v.dirty()));
+                    remaining_to_select -= 1;
+
+                    // Early exit: we've selected all max items
+                    if remaining_to_select == 0 {
+                        break;
+                    }
+                }
+            }
+        } else {
+            // Original age-based filtering for non-max_evictions case
+            for (k, v) in iter {
+                // Skip entries with ref_count != 1 early
+                if v.ref_count() != 1 {
+                    continue;
+                }
+
+                if !startup && current_age.wrapping_sub(v.age()) > ages_flushing_now {
+                    // For Minimal disk index.
+                    // not planning to evict this item from memory within 'ages_flushing_now' ages
+                    continue;
+                }
+
+                possible_evictions.push((*k, v.dirty()));
+            }
         }
         possible_evictions
     }
@@ -919,11 +956,21 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let (possible_evictions, m) = {
             let map = self.map_internal.read().unwrap();
             let m = Measure::start("flush_scan"); // we don't care about lock time in this metric - bg threads can wait
+
+            // Calculate max evictions for threshold-based flushing
+            let entries_in_bin = map.len();
+            // Low water mark: flush down to 50% of limit
+            let max_evictions = self
+                .storage
+                .max_evictions_for_threshold(entries_in_bin, 0.60);
+
             let possible_evictions = Self::gather_possible_evictions(
                 map.iter(),
                 startup,
                 current_age,
                 ages_flushing_now,
+                entries_in_bin,
+                max_evictions,
             );
             (possible_evictions, m)
         };
@@ -1055,6 +1102,18 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             return;
         }
 
+        // For threshold-based flushing, check if current entry count warrants flushing
+        if !startup {
+            let entries_in_bin = self.map_internal.read().unwrap().len();
+            if !self.storage.should_flush_to_disk(entries_in_bin, 0.8) {
+                // Entry count is below threshold, no need to flush
+                // Still mark as aged to avoid infinite scanning
+                assert_eq!(current_age, self.storage.current_age());
+                self.set_has_aged(current_age, can_advance_age);
+                return;
+            }
+        }
+
         if startup {
             self.write_startup_info_to_disk();
         }
@@ -1083,6 +1142,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         // scan in-mem map for items that we may evict
         let evictions_age_possible =
             self.flush_scan(current_age, startup, flush_guard, ages_flushing_now);
+
+        // Capture map metrics before flush
+        let (map_len_before, map_capacity_before, total_entries_before) = {
+            let map_guard = self.map_internal.read().unwrap();
+            (
+                map_guard.len(),
+                map_guard.capacity(),
+                map_guard.len() * self.storage.bins,
+            )
+        };
 
         if !evictions_age_possible.is_empty() {
             // write to disk outside in-mem map read lock
@@ -1192,9 +1261,31 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             flush_stats.flush_update_us = flush_update_measure.end_as_us();
             flush_stats.update_to_stats(self.stats());
 
+            let num_flushed = evictions_age.len();
             let m = Measure::start("flush_evict");
             self.evict_from_cache(evictions_age, current_age, startup, ages_flushing_now);
             Self::update_time_stat(&self.stats().flush_evict_us, m);
+
+            // Log and update stats for flush metrics
+            let (map_len_after, map_capacity_after) = {
+                let map_guard = self.map_internal.read().unwrap();
+                (map_guard.len(), map_guard.capacity())
+            };
+            let total_entries_after = map_len_after * self.storage.bins;
+            let evicted = map_len_before.saturating_sub(map_len_after);
+
+            // Update stats with max values for 10s datapoint
+            let stats = self.stats();
+            stats.update_flush_stats_max(
+                total_entries_before,
+                num_flushed,
+                map_len_before,
+                map_capacity_before,
+                map_len_after,
+                map_capacity_after,
+                evicted,
+                total_entries_after,
+            );
         }
         if iterate_for_age {
             // completed iteration of the buckets at the current age
@@ -1350,7 +1441,7 @@ impl Drop for FlushGuard<'_> {
 mod tests {
     use {
         super::*,
-        crate::accounts_index::{AccountsIndexConfig, IndexLimitMb, BINS_FOR_TESTING},
+        crate::accounts_index::{AccountsIndexConfig, IndexLimit, BINS_FOR_TESTING},
         assert_matches::assert_matches,
         itertools::Itertools,
         test_case::test_case,
@@ -1368,7 +1459,7 @@ mod tests {
 
     fn new_disk_buckets_for_test<T: IndexValue>() -> InMemAccountsIndex<T, T> {
         let config = AccountsIndexConfig {
-            index_limit_mb: IndexLimitMb::Minimal,
+            index_limit: IndexLimit::Minimal,
             ..Default::default()
         };
         let holder = Arc::new(BucketMapHolder::new(BINS_FOR_TESTING, &config, 1));
@@ -1717,6 +1808,8 @@ mod tests {
                     startup,
                     current_age,
                     ages_flushing_now,
+                    256,
+                    None, // no max evictions limit for this test
                 );
                 // Verify that the number of entries selected for eviction matches the expected count.
                 // Test setup: map contains 256 entries with ages 0-255 (one entry per age value).
@@ -1748,6 +1841,74 @@ mod tests {
                 });
             }
         }
+    }
+
+    #[test]
+    fn test_gather_possible_evictions_with_max_evictions() {
+        agave_logger::setup();
+        let startup = false;
+        let ref_count = 1;
+        let current_age = 100;
+        let ages_flushing_now = 0;
+        let total_entries = 256;
+        let max_evictions = 5;
+
+        // Create a map with 256 entries
+        let map: HashMap<_, _> = (0..total_entries)
+            .map(|i| {
+                let pk = Pubkey::from([i as u8; 32]);
+                let one_element_slot_list = SlotList::from([(0, 0)]);
+                let one_element_slot_list_entry = Box::new(AccountMapEntry::new(
+                    one_element_slot_list,
+                    ref_count,
+                    AccountMapEntryMeta::default(),
+                ));
+                one_element_slot_list_entry.set_age(current_age);
+                (pk, one_element_slot_list_entry)
+            })
+            .collect();
+
+        // Run the sampling multiple times to verify statistical properties
+        let num_trials = 1000;
+        let mut selection_counts: HashMap<Pubkey, usize> = HashMap::new();
+
+        for _ in 0..num_trials {
+            let possible_evictions = InMemAccountsIndex::<u64, u64>::gather_possible_evictions(
+                map.iter(),
+                startup,
+                current_age,
+                ages_flushing_now,
+                total_entries,
+                Some(max_evictions),
+            );
+
+            assert_eq!(
+                possible_evictions.len(),
+                max_evictions,
+                "Should select exactly {max_evictions} items"
+            );
+
+            for (key, _is_dirty) in possible_evictions {
+                *selection_counts.entry(key).or_insert(0) += 1;
+            }
+        }
+
+        let expected_selections = (max_evictions as f64 / total_entries as f64) * num_trials as f64;
+        let tolerance = 0.5;
+
+        let min_expected = (expected_selections * (1.0 - tolerance)) as usize;
+        let max_expected = (expected_selections * (1.0 + tolerance)) as usize;
+
+        let entries_in_range = selection_counts
+            .values()
+            .filter(|&&count| count >= min_expected && count <= max_expected)
+            .count();
+
+        assert!(
+            entries_in_range >= (total_entries * 80 / 100),
+            "Expected at least 80% of entries to have selection counts in range [{min_expected}, \
+             {max_expected}], but only {entries_in_range} out of {total_entries} did"
+        );
     }
 
     #[test]

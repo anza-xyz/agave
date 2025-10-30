@@ -62,6 +62,15 @@ pub struct Stats {
     bins: u64,
     pub flush_should_evict_us: AtomicU64,
     pub flush_read_lock_us: AtomicU64,
+    // Max flush stats for 10s reporting interval
+    pub flush_max_total_entries_before: AtomicU64,
+    pub flush_max_num_flushed: AtomicU64,
+    pub flush_max_map_len_before: AtomicU64,
+    pub flush_max_map_capacity_before: AtomicU64,
+    pub flush_max_map_len_after: AtomicU64,
+    pub flush_max_map_capacity_after: AtomicU64,
+    pub flush_max_evicted: AtomicU64,
+    pub flush_max_total_entries_after: AtomicU64,
 }
 
 impl Stats {
@@ -149,6 +158,36 @@ impl Stats {
     pub fn remaining_until_next_interval(&self) -> u64 {
         self.last_time
             .remaining_until_next_interval(STATS_INTERVAL_MS)
+    }
+
+    /// Update flush stats with max values
+    pub fn update_flush_stats_max(
+        &self,
+        total_entries_before: usize,
+        num_flushed: usize,
+        map_len_before: usize,
+        map_capacity_before: usize,
+        map_len_after: usize,
+        map_capacity_after: usize,
+        evicted: usize,
+        total_entries_after: usize,
+    ) {
+        self.flush_max_total_entries_before
+            .fetch_max(total_entries_before as u64, Ordering::Relaxed);
+        self.flush_max_num_flushed
+            .fetch_max(num_flushed as u64, Ordering::Relaxed);
+        self.flush_max_map_len_before
+            .fetch_max(map_len_before as u64, Ordering::Relaxed);
+        self.flush_max_map_capacity_before
+            .fetch_max(map_capacity_before as u64, Ordering::Relaxed);
+        self.flush_max_map_len_after
+            .fetch_max(map_len_after as u64, Ordering::Relaxed);
+        self.flush_max_map_capacity_after
+            .fetch_max(map_capacity_after as u64, Ordering::Relaxed);
+        self.flush_max_evicted
+            .fetch_max(evicted as u64, Ordering::Relaxed);
+        self.flush_max_total_entries_after
+            .fetch_max(total_entries_after as u64, Ordering::Relaxed);
     }
 
     /// return min, max, sum, median of data
@@ -555,6 +594,49 @@ impl Stats {
                         .swap(0, Ordering::Relaxed),
                     i64
                 ),
+                (
+                    "flush_max_total_entries_before",
+                    self.flush_max_total_entries_before
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "flush_max_num_flushed",
+                    self.flush_max_num_flushed.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "flush_max_map_len_before",
+                    self.flush_max_map_len_before.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "flush_max_map_capacity_before",
+                    self.flush_max_map_capacity_before
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "flush_max_map_len_after",
+                    self.flush_max_map_len_after.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "flush_max_map_capacity_after",
+                    self.flush_max_map_capacity_after.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "flush_max_evicted",
+                    self.flush_max_evicted.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "flush_max_total_entries_after",
+                    self.flush_max_total_entries_after
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
             );
         } else {
             datapoint_info!(
@@ -621,6 +703,49 @@ impl Stats {
                 ("inserts", self.inserts.swap(0, Ordering::Relaxed), i64),
                 ("deletes", self.deletes.swap(0, Ordering::Relaxed), i64),
                 ("keys", self.keys.swap(0, Ordering::Relaxed), i64),
+                (
+                    "flush_max_total_entries_before",
+                    self.flush_max_total_entries_before
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "flush_max_num_flushed",
+                    self.flush_max_num_flushed.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "flush_max_map_len_before",
+                    self.flush_max_map_len_before.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "flush_max_map_capacity_before",
+                    self.flush_max_map_capacity_before
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "flush_max_map_len_after",
+                    self.flush_max_map_len_after.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "flush_max_map_capacity_after",
+                    self.flush_max_map_capacity_after.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "flush_max_evicted",
+                    self.flush_max_evicted.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "flush_max_total_entries_after",
+                    self.flush_max_total_entries_after
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
             );
         }
     }
