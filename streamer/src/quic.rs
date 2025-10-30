@@ -72,9 +72,6 @@ pub struct SpawnServerResult {
     pub key_updater: Arc<EndpointKeyUpdater>,
 }
 
-/// Controls the the channel size for the PacketBatch coalesce
-pub(crate) const DEFAULT_ACCUMULATOR_CHANNEL_SIZE: usize = 250_000;
-
 /// Returns default server configuration along with its PEM certificate chain.
 #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 pub(crate) fn configure_server(
@@ -171,11 +168,7 @@ pub struct StreamerStats {
     pub(crate) total_handle_chunk_to_packet_batcher_send_err: AtomicUsize,
     pub(crate) total_handle_chunk_to_packet_batcher_send_full_err: AtomicUsize,
     pub(crate) total_handle_chunk_to_packet_batcher_send_disconnected_err: AtomicUsize,
-    pub(crate) total_packet_batches_sent: AtomicUsize,
     pub(crate) total_packet_batches_none: AtomicUsize,
-    pub(crate) total_packets_sent_for_batching: AtomicUsize,
-    pub(crate) total_bytes_sent_for_batching: AtomicUsize,
-    pub(crate) total_chunks_sent_for_batching: AtomicUsize,
     pub(crate) total_packets_sent_to_consumer: AtomicUsize,
     pub(crate) total_bytes_sent_to_consumer: AtomicUsize,
     pub(crate) total_chunks_processed_by_batcher: AtomicUsize,
@@ -393,12 +386,6 @@ impl StreamerStats {
                 i64
             ),
             (
-                "packets_sent_for_batching",
-                self.total_packets_sent_for_batching
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
                 "staked_packets_sent_for_batching",
                 self.total_staked_packets_sent_for_batching
                     .swap(0, Ordering::Relaxed),
@@ -407,18 +394,6 @@ impl StreamerStats {
             (
                 "unstaked_packets_sent_for_batching",
                 self.total_unstaked_packets_sent_for_batching
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "bytes_sent_for_batching",
-                self.total_bytes_sent_for_batching
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "chunks_sent_for_batching",
-                self.total_chunks_sent_for_batching
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
@@ -471,11 +446,6 @@ impl StreamerStats {
                 "handle_chunk_to_packet_batcher_send_disconnected_err",
                 self.total_handle_chunk_to_packet_batcher_send_disconnected_err
                     .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "packet_batches_sent",
-                self.total_packet_batches_sent.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
@@ -635,7 +605,6 @@ pub struct QuicServerParams {
     pub max_unstaked_connections: usize,
     pub max_connections_per_ipaddr_per_min: u64,
     pub wait_for_chunk_timeout: Duration,
-    pub accumulator_channel_size: usize,
     pub num_threads: NonZeroUsize,
     pub max_streams_per_ms: u64,
 }
@@ -647,7 +616,6 @@ pub struct QuicStreamerConfig {
     pub max_unstaked_connections: usize,
     pub max_connections_per_ipaddr_per_min: u64,
     pub wait_for_chunk_timeout: Duration,
-    pub accumulator_channel_size: usize,
     pub num_threads: NonZeroUsize,
 }
 
@@ -672,7 +640,6 @@ impl Default for QuicServerParams {
             max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-            accumulator_channel_size: DEFAULT_ACCUMULATOR_CHANNEL_SIZE,
             num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
             max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
         }
@@ -702,7 +669,6 @@ impl Default for QuicStreamerConfig {
             max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-            accumulator_channel_size: DEFAULT_ACCUMULATOR_CHANNEL_SIZE,
             num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
         }
     }
@@ -716,7 +682,6 @@ impl QuicStreamerConfig {
     pub fn default_for_tests() -> Self {
         // Shrink the channel size to avoid a massive allocation for tests
         Self {
-            accumulator_channel_size: 100_000,
             num_threads: Self::DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
             ..Self::default()
         }
@@ -737,7 +702,6 @@ impl From<&QuicServerParams> for QuicStreamerConfig {
             max_unstaked_connections: params.max_unstaked_connections,
             max_connections_per_ipaddr_per_min: params.max_connections_per_ipaddr_per_min,
             wait_for_chunk_timeout: params.wait_for_chunk_timeout,
-            accumulator_channel_size: params.accumulator_channel_size,
             num_threads: params.num_threads,
         }
     }
