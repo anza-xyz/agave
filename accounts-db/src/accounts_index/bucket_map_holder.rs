@@ -1,12 +1,10 @@
 use {
-    crate::{
-        accounts_index::{
-            in_mem_accounts_index::{InMemAccountsIndex, StartupStats},
-            AccountsIndexConfig, DiskIndexValue, IndexLimitMb, IndexValue,
-        },
-        bucket_map_holder_stats::BucketMapHolderStats,
-        waitable_condvar::WaitableCondvar,
+    super::{
+        in_mem_accounts_index::{InMemAccountsIndex, StartupStats},
+        stats::Stats,
+        AccountsIndexConfig, DiskIndexValue, IndexLimitMb, IndexValue,
     },
+    crate::waitable_condvar::WaitableCondvar,
     solana_bucket_map::bucket_map::{BucketMap, BucketMapConfig},
     solana_clock::Slot,
     solana_measure::measure::Measure,
@@ -47,7 +45,7 @@ pub struct BucketMapHolder<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
     /// these items are expected to be flushed from the accounts write cache or otherwise modified before this age occurs
     pub future_age_to_flush_cached: AtomicAge,
 
-    pub stats: BucketMapHolderStats,
+    pub stats: Stats,
 
     age_timer: AtomicInterval,
 
@@ -224,7 +222,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
             future_age_to_flush: AtomicAge::new(ages_to_stay_in_cache),
             // effectively age (0) - 1. So, the oldest possible age from 'now'
             future_age_to_flush_cached: AtomicAge::new(Age::MAX),
-            stats: BucketMapHolderStats::new(bins),
+            stats: Stats::new(bins),
             wait_dirty_or_aged: Arc::default(),
             next_bucket_to_flush: AtomicUsize::new(0),
             age_timer: AtomicInterval::default(),

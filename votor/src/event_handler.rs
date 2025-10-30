@@ -5,6 +5,7 @@ use {
         commitment::{update_commitment_cache, CommitmentType},
         consensus_metrics::ConsensusMetricsEvent,
         event::{CompletedBlock, VotorEvent, VotorEventReceiver},
+        event_handler::stats::EventHandlerStats,
         root_utils::{self, RootContext, SetRootError},
         timer_manager::TimerManager,
         vote_history::{VoteHistory, VoteHistoryError},
@@ -35,6 +36,8 @@ use {
     },
     thiserror::Error,
 };
+
+mod stats;
 
 /// Banks that have completed replay, but are yet to be voted on
 /// in the form of (block, parent block)
@@ -81,6 +84,7 @@ struct LocalContext {
     pub(crate) pending_blocks: PendingBlocks,
     pub(crate) finalized_blocks: BTreeSet<Block>,
     pub(crate) received_shred: BTreeSet<Slot>,
+    pub(crate) stats: EventHandlerStats,
 }
 
 impl EventHandler {
@@ -116,6 +120,7 @@ impl EventHandler {
             pending_blocks: PendingBlocks::default(),
             finalized_blocks: BTreeSet::default(),
             received_shred: BTreeSet::default(),
+            stats: EventHandlerStats::new(),
         };
 
         // Wait until migration has completed
@@ -131,13 +136,19 @@ impl EventHandler {
                 Err(e) => return Err(EventLoopError::ReceiverDisconnected(e)),
             };
             receive_event_time.stop();
+            local_context.stats.receive_event_time_us = local_context
+                .stats
+                .receive_event_time_us
+                .saturating_add(receive_event_time.as_us());
 
             let root_bank = vctx.sharable_banks.root();
             if event.should_ignore(root_bank.slot()) {
+                local_context.stats.ignored = local_context.stats.ignored.saturating_add(1);
                 continue;
             }
 
             let mut event_processing_time = Measure::start("event_processing");
+            let stats_event = local_context.stats.handle_event_arrival(&event);
             let votes = Self::handle_event(
                 event,
                 &timer_manager,
@@ -147,12 +158,21 @@ impl EventHandler {
                 &mut local_context,
             )?;
             event_processing_time.stop();
+            local_context
+                .stats
+                .incr_event_with_timing(stats_event, event_processing_time.as_us());
 
             let mut send_votes_batch_time = Measure::start("send_votes_batch");
             for vote in votes {
+                local_context.stats.incr_vote(&vote);
                 vctx.bls_sender.send(vote).map_err(|_| SendError(()))?;
             }
             send_votes_batch_time.stop();
+            local_context.stats.send_votes_batch_time_us = local_context
+                .stats
+                .send_votes_batch_time_us
+                .saturating_add(send_votes_batch_time.as_us());
+            local_context.stats.maybe_report();
         }
 
         Ok(())
@@ -173,6 +193,7 @@ impl EventHandler {
         Self::check_pending_blocks(my_pubkey, &mut local_context.pending_blocks, vctx, votes)?;
         if should_set_timeouts {
             timer_manager.write().set_timeouts(slot);
+            local_context.stats.timeout_set = local_context.stats.timeout_set.saturating_add(1);
         }
         let mut highest_parent_ready = ctx
             .leader_window_notifier
@@ -202,6 +223,7 @@ impl EventHandler {
             ref mut pending_blocks,
             ref mut finalized_blocks,
             ref mut received_shred,
+            ref mut stats,
         } = local_context;
         match event {
             // Block has completed replay
@@ -250,6 +272,7 @@ impl EventHandler {
                     pending_blocks,
                     finalized_blocks,
                     received_shred,
+                    stats,
                 )?;
                 if let Some((ready_slot, parent_block)) =
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)
@@ -364,6 +387,7 @@ impl EventHandler {
                 info!("{my_pubkey}: ProduceWindow {window_info:?}");
                 let mut l_window_info = ctx.leader_window_notifier.window_info.lock().unwrap();
                 if let Some(old_window_info) = l_window_info.as_ref() {
+                    stats.leader_window_replaced = stats.leader_window_replaced.saturating_add(1);
                     error!(
                         "{my_pubkey}: Attempting to start leader window for {}-{}, however there \
                          is already a pending window to produce {}-{}. Our production is lagging, \
@@ -390,6 +414,7 @@ impl EventHandler {
                     pending_blocks,
                     finalized_blocks,
                     received_shred,
+                    stats,
                 )?;
                 if let Some((slot, block)) =
                     Self::add_missing_parent_ready(block, ctx, vctx, local_context)
@@ -724,6 +749,7 @@ impl EventHandler {
         pending_blocks: &mut PendingBlocks,
         finalized_blocks: &mut BTreeSet<Block>,
         received_shred: &mut BTreeSet<Slot>,
+        stats: &mut EventHandlerStats,
     ) -> Result<(), EventLoopError> {
         let bank_forks_r = ctx.bank_forks.read().unwrap();
         let old_root = bank_forks_r.root();
@@ -743,7 +769,7 @@ impl EventHandler {
             return Ok(());
         };
         drop(bank_forks_r);
-        root_utils::set_root(
+        let set_root_result = root_utils::set_root(
             my_pubkey,
             new_root,
             ctx,
@@ -753,7 +779,13 @@ impl EventHandler {
             finalized_blocks,
             received_shred,
         )
-        .map_err(EventLoopError::SetRoot)
+        .map_err(EventLoopError::SetRoot);
+
+        if set_root_result.is_ok() {
+            stats.set_root(new_root)
+        }
+
+        set_root_result
     }
 
     pub(crate) fn join(self) -> thread::Result<()> {

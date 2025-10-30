@@ -20,6 +20,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
+    stats::Stats,
     std::{
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -30,6 +31,8 @@ use {
     },
     thiserror::Error,
 };
+
+mod stats;
 
 /// Inputs for the certificate pool thread
 pub(crate) struct ConsensusPoolContext {
@@ -91,30 +94,33 @@ impl ConsensusPoolService {
         new_finalized_slot: Option<Slot>,
         new_certificates_to_send: Vec<Arc<Certificate>>,
         standstill_timer: &mut Instant,
+        stats: &mut Stats,
     ) -> Result<(), AddVoteError> {
         // If we have a new finalized slot, update the root and send new certificates
         if new_finalized_slot.is_some() {
             // Reset standstill timer
             *standstill_timer = Instant::now();
+            stats.new_finalized_slot += 1;
         }
         let root_bank = sharable_banks.root();
         consensus_pool.prune_old_state(root_bank.slot());
+        stats.prune_old_state_called += 1;
         // Send new certificates to peers
-        Self::send_certificates(bls_sender, new_certificates_to_send)
+        Self::send_certificates(bls_sender, new_certificates_to_send, stats)
     }
 
     fn send_certificates(
         bls_sender: &Sender<BLSOp>,
-        certificates_to_send: Vec<Arc<Certificate>>,
+        certs: Vec<Arc<Certificate>>,
+        stats: &mut Stats,
     ) -> Result<(), AddVoteError> {
-        for certificate in certificates_to_send.iter() {
+        let certs_len = certs.len();
+        for (i, certificate) in certs.into_iter().enumerate() {
             // The BLS cert channel is expected to be large enough, so we don't
             // handle certificate re-send here.
-            match bls_sender.try_send(BLSOp::PushCertificate {
-                certificate: certificate.clone(),
-            }) {
-                Ok(_) => {
-                    // Successfully sent certificate
+            match bls_sender.try_send(BLSOp::PushCertificate { certificate }) {
+                Ok(()) => {
+                    stats.certificates_sent += 1;
                 }
                 Err(TrySendError::Disconnected(_)) => {
                     return Err(AddVoteError::ChannelDisconnected(
@@ -122,6 +128,7 @@ impl ConsensusPoolService {
                     ));
                 }
                 Err(TrySendError::Full(_)) => {
+                    stats.certificates_dropped += certs_len.saturating_sub(i);
                     return Err(AddVoteError::VotingServiceQueueFull);
                 }
             }
@@ -136,7 +143,16 @@ impl ConsensusPoolService {
         consensus_pool: &mut ConsensusPool,
         events: &mut Vec<VotorEvent>,
         standstill_timer: &mut Instant,
+        stats: &mut Stats,
     ) -> Result<(), AddVoteError> {
+        match message {
+            ConsensusMessage::Certificate(_) => {
+                stats.received_certificates += 1;
+            }
+            ConsensusMessage::Vote(_) => {
+                stats.received_votes += 1;
+            }
+        }
         let root_bank = ctx.sharable_banks.root();
         let (new_finalized_slot, new_certificates_to_send) =
             Self::add_message_and_maybe_update_commitment(
@@ -155,6 +171,7 @@ impl ConsensusPoolService {
             new_finalized_slot,
             new_certificates_to_send,
             standstill_timer,
+            stats,
         )
     }
 
@@ -166,12 +183,15 @@ impl ConsensusPoolService {
         let mut events = vec![];
         let mut my_pubkey = ctx.cluster_info.id();
         let root_bank = ctx.sharable_banks.root();
-        let mut consensus_pool = ConsensusPool::new_from_root_bank(my_pubkey, &root_bank);
+        let mut consensus_pool =
+            ConsensusPool::new_from_root_bank(ctx.cluster_info.clone(), &root_bank);
 
         // Wait until migration has completed
         info!("{my_pubkey}: Consensus pool loop initialized, waiting for Alpenglow migration");
         Votor::wait_for_migration_or_exit(&ctx.exit, &ctx.start);
         info!("{my_pubkey}: Consensus pool loop starting");
+
+        let mut stats = Stats::default();
 
         // Standstill tracking
         let mut standstill_timer = Instant::now();
@@ -190,7 +210,6 @@ impl ConsensusPoolService {
             let new_pubkey = ctx.cluster_info.id();
             if my_pubkey != new_pubkey {
                 my_pubkey = new_pubkey;
-                consensus_pool.update_pubkey(my_pubkey);
                 info!("Consensus pool pubkey updated to {my_pubkey}");
             }
 
@@ -200,16 +219,19 @@ impl ConsensusPoolService {
                 &my_pubkey,
                 ctx,
                 &mut events,
+                &mut stats,
             )?;
 
             if standstill_timer.elapsed() > ctx.delta_standstill {
                 events.push(VotorEvent::Standstill(
                     consensus_pool.highest_finalized_slot(),
                 ));
+                stats.standstill = true;
                 standstill_timer = Instant::now();
                 match Self::send_certificates(
                     &ctx.bls_sender,
                     consensus_pool.get_certs_for_standstill(),
+                    &mut stats,
                 ) {
                     Ok(()) => (),
                     Err(AddVoteError::ChannelDisconnected(channel_name)) => {
@@ -251,17 +273,19 @@ impl ConsensusPoolService {
                     &mut consensus_pool,
                     &mut events,
                     &mut standstill_timer,
+                    &mut stats,
                 ) {
                     Ok(()) => {}
                     Err(AddVoteError::ChannelDisconnected(channel_name)) => {
                         return Err(ConsensusPoolServiceError::ChannelDisconnected(channel_name));
                     }
                     Err(e) => {
-                        // This is a non critical error, a duplicate vote for example
-                        trace!("{my_pubkey}: unable to push vote into pool {e}");
+                        warn!("{my_pubkey}: process_consensus_message() failed with {e}");
+                        stats.add_message_failed += 1;
                     }
                 }
             }
+            stats.maybe_report();
             consensus_pool.maybe_report();
         }
         Ok(())
@@ -306,6 +330,7 @@ impl ConsensusPoolService {
         my_pubkey: &Pubkey,
         ctx: &mut ConsensusPoolContext,
         events: &mut Vec<VotorEvent>,
+        stats: &mut Stats,
     ) -> Result<(), ConsensusPoolServiceError> {
         let Some(new_highest_parent_ready) = events
             .iter()
@@ -359,13 +384,13 @@ impl ConsensusPoolService {
                     "{my_pubkey}: Leader slot {start_slot} has already been certified, skipping \
                      production of {start_slot}-{end_slot}"
                 );
+                stats.parent_ready_missed_window += 1;
             }
             BlockProductionParent::ParentNotReady => {
                 // This can't happen, place holder depending on how we hook up optimistic
-                return Err(ConsensusPoolServiceError::FailedToAddBlockEvent(format!(
-                    "Must have a block production parent: {:#?}",
-                    consensus_pool.parent_ready_tracker
-                )));
+                return Err(ConsensusPoolServiceError::FailedToAddBlockEvent(
+                    "Must have a block production parent".to_string(),
+                ));
             }
             BlockProductionParent::Parent(parent_block) => {
                 events.push(VotorEvent::ProduceWindow(LeaderWindowInfo {
@@ -374,6 +399,7 @@ impl ConsensusPoolService {
                     parent_block,
                     skip_timer: Instant::now(),
                 }));
+                stats.parent_ready_produce_window += 1;
             }
         }
 

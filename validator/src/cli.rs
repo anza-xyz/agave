@@ -1,5 +1,5 @@
 use {
-    crate::commands,
+    crate::{commands, commands::run::args::pub_sub_config},
     agave_snapshots::{
         snapshot_config::{
             DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
@@ -557,18 +557,6 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .help("Application profile id to use in Bigtable requests"),
         )
         .arg(
-            Arg::with_name("rpc_pubsub_enable_vote_subscription")
-                .long("rpc-pubsub-enable-vote-subscription")
-                .takes_value(false)
-                .help("Enable the unstable RPC PubSub `voteSubscribe` subscription"),
-        )
-        .arg(
-            Arg::with_name("rpc_pubsub_enable_block_subscription")
-                .long("rpc-pubsub-enable-block-subscription")
-                .takes_value(false)
-                .help("Enable the unstable RPC PubSub `blockSubscribe` subscription"),
-        )
-        .arg(
             Arg::with_name("bpf_program")
                 .long("bpf-program")
                 .value_names(&["ADDRESS_OR_KEYPAIR", "SBF_PROGRAM.SO"])
@@ -921,6 +909,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                      silently ignored",
                 ),
         )
+        .args(&pub_sub_config::args(/*test_validator:*/ true))
 }
 
 pub struct DefaultTestArgs {

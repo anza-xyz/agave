@@ -240,11 +240,11 @@ impl VerboseDisplay for Output {}
 // https://github.com/rust-lang/rust/issues/74465
 struct LazyAnalysis<'a, 'b> {
     analysis: Option<Analysis<'a>>,
-    executable: &'a Executable<InvokeContext<'b>>,
+    executable: &'a Executable<InvokeContext<'b, 'b>>,
 }
 
 impl<'a, 'b> LazyAnalysis<'a, 'b> {
-    fn new(executable: &'a Executable<InvokeContext<'b>>) -> Self {
+    fn new(executable: &'a Executable<InvokeContext<'b, 'b>>) -> Self {
         Self {
             analysis: None,
             executable,
@@ -263,8 +263,8 @@ impl<'a, 'b> LazyAnalysis<'a, 'b> {
 fn load_program<'a>(
     filename: &Path,
     program_id: Pubkey,
-    invoke_context: &InvokeContext<'a>,
-) -> Executable<InvokeContext<'a>> {
+    invoke_context: &InvokeContext<'a, 'a>,
+) -> Executable<InvokeContext<'a, 'a>> {
     let mut file = File::open(filename).unwrap();
     let mut magic = [0u8; 4];
     file.read_exact(&mut magic).unwrap();
@@ -324,9 +324,10 @@ fn load_program<'a>(
     #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
     verified_executable.jit_compile().unwrap();
     unsafe {
-        std::mem::transmute::<Executable<InvokeContext<'static>>, Executable<InvokeContext<'a>>>(
-            verified_executable,
-        )
+        std::mem::transmute::<
+            Executable<InvokeContext<'static, 'static>>,
+            Executable<InvokeContext<'a, 'a>>,
+        >(verified_executable)
     }
 }
 

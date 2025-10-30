@@ -1,21 +1,19 @@
 mod account_map_entry;
+mod accounts_index_storage;
+mod bucket_map_holder;
 pub(crate) mod in_mem_accounts_index;
 mod iter;
 mod roots_tracker;
 mod secondary;
+mod stats;
 use {
     crate::{
-        accounts_index::account_map_entry::SlotListWriteGuard,
-        accounts_index_storage::{AccountsIndexStorage, Startup},
-        ancestors::Ancestors,
-        bucket_map_holder::Age,
-        bucket_map_holder_stats::BucketMapHolderStats,
-        contains::Contains,
-        is_zero_lamport::IsZeroLamport,
-        pubkey_bins::PubkeyBinCalculator24,
-        rolling_bit_field::RollingBitField,
+        ancestors::Ancestors, contains::Contains, is_zero_lamport::IsZeroLamport,
+        pubkey_bins::PubkeyBinCalculator24, rolling_bit_field::RollingBitField,
     },
-    account_map_entry::{AccountMapEntry, PreAllocatedAccountMapEntry},
+    account_map_entry::{AccountMapEntry, PreAllocatedAccountMapEntry, SlotListWriteGuard},
+    accounts_index_storage::AccountsIndexStorage,
+    bucket_map_holder::Age,
     in_mem_accounts_index::{
         ExistedLocation, InMemAccountsIndex, InsertNewEntryResults, StartupStats,
     },
@@ -30,6 +28,7 @@ use {
     solana_clock::{BankId, Slot},
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
+    stats::Stats,
     std::{
         collections::{btree_map::BTreeMap, HashSet},
         fmt::Debug,
@@ -62,6 +61,7 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_TESTING: AccountsIndexConfig = AccountsIndex
     index_limit_mb: IndexLimitMb::InMemOnly,
     ages_to_stay_in_cache: None,
     scan_results_limit_bytes: None,
+    num_initial_accounts: None,
 };
 pub const ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS: AccountsIndexConfig = AccountsIndexConfig {
     bins: Some(BINS_FOR_BENCHMARKS),
@@ -70,6 +70,7 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS: AccountsIndexConfig = AccountsIn
     index_limit_mb: IndexLimitMb::InMemOnly,
     ages_to_stay_in_cache: None,
     scan_results_limit_bytes: None,
+    num_initial_accounts: None,
 };
 pub type ScanResult<T> = Result<T, ScanError>;
 pub type SlotList<T> = SmallVec<[(Slot, T); 1]>;
@@ -243,6 +244,8 @@ pub struct AccountsIndexConfig {
     pub index_limit_mb: IndexLimitMb,
     pub ages_to_stay_in_cache: Option<Age>,
     pub scan_results_limit_bytes: Option<usize>,
+    /// Initial number of accounts, used to pre-allocate HashMap capacity at startup.
+    pub num_initial_accounts: Option<usize>,
 }
 
 impl Default for AccountsIndexConfig {
@@ -254,6 +257,7 @@ impl Default for AccountsIndexConfig {
             index_limit_mb: IndexLimitMb::InMemOnly,
             ages_to_stay_in_cache: None,
             scan_results_limit_bytes: None,
+            num_initial_accounts: None,
         }
     }
 }
@@ -1003,7 +1007,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         rv.map(|index| slot_list.len() - 1 - index)
     }
 
-    pub(crate) fn bucket_map_holder_stats(&self) -> &BucketMapHolderStats {
+    pub(crate) fn stats(&self) -> &Stats {
         &self.storage.storage.stats
     }
 
@@ -1012,7 +1016,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         &self.storage.storage.startup_stats
     }
 
-    pub fn set_startup(&self, value: Startup) {
+    pub(crate) fn set_startup(&self, value: Startup) {
         self.storage.set_startup(value);
     }
 
@@ -1728,14 +1732,28 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     }
 }
 
+/// modes the system can be in
+#[allow(clippy::enum_variant_names)]
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum Startup {
+    /// not startup, but steady state execution
+    Normal,
+    /// startup (not steady state execution)
+    /// requesting 'startup'-like behavior where in-mem acct idx items are flushed asap
+    #[cfg(test)]
+    Startup,
+    /// startup (not steady state execution)
+    /// but also requesting additional threads to be running to flush the acct idx to disk asap
+    /// The idea is that the best perf to ssds will be with multiple threads,
+    ///  but during steady state, we can't allocate as many threads because we'd starve the rest of the system.
+    StartupWithExtraThreads,
+}
+
 #[cfg(test)]
 pub mod tests {
     use {
-        super::*,
-        crate::{
-            accounts_index::account_map_entry::AccountMapEntryMeta,
-            bucket_map_holder::BucketMapHolder,
-        },
+        super::{bucket_map_holder::BucketMapHolder, *},
+        crate::accounts_index::account_map_entry::AccountMapEntryMeta,
         solana_account::{AccountSharedData, WritableAccount},
         solana_pubkey::PUBKEY_BYTES,
         spl_generic_token::{spl_token_ids, token::SPL_TOKEN_ACCOUNT_OWNER_OFFSET},

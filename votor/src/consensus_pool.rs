@@ -7,10 +7,10 @@ use {
             MAX_ENTRIES_PER_PUBKEY_FOR_OTHER_TYPES,
         },
         consensus_pool::{
+            certificate_builder::{BuildError as CertificateBuilderError, CertificateBuilder},
             parent_ready_tracker::ParentReadyTracker,
             slot_stake_counters::SlotStakeCounters,
             stats::ConsensusPoolStats,
-            vote_certificate_builder::{CertificateError, VoteCertificateBuilder},
             vote_pool::{DuplicateBlockVotePool, SimpleVotePool, VotePool},
         },
         event::VotorEvent,
@@ -22,6 +22,7 @@ use {
     log::{error, trace},
     solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
+    solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, epoch_stakes::VersionedEpochStakes},
@@ -33,16 +34,16 @@ use {
     thiserror::Error,
 };
 
-pub mod parent_ready_tracker;
+mod certificate_builder;
+pub(crate) mod parent_ready_tracker;
 mod slot_stake_counters;
 mod stats;
-mod vote_certificate_builder;
 mod vote_pool;
 
-pub type PoolId = (Slot, VoteType);
+type PoolId = (Slot, VoteType);
 
 #[derive(Debug, Error, PartialEq)]
-pub enum AddVoteError {
+pub(crate) enum AddVoteError {
     #[error("Conflicting vote type: {0:?} vs existing {1:?} for slot: {2} pubkey: {3}")]
     ConflictingVoteType(VoteType, VoteType, Slot, Pubkey),
 
@@ -52,11 +53,8 @@ pub enum AddVoteError {
     #[error("Unrooted slot")]
     UnrootedSlot,
 
-    #[error("Slot in the future")]
-    SlotInFuture,
-
-    #[error("Certificate error: {0}")]
-    Certificate(#[from] CertificateError),
+    #[error("Certificate builder error: {0}")]
+    CertificateBuilder(#[from] CertificateBuilderError),
 
     #[error("{0} channel disconnected")]
     ChannelDisconnected(String),
@@ -98,8 +96,8 @@ fn get_key_and_stakes(
     Ok((*vote_key, stake, epoch_stakes.total_stake()))
 }
 
-pub struct ConsensusPool {
-    my_pubkey: Pubkey,
+pub(crate) struct ConsensusPool {
+    cluster_info: Arc<ClusterInfo>,
     // Vote pools to do bean counting for votes.
     vote_pools: BTreeMap<PoolId, VotePool>,
     /// Completed certificates
@@ -107,7 +105,7 @@ pub struct ConsensusPool {
     /// Tracks slots which have reached the parent ready condition:
     /// - They have a potential parent block with a NotarizeFallback certificate
     /// - All slots from the parent have a Skip certificate
-    pub parent_ready_tracker: ParentReadyTracker,
+    pub(crate) parent_ready_tracker: ParentReadyTracker,
     /// Highest slot that has a Finalized variant certificate
     highest_finalized_slot: Option<Slot>,
     /// Highest slot that has Finalize+Notarize or FinalizeFast, for use in standstill
@@ -120,14 +118,14 @@ pub struct ConsensusPool {
 }
 
 impl ConsensusPool {
-    pub fn new_from_root_bank(my_pubkey: Pubkey, bank: &Bank) -> Self {
+    pub(crate) fn new_from_root_bank(cluster_info: Arc<ClusterInfo>, bank: &Bank) -> Self {
         // To account for genesis and snapshots we allow default block id until
         // block id can be serialized  as part of the snapshot
         let root_block = (bank.slot(), bank.block_id().unwrap_or_default());
-        let parent_ready_tracker = ParentReadyTracker::new(my_pubkey, root_block);
+        let parent_ready_tracker = ParentReadyTracker::new(cluster_info.clone(), root_block);
 
         Self {
-            my_pubkey,
+            cluster_info,
             vote_pools: BTreeMap::new(),
             completed_certificates: BTreeMap::new(),
             highest_finalized_slot: None,
@@ -211,7 +209,7 @@ impl ConsensusPool {
             if accumulated_stake as f64 / (total_stake as f64) < limit {
                 continue;
             }
-            let mut cert_builder = VoteCertificateBuilder::new(cert_type);
+            let mut cert_builder = CertificateBuilder::new(cert_type);
             vote_types.iter().for_each(|vote_type| {
                 if let Some(vote_pool) = self.vote_pools.get(&(slot, *vote_type)) {
                     match vote_pool {
@@ -280,7 +278,11 @@ impl ConsensusPool {
         cert: Arc<Certificate>,
         events: &mut Vec<VotorEvent>,
     ) {
-        trace!("{}: Inserting certificate {:?}", self.my_pubkey, cert_type);
+        trace!(
+            "{}: Inserting certificate {:?}",
+            self.cluster_info.id(),
+            cert_type
+        );
         self.completed_certificates.insert(cert_type, cert);
         match cert_type {
             CertificateType::NotarizeFallback(slot, block_id) => {
@@ -343,7 +345,7 @@ impl ConsensusPool {
     ///
     /// If this resulted in a new highest Finalize or FastFinalize certificate,
     /// return the slot
-    pub fn add_message(
+    pub(crate) fn add_message(
         &mut self,
         epoch_schedule: &EpochSchedule,
         epoch_stakes_map: &HashMap<Epoch, VersionedEpochStakes>,
@@ -438,9 +440,7 @@ impl ConsensusPool {
                 );
             }
         }
-        self.stats
-            .incr_ingested_vote_type(VoteType::get_type(&vote));
-
+        self.stats.incr_ingested_vote(&vote);
         self.update_certificates(&vote, block_id, events, total_stake)
     }
 
@@ -469,7 +469,7 @@ impl ConsensusPool {
     }
 
     /// Get the notarized block in `slot`
-    pub fn get_notarized_block(&self, slot: Slot) -> Option<Block> {
+    fn get_notarized_block(&self, slot: Slot) -> Option<Block> {
         self.completed_certificates
             .iter()
             .find_map(|(cert_type, _)| match cert_type {
@@ -506,7 +506,7 @@ impl ConsensusPool {
             .unwrap_or(0)
     }
 
-    pub fn highest_finalized_slot(&self) -> Slot {
+    pub(crate) fn highest_finalized_slot(&self) -> Slot {
         self.completed_certificates
             .iter()
             .filter_map(|(cert_type, _)| match cert_type {
@@ -520,7 +520,7 @@ impl ConsensusPool {
     }
 
     /// Checks if any block in the slot `s` is finalized
-    pub fn is_finalized(&self, slot: Slot) -> bool {
+    fn is_finalized(&self, slot: Slot) -> bool {
         self.completed_certificates.keys().any(|cert_type| {
             matches!(cert_type, CertificateType::Finalize(s) | CertificateType::FinalizeFast(s, _) if *s == slot)
         })
@@ -529,21 +529,17 @@ impl ConsensusPool {
     /// Checks if the any block in slot `slot` has received a `NotarizeFallback` certificate, if so return
     /// the size of the certificate
     #[cfg(test)]
-    pub fn slot_has_notarized_fallback(&self, slot: Slot) -> bool {
+    fn slot_has_notarized_fallback(&self, slot: Slot) -> bool {
         self.completed_certificates.iter().any(
             |(cert_type, _)| matches!(cert_type, CertificateType::NotarizeFallback(s,_) if *s == slot),
         )
     }
 
     /// Checks if `slot` has a `Skip` certificate
-    pub fn skip_certified(&self, slot: Slot) -> bool {
+    #[cfg(test)]
+    fn skip_certified(&self, slot: Slot) -> bool {
         self.completed_certificates
             .contains_key(&CertificateType::Skip(slot))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn my_pubkey(&self) -> Pubkey {
-        self.my_pubkey
     }
 
     #[cfg(test)]
@@ -587,7 +583,7 @@ impl ConsensusPool {
     }
 
     /// Cleanup any old slots from the certificate pool
-    pub fn prune_old_state(&mut self, root_slot: Slot) {
+    pub(crate) fn prune_old_state(&mut self, root_slot: Slot) {
         // `completed_certificates`` now only contains entries >= `slot`
         self.completed_certificates
             .retain(|cert_type, _| match cert_type {
@@ -602,19 +598,11 @@ impl ConsensusPool {
         self.parent_ready_tracker.set_root(root_slot);
     }
 
-    /// Updates the pubkey used for logging purposes only.
-    /// This avoids the need to recreate the entire certificate pool since it's
-    /// not distinguished by the pubkey.
-    pub fn update_pubkey(&mut self, new_pubkey: Pubkey) {
-        self.my_pubkey = new_pubkey;
-        self.parent_ready_tracker.update_pubkey(new_pubkey);
-    }
-
-    pub fn maybe_report(&mut self) {
+    pub(crate) fn maybe_report(&mut self) {
         self.stats.maybe_report();
     }
 
-    pub fn get_certs_for_standstill(&self) -> Vec<Arc<Certificate>> {
+    pub(crate) fn get_certs_for_standstill(&self) -> Vec<Arc<Certificate>> {
         let (highest_finalized_with_notarize_slot, has_fast_finalize) =
             self.highest_finalized_with_notarize.unwrap_or((0, false));
         self.completed_certificates
@@ -640,7 +628,11 @@ impl ConsensusPool {
                     _ => None,
                 };
                 if cert_to_send.is_some() {
-                    trace!("{}: Refreshing certificate {:?}", self.my_pubkey, cert_type);
+                    trace!(
+                        "{}: Refreshing certificate {:?}",
+                        self.cluster_info.id(),
+                        cert_type
+                    );
                 }
                 cert_to_send
             })
@@ -658,7 +650,9 @@ mod tests {
             VerifiableSignature,
         },
         solana_clock::Slot,
+        solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_runtime::{
             bank::{Bank, NewBankOptions},
             bank_forks::BankForks,
@@ -667,9 +661,20 @@ mod tests {
             },
         },
         solana_signer::Signer,
+        solana_streamer::socket::SocketAddrSpace,
         std::sync::{Arc, RwLock},
         test_case::test_case,
     };
+
+    fn new_cluster_info() -> Arc<ClusterInfo> {
+        let keypair = Keypair::new();
+        let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
+        Arc::new(ClusterInfo::new(
+            contact_info,
+            Arc::new(keypair),
+            SocketAddrSpace::Unspecified,
+        ))
+    }
 
     fn dummy_vote_message(
         keypairs: &[ValidatorVoteKeypairs],
@@ -712,7 +717,7 @@ mod tests {
         let root_bank = bank_forks.read().unwrap().root_bank();
         (
             validator_keypairs,
-            ConsensusPool::new_from_root_bank(Pubkey::new_unique(), &root_bank),
+            ConsensusPool::new_from_root_bank(new_cluster_info(), &root_bank),
             bank_forks,
         )
     }
@@ -746,11 +751,11 @@ mod tests {
             )
             .is_ok());
         match vote {
-            Vote::Notarize(vote) => assert_eq!(pool.highest_notarized_slot(), vote.slot()),
-            Vote::NotarizeFallback(vote) => assert_eq!(pool.highest_notarized_slot(), vote.slot()),
-            Vote::Skip(vote) => assert_eq!(pool.highest_skip_slot(), vote.slot()),
-            Vote::SkipFallback(vote) => assert_eq!(pool.highest_skip_slot(), vote.slot()),
-            Vote::Finalize(vote) => assert_eq!(pool.highest_finalized_slot(), vote.slot()),
+            Vote::Notarize(vote) => assert_eq!(pool.highest_notarized_slot(), vote.slot),
+            Vote::NotarizeFallback(vote) => assert_eq!(pool.highest_notarized_slot(), vote.slot),
+            Vote::Skip(vote) => assert_eq!(pool.highest_skip_slot(), vote.slot),
+            Vote::SkipFallback(vote) => assert_eq!(pool.highest_skip_slot(), vote.slot),
+            Vote::Finalize(vote) => assert_eq!(pool.highest_finalized_slot(), vote.slot),
         }
     }
 
@@ -1862,7 +1867,7 @@ mod tests {
             .collect::<Vec<_>>();
         let bank_forks = create_bank_forks(&validator_keypairs);
         let mut pool = ConsensusPool::new_from_root_bank(
-            Pubkey::new_unique(),
+            new_cluster_info(),
             &bank_forks.read().unwrap().root_bank(),
         );
 
@@ -2314,17 +2319,5 @@ mod tests {
                 .is_ok(),
             "BLS signature verification failed for VoteMessage"
         );
-    }
-
-    #[test]
-    fn test_update_pubkey() {
-        let new_pubkey = Pubkey::new_unique();
-        let (_, mut pool, _) = create_initial_state();
-        let old_pubkey = pool.my_pubkey();
-        assert_eq!(pool.parent_ready_tracker.my_pubkey(), old_pubkey);
-        assert_ne!(old_pubkey, new_pubkey);
-        pool.update_pubkey(new_pubkey);
-        assert_eq!(pool.my_pubkey(), new_pubkey);
-        assert_eq!(pool.parent_ready_tracker.my_pubkey(), new_pubkey);
     }
 }

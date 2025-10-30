@@ -1177,6 +1177,15 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Number of bins to divide the accounts index into"),
     )
     .arg(
+        Arg::with_name("accounts_index_initial_accounts_count")
+            .long("accounts-index-initial-accounts-count")
+            .value_name("NUMBER")
+            .validator(is_parsable::<usize>)
+            .takes_value(true)
+            .help("Pre-allocate the accounts index, assuming this many accounts")
+            .hidden(hidden_unless_forced()),
+    )
+    .arg(
         Arg::with_name("accounts_index_path")
             .long("accounts-index-path")
             .value_name("PATH")
@@ -1376,7 +1385,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                  set,tpu-client-next is used by default.",
             ),
     )
-    .args(&pub_sub_config::args())
+    .args(&pub_sub_config::args(/*test_validator:*/ false))
     .args(&json_rpc_config::args())
     .args(&rpc_bigtable_config::args())
     .args(&send_transaction_config::args())

@@ -35,8 +35,7 @@ use {
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
             EpochBoundaryPreparation, ForkGraph, ProgramCache, ProgramCacheEntry,
-            ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
-            ProgramRuntimeEnvironments,
+            ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironments,
         },
         sysvar_cache::SysvarCache,
     },
@@ -61,7 +60,10 @@ use {
 #[cfg(feature = "dev-context-only-utils")]
 use {
     qualifier_attr::{field_qualifiers, qualifiers},
-    solana_program_runtime::solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
+    solana_program_runtime::{
+        loaded_programs::ProgramRuntimeEnvironment,
+        solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
+    },
     std::sync::Weak,
 };
 
@@ -250,10 +252,20 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .unwrap()
             .set_fork_graph(fork_graph);
         let empty_loader = || Arc::new(BuiltinProgram::new_loader(VmConfig::default()));
-        processor.configure_program_runtime_environments(
-            program_runtime_environment_v1.unwrap_or(empty_loader()),
-            program_runtime_environment_v2.unwrap_or(empty_loader()),
-        );
+        processor
+            .global_program_cache
+            .write()
+            .unwrap()
+            .latest_root_slot = processor.slot;
+        processor
+            .epoch_boundary_preparation
+            .write()
+            .unwrap()
+            .upcoming_epoch = processor.epoch;
+        processor.environments.program_runtime_v1 =
+            program_runtime_environment_v1.unwrap_or(empty_loader());
+        processor.environments.program_runtime_v2 =
+            program_runtime_environment_v2.unwrap_or(empty_loader());
         processor
     }
 
@@ -282,19 +294,41 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.execution_cost = cost;
     }
 
-    /// Configures the program runtime environments (loaders).
-    pub fn configure_program_runtime_environments(
-        &mut self,
-        program_runtime_environment_v1: ProgramRuntimeEnvironment,
-        program_runtime_environment_v2: ProgramRuntimeEnvironment,
-    ) {
-        self.global_program_cache.write().unwrap().latest_root_slot = self.slot;
-        self.epoch_boundary_preparation
-            .write()
+    /// Updates the environments when entering a new Epoch.
+    pub fn set_environments(&mut self, new_environments: ProgramRuntimeEnvironments) {
+        // First update the parts of the environments which changed
+        if self.environments.program_runtime_v1 != new_environments.program_runtime_v1 {
+            self.environments.program_runtime_v1 = new_environments.program_runtime_v1;
+        }
+        if self.environments.program_runtime_v2 != new_environments.program_runtime_v2 {
+            self.environments.program_runtime_v2 = new_environments.program_runtime_v2;
+        }
+        // Then try to consolidate with the upcoming environments (to reuse their address)
+        if let Some(upcoming_environments) = &self
+            .epoch_boundary_preparation
+            .read()
             .unwrap()
-            .latest_root_epoch = self.epoch;
-        self.environments.program_runtime_v1 = program_runtime_environment_v1;
-        self.environments.program_runtime_v2 = program_runtime_environment_v2;
+            .upcoming_environments
+        {
+            if self.environments.program_runtime_v1 == upcoming_environments.program_runtime_v1
+                && !Arc::ptr_eq(
+                    &self.environments.program_runtime_v1,
+                    &upcoming_environments.program_runtime_v1,
+                )
+            {
+                self.environments.program_runtime_v1 =
+                    upcoming_environments.program_runtime_v1.clone();
+            }
+            if self.environments.program_runtime_v2 == upcoming_environments.program_runtime_v2
+                && !Arc::ptr_eq(
+                    &self.environments.program_runtime_v2,
+                    &upcoming_environments.program_runtime_v2,
+                )
+            {
+                self.environments.program_runtime_v2 =
+                    upcoming_environments.program_runtime_v2.clone();
+            }
+        }
     }
 
     /// Returns the current environments depending on the given epoch
@@ -355,15 +389,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .then(|| BalanceCollector::new_with_transaction_count(sanitized_txs.len()));
 
         // Create the batch-local program cache.
-        let program_runtime_environments_for_execution =
-            self.get_environments_for_epoch(self.epoch);
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
         let builtins = self.builtin_program_ids.read().unwrap().clone();
         let ((), program_cache_us) = measure_us!({
             self.replenish_program_cache(
                 &account_loader,
                 &builtins,
-                &program_runtime_environments_for_execution,
+                &environment.program_runtime_environments_for_execution,
                 &mut program_cache_for_tx_batch,
                 &mut execute_timings,
                 config.check_program_modification_slot,
@@ -446,7 +478,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         self.replenish_program_cache(
                             &account_loader,
                             &program_accounts_set,
-                            &program_runtime_environments_for_execution,
+                            &environment.program_runtime_environments_for_execution,
                             &mut program_cache_for_tx_batch,
                             &mut execute_timings,
                             config.check_program_modification_slot,
@@ -747,7 +779,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             })
             .collect();
 
-        let program_runtime_environments = self.get_environments_for_epoch(self.epoch);
         let mut count_hits_and_misses = true;
         loop {
             let (program_to_store, task_cookie, task_waiter) = {
@@ -787,7 +818,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 let mut global_program_cache = self.global_program_cache.write().unwrap();
                 // Submit our last completed loading task.
                 if global_program_cache.finish_cooperative_loading_task(
-                    &program_runtime_environments,
+                    program_runtime_environments_for_execution,
                     self.slot,
                     key,
                     program,
@@ -1004,7 +1035,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     inner_instructions.push(InnerInstruction {
                         instruction: CompiledInstruction::new_from_raw_parts(
                             ix_in_trace.program_account_index_in_tx as u8,
-                            ix_in_trace.instruction_data,
+                            ix_in_trace.instruction_data.into_owned(),
                             ix_in_trace
                                 .instruction_accounts
                                 .iter()

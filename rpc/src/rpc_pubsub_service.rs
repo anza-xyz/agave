@@ -35,6 +35,7 @@ pub const MAX_ACTIVE_SUBSCRIPTIONS: usize = 1_000_000;
 pub const DEFAULT_QUEUE_CAPACITY_ITEMS: usize = 10_000_000;
 pub const DEFAULT_TEST_QUEUE_CAPACITY_ITEMS: usize = 100;
 pub const DEFAULT_QUEUE_CAPACITY_BYTES: usize = 256 * 1024 * 1024;
+const DEFAULT_TEST_QUEUE_CAPACITY_BYTES: usize = 16 * 1024 * 1024;
 pub const DEFAULT_WORKER_THREADS: usize = 1;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -63,13 +64,13 @@ impl Default for PubSubConfig {
 }
 
 impl PubSubConfig {
-    pub fn default_for_tests() -> Self {
+    pub const fn default_for_tests() -> Self {
         Self {
             enable_block_subscription: false,
             enable_vote_subscription: false,
             max_active_subscriptions: MAX_ACTIVE_SUBSCRIPTIONS,
             queue_capacity_items: DEFAULT_TEST_QUEUE_CAPACITY_ITEMS,
-            queue_capacity_bytes: DEFAULT_QUEUE_CAPACITY_BYTES,
+            queue_capacity_bytes: DEFAULT_TEST_QUEUE_CAPACITY_BYTES,
             worker_threads: DEFAULT_WORKER_THREADS,
             notification_threads: NonZeroUsize::new(2),
         }
