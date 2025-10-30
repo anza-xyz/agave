@@ -3,8 +3,8 @@ use {
         bootstrap::RpcBootstrapConfig,
         commands::{FromClapArgMatches, Result},
     },
-    agave_snapshots::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     clap::{value_t, Arg, ArgMatches},
+    solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     std::sync::LazyLock,
 };
 

@@ -25,7 +25,6 @@ use {
     },
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_faucet::faucet::{self, FAUCET_PORT},
-    solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     solana_hash::Hash,
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
     solana_quic_definitions::QUIC_PORT_OFFSET,
