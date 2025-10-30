@@ -104,6 +104,7 @@ impl ProgressTracker {
             }
 
             ProgressMessage {
+                leader_state: agave_scheduler_bindings::IS_LEADER,
                 current_slot: working_bank.slot(),
                 next_leader_slot: working_bank.slot(),
                 remaining_cost_units: self.remaining_block_cost(),
@@ -116,6 +117,7 @@ impl ProgressTracker {
         } else {
             let current_slot = slot_from_tick_height(tick_height, self.ticks_per_slot);
             ProgressMessage {
+                leader_state: agave_scheduler_bindings::IS_NOT_LEADER,
                 current_slot,
                 next_leader_slot: leader_state
                     .leader_first_tick_height()

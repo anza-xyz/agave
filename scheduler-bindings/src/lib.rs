@@ -167,6 +167,11 @@ pub mod tpu_message_flags {
     pub const FROM_STAKED_NODE: u8 = 1 << 2;
 }
 
+/// Indicates the node is leader.
+pub const IS_LEADER: u8 = 1;
+/// Indicates the node is not leader.
+pub const IS_NOT_LEADER: u8 = 0;
+
 /// Message: [Agave -> Pack]
 /// Agave passes leader status to the external pack process.
 #[cfg_attr(
@@ -175,7 +180,17 @@ pub mod tpu_message_flags {
 )]
 #[repr(C)]
 pub struct ProgressMessage {
-    /// The current slot.
+    /// Indicates if node is currently leader or not.
+    /// [`IS_LEADER`] if the node is leader.
+    /// [`IS_NOT_LEADER`] if the node is not leader.
+    /// Other values should be considered invalid.
+    pub leader_state: u8,
+    /// The current slot. This along with a leader schedule is not sufficient
+    /// for determining if the node is currently leader. There is a slight
+    /// delay between when a node is supposed to begin its' leader slot, and
+    /// when a bank is ready for processing transactions as leader.
+    /// Using [`Self::leader_state`] for determining if the node is leader
+    /// and has a bank available.
     pub current_slot: u64,
     /// Next known leader slot or u64::MAX if unknown.
     /// If currently leader, this is equal to `current_slot`.
