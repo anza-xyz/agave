@@ -31,7 +31,7 @@ const MAX_FANOUT_SLOTS: u64 = 100;
 
 /// Configuration for the [`LeaderTpuCacheService`].
 #[derive(Debug, Clone)]
-pub struct LeaderTpuCacheServiceConfig {
+pub struct Config {
     /// max number of leaders to look ahead for, not necessary unique.
     pub lookahead_leaders: u8,
     /// how often to refresh cluster nodes info.
@@ -44,7 +44,7 @@ pub struct LeaderTpuCacheServiceConfig {
 /// upcoming Solana leader nodes and updates their TPU socket addresses
 /// encapsulated in [`LeaderUpdateReceiver`] for downstream consumers.
 pub struct LeaderTpuCacheService {
-    handle: Option<JoinHandle<Result<(), LeaderTpuCacheServiceError>>>,
+    handle: Option<JoinHandle<Result<(), Error>>>,
     cancel: CancellationToken,
 }
 
@@ -73,9 +73,9 @@ impl LeaderTpuCacheService {
     pub async fn run(
         rpc_client: Arc<impl ClusterInfoProvider + 'static>,
         slot_receiver: SlotReceiver,
-        config: LeaderTpuCacheServiceConfig,
+        config: Config,
         cancel: CancellationToken,
-    ) -> Result<(LeaderUpdateReceiver, Self), LeaderTpuCacheServiceError> {
+    ) -> Result<(LeaderUpdateReceiver, Self), Error> {
         let (leader_tpu_map, epoch_info, slot_leaders) = Self::initialize_state(
             rpc_client.as_ref(),
             slot_receiver.clone(),
@@ -120,7 +120,7 @@ impl LeaderTpuCacheService {
     }
 
     /// Gracefully shutdown the [`LeaderTpuCacheService`].
-    pub async fn shutdown(&mut self) -> Result<(), LeaderTpuCacheServiceError> {
+    pub async fn shutdown(&mut self) -> Result<(), Error> {
         self.cancel.cancel();
         if let Some(handle) = self.handle.take() {
             handle.await??;
@@ -133,10 +133,10 @@ impl LeaderTpuCacheService {
         mut epoch_info: EpochInfo,
         mut slot_leaders: SlotLeaders,
         mut leader_tpu_map: LeaderTpuMap,
-        config: LeaderTpuCacheServiceConfig,
+        config: Config,
         leaders_sender: watch::Sender<(Vec<SocketAddr>, bool)>,
         cancel: CancellationToken,
-    ) -> Result<(), LeaderTpuCacheServiceError> {
+    ) -> Result<(), Error> {
         let mut num_consecutive_failures: usize = 0;
         let mut refresh_tpu_interval = interval(config.refresh_nodes_info_every);
         loop {
@@ -177,7 +177,7 @@ impl LeaderTpuCacheService {
 
                     if let Err(e) = leaders_sender.send((leaders, config.lookahead_leaders != lookahead_leaders)) {
                         warn!("Unexpectedly dropped leaders_sender: {e}");
-                        return Err(LeaderTpuCacheServiceError::ChannelClosed);
+                        return Err(Error::ChannelClosed);
                     }
                 }
 
@@ -191,14 +191,14 @@ impl LeaderTpuCacheService {
     }
 
     // TODO(klykov): use impl
-    async fn update_leader_info<C: ClusterInfoProvider + Sync>(
+    async fn update_leader_info(
         estimated_current_slot: Slot,
-        rpc_client: &C,
+        rpc_client: &impl ClusterInfoProvider,
         epoch_info: &mut EpochInfo,
         slot_leaders: &mut SlotLeaders,
         num_consecutive_failures: &mut usize,
         max_consecutive_failures: usize,
-    ) -> Result<(), LeaderTpuCacheServiceError> {
+    ) -> Result<(), Error> {
         if estimated_current_slot > epoch_info.last_slot_in_epoch {
             try_update(
                 "epoch info",
@@ -271,7 +271,7 @@ impl LeaderTpuCacheService {
         rpc_client: &impl ClusterInfoProvider,
         slot_receiver: SlotReceiver,
         max_attempts: usize,
-    ) -> Result<(LeaderTpuMap, EpochInfo, SlotLeaders), LeaderTpuCacheServiceError> {
+    ) -> Result<(LeaderTpuMap, EpochInfo, SlotLeaders), Error> {
         const ATTEMPTS_SLEEP_DURATION: Duration = Duration::from_millis(1000);
         let mut leader_tpu_map = None;
         let mut epoch_info = None;
@@ -309,12 +309,12 @@ impl LeaderTpuCacheService {
             num_attempts = num_attempts.saturating_add(1);
             sleep(ATTEMPTS_SLEEP_DURATION).await;
         }
-        Err(LeaderTpuCacheServiceError::InitializationFailed)
+        Err(Error::InitializationFailed)
     }
 }
 
 #[derive(Debug, Error)]
-pub enum LeaderTpuCacheServiceError {
+pub enum Error {
     #[error(transparent)]
     RpcError(#[from] ClientError),
 
@@ -336,18 +336,13 @@ pub enum LeaderTpuCacheServiceError {
 
 #[async_trait]
 pub trait ClusterInfoProvider: Send + Sync {
-    async fn leader_tpu_map(
-        &self,
-    ) -> Result<HashMap<Pubkey, SocketAddr>, LeaderTpuCacheServiceError>;
-    async fn epoch_info(
-        &self,
-        estimated_current_slot: Slot,
-    ) -> Result<(Slot, Slot), LeaderTpuCacheServiceError>;
+    async fn leader_tpu_map(&self) -> Result<HashMap<Pubkey, SocketAddr>, Error>;
+    async fn epoch_info(&self, estimated_current_slot: Slot) -> Result<(Slot, Slot), Error>;
     async fn slot_leaders(
         &self,
         estimated_current_slot: Slot,
         slots_in_epoch: Slot,
-    ) -> Result<Vec<Pubkey>, LeaderTpuCacheServiceError>;
+    ) -> Result<Vec<Pubkey>, Error>;
 }
 
 fn get_slot_and_lookahead(
@@ -373,10 +368,10 @@ async fn try_update<F, Fut, T>(
     make_call: F,
     num_failures: &mut usize,
     max_failures: usize,
-) -> Result<(), LeaderTpuCacheServiceError>
+) -> Result<(), Error>
 where
     F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<T, LeaderTpuCacheServiceError>>,
+    Fut: Future<Output = Result<T, Error>>,
 {
     match make_call().await {
         Ok(result) => {
@@ -406,9 +401,7 @@ struct LeaderTpuMap {
 }
 
 impl LeaderTpuMap {
-    async fn new(
-        rpc_client: &impl ClusterInfoProvider,
-    ) -> Result<Self, LeaderTpuCacheServiceError> {
+    async fn new(rpc_client: &impl ClusterInfoProvider) -> Result<Self, Error> {
         let leader_tpu_map = rpc_client.leader_tpu_map().await?;
         Ok(Self {
             last_cluster_refresh: Instant::now(),
@@ -432,7 +425,7 @@ impl SlotLeaders {
         rpc_client: &impl ClusterInfoProvider,
         estimated_current_slot: Slot,
         slots_in_epoch: Slot,
-    ) -> Result<Self, LeaderTpuCacheServiceError> {
+    ) -> Result<Self, Error> {
         Ok(Self {
             first_slot: estimated_current_slot,
             leaders: rpc_client
@@ -472,7 +465,7 @@ impl EpochInfo {
     async fn new(
         rpc_client: &impl ClusterInfoProvider,
         estimated_current_slot: Slot,
-    ) -> Result<Self, LeaderTpuCacheServiceError> {
+    ) -> Result<Self, Error> {
         let (slots_in_epoch, last_slot_in_epoch) =
             rpc_client.epoch_info(estimated_current_slot).await?;
         Ok(Self {
@@ -484,20 +477,12 @@ impl EpochInfo {
 
 #[async_trait]
 impl ClusterInfoProvider for RpcClient {
-    async fn leader_tpu_map(
-        &self,
-    ) -> Result<HashMap<Pubkey, SocketAddr>, LeaderTpuCacheServiceError> {
-        let cluster_nodes = self
-            .get_cluster_nodes()
-            .await
-            .map_err(LeaderTpuCacheServiceError::RpcError)?;
+    async fn leader_tpu_map(&self) -> Result<HashMap<Pubkey, SocketAddr>, Error> {
+        let cluster_nodes = self.get_cluster_nodes().await.map_err(Error::RpcError)?;
         Ok(extract_cluster_tpu_sockets(cluster_nodes))
     }
 
-    async fn epoch_info(
-        &self,
-        estimated_current_slot: Slot,
-    ) -> Result<(Slot, Slot), LeaderTpuCacheServiceError> {
+    async fn epoch_info(&self, estimated_current_slot: Slot) -> Result<(Slot, Slot), Error> {
         match self.get_epoch_schedule().await {
             Ok(epoch_schedule) => {
                 let epoch = epoch_schedule.get_epoch(estimated_current_slot);
@@ -508,7 +493,7 @@ impl ClusterInfoProvider for RpcClient {
                 );
                 Ok((slots_in_epoch, last_slot_in_epoch))
             }
-            Err(err) => Err(LeaderTpuCacheServiceError::RpcError(err)),
+            Err(err) => Err(Error::RpcError(err)),
         }
     }
 
@@ -516,12 +501,12 @@ impl ClusterInfoProvider for RpcClient {
         &self,
         estimated_current_slot: Slot,
         slots_in_epoch: Slot,
-    ) -> Result<Vec<Pubkey>, LeaderTpuCacheServiceError> {
+    ) -> Result<Vec<Pubkey>, Error> {
         let slot_leaders = self
             .get_slot_leaders(estimated_current_slot, fanout(slots_in_epoch))
             .await;
         debug!("Fetched slot leaders from slot {estimated_current_slot} for {slots_in_epoch}. ");
-        slot_leaders.map_err(LeaderTpuCacheServiceError::RpcError)
+        slot_leaders.map_err(Error::RpcError)
     }
 }
 

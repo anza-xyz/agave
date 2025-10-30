@@ -1,7 +1,8 @@
 //! Error for [`NodeAddressService`].
 use {
     crate::node_address_service::{
-        leader_tpu_cache_service::LeaderTpuCacheServiceError, slot_receiver::SlotReceiverError,
+        leader_tpu_cache_service::Error as LeaderTpuCacheServiceError,
+        slot_receiver::SlotReceiverError,
         websocket_slot_update_service::WebsocketSlotUpdateServiceError,
     },
     solana_rpc_client_api::client_error::Error as ClientError,

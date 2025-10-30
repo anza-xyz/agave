@@ -23,7 +23,7 @@ pub mod slot_receiver;
 pub mod websocket_slot_update_service;
 pub use {
     error::NodeAddressServiceError,
-    leader_tpu_cache_service::{LeaderTpuCacheService, LeaderTpuCacheServiceConfig},
+    leader_tpu_cache_service::{Config as LeaderTpuCacheServiceConfig, LeaderTpuCacheService},
     recent_leader_slots::RecentLeaderSlots,
     slot_receiver::SlotReceiver,
     websocket_slot_update_service::WebsocketSlotUpdateService,
