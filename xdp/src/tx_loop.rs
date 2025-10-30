@@ -118,7 +118,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
     // How long we sleep waiting to receive shreds from the channel.
     const RECV_TIMEOUT: Duration = Duration::from_nanos(1000);
 
-    const MAX_TIMEOUTS: usize = 500;
+    const MAX_TIMEOUTS: usize = 1;
 
     // We try to collect _at least_ BATCH_SIZE packets before queueing into the NIC. This is to
     // avoid introducing too much per-packet overhead and giving the NIC time to complete work
