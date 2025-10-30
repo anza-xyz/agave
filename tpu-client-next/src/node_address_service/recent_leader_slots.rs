@@ -9,12 +9,6 @@ const MAX_SLOT_SKIP_DISTANCE: u64 = 48;
 
 const RECENT_LEADER_SLOTS_CAPACITY: usize = 48;
 
-#[derive(Debug, Clone)]
-struct SlotEvent {
-    slot: Slot,
-    is_start: bool,
-}
-
 #[derive(Debug)]
 pub struct RecentLeaderSlots(VecDeque<SlotEvent>);
 
@@ -32,20 +26,14 @@ impl Default for RecentLeaderSlots {
 
 impl RecentLeaderSlots {
     pub fn record_slot_start(&mut self, current_slot: Slot) {
-        self.0.push_back(SlotEvent {
-            slot: current_slot,
-            is_start: true,
-        });
+        self.0.push_back(SlotEvent::Start(current_slot));
         while self.0.len() > RECENT_LEADER_SLOTS_CAPACITY {
             self.0.pop_front();
         }
     }
 
     pub fn record_slot_end(&mut self, current_slot: Slot) {
-        self.0.push_back(SlotEvent {
-            slot: current_slot,
-            is_start: false,
-        });
+        self.0.push_back(SlotEvent::End(current_slot));
         while self.0.len() > RECENT_LEADER_SLOTS_CAPACITY {
             self.0.pop_front();
         }
@@ -57,36 +45,54 @@ impl RecentLeaderSlots {
         let mut recent_slots: Vec<SlotEvent> = self.0.iter().cloned().collect();
         assert!(!recent_slots.is_empty());
         recent_slots.sort_by(|a, b| {
-            a.slot
-                .cmp(&b.slot)
-                .then_with(|| b.is_start.cmp(&a.is_start)) // true before false
+            a.slot()
+                .cmp(&b.slot())
+                .then_with(|| b.is_start().cmp(&a.is_start())) // true before false
         });
 
         // Validators can broadcast invalid blocks that are far in the future
         // so check if the current slot is in line with the recent progression.
         let max_index = recent_slots.len() - 1;
         let median_index = max_index / 2;
-        let median_recent_slot = recent_slots[median_index].slot;
+        let median_recent_slot = recent_slots[median_index].slot();
         let expected_current_slot = median_recent_slot + (max_index - median_index) as u64;
         let max_reasonable_current_slot = expected_current_slot + MAX_SLOT_SKIP_DISTANCE;
 
         let idx = recent_slots
             .iter()
-            .rposition(|e| e.slot <= max_reasonable_current_slot)
+            .rposition(|e| e.slot() <= max_reasonable_current_slot)
             .expect("no reasonable slot");
 
         let slot_event = &recent_slots[idx];
-        if slot_event.is_start {
+        if slot_event.is_start() {
             if let Some(prev_event) = idx.checked_sub(1).and_then(|i| recent_slots.get(i)) {
-                if prev_event.is_start {
+                if prev_event.is_start() {
                     debug!("recent_slots = {recent_slots:?}, idx = {idx:?}");
-                    return EstimatedSlot::Multiple([prev_event.slot, slot_event.slot]);
+                    return EstimatedSlot::Multiple([prev_event.slot(), slot_event.slot()]);
                 }
             }
-            EstimatedSlot::Single(slot_event.slot)
+            EstimatedSlot::Single(slot_event.slot())
         } else {
-            EstimatedSlot::Single(slot_event.slot.saturating_add(1))
+            EstimatedSlot::Single(slot_event.slot().saturating_add(1))
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum SlotEvent {
+    Start(Slot),
+    End(Slot),
+}
+
+impl SlotEvent {
+    fn slot(&self) -> Slot {
+        match self {
+            SlotEvent::Start(slot) | SlotEvent::End(slot) => *slot,
+        }
+    }
+
+    fn is_start(&self) -> bool {
+        matches!(self, SlotEvent::Start(_))
     }
 }
 
@@ -102,15 +108,8 @@ mod tests {
             let mut events = VecDeque::with_capacity(recent_slots.len());
 
             for slot in recent_slots {
-                events.push_back(SlotEvent {
-                    slot,
-                    is_start: true,
-                });
-
-                events.push_back(SlotEvent {
-                    slot,
-                    is_start: false,
-                });
+                events.push_back(SlotEvent::Start(slot));
+                events.push_back(SlotEvent::End(slot));
             }
 
             Self(events)
