@@ -319,7 +319,9 @@ pub fn execute(
     if let Ok(bins) = value_t!(matches, "accounts_index_bins", usize) {
         accounts_index_config.bins = Some(bins);
     }
-    if let Ok(num_initial_accounts) = value_t!(matches, "accounts_index_initial_accounts", usize) {
+    if let Ok(num_initial_accounts) =
+        value_t!(matches, "accounts_index_initial_accounts_count", usize)
+    {
         accounts_index_config.num_initial_accounts = Some(num_initial_accounts);
     }
 

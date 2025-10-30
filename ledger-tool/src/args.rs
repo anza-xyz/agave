@@ -53,8 +53,8 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .validator(is_pow2)
             .takes_value(true)
             .help("Number of bins to divide the accounts index into"),
-        Arg::with_name("accounts_index_initial_accounts")
-            .long("accounts-index-initial-accounts")
+        Arg::with_name("accounts_index_initial_accounts_count")
+            .long("accounts-index-initial-accounts-count")
             .value_name("NUMBER")
             .validator(is_parsable::<usize>)
             .takes_value(true)
@@ -249,7 +249,7 @@ pub fn get_accounts_db_config(
     let ledger_tool_ledger_path = ledger_path.join(LEDGER_TOOL_DIRECTORY);
 
     let accounts_index_bins = value_t!(arg_matches, "accounts_index_bins", usize).ok();
-    let num_initial_accounts = value_t!(arg_matches, "accounts_index_initial_accounts", usize).ok();
+    let num_initial_accounts = value_t!(arg_matches, "accounts_index_initial_accounts_count", usize).ok();
     let accounts_index_index_limit_mb = if !arg_matches.is_present("enable_accounts_disk_index") {
         IndexLimitMb::InMemOnly
     } else {

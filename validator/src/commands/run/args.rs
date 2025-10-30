@@ -1177,8 +1177,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Number of bins to divide the accounts index into"),
     )
     .arg(
-        Arg::with_name("accounts_index_initial_accounts")
-            .long("accounts-index-initial-accounts")
+        Arg::with_name("accounts_index_initial_accounts_count")
+            .long("accounts-index-initial-accounts-count")
             .value_name("NUMBER")
             .validator(is_parsable::<usize>)
             .takes_value(true)
