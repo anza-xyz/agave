@@ -2251,9 +2251,7 @@ mod tests {
     fn test_new_with_num_initial_accounts(num_initial_accounts: Option<usize>) {
         let config = AccountsIndexConfig::default();
 
-        // Test with different bin counts: 2, 4, 8
         let bin_counts = [2, 4, 8];
-        let mut total_capacities = Vec::new();
 
         for bin_count in bin_counts {
             let holder = Arc::new(BucketMapHolder::new(bin_count, &config, 1));
@@ -2265,10 +2263,8 @@ mod tests {
                 total_capacity += accounts_index.map_internal.read().unwrap().capacity();
             }
 
-            total_capacities.push(total_capacity);
-
-            if num_initial_accounts.is_some() {
-                assert!(total_capacity > num_initial_accounts.unwrap());
+            if let Some(num_initial_accounts) = num_initial_accounts {
+                assert!(total_capacity > num_initial_accounts);
             } else {
                 assert_eq!(total_capacity, 0);
             }
