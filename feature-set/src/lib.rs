@@ -165,6 +165,7 @@ impl FeatureSet {
                 .is_active(&disable_zk_elgamal_proof_program::id()),
             reenable_zk_elgamal_proof_program: self
                 .is_active(&reenable_zk_elgamal_proof_program::id()),
+            delay_commission_updates: self.is_active(&delay_commission_updates::id()),
             raise_cpi_nesting_limit_to_8: self.is_active(&raise_cpi_nesting_limit_to_8::id()),
             provide_instruction_data_offset_in_vm_r2: self
                 .is_active(&provide_instruction_data_offset_in_vm_r2::id()),
@@ -1138,6 +1139,10 @@ pub mod raise_block_limits_to_100m {
 
 pub mod raise_account_cu_limit {
     solana_pubkey::declare_id!("htsptAwi2yRoZH83SKaUXykeZGtZHgxkS2QwW1pssR8");
+}
+
+pub mod delay_commission_updates {
+    solana_pubkey::declare_id!("BRUoCu28xjjPkDcNm7iY9a8LqgftZko99ioXz84wivXh");
 }
 
 pub mod raise_cpi_nesting_limit_to_8 {
@@ -2134,6 +2139,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             switch_to_chacha8_turbine::id(),
             "SIMD-0332: Reduce ChaCha rounds for Turbine from 20 to 8",
+        ),
+        (
+            delay_commission_updates::id(),
+            "SIMD-0249: Delay Commission Updates",
         ),
         (
             increase_cpi_account_info_limit::id(),
