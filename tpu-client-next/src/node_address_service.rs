@@ -4,7 +4,7 @@
 //!
 use {
     crate::{
-        leader_updater::LeaderUpdater,
+        leader_updater::LeaderUpdater, logging::error,
         node_address_service::leader_tpu_cache_service::LeaderUpdateReceiver,
     },
     async_trait::async_trait,
@@ -12,6 +12,7 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     std::{net::SocketAddr, sync::Arc},
+    tokio::join,
     tokio_util::sync::CancellationToken,
 };
 
@@ -65,8 +66,12 @@ impl NodeAddressService {
     }
 
     pub async fn shutdown(&mut self) -> Result<(), NodeAddressServiceError> {
-        self.slot_update_service.shutdown().await?;
-        self.leader_cache_service.shutdown().await?;
+        let (slot_update_service_res, leader_cache_service_res) = join!(
+            self.slot_update_service.shutdown(),
+            self.leader_cache_service.shutdown(),
+        );
+        slot_update_service_res?;
+        leader_cache_service_res?;
         Ok(())
     }
 
@@ -77,11 +82,13 @@ impl NodeAddressService {
 
 #[async_trait]
 impl LeaderUpdater for NodeAddressService {
-    fn next_leaders(&mut self, lookahead_leaders: usize) -> Vec<SocketAddr> {
-        self.leaders_receiver.next_leaders(lookahead_leaders)
+    fn next_leaders(&mut self, lookahead: usize) -> Vec<SocketAddr> {
+        self.leaders_receiver.next_leaders(lookahead)
     }
 
     async fn stop(&mut self) {
-        self.shutdown().await.ok();
+        if let Err(e) = self.shutdown().await {
+            error!("Failed to shutdown NodeAddressService: {e}");
+        }
     }
 }

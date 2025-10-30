@@ -33,7 +33,7 @@ const MAX_FANOUT_SLOTS: u64 = 100;
 #[derive(Debug, Clone)]
 pub struct LeaderTpuCacheServiceConfig {
     /// max number of leaders to look ahead for, not necessary unique.
-    pub lookahead_leaders: u64,
+    pub lookahead_leaders: u8,
     /// how often to refresh cluster nodes info.
     pub refresh_nodes_info_every: Duration,
     /// maximum number of consecutive failures to tolerate.
@@ -56,6 +56,7 @@ pub struct LeaderUpdateReceiver {
 }
 
 impl LeaderUpdateReceiver {
+    // TODO(klykov): why next_?
     pub fn next_leaders(&self, lookahead_leaders: usize) -> Vec<SocketAddr> {
         let (leaders, extended) = self.receiver.borrow().clone();
         let lookahead_leaders = if extended {
@@ -71,11 +72,11 @@ impl LeaderTpuCacheService {
     /// Run the [`LeaderTpuCacheService`], returning receiver and the service.
     pub async fn run(
         rpc_client: Arc<impl ClusterInfoProvider + 'static>,
-        mut slot_receiver: SlotReceiver,
+        slot_receiver: SlotReceiver,
         config: LeaderTpuCacheServiceConfig,
         cancel: CancellationToken,
     ) -> Result<(LeaderUpdateReceiver, Self), LeaderTpuCacheServiceError> {
-        let (mut leader_tpu_map, mut epoch_info, mut slot_leaders) = Self::initialize_state(
+        let (leader_tpu_map, epoch_info, slot_leaders) = Self::initialize_state(
             rpc_client.as_ref(),
             slot_receiver.clone(),
             config.max_consecutive_failures,
@@ -84,7 +85,7 @@ impl LeaderTpuCacheService {
         let (current_slot, lookahead_leaders) = get_slot_and_lookahead(
             slot_receiver.slot(),
             &slot_leaders,
-            config.lookahead_leaders,
+            config.lookahead_leaders as u8,
         );
         let leaders = Self::leader_sockets(
             current_slot,
@@ -96,72 +97,16 @@ impl LeaderTpuCacheService {
         let (leaders_sender, leaders_receiver) =
             watch::channel((leaders, config.lookahead_leaders != lookahead_leaders));
 
-        let cancel_clone = cancel.clone();
-        let main_loop = async move {
-            let mut num_consequent_failures: usize = 0;
-            let mut refresh_tpu_interval = interval(config.refresh_nodes_info_every);
-            loop {
-                tokio::select! {
-                    _ = refresh_tpu_interval.tick() => {
-                        try_update(
-                            "cluster TPU ports",
-                            &mut leader_tpu_map,
-                            || LeaderTpuMap::new(rpc_client.as_ref()),
-                            &mut num_consequent_failures,
-                            config.max_consecutive_failures,
-                        ).await?;
-                        debug!("Updated cluster TPU ports");
-                    }
-                    res = slot_receiver.changed() => {
-                        debug!("Changed slot receiver");
-                        if let Err(e) = res {
-                            warn!("Slot receiver channel closed: {e}");
-                            break;
-                        }
-
-                        let estimated_current_slot = slot_receiver.slot().first_slot();
-                        if estimated_current_slot > epoch_info.last_slot_in_epoch {
-                            try_update(
-                                "epoch info",
-                                &mut epoch_info,
-                                || EpochInfo::new(rpc_client.as_ref(), estimated_current_slot),
-                                &mut num_consequent_failures,
-                                config.max_consecutive_failures,
-                            ).await?;
-                        }
-                        if estimated_current_slot > slot_leaders.last_slot().saturating_sub(MAX_FANOUT_SLOTS) {
-                            try_update(
-                                "slot leaders",
-                                &mut slot_leaders,
-                                || SlotLeaders::new(rpc_client.as_ref(), estimated_current_slot, epoch_info.slots_in_epoch),
-                                &mut num_consequent_failures,
-                                config.max_consecutive_failures,
-                            ).await?;
-                        }
-
-                        let (current_slot, lookahead_leaders) = get_slot_and_lookahead(
-                            slot_receiver.slot(),
-                            &slot_leaders,
-                            config.lookahead_leaders,
-                        );
-                        let leaders = Self::leader_sockets(current_slot, lookahead_leaders, &slot_leaders, &leader_tpu_map);
-
-                        if let Err(e) = leaders_sender.send((leaders, config.lookahead_leaders != lookahead_leaders)) {
-                            warn!("Unexpectedly dropped leaders_sender: {e}");
-                            return Err(LeaderTpuCacheServiceError::ChannelClosed);
-                        }
-                    }
-
-                    _ = cancel.cancelled() => {
-                        info!("Cancel signal received, stopping LeaderTpuCacheService.");
-                        break;
-                    }
-                }
-            }
-            Ok(())
-        };
-
-        let handle = tokio::spawn(main_loop);
+        let handle = tokio::spawn(Self::run_loop(
+            rpc_client,
+            slot_receiver,
+            epoch_info,
+            slot_leaders,
+            leader_tpu_map,
+            config,
+            leaders_sender,
+            cancel.clone(),
+        ));
 
         Ok((
             LeaderUpdateReceiver {
@@ -169,7 +114,7 @@ impl LeaderTpuCacheService {
             },
             Self {
                 handle: Some(handle),
-                cancel: cancel_clone,
+                cancel,
             },
         ))
     }
@@ -182,16 +127,116 @@ impl LeaderTpuCacheService {
         }
         Ok(())
     }
+    async fn run_loop(
+        rpc_client: Arc<impl ClusterInfoProvider + 'static>,
+        mut slot_receiver: SlotReceiver,
+        mut epoch_info: EpochInfo,
+        mut slot_leaders: SlotLeaders,
+        mut leader_tpu_map: LeaderTpuMap,
+        config: LeaderTpuCacheServiceConfig,
+        leaders_sender: watch::Sender<(Vec<SocketAddr>, bool)>,
+        cancel: CancellationToken,
+    ) -> Result<(), LeaderTpuCacheServiceError> {
+        let mut num_consecutive_failures: usize = 0;
+        let mut refresh_tpu_interval = interval(config.refresh_nodes_info_every);
+        loop {
+            tokio::select! {
+                _ = refresh_tpu_interval.tick() => {
+                    try_update(
+                        "cluster TPU ports",
+                        &mut leader_tpu_map,
+                        || LeaderTpuMap::new(rpc_client.as_ref()),
+                        &mut num_consecutive_failures,
+                        config.max_consecutive_failures,
+                    ).await?;
+                    debug!("Updated cluster TPU ports");
+                }
+                res = slot_receiver.changed() => {
+                    debug!("Changed slot receiver");
+                    if let Err(e) = res {
+                        warn!("Slot receiver channel closed: {e}");
+                        break;
+                    }
+
+                    let estimated_current_slot = slot_receiver.slot().first_slot();
+                    Self::update_leader_info(
+                        estimated_current_slot,
+                        rpc_client.as_ref(),
+                        &mut epoch_info,
+                        &mut slot_leaders,
+                        &mut num_consecutive_failures,
+                        config.max_consecutive_failures,
+                    ).await?;
+
+                    let (current_slot, lookahead_leaders) = get_slot_and_lookahead(
+                        slot_receiver.slot(),
+                        &slot_leaders,
+                        config.lookahead_leaders,
+                    );
+                    let leaders = Self::leader_sockets(current_slot, lookahead_leaders, &slot_leaders, &leader_tpu_map);
+
+                    if let Err(e) = leaders_sender.send((leaders, config.lookahead_leaders != lookahead_leaders)) {
+                        warn!("Unexpectedly dropped leaders_sender: {e}");
+                        return Err(LeaderTpuCacheServiceError::ChannelClosed);
+                    }
+                }
+
+                _ = cancel.cancelled() => {
+                    info!("Cancel signal received, stopping LeaderTpuCacheService.");
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // TODO(klykov): use impl
+    async fn update_leader_info<C: ClusterInfoProvider + Sync>(
+        estimated_current_slot: Slot,
+        rpc_client: &C,
+        epoch_info: &mut EpochInfo,
+        slot_leaders: &mut SlotLeaders,
+        num_consecutive_failures: &mut usize,
+        max_consecutive_failures: usize,
+    ) -> Result<(), LeaderTpuCacheServiceError> {
+        if estimated_current_slot > epoch_info.last_slot_in_epoch {
+            try_update(
+                "epoch info",
+                epoch_info,
+                || EpochInfo::new(rpc_client, estimated_current_slot),
+                num_consecutive_failures,
+                max_consecutive_failures,
+            )
+            .await?;
+        }
+        if estimated_current_slot.saturating_add(MAX_FANOUT_SLOTS) > slot_leaders.last_slot() {
+            try_update(
+                "slot leaders",
+                slot_leaders,
+                || {
+                    SlotLeaders::new(
+                        rpc_client,
+                        estimated_current_slot,
+                        epoch_info.slots_in_epoch,
+                    )
+                },
+                num_consecutive_failures,
+                max_consecutive_failures,
+            )
+            .await?;
+        }
+        Ok(())
+    }
 
     /// Get the TPU sockets for the current and upcoming leaders according to
     /// fanout size.
     fn leader_sockets(
         estimated_current_slot: Slot,
-        lookahead_leaders: u64,
+        lookahead_leaders: u8,
         slot_leaders: &SlotLeaders,
         leader_tpu_map: &LeaderTpuMap,
     ) -> Vec<SocketAddr> {
-        let fanout_slots = lookahead_leaders.saturating_mul(NUM_CONSECUTIVE_LEADER_SLOTS);
+        let fanout_slots = (lookahead_leaders as u64).saturating_mul(NUM_CONSECUTIVE_LEADER_SLOTS);
         let mut leader_sockets = Vec::with_capacity(lookahead_leaders as usize);
         // `first_slot` might have been advanced since caller last read the
         // `estimated_current_slot` value. Take the greater of the two values to
@@ -254,20 +299,17 @@ impl LeaderTpuCacheService {
                 }
             }
             if leader_tpu_map.is_some() && epoch_info.is_some() && slot_leaders.is_some() {
-                break;
+                return Ok((
+                    leader_tpu_map.take().unwrap(),
+                    epoch_info.take().unwrap(),
+                    slot_leaders.take().unwrap(),
+                ));
             }
+
             num_attempts = num_attempts.saturating_add(1);
             sleep(ATTEMPTS_SLEEP_DURATION).await;
         }
-        if num_attempts >= max_attempts {
-            Err(LeaderTpuCacheServiceError::InitializationFailed)
-        } else {
-            Ok((
-                leader_tpu_map.unwrap(),
-                epoch_info.unwrap(),
-                slot_leaders.unwrap(),
-            ))
-        }
+        Err(LeaderTpuCacheServiceError::InitializationFailed)
     }
 }
 
@@ -311,8 +353,8 @@ pub trait ClusterInfoProvider: Send + Sync {
 fn get_slot_and_lookahead(
     estimated_slot: EstimatedSlot,
     slot_leaders: &SlotLeaders,
-    lookahead_leaders: u64,
-) -> (Slot, u64) {
+    lookahead_leaders: u8,
+) -> (Slot, u8) {
     match estimated_slot {
         EstimatedSlot::Single(slot) => {
             if slot_leaders.is_last_slot_in_window(slot).unwrap_or(false) {
@@ -404,25 +446,19 @@ impl SlotLeaders {
     }
 
     fn slot_leader(&self, slot: Slot) -> Option<&Pubkey> {
-        if slot >= self.first_slot {
-            let index = slot - self.first_slot;
-            self.leaders.get(index as usize)
-        } else {
-            None
-        }
+        slot.checked_sub(self.first_slot)
+            .and_then(|index| self.leaders.get(index as usize))
     }
 
     fn is_last_slot_in_window(&self, slot: Slot) -> Option<bool> {
-        if slot >= self.first_slot {
-            let index = (slot - self.first_slot) as usize;
+        slot.checked_sub(self.first_slot).and_then(|index| {
+            let index = index as usize;
             if index + 1 < self.leaders.len() {
                 Some(self.leaders[index] != self.leaders[index + 1])
             } else {
                 None
             }
-        } else {
-            None
-        }
+        })
     }
 }
 
@@ -451,11 +487,11 @@ impl ClusterInfoProvider for RpcClient {
     async fn leader_tpu_map(
         &self,
     ) -> Result<HashMap<Pubkey, SocketAddr>, LeaderTpuCacheServiceError> {
-        let cluster_nodes = self.get_cluster_nodes().await;
-        match cluster_nodes {
-            Ok(cluster_nodes) => Ok(extract_cluster_tpu_sockets(cluster_nodes)),
-            Err(err) => Err(LeaderTpuCacheServiceError::RpcError(err)),
-        }
+        let cluster_nodes = self
+            .get_cluster_nodes()
+            .await
+            .map_err(LeaderTpuCacheServiceError::RpcError)?;
+        Ok(extract_cluster_tpu_sockets(cluster_nodes))
     }
 
     async fn epoch_info(
@@ -485,10 +521,7 @@ impl ClusterInfoProvider for RpcClient {
             .get_slot_leaders(estimated_current_slot, fanout(slots_in_epoch))
             .await;
         debug!("Fetched slot leaders from slot {estimated_current_slot} for {slots_in_epoch}. ");
-        match slot_leaders {
-            Ok(slot_leaders) => Ok(slot_leaders),
-            Err(err) => Err(LeaderTpuCacheServiceError::RpcError(err)),
-        }
+        slot_leaders.map_err(LeaderTpuCacheServiceError::RpcError)
     }
 }
 

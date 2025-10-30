@@ -53,6 +53,7 @@ pub struct SlotReceiver {
     receiver: watch::Receiver<EstimatedSlot>,
 }
 
+//TODO(klykov): maybe use watch channel directly?
 impl SlotReceiver {
     pub fn new(receiver: watch::Receiver<EstimatedSlot>) -> Self {
         Self { receiver }
