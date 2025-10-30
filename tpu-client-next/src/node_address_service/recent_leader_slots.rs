@@ -1,6 +1,8 @@
 //! This module provides [`RecentLeaderSlots`] to track recent leader slots.
 use {
-    crate::node_address_service::slot_receiver::EstimatedSlot, log::*, solana_clock::Slot,
+    crate::node_address_service::{slot_receiver::EstimatedSlot, SlotEvent},
+    log::*,
+    solana_clock::Slot,
     std::collections::VecDeque,
 };
 
@@ -75,24 +77,6 @@ impl RecentLeaderSlots {
         } else {
             EstimatedSlot::Single(slot_event.slot().saturating_add(1))
         }
-    }
-}
-
-#[derive(Debug, Clone)]
-enum SlotEvent {
-    Start(Slot),
-    End(Slot),
-}
-
-impl SlotEvent {
-    fn slot(&self) -> Slot {
-        match self {
-            SlotEvent::Start(slot) | SlotEvent::End(slot) => *slot,
-        }
-    }
-
-    fn is_start(&self) -> bool {
-        matches!(self, SlotEvent::Start(_))
     }
 }
 

@@ -4,39 +4,47 @@
 //!
 use {
     crate::{
-        leader_updater::LeaderUpdater, logging::error,
-        node_address_service::leader_tpu_cache_service::LeaderUpdateReceiver,
+        leader_updater::LeaderUpdater,
+        logging::error,
+        node_address_service::{
+            leader_tpu_cache_service::{Error as LeaderTpuCacheServiceError, LeaderUpdateReceiver},
+            slot_receiver::SlotReceiverError,
+            slot_update_service::Error as SlotUpdateServiceError,
+        },
     },
     async_trait::async_trait,
+    futures::StreamExt,
     solana_clock::Slot,
     solana_commitment_config::CommitmentConfig,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
+    solana_rpc_client_api::client_error::Error as ClientError,
     std::{net::SocketAddr, sync::Arc},
+    thiserror::Error,
     tokio::join,
     tokio_util::sync::CancellationToken,
 };
 
-pub mod error;
 pub mod leader_tpu_cache_service;
 pub mod recent_leader_slots;
+pub mod slot_event;
 pub mod slot_receiver;
-pub mod websocket_slot_update_service;
+pub mod slot_update_service;
 pub use {
-    error::NodeAddressServiceError,
     leader_tpu_cache_service::{Config as LeaderTpuCacheServiceConfig, LeaderTpuCacheService},
     recent_leader_slots::RecentLeaderSlots,
+    slot_event::SlotEvent,
     slot_receiver::SlotReceiver,
-    websocket_slot_update_service::WebsocketSlotUpdateService,
+    slot_update_service::SlotUpdateService,
 };
 
 /// [`NodeAddressService`] is a convenience wrapper for
-/// [`WebsocketSlotUpdateService`] and [`LeaderTpuCacheService`] to track
+/// [`SlotUpdateService`] and [`LeaderTpuCacheService`] to track
 /// upcoming leaders and maintains an up-to-date mapping of leader id to TPU
 /// socket address.
 pub struct NodeAddressService {
     leaders_receiver: LeaderUpdateReceiver,
     slot_receiver: SlotReceiver,
-    slot_update_service: WebsocketSlotUpdateService,
+    slot_update_service: SlotUpdateService,
     leader_cache_service: LeaderTpuCacheService,
 }
 
@@ -44,7 +52,7 @@ impl NodeAddressService {
     /// Run the [`NodeAddressService`].
     pub async fn run(
         rpc_client: Arc<RpcClient>,
-        websocket_url: String,
+        slot_update_stream: impl StreamExt<Item = SlotEvent> + Send + 'static,
         config: LeaderTpuCacheServiceConfig,
         cancel: CancellationToken,
     ) -> Result<Self, NodeAddressServiceError> {
@@ -53,7 +61,7 @@ impl NodeAddressService {
             .await?;
 
         let (slot_receiver, slot_update_service) =
-            WebsocketSlotUpdateService::run(start_slot, websocket_url, cancel.clone())?;
+            SlotUpdateService::run(start_slot, slot_update_stream, cancel.clone())?;
         let (leaders_receiver, leader_cache_service) =
             LeaderTpuCacheService::run(rpc_client, slot_receiver.clone(), config, cancel).await?;
 
@@ -91,4 +99,19 @@ impl LeaderUpdater for NodeAddressService {
             error!("Failed to shutdown NodeAddressService: {e}");
         }
     }
+}
+
+#[derive(Debug, Error)]
+pub enum NodeAddressServiceError {
+    #[error(transparent)]
+    RpcError(#[from] ClientError),
+
+    #[error(transparent)]
+    SlotReceiverError(#[from] SlotReceiverError),
+
+    #[error(transparent)]
+    WebsocketSlotUpdateServiceError(#[from] SlotUpdateServiceError),
+
+    #[error(transparent)]
+    LeaderTpuCacheServiceError(#[from] LeaderTpuCacheServiceError),
 }

@@ -1,3 +1,8 @@
+#[allow(deprecated)]
+// Reason: This deprecated function internally creates a
+// PinnedLeaderUpdater. This structure we want to move to tests as soon as
+// we can remove create_leader_updater function.
+use solana_tpu_client_next::leader_updater::create_leader_updater;
 use {
     crossbeam_channel::Receiver as CrossbeamReceiver,
     futures::future::BoxFuture,
@@ -42,12 +47,6 @@ use {
     },
     tokio_util::sync::CancellationToken,
 };
-
-#[allow(deprecated)]
-// Reason: This deprecated function internally creates a
-// PinnedLeaderUpdater. This structure we want to move to tests as soon as
-// we can remove create_leader_updater function.
-use solana_tpu_client_next::leader_updater::create_leader_updater;
 
 fn test_config(stake_identity: Option<Keypair>) -> ConnectionWorkersSchedulerConfig {
     let address = SocketAddr::new(
