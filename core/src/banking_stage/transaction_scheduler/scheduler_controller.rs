@@ -520,7 +520,7 @@ mod tests {
         genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0);
         let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
 
-        let shared_leader_state = SharedLeaderState::new(0, None);
+        let shared_leader_state = SharedLeaderState::new(0, None, None);
 
         let decision_maker = DecisionMaker::new(shared_leader_state.clone());
 
@@ -671,6 +671,7 @@ mod tests {
             Some(bank.clone()),
             bank.tick_height(),
             None,
+            None,
         )));
 
         // Send packet batch to the scheduler - should do nothing until we become the leader.
@@ -728,6 +729,7 @@ mod tests {
         shared_leader_state.store(Arc::new(LeaderState::new(
             Some(bank.clone()),
             bank.tick_height(),
+            None,
             None,
         )));
 
@@ -789,6 +791,7 @@ mod tests {
         shared_leader_state.store(Arc::new(LeaderState::new(
             Some(bank.clone()),
             bank.tick_height(),
+            None,
             None,
         )));
 
@@ -855,6 +858,7 @@ mod tests {
         shared_leader_state.store(Arc::new(LeaderState::new(
             Some(bank.clone()),
             bank.tick_height(),
+            None,
             None,
         )));
 
@@ -925,6 +929,7 @@ mod tests {
         shared_leader_state.store(Arc::new(LeaderState::new(
             Some(bank.clone()),
             bank.tick_height(),
+            None,
             None,
         )));
 

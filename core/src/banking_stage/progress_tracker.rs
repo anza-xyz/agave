@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn test_progress_tracker_produce_progress_message() {
-        let mut shared_leader_state = SharedLeaderState::new(0, None);
+        let mut shared_leader_state = SharedLeaderState::new(0, None, None);
         let ticks_per_slot = DEFAULT_TICKS_PER_SLOT;
 
         let mut progress_tracker =
@@ -176,7 +176,12 @@ mod tests {
         assert_eq!(message.next_leader_slot, u64::MAX);
 
         let expected_tick_height = 2 * ticks_per_slot;
-        shared_leader_state.store(Arc::new(LeaderState::new(None, expected_tick_height, None)));
+        shared_leader_state.store(Arc::new(LeaderState::new(
+            None,
+            expected_tick_height,
+            None,
+            None,
+        )));
         let (message, tick_height) = progress_tracker.produce_progress_message();
         assert_eq!(tick_height, expected_tick_height);
         assert_eq!(message.current_slot, 2);
@@ -187,6 +192,7 @@ mod tests {
             None,
             expected_tick_height,
             Some(4 * ticks_per_slot),
+            Some((4, 8)),
         )));
         let (message, tick_height) = progress_tracker.produce_progress_message();
         assert_eq!(tick_height, expected_tick_height);
@@ -201,6 +207,7 @@ mod tests {
             Some(bank.clone()),
             bank.tick_height(),
             Some(4 * ticks_per_slot),
+            Some((4, 8)),
         )));
 
         assert!(!bank.is_complete());
@@ -216,6 +223,7 @@ mod tests {
             Some(bank.clone()),
             bank.tick_height(),
             Some(4 * ticks_per_slot),
+            Some((4, 8)),
         )));
         let (message, tick_height) = progress_tracker.produce_progress_message();
         assert_eq!(tick_height, bank.tick_height());
@@ -228,7 +236,7 @@ mod tests {
     fn test_progress_tracker_remaining_block_cost() {
         let mut progress_tracker = ProgressTracker::new(
             Arc::default(),
-            SharedLeaderState::new(0, None),
+            SharedLeaderState::new(0, None, None),
             DEFAULT_TICKS_PER_SLOT,
         );
 

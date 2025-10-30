@@ -1687,7 +1687,7 @@ mod tests {
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
-        let shared_leader_state = SharedLeaderState::new(0, None);
+        let shared_leader_state = SharedLeaderState::new(0, None, None);
 
         let (consume_sender, consume_receiver) = unbounded();
         let (consumed_sender, consumed_receiver) = unbounded();
@@ -1781,6 +1781,7 @@ mod tests {
             Some(bank.clone()),
             bank.tick_height(),
             None,
+            None,
         )));
         record_receiver.restart(bank.bank_id());
 
@@ -1833,6 +1834,7 @@ mod tests {
         shared_leader_state.store(Arc::new(LeaderState::new(
             Some(bank.clone()),
             bank.tick_height(),
+            None,
             None,
         )));
         record_receiver.restart(bank.bank_id());
@@ -1897,6 +1899,7 @@ mod tests {
         shared_leader_state.store(Arc::new(LeaderState::new(
             Some(bank.clone()),
             bank.tick_height(),
+            None,
             None,
         )));
         record_receiver.restart(bank.bank_id());
@@ -1975,6 +1978,7 @@ mod tests {
         shared_leader_state.store(Arc::new(LeaderState::new(
             Some(bank.clone()),
             bank.tick_height(),
+            None,
             None,
         )));
         record_receiver.restart(bank.bank_id());
