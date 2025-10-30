@@ -198,6 +198,7 @@ pub(crate) mod external {
             resolved_transaction_view::ResolvedTransactionView,
             transaction_view::SanitizedTransactionView,
         },
+        solana_clock::Slot,
         solana_cost_model::cost_model::CostModel,
         solana_message::v0::LoadedAddresses,
         solana_pubkey::Pubkey,
@@ -487,75 +488,70 @@ pub(crate) mod external {
             let mut resolved_pubkeys = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
 
             for tx in batch.iter() {
-                let Ok(view) = SanitizedTransactionView::try_new_sanitized(
+                resolved_pubkeys.push(self.resolve_transaction_ptr(
                     tx,
                     enable_static_instruction_limit,
-                ) else {
-                    resolved_pubkeys.push(Err(()));
-                    continue;
-                };
-
-                let Ok((maybe_loaded_addresses, deactivation_slot)) =
-                    load_addresses_for_view(&view, bank)
-                else {
-                    resolved_pubkeys.push(Err(()));
-                    continue;
-                };
-
-                // There are 3 cases here:
-                // 1. None - Tx format does not support ATL
-                // 2. Some(empty) - V0 Tx with no ATL
-                // 3. Some(keys) - V0 Tx with ATL
-                // Only in case 3 will we create a shared allocation and copy keys.
-                match maybe_loaded_addresses {
-                    Some(loaded_addresses) if !loaded_addresses.is_empty() => {
-                        let num_pubkeys = loaded_addresses.len();
-                        let pubkeys_allocation = self
-                            .allocator
-                            .allocate(
-                                num_pubkeys.wrapping_mul(core::mem::size_of::<Pubkey>()) as u32
-                            )
-                            .ok_or(ExternalConsumeWorkerError::AllocationFailure)?
-                            .cast();
-                        // SAFETY: non-overlapping and appropriately sized.
-                        unsafe {
-                            Self::copy_loaded_addresses(&loaded_addresses, pubkeys_allocation)
-                        };
-                        // SAFETY: pubkeys_allocation was allocated by allocator
-                        let offset = unsafe { self.allocator.offset(pubkeys_allocation.cast()) };
-                        resolved_pubkeys.push(Ok(Some((
-                            SharablePubkeys {
-                                offset,
-                                num_pubkeys: num_pubkeys as u32,
-                            },
-                            deactivation_slot,
-                        ))))
-                    }
-                    _ => {
-                        resolved_pubkeys.push(Ok(None));
-                    }
-                }
+                    bank,
+                )?);
             }
+
             let slot = bank.slot();
-            Ok(resolved_pubkeys
-                .into_iter()
-                .map(move |resolving_result| match resolving_result {
-                    Ok(Some((resolved_pubkeys, min_alt_deactivation_slot))) => Resolved {
-                        success: 1,
-                        slot,
-                        min_alt_deactivation_slot,
-                        resolved_pubkeys,
-                    },
-                    _ => Resolved {
-                        success: u8::from(resolving_result.is_ok()),
-                        slot,
-                        min_alt_deactivation_slot: u64::MAX,
-                        resolved_pubkeys: SharablePubkeys {
-                            offset: 0,
-                            num_pubkeys: 0,
+            Ok(resolved_pubkeys.into_iter().map(move |resolving_result| {
+                Self::resolved_pubkeys_to_response(resolving_result, slot)
+            }))
+        }
+
+        /// Resolve keys given a tx ptr if possible/necessary.
+        ///
+        /// Outer result indicates failure to allocate.
+        /// Inner result indicates a transaction sanitization or resolving failure.
+        /// Option indicates if addresses were loaded.
+        fn resolve_transaction_ptr(
+            &self,
+            tx: TransactionPtr,
+            enable_static_instruction_limit: bool,
+            bank: &Bank,
+        ) -> Result<Result<Option<(SharablePubkeys, u64)>, ()>, ExternalConsumeWorkerError>
+        {
+            let Ok(view) =
+                SanitizedTransactionView::try_new_sanitized(tx, enable_static_instruction_limit)
+            else {
+                return Ok(Err(()));
+            };
+
+            let Ok((maybe_loaded_addresses, deactivation_slot)) =
+                load_addresses_for_view(&view, bank)
+            else {
+                return Ok(Err(()));
+            };
+
+            // There are 3 cases here:
+            // 1. None - Tx format does not support ATL
+            // 2. Some(empty) - V0 Tx with no ATL
+            // 3. Some(keys) - V0 Tx with ATL
+            // Only in case 3 will we create a shared allocation and copy keys.
+            match maybe_loaded_addresses {
+                Some(loaded_addresses) if !loaded_addresses.is_empty() => {
+                    let num_pubkeys = loaded_addresses.len();
+                    let pubkeys_allocation = self
+                        .allocator
+                        .allocate(num_pubkeys.wrapping_mul(core::mem::size_of::<Pubkey>()) as u32)
+                        .ok_or(ExternalConsumeWorkerError::AllocationFailure)?
+                        .cast();
+                    // SAFETY: non-overlapping and appropriately sized.
+                    unsafe { Self::copy_loaded_addresses(&loaded_addresses, pubkeys_allocation) };
+                    // SAFETY: pubkeys_allocation was allocated by allocator
+                    let offset = unsafe { self.allocator.offset(pubkeys_allocation.cast()) };
+                    Ok(Ok(Some((
+                        SharablePubkeys {
+                            offset,
+                            num_pubkeys: num_pubkeys as u32,
                         },
-                    },
-                }))
+                        deactivation_slot,
+                    ))))
+                }
+                _ => Ok(Ok(None)),
+            }
         }
 
         /// Return all transactions in the batch as not included with the provided
@@ -673,6 +669,30 @@ pub(crate) mod external {
                     },
                 )
             })
+        }
+
+        /// Translate resolved pubkeys results into [`Resolved`] response.
+        fn resolved_pubkeys_to_response(
+            resolving_result: Result<Option<(SharablePubkeys, u64)>, ()>,
+            slot: Slot,
+        ) -> Resolved {
+            match resolving_result {
+                Ok(Some((resolved_pubkeys, min_alt_deactivation_slot))) => Resolved {
+                    success: 1,
+                    slot,
+                    min_alt_deactivation_slot,
+                    resolved_pubkeys,
+                },
+                _ => Resolved {
+                    success: u8::from(resolving_result.is_ok()),
+                    slot,
+                    min_alt_deactivation_slot: u64::MAX,
+                    resolved_pubkeys: SharablePubkeys {
+                        offset: 0,
+                        num_pubkeys: 0,
+                    },
+                },
+            }
         }
 
         /// # Safety
@@ -872,6 +892,51 @@ pub(crate) mod external {
         }
 
         #[test]
+        fn test_resolved_pubkeys_to_response() {
+            const TEST_SLOT: Slot = 7;
+            assert_eq!(
+                ExternalWorker::resolved_pubkeys_to_response(Err(()), TEST_SLOT),
+                Resolved {
+                    success: 0,
+                    slot: TEST_SLOT,
+                    min_alt_deactivation_slot: u64::MAX,
+                    resolved_pubkeys: SharablePubkeys {
+                        offset: 0,
+                        num_pubkeys: 0
+                    }
+                }
+            );
+            assert_eq!(
+                ExternalWorker::resolved_pubkeys_to_response(Ok(None), TEST_SLOT),
+                Resolved {
+                    success: 1,
+                    slot: TEST_SLOT,
+                    min_alt_deactivation_slot: u64::MAX,
+                    resolved_pubkeys: SharablePubkeys {
+                        offset: 0,
+                        num_pubkeys: 0
+                    }
+                }
+            );
+            let resolved_pubkeys = SharablePubkeys {
+                offset: 256,
+                num_pubkeys: 21,
+            };
+            assert_eq!(
+                ExternalWorker::resolved_pubkeys_to_response(
+                    Ok(Some((resolved_pubkeys, 120))),
+                    TEST_SLOT
+                ),
+                Resolved {
+                    success: 1,
+                    slot: TEST_SLOT,
+                    min_alt_deactivation_slot: 120,
+                    resolved_pubkeys
+                }
+            );
+        }
+
+        #[test]
         fn test_reason_from_packet_handling_error() {
             assert_eq!(
                 ExternalWorker::reason_from_packet_handling_error(
@@ -898,6 +963,24 @@ pub(crate) mod external {
                 ),
                 not_included_reasons::ADDRESS_LOOKUP_TABLE_NOT_FOUND
             );
+        }
+
+        #[test]
+        fn test_copy_loaded_addresses() {
+            let loaded_addresses = LoadedAddresses {
+                writable: (0..5).map(|_| Pubkey::new_unique()).collect(),
+                readonly: (0..2).map(|_| Pubkey::new_unique()).collect(),
+            };
+            let mut buffer = vec![Pubkey::default(); 7];
+            unsafe {
+                ExternalWorker::copy_loaded_addresses(
+                    &loaded_addresses,
+                    NonNull::new(buffer.as_mut_ptr()).unwrap(),
+                )
+            };
+
+            assert_eq!(&loaded_addresses.writable, &buffer[0..5]);
+            assert_eq!(&loaded_addresses.readonly, &buffer[5..7]);
         }
     }
 }
