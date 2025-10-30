@@ -727,6 +727,7 @@ mod external {
                     worker_to_pack,
                     allocator,
                     context.poh_recorder.read().unwrap().shared_leader_state(),
+                    context.bank_forks.read().unwrap().sharable_banks(),
                 );
 
                 worker_metrics.push(consume_worker.metrics_handle());
