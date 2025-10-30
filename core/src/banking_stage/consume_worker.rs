@@ -386,7 +386,7 @@ pub(crate) mod external {
                 .ok_or(ExternalConsumeWorkerError::AllocationFailure)?;
                 let response = WorkerToPackMessage {
                     batch: message.batch,
-                    processed: 1,
+                    processed: agave_scheduler_bindings::PROCESSED,
                     responses,
                 };
 
@@ -428,7 +428,7 @@ pub(crate) mod external {
 
             let response = WorkerToPackMessage {
                 batch: message.batch,
-                processed: 1,
+                processed: agave_scheduler_bindings::PROCESSED,
                 responses,
             };
 
@@ -573,7 +573,7 @@ pub(crate) mod external {
 
             let response_message = WorkerToPackMessage {
                 batch: message.batch,
-                processed: 1,
+                processed: agave_scheduler_bindings::PROCESSED,
                 responses: response_region,
             };
 
@@ -596,7 +596,7 @@ pub(crate) mod external {
         ) -> Result<(), ExternalConsumeWorkerError> {
             let invalid_message = WorkerToPackMessage {
                 batch: message.batch,
-                processed: 0,
+                processed: agave_scheduler_bindings::NOT_PROCESSED,
                 responses: TransactionResponseRegion {
                     tag: 0,
                     num_transaction_responses: 0,
@@ -678,13 +678,17 @@ pub(crate) mod external {
         ) -> Resolved {
             match resolving_result {
                 Ok(Some((resolved_pubkeys, min_alt_deactivation_slot))) => Resolved {
-                    success: 1,
+                    success: agave_scheduler_bindings::worker_message_types::RESOLVE_SUCCESS,
                     slot,
                     min_alt_deactivation_slot,
                     resolved_pubkeys,
                 },
                 _ => Resolved {
-                    success: u8::from(resolving_result.is_ok()),
+                    success: if resolving_result.is_ok() {
+                        agave_scheduler_bindings::worker_message_types::RESOLVE_SUCCESS
+                    } else {
+                        agave_scheduler_bindings::worker_message_types::RESOLVE_FAILURE
+                    },
                     slot,
                     min_alt_deactivation_slot: u64::MAX,
                     resolved_pubkeys: SharablePubkeys {
@@ -897,7 +901,7 @@ pub(crate) mod external {
             assert_eq!(
                 ExternalWorker::resolved_pubkeys_to_response(Err(()), TEST_SLOT),
                 Resolved {
-                    success: 0,
+                    success: agave_scheduler_bindings::worker_message_types::RESOLVE_FAILURE,
                     slot: TEST_SLOT,
                     min_alt_deactivation_slot: u64::MAX,
                     resolved_pubkeys: SharablePubkeys {
@@ -909,7 +913,7 @@ pub(crate) mod external {
             assert_eq!(
                 ExternalWorker::resolved_pubkeys_to_response(Ok(None), TEST_SLOT),
                 Resolved {
-                    success: 1,
+                    success: agave_scheduler_bindings::worker_message_types::RESOLVE_SUCCESS,
                     slot: TEST_SLOT,
                     min_alt_deactivation_slot: u64::MAX,
                     resolved_pubkeys: SharablePubkeys {
@@ -928,7 +932,7 @@ pub(crate) mod external {
                     TEST_SLOT
                 ),
                 Resolved {
-                    success: 1,
+                    success: agave_scheduler_bindings::worker_message_types::RESOLVE_SUCCESS,
                     slot: TEST_SLOT,
                     min_alt_deactivation_slot: 120,
                     resolved_pubkeys
