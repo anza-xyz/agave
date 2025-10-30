@@ -2,6 +2,71 @@
 //! [`LeaderUpdater`] trait to track upcoming leaders and maintains an
 //! up-to-date mapping of leader id to TPU socket address.
 //!
+//! # Examples
+//!
+//! This example shows how to use [`NodeAddressService`] to implement
+//! [`LeaderUpdater`] using some custom slot update provider. Typically, it can
+//! be done with zero-cost abstraction as shown below. The case of
+//! [`WebSocketNodeAddressService`] requires, contrary, introducing task and
+//! channel due to specifics of the PubsubClient API implementation.
+//!
+//! For the sake of the example, let's assume we have some custom slot updates
+//! that we receive by UDP.
+//!
+//! ```
+//!  use async_stream::stream;
+//!  use tokio::net::UdpSocket;
+//!
+//!  pub struct SlotUpdaterNodeAddressService {
+//!    service: NodeAddressService,
+//! }
+//!
+//! impl SlotUpdaterNodeAddressService {
+//!    pub async fn run(
+//!        rpc_client: Arc<RpcClient>,
+//!        bind_address: SocketAddr,
+//!        config: LeaderTpuCacheServiceConfig,
+//!        cancel: CancellationToken,
+//!    ) -> Result<Self, NodeAddressServiceError> {
+//!        let socket = UdpSocket::bind(bind_address)
+//!            .await
+//!            .map_err(|_e| NodeAddressServiceError::InitializationFailed)?;
+//!        let stream = Self::udp_slot_event_stream(socket);
+//!        let service = NodeAddressService::run(rpc_client, stream, config, cancel).await?;
+//!
+//!        Ok(Self { service })
+//!    }
+//!
+//!    fn udp_slot_event_stream(socket: UdpSocket) -> impl Stream<Item = SlotEvent> + Send + 'static {
+//!        stream! {
+//!            let mut buf = vec![0u8; 2048];
+//!
+//!            loop {
+//!                match socket.recv_from(&mut buf).await {
+//!                    Ok((len, from)) => {
+//!                        let data = &buf[..len];
+//!                        match serde_json::from_slice::<SlotMessage>(data) {
+//!                            Ok(msg) => {
+//!                                match msg.status {
+//!                                    SlotStatus::FirstShredReceived => yield SlotEvent::Start(msg.slot),
+//!                                    SlotStatus::Completed => yield SlotEvent::End(msg.slot),
+//!                                    _ => continue,
+//!                                };
+//!                            }
+//!                            Err(e) => error!("Failed to parse SlotMessage from {from}: {e}"),
+//!                        }
+//!                    }
+//!                    Err(e) => {
+//!                        error!("UDP receive failed: {e}");
+//!                        break;
+//!                    }
+//!                }
+//!            }
+//!        }
+//!    }
+//! }
+//! ```
+//!
 use {
     crate::{
         leader_updater::LeaderUpdater,
