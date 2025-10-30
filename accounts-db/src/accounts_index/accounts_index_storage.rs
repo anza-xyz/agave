@@ -185,12 +185,10 @@ mod tests {
         let exit = Arc::new(AtomicBool::default());
         let storage = AccountsIndexStorage::<u64, u64>::new(BINS_FOR_TESTING, &config, exit);
 
-        // Verify that the in-memory map was created with capacity
         let map_capacity = storage.in_mem[0].map_internal_capacity();
         assert!(
             map_capacity > 0,
-            "Expected non-zero capacity with InMemOnly and num_initial_accounts set, got {}",
-            map_capacity
+            "Expected non-zero capacity with InMemOnly and num_initial_accounts set, got {map_capacity}"
         );
     }
 
@@ -206,12 +204,10 @@ mod tests {
         let exit = Arc::new(AtomicBool::default());
         let storage = AccountsIndexStorage::<u64, u64>::new(BINS_FOR_TESTING, &config, exit);
 
-        // Verify that the in-memory map was created without preallocation
         let map_capacity = storage.in_mem[0].map_internal_capacity();
         assert_eq!(
             map_capacity, 0,
-            "Expected zero capacity with Minimal index_limit_mb even with num_initial_accounts set, got {}",
-            map_capacity
+            "Expected zero capacity with Minimal index_limit_mb even with num_initial_accounts set, got {map_capacity}"
         );
     }
 
@@ -230,8 +226,7 @@ mod tests {
         let map_capacity = storage.in_mem[0].map_internal_capacity();
         assert_eq!(
             map_capacity, 0,
-            "Expected zero capacity with None num_initial_accounts, got {}",
-            map_capacity
+            "Expected zero capacity with None num_initial_accounts, got {map_capacity}"
         );
     }
 }
