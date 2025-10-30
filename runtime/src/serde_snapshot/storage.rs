@@ -1,6 +1,6 @@
 use {
     serde::{Deserialize, Serialize},
-    solana_accounts_db::accounts_db::AccountStorageEntry,
+    solana_accounts_db::account_storage_entry::AccountStorageEntry,
     solana_clock::Slot,
 };
 

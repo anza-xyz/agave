@@ -7,11 +7,11 @@
 use {
     crate::{
         account_storage::ShrinkInProgress,
+        account_storage_entry::AccountStorageEntry,
         accounts_db::{
             stats::{ShrinkAncientStats, ShrinkStatsSub},
-            AccountFromStorage, AccountStorageEntry, AccountsDb, AliveAccounts,
-            GetUniqueAccountsResult, ShrinkCollect, ShrinkCollectAliveSeparatedByRefs,
-            UpdateIndexThreadSelection,
+            AccountFromStorage, AccountsDb, AliveAccounts, GetUniqueAccountsResult, ShrinkCollect,
+            ShrinkCollectAliveSeparatedByRefs, UpdateIndexThreadSelection,
         },
         active_stats::ActiveStatItem,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},

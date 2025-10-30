@@ -1,5 +1,5 @@
 use {
-    crate::accounts_db::AccountStorageEntry,
+    crate::account_storage_entry::AccountStorageEntry,
     log::*,
     solana_clock::Slot,
     solana_measure::measure::Measure,
@@ -195,7 +195,8 @@ mod tests {
     use {
         super::*,
         crate::{
-            accounts_db::{AccountStorageEntry, AccountsFileId},
+            account_storage_entry::AccountStorageEntry,
+            accounts_db::AccountsFileId,
             accounts_file::{AccountsFile, AccountsFileProvider, StorageAccess},
             append_vec::AppendVec,
         },
