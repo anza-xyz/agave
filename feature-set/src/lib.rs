@@ -1181,7 +1181,7 @@ pub mod deprecate_rent_exemption_threshold {
 
 pub mod poseidon_enforce_padding {
     solana_pubkey::declare_id!("poUdAqRXXsNmfqAZ6UqpjbeYgwBygbfQLEvWSqVhSnb");
-
+}
 
 pub mod fix_alt_bn128_pairing_length_check {
     solana_pubkey::declare_id!("bnYzodLwmybj7e1HAe98yZrdJTd7we69eMMLgCXqKZm");
