@@ -188,7 +188,8 @@ mod tests {
         let map_capacity = storage.in_mem[0].map_internal_capacity();
         assert!(
             map_capacity > 0,
-            "Expected non-zero capacity with InMemOnly and num_initial_accounts set, got {map_capacity}"
+            "Expected non-zero capacity with InMemOnly and num_initial_accounts set, got \
+             {map_capacity}"
         );
     }
 
@@ -207,7 +208,8 @@ mod tests {
         let map_capacity = storage.in_mem[0].map_internal_capacity();
         assert_eq!(
             map_capacity, 0,
-            "Expected zero capacity with Minimal index_limit_mb even with num_initial_accounts set, got {map_capacity}"
+            "Expected zero capacity with Minimal index_limit_mb even with num_initial_accounts \
+             set, got {map_capacity}"
         );
     }
 
