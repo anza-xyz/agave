@@ -1,18 +1,13 @@
 use {
     super::{
+        account_map_entry::{
+            AccountMapEntry, AccountMapEntryMeta, PreAllocatedAccountMapEntry, SlotListWriteGuard,
+        },
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         stats::Stats,
+        DiskIndexValue, IndexValue, ReclaimsSlotList, RefCount, SlotList, UpsertReclaim,
     },
-    crate::{
-        accounts_index::{
-            account_map_entry::{
-                AccountMapEntry, AccountMapEntryMeta, PreAllocatedAccountMapEntry,
-                SlotListWriteGuard,
-            },
-            DiskIndexValue, IndexValue, ReclaimsSlotList, RefCount, SlotList, UpsertReclaim,
-        },
-        pubkey_bins::PubkeyBinCalculator24,
-    },
+    crate::pubkey_bins::PubkeyBinCalculator24,
     rand::{thread_rng, Rng},
     solana_bucket_map::bucket_api::BucketApi,
     solana_clock::Slot,

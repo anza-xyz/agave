@@ -1,12 +1,9 @@
 use {
-    super::bucket_map_holder::BucketMapHolder,
-    crate::{
-        accounts_index::{
-            self, in_mem_accounts_index::InMemAccountsIndex, AccountsIndexConfig, DiskIndexValue,
-            IndexValue, Startup,
-        },
-        waitable_condvar::WaitableCondvar,
+    super::{
+        bucket_map_holder::BucketMapHolder, in_mem_accounts_index::InMemAccountsIndex,
+        AccountsIndexConfig, DiskIndexValue, IndexValue, Startup,
     },
+    crate::{accounts_index, waitable_condvar::WaitableCondvar},
     std::{
         fmt::Debug,
         num::NonZeroUsize,

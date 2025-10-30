@@ -8,11 +8,10 @@ mod secondary;
 mod stats;
 use {
     crate::{
-        accounts_index::account_map_entry::SlotListWriteGuard, ancestors::Ancestors,
-        contains::Contains, is_zero_lamport::IsZeroLamport, pubkey_bins::PubkeyBinCalculator24,
-        rolling_bit_field::RollingBitField,
+        ancestors::Ancestors, contains::Contains, is_zero_lamport::IsZeroLamport,
+        pubkey_bins::PubkeyBinCalculator24, rolling_bit_field::RollingBitField,
     },
-    account_map_entry::{AccountMapEntry, PreAllocatedAccountMapEntry},
+    account_map_entry::{AccountMapEntry, PreAllocatedAccountMapEntry, SlotListWriteGuard},
     accounts_index_storage::AccountsIndexStorage,
     bucket_map_holder::Age,
     in_mem_accounts_index::{

@@ -1,12 +1,10 @@
 use {
-    super::stats::Stats,
-    crate::{
-        accounts_index::{
-            in_mem_accounts_index::{InMemAccountsIndex, StartupStats},
-            AccountsIndexConfig, DiskIndexValue, IndexLimitMb, IndexValue,
-        },
-        waitable_condvar::WaitableCondvar,
+    super::{
+        in_mem_accounts_index::{InMemAccountsIndex, StartupStats},
+        stats::Stats,
+        AccountsIndexConfig, DiskIndexValue, IndexLimitMb, IndexValue,
     },
+    crate::waitable_condvar::WaitableCondvar,
     solana_bucket_map::bucket_map::{BucketMap, BucketMapConfig},
     solana_clock::Slot,
     solana_measure::measure::Measure,
