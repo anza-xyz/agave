@@ -33,7 +33,6 @@ use {
     solana_poh_config::PohConfig,
     solana_program_binaries::core_bpf_programs,
     solana_pubkey::Pubkey,
-    solana_runtime::stakes::StakedNodesMap,
     solana_rent::Rent,
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::{
@@ -42,6 +41,7 @@ use {
             ValidatorVoteKeypairs,
         },
         snapshot_utils::BANK_SNAPSHOTS_DIR,
+        stakes::StakedNodesMap,
     },
     solana_signer::{signers::Signers, Signer},
     solana_stake_interface::{

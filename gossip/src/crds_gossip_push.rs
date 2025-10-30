@@ -461,9 +461,7 @@ mod tests {
                 &Pubkey::default(),
                 &crds,
                 0,
-                &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
-                    PubkeyHasherBuilder::default()
-                ), // stakes
+                &StakedNodesMap::default(), // stakes
             ),
             expected
         );
@@ -526,9 +524,7 @@ mod tests {
                 &Pubkey::default(),
                 &crds,
                 now,
-                &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
-                    PubkeyHasherBuilder::default()
-                ), // stakes
+                &StakedNodesMap::default(), // stakes
             ),
             expected
         );
@@ -580,9 +576,7 @@ mod tests {
                 &self_id,
                 &crds,
                 0,
-                &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
-                    PubkeyHasherBuilder::default()
-                ), // stakes
+                &StakedNodesMap::default(), // stakes
             ),
             expected
         );
@@ -623,9 +617,7 @@ mod tests {
                 &Pubkey::default(),
                 &crds,
                 0,
-                &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
-                    PubkeyHasherBuilder::default()
-                ), // stakes
+                &StakedNodesMap::default(), // stakes
             ),
             expected
         );

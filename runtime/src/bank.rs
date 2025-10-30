@@ -4977,10 +4977,7 @@ impl Bank {
         self.current_epoch_stakes().stakes().staked_nodes()
     }
 
-    pub fn epoch_staked_nodes(
-        &self,
-        epoch: Epoch,
-    ) -> Option<Arc<StakedNodesMap>> {
+    pub fn epoch_staked_nodes(&self, epoch: Epoch) -> Option<Arc<StakedNodesMap>> {
         Some(self.epoch_stakes.get(&epoch)?.stakes().staked_nodes())
     }
 

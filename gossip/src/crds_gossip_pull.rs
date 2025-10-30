@@ -38,7 +38,7 @@ use {
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     std::{
-        collections::{HashMap, HashSet, VecDeque},
+        collections::{HashSet, VecDeque},
         convert::TryInto,
         iter::{repeat, repeat_with},
         net::SocketAddr,
@@ -679,6 +679,7 @@ pub(crate) mod tests {
         solana_sha256_hasher::hash,
         solana_time_utils::timestamp,
         std::{
+            collections::HashMap,
             net::{IpAddr, Ipv6Addr},
             time::Instant,
         },
@@ -926,9 +927,7 @@ pub(crate) mod tests {
                 0,
                 0,
                 None,
-                &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
-                    PubkeyHasherBuilder::default()
-                ),
+                &StakedNodesMap::default(),
                 PACKET_DATA_SIZE,
                 &ping_cache,
                 &mut pings,
@@ -949,9 +948,7 @@ pub(crate) mod tests {
                 0,
                 0,
                 None,
-                &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
-                    PubkeyHasherBuilder::default()
-                ),
+                &StakedNodesMap::default(),
                 PACKET_DATA_SIZE,
                 &ping_cache,
                 &mut pings,
@@ -978,9 +975,7 @@ pub(crate) mod tests {
             0,
             now,
             None,
-            &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
-                PubkeyHasherBuilder::default(),
-            ),
+            &StakedNodesMap::default(),
             PACKET_DATA_SIZE,
             &ping_cache,
             &mut pings,
@@ -1003,9 +998,7 @@ pub(crate) mod tests {
             0,
             now,
             None,
-            &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
-                PubkeyHasherBuilder::default(),
-            ),
+            &StakedNodesMap::default(),
             PACKET_DATA_SIZE,
             &ping_cache,
             &mut pings,
@@ -1059,11 +1052,9 @@ pub(crate) mod tests {
                     &node_keypair,
                     0, // self_shred_version
                     now,
-                    None, // gossip_validators
-                    &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
-                        PubkeyHasherBuilder::default(),
-                    ), // stakes
-                    PACKET_DATA_SIZE, // bloom_size
+                    None,                       // gossip_validators
+                    &StakedNodesMap::default(), // stakes
+                    PACKET_DATA_SIZE,           // bloom_size
                     &ping_cache,
                     &mut pings,
                     &SocketAddrSpace::Unspecified,
@@ -1108,11 +1099,9 @@ pub(crate) mod tests {
             &node_keypair,
             0, // self_shred_version
             now,
-            None, // gossip_validators
-            &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
-                PubkeyHasherBuilder::default(),
-            ), // stakes
-            PACKET_DATA_SIZE, // bloom_size
+            None,                       // gossip_validators
+            &StakedNodesMap::default(), // stakes
+            PACKET_DATA_SIZE,           // bloom_size
             &Mutex::new(ping_cache),
             &mut pings,
             &SocketAddrSpace::Unspecified,
@@ -1259,9 +1248,7 @@ pub(crate) mod tests {
                 0,
                 0,
                 None,
-                &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
-                    PubkeyHasherBuilder::default(),
-                ),
+                &StakedNodesMap::default(),
                 PACKET_DATA_SIZE,
                 &ping_cache,
                 &mut pings,
@@ -1301,9 +1288,7 @@ pub(crate) mod tests {
                     &node_crds,
                     &node.make_timeouts(
                         node_pubkey,
-                        &HashMap::<Pubkey, u64, PubkeyHasherBuilder>::with_hasher(
-                            PubkeyHasherBuilder::default(),
-                        ),
+                        &StakedNodesMap::default(),
                         Duration::default(),
                     ),
                     rsp.into_iter().flatten().collect(),
@@ -1356,7 +1341,7 @@ pub(crate) mod tests {
         );
         // purge
         let node_crds = RwLock::new(node_crds);
-        let mut stakes = HashMap::default();
+        let mut stakes = StakedNodesMap::default();
         stakes.insert(Pubkey::new_unique(), 1u64);
         let timeouts = node.make_timeouts(node_pubkey, &stakes, Duration::default());
         CrdsGossipPull::purge_active(&thread_pool, &node_crds, node.crds_timeout, &timeouts);
@@ -1472,7 +1457,7 @@ pub(crate) mod tests {
         let peer_pubkey = solana_pubkey::new_rand();
         let peer_entry =
             CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(&peer_pubkey, 0)));
-        let mut stakes = HashMap::default();
+        let mut stakes = StakedNodesMap::default();
         stakes.insert(peer_pubkey, 1u64);
         let timeouts = CrdsTimeouts::new(
             Pubkey::new_unique(),

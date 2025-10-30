@@ -128,6 +128,8 @@ impl VoteAccount {
     }
 }
 
+type StakedNodesMap = HashMap<Pubkey, u64, PubkeyHasherBuilder>;
+
 impl VoteAccounts {
     pub fn len(&self) -> usize {
         self.vote_accounts.len()
@@ -137,9 +139,7 @@ impl VoteAccounts {
         self.vote_accounts.is_empty()
     }
 
-    pub fn staked_nodes(
-        &self,
-    ) -> Arc<HashMap<Pubkey, u64, PubkeyHasherBuilder>> {
+    pub fn staked_nodes(&self) -> Arc<StakedNodesMap> {
         self.staked_nodes
             .get_or_init(|| {
                 // Count non-zero stake accounts for optimal capacity allocation

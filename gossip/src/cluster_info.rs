@@ -62,9 +62,8 @@ use {
         packet::{Packet, PacketBatch, PacketBatchRecycler, PacketRef, PinnedPacketBatch},
     },
     solana_pubkey::Pubkey,
-    solana_runtime::stakes::StakedNodesMap,
     solana_rayon_threadlimit::get_thread_count,
-    solana_runtime::bank_forks::BankForks,
+    solana_runtime::{bank_forks::BankForks, stakes::StakedNodesMap},
     solana_sanitize::Sanitize,
     solana_signature::Signature,
     solana_signer::Signer,
@@ -1548,11 +1547,7 @@ impl ClusterInfo {
             .unwrap()
     }
 
-    fn handle_batch_prune_messages(
-        &self,
-        messages: Vec<PruneData>,
-        stakes: &StakedNodesMap,
-    ) {
+    fn handle_batch_prune_messages(&self, messages: Vec<PruneData>, stakes: &StakedNodesMap) {
         let _st = ScopedTimer::from(&self.stats.handle_batch_prune_messages_time);
         if messages.is_empty() {
             return;
@@ -3348,7 +3343,7 @@ mod tests {
         let keypair = Arc::new(Keypair::new());
         let d = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());
         let cluster_info = ClusterInfo::new(d.clone(), keypair, SocketAddrSpace::Unspecified);
-        let mut stakes = HashMap::<_, _, PubkeyHasherBuilder>::default();
+        let mut stakes = StakedNodesMap::default();
 
         // no stake
         let id = Pubkey::from([1u8; 32]);

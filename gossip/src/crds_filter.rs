@@ -1,8 +1,6 @@
 use {
     crate::{crds_data::CrdsData, crds_value::CrdsValue},
-    solana_pubkey::Pubkey,
     solana_runtime::stakes::StakedNodesMap,
-    std::collections::HashMap,
 };
 
 pub(crate) enum GossipFilterDirection {

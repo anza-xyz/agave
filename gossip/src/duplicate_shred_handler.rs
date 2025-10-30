@@ -8,8 +8,7 @@ use {
     solana_clock::{Epoch, Slot},
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
     solana_pubkey::Pubkey,
-    solana_runtime::stakes::StakedNodesMap,
-    solana_runtime::bank_forks::BankForks,
+    solana_runtime::{bank_forks::BankForks, stakes::StakedNodesMap},
     std::{
         cmp::Reverse,
         collections::HashMap,

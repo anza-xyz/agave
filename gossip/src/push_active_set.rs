@@ -6,7 +6,6 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_runtime::stakes::StakedNodesMap,
-    std::collections::HashMap,
 };
 
 const NUM_PUSH_ACTIVE_SET_ENTRIES: usize = 25;
@@ -179,7 +178,7 @@ fn get_stake_bucket(stake: Option<&u64>) -> usize {
 mod tests {
     use {
         super::*, itertools::iproduct, rand::SeedableRng, rand_chacha::ChaChaRng,
-        std::iter::repeat_with,
+        solana_pubkey::PubkeyHasherBuilder, std::iter::repeat_with,
     };
 
     #[test]
@@ -212,8 +211,10 @@ mod tests {
         let mut rng = ChaChaRng::from_seed([189u8; 32]);
         let pubkey = Pubkey::new_unique();
         let nodes: Vec<_> = repeat_with(Pubkey::new_unique).take(20).collect();
-        let mut stakes =
-            HashMap::with_capacity_and_hasher(nodes.len() + 1, PubkeyHasherBuilder::default());
+        let mut stakes = StakedNodesMap::with_capacity_and_hasher(
+            nodes.len() + 1,
+            PubkeyHasherBuilder::default(),
+        );
         let stake_values = repeat_with(|| rng.gen_range(1..MAX_STAKE));
         for (node, stake) in nodes.iter().copied().zip(stake_values).take(nodes.len()) {
             stakes.insert(node, stake);

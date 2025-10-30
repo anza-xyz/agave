@@ -20,8 +20,7 @@ use {
     solana_ledger::shred::ShredId,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
-    solana_runtime::stakes::StakedNodesMap,
-    solana_runtime::bank::Bank,
+    solana_runtime::{bank::Bank, stakes::StakedNodesMap},
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_time_utils::timestamp,
@@ -1165,8 +1164,7 @@ mod tests {
             .take(50)
             .collect();
         let stakes = std::iter::repeat_with(|| rng.gen_range(0..100u64));
-        let stakes: StakedNodesMap =
-            pubkeys.iter().copied().zip(stakes).collect();
+        let stakes: StakedNodesMap = pubkeys.iter().copied().zip(stakes).collect();
         let mut nodes: Vec<Node> = std::iter::repeat_with(|| {
             let pubkey = pubkeys.choose(&mut rng).copied().unwrap();
             let stake = stakes[&pubkey];

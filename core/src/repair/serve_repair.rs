@@ -41,8 +41,8 @@ use {
         data_budget::DataBudget,
         packet::{Packet, PacketBatch, PacketBatchRecycler, PinnedPacketBatch},
     },
-    solana_pubkey::{Pubkey, PubkeyHasherBuilder, PUBKEY_BYTES},
-    solana_runtime::bank_forks::SharableBanks,
+    solana_pubkey::{Pubkey, PUBKEY_BYTES},
+    solana_runtime::{bank_forks::SharableBanks, stakes::StakedNodesMap},
     solana_signature::{Signature, SIGNATURE_BYTES},
     solana_signer::Signer,
     solana_streamer::{
@@ -53,7 +53,7 @@ use {
     solana_time_utils::timestamp,
     std::{
         cmp::Reverse,
-        collections::{HashMap, HashSet},
+        collections::HashSet,
         net::{SocketAddr, UdpSocket},
         sync::{
             atomic::{AtomicBool, Ordering},

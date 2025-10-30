@@ -16,12 +16,7 @@ pub struct LeaderSchedule {
 
 impl LeaderSchedule {
     // Note: passing in zero stakers will cause a panic.
-    pub fn new(
-        epoch_staked_nodes: &StakedNodesMap,
-        epoch: Epoch,
-        len: u64,
-        repeat: u64,
-    ) -> Self {
+    pub fn new(epoch_staked_nodes: &StakedNodesMap, epoch: Epoch, len: u64, repeat: u64) -> Self {
         let keyed_stakes: Vec<_> = epoch_staked_nodes
             .iter()
             .map(|(pubkey, stake)| (pubkey, *stake))
