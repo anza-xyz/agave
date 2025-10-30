@@ -111,7 +111,7 @@ impl RouteMonitor {
                             break;
                         }
                     };
-                    match handle_revents(rv, pfd.revents, &atomic_router, &mut working) {
+                    match handle_revents(rv, 0, &atomic_router, &mut working) {
                         LoopControl::Proceed => (),
                         LoopControl::Skip => break,
                         LoopControl::Recreate => {
@@ -281,6 +281,7 @@ fn handle_revents(
     working: &mut Option<WorkingRouter>,
 ) -> LoopControl {
     match rv {
+        Revents::Ready => LoopControl::Proceed,
         Revents::Nval => {
             error!("netlink socket POLLNVAL (invalid fd), revents={revents_bits:#x}",);
             panic!("RouteMonitor: POLLNVAL on netlink socket (invalid fd)");
@@ -299,17 +300,21 @@ fn handle_revents(
             debug!("poll timeout or no data, revents={revents_bits:#x}");
             LoopControl::Skip
         }
-        Revents::Ready => LoopControl::Proceed,
+        Revents::Unhandled(re) => {
+            debug!("poll returned unhandled revents, revents={re:#x}");
+            LoopControl::Skip
+        }
     }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum Revents {
     Ready,           // POLLIN set
-    TimeoutOrNoData, // no data within timeout or rc!=1
+    TimeoutOrNoData, // no data within timeout
     Error,           // POLLERR
     Hup,             // POLLHUP
     Nval,            // POLLNVAL
+    Unhandled(u16),  // rc==1 but none of the handled bits (POLLIN/ERR/HUP/NVAL) are set
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -333,7 +338,7 @@ fn poll_helper(pfd: &mut pollfd, timeout_ms: i32) -> Result<Revents, Error> {
         return Err(Error::last_os_error());
     }
     if rc != 1 {
-        // When polling a single fd, rc should be exactly 1 when not an error.
+        // no events within timeout
         return Ok(Revents::TimeoutOrNoData);
     }
 
@@ -351,5 +356,7 @@ fn poll_helper(pfd: &mut pollfd, timeout_ms: i32) -> Result<Revents, Error> {
         return Ok(Revents::Ready);
     }
 
-    Ok(Revents::TimeoutOrNoData)
+    // rc==1 but none of the handled bits (POLLIN/ERR/HUP/NVAL) are set.
+    // This covers unhandled flags (e.g., POLLPRI) or unknown combinations.
+    Ok(Revents::Unhandled(re as u16))
 }
