@@ -1207,6 +1207,21 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("accounts_index_limit_entries")
+            .long("accounts-index-limit-entries")
+            .value_name("ENTRIES")
+            .takes_value(true)
+            .conflicts_with("enable_accounts_disk_index")
+            .help("Flush accounts index to disk when entry count exceeds this limit")
+            .long_help(
+                "Sets an entry count threshold for the in-memory accounts index. When the total \
+                 number of entries in the index exceeds this limit, it will flush to disk. This \
+                 provides a middle ground between pure in-memory (default) and always-on-disk \
+                 (--enable-accounts-disk-index) modes. Cannot be used with \
+                 --enable-accounts-disk-index.",
+            ),
+    )
+    .arg(
         Arg::with_name("accounts_shrink_optimize_total_space")
             .long("accounts-shrink-optimize-total-space")
             .takes_value(true)

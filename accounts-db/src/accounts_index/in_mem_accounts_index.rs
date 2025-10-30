@@ -77,6 +77,13 @@ impl PossibleEvictions {
         let list = &mut self.possible_evictions[index];
         list.evictions_age_possible.push((key, is_dirty));
     }
+
+    /// get current count of possible evictions
+    fn len(&self) -> usize {
+        self.possible_evictions[self.index]
+            .evictions_age_possible
+            .len()
+    }
 }
 
 // one instance of this represents one bin of the accounts index.
@@ -239,6 +246,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         if self.storage.is_disk_index_enabled() {
             self.map_internal.write().unwrap().shrink_to_fit();
         }
+    }
+
+    /// Get the number of entries in this bin
+    pub fn entry_count(&self) -> usize {
+        self.map_internal.read().unwrap().len()
     }
 
     /// return all keys in this bin
@@ -946,8 +958,24 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         startup: bool,
         current_age: Age,
         ages_flushing_now: Age,
+        max_evictions: Option<usize>,
     ) {
         for (k, v) in iter {
+            // Check if we've reached the max evictions limit
+            if let Some(max) = max_evictions {
+                if possible_evictions.len() >= max {
+                    break;
+                }
+            }
+
+            // Age wrapping consideration: Age is u8 (0-255) and increments every AGE_MS (2 seconds).
+            // After 256 age increments (512 seconds), age wraps around to 0, which could cause
+            // wrapping_sub to incorrectly calculate the age difference for very old entries that
+            // fall outside the eviction window (current_age - ages_flushing_now).
+            // This means entries that remain unused for 512+ seconds may not be considered
+            // candidates for eviction. However, this is acceptable because:
+            // 1. The entry count limit is sized large enough to hold all frequently-accessed accounts
+            // 2. Other cold accounts within the eviction window will still be evicted normally
             if !startup && current_age.wrapping_sub(v.age()) > ages_flushing_now {
                 // not planning to evict this item from memory within 'ages_flushing_now' ages
                 continue;
@@ -980,12 +1008,23 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         {
             let map = self.map_internal.read().unwrap();
             m = Measure::start("flush_scan"); // we don't care about lock time in this metric - bg threads can wait
+
+            // Calculate max evictions for threshold-based flushing
+            let max_evictions = if !startup {
+                let entries_in_bin = map.len();
+                let total_entries = entries_in_bin * self.storage.bins;
+                self.storage.max_evictions_for_threshold(total_entries)
+            } else {
+                None
+            };
+
             Self::gather_possible_evictions(
                 map.iter(),
                 &mut possible_evictions,
                 startup,
                 current_age,
                 ages_flushing_now,
+                max_evictions,
             );
         }
         Self::update_time_stat(&self.stats().flush_scan_us, m);
@@ -1114,6 +1153,20 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             // no need to age, so no need to flush this bucket
             // but, at startup we want to evict from buckets as fast as possible if any items exist
             return;
+        }
+
+        // For threshold-based flushing, check if current entry count warrants flushing
+        // Each bin manages approximately 1/bins of the total entries
+        if !startup {
+            let entries_in_bin = self.entry_count();
+            let total_entries = entries_in_bin * self.storage.bins;
+            if !self.storage.should_flush_to_disk(total_entries) {
+                // Entry count is below threshold, no need to flush
+                // Still mark as aged to avoid infinite scanning
+                assert_eq!(current_age, self.storage.current_age());
+                self.set_has_aged(current_age, can_advance_age);
+                return;
+            }
         }
 
         if startup {
@@ -1415,7 +1468,7 @@ impl Drop for FlushGuard<'_> {
 mod tests {
     use {
         super::*,
-        crate::accounts_index::{AccountsIndexConfig, IndexLimitMb, BINS_FOR_TESTING},
+        crate::accounts_index::{AccountsIndexConfig, IndexLimit, BINS_FOR_TESTING},
         assert_matches::assert_matches,
         itertools::Itertools,
         test_case::test_case,
@@ -1433,7 +1486,7 @@ mod tests {
 
     fn new_disk_buckets_for_test<T: IndexValue>() -> InMemAccountsIndex<T, T> {
         let config = AccountsIndexConfig {
-            index_limit_mb: IndexLimitMb::Minimal,
+            index_limit: IndexLimit::Minimal,
             ..Default::default()
         };
         let holder = Arc::new(BucketMapHolder::new(BINS_FOR_TESTING, &config, 1));
@@ -1785,6 +1838,7 @@ mod tests {
                     startup,
                     current_age,
                     ages_flushing_now,
+                    None, // no max evictions limit for this test
                 );
                 let evictions = possible_evictions.possible_evictions.pop().unwrap();
                 assert_eq!(
