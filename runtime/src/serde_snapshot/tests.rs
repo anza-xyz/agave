@@ -16,11 +16,12 @@ mod serde_snapshot_tests {
         solana_account::{AccountSharedData, ReadableAccount},
         solana_accounts_db::{
             account_storage::AccountStorageMap,
+            account_storage_entry::AccountStorageEntry,
             account_storage_reader::AccountStorageReader,
             accounts::Accounts,
             accounts_db::{
-                get_temp_accounts_paths, AccountStorageEntry, AccountsDb, AccountsDbConfig,
-                AtomicAccountsFileId, MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING,
+                get_temp_accounts_paths, AccountsDb, AccountsDbConfig, AtomicAccountsFileId,
+                MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
             ancestors::Ancestors,

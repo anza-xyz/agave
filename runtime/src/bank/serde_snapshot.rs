@@ -14,8 +14,9 @@ mod tests {
         agave_snapshots::snapshot_config::SnapshotConfig,
         solana_accounts_db::{
             account_storage::AccountStorageMap,
+            account_storage_entry::AccountStorageEntry,
             accounts_db::{
-                get_temp_accounts_paths, AccountStorageEntry, AccountsDb, AtomicAccountsFileId,
+                get_temp_accounts_paths, AccountsDb, AtomicAccountsFileId,
                 ACCOUNTS_DB_CONFIG_FOR_TESTING,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
