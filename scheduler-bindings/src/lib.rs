@@ -167,10 +167,10 @@ pub mod tpu_message_flags {
     pub const FROM_STAKED_NODE: u8 = 1 << 2;
 }
 
-/// Indicates the node is leader.
-pub const IS_LEADER: u8 = 1;
 /// Indicates the node is not leader.
 pub const IS_NOT_LEADER: u8 = 0;
+/// Indicates the node is leader.
+pub const IS_LEADER: u8 = 1;
 
 /// Message: [Agave -> Pack]
 /// Agave passes leader status to the external pack process.
@@ -258,10 +258,10 @@ pub mod pack_message_flags {
     pub const RESOLVE: u16 = 1 << 1;
 }
 
-/// The message was processed.
-pub const PROCESSED: u8 = 1;
 /// The message was not processed.
 pub const NOT_PROCESSED: u8 = 0;
+/// The message was processed.
+pub const PROCESSED: u8 = 1;
 
 /// Message: [Worker -> Pack]
 /// Message from worker threads in response to a [`PackToWorkerMessage`].
@@ -421,10 +421,10 @@ pub mod worker_message_types {
     /// Tag indicating [`Resolved`] inner message.
     pub const RESOLVED: u8 = 1;
 
-    /// Resolving was successful.
-    pub const RESOLVE_SUCCESS: u8 = 1;
     /// Resolving was unsuccessful.
     pub const RESOLVE_FAILURE: u8 = 0;
+    /// Resolving was successful.
+    pub const RESOLVE_SUCCESS: u8 = 1;
 
     #[cfg_attr(
         feature = "dev-context-only-utils",
