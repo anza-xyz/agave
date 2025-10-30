@@ -33,6 +33,7 @@ fn message_passing_on_all_queues() {
         leader_state: agave_scheduler_bindings::IS_LEADER,
         current_slot: 3,
         next_leader_slot: 12,
+        leader_range_end: 16,
         remaining_cost_units: 12_000_000,
         current_slot_progress: 32,
     };

@@ -193,8 +193,14 @@ pub struct ProgressMessage {
     /// and has a bank available.
     pub current_slot: u64,
     /// Next known leader slot or u64::MAX if unknown.
-    /// If currently leader, this is equal to `current_slot`.
+    /// This will **not** include the current slot if leader.
+    /// Node is leader for contiguous slots in the inclusive range
+    /// [[`Self::next_leader_slot`], [`Self::leader_range_end`]].
     pub next_leader_slot: u64,
+    /// Next known leader slot range end (inclusive) or u64::MAX if unknown.
+    /// Node is leader for contiguous slots in the inclusive range
+    /// [[`Self::next_leader_slot`], [`Self::leader_range_end`]].
+    pub leader_range_end: u64,
     /// The remaining cost units allowed to be packed in the block.
     /// i.e. block_limit - current_cost_units_used.
     /// Only valid if currently leader, otherwise the value is undefined.

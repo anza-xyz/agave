@@ -985,7 +985,7 @@ impl SharedLeaderState {
     fn new(
         tick_height: u64,
         leader_first_tick_height: Option<u64>,
-        next_leader_slot: Option<(Slot, Slot)>,
+        next_leader_slot_range: Option<(Slot, Slot)>,
     ) -> Self {
         let inner = LeaderState {
             working_bank: None,
