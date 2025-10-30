@@ -40,7 +40,15 @@ humantime = { workspace = true }
 log = { workspace = true }
 num-traits = { workspace = true }
 pretty-hex = { workspace = true }
-reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "rustls-tls-native-roots", "json"] }
+reqwest = { workspace = true, features = [
+    "blocking",
+    "brotli",
+    "deflate",
+    "gzip",
+    "rustls-tls",
+    "rustls-tls-native-roots",
+    "json",
+] }
 semver = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -107,13 +115,15 @@ tiny-bip39 = { workspace = true }
 [dev-dependencies]
 assert_matches = { workspace = true }
 solana-client = { workspace = true, features = ["dev-context-only-utils"] }
-solana-faucet = { workspace = true, features = ["dev-context-only-utils"] }
 solana-nonce-account = { workspace = true }
 solana-presigner = { workspace = true }
-solana-rpc = { workspace = true }
 solana-sha256-hasher = { workspace = true }
-solana-streamer = { workspace = true }
-solana-test-validator = { workspace = true }
 solana-tps-client = { workspace = true, features = ["dev-context-only-utils"] }
 tempfile = { workspace = true }
 test-case = { workspace = true }
+
+[target."cfg(unix)".dev-dependencies]
+solana-faucet = { workspace = true, features = ["dev-context-only-utils"] }
+solana-rpc = { workspace = true }
+solana-streamer = { workspace = true }
+solana-test-validator = { workspace = true }
