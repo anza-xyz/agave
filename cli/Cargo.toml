@@ -44,7 +44,7 @@ reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip
 semver = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-solana-account = "=3.1.0"
+solana-account = "=3.2.0"
 solana-account-decoder = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
 solana-borsh = "=3.0.0"

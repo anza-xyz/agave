@@ -2,7 +2,7 @@
 use {
     agave_snapshots::{
         paths as snapshot_paths, snapshot_archive_info::SnapshotArchiveInfoGetter,
-        snapshot_config::SnapshotConfig, SnapshotInterval,
+        snapshot_config::SnapshotConfig, SnapshotInterval, SnapshotKind,
     },
     assert_matches::assert_matches,
     crossbeam_channel::{unbounded, Receiver},
@@ -71,10 +71,7 @@ use {
         },
         response::RpcSignatureResult,
     },
-    solana_runtime::{
-        commitment::VOTE_THRESHOLD_SIZE, snapshot_bank_utils, snapshot_package::SnapshotKind,
-        snapshot_utils,
-    },
+    solana_runtime::{commitment::VOTE_THRESHOLD_SIZE, snapshot_bank_utils, snapshot_utils},
     solana_signer::Signer,
     solana_stake_interface::{self as stake, state::NEW_WARMUP_COOLDOWN_RATE},
     solana_streamer::socket::SocketAddrSpace,

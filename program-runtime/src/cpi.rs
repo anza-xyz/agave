@@ -1143,7 +1143,7 @@ fn consume_compute_meter(invoke_context: &InvokeContext, amount: u64) -> Result<
 fn update_callee_account(
     check_aligned: bool,
     caller_account: &CallerAccount,
-    mut callee_account: BorrowedInstructionAccount<'_>,
+    mut callee_account: BorrowedInstructionAccount<'_, '_>,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
 ) -> Result<bool, Error> {
@@ -1200,7 +1200,7 @@ fn update_caller_account_region(
     memory_mapping: &mut MemoryMapping,
     check_aligned: bool,
     caller_account: &CallerAccount,
-    callee_account: &mut BorrowedInstructionAccount<'_>,
+    callee_account: &mut BorrowedInstructionAccount<'_, '_>,
     account_data_direct_mapping: bool,
 ) -> Result<(), Error> {
     let is_caller_loader_deprecated = !check_aligned;
@@ -1250,7 +1250,7 @@ fn update_caller_account(
     memory_mapping: &MemoryMapping<'_>,
     check_aligned: bool,
     caller_account: &mut CallerAccount<'_>,
-    callee_account: &mut BorrowedInstructionAccount<'_>,
+    callee_account: &mut BorrowedInstructionAccount<'_, '_>,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
 ) -> Result<(), Error> {

@@ -226,6 +226,7 @@ pub(crate) enum PacketHandlingError {
     Sanitization,
     LockValidation,
     ComputeBudget,
+    ALTResolution,
 }
 
 impl TransactionViewReceiveAndBuffer {
@@ -350,7 +351,10 @@ impl TransactionViewReceiveAndBuffer {
                             transaction_account_lock_limit,
                         ) {
                             Ok(state) => Ok(state),
-                            Err(PacketHandlingError::Sanitization) => {
+                            Err(
+                                PacketHandlingError::Sanitization
+                                | PacketHandlingError::ALTResolution,
+                            ) => {
                                 num_dropped_on_parsing_and_sanitization += 1;
                                 Err(())
                             }
@@ -495,7 +499,7 @@ pub(crate) fn load_addresses_for_view<D: TransactionData>(
             .map(|(loaded_addresses, deactivation_slot)| {
                 (Some(loaded_addresses), deactivation_slot)
             })
-            .map_err(|_| PacketHandlingError::Sanitization),
+            .map_err(|_| PacketHandlingError::ALTResolution),
     }
 }
 

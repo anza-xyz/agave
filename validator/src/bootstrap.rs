@@ -1,6 +1,7 @@
 use {
     agave_snapshots::{
         paths as snapshot_paths, snapshot_archive_info::SnapshotArchiveInfoGetter as _,
+        SnapshotKind,
     },
     itertools::Itertools,
     log::*,
@@ -24,7 +25,6 @@ use {
     solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_runtime::snapshot_package::SnapshotKind,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_vote_program::vote_state::VoteStateV4,

@@ -1036,7 +1036,7 @@ mod tests {
         vote_pubkey: Pubkey,
         vote_account: AccountSharedData,
         rent: Rent,
-    ) -> TransactionContext {
+    ) -> TransactionContext<'static> {
         let program_account = AccountSharedData::new(0, 0, &native_loader::id());
         let mut transaction_context = TransactionContext::new(
             vec![(id(), program_account), (vote_pubkey, vote_account)],

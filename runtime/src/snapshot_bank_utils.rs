@@ -18,7 +18,7 @@ use {
         serde_snapshot::{
             self, reconstruct_bank_from_fields, SnapshotAccountsDbFields, SnapshotBankFields,
         },
-        snapshot_package::{SnapshotKind, SnapshotPackage},
+        snapshot_package::SnapshotPackage,
         snapshot_utils::{
             self, get_highest_bank_snapshot, rebuild_storages_from_snapshot_dir,
             verify_and_unarchive_snapshots, BankSnapshotInfo, StorageAndNextAccountsFileId,
@@ -40,7 +40,7 @@ use {
         },
         snapshot_config::SnapshotConfig,
         snapshot_hash::SnapshotHash,
-        ArchiveFormat, SnapshotVersion,
+        ArchiveFormat, SnapshotKind, SnapshotVersion,
     },
     log::*,
     solana_accounts_db::{

@@ -12,10 +12,10 @@ use {
 /// For each instruction it calls the program entrypoint method and verifies that the result of
 /// the call does not violate the bank's accounting rules.
 /// The accounts are committed back to the bank only if every instruction succeeds.
-pub(crate) fn process_message(
-    message: &impl SVMMessage,
+pub(crate) fn process_message<'ix_data>(
+    message: &'ix_data impl SVMMessage,
     program_indices: &[IndexOfAccount],
-    invoke_context: &mut InvokeContext,
+    invoke_context: &mut InvokeContext<'_, 'ix_data>,
     execute_timings: &mut ExecuteTimings,
     accumulated_consumed_units: &mut u64,
 ) -> Result<(), TransactionError> {
@@ -26,7 +26,12 @@ pub(crate) fn process_message(
         .enumerate()
     {
         invoke_context
-            .prepare_next_top_level_instruction(message, &instruction, *program_account_index)
+            .prepare_next_top_level_instruction(
+                message,
+                &instruction,
+                *program_account_index,
+                instruction.data,
+            )
             .map_err(|err| {
                 TransactionError::InstructionError(top_level_instruction_index as u8, err)
             })?;

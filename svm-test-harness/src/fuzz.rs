@@ -8,8 +8,12 @@ use {
         },
         instr::execute_instr,
     },
+    agave_feature_set::{increase_cpi_account_info_limit, raise_cpi_nesting_limit_to_8},
+    agave_syscalls::create_program_runtime_environment_v1,
     prost::Message,
-    std::{env, ffi::c_int},
+    solana_compute_budget::compute_budget::ComputeBudget,
+    solana_program_runtime::loaded_programs::ProgramRuntimeEnvironments,
+    std::{env, ffi::c_int, sync::Arc},
 };
 
 #[no_mangle]
@@ -29,7 +33,58 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects
     let Ok(instr_context) = InstrContext::try_from(input) else {
         return None;
     };
-    let instr_effects = execute_instr(instr_context);
+
+    let feature_set = &instr_context.feature_set;
+    let simd_0268_active = feature_set.is_active(&raise_cpi_nesting_limit_to_8::id());
+    let simd_0339_active = feature_set.is_active(&increase_cpi_account_info_limit::id());
+
+    let compute_budget = {
+        let mut budget = ComputeBudget::new_with_defaults(simd_0268_active, simd_0339_active);
+        budget.compute_unit_limit = instr_context.cu_avail;
+        budget
+    };
+
+    // When testing with protobuf, we fill the sysvar cache from input accounts.
+    let sysvar_cache = {
+        let mut cache = solana_program_runtime::sysvar_cache::SysvarCache::default();
+        crate::sysvar_cache::fill_from_accounts(&mut cache, &instr_context.accounts);
+        cache
+    };
+
+    // When testing with protobuf, we fill the program cache from input accounts.
+    let mut program_cache = {
+        let slot = sysvar_cache.get_clock().unwrap().slot;
+        let environments = ProgramRuntimeEnvironments {
+            program_runtime_v1: Arc::new(
+                create_program_runtime_environment_v1(
+                    &instr_context.feature_set.runtime_features(),
+                    &compute_budget.to_budget(),
+                    false, /* deployment */
+                    false, /* debugging_features */
+                )
+                .unwrap(),
+            ),
+            ..ProgramRuntimeEnvironments::default()
+        };
+
+        let mut cache = crate::program_cache::new_with_builtins(&instr_context.feature_set, slot);
+        crate::program_cache::fill_from_accounts(
+            &mut cache,
+            &environments,
+            &instr_context.accounts,
+            slot,
+        )
+        .unwrap();
+
+        cache
+    };
+
+    let instr_effects = execute_instr(
+        instr_context,
+        &compute_budget,
+        &mut program_cache,
+        &sysvar_cache,
+    );
     instr_effects.map(Into::into)
 }
 
