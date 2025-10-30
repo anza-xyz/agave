@@ -227,10 +227,9 @@ impl ClusterInfo {
         sender: &impl ChannelSend<PacketBatch>,
     ) {
         let shred_version = self.my_contact_info.read().unwrap().shred_version();
-        let self_keypair = self.keypair();
         let mut pings = Vec::new();
         self.gossip.refresh_push_active_set(
-            &self_keypair,
+            &self.keypair(),
             shred_version,
             stakes,
             gossip_validators,
@@ -728,9 +727,8 @@ impl ClusterInfo {
     ) -> Result<(), RestartLastVotedForkSlotsError> {
         let now = timestamp();
         let self_keypair = self.keypair();
-        let self_pubkey = self_keypair.pubkey();
         let last_voted_fork_slots = RestartLastVotedForkSlots::new(
-            self_pubkey,
+            self_keypair.pubkey(),
             now,
             fork,
             last_vote_bankhash,
@@ -750,9 +748,8 @@ impl ClusterInfo {
         observed_stake: u64,
     ) {
         let self_keypair = self.keypair();
-        let self_pubkey = self_keypair.pubkey();
         let restart_heaviest_fork = RestartHeaviestFork {
-            from: self_pubkey,
+            from: self_keypair.pubkey(),
             wallclock: timestamp(),
             last_slot,
             last_slot_hash,
@@ -790,10 +787,9 @@ impl ClusterInfo {
         }
 
         let self_keypair = self.keypair();
-        let self_pubkey = self_keypair.pubkey();
 
         let message = CrdsData::SnapshotHashes(SnapshotHashes {
-            from: self_pubkey,
+            from: self_keypair.pubkey(),
             full,
             incremental,
             wallclock: timestamp(),
@@ -803,13 +799,13 @@ impl ClusterInfo {
         Ok(())
     }
 
-    pub fn push_vote_at_index(&self, vote: Transaction, vote_index: u8, keypair: &Keypair) {
+    pub fn push_vote_at_index(&self, vote: Transaction, vote_index: u8, self_keypair: &Keypair) {
         assert!(vote_index < MAX_VOTES);
-        let self_pubkey = keypair.pubkey();
+        let self_pubkey = self_keypair.pubkey();
         let now = timestamp();
         let vote = Vote::new(self_pubkey, vote, now).unwrap();
         let vote = CrdsData::Vote(vote_index, vote);
-        let vote = CrdsValue::new(vote, keypair);
+        let vote = CrdsValue::new(vote, self_keypair);
         let mut gossip_crds = self.gossip.crds.write().unwrap();
         if let Err(err) = gossip_crds.insert(vote, now, GossipRoute::LocalMessage) {
             error!("push_vote failed: {err:?}");
@@ -824,8 +820,7 @@ impl ClusterInfo {
     /// If there exists a newer vote in gossip than `new_vote_slot` return `None` as this indicates
     /// that we might be submitting slashable votes after an improper restart
     fn find_vote_index_to_evict(&self, new_vote_slot: Slot) -> Option<u8> {
-        let self_keypair = self.keypair();
-        let self_pubkey = self_keypair.pubkey();
+        let self_pubkey = self.id();
         let mut num_crds_votes = 0;
         let mut exists_newer_vote = false;
         let vote_index = {
@@ -885,12 +880,11 @@ impl ClusterInfo {
 
     pub fn refresh_vote(&self, refresh_vote: Transaction, refresh_vote_slot: Slot) {
         let self_keypair = self.keypair();
-        let self_pubkey = self_keypair.pubkey();
         let vote_index = {
             let gossip_crds =
                 self.time_gossip_read_lock("gossip_read_push_vote", &self.stats.push_vote_read);
             (0..MAX_VOTES).find(|ix| {
-                let vote = CrdsValueLabel::Vote(*ix, self_pubkey);
+                let vote = CrdsValueLabel::Vote(*ix, self_keypair.pubkey());
                 let Some(vote) = gossip_crds.get::<&CrdsData>(&vote) else {
                     return false;
                 };
@@ -3009,7 +3003,7 @@ mod tests {
         let keypair = Arc::new(Keypair::new());
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
         let cluster_info =
-            ClusterInfo::new(contact_info, keypair.clone(), SocketAddrSpace::Unspecified);
+            ClusterInfo::new(contact_info, keypair, SocketAddrSpace::Unspecified);
 
         // Push MAX_LOCKOUT_HISTORY votes into gossip, one for each slot between
         // [lowest_vote_slot, lowest_vote_slot + MAX_LOCKOUT_HISTORY)
