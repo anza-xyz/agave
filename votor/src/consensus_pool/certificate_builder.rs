@@ -21,7 +21,7 @@ const MAXIMUM_VALIDATORS: usize = 4096;
 pub(super) enum AggregateError {
     #[error("BLS error: {0}")]
     Bls(#[from] BlsError),
-    #[error("Validator does not exist for given rank: {0}")]
+    #[error("Invalid rank: {0}")]
     InvalidRank(u16),
     #[error("Validator already included")]
     ValidatorAlreadyIncluded,
@@ -34,6 +34,8 @@ pub enum BuildError {
     Bls(#[from] BlsError),
     #[error("Encoding failed: {0:?}")]
     Encode(EncodeError),
+    #[error("Invalid rank: {0}")]
+    InvalidRank(usize),
 }
 
 /// Looks up the bit at `rank` in `bitmap` and sets it to true.
@@ -107,7 +109,10 @@ impl CertificateBuilder {
             .map_or(0, |i| i.saturating_add(1));
         let new_length = last_one_1.max(last_one_2);
         // checks in `aggregate()` guarantee that this assertion is valid
-        assert!(new_length <= MAXIMUM_VALIDATORS);
+        debug_assert!(new_length <= MAXIMUM_VALIDATORS);
+        if new_length > MAXIMUM_VALIDATORS {
+            return Err(BuildError::InvalidRank(new_length));
+        }
 
         input_bitmap_1.resize(new_length, false);
         input_bitmap_2.resize(new_length, false);
