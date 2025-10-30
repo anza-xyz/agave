@@ -32,7 +32,7 @@ cargo_build_sbf_sanity() {
   done
   popd
 
-  cargo test --features=sbf_rust --test programs test_program_sbf_sanity
+  SBF_OUT_DIR=target/deploy cargo test --features=sbf_rust --test programs test_program_sbf_sanity
   popd
 }
 
