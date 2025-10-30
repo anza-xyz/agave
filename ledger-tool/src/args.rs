@@ -249,7 +249,8 @@ pub fn get_accounts_db_config(
     let ledger_tool_ledger_path = ledger_path.join(LEDGER_TOOL_DIRECTORY);
 
     let accounts_index_bins = value_t!(arg_matches, "accounts_index_bins", usize).ok();
-    let num_initial_accounts = value_t!(arg_matches, "accounts_index_initial_accounts_count", usize).ok();
+    let num_initial_accounts =
+        value_t!(arg_matches, "accounts_index_initial_accounts_count", usize).ok();
     let accounts_index_index_limit_mb = if !arg_matches.is_present("enable_accounts_disk_index") {
         IndexLimitMb::InMemOnly
     } else {
