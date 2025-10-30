@@ -173,7 +173,6 @@ impl FeatureSet {
             poseidon_enforce_padding: self.is_active(&poseidon_enforce_padding::id()),
             fix_alt_bn128_pairing_length_check: self
                 .is_active(&fix_alt_bn128_pairing_length_check::id()),
-            replace_spl_token_with_p_token: self.is_active(&replace_spl_token_with_p_token::id()),
         }
     }
 }
