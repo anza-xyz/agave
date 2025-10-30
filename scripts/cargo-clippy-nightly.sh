@@ -22,12 +22,25 @@ source "$here/../ci/rust-version.sh" nightly
 # Similarly, nightly is desired to run clippy over all of bench files because
 # the bench itself isn't stabilized yet...
 #   ref: https://github.com/rust-lang/rust/issues/66287
-"$here/cargo-for-all-lock-files.sh" -- \
-  "+${rust_nightly}" clippy \
-  --workspace --all-targets --features dummy-for-ci-check,frozen-abi -- \
-  --deny=warnings \
-  --deny=clippy::default_trait_access \
-  --deny=clippy::arithmetic_side_effects \
-  --deny=clippy::manual_let_else \
-  --deny=clippy::uninlined-format-args \
-  --deny=clippy::used_underscore_binding
+if [[ -n "${SOLANA_CLI_ONLY+x}" ]]; then
+  cargo \
+    "+${rust_nightly}" clippy \
+    --workspace --bin solana --bin solana-keygen \
+    --features dummy-for-ci-check,frozen-abi -- \
+    --deny=warnings \
+    --deny=clippy::default_trait_access \
+    --deny=clippy::arithmetic_side_effects \
+    --deny=clippy::manual_let_else \
+    --deny=clippy::uninlined-format-args \
+    --deny=clippy::used_underscore_binding
+else
+  "$here/cargo-for-all-lock-files.sh" -- \
+    "+${rust_nightly}" clippy \
+    --workspace --all-targets --features dummy-for-ci-check,frozen-abi -- \
+    --deny=warnings \
+    --deny=clippy::default_trait_access \
+    --deny=clippy::arithmetic_side_effects \
+    --deny=clippy::manual_let_else \
+    --deny=clippy::uninlined-format-args \
+    --deny=clippy::used_underscore_binding
+fi
