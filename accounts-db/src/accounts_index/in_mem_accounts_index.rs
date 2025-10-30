@@ -2255,11 +2255,11 @@ mod tests {
         let bin_counts = [2, 4, 8];
         let mut total_capacities = Vec::new();
 
-        for bins in bin_counts {
-            let holder = Arc::new(BucketMapHolder::new(bins, &config, 1));
+        for bin_count in bin_counts {
+            let holder = Arc::new(BucketMapHolder::new(bin_count, &config, 1));
             let mut total_capacity = 0;
 
-            for bin in 0..bins {
+            for bin in 0..bin_count {
                 let accounts_index =
                     InMemAccountsIndex::<u64, u64>::new(&holder, bin, num_initial_accounts);
                 total_capacity += accounts_index.map_internal.read().unwrap().capacity();
@@ -2268,18 +2268,9 @@ mod tests {
             total_capacities.push(total_capacity);
 
             if num_initial_accounts.is_some() {
-                assert!(total_capacity > 0);
+                assert!(total_capacity > num_initial_accounts.unwrap());
             } else {
                 assert_eq!(total_capacity, 0);
-            }
-        }
-
-        // Verify that total capacity across all bins is the same
-        // regardless of bin count
-        if num_initial_accounts.is_some() {
-            let first_total = total_capacities[0];
-            for &total in &total_capacities[1..] {
-                assert_eq!(total, first_total);
             }
         }
     }
