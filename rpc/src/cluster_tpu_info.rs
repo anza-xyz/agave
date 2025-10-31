@@ -96,7 +96,6 @@ mod test {
             leader_schedule_cache::LeaderScheduleCache,
         },
         solana_poh_config::PohConfig,
-        solana_quic_definitions::QUIC_PORT_OFFSET,
         solana_runtime::{
             bank::Bank,
             genesis_utils::{
@@ -218,15 +217,15 @@ mod test {
 
         let validator0_socket = (
             SocketAddr::from((Ipv4Addr::LOCALHOST, 1111)),
-            SocketAddr::from((Ipv4Addr::LOCALHOST, 1111 + QUIC_PORT_OFFSET)),
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 1112)),
         );
         let validator1_socket = (
             SocketAddr::from((Ipv4Addr::LOCALHOST, 2222)),
-            SocketAddr::from((Ipv4Addr::LOCALHOST, 2222 + QUIC_PORT_OFFSET)),
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 2223)),
         );
         let validator2_socket = (
             SocketAddr::from((Ipv4Addr::LOCALHOST, 3333)),
-            SocketAddr::from((Ipv4Addr::LOCALHOST, 3333 + QUIC_PORT_OFFSET)),
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 3334)),
         );
         let recent_peers: HashMap<_, _> = [
             (

@@ -348,7 +348,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .validator(solana_net_utils::is_host_port)
             .help(
-                "Specify TPU address to advertise in gossip [default: ask --entrypoint or \
+                "Specify TPU QUIC address to advertise in gossip [default: ask --entrypoint or \
                  localhost when --entrypoint is not provided]",
             ),
     )
@@ -359,8 +359,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .validator(solana_net_utils::is_host_port)
             .help(
-                "Specify TPU Forwards address to advertise in gossip [default: ask --entrypoint \
-                 or localhostwhen --entrypoint is not provided]",
+                "Specify TPU Forwards QUIC address to advertise in gossip [default: ask \
+                 --entrypoint or localhostwhen --entrypoint is not provided]",
             ),
     )
     .arg(

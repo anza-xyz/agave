@@ -27,7 +27,6 @@ use {
     solana_faucet::faucet::{self, FAUCET_PORT},
     solana_hash::Hash,
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
-    solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_send_transaction_service::send_transaction_service::{self},
     solana_streamer::quic::{
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
@@ -345,8 +344,6 @@ pub fn port_range_validator(port_range: String) -> Result<(), String> {
                 start,
                 start + MINIMUM_VALIDATOR_PORT_RANGE_WIDTH
             ))
-        } else if end.checked_add(QUIC_PORT_OFFSET).is_none() {
-            Err("Invalid dynamic_port_range.".to_string())
         } else {
             Ok(())
         }

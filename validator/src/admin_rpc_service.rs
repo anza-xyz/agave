@@ -701,10 +701,10 @@ impl AdminRpc for AdminRpcImpl {
             post_init
                 .cluster_info
                 .my_contact_info()
-                .tpu(Protocol::UDP)
+                .tpu(Protocol::QUIC)
                 .ok_or_else(|| {
                     error!(
-                        "The public TPU address isn't being published. The node is likely in \
+                        "The public TPU QUIC address isn't being published. The node is likely in \
                          repair mode. See help for --restricted-repair-only-mode for more \
                          information."
                     );
@@ -712,15 +712,14 @@ impl AdminRpc for AdminRpcImpl {
                 })?;
             post_init
                 .cluster_info
-                .set_tpu(public_tpu_addr)
+                .set_tpu_quic(public_tpu_addr)
                 .map_err(|err| {
-                    error!("Failed to set public TPU address to {public_tpu_addr}: {err}");
+                    error!("Failed to set public TPU QUIC address to {public_tpu_addr}: {err}");
                     jsonrpc_core::error::Error::internal_error()
                 })?;
             let my_contact_info = post_init.cluster_info.my_contact_info();
             warn!(
-                "Public TPU addresses set to {:?} (udp) and {:?} (quic)",
-                my_contact_info.tpu(Protocol::UDP),
+                "Public TPU addresses set to {:?} (quic)",
                 my_contact_info.tpu(Protocol::QUIC),
             );
             Ok(())
@@ -738,7 +737,7 @@ impl AdminRpc for AdminRpcImpl {
             post_init
                 .cluster_info
                 .my_contact_info()
-                .tpu_forwards(Protocol::UDP)
+                .tpu_forwards(Protocol::QUIC)
                 .ok_or_else(|| {
                     error!(
                         "The public TPU Forwards address isn't being published. The node is \
@@ -749,15 +748,17 @@ impl AdminRpc for AdminRpcImpl {
                 })?;
             post_init
                 .cluster_info
-                .set_tpu_forwards(public_tpu_forwards_addr)
+                .set_tpu_forwards_quic(public_tpu_forwards_addr)
                 .map_err(|err| {
-                    error!("Failed to set public TPU address to {public_tpu_forwards_addr}: {err}");
+                    error!(
+                        "Failed to set public TPU QUIC address to {public_tpu_forwards_addr}: \
+                         {err}"
+                    );
                     jsonrpc_core::error::Error::internal_error()
                 })?;
             let my_contact_info = post_init.cluster_info.my_contact_info();
             warn!(
-                "Public TPU Forwards addresses set to {:?} (udp) and {:?} (quic)",
-                my_contact_info.tpu_forwards(Protocol::UDP),
+                "Public TPU Forwards address set to {:?} (quic)",
                 my_contact_info.tpu_forwards(Protocol::QUIC),
             );
             Ok(())
