@@ -485,8 +485,9 @@ impl ValidatorConfig {
 // `ValidatorStartProgress` contains status information that is surfaced to the node operator over
 // the admin RPC channel to help them to follow the general progress of node startup without
 // having to watch log messages.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum ValidatorStartProgress {
+    #[default]
     Initializing, // Catch all, default state
     SearchingForRpcService,
     DownloadingSnapshot {
@@ -510,12 +511,6 @@ pub enum ValidatorStartProgress {
     // `Running` is the terminal state once the validator fully starts and all services are
     // operational
     Running,
-}
-
-impl Default for ValidatorStartProgress {
-    fn default() -> Self {
-        Self::Initializing
-    }
 }
 
 struct BlockstoreRootScan {
