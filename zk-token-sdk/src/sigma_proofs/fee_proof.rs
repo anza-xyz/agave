@@ -396,35 +396,35 @@ impl FeeSigmaProof {
         let mut chunks = buf.chunks_mut(UNIT_LEN);
         chunks
             .next()
-            .unwrap()
+            .expect("fee proof buffer has chunk for Y_max_proof")
             .copy_from_slice(self.fee_max_proof.Y_max_proof.as_bytes());
         chunks
             .next()
-            .unwrap()
+            .expect("fee proof buffer has chunk for z_max_proof")
             .copy_from_slice(self.fee_max_proof.z_max_proof.as_bytes());
         chunks
             .next()
-            .unwrap()
+            .expect("fee proof buffer has chunk for c_max_proof")
             .copy_from_slice(self.fee_max_proof.c_max_proof.as_bytes());
         chunks
             .next()
-            .unwrap()
+            .expect("fee proof buffer has chunk for Y_delta")
             .copy_from_slice(self.fee_equality_proof.Y_delta.as_bytes());
         chunks
             .next()
-            .unwrap()
+            .expect("fee proof buffer has chunk for Y_claimed")
             .copy_from_slice(self.fee_equality_proof.Y_claimed.as_bytes());
         chunks
             .next()
-            .unwrap()
+            .expect("fee proof buffer has chunk for z_x")
             .copy_from_slice(self.fee_equality_proof.z_x.as_bytes());
         chunks
             .next()
-            .unwrap()
+            .expect("fee proof buffer has chunk for z_delta")
             .copy_from_slice(self.fee_equality_proof.z_delta.as_bytes());
         chunks
             .next()
-            .unwrap()
+            .expect("fee proof buffer has chunk for z_claimed")
             .copy_from_slice(self.fee_equality_proof.z_claimed.as_bytes());
         buf
     }
