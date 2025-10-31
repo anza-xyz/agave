@@ -26,13 +26,15 @@ impl SVMMessage for SanitizedMessage {
         SanitizedMessage::instructions(self).len()
     }
 
-    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction> {
+    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction<'_>> {
         SanitizedMessage::instructions(self)
             .iter()
             .map(SVMInstruction::from)
     }
 
-    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone {
+    fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
         SanitizedMessage::program_instructions_iter(self)
             .map(|(pubkey, ix)| (pubkey, SVMInstruction::from(ix)))
     }
@@ -41,7 +43,7 @@ impl SVMMessage for SanitizedMessage {
         SanitizedMessage::static_account_keys(self)
     }
 
-    fn account_keys(&self) -> AccountKeys {
+    fn account_keys(&self) -> AccountKeys<'_> {
         SanitizedMessage::account_keys(self)
     }
 
@@ -65,7 +67,9 @@ impl SVMMessage for SanitizedMessage {
         SanitizedMessage::message_address_table_lookups(self).len()
     }
 
-    fn message_address_table_lookups(&self) -> impl Iterator<Item = SVMMessageAddressTableLookup> {
+    fn message_address_table_lookups(
+        &self,
+    ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>> {
         SanitizedMessage::message_address_table_lookups(self)
             .iter()
             .map(SVMMessageAddressTableLookup::from)

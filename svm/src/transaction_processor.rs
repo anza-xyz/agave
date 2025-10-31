@@ -341,7 +341,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .unwrap_or_else(|| self.environments.clone())
     }
 
-    pub fn sysvar_cache(&self) -> RwLockReadGuard<SysvarCache> {
+    pub fn sysvar_cache(&self) -> RwLockReadGuard<'_, SysvarCache> {
         self.sysvar_cache.read().unwrap()
     }
 

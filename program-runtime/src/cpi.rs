@@ -1499,7 +1499,7 @@ mod tests {
             }
         }
 
-        fn caller_account(&mut self) -> CallerAccount {
+        fn caller_account(&mut self) -> CallerAccount<'_> {
             let data = if self.stricter_abi_and_runtime_constraints {
                 &mut []
             } else {
@@ -1528,7 +1528,7 @@ mod tests {
     }
 
     impl MockAccountInfo<'_> {
-        fn new(key: Pubkey, account: &AccountSharedData) -> MockAccountInfo {
+        fn new(key: Pubkey, account: &AccountSharedData) -> MockAccountInfo<'_> {
             MockAccountInfo {
                 key,
                 is_signer: false,
