@@ -1,5 +1,8 @@
 use {
-    crate::{BorrowedInstructionAccount, IndexOfAccount, InstructionAccount, TransactionContext},
+    crate::{
+        instruction_accounts::BorrowedInstructionAccount, IndexOfAccount, InstructionAccount,
+        TransactionContext,
+    },
     solana_account::ReadableAccount,
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,

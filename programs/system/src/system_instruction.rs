@@ -11,7 +11,8 @@ use {
     solana_system_interface::error::SystemError,
     solana_sysvar::rent::Rent,
     solana_transaction_context::{
-        instruction::InstructionContext, BorrowedInstructionAccount, IndexOfAccount,
+        instruction::InstructionContext, instruction_accounts::BorrowedInstructionAccount,
+        IndexOfAccount,
     },
     std::collections::HashSet,
 };
@@ -254,7 +255,7 @@ mod test {
         solana_program_runtime::with_mock_invoke_context,
         solana_sdk_ids::system_program,
         solana_sha256_hasher::hash,
-        solana_transaction_context::InstructionAccount,
+        solana_transaction_context::instruction_accounts::InstructionAccount,
     };
 
     pub const NONCE_ACCOUNT_INDEX: IndexOfAccount = 0;

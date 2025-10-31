@@ -18,7 +18,7 @@ use {
     solana_svm_measure::measure::Measure,
     solana_svm_timings::ExecuteTimings,
     solana_transaction_context::{
-        vm_slice::VmSlice, BorrowedInstructionAccount, IndexOfAccount,
+        instruction_accounts::BorrowedInstructionAccount, vm_slice::VmSlice, IndexOfAccount,
         MAX_ACCOUNTS_PER_INSTRUCTION, MAX_INSTRUCTION_DATA_LEN,
     },
     std::mem,
@@ -1353,7 +1353,8 @@ mod tests {
         solana_sdk_ids::{bpf_loader, system_program},
         solana_svm_feature_set::SVMFeatureSet,
         solana_transaction_context::{
-            transaction_accounts::KeyedAccountSharedData, IndexOfAccount, InstructionAccount,
+            instruction_accounts::InstructionAccount, transaction_accounts::KeyedAccountSharedData,
+            IndexOfAccount,
         },
         std::{
             cell::{Cell, RefCell},

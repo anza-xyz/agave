@@ -19,7 +19,8 @@ use {
     solana_rent::Rent,
     solana_slot_hashes::SlotHash,
     solana_transaction_context::{
-        instruction::InstructionContext, BorrowedInstructionAccount, IndexOfAccount,
+        instruction::InstructionContext, instruction_accounts::BorrowedInstructionAccount,
+        IndexOfAccount,
     },
     solana_vote_interface::{error::VoteError, program::id},
     std::{
@@ -1127,7 +1128,9 @@ mod tests {
         solana_account::{AccountSharedData, ReadableAccount},
         solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_sha256_hasher::hash,
-        solana_transaction_context::{InstructionAccount, TransactionContext},
+        solana_transaction_context::{
+            instruction_accounts::InstructionAccount, TransactionContext,
+        },
         solana_vote_interface::authorized_voters::AuthorizedVoters,
         test_case::test_case,
     };
