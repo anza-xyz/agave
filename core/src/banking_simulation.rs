@@ -3,7 +3,8 @@ use {
     crate::{
         banking_stage::{
             transaction_scheduler::scheduler_controller::SchedulerConfig,
-            update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage, LikeClusterInfo,
+            update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage, BankingStageHandle,
+            LikeClusterInfo,
         },
         banking_trace::{
             BankingTracer, ChannelLabel, Channels, TimedTracedEvent, TracedEvent, TracedSender,
@@ -59,6 +60,7 @@ use {
         time::{Duration, Instant, SystemTime},
     },
     thiserror::Error,
+    tokio::sync::mpsc,
 };
 
 /// This creates a simulated environment around `BankingStage` to produce leader's blocks based on
@@ -530,7 +532,7 @@ impl SimulatorLoop {
 
 struct SimulatorThreads {
     poh_service: PohService,
-    banking_stage: BankingStage,
+    banking_stage: BankingStageHandle,
     broadcast_stage: BroadcastStage,
     retracer_thread: TracerThread,
     exit: Arc<AtomicBool>,
@@ -837,6 +839,7 @@ impl BankingSimulator {
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
+            mpsc::channel(1).1,
             BankingStage::default_num_workers(),
             SchedulerConfig::default(),
             None,

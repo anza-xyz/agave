@@ -6305,6 +6305,7 @@ dependencies = [
  "solana-tpu-client",
  "solana-transaction",
  "solana-version",
+ "tokio",
 ]
 
 [[package]]
