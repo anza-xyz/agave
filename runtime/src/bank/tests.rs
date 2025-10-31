@@ -1073,7 +1073,7 @@ fn test_one_source_two_tx_one_batch() {
 
     let t1 = system_transaction::transfer(&mint_keypair, &key1, amount, genesis_config.hash());
     let t2 = system_transaction::transfer(&mint_keypair, &key2, amount, genesis_config.hash());
-    let txs = vec![t1.clone(), t2.clone()];
+    let txs = [t1.clone(), t2.clone()];
     let res = bank.process_transactions(txs.iter());
 
     assert_eq!(res.len(), 2);
@@ -1708,7 +1708,7 @@ fn test_debits_before_credits() {
         2 * LAMPORTS_PER_SOL,
         genesis_config.hash(),
     );
-    let txs = vec![tx0, tx1];
+    let txs = [tx0, tx1];
     let results = bank.process_transactions(txs.iter());
     assert!(results[0].is_err());
 
@@ -1791,7 +1791,7 @@ fn test_readonly_accounts(relax_intrabatch_account_locks: bool) {
         &[&payer1, &authorized_voter],
         bank.last_blockhash(),
     );
-    let txs = vec![tx0, tx1];
+    let txs = [tx0, tx1];
     let results = bank.process_transactions(txs.iter());
 
     // If multiple transactions attempt to read the same account, they should succeed.
@@ -1812,7 +1812,7 @@ fn test_readonly_accounts(relax_intrabatch_account_locks: bool) {
         1,
         bank.last_blockhash(),
     );
-    let txs = vec![tx0, tx1];
+    let txs = [tx0, tx1];
     let results = bank.process_transactions(txs.iter());
     // Whether an account can be locked as read-only and writable at the same time depends on features.
     assert_eq!(results[0], Ok(()));
@@ -8989,7 +8989,7 @@ fn test_failed_compute_request_instruction() {
         ],
         Some(&payer1_keypair.pubkey()),
     );
-    let txs = vec![
+    let txs = [
         Transaction::new(&[&payer0_keypair], message0, bank.last_blockhash()),
         Transaction::new(&[&payer1_keypair], message1, bank.last_blockhash()),
     ];
