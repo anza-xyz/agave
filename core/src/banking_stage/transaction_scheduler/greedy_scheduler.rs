@@ -77,7 +77,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
         &mut self,
         container: &mut S,
         budget: u64,
-        _relax_intrabatch_account_locks: bool,
+        relax_intrabatch_account_locks: bool,
         _pre_graph_filter: impl Fn(&[&Tx], &mut [bool]),
         pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     ) -> Result<SchedulingSummary, SchedulerError> {
@@ -144,9 +144,10 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
 
             // If there is a conflict with any of the transactions in the current batches,
             // we should immediately send out the batches, so this transaction may be scheduled.
-            if !self
-                .working_account_set
-                .check_locks(transaction_state.transaction())
+            if !relax_intrabatch_account_locks
+                && !self
+                    .working_account_set
+                    .check_locks(transaction_state.transaction())
             {
                 self.working_account_set.clear();
                 num_sent += self.common.send_batches()?;
@@ -182,10 +183,12 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                     max_age,
                     cost,
                 }) => {
-                    assert!(
-                        self.working_account_set.take_locks(&transaction),
-                        "locks must be available"
-                    );
+                    if !relax_intrabatch_account_locks {
+                        assert!(
+                            self.working_account_set.take_locks(&transaction),
+                            "locks must be available"
+                        );
+                    }
                     num_scheduled += 1;
                     self.common.batches.add_transaction_to_batch(
                         thread_id,
