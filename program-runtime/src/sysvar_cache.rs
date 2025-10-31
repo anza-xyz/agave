@@ -16,7 +16,7 @@ use {
     solana_svm_type_overrides::sync::Arc,
     solana_sysvar::SysvarSerialize,
     solana_sysvar_id::SysvarId,
-    solana_transaction_context::{IndexOfAccount, InstructionContext},
+    solana_transaction_context::{instruction::InstructionContext, IndexOfAccount},
 };
 
 #[cfg(feature = "frozen-abi")]

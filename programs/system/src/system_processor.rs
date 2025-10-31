@@ -17,7 +17,9 @@ use {
     solana_system_interface::{
         error::SystemError, instruction::SystemInstruction, MAX_PERMITTED_DATA_LENGTH,
     },
-    solana_transaction_context::{BorrowedInstructionAccount, IndexOfAccount, InstructionContext},
+    solana_transaction_context::{
+        instruction::InstructionContext, BorrowedInstructionAccount, IndexOfAccount,
+    },
     std::collections::HashSet,
 };
 

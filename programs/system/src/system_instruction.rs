@@ -10,7 +10,9 @@ use {
     solana_svm_log_collector::ic_msg,
     solana_system_interface::error::SystemError,
     solana_sysvar::rent::Rent,
-    solana_transaction_context::{BorrowedInstructionAccount, IndexOfAccount, InstructionContext},
+    solana_transaction_context::{
+        instruction::InstructionContext, BorrowedInstructionAccount, IndexOfAccount,
+    },
     std::collections::HashSet,
 };
 

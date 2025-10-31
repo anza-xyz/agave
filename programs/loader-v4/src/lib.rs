@@ -27,7 +27,7 @@ use {
     solana_svm_log_collector::{ic_logger_msg, LogCollector},
     solana_svm_measure::measure::Measure,
     solana_svm_type_overrides::sync::Arc,
-    solana_transaction_context::{BorrowedInstructionAccount, InstructionContext},
+    solana_transaction_context::{instruction::InstructionContext, BorrowedInstructionAccount},
     std::{cell::RefCell, rc::Rc},
 };
 
