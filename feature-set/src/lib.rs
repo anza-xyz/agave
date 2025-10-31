@@ -173,6 +173,7 @@ impl FeatureSet {
             poseidon_enforce_padding: self.is_active(&poseidon_enforce_padding::id()),
             fix_alt_bn128_pairing_length_check: self
                 .is_active(&fix_alt_bn128_pairing_length_check::id()),
+            alt_bn128_little_endian: self.is_active(&alt_bn128_little_endian::id()),
         }
     }
 }
@@ -1199,6 +1200,10 @@ pub mod replace_spl_token_with_p_token {
         Pubkey::from_str_const("ptokNfvuU7terQ2r2452RzVXB3o4GT33yPWo1fUkkZ2");
 }
 
+pub mod alt_bn128_little_endian {
+    solana_pubkey::declare_id!("bnS3pWfLrxHRJvMyLm6EaYQkP7A2Fe9DxoKv4aGA8YM");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2149,6 +2154,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             replace_spl_token_with_p_token::id(),
             "SIMD-0266: Efficient Token program",
+        ),
+        (
+            alt_bn128_little_endian::id(),
+            "SIMD-0284: Add little-endian compatibility for alt_bn128",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
