@@ -257,6 +257,7 @@ pub(crate) mod external {
         }
 
         pub fn run(mut self) -> Result<(), ExternalConsumeWorkerError> {
+            let mut should_drain_executes = false;
             let mut did_work = false;
             let mut last_empty_time = Instant::now();
             let mut sleep_duration = STARTING_SLEEP_DURATION;
@@ -265,6 +266,7 @@ pub(crate) mod external {
                 self.allocator.clean_remote_free_lists();
                 if self.receiver.is_empty() {
                     self.receiver.sync();
+                    should_drain_executes = false;
                 }
 
                 match self.receiver.try_read() {
@@ -273,7 +275,8 @@ pub(crate) mod external {
                         self.sender.sync();
                         // SAFETY: `try_read` gives a ptr to a properly aligned
                         //         region for a `PackToWorkerMessage`
-                        self.process_message(unsafe { message.as_ref() })?;
+                        should_drain_executes |= self
+                            .process_message(unsafe { message.as_ref() }, should_drain_executes)?;
                         self.sender.commit();
                         self.receiver.finalize();
                     }
@@ -293,12 +296,14 @@ pub(crate) mod external {
             Ok(())
         }
 
+        /// Return true if fetching a bank for execution timed out.
         fn process_message(
             &mut self,
             message: &PackToWorkerMessage,
-        ) -> Result<(), ExternalConsumeWorkerError> {
+            should_drain_executes: bool,
+        ) -> Result<bool, ExternalConsumeWorkerError> {
             if !Self::validate_message(message) {
-                return self.return_invalid_message(message);
+                return self.return_invalid_message(message).map(|()| false);
             }
 
             self.metrics
@@ -307,16 +312,27 @@ pub(crate) mod external {
                 .fetch_add(1, Ordering::Relaxed);
 
             match message.flags {
-                pack_message_flags::NONE => self.execute_batch(message),
-                pack_message_flags::RESOLVE => self.resolve_batch(message),
+                pack_message_flags::NONE => self.execute_batch(message, should_drain_executes),
+                pack_message_flags::RESOLVE => self.resolve_batch(message).map(|()| false),
                 _ => unreachable!("flags verified earlier"),
             }
         }
 
+        /// Return true if fetching a bank for execution timed out.
         fn execute_batch(
             &mut self,
             message: &PackToWorkerMessage,
-        ) -> Result<(), ExternalConsumeWorkerError> {
+            should_drain_executes: bool,
+        ) -> Result<bool, ExternalConsumeWorkerError> {
+            if should_drain_executes {
+                return self
+                    .return_not_included_with_reason(
+                        message,
+                        not_included_reasons::BANK_NOT_AVAILABLE,
+                    )
+                    .map(|()| true);
+            }
+
             // Loop here to avoid exposing internal error to external scheduler.
             // In the vast majority of cases, this will iterate a single time;
             // If we began execution when a slot was still in process, and could
@@ -326,20 +342,24 @@ pub(crate) mod external {
                 let Some(leader_state) =
                     active_leader_state_with_timeout(&self.shared_leader_state)
                 else {
-                    return self.return_not_included_with_reason(
-                        message,
-                        not_included_reasons::BANK_NOT_AVAILABLE,
-                    );
+                    return self
+                        .return_not_included_with_reason(
+                            message,
+                            not_included_reasons::BANK_NOT_AVAILABLE,
+                        )
+                        .map(|()| true);
                 };
 
                 let bank = leader_state
                     .working_bank()
                     .expect("active_leader_state_with_timeout should only return an active bank");
                 if bank.slot() > message.max_execution_slot {
-                    return self.return_not_included_with_reason(
-                        message,
-                        not_included_reasons::SLOT_MISMATCH,
-                    );
+                    return self
+                        .return_not_included_with_reason(
+                            message,
+                            not_included_reasons::SLOT_MISMATCH,
+                        )
+                        .map(|()| false);
                 }
 
                 // SAFETY: Assumption that external scheduler does not pass messages with batch regions
@@ -397,12 +417,13 @@ pub(crate) mod external {
 
                 // `reserve` returns valid aligned pointer
                 unsafe { send_ptr.write(response) };
-                return Ok(());
+                return Ok(false);
             }
 
             // If not successfully recorded even after second attempt, then we
             // just return immediately as if a bank is not available.
             self.return_not_included_with_reason(message, not_included_reasons::BANK_NOT_AVAILABLE)
+                .map(|()| false)
         }
 
         fn resolve_batch(
