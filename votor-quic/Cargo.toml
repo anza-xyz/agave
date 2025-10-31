@@ -1,0 +1,32 @@
+[package]
+name = "votor-quic"
+version = { workspace = true }
+authors = { workspace = true }
+description = "Solana Votor specific QUIC server and client"
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = true
+
+[lib]
+
+[dependencies]
+anyhow = { workspace = true }
+arc-swap.workspace = true
+bytes.workspace = true
+crossbeam-channel.workspace = true
+futures-util = { workspace = true }
+pem.workspace = true
+quinn = { workspace = true }
+rcgen = "0.13"
+rustls = { workspace = true }
+solana-address = { workspace = true }
+solana-keypair.workspace = true
+solana-net-utils = { workspace = true }
+solana-pubkey.workspace = true
+solana-tls-utils = { workspace = true, features = ["agave-unstable-api"] }
+tokio = { workspace = true, features = ["full"] }
+
+[lints]
+workspace = true

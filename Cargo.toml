@@ -133,6 +133,7 @@ members = [
     "vote",
     "votor",
     "votor-messages",
+    "votor-quic",
     "watchtower",
     "wen-restart",
     "xdp",
