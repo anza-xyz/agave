@@ -41,7 +41,6 @@ solana-message = { workspace = true, optional = true }
 solana-net-utils = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
-solana-quic-definitions = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-signature = { workspace = true }

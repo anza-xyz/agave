@@ -9491,7 +9491,6 @@ dependencies = [
  "solana-net-utils",
  "solana-pubkey",
  "solana-pubsub-client",
- "solana-quic-definitions",
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-signature",

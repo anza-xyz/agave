@@ -297,10 +297,34 @@ impl Node {
         info.set_gossip((advertised_ip, gossip_ports[0])).unwrap();
         info.set_tvu(UDP, (advertised_ip, tvu_port)).unwrap();
         info.set_tvu(QUIC, (advertised_ip, tvu_quic_port)).unwrap();
-        info.set_tpu(public_tpu_addr.unwrap_or_else(|| SocketAddr::new(advertised_ip, tpu_port)))
-            .unwrap();
+        info.set_tpu(
+            UDP,
+            public_tpu_addr.unwrap_or_else(|| SocketAddr::new(advertised_ip, tpu_port)),
+        )
+        .unwrap();
+        info.set_tpu(
+            QUIC,
+            public_tpu_addr
+                .map(|mut s| {
+                    s.set_port(s.port() + QUIC_PORT_OFFSET);
+                    s
+                })
+                .unwrap_or_else(|| SocketAddr::new(advertised_ip, tpu_port_quic)),
+        )
+        .unwrap();
         info.set_tpu_forwards(
+            UDP,
             public_tpu_forwards_addr
+                .unwrap_or_else(|| SocketAddr::new(advertised_ip, tpu_forwards_port)),
+        )
+        .unwrap();
+        info.set_tpu_forwards(
+            QUIC,
+            public_tpu_forwards_addr
+                .map(|mut s| {
+                    s.set_port(s.port() + QUIC_PORT_OFFSET);
+                    s
+                })
                 .unwrap_or_else(|| SocketAddr::new(advertised_ip, tpu_forwards_port)),
         )
         .unwrap();

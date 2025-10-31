@@ -63,6 +63,7 @@ use {
         packet::{Packet, PacketBatch, PacketBatchRecycler, PacketRef, PinnedPacketBatch},
     },
     solana_pubkey::Pubkey,
+    solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_rayon_threadlimit::get_thread_count,
     solana_runtime::bank_forks::BankForks,
     solana_sanitize::Sanitize,
@@ -414,17 +415,27 @@ impl ClusterInfo {
         Ok(())
     }
 
-    pub fn set_tpu(&self, tpu_addr: SocketAddr) -> Result<(), ContactInfoError> {
-        self.my_contact_info.write().unwrap().set_tpu(tpu_addr)?;
+    pub fn set_tpu(&self, mut tpu_addr: SocketAddr) -> Result<(), ContactInfoError> {
+        {
+            let mut guard = self.my_contact_info.write().unwrap();
+            guard.set_tpu(contact_info::Protocol::UDP, tpu_addr)?;
+            tpu_addr.set_port(tpu_addr.port() + QUIC_PORT_OFFSET);
+            guard.set_tpu(contact_info::Protocol::QUIC, tpu_addr)?;
+        }
         self.refresh_my_gossip_contact_info();
         Ok(())
     }
 
-    pub fn set_tpu_forwards(&self, tpu_forwards_addr: SocketAddr) -> Result<(), ContactInfoError> {
-        self.my_contact_info
-            .write()
-            .unwrap()
-            .set_tpu_forwards(tpu_forwards_addr)?;
+    pub fn set_tpu_forwards(
+        &self,
+        mut tpu_forwards_addr: SocketAddr,
+    ) -> Result<(), ContactInfoError> {
+        {
+            let mut guard = self.my_contact_info.write().unwrap();
+            guard.set_tpu_forwards(contact_info::Protocol::UDP, tpu_forwards_addr)?;
+            tpu_forwards_addr.set_port(tpu_forwards_addr.port() + QUIC_PORT_OFFSET);
+            guard.set_tpu_forwards(contact_info::Protocol::QUIC, tpu_forwards_addr)?;
+        }
         self.refresh_my_gossip_contact_info();
         Ok(())
     }
