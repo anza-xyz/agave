@@ -409,33 +409,30 @@ impl BankingStage {
         );
 
         // Setup the manager thread state.
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
         let banking_shutdown_signal = CancellationToken::new();
-        let manager = {
-            let _guard = rt.enter();
-            BankingStage {
-                banking_shutdown_signal: banking_shutdown_signal.clone(),
-                worker_exit_signal: Arc::new(AtomicBool::new(false)),
-                banking_control_receiver,
-                tpu_vote_receiver,
-                gossip_vote_receiver,
-                non_vote_receiver,
-                transaction_recorder,
-                poh_recorder,
-                bank_forks,
-                committer,
-                log_messages_bytes_limit,
-                threads: FuturesUnordered::default(),
-            }
+        let manager = BankingStage {
+            banking_shutdown_signal: banking_shutdown_signal.clone(),
+            worker_exit_signal: Arc::new(AtomicBool::new(false)),
+            banking_control_receiver,
+            tpu_vote_receiver,
+            gossip_vote_receiver,
+            non_vote_receiver,
+            transaction_recorder,
+            poh_recorder,
+            bank_forks,
+            committer,
+            log_messages_bytes_limit,
+            threads: FuturesUnordered::default(),
         };
 
         // Spawn the manager thread.
         let thread = std::thread::Builder::new()
             .name("BankingMgr".to_string())
             .spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
                 rt.block_on(manager.run(BankingControlMsg::Internal {
                     block_production_method,
                     num_workers,
@@ -684,10 +681,7 @@ mod external {
     use {
         super::*,
         crate::banking_stage::consume_worker::external::ExternalWorker,
-        agave_scheduling_utils::handshake::{
-            self,
-            server::{AgaveSession, AgaveWorkerSession},
-        },
+        agave_scheduling_utils::handshake::server::{AgaveSession, AgaveWorkerSession},
         tpu_to_pack::BankingPacketReceivers,
     };
 
@@ -701,7 +695,8 @@ mod external {
             }: AgaveSession,
         ) -> Vec<JoinHandle<()>> {
             static_assertions::const_assert!(
-                handshake::MAX_WORKERS == BankingStage::max_num_workers().get()
+                agave_scheduling_utils::handshake::MAX_WORKERS
+                    == BankingStage::max_num_workers().get()
             );
             assert!(workers.len() <= BankingStage::max_num_workers().get());
 
