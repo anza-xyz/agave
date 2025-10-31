@@ -214,6 +214,8 @@ where
                 let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
                     &mut self.container,
                     scheduling_budget,
+                    bank.feature_set
+                        .is_active(&agave_feature_set::relax_intrabatch_account_locks::ID),
                     |txs, results| {
                         Self::pre_graph_filter(txs, results, bank, MAX_PROCESSING_AGE)
                     },
