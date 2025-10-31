@@ -186,7 +186,7 @@ agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", vers
 agave-cargo-registry = { path = "cargo-registry", version = "=4.0.0-alpha.0" }
 agave-feature-set = { path = "feature-set", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-fs = { path = "fs", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
+agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=4.0.0-alpha.0" }
 agave-io-uring = { path = "io-uring", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-logger = { path = "logger", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-precompiles = { path = "precompiles", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
