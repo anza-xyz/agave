@@ -468,6 +468,7 @@ fn main() {
         tpu_vote_receiver,
         gossip_vote_receiver,
         mpsc::channel(1).1,
+        None,
         block_production_num_workers,
         SchedulerConfig {
             scheduler_pacing: SchedulerPacing::Disabled,

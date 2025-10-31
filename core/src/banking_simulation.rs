@@ -840,6 +840,7 @@ impl BankingSimulator {
             tpu_vote_receiver,
             gossip_vote_receiver,
             mpsc::channel(1).1,
+            None,
             BankingStage::default_num_workers(),
             SchedulerConfig::default(),
             None,

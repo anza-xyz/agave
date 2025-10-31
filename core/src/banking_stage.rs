@@ -25,7 +25,7 @@ use {
     },
     agave_banking_stage_ingress_types::BankingPacketReceiver,
     crossbeam_channel::{unbounded, Receiver, Sender},
-    futures::{stream::FuturesUnordered, StreamExt},
+    futures::{future::OptionFuture, stream::FuturesUnordered, StreamExt},
     histogram::Histogram,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery},
     solana_ledger::blockstore_processor::TransactionStatusSender,
@@ -43,6 +43,7 @@ use {
     std::{
         num::{NonZeroU64, NonZeroUsize, Saturating},
         ops::Deref,
+        path::PathBuf,
         sync::{
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc, RwLock,
@@ -381,6 +382,7 @@ pub struct BankingStage {
     bank_forks: Arc<RwLock<BankForks>>,
     committer: Committer,
     log_messages_bytes_limit: Option<usize>,
+    external_scheduler_server: Option<tokio::task::JoinHandle<()>>,
     threads: FuturesUnordered<NamedTask<std::thread::Result<()>>>,
 }
 
@@ -394,6 +396,7 @@ impl BankingStage {
         tpu_vote_receiver: BankingPacketReceiver,
         gossip_vote_receiver: BankingPacketReceiver,
         banking_control_receiver: mpsc::Receiver<BankingControlMsg>,
+        external_scheduler_server: Option<(PathBuf, mpsc::Sender<BankingControlMsg>)>,
         num_workers: NonZeroUsize,
         scheduler_config: SchedulerConfig,
         transaction_status_sender: Option<TransactionStatusSender>,
@@ -409,30 +412,70 @@ impl BankingStage {
         );
 
         // Setup the manager thread state.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         let banking_shutdown_signal = CancellationToken::new();
-        let manager = BankingStage {
-            banking_shutdown_signal: banking_shutdown_signal.clone(),
-            worker_exit_signal: Arc::new(AtomicBool::new(false)),
-            banking_control_receiver,
-            tpu_vote_receiver,
-            gossip_vote_receiver,
-            non_vote_receiver,
-            transaction_recorder,
-            poh_recorder,
-            bank_forks,
-            committer,
-            log_messages_bytes_limit,
-            threads: FuturesUnordered::default(),
+        let manager = {
+            let _guard = rt.enter();
+            BankingStage {
+                banking_shutdown_signal: banking_shutdown_signal.clone(),
+                worker_exit_signal: Arc::new(AtomicBool::new(false)),
+                banking_control_receiver,
+                tpu_vote_receiver,
+                gossip_vote_receiver,
+                non_vote_receiver,
+                transaction_recorder,
+                poh_recorder,
+                bank_forks,
+                committer,
+                log_messages_bytes_limit,
+                external_scheduler_server: external_scheduler_server.map(
+                    |(path, session_sender)| {
+                        tokio::task::spawn_blocking(move || {
+                            #[cfg(unix)]
+                            {
+                                // NB: Panic on start if we can't bind.
+                                let mut listener =
+                                    agave_scheduling_utils::handshake::server::Server::new(path)
+                                        .unwrap();
+
+                                loop {
+                                    match listener.accept() {
+                                        Ok(session) => {
+                                            if session_sender
+                                                .blocking_send(BankingControlMsg::External {
+                                                    session,
+                                                })
+                                                .is_err()
+                                            {
+                                                break;
+                                            }
+                                        }
+                                        Err(err) => {
+                                            error!("External scheduler handshake failed; err={err}")
+                                        }
+                                    };
+                                }
+                            }
+                            #[cfg(not(unix))]
+                            {
+                                loop {
+                                    std::thread::sleep(Duration::from_secs(30));
+                                }
+                            }
+                        })
+                    },
+                ),
+                threads: FuturesUnordered::default(),
+            }
         };
 
         // Spawn the manager thread.
         let thread = std::thread::Builder::new()
             .name("BankingMgr".to_string())
             .spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap();
                 rt.block_on(manager.run(BankingControlMsg::Internal {
                     block_production_method,
                     num_workers,
@@ -468,6 +511,10 @@ impl BankingStage {
                         num_workers: BankingStage::default_num_workers(),
                         config: SchedulerConfig::default(),
                     }).await;
+                },
+                Some(res) = OptionFuture::from(self.external_scheduler_server.as_mut()) => {
+                    self.external_scheduler_server = None;
+                    error!("External scheduler server exited unexpectedly; res={res:?}");
                 },
             }
         }
@@ -927,6 +974,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_receiver,
             mpsc::channel(1).1,
+            None,
             DEFAULT_NUM_WORKERS,
             SchedulerConfig {
                 scheduler_pacing: SchedulerPacing::Disabled,
@@ -991,6 +1039,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_receiver,
             mpsc::channel(1).1,
+            None,
             DEFAULT_NUM_WORKERS,
             SchedulerConfig {
                 scheduler_pacing: SchedulerPacing::Disabled,
@@ -1063,6 +1112,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_receiver,
             mpsc::channel(1).1,
+            None,
             DEFAULT_NUM_WORKERS,
             SchedulerConfig {
                 scheduler_pacing: SchedulerPacing::Disabled,
@@ -1213,6 +1263,7 @@ mod tests {
                 tpu_vote_receiver,
                 gossip_vote_receiver,
                 mpsc::channel(1).1,
+                None,
                 DEFAULT_NUM_WORKERS,
                 SchedulerConfig {
                     scheduler_pacing: SchedulerPacing::Disabled,
@@ -1366,6 +1417,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_receiver,
             mpsc::channel(1).1,
+            None,
             DEFAULT_NUM_WORKERS,
             SchedulerConfig {
                 scheduler_pacing: SchedulerPacing::Disabled,
