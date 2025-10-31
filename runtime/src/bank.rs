@@ -1932,7 +1932,7 @@ impl Bank {
         self.epoch_schedule().first_normal_epoch
     }
 
-    pub fn freeze_lock(&self) -> RwLockReadGuard<Hash> {
+    pub fn freeze_lock(&self) -> RwLockReadGuard<'_, Hash> {
         self.hash.read().unwrap()
     }
 
@@ -2936,7 +2936,7 @@ impl Bank {
     pub fn prepare_entry_batch(
         &self,
         txs: Vec<VersionedTransaction>,
-    ) -> Result<TransactionBatch<RuntimeTransaction<SanitizedTransaction>>> {
+    ) -> Result<TransactionBatch<'_, '_, RuntimeTransaction<SanitizedTransaction>>> {
         let enable_static_instruction_limit = self
             .feature_set
             .is_active(&agave_feature_set::static_instruction_limit::id());
@@ -5180,11 +5180,11 @@ impl Bank {
             .shrink_ancient_slots(self.epoch_schedule())
     }
 
-    pub fn read_cost_tracker(&self) -> LockResult<RwLockReadGuard<CostTracker>> {
+    pub fn read_cost_tracker(&self) -> LockResult<RwLockReadGuard<'_, CostTracker>> {
         self.cost_tracker.read()
     }
 
-    pub fn write_cost_tracker(&self) -> LockResult<RwLockWriteGuard<CostTracker>> {
+    pub fn write_cost_tracker(&self) -> LockResult<RwLockWriteGuard<'_, CostTracker>> {
         self.cost_tracker.write()
     }
 
@@ -5937,7 +5937,7 @@ impl Bank {
     pub fn prepare_batch_for_tests(
         &self,
         txs: Vec<Transaction>,
-    ) -> TransactionBatch<RuntimeTransaction<SanitizedTransaction>> {
+    ) -> TransactionBatch<'_, '_, RuntimeTransaction<SanitizedTransaction>> {
         let sanitized_txs = txs
             .into_iter()
             .map(RuntimeTransaction::from_transaction_for_tests)

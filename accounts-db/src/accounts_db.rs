@@ -917,7 +917,7 @@ impl AccountStorageEntry {
     }
 
     /// Locks obsolete accounts with a read lock and returns the the accounts with the guard
-    pub(crate) fn obsolete_accounts_read_lock(&self) -> RwLockReadGuard<ObsoleteAccounts> {
+    pub(crate) fn obsolete_accounts_read_lock(&self) -> RwLockReadGuard<'_, ObsoleteAccounts> {
         self.obsolete_accounts.read().unwrap()
     }
 

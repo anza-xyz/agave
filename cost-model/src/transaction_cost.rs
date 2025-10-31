@@ -198,14 +198,18 @@ impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction
 
     fn instructions_iter(
         &self,
-    ) -> impl Iterator<Item = solana_svm_transaction::instruction::SVMInstruction> {
+    ) -> impl Iterator<Item = solana_svm_transaction::instruction::SVMInstruction<'_>> {
         core::iter::empty()
     }
 
     fn program_instructions_iter(
         &self,
-    ) -> impl Iterator<Item = (&Pubkey, solana_svm_transaction::instruction::SVMInstruction)> + Clone
-    {
+    ) -> impl Iterator<
+        Item = (
+            &Pubkey,
+            solana_svm_transaction::instruction::SVMInstruction<'_>,
+        ),
+    > + Clone {
         core::iter::empty()
     }
 
@@ -213,7 +217,7 @@ impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction
         &self.0
     }
 
-    fn account_keys(&self) -> solana_message::AccountKeys {
+    fn account_keys(&self) -> solana_message::AccountKeys<'_> {
         solana_message::AccountKeys::new(&self.0, None)
     }
 
@@ -240,7 +244,9 @@ impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction
     fn message_address_table_lookups(
         &self,
     ) -> impl Iterator<
-        Item = solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup,
+        Item = solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup<
+            '_,
+        >,
     > {
         core::iter::empty()
     }
@@ -289,7 +295,7 @@ impl solana_runtime_transaction::transaction_with_meta::TransactionWithMeta
     #[allow(refining_impl_trait)]
     fn as_sanitized_transaction(
         &self,
-    ) -> std::borrow::Cow<solana_transaction::sanitized::SanitizedTransaction> {
+    ) -> std::borrow::Cow<'_, solana_transaction::sanitized::SanitizedTransaction> {
         unimplemented!("WritableKeysTransaction::as_sanitized_transaction");
     }
 

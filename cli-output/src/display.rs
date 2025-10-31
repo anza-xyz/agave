@@ -275,7 +275,9 @@ fn write_transaction<W: io::Write>(
     Ok(())
 }
 
-fn transform_lookups_to_unknown_keys(lookups: &[MessageAddressTableLookup]) -> Vec<AccountKeyType> {
+fn transform_lookups_to_unknown_keys(
+    lookups: &[MessageAddressTableLookup],
+) -> Vec<AccountKeyType<'_>> {
     let unknown_writable_keys = lookups
         .iter()
         .enumerate()
