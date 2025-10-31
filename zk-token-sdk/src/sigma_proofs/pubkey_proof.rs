@@ -123,8 +123,14 @@ impl PubkeyValidityProof {
     pub fn to_bytes(&self) -> [u8; PUBKEY_VALIDITY_PROOF_LEN] {
         let mut buf = [0_u8; PUBKEY_VALIDITY_PROOF_LEN];
         let mut chunks = buf.chunks_mut(UNIT_LEN);
-        chunks.next().unwrap().copy_from_slice(self.Y.as_bytes());
-        chunks.next().unwrap().copy_from_slice(self.z.as_bytes());
+        chunks
+            .next()
+            .expect("pubkey validity proof buffer has chunk for Y")
+            .copy_from_slice(self.Y.as_bytes());
+        chunks
+            .next()
+            .expect("pubkey validity proof buffer has chunk for z")
+            .copy_from_slice(self.z.as_bytes());
         buf
     }
 
