@@ -13,7 +13,7 @@
 //! For the sake of the example, let's assume we have some custom slot updates
 //! that we receive by UDP.
 //!
-//! ```
+//! ```ignore
 //!  use async_stream::stream;
 //!  use tokio::net::UdpSocket;
 //!
@@ -150,7 +150,7 @@ impl NodeAddressService {
 
     /// Returns the estimated current slot.
     pub fn current_slot(&self) -> Slot {
-        self.slot_receiver.slot().first_slot()
+        self.slot_receiver.slot()
     }
 }
 

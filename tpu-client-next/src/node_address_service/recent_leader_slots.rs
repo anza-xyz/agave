@@ -1,10 +1,5 @@
 //! This module provides [`RecentLeaderSlots`] to track recent leader slots.
-use {
-    crate::node_address_service::{slot_receiver::EstimatedSlot, SlotEvent},
-    log::*,
-    solana_clock::Slot,
-    std::collections::VecDeque,
-};
+use {crate::node_address_service::SlotEvent, solana_clock::Slot, std::collections::VecDeque};
 
 // 48 chosen because it's unlikely that 12 leaders in a row will miss their slots
 const MAX_SLOT_SKIP_DISTANCE: u64 = 48;
@@ -43,7 +38,7 @@ impl RecentLeaderSlots {
 
     // Estimate the current slot from recent slot notifications.
     #[allow(clippy::arithmetic_side_effects)]
-    pub fn estimate_current_slot(&self) -> EstimatedSlot {
+    pub fn estimate_current_slot(&self) -> Slot {
         let mut recent_slots: Vec<SlotEvent> = self.0.iter().cloned().collect();
         assert!(!recent_slots.is_empty());
         recent_slots.sort_by(|a, b| {
@@ -67,15 +62,9 @@ impl RecentLeaderSlots {
 
         let slot_event = &recent_slots[idx];
         if slot_event.is_start() {
-            if let Some(prev_event) = idx.checked_sub(1).and_then(|i| recent_slots.get(i)) {
-                if prev_event.is_start() {
-                    debug!("recent_slots = {recent_slots:?}, idx = {idx:?}");
-                    return EstimatedSlot::Multiple([prev_event.slot(), slot_event.slot()]);
-                }
-            }
-            EstimatedSlot::Single(slot_event.slot())
+            slot_event.slot()
         } else {
-            EstimatedSlot::Single(slot_event.slot().saturating_add(1))
+            slot_event.slot().saturating_add(1)
         }
     }
 }
@@ -105,56 +94,47 @@ mod tests {
         let mut recent_slots: Vec<Slot> = (1..=12).collect();
         assert_eq!(
             RecentLeaderSlots::from(recent_slots.clone()).estimate_current_slot(),
-            EstimatedSlot::Single(13)
+            13
         );
 
         recent_slots.reverse();
         assert_eq!(
             RecentLeaderSlots::from(recent_slots).estimate_current_slot(),
-            EstimatedSlot::Single(13)
+            13
         );
 
         let mut recent_slots = RecentLeaderSlots::new();
         recent_slots.record_slot_start(13);
-        assert_eq!(
-            recent_slots.estimate_current_slot(),
-            EstimatedSlot::Single(13)
-        );
+        assert_eq!(recent_slots.estimate_current_slot(), 13);
         recent_slots.record_slot_start(14);
-        assert_eq!(
-            recent_slots.estimate_current_slot(),
-            EstimatedSlot::Multiple([13, 14])
-        );
+        assert_eq!(recent_slots.estimate_current_slot(), 14);
         recent_slots.record_slot_start(15);
-        assert_eq!(
-            recent_slots.estimate_current_slot(),
-            EstimatedSlot::Multiple([14, 15])
-        );
+        assert_eq!(recent_slots.estimate_current_slot(), 15);
 
         assert_eq!(
             RecentLeaderSlots::from(vec![0, 1 + MAX_SLOT_SKIP_DISTANCE]).estimate_current_slot(),
-            EstimatedSlot::Single(2 + MAX_SLOT_SKIP_DISTANCE),
+            2 + MAX_SLOT_SKIP_DISTANCE,
         );
         assert_eq!(
             RecentLeaderSlots::from(vec![0, 2 + MAX_SLOT_SKIP_DISTANCE]).estimate_current_slot(),
-            EstimatedSlot::Single(3 + MAX_SLOT_SKIP_DISTANCE),
+            3 + MAX_SLOT_SKIP_DISTANCE,
         );
 
         assert_eq!(
             RecentLeaderSlots::from(vec![1, 100]).estimate_current_slot(),
-            EstimatedSlot::Single(2)
+            2
         );
         assert_eq!(
             RecentLeaderSlots::from(vec![1, 2, 100]).estimate_current_slot(),
-            EstimatedSlot::Single(3)
+            3
         );
         assert_eq!(
             RecentLeaderSlots::from(vec![1, 2, 3, 100]).estimate_current_slot(),
-            EstimatedSlot::Single(4)
+            4
         );
         assert_eq!(
             RecentLeaderSlots::from(vec![1, 2, 3, 99, 100]).estimate_current_slot(),
-            EstimatedSlot::Single(4)
+            4
         );
     }
 }

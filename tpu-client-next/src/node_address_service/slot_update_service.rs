@@ -1,11 +1,11 @@
 //! This module provides [`SlotUpdateService`] that is used to get slot
 //! updates using provided stream.
 use {
-    crate::node_address_service::{
-        slot_receiver::EstimatedSlot, RecentLeaderSlots, SlotEvent, SlotReceiver,
+    crate::{
+        logging::info,
+        node_address_service::{RecentLeaderSlots, SlotEvent, SlotReceiver},
     },
     futures::StreamExt,
-    log::info,
     solana_clock::Slot,
     std::pin::pin,
     thiserror::Error,
@@ -28,7 +28,7 @@ impl SlotUpdateService {
         cancel: CancellationToken,
     ) -> Result<(SlotReceiver, Self), Error> {
         let mut recent_slots = RecentLeaderSlots::new();
-        let (slot_sender, slot_receiver) = watch::channel(EstimatedSlot::Single(current_slot));
+        let (slot_sender, slot_receiver) = watch::channel(current_slot);
         let slot_receiver_clone = slot_receiver.clone();
         let cancel_clone = cancel.clone();
 
@@ -44,7 +44,7 @@ impl SlotUpdateService {
                         }
                         let estimated_slots = recent_slots.estimate_current_slot();
                         let cached_estimated_slots = *slot_receiver.borrow();
-                        if estimated_slots.requires_update(&cached_estimated_slots) {
+                        if estimated_slots > cached_estimated_slots {
                             slot_sender.send(estimated_slots).map_err(|_| Error::ChannelClosed)?;
                         }
                     }

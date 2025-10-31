@@ -7,7 +7,7 @@ use {
     crate::{
         connection_workers_scheduler::extract_send_leaders,
         logging::{debug, error, info, warn},
-        node_address_service::{slot_receiver::EstimatedSlot, SlotReceiver},
+        node_address_service::SlotReceiver,
     },
     async_trait::async_trait,
     solana_clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
@@ -80,11 +80,9 @@ impl LeaderTpuCacheService {
             config.max_consecutive_failures,
         )
         .await?;
-        let (current_slot, lookahead_leaders) = get_slot_and_lookahead(
-            slot_receiver.slot(),
-            &slot_leaders,
-            config.lookahead_leaders,
-        );
+        let current_slot = slot_receiver.slot();
+        let lookahead_leaders =
+            adjust_lookahead(current_slot, &slot_leaders, config.lookahead_leaders);
         let leaders = leader_sockets(
             current_slot,
             lookahead_leaders,
@@ -156,7 +154,7 @@ impl LeaderTpuCacheService {
                         break;
                     }
 
-                    let estimated_current_slot = slot_receiver.slot().first_slot();
+                    let estimated_current_slot = slot_receiver.slot();
                     update_leader_info(
                         estimated_current_slot,
                         rpc_client.as_ref(),
@@ -165,9 +163,9 @@ impl LeaderTpuCacheService {
                         &mut num_consecutive_failures,
                         config.max_consecutive_failures,
                     ).await?;
-
-                    let (current_slot, lookahead_leaders) = get_slot_and_lookahead(
-                        slot_receiver.slot(),
+                    let current_slot = slot_receiver.slot();
+                    let lookahead_leaders = adjust_lookahead(
+                        current_slot,
                         &slot_leaders,
                         config.lookahead_leaders,
                     );
@@ -312,20 +310,15 @@ async fn initialize_state(
             leader_tpu_map = LeaderTpuMap::new(rpc_client).await.ok();
         }
         if epoch_info.is_none() {
-            epoch_info = EpochInfo::new(rpc_client, slot_receiver.slot().first_slot())
-                .await
-                .ok();
+            epoch_info = EpochInfo::new(rpc_client, slot_receiver.slot()).await.ok();
         }
 
         if let Some(epoch_info) = &epoch_info {
             if slot_leaders.is_none() {
-                slot_leaders = SlotLeaders::new(
-                    rpc_client,
-                    slot_receiver.slot().first_slot(),
-                    epoch_info.slots_in_epoch,
-                )
-                .await
-                .ok();
+                slot_leaders =
+                    SlotLeaders::new(rpc_client, slot_receiver.slot(), epoch_info.slots_in_epoch)
+                        .await
+                        .ok();
             }
         }
         if leader_tpu_map.is_some() && epoch_info.is_some() && slot_leaders.is_some() {
@@ -342,20 +335,14 @@ async fn initialize_state(
     Err(Error::InitializationFailed)
 }
 
-fn get_slot_and_lookahead(
-    estimated_slot: EstimatedSlot,
-    slot_leaders: &SlotLeaders,
-    lookahead_leaders: u8,
-) -> (Slot, u8) {
-    match estimated_slot {
-        EstimatedSlot::Single(slot) => {
-            if slot_leaders.is_last_slot_in_window(slot).unwrap_or(false) {
-                (slot, lookahead_leaders.saturating_add(1))
-            } else {
-                (slot, lookahead_leaders)
-            }
-        }
-        EstimatedSlot::Multiple([slot, _]) => (slot, lookahead_leaders.saturating_add(1)),
+fn adjust_lookahead(estimated_slot: Slot, slot_leaders: &SlotLeaders, lookahead_leaders: u8) -> u8 {
+    if slot_leaders
+        .is_last_slot_in_window(estimated_slot)
+        .unwrap_or(false)
+    {
+        lookahead_leaders.saturating_add(1)
+    } else {
+        lookahead_leaders
     }
 }
 
