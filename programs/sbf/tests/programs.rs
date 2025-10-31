@@ -254,7 +254,7 @@ fn test_program_sbf_sanity() {
             (
                 program_id,
                 Account {
-                    owner: bpf_loader_upgradeable::id(),
+                    owner: loader_v4::id(),
                     ..Default::default() // <-- Stubbed
                 },
             ),
@@ -269,7 +269,7 @@ fn test_program_sbf_sanity() {
         harness::program_cache::add_program(
             &mut program_cache,
             &program_id,
-            &bpf_loader_upgradeable::id(),
+            &loader_v4::id(),
             &program_elf,
             &feature_set,
             &compute_budget,
