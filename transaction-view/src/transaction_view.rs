@@ -143,7 +143,7 @@ impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
 
     /// Return an iterator over the instructions in the transaction.
     #[inline]
-    pub fn instructions_iter(&self) -> InstructionsIterator {
+    pub fn instructions_iter(&self) -> InstructionsIterator<'_> {
         let data = self.data();
         // SAFETY: `frame` was created from `data`.
         unsafe { self.frame.instructions_iter(data) }
@@ -151,7 +151,7 @@ impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
 
     /// Return an iterator over the address table lookups in the transaction.
     #[inline]
-    pub fn address_table_lookup_iter(&self) -> AddressTableLookupIterator {
+    pub fn address_table_lookup_iter(&self) -> AddressTableLookupIterator<'_> {
         let data = self.data();
         // SAFETY: `frame` was created from `data`.
         unsafe { self.frame.address_table_lookup_iter(data) }
@@ -181,7 +181,7 @@ impl<D: TransactionData> TransactionView<true, D> {
     /// Return an iterator over the instructions paired with their program ids.
     pub fn program_instructions_iter(
         &self,
-    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone {
+    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
         self.instructions_iter().map(|ix| {
             let program_id_index = usize::from(ix.program_id_index);
             let program_id = &self.static_account_keys()[program_id_index];
