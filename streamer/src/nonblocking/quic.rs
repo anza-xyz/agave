@@ -21,7 +21,7 @@ use {
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_packet::{Meta, PACKET_DATA_SIZE},
-    solana_perf::packet::{BytesPacket, BytesPacketBatch, PacketBatch},
+    solana_perf::packet::{BytesPacket, PacketBatch},
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_tls_utils::get_pubkey_from_tls_certificate,
@@ -880,7 +880,7 @@ fn handle_chunks(
         // we set the PERF_TRACK_PACKET on
         packet.meta_mut().set_track_performance(true);
     }
-    let packet_batch = PacketBatch::Bytes(BytesPacketBatch::from(vec![packet]));
+    let packet_batch = PacketBatch::Single(packet);
 
     if let Err(err) = packet_sender.try_send(packet_batch) {
         stats
