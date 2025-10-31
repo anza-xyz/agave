@@ -119,14 +119,16 @@ pub fn fill_from_accounts(
                 epoch_schedule: &EpochSchedule,
                 reload: bool,
             ) -> Option<Arc<ProgramCacheEntry>> { */
-            if let Some(loaded_program) = solana_svm::program_loader::load_program_with_pubkey(
-                &FillFromAccountsCallback(accounts),
-                environments,
-                &acc.0,
-                slot,
-                &mut ExecuteTimings::default(),
-                false,
-            ) {
+            if let Some((loaded_program, _last_modification_slot)) =
+                solana_svm::program_loader::load_program_with_pubkey(
+                    &FillFromAccountsCallback(accounts),
+                    environments,
+                    &acc.0,
+                    slot,
+                    &mut ExecuteTimings::default(),
+                    false,
+                )
+            {
                 program_cache.replenish(acc.0, loaded_program);
             }
         }
