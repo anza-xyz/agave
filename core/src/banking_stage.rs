@@ -435,35 +435,12 @@ impl BankingStage {
                     |(path, session_sender)| {
                         tokio::task::spawn_blocking(move || {
                             #[cfg(unix)]
-                            {
-                                // NB: Panic on start if we can't bind.
-                                let mut listener =
-                                    agave_scheduling_utils::handshake::server::Server::new(path)
-                                        .unwrap();
-
-                                loop {
-                                    match listener.accept() {
-                                        Ok(session) => {
-                                            if session_sender
-                                                .blocking_send(BankingControlMsg::External {
-                                                    session,
-                                                })
-                                                .is_err()
-                                            {
-                                                break;
-                                            }
-                                        }
-                                        Err(err) => {
-                                            error!("External scheduler handshake failed; err={err}")
-                                        }
-                                    };
-                                }
-                            }
+                            Self::run_handshake_server_blocking(path, session_sender);
                             #[cfg(not(unix))]
-                            {
-                                loop {
-                                    std::thread::sleep(Duration::from_secs(30));
-                                }
+                            loop {
+                                path;
+                                session_sender;
+                                std::thread::sleep(Duration::from_secs(30));
                             }
                         })
                     },
@@ -728,11 +705,38 @@ mod external {
     use {
         super::*,
         crate::banking_stage::consume_worker::external::ExternalWorker,
-        agave_scheduling_utils::handshake::server::{AgaveSession, AgaveWorkerSession},
+        agave_scheduling_utils::{
+            handshake,
+            handshake::server::{AgaveSession, AgaveWorkerSession},
+        },
         tpu_to_pack::BankingPacketReceivers,
     };
 
     impl BankingStage {
+        pub(super) fn run_handshake_server_blocking(
+            path: PathBuf,
+            session_sender: mpsc::Sender<BankingControlMsg>,
+        ) {
+            // NB: Panic on start if we can't bind.
+            let mut listener = handshake::server::Server::new(path).unwrap();
+
+            loop {
+                match listener.accept() {
+                    Ok(session) => {
+                        if session_sender
+                            .blocking_send(BankingControlMsg::External { session })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        error!("External scheduler handshake failed; err={err}")
+                    }
+                };
+            }
+        }
+
         pub(super) fn spawn_external(
             &self,
             AgaveSession {
