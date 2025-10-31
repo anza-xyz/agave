@@ -2,8 +2,8 @@
 use {solana_clock::Slot, thiserror::Error, tokio::sync::watch};
 
 /// [`EstimatedSlot`] represents either a single estimated slot or multiple. In
-/// case of uncertanty about current slot when we received FirstShred from two
-/// consequent slots without receving Processed, it will contain two slots in
+/// case of uncertanty about current slot when we received SlotEvent::Start from two
+/// consequent slots without receving SlotEvent::End, it will contain two slots in
 /// sorted order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EstimatedSlot {

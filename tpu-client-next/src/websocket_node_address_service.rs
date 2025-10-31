@@ -56,8 +56,9 @@ impl WebsocketNodeAddressService {
         Ok(())
     }
 
-    pub fn estimated_current_slot(&mut self) -> Slot {
-        self.service.estimated_current_slot()
+    /// Returns the estimated current slot.
+    pub fn current_slot(&self) -> Slot {
+        self.service.current_slot()
     }
 }
 

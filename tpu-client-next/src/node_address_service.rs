@@ -148,15 +148,16 @@ impl NodeAddressService {
         Ok(())
     }
 
-    pub fn estimated_current_slot(&self) -> Slot {
+    /// Returns the estimated current slot.
+    pub fn current_slot(&self) -> Slot {
         self.slot_receiver.slot().first_slot()
     }
 }
 
 #[async_trait]
 impl LeaderUpdater for NodeAddressService {
-    fn next_leaders(&mut self, lookahead: usize) -> Vec<SocketAddr> {
-        self.leaders_receiver.next_leaders(lookahead)
+    fn next_leaders(&mut self, lookahead_leaders: usize) -> Vec<SocketAddr> {
+        self.leaders_receiver.leaders(lookahead_leaders)
     }
 
     async fn stop(&mut self) {
