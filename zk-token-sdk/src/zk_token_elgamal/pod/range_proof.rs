@@ -130,18 +130,33 @@ impl TryFrom<RangeProofU256> for decoded::RangeProof {
 #[cfg(not(target_os = "solana"))]
 fn copy_range_proof_modulo_inner_product_proof(proof: &decoded::RangeProof, buf: &mut [u8]) {
     let mut chunks = buf.chunks_mut(UNIT_LEN);
-    chunks.next().unwrap().copy_from_slice(proof.A.as_bytes());
-    chunks.next().unwrap().copy_from_slice(proof.S.as_bytes());
-    chunks.next().unwrap().copy_from_slice(proof.T_1.as_bytes());
-    chunks.next().unwrap().copy_from_slice(proof.T_2.as_bytes());
-    chunks.next().unwrap().copy_from_slice(proof.t_x.as_bytes());
     chunks
         .next()
-        .unwrap()
+        .expect("range proof buffer has chunk for A")
+        .copy_from_slice(proof.A.as_bytes());
+    chunks
+        .next()
+        .expect("range proof buffer has chunk for S")
+        .copy_from_slice(proof.S.as_bytes());
+    chunks
+        .next()
+        .expect("range proof buffer has chunk for T_1")
+        .copy_from_slice(proof.T_1.as_bytes());
+    chunks
+        .next()
+        .expect("range proof buffer has chunk for T_2")
+        .copy_from_slice(proof.T_2.as_bytes());
+    chunks
+        .next()
+        .expect("range proof buffer has chunk for t_x")
+        .copy_from_slice(proof.t_x.as_bytes());
+    chunks
+        .next()
+        .expect("range proof buffer has chunk for t_x_blinding")
         .copy_from_slice(proof.t_x_blinding.as_bytes());
     chunks
         .next()
-        .unwrap()
+        .expect("range proof buffer has chunk for e_blinding")
         .copy_from_slice(proof.e_blinding.as_bytes());
 }
 
