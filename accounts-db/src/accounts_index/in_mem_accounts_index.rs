@@ -30,55 +30,6 @@ pub struct StartupStats {
     pub copy_data_us: AtomicU64,
 }
 
-#[derive(Debug)]
-pub struct PossibleEvictions {
-    /// vec per age in the future, up to size 'ages_to_stay_in_cache'
-    possible_evictions: Vec<FlushScanResult>,
-    /// next index to use into 'possible_evictions'
-    /// if 'index' >= 'possible_evictions.len()', then there are no available entries
-    index: usize,
-}
-
-impl PossibleEvictions {
-    fn new(max_ages: Age) -> Self {
-        Self {
-            possible_evictions: (0..max_ages).map(|_| FlushScanResult::default()).collect(),
-            index: max_ages as usize, // initially no data
-        }
-    }
-
-    /// remove the possible evictions queued for the current flush window
-    fn get_possible_evictions(&mut self) -> Option<FlushScanResult> {
-        self.possible_evictions.get_mut(self.index).map(|result| {
-            self.index += 1;
-            // remove the list from 'possible_evictions'
-            std::mem::take(result)
-        })
-    }
-
-    /// clear existing data and prepare to add 'entries' more ages of data
-    fn reset(&mut self, entries: Age) {
-        self.possible_evictions.iter_mut().for_each(|entry| {
-            entry.evictions_age_possible.clear();
-        });
-        let entries = entries as usize;
-        assert!(
-            entries <= self.possible_evictions.len(),
-            "entries: {}, len: {}",
-            entries,
-            self.possible_evictions.len()
-        );
-        self.index = self.possible_evictions.len() - entries;
-    }
-
-    /// insert `key` at `relative_age` in the future into `possible_evictions`
-    fn insert(&mut self, relative_age: Age, key: Pubkey, is_dirty: bool) {
-        let index = self.index + (relative_age as usize);
-        let list = &mut self.possible_evictions[index];
-        list.evictions_age_possible.push((key, is_dirty));
-    }
-}
-
 // one instance of this represents one bin of the accounts index.
 pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     last_age_flushed: AtomicAge,
@@ -97,9 +48,6 @@ pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<
 
     /// info to streamline initial index generation
     startup_info: StartupInfo<T, U>,
-
-    /// possible evictions for next few slots coming up
-    possible_evictions: RwLock<PossibleEvictions>,
 
     /// how many more ages to skip before this bucket is flushed (as opposed to being skipped).
     /// When this reaches 0, this bucket is flushed.
@@ -203,7 +151,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             // initialize this to max, to make it clear we have not flushed at age 0, the starting age
             last_age_flushed: AtomicAge::new(Age::MAX),
             startup_info: StartupInfo::default(),
-            possible_evictions: RwLock::new(PossibleEvictions::new(1)),
             // Spread out the scanning across all ages within the window.
             // This causes us to scan 1/N of the bins each 'Age'
             remaining_ages_to_skip_flushing: AtomicAge::new(
@@ -937,12 +884,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
     }
 
-    /// fill in `possible_evictions` from `iter` by checking age
+    /// fill in `result` from `iter` by checking age
     /// Filter as much as possible and capture dirty flag
     /// Skip entries with ref_count != 1 since they will be rejected later anyway
     fn gather_possible_evictions<'a>(
         iter: impl Iterator<Item = (&'a Pubkey, &'a Box<AccountMapEntry<T>>)>,
-        possible_evictions: &mut PossibleEvictions,
+        result: &mut FlushScanResult,
         startup: bool,
         current_age: Age,
         ages_flushing_now: Age,
@@ -960,7 +907,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 continue;
             }
 
-            possible_evictions.insert(0, *k, v.dirty());
+            result.evictions_age_possible.push((*k, v.dirty()));
         }
     }
 
@@ -974,15 +921,14 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         _flush_guard: &FlushGuard,
         ages_flushing_now: Age,
     ) -> FlushScanResult {
-        let mut possible_evictions = self.possible_evictions.write().unwrap();
-        possible_evictions.reset(1);
+        let mut result = FlushScanResult::default();
         let m;
         {
             let map = self.map_internal.read().unwrap();
             m = Measure::start("flush_scan"); // we don't care about lock time in this metric - bg threads can wait
             Self::gather_possible_evictions(
                 map.iter(),
-                &mut possible_evictions,
+                &mut result,
                 startup,
                 current_age,
                 ages_flushing_now,
@@ -990,7 +936,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
         Self::update_time_stat(&self.stats().flush_scan_us, m);
 
-        possible_evictions.get_possible_evictions().unwrap()
+        result
     }
 
     fn write_startup_info_to_disk(&self) {
@@ -1777,21 +1723,19 @@ mod tests {
 
         for current_age in 0..=255 {
             for ages_flushing_now in 0..=255 {
-                let mut possible_evictions = PossibleEvictions::new(1);
-                possible_evictions.reset(1);
+                let mut result = FlushScanResult::default();
                 InMemAccountsIndex::<u64, u64>::gather_possible_evictions(
                     map.iter(),
-                    &mut possible_evictions,
+                    &mut result,
                     startup,
                     current_age,
                     ages_flushing_now,
                 );
-                let evictions = possible_evictions.possible_evictions.pop().unwrap();
                 assert_eq!(
-                    evictions.evictions_age_possible.len(),
+                    result.evictions_age_possible.len(),
                     1 + ages_flushing_now as usize
                 );
-                evictions
+                result
                     .evictions_age_possible
                     .iter()
                     .for_each(|(key, _is_dirty)| {
