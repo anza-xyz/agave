@@ -25,7 +25,7 @@ use {
     },
     agave_banking_stage_ingress_types::BankingPacketReceiver,
     crossbeam_channel::{unbounded, Receiver, Sender},
-    futures::{future::OptionFuture, stream::FuturesUnordered, StreamExt},
+    futures::{stream::FuturesUnordered, StreamExt},
     histogram::Histogram,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery},
     solana_ledger::blockstore_processor::TransactionStatusSender,
@@ -43,7 +43,6 @@ use {
     std::{
         num::{NonZeroU64, NonZeroUsize, Saturating},
         ops::Deref,
-        path::PathBuf,
         sync::{
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc, RwLock,
@@ -382,7 +381,6 @@ pub struct BankingStage {
     bank_forks: Arc<RwLock<BankForks>>,
     committer: Committer,
     log_messages_bytes_limit: Option<usize>,
-    external_scheduler_server: Option<tokio::task::JoinHandle<()>>,
     threads: FuturesUnordered<NamedTask<std::thread::Result<()>>>,
 }
 
@@ -396,7 +394,6 @@ impl BankingStage {
         tpu_vote_receiver: BankingPacketReceiver,
         gossip_vote_receiver: BankingPacketReceiver,
         banking_control_receiver: mpsc::Receiver<BankingControlMsg>,
-        external_scheduler_server: Option<(PathBuf, mpsc::Sender<BankingControlMsg>)>,
         num_workers: NonZeroUsize,
         scheduler_config: SchedulerConfig,
         transaction_status_sender: Option<TransactionStatusSender>,
@@ -431,20 +428,6 @@ impl BankingStage {
                 bank_forks,
                 committer,
                 log_messages_bytes_limit,
-                external_scheduler_server: external_scheduler_server.map(
-                    |(path, session_sender)| {
-                        tokio::task::spawn_blocking(move || {
-                            #[cfg(unix)]
-                            Self::run_handshake_server_blocking(path, session_sender);
-                            #[cfg(not(unix))]
-                            loop {
-                                path;
-                                session_sender;
-                                std::thread::sleep(Duration::from_secs(30));
-                            }
-                        })
-                    },
-                ),
                 threads: FuturesUnordered::default(),
             }
         };
@@ -488,10 +471,6 @@ impl BankingStage {
                         num_workers: BankingStage::default_num_workers(),
                         config: SchedulerConfig::default(),
                     }).await;
-                },
-                Some(res) = OptionFuture::from(self.external_scheduler_server.as_mut()) => {
-                    self.external_scheduler_server = None;
-                    error!("External scheduler server exited unexpectedly; res={res:?}");
                 },
             }
         }
@@ -705,38 +684,14 @@ mod external {
     use {
         super::*,
         crate::banking_stage::consume_worker::external::ExternalWorker,
-        agave_scheduling_utils::{
-            handshake,
-            handshake::server::{AgaveSession, AgaveWorkerSession},
+        agave_scheduling_utils::handshake::{
+            self,
+            server::{AgaveSession, AgaveWorkerSession},
         },
         tpu_to_pack::BankingPacketReceivers,
     };
 
     impl BankingStage {
-        pub(super) fn run_handshake_server_blocking(
-            path: PathBuf,
-            session_sender: mpsc::Sender<BankingControlMsg>,
-        ) {
-            // NB: Panic on start if we can't bind.
-            let mut listener = handshake::server::Server::new(path).unwrap();
-
-            loop {
-                match listener.accept() {
-                    Ok(session) => {
-                        if session_sender
-                            .blocking_send(BankingControlMsg::External { session })
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Err(err) => {
-                        error!("External scheduler handshake failed; err={err}")
-                    }
-                };
-            }
-        }
-
         pub(super) fn spawn_external(
             &self,
             AgaveSession {
@@ -746,8 +701,7 @@ mod external {
             }: AgaveSession,
         ) -> Vec<JoinHandle<()>> {
             static_assertions::const_assert!(
-                agave_scheduling_utils::handshake::MAX_WORKERS
-                    == BankingStage::max_num_workers().get()
+                handshake::MAX_WORKERS == BankingStage::max_num_workers().get()
             );
             assert!(workers.len() <= BankingStage::max_num_workers().get());
 
@@ -978,7 +932,6 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_receiver,
             mpsc::channel(1).1,
-            None,
             DEFAULT_NUM_WORKERS,
             SchedulerConfig {
                 scheduler_pacing: SchedulerPacing::Disabled,
@@ -1043,7 +996,6 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_receiver,
             mpsc::channel(1).1,
-            None,
             DEFAULT_NUM_WORKERS,
             SchedulerConfig {
                 scheduler_pacing: SchedulerPacing::Disabled,
@@ -1116,7 +1068,6 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_receiver,
             mpsc::channel(1).1,
-            None,
             DEFAULT_NUM_WORKERS,
             SchedulerConfig {
                 scheduler_pacing: SchedulerPacing::Disabled,
@@ -1267,7 +1218,6 @@ mod tests {
                 tpu_vote_receiver,
                 gossip_vote_receiver,
                 mpsc::channel(1).1,
-                None,
                 DEFAULT_NUM_WORKERS,
                 SchedulerConfig {
                     scheduler_pacing: SchedulerPacing::Disabled,
@@ -1421,7 +1371,6 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_receiver,
             mpsc::channel(1).1,
-            None,
             DEFAULT_NUM_WORKERS,
             SchedulerConfig {
                 scheduler_pacing: SchedulerPacing::Disabled,

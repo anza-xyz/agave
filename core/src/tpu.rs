@@ -338,7 +338,6 @@ impl Tpu {
             tpu_vote_receiver,
             gossip_vote_receiver,
             banking_control_receiver,
-            None,
             block_production_num_workers,
             block_production_scheduler_config,
             transaction_status_sender,
