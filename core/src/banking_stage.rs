@@ -705,7 +705,6 @@ mod external {
             threads.push(self.spawn_vote_worker());
 
             // Spawn the external consumer workers.
-            // TODO: Pass worker_metrics to progress tracker.
             let mut worker_metrics = Vec::with_capacity(workers.len());
             for (
                 index,
@@ -765,6 +764,7 @@ mod external {
                 self.worker_exit_signal.clone(),
                 progress_tracker,
                 shared_leader_state,
+                worker_metrics,
                 ticks_per_slot,
             ));
 
