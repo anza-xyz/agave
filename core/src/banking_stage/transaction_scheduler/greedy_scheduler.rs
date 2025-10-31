@@ -318,6 +318,7 @@ mod test {
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},
         std::borrow::Borrow,
+        test_case::test_case,
     };
 
     #[allow(clippy::type_complexity)]
@@ -567,8 +568,9 @@ mod test {
         assert_eq!(collect_work(&work_receivers[0]).1, vec![vec![1], vec![0]]);
     }
 
-    #[test]
-    fn test_schedule_single_threaded_conflict() {
+    #[test_case(true; "relax_intrabatch_account_locks_true")]
+    #[test_case(false; "relax_intrabatch_account_locks_false")]
+    fn test_schedule_single_threaded_conflict(relax_intrabatch_account_locks: bool) {
         let (mut scheduler, work_receivers, _finished_work_sender) =
             create_test_frame(1, GreedySchedulerConfig::default());
         let pubkey = Pubkey::new_unique();
@@ -581,14 +583,18 @@ mod test {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
-                false,
+                relax_intrabatch_account_locks,
                 test_pre_graph_filter,
                 test_pre_lock_filter,
             )
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
         assert_eq!(scheduling_summary.num_unschedulable_conflicts, 0);
-        assert_eq!(collect_work(&work_receivers[0]).1, vec![vec![1], vec![0]]);
+        if relax_intrabatch_account_locks {
+            assert_eq!(collect_work(&work_receivers[0]).1, vec![vec![1, 0]]);
+        } else {
+            assert_eq!(collect_work(&work_receivers[0]).1, vec![vec![1], vec![0]]);
+        }
     }
 
     #[test]
