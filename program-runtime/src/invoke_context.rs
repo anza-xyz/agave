@@ -32,8 +32,8 @@ use {
     solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
     solana_svm_type_overrides::sync::Arc,
     solana_transaction_context::{
-        transaction_accounts::KeyedAccountSharedData, IndexOfAccount, InstructionAccount,
-        InstructionContext, TransactionContext, MAX_ACCOUNTS_PER_TRANSACTION,
+        instruction::InstructionContext, transaction_accounts::KeyedAccountSharedData,
+        IndexOfAccount, InstructionAccount, TransactionContext, MAX_ACCOUNTS_PER_TRANSACTION,
     },
     std::{
         alloc::Layout,
