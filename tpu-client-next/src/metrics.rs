@@ -44,6 +44,7 @@ impl SendTransactionStats {
                         ("connect_error", connect_error, i64),
                         ("connection_error", connection_error, i64),
                         ("successfully_sent", view.successfully_sent, i64),
+                        ("congestion_events", view.transport_congestion_events, i64),
                         ("write_error", write_error, i64),
                     );
                 }

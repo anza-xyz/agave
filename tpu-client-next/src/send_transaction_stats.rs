@@ -27,6 +27,7 @@ pub struct SendTransactionStats {
     pub connection_error_timed_out: AtomicU64,
     pub connection_error_transport_error: AtomicU64,
     pub connection_error_version_mismatch: AtomicU64,
+    pub transport_congestion_events: AtomicU64,
     pub write_error_closed_stream: AtomicU64,
     pub write_error_connection_lost: AtomicU64,
     pub write_error_stopped: AtomicU64,
@@ -161,6 +162,7 @@ impl fmt::Display for SendTransactionStats {
             write_error_connection_lost,
             write_error_stopped,
             write_error_zero_rtt_rejected,
+            transport_congestion_events,
         )
     }
 }
@@ -210,8 +212,9 @@ define_non_atomic_struct_for!(
         connection_error_transport_error,
         connection_error_version_mismatch,
         write_error_closed_stream,
+        transport_congestion_events,
         write_error_connection_lost,
         write_error_stopped,
-        write_error_zero_rtt_rejected
+        write_error_zero_rtt_rejected,
     }
 );
