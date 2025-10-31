@@ -108,20 +108,10 @@ enum BuilderType {
         signature: SignatureProjective,
         bitmap: BitVec<u8, Lsb0>,
     },
-    /// A [`Certificate`] of type Skip will be produced.
+    /// A [`Certificate`] of type NotarFallback or Skip will be produced.
     ///
     /// It can require two types of [`VoteMessage`]s.
-    /// In order to be able to produce certificates for reward purposes, signature aggregates for the two types are tracked separately.
-    Skip {
-        signature0: SignatureProjective,
-        bitmap0: BitVec<u8, Lsb0>,
-        sig_and_bitmap1: Option<(SignatureProjective, BitVec<u8, Lsb0>)>,
-    },
-    /// A [`Certificate`] of type NotarFallback will be produced.
-    ///
-    /// It can require two types of [`VoteMessage`]s.
-    /// This certificate is not used for rewards so its signature can be aggregated in a single container.
-    NotarFallback {
+    DoubleVote {
         signature: SignatureProjective,
         bitmap0: BitVec<u8, Lsb0>,
         bitmap1: Option<BitVec<u8, Lsb0>>,
@@ -132,16 +122,13 @@ impl BuilderType {
     /// Creates a new instance of [`BuilderType`].
     fn new(cert_type: &CertificateType) -> Self {
         match cert_type {
-            CertificateType::Skip(_) => Self::Skip {
-                signature0: SignatureProjective::identity(),
-                bitmap0: default_bitvec(),
-                sig_and_bitmap1: None,
-            },
-            CertificateType::NotarizeFallback(_, _) => Self::NotarFallback {
-                signature: SignatureProjective::identity(),
-                bitmap0: default_bitvec(),
-                bitmap1: None,
-            },
+            CertificateType::NotarizeFallback(_, _) | CertificateType::Skip(_) => {
+                Self::DoubleVote {
+                    signature: SignatureProjective::identity(),
+                    bitmap0: default_bitvec(),
+                    bitmap1: None,
+                }
+            }
             CertificateType::Finalize(_)
             | CertificateType::FinalizeFast(_, _)
             | CertificateType::Notarize(_, _) => Self::SingleVote {
@@ -159,39 +146,7 @@ impl BuilderType {
     ) -> Result<(), AggregateError> {
         let vote_types = certificate_limits_and_vote_types(cert_type).1;
         match self {
-            Self::Skip {
-                signature0,
-                bitmap0,
-                sig_and_bitmap1,
-            } => {
-                assert_eq!(vote_types.len(), 2);
-                for msg in msgs {
-                    let vote_type = VoteType::get_type(&msg.vote);
-                    if vote_type == vote_types[0] {
-                        try_set_bitmap(bitmap0, msg.rank)?;
-                    } else {
-                        assert_eq!(vote_type, vote_types[1]);
-                        let (_, bitmap) = sig_and_bitmap1
-                            .get_or_insert((SignatureProjective::identity(), default_bitvec()));
-                        try_set_bitmap(bitmap, msg.rank)?;
-                    }
-                }
-                signature0.aggregate_with(msgs.iter().filter_map(|msg| {
-                    (VoteType::get_type(&msg.vote) == vote_types[0]).then_some(&msg.signature)
-                }))?;
-                sig_and_bitmap1
-                    .as_mut()
-                    .map(|(signature, _)| {
-                        signature.aggregate_with(msgs.iter().filter_map(|msg| {
-                            (VoteType::get_type(&msg.vote) == vote_types[1])
-                                .then_some(&msg.signature)
-                        }))
-                    })
-                    .unwrap_or(Ok(()))?;
-                Ok(())
-            }
-
-            Self::NotarFallback {
+            Self::DoubleVote {
                 signature,
                 bitmap0,
                 bitmap1,
@@ -227,18 +182,7 @@ impl BuilderType {
             Self::SingleVote { signature, bitmap } => {
                 build_cert_from_bitmap(cert_type, signature, bitmap)
             }
-            Self::Skip {
-                mut signature0,
-                bitmap0,
-                sig_and_bitmap1,
-            } => match sig_and_bitmap1 {
-                None => build_cert_from_bitmap(cert_type, signature0, bitmap0),
-                Some((signature1, bitmap1)) => {
-                    signature0.aggregate_with([signature1].iter())?;
-                    build_cert_from_bitmaps(cert_type, signature0, bitmap0, bitmap1)
-                }
-            },
-            Self::NotarFallback {
+            Self::DoubleVote {
                 signature,
                 bitmap0,
                 bitmap1,
