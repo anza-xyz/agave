@@ -473,7 +473,7 @@ impl From<&LoadedAddresses> for UiLoadedAddresses {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TransactionTokenBalance {
     pub account_index: u8,
     pub mint: String,
@@ -639,7 +639,7 @@ pub struct InnerInstruction {
     pub stack_height: Option<u32>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TransactionStatusMeta {
     pub status: TransactionResult<()>,
     pub fee: u64,
