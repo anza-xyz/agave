@@ -77,7 +77,7 @@ solana-bench-tps = { path = "../bench-tps", version = "=3.1.0" }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-clap-utils = { path = "../clap-utils", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-cli-config = { path = "../cli-config", version = "=3.1.0", features = ["agave-unstable-api"] }
-solana-cli-output = { path = "../cli-output", version = "=3.1.0", features = ["agave-unstable-api"] }
+solana-cli-output = { path = "../cli-output", version = "=3.1.0" }
 solana-client = { path = "../client", version = "=3.1.0", features = ["agave-unstable-api"] }
 solana-clock = "3.0.0"
 solana-cluster-type = "3.0.0"
