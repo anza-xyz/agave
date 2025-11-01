@@ -1,7 +1,7 @@
 use {
     super::{
         bucket_map_holder::BucketMapHolder, in_mem_accounts_index::InMemAccountsIndex,
-        AccountsIndexConfig, DiskIndexValue, IndexValue, Startup,
+        AccountsIndexConfig, DiskIndexValue, IndexValue, Startup, IndexLimit,
     },
     crate::{accounts_index, waitable_condvar::WaitableCondvar},
     std::{
@@ -152,8 +152,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexStorage<
         let storage = Arc::new(BucketMapHolder::new(bins, config, num_flush_threads.get()));
 
         let num_initial_accounts = config.num_initial_accounts;
+
+        // Use the max of num_initial_accounts or threshold limit for preallocation
+        let prealloc_size = match config.index_limit {
+            IndexLimit::Threshold(threshold) => {
+                Some(num_initial_accounts.unwrap_or(0).max(threshold))
+            }
+            _ => num_initial_accounts,
+        };
+
         let in_mem: Box<_> = (0..bins)
-            .map(|bin| Arc::new(InMemAccountsIndex::new(&storage, bin, num_initial_accounts)))
+            .map(|bin| Arc::new(InMemAccountsIndex::new(&storage, bin, prealloc_size)))
             .collect();
 
         Self {

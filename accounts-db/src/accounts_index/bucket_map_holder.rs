@@ -2,7 +2,7 @@ use {
     super::{
         in_mem_accounts_index::{InMemAccountsIndex, StartupStats},
         stats::Stats,
-        AccountsIndexConfig, DiskIndexValue, IndexLimitMb, IndexValue,
+        AccountsIndexConfig, DiskIndexValue, IndexLimit, IndexValue,
     },
     crate::waitable_condvar::WaitableCondvar,
     solana_bucket_map::bucket_map::{BucketMap, BucketMapConfig},
@@ -67,6 +67,9 @@ pub struct BucketMapHolder<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
     _phantom: PhantomData<T>,
 
     pub(crate) startup_stats: Arc<StartupStats>,
+
+    /// entry count limit configuration for index flushing
+    index_limit: IndexLimit,
 }
 
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Debug for BucketMapHolder<T, U> {
@@ -80,6 +83,41 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
     /// is the accounts index using disk as a backing store
     pub fn is_disk_index_enabled(&self) -> bool {
         self.disk.is_some()
+    }
+
+    /// Check if flushing to disk should occur based on entry count threshold
+    ///
+    /// Returns true if:
+    /// - IndexLimit::Minimal (always flush)
+    /// - IndexLimit::Threshold and current_entries > threshold
+    ///
+    /// Returns false if:
+    /// - IndexLimit::InMemOnly (never flush)
+    pub fn should_flush_to_disk(&self, current_entries: usize) -> bool {
+        match self.index_limit {
+            IndexLimit::Minimal => true,
+            IndexLimit::InMemOnly => false,
+            IndexLimit::Threshold(limit_entries) => current_entries > limit_entries,
+        }
+    }
+
+    /// Calculate maximum evictions to perform for threshold-based flushing
+    ///
+    /// Returns None for Minimal (evict everything) and InMemOnly (evict nothing)
+    /// Returns Some(max_evictions) for Threshold mode to bring count to 95% of limit
+    pub fn max_evictions_for_threshold(&self, current_entries: usize) -> Option<usize> {
+        match self.index_limit {
+            IndexLimit::Minimal | IndexLimit::InMemOnly => None,
+            IndexLimit::Threshold(limit_entries) => {
+                // Target is 95% of the limit to provide hysteresis
+                let target_entries = (limit_entries as f64 * 0.95) as usize;
+                if current_entries > target_entries {
+                    Some(current_entries - target_entries)
+                } else {
+                    Some(0)
+                }
+            }
+        }
     }
 
     pub fn increment_age(&self) {
@@ -207,9 +245,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
             .and_then(|drives| drives.first())
             .map(|drive| drive.join("accounts_index_restart"));
 
-        let disk = match config.index_limit_mb {
-            IndexLimitMb::InMemOnly => None,
-            IndexLimitMb::Minimal => Some(BucketMap::new(bucket_config)),
+        let disk = match config.index_limit {
+            IndexLimit::InMemOnly => None,
+            IndexLimit::Minimal | IndexLimit::Threshold(_) => Some(BucketMap::new(bucket_config)),
         };
 
         Self {
@@ -232,6 +270,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
             threads,
             _phantom: PhantomData,
             startup_stats: Arc::default(),
+            index_limit: config.index_limit,
         }
     }
 
@@ -476,11 +515,144 @@ pub mod tests {
     fn test_disk_index_enabled() {
         let bins = 1;
         let config = AccountsIndexConfig {
-            index_limit_mb: IndexLimitMb::Minimal,
+            index_limit: IndexLimit::Minimal,
             ..Default::default()
         };
         let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
         assert!(test.is_disk_index_enabled());
+    }
+
+    #[test]
+    fn test_threshold_flush_below_limit() {
+        let bins = 1;
+        let threshold_entries = 1000;
+        let config = AccountsIndexConfig {
+            index_limit: IndexLimit::Threshold(threshold_entries),
+            ..Default::default()
+        };
+        let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
+        assert!(test.is_disk_index_enabled()); // Disk should be enabled for threshold mode
+
+        // Entry count below threshold - should not flush
+        let current_entries = 500;
+        assert!(!test.should_flush_to_disk(current_entries));
+    }
+
+    #[test]
+    fn test_threshold_flush_above_limit() {
+        let bins = 1;
+        let threshold_entries = 1000;
+        let config = AccountsIndexConfig {
+            index_limit: IndexLimit::Threshold(threshold_entries),
+            ..Default::default()
+        };
+        let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
+
+        // Entry count above threshold - should flush
+        let current_entries = 1500;
+        assert!(test.should_flush_to_disk(current_entries));
+    }
+
+    #[test]
+    fn test_threshold_flush_at_boundary() {
+        let bins = 1;
+        let threshold_entries = 1000;
+        let config = AccountsIndexConfig {
+            index_limit: IndexLimit::Threshold(threshold_entries),
+            ..Default::default()
+        };
+        let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
+
+        // Entry count exactly at threshold - should not flush
+        let current_entries = 1000;
+        assert!(!test.should_flush_to_disk(current_entries));
+
+        // Just above threshold - should flush
+        let current_entries = 1001;
+        assert!(test.should_flush_to_disk(current_entries));
+    }
+
+    #[test]
+    fn test_minimal_always_flushes() {
+        let bins = 1;
+        let config = AccountsIndexConfig {
+            index_limit: IndexLimit::Minimal,
+            ..Default::default()
+        };
+        let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
+
+        // Minimal mode always flushes regardless of entry count
+        assert!(test.should_flush_to_disk(0));
+        assert!(test.should_flush_to_disk(1000));
+        assert!(test.should_flush_to_disk(usize::MAX));
+    }
+
+    #[test]
+    fn test_in_mem_only_never_flushes() {
+        let bins = 1;
+        let config = AccountsIndexConfig {
+            index_limit: IndexLimit::InMemOnly,
+            ..Default::default()
+        };
+        let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
+
+        // InMemOnly mode never flushes regardless of entry count
+        assert!(!test.should_flush_to_disk(0));
+        assert!(!test.should_flush_to_disk(1000));
+        assert!(!test.should_flush_to_disk(usize::MAX));
+    }
+
+    #[test]
+    fn test_max_evictions_minimal() {
+        let bins = 1;
+        let config = AccountsIndexConfig {
+            index_limit: IndexLimit::Minimal,
+            ..Default::default()
+        };
+        let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
+
+        // Minimal mode returns None (evict everything)
+        assert_eq!(test.max_evictions_for_threshold(0), None);
+        assert_eq!(test.max_evictions_for_threshold(1000), None);
+    }
+
+    #[test]
+    fn test_max_evictions_in_mem_only() {
+        let bins = 1;
+        let config = AccountsIndexConfig {
+            index_limit: IndexLimit::InMemOnly,
+            ..Default::default()
+        };
+        let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
+
+        // InMemOnly mode returns None (evict nothing)
+        assert_eq!(test.max_evictions_for_threshold(0), None);
+        assert_eq!(test.max_evictions_for_threshold(1000), None);
+    }
+
+    #[test]
+    fn test_max_evictions_threshold() {
+        let bins = 1;
+        let threshold_entries = 1000;
+        let config = AccountsIndexConfig {
+            index_limit: IndexLimit::Threshold(threshold_entries),
+            ..Default::default()
+        };
+        let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
+
+        // Target is 95% of limit = 950
+        // At 1200 entries: should evict 1200 - 950 = 250
+        assert_eq!(test.max_evictions_for_threshold(1200), Some(250));
+
+        // At 1100 entries: should evict 1100 - 950 = 150
+        assert_eq!(test.max_evictions_for_threshold(1100), Some(150));
+
+        // At 950 entries: already at target, evict 0
+        assert_eq!(test.max_evictions_for_threshold(950), Some(0));
+
+        // Below target: evict 0
+        assert_eq!(test.max_evictions_for_threshold(900), Some(0));
+        assert_eq!(test.max_evictions_for_threshold(0), Some(0));
     }
 
     #[test]
