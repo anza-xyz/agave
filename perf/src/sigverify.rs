@@ -472,6 +472,7 @@ fn split_batches(batches: Vec<PacketBatch>) -> (Vec<BytesPacketBatch>, Vec<Pinne
         match batch {
             PacketBatch::Bytes(batch) => bytes_batches.push(batch),
             PacketBatch::Pinned(batch) => pinned_batches.push(batch),
+            PacketBatch::WithClientId(batch) => bytes_batches.push(batch.into()),
         }
     }
     (bytes_batches, pinned_batches)
@@ -650,6 +651,7 @@ pub fn ed25519_verify(
         .map(|batch| match batch {
             PacketBatch::Pinned(batch) => Cow::Borrowed(batch),
             PacketBatch::Bytes(batch) => Cow::Owned(batch.to_pinned_packet_batch()),
+            PacketBatch::WithClientId(batch) => Cow::Owned(batch.to_pinned_packet_batch()),
         })
         .collect::<Vec<_>>();
     for batch in pinned_batches.iter() {

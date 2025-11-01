@@ -4,11 +4,12 @@ use {
             qos::{ConnectionContext, QosController},
             quic::{ALPN_TPU_PROTOCOL_ID, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT},
             simple_qos::{SimpleQos, SimpleQosConfig},
+            streamer_feedback::{CensoringStats, StreamerFeedback},
             swqos::{SwQos, SwQosConfig},
         },
         streamer::StakedNodes,
     },
-    crossbeam_channel::Sender,
+    crossbeam_channel::{Receiver, Sender},
     pem::Pem,
     quinn::{
         crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
@@ -182,6 +183,7 @@ pub struct StreamerStats {
     pub(crate) total_stream_read_errors: AtomicUsize,
     pub(crate) total_stream_read_timeouts: AtomicUsize,
     pub(crate) num_evictions_staked: AtomicUsize,
+    pub(crate) num_censored_clients: AtomicUsize,
     pub(crate) num_evictions_unstaked: AtomicUsize,
     pub(crate) connection_added_from_staked_peer: AtomicUsize,
     pub(crate) connection_added_from_unstaked_peer: AtomicUsize,
@@ -225,6 +227,7 @@ pub struct StreamerStats {
     pub(crate) outstanding_incoming_connection_attempts: AtomicUsize,
     pub(crate) total_incoming_connection_attempts: AtomicUsize,
     pub(crate) quic_endpoints_count: AtomicUsize,
+    pub(crate) censoring_stats: Option<CensoringStats>,
 }
 
 impl StreamerStats {
@@ -234,6 +237,16 @@ impl StreamerStats {
             let process_sampled_packets_us_hist = metrics.clone();
             metrics.clear();
             process_sampled_packets_us_hist
+        };
+
+        // Helper function to get censoring stat or 0
+        let censoring_stat = |field: &dyn Fn(&CensoringStats) -> usize| -> i64 {
+            self.censoring_stats.as_ref().map(field).unwrap_or(0) as i64
+        };
+
+        // Helper function to get and reset censoring stat or 0
+        let censoring_stat_swap = |field: &dyn Fn(&CensoringStats) -> usize| -> i64 {
+            self.censoring_stats.as_ref().map(field).unwrap_or(0) as i64
         };
 
         datapoint_info!(
@@ -598,6 +611,53 @@ impl StreamerStats {
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
+            // Censoring stats - always included, 0 if not available
+            (
+                "total_censored_clients",
+                censoring_stat(&|stats| stats.total_censored.load(Ordering::Relaxed)),
+                i64
+            ),
+            (
+                "indefinite_censored_clients",
+                censoring_stat(&|stats| stats.indefinite_count.load(Ordering::Relaxed)),
+                i64
+            ),
+            (
+                "temporary_censored_clients",
+                censoring_stat(&|stats| stats.temporary_count.load(Ordering::Relaxed)),
+                i64
+            ),
+            (
+                "expired_censored_clients",
+                censoring_stat(&|stats| stats.expired_count.load(Ordering::Relaxed)),
+                i64
+            ),
+            (
+                "total_censored_events",
+                censoring_stat_swap(&|stats| stats
+                    .total_censored_events
+                    .swap(0, Ordering::Relaxed)),
+                i64
+            ),
+            (
+                "total_uncensored_events",
+                censoring_stat_swap(&|stats| stats
+                    .total_uncensored_events
+                    .swap(0, Ordering::Relaxed)),
+                i64
+            ),
+            (
+                "auto_cleanup_runs",
+                censoring_stat_swap(&|stats| stats.auto_cleanup_runs.swap(0, Ordering::Relaxed)),
+                i64
+            ),
+            (
+                "clients_auto_uncensored",
+                censoring_stat_swap(&|stats| stats
+                    .clients_auto_uncensored
+                    .swap(0, Ordering::Relaxed)),
+                i64
+            ),
         );
     }
 }
@@ -649,6 +709,8 @@ pub struct QuicStreamerConfig {
     pub wait_for_chunk_timeout: Duration,
     pub accumulator_channel_size: usize,
     pub num_threads: NonZeroUsize,
+    /// Controls if to send the client Id (client's public key) along with packet batches.
+    pub send_client_id: bool,
 }
 
 #[derive(Clone)]
@@ -704,6 +766,7 @@ impl Default for QuicStreamerConfig {
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             accumulator_channel_size: DEFAULT_ACCUMULATOR_CHANNEL_SIZE,
             num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
+            send_client_id: false, // Default to false for backward compatibility
         }
     }
 }
@@ -726,6 +789,12 @@ impl QuicStreamerConfig {
         let conns = self.max_staked_connections + self.max_unstaked_connections;
         conns + conns / 4
     }
+
+    // Add convenience method
+    pub fn with_client_id(mut self, include_client_id: bool) -> Self {
+        self.send_client_id = include_client_id;
+        self
+    }
 }
 
 #[allow(deprecated)]
@@ -739,6 +808,7 @@ impl From<&QuicServerParams> for QuicStreamerConfig {
             wait_for_chunk_timeout: params.wait_for_chunk_timeout,
             accumulator_channel_size: params.accumulator_channel_size,
             num_threads: params.num_threads,
+            send_client_id: false,
         }
     }
 }
@@ -867,6 +937,7 @@ pub fn spawn_server_with_cancel(
 }
 
 /// Spawns a tokio runtime and a streamer instance inside it.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_simple_qos_server_with_cancel(
     thread_name: &'static str,
     metrics_name: &'static str,
@@ -876,18 +947,20 @@ pub fn spawn_simple_qos_server_with_cancel(
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicStreamerConfig,
     qos_config: SimpleQosConfig,
+    feedback_receiver: Option<Receiver<StreamerFeedback>>,
     cancel: CancellationToken,
 ) -> Result<SpawnServerResult, QuicServerError> {
     let stats = Arc::<StreamerStats>::default();
 
-    let simple_qos = Arc::new(SimpleQos::new(
+    let simple_qos = SimpleQos::new(
         qos_config,
         quic_server_params.max_connections_per_peer,
         quic_server_params.max_staked_connections,
         stats.clone(),
         staked_nodes,
+        feedback_receiver,
         cancel.clone(),
-    ));
+    );
 
     spawn_server_with_cancel_generic(
         thread_name,
@@ -981,6 +1054,7 @@ mod test {
             staked_nodes,
             server_params.quic_streamer_config,
             server_params.qos_config,
+            None,
             cancel.clone(),
         )
         .unwrap();

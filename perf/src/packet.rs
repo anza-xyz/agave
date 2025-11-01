@@ -153,6 +153,7 @@ impl BytesPacket {
 pub enum PacketBatch {
     Pinned(PinnedPacketBatch),
     Bytes(BytesPacketBatch),
+    WithClientId(BytesPacketBatchWithClientId), // Add this variant
 }
 
 impl PacketBatch {
@@ -161,6 +162,7 @@ impl PacketBatch {
         match self {
             Self::Pinned(batch) => batch.first().map(PacketRef::from),
             Self::Bytes(batch) => batch.first().map(PacketRef::from),
+            Self::WithClientId(batch) => batch.first().map(PacketRef::from),
         }
     }
 
@@ -169,6 +171,7 @@ impl PacketBatch {
         match self {
             Self::Pinned(batch) => batch.first_mut().map(PacketRefMut::from),
             Self::Bytes(batch) => batch.first_mut().map(PacketRefMut::from),
+            Self::WithClientId(batch) => batch.first_mut().map(PacketRefMut::from),
         }
     }
 
@@ -177,6 +180,7 @@ impl PacketBatch {
         match self {
             Self::Pinned(batch) => batch.is_empty(),
             Self::Bytes(batch) => batch.is_empty(),
+            Self::WithClientId(batch) => batch.is_empty(),
         }
     }
 
@@ -185,6 +189,7 @@ impl PacketBatch {
         match self {
             Self::Pinned(batch) => batch.get(index).map(PacketRef::from),
             Self::Bytes(batch) => batch.get(index).map(PacketRef::from),
+            Self::WithClientId(batch) => batch.get(index).map(PacketRef::from),
         }
     }
 
@@ -192,6 +197,7 @@ impl PacketBatch {
         match self {
             Self::Pinned(batch) => batch.get_mut(index).map(PacketRefMut::from),
             Self::Bytes(batch) => batch.get_mut(index).map(PacketRefMut::from),
+            Self::WithClientId(batch) => batch.get_mut(index).map(PacketRefMut::from),
         }
     }
 
@@ -199,6 +205,7 @@ impl PacketBatch {
         match self {
             Self::Pinned(batch) => PacketBatchIter::Pinned(batch.iter()),
             Self::Bytes(batch) => PacketBatchIter::Bytes(batch.iter()),
+            Self::WithClientId(batch) => PacketBatchIter::WithClientId(batch.iter()),
         }
     }
 
@@ -206,6 +213,7 @@ impl PacketBatch {
         match self {
             Self::Pinned(batch) => PacketBatchIterMut::Pinned(batch.iter_mut()),
             Self::Bytes(batch) => PacketBatchIterMut::Bytes(batch.iter_mut()),
+            Self::WithClientId(batch) => PacketBatchIterMut::WithClientId(batch.iter_mut()),
         }
     }
 
@@ -215,6 +223,9 @@ impl PacketBatch {
                 PacketBatchParIter::Pinned(batch.par_iter().map(PacketRef::from))
             }
             Self::Bytes(batch) => PacketBatchParIter::Bytes(batch.par_iter().map(PacketRef::from)),
+            Self::WithClientId(batch) => {
+                PacketBatchParIter::WithClientId(batch.par_iter().map(PacketRef::from))
+            }
         }
     }
 
@@ -226,6 +237,9 @@ impl PacketBatch {
             Self::Bytes(batch) => {
                 PacketBatchParIterMut::Bytes(batch.par_iter_mut().map(PacketRefMut::from))
             }
+            Self::WithClientId(batch) => {
+                PacketBatchParIterMut::WithClientId(batch.par_iter_mut().map(PacketRefMut::from))
+            }
         }
     }
 
@@ -233,6 +247,7 @@ impl PacketBatch {
         match self {
             Self::Pinned(batch) => batch.len(),
             Self::Bytes(batch) => batch.len(),
+            Self::WithClientId(batch) => batch.len(),
         }
     }
 }
@@ -246,6 +261,11 @@ impl From<PinnedPacketBatch> for PacketBatch {
 impl From<BytesPacketBatch> for PacketBatch {
     fn from(batch: BytesPacketBatch) -> Self {
         Self::Bytes(batch)
+    }
+}
+impl From<BytesPacketBatchWithClientId> for PacketBatch {
+    fn from(batch: BytesPacketBatchWithClientId) -> Self {
+        Self::WithClientId(batch)
     }
 }
 
@@ -291,6 +311,7 @@ impl<'a> IntoParallelIterator for &'a mut PacketBatch {
 pub enum PacketRef<'a> {
     Packet(&'a Packet),
     Bytes(&'a BytesPacket),
+    WithClientId(&'a BytesPacketWithClientId),
 }
 
 impl PartialEq for PacketRef<'_> {
@@ -323,6 +344,12 @@ impl<'a> From<&'a mut BytesPacket> for PacketRef<'a> {
     }
 }
 
+impl<'a> From<&'a BytesPacketWithClientId> for PacketRef<'a> {
+    fn from(packet: &'a BytesPacketWithClientId) -> Self {
+        Self::WithClientId(packet)
+    }
+}
+
 impl<'a> PacketRef<'a> {
     pub fn data<I>(&self, index: I) -> Option<&'a <I as SliceIndex<[u8]>>::Output>
     where
@@ -331,6 +358,7 @@ impl<'a> PacketRef<'a> {
         match self {
             Self::Packet(packet) => packet.data(index),
             Self::Bytes(packet) => packet.data(index),
+            Self::WithClientId(packet) => packet.data(index),
         }
     }
 
@@ -339,6 +367,7 @@ impl<'a> PacketRef<'a> {
         match self {
             Self::Packet(packet) => packet.meta(),
             Self::Bytes(packet) => packet.meta(),
+            Self::WithClientId(packet) => packet.meta(),
         }
     }
 
@@ -350,6 +379,7 @@ impl<'a> PacketRef<'a> {
         match self {
             Self::Packet(packet) => packet.deserialize_slice(index),
             Self::Bytes(packet) => packet.deserialize_slice(index),
+            Self::WithClientId(packet) => packet.deserialize_slice(index),
         }
     }
 
@@ -370,6 +400,7 @@ impl<'a> PacketRef<'a> {
             // `BytesPacket` entirely and deal just with `Vec<BytesPacket>`
             // everywhere.
             Self::Bytes(packet) => packet.to_owned().to_owned(),
+            Self::WithClientId(packet) => packet.packet.to_owned().to_owned(),
         }
     }
 }
@@ -378,6 +409,7 @@ impl<'a> PacketRef<'a> {
 pub enum PacketRefMut<'a> {
     Packet(&'a mut Packet),
     Bytes(&'a mut BytesPacket),
+    WithClientId(&'a mut BytesPacketWithClientId),
 }
 
 impl<'a> PartialEq for PacketRefMut<'a> {
@@ -398,6 +430,12 @@ impl<'a> From<&'a mut BytesPacket> for PacketRefMut<'a> {
     }
 }
 
+impl<'a> From<&'a mut BytesPacketWithClientId> for PacketRefMut<'a> {
+    fn from(packet: &'a mut BytesPacketWithClientId) -> Self {
+        Self::WithClientId(packet)
+    }
+}
+
 impl PacketRefMut<'_> {
     pub fn data<I>(&self, index: I) -> Option<&<I as SliceIndex<[u8]>>::Output>
     where
@@ -406,6 +444,7 @@ impl PacketRefMut<'_> {
         match self {
             Self::Packet(packet) => packet.data(index),
             Self::Bytes(packet) => packet.data(index),
+            Self::WithClientId(packet) => packet.data(index),
         }
     }
 
@@ -414,6 +453,7 @@ impl PacketRefMut<'_> {
         match self {
             Self::Packet(packet) => packet.meta(),
             Self::Bytes(packet) => packet.meta(),
+            Self::WithClientId(packet) => packet.meta(),
         }
     }
 
@@ -422,6 +462,7 @@ impl PacketRefMut<'_> {
         match self {
             Self::Packet(packet) => packet.meta_mut(),
             Self::Bytes(packet) => packet.meta_mut(),
+            Self::WithClientId(packet) => packet.meta_mut(),
         }
     }
 
@@ -433,6 +474,7 @@ impl PacketRefMut<'_> {
         match self {
             Self::Packet(packet) => packet.deserialize_slice(index),
             Self::Bytes(packet) => packet.deserialize_slice(index),
+            Self::WithClientId(packet) => packet.deserialize_slice(index),
         }
     }
 
@@ -445,6 +487,7 @@ impl PacketRefMut<'_> {
                 packet.buffer_mut()[..size].copy_from_slice(src);
             }
             Self::Bytes(packet) => packet.copy_from_slice(src),
+            Self::WithClientId(packet) => packet.copy_from_slice(src),
         }
     }
 
@@ -453,6 +496,7 @@ impl PacketRefMut<'_> {
         match self {
             Self::Packet(packet) => PacketRef::Packet(packet),
             Self::Bytes(packet) => PacketRef::Bytes(packet),
+            Self::WithClientId(packet) => PacketRef::WithClientId(packet),
         }
     }
 }
@@ -460,6 +504,7 @@ impl PacketRefMut<'_> {
 pub enum PacketBatchIter<'a> {
     Pinned(std::slice::Iter<'a, Packet>),
     Bytes(std::slice::Iter<'a, BytesPacket>),
+    WithClientId(std::slice::Iter<'a, BytesPacketWithClientId>),
 }
 
 impl DoubleEndedIterator for PacketBatchIter<'_> {
@@ -467,6 +512,7 @@ impl DoubleEndedIterator for PacketBatchIter<'_> {
         match self {
             Self::Pinned(iter) => iter.next_back().map(PacketRef::Packet),
             Self::Bytes(iter) => iter.next_back().map(PacketRef::Bytes),
+            Self::WithClientId(iter) => iter.next_back().map(PacketRef::WithClientId),
         }
     }
 }
@@ -478,6 +524,7 @@ impl<'a> Iterator for PacketBatchIter<'a> {
         match self {
             Self::Pinned(iter) => iter.next().map(PacketRef::Packet),
             Self::Bytes(iter) => iter.next().map(PacketRef::Bytes),
+            Self::WithClientId(iter) => iter.next().map(PacketRef::WithClientId),
         }
     }
 }
@@ -485,6 +532,7 @@ impl<'a> Iterator for PacketBatchIter<'a> {
 pub enum PacketBatchIterMut<'a> {
     Pinned(std::slice::IterMut<'a, Packet>),
     Bytes(std::slice::IterMut<'a, BytesPacket>),
+    WithClientId(std::slice::IterMut<'a, BytesPacketWithClientId>),
 }
 
 impl DoubleEndedIterator for PacketBatchIterMut<'_> {
@@ -492,6 +540,7 @@ impl DoubleEndedIterator for PacketBatchIterMut<'_> {
         match self {
             Self::Pinned(iter) => iter.next_back().map(PacketRefMut::Packet),
             Self::Bytes(iter) => iter.next_back().map(PacketRefMut::Bytes),
+            Self::WithClientId(iter) => iter.next_back().map(PacketRefMut::WithClientId),
         }
     }
 }
@@ -503,12 +552,14 @@ impl<'a> Iterator for PacketBatchIterMut<'a> {
         match self {
             Self::Pinned(iter) => iter.next().map(PacketRefMut::Packet),
             Self::Bytes(iter) => iter.next().map(PacketRefMut::Bytes),
+            Self::WithClientId(iter) => iter.next().map(PacketRefMut::WithClientId),
         }
     }
 }
 
 type PacketParIter<'a> = rayon::slice::Iter<'a, Packet>;
 type BytesPacketParIter<'a> = rayon::slice::Iter<'a, BytesPacket>;
+type WithClientIdPacketParIter<'a> = rayon::slice::Iter<'a, BytesPacketWithClientId>;
 
 pub enum PacketBatchParIter<'a> {
     Pinned(
@@ -523,6 +574,12 @@ pub enum PacketBatchParIter<'a> {
             fn(<BytesPacketParIter<'a> as ParallelIterator>::Item) -> PacketRef<'a>,
         >,
     ),
+    WithClientId(
+        rayon::iter::Map<
+            WithClientIdPacketParIter<'a>,
+            fn(<WithClientIdPacketParIter<'a> as ParallelIterator>::Item) -> PacketRef<'a>,
+        >,
+    ),
 }
 
 impl<'a> ParallelIterator for PacketBatchParIter<'a> {
@@ -534,6 +591,7 @@ impl<'a> ParallelIterator for PacketBatchParIter<'a> {
         match self {
             Self::Pinned(iter) => iter.drive_unindexed(consumer),
             Self::Bytes(iter) => iter.drive_unindexed(consumer),
+            Self::WithClientId(iter) => iter.drive_unindexed(consumer),
         }
     }
 }
@@ -543,6 +601,7 @@ impl IndexedParallelIterator for PacketBatchParIter<'_> {
         match self {
             Self::Pinned(iter) => iter.len(),
             Self::Bytes(iter) => iter.len(),
+            Self::WithClientId(iter) => iter.len(),
         }
     }
 
@@ -550,6 +609,7 @@ impl IndexedParallelIterator for PacketBatchParIter<'_> {
         match self {
             Self::Pinned(iter) => iter.drive(consumer),
             Self::Bytes(iter) => iter.drive(consumer),
+            Self::WithClientId(iter) => iter.drive(consumer),
         }
     }
 
@@ -560,12 +620,14 @@ impl IndexedParallelIterator for PacketBatchParIter<'_> {
         match self {
             Self::Pinned(iter) => iter.with_producer(callback),
             Self::Bytes(iter) => iter.with_producer(callback),
+            Self::WithClientId(iter) => iter.with_producer(callback),
         }
     }
 }
 
 type PacketParIterMut<'a> = rayon::slice::IterMut<'a, Packet>;
 type BytesPacketParIterMut<'a> = rayon::slice::IterMut<'a, BytesPacket>;
+type WithClientIdPacketParIterMut<'a> = rayon::slice::IterMut<'a, BytesPacketWithClientId>;
 
 pub enum PacketBatchParIterMut<'a> {
     Pinned(
@@ -580,6 +642,12 @@ pub enum PacketBatchParIterMut<'a> {
             fn(<BytesPacketParIterMut<'a> as ParallelIterator>::Item) -> PacketRefMut<'a>,
         >,
     ),
+    WithClientId(
+        rayon::iter::Map<
+            WithClientIdPacketParIterMut<'a>,
+            fn(<WithClientIdPacketParIterMut<'a> as ParallelIterator>::Item) -> PacketRefMut<'a>,
+        >,
+    ),
 }
 
 impl<'a> ParallelIterator for PacketBatchParIterMut<'a> {
@@ -591,6 +659,7 @@ impl<'a> ParallelIterator for PacketBatchParIterMut<'a> {
         match self {
             Self::Pinned(iter) => iter.drive_unindexed(consumer),
             Self::Bytes(iter) => iter.drive_unindexed(consumer),
+            Self::WithClientId(iter) => iter.drive_unindexed(consumer),
         }
     }
 }
@@ -600,6 +669,7 @@ impl IndexedParallelIterator for PacketBatchParIterMut<'_> {
         match self {
             Self::Pinned(iter) => iter.len(),
             Self::Bytes(iter) => iter.len(),
+            Self::WithClientId(iter) => iter.len(),
         }
     }
 
@@ -607,6 +677,7 @@ impl IndexedParallelIterator for PacketBatchParIterMut<'_> {
         match self {
             Self::Pinned(iter) => iter.drive(consumer),
             Self::Bytes(iter) => iter.drive(consumer),
+            Self::WithClientId(iter) => iter.drive(consumer),
         }
     }
 
@@ -617,6 +688,7 @@ impl IndexedParallelIterator for PacketBatchParIterMut<'_> {
         match self {
             Self::Pinned(iter) => iter.with_producer(callback),
             Self::Bytes(iter) => iter.with_producer(callback),
+            Self::WithClientId(iter) => iter.with_producer(callback),
         }
     }
 }
@@ -902,6 +974,251 @@ where
         .with_fixint_encoding()
         .allow_trailing_bytes()
         .deserialize_from(reader)
+}
+
+/// Enhanced version of BytesPacket with remote pubkey support
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct BytesPacketWithClientId {
+    packet: BytesPacket,
+    remote_pubkey: Option<solana_pubkey::Pubkey>,
+}
+
+impl BytesPacketWithClientId {
+    pub fn new(packet: BytesPacket, remote_pubkey: Option<solana_pubkey::Pubkey>) -> Self {
+        Self {
+            packet,
+            remote_pubkey,
+        }
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn empty() -> Self {
+        Self {
+            packet: BytesPacket::empty(),
+            remote_pubkey: None,
+        }
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn from_bytes(dest: Option<&SocketAddr>, buffer: impl Into<Bytes>) -> Self {
+        Self {
+            packet: BytesPacket::from_bytes(dest, buffer),
+            remote_pubkey: None,
+        }
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn from_data<T>(dest: Option<&SocketAddr>, data: T) -> bincode::Result<Self>
+    where
+        T: solana_packet::Encode,
+    {
+        let packet = BytesPacket::from_data(dest, data)?;
+        Ok(Self::new(packet, None))
+    }
+
+    #[inline]
+    pub fn remote_pubkey(&self) -> Option<&solana_pubkey::Pubkey> {
+        self.remote_pubkey.as_ref()
+    }
+
+    #[inline]
+    pub fn set_remote_pubkey(&mut self, pubkey: Option<solana_pubkey::Pubkey>) {
+        self.remote_pubkey = pubkey;
+    }
+
+    /// Get the underlying BytesPacket
+    #[inline]
+    pub fn packet(&self) -> &BytesPacket {
+        &self.packet
+    }
+
+    /// Get mutable reference to the underlying BytesPacket
+    #[inline]
+    pub fn packet_mut(&mut self) -> &mut BytesPacket {
+        &mut self.packet
+    }
+
+    /// Convert to a regular BytesPacket (losing pubkey information)
+    pub fn into_bytes_packet(self) -> BytesPacket {
+        self.packet
+    }
+
+    /// Convert from a regular BytesPacket (no pubkey info)
+    pub fn from_bytes_packet(
+        packet: BytesPacket,
+        remote_pubkey: Option<solana_pubkey::Pubkey>,
+    ) -> Self {
+        Self {
+            packet,
+            remote_pubkey,
+        }
+    }
+}
+
+impl BytesPacketWithClientId {
+    #[inline]
+    pub fn data<I>(&self, index: I) -> Option<&<I as SliceIndex<[u8]>>::Output>
+    where
+        I: SliceIndex<[u8]>,
+    {
+        self.packet.data(index)
+    }
+
+    #[inline]
+    pub fn meta(&self) -> &Meta {
+        self.packet.meta()
+    }
+
+    #[inline]
+    pub fn meta_mut(&mut self) -> &mut Meta {
+        self.packet.meta_mut()
+    }
+
+    pub fn deserialize_slice<T, I>(&self, index: I) -> bincode::Result<T>
+    where
+        T: serde::de::DeserializeOwned,
+        I: SliceIndex<[u8], Output = [u8]>,
+    {
+        self.packet.deserialize_slice(index)
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn copy_from_slice(&mut self, slice: &[u8]) {
+        self.packet.copy_from_slice(slice);
+    }
+
+    #[inline]
+    pub fn buffer(&self) -> &Bytes {
+        self.packet.buffer()
+    }
+
+    #[inline]
+    pub fn set_buffer(&mut self, buffer: impl Into<Bytes>) {
+        self.packet.set_buffer(buffer);
+    }
+
+    #[inline]
+    pub fn as_ref(&self) -> PacketRef<'_> {
+        PacketRef::Bytes(&self.packet)
+    }
+
+    #[inline]
+    pub fn as_mut(&mut self) -> PacketRefMut<'_> {
+        PacketRefMut::Bytes(&mut self.packet)
+    }
+}
+
+/// Enhanced version of BytesPacketBatch with remote pubkey support
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct BytesPacketBatchWithClientId {
+    packets: Vec<BytesPacketWithClientId>,
+}
+
+impl BytesPacketBatchWithClientId {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        let packets = Vec::with_capacity(capacity);
+        Self { packets }
+    }
+
+    /// Convert to a regular BytesPacketBatch (losing pubkey information)
+    pub fn to_bytes_packet_batch(self) -> BytesPacketBatch {
+        let packets: Vec<BytesPacket> = self
+            .packets
+            .into_iter()
+            .map(|ep| ep.into_bytes_packet())
+            .collect();
+        BytesPacketBatch::from(packets)
+    }
+
+    /// Convert to PinnedPacketBatch for compatibility
+    pub fn to_pinned_packet_batch(&self) -> PinnedPacketBatch {
+        // Delegate to BytesPacketBatch implementation
+        let bytes_batch = self.clone().to_bytes_packet_batch();
+        bytes_batch.to_pinned_packet_batch()
+    }
+}
+
+impl Deref for BytesPacketBatchWithClientId {
+    type Target = Vec<BytesPacketWithClientId>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.packets
+    }
+}
+
+impl DerefMut for BytesPacketBatchWithClientId {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.packets
+    }
+}
+
+impl From<Vec<BytesPacketWithClientId>> for BytesPacketBatchWithClientId {
+    fn from(packets: Vec<BytesPacketWithClientId>) -> Self {
+        Self { packets }
+    }
+}
+
+impl FromIterator<BytesPacketWithClientId> for BytesPacketBatchWithClientId {
+    fn from_iter<T: IntoIterator<Item = BytesPacketWithClientId>>(iter: T) -> Self {
+        let packets = Vec::from_iter(iter);
+        Self { packets }
+    }
+}
+
+impl From<BytesPacketBatchWithClientId> for BytesPacketBatch {
+    fn from(enhanced_batch: BytesPacketBatchWithClientId) -> Self {
+        enhanced_batch.to_bytes_packet_batch()
+    }
+}
+
+// Iterator implementations
+impl<'a> IntoIterator for &'a BytesPacketBatchWithClientId {
+    type Item = &'a BytesPacketWithClientId;
+    type IntoIter = std::slice::Iter<'a, BytesPacketWithClientId>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.packets.iter()
+    }
+}
+
+impl IntoIterator for BytesPacketBatchWithClientId {
+    type Item = BytesPacketWithClientId;
+    type IntoIter = std::vec::IntoIter<BytesPacketWithClientId>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.packets.into_iter()
+    }
+}
+
+// Parallel iterator support
+impl<'a> IntoParallelIterator for &'a BytesPacketBatchWithClientId {
+    type Iter = rayon::slice::Iter<'a, BytesPacketWithClientId>;
+    type Item = &'a BytesPacketWithClientId;
+    fn into_par_iter(self) -> Self::Iter {
+        self.packets.par_iter()
+    }
+}
+
+impl<'a> IntoParallelIterator for &'a mut BytesPacketBatchWithClientId {
+    type Iter = rayon::slice::IterMut<'a, BytesPacketWithClientId>;
+    type Item = &'a mut BytesPacketWithClientId;
+    fn into_par_iter(self) -> Self::Iter {
+        self.packets.par_iter_mut()
+    }
+}
+
+impl IntoParallelIterator for BytesPacketBatchWithClientId {
+    type Iter = rayon::vec::IntoIter<BytesPacketWithClientId>;
+    type Item = BytesPacketWithClientId;
+    fn into_par_iter(self) -> Self::Iter {
+        self.packets.into_par_iter()
+    }
 }
 
 #[cfg(test)]
