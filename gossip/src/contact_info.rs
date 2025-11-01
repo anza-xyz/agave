@@ -668,7 +668,7 @@ fn sanitize_quic_offset(
 }
 
 // Returns the socket at QUIC_PORT_OFFSET from the given one.
-fn get_quic_socket(socket: &SocketAddr) -> Result<SocketAddr, Error> {
+pub fn get_quic_socket(socket: &SocketAddr) -> Result<SocketAddr, Error> {
     Ok(SocketAddr::new(
         socket.ip(),
         socket

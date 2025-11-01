@@ -364,6 +364,18 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("public_tvu_addr")
+            .long("public-tvu-address")
+            .alias("tvu-host-addr")
+            .value_name("HOST:PORT")
+            .takes_value(true)
+            .validator(solana_net_utils::is_host_port)
+            .help(
+                "Specify TVU address to advertise in gossip [default: ask --entrypoint or \
+                 localhost when --entrypoint is not provided]",
+            ),
+    )
+    .arg(
         Arg::with_name("tpu_vortexor_receiver_address")
             .long("tpu-vortexor-receiver-address")
             .value_name("HOST:PORT")
