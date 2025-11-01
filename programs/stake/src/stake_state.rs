@@ -15,31 +15,6 @@ use {
     solana_vote_interface::state::VoteStateV4,
 };
 
-// utility function, used by Stakes, tests
-pub fn from<T: ReadableAccount + StateMut<StakeStateV2>>(account: &T) -> Option<StakeStateV2> {
-    account.state().ok()
-}
-
-pub fn stake_from<T: ReadableAccount + StateMut<StakeStateV2>>(account: &T) -> Option<Stake> {
-    from(account).and_then(|state: StakeStateV2| state.stake())
-}
-
-pub fn delegation_from(account: &AccountSharedData) -> Option<Delegation> {
-    from(account).and_then(|state: StakeStateV2| state.delegation())
-}
-
-pub fn authorized_from(account: &AccountSharedData) -> Option<Authorized> {
-    from(account).and_then(|state: StakeStateV2| state.authorized())
-}
-
-pub fn lockup_from<T: ReadableAccount + StateMut<StakeStateV2>>(account: &T) -> Option<Lockup> {
-    from(account).and_then(|state: StakeStateV2| state.lockup())
-}
-
-pub fn meta_from(account: &AccountSharedData) -> Option<Meta> {
-    from(account).and_then(|state: StakeStateV2| state.meta())
-}
-
 fn new_stake(stake: u64, voter_pubkey: &Pubkey, credits: u64, activation_epoch: Epoch) -> Stake {
     Stake {
         delegation: Delegation::new(voter_pubkey, stake, activation_epoch),
