@@ -7,19 +7,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
 
-Release channels have their own copy of this changelog:
-* [edge - v3.1](#edge-channel)
-* [beta - v3.0](https://github.com/anza-xyz/agave/blob/v3.0/CHANGELOG.md)
-* [stable - v2.3](https://github.com/anza-xyz/agave/blob/v2.3/CHANGELOG.md)
-
-<a name="edge-channel"></a>
-## 3.1.0—Unreleased
-### RPC
-#### Breaking
-#### Changes
-### Validator
-#### Breaking
-
 ## 3.0.0
 
 ### RPC
