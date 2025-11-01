@@ -221,6 +221,8 @@ pub struct StreamerStats {
     pub(crate) open_connections: AtomicUsize,
     pub(crate) open_staked_connections: AtomicUsize,
     pub(crate) open_unstaked_connections: AtomicUsize,
+    pub(crate) peak_open_staked_connections: AtomicUsize,
+    pub(crate) peak_open_unstaked_connections: AtomicUsize,
     pub(crate) refused_connections_too_many_open_connections: AtomicUsize,
     pub(crate) outstanding_incoming_connection_attempts: AtomicUsize,
     pub(crate) total_incoming_connection_attempts: AtomicUsize,
@@ -583,13 +585,19 @@ impl StreamerStats {
                 i64
             ),
             (
-                "open_staked_connections",
-                self.open_staked_connections.load(Ordering::Relaxed),
+                "peak_open_staked_connections",
+                self.peak_open_staked_connections.swap(
+                    self.open_staked_connections.load(Ordering::Relaxed),
+                    Ordering::Relaxed
+                ),
                 i64
             ),
             (
-                "open_unstaked_connections",
-                self.open_unstaked_connections.load(Ordering::Relaxed),
+                "peak_open_unstaked_connections",
+                self.peak_open_unstaked_connections.swap(
+                    self.open_unstaked_connections.load(Ordering::Relaxed),
+                    Ordering::Relaxed
+                ),
                 i64
             ),
             (

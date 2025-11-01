@@ -512,10 +512,16 @@ pub(crate) fn update_open_connections_stat(
         stats
             .open_staked_connections
             .store(connection_table.table_size(), Ordering::Relaxed);
+        stats
+            .peak_open_staked_connections
+            .fetch_max(connection_table.table_size(), Ordering::Relaxed);
     } else {
         stats
             .open_unstaked_connections
             .store(connection_table.table_size(), Ordering::Relaxed);
+        stats
+            .peak_open_unstaked_connections
+            .fetch_max(connection_table.table_size(), Ordering::Relaxed);
     }
 }
 
