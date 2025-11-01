@@ -6988,6 +6988,7 @@ dependencies = [
  "rayon",
  "serde",
  "solana-address",
+ "solana-clock",
  "solana-hash",
  "solana-measure",
  "solana-merkle-tree",

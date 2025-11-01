@@ -8496,6 +8496,7 @@ dependencies = [
  "rayon",
  "serde",
  "solana-address",
+ "solana-clock",
  "solana-entry",
  "solana-hash",
  "solana-keypair",
