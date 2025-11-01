@@ -7856,6 +7856,7 @@ dependencies = [
  "test-case",
  "thiserror 2.0.17",
  "tiny-bip39",
+ "tokio",
 ]
 
 [[package]]
@@ -11525,6 +11526,7 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-status",
  "solana-version",
+ "tokio",
 ]
 
 [[package]]
