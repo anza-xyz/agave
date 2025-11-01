@@ -213,7 +213,6 @@ solana-poh = { workspace = true, features = ["dev-context-only-utils"] }
 solana-program-binaries = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-rpc = { workspace = true, features = ["dev-context-only-utils"] }
-solana-stake-program = { workspace = true }
 solana-system-program = { workspace = true }
 solana-unified-scheduler-pool = { workspace = true, features = [
     "dev-context-only-utils",

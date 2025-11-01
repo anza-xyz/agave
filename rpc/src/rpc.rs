@@ -70,12 +70,12 @@ use {
         commitment::{BlockCommitmentArray, BlockCommitmentCache},
         non_circulating_supply::{calculate_non_circulating_supply, NonCirculatingSupply},
         prioritization_fee_cache::PrioritizationFeeCache,
+        stake_utils,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_send_transaction_service::send_transaction_service::TransactionInfo,
     solana_signature::Signature,
     solana_signer::Signer,
-    solana_stake_program,
     solana_storage_bigtable::Error as StorageError,
     solana_transaction::{
         sanitized::{MessageHash, SanitizedTransaction, MAX_TX_ACCOUNT_LOCKS},
@@ -2376,7 +2376,7 @@ impl JsonRpcRequestProcessor {
 
     fn get_stake_minimum_delegation(&self, config: RpcContextConfig) -> Result<RpcResponse<u64>> {
         let bank = self.get_bank_with_config(config)?;
-        let stake_minimum_delegation = solana_stake_program::get_minimum_delegation(
+        let stake_minimum_delegation = stake_utils::get_minimum_delegation(
             bank.feature_set
                 .is_active(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id()),
         );
@@ -9242,7 +9242,7 @@ pub mod tests {
     fn test_rpc_get_stake_minimum_delegation() {
         let rpc = RpcHandler::start();
         let bank = rpc.working_bank();
-        let expected_stake_minimum_delegation = solana_stake_program::get_minimum_delegation(
+        let expected_stake_minimum_delegation = stake_utils::get_minimum_delegation(
             bank.feature_set
                 .is_active(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id()),
         );

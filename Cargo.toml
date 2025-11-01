@@ -69,7 +69,6 @@ members = [
     "programs/compute-budget-bench",
     "programs/ed25519-tests",
     "programs/loader-v4",
-    "programs/stake",
     "programs/system",
     "programs/vote",
     "programs/zk-elgamal-proof",
@@ -531,7 +530,6 @@ solana-slot-hashes = "3.0.0"
 solana-slot-history = "3.0.0"
 solana-stable-layout = "3.0.0"
 solana-stake-interface = { version = "2.0.1" }
-solana-stake-program = { path = "programs/stake", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-storage-bigtable = { path = "storage-bigtable", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-storage-proto = { path = "storage-proto", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-streamer = { path = "streamer", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
