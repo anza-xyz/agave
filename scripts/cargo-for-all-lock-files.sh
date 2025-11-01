@@ -10,6 +10,7 @@ fi
 set -e
 
 shifted_args=()
+only_workspaces=false
 while [[ -n $1 ]]; do
   if [[ $1 = -- ]]; then
     escape_marker=found
@@ -18,6 +19,9 @@ while [[ -n $1 ]]; do
   elif [[ $1 = "--ignore-exit-code" ]]; then
     ignore=1
     shift
+  elif [[ $1 = "--only-workspaces" ]]; then
+    shift
+    only_workspaces=true
   else
     shifted_args+=("$1")
     shift
@@ -39,7 +43,17 @@ else
   files="$(git ls-files :**Cargo.lock)"
 fi
 
+lock_file_is_workspace() {
+  local lock_file="$1"
+  local manifest_path="$(dirname "$lock_file")"/Cargo.toml
+  $(toml get "$manifest_path" . | jq '.workspace != null')
+}
+
 for lock_file in $files; do
+  if $only_workspaces && ! lock_file_is_workspace "$lock_file"; then
+    echo "$0: skipping non-workspace lock file \`$lock_file\`" >&2
+    continue
+  fi
   if [[ -n $CI ]]; then
     echo "--- [$lock_file]: cargo " "${shifted_args[@]}" "$@"
   fi
