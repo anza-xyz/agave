@@ -288,7 +288,7 @@ impl TransactionAccounts {
 
     pub(crate) fn len(&self) -> usize {
         // SAFETY: The borrow is local to this function and is only reading length.
-        unsafe { (*self.shared_account_fields.get()).len() }
+        unsafe { (&(*self.shared_account_fields.get())).len() }
     }
 
     #[cfg(not(target_os = "solana"))]
@@ -346,12 +346,12 @@ impl TransactionAccounts {
         // The unwrap is safe because accounts.len() == borrow_counters.len(), so the missing
         // account error should have been returned above.
         let svm_account = unsafe {
-            (*self.shared_account_fields.get())
+          (&mut (*self.shared_account_fields.get()))
                 .get_mut(index as usize)
                 .unwrap()
         };
         let private_fields = unsafe {
-            (*self.private_account_fields.get())
+       (&mut (*self.private_account_fields.get()))
                 .get_mut(index as usize)
                 .unwrap()
         };
@@ -378,12 +378,12 @@ impl TransactionAccounts {
         // The unwrap is safe because accounts.len() == borrow_counters.len(), so the missing
         // account error should have been returned above.
         let svm_account = unsafe {
-            (*self.shared_account_fields.get())
+            (&(*self.shared_account_fields.get()))
                 .get(index as usize)
                 .unwrap()
         };
         let private_fields = unsafe {
-            (*self.private_account_fields.get())
+            (&(*self.private_account_fields.get()))
                 .get(index as usize)
                 .unwrap()
         };
@@ -462,7 +462,7 @@ impl TransactionAccounts {
     pub(crate) fn account_key(&self, index: IndexOfAccount) -> Option<&Pubkey> {
         // SAFETY: We never modify an account key, so returning a reference to it is safe.
         unsafe {
-            (*self.shared_account_fields.get())
+           (&(*self.shared_account_fields.get()))
                 .get(index as usize)
                 .map(|acc| &acc.key)
         }
