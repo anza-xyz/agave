@@ -1,6 +1,6 @@
 [package]
 name = "solana-svm-callback"
-version = "3.0.9"
+version = "3.0.10"
 description = "Solana SVM callback"
 authors = { workspace = true }
 repository = { workspace = true }
