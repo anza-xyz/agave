@@ -11,7 +11,7 @@ use {
     solana_config_interface::state::{get_config_data, ConfigKeys},
     solana_genesis_config::GenesisConfig,
     solana_pubkey::Pubkey,
-    solana_transaction_context::BorrowedInstructionAccount,
+    solana_transaction_context::instruction_accounts::BorrowedInstructionAccount,
 };
 
 #[allow(deprecated)]

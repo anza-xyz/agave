@@ -18,7 +18,10 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_slot_hashes::SlotHash,
-    solana_transaction_context::{BorrowedInstructionAccount, IndexOfAccount, InstructionContext},
+    solana_transaction_context::{
+        instruction::InstructionContext, instruction_accounts::BorrowedInstructionAccount,
+        IndexOfAccount,
+    },
     solana_vote_interface::{error::VoteError, program::id},
     std::{
         cmp::Ordering,
@@ -1125,7 +1128,9 @@ mod tests {
         solana_account::{AccountSharedData, ReadableAccount},
         solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_sha256_hasher::hash,
-        solana_transaction_context::{InstructionAccount, TransactionContext},
+        solana_transaction_context::{
+            instruction_accounts::InstructionAccount, TransactionContext,
+        },
         solana_vote_interface::authorized_voters::AuthorizedVoters,
         test_case::test_case,
     };

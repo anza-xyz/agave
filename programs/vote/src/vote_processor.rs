@@ -10,7 +10,9 @@ use {
         sysvar_cache::get_sysvar_with_account_check,
     },
     solana_pubkey::Pubkey,
-    solana_transaction_context::{BorrowedInstructionAccount, InstructionContext},
+    solana_transaction_context::{
+        instruction::InstructionContext, instruction_accounts::BorrowedInstructionAccount,
+    },
     solana_vote_interface::{instruction::VoteInstruction, program::id, state::VoteAuthorize},
     std::collections::HashSet,
 };
