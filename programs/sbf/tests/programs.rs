@@ -71,6 +71,16 @@ use {
     },
     test_case::test_matrix,
 };
+#[cfg(all(
+    any(feature = "sbf_c", feature = "sbf_rust"),
+    not(feature = "sbf_sanity_list")
+))]
+use {
+    solana_account::Account,
+    solana_program_runtime::sysvar_cache::SysvarCache,
+    solana_sdk_ids::sysvar::rent,
+    solana_svm_test_harness::{self as harness, fixture::instr_context::InstrContext},
+};
 
 #[cfg(feature = "sbf_rust")]
 fn process_transaction_and_record_inner(
@@ -226,31 +236,75 @@ fn test_program_sbf_sanity() {
     for program in programs.iter() {
         println!("Test program: {:?}", program.0);
 
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config(50);
+        let program_elf = harness::file::load_program_elf(program.0);
+        let program_id = Pubkey::new_unique();
 
-        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let mut bank_client = BankClient::new_shared(bank);
-        let authority_keypair = Keypair::new();
+        let feature_set = FeatureSet::all_enabled();
 
-        // Call user program
-        let (_bank, program_id) = load_program_of_loader_v4(
-            &mut bank_client,
-            &bank_forks,
-            &mint_keypair,
-            &authority_keypair,
-            program.0,
-        );
+        let pubkey1 = Pubkey::new_unique();
+        let pubkey2 = Pubkey::new_unique();
 
         let account_metas = vec![
-            AccountMeta::new(mint_keypair.pubkey(), true),
-            AccountMeta::new(Keypair::new().pubkey(), false),
+            AccountMeta::new(pubkey1, true),
+            AccountMeta::new(pubkey2, false),
         ];
         let instruction = Instruction::new_with_bytes(program_id, &[1], account_metas);
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
+
+        let accounts = vec![
+            (
+                program_id,
+                Account {
+                    owner: loader_v4::id(),
+                    ..Default::default() // <-- Stubbed
+                },
+            ),
+            (pubkey1, Account::default()),
+            (pubkey2, Account::default()),
+        ];
+
+        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+
+        let mut program_cache =
+            harness::program_cache::new_with_builtins(&feature_set, /* slot */ 0);
+        harness::program_cache::add_program(
+            &mut program_cache,
+            &program_id,
+            &loader_v4::id(),
+            &program_elf,
+            &feature_set,
+            &compute_budget,
+        );
+
+        let mut sysvar_cache = SysvarCache::default();
+        sysvar_cache.fill_missing_entries(|pubkey, callbackback| {
+            if pubkey == &rent::id() {
+                // Add the default Rent sysvar.
+                let rent = Rent::default();
+                let rent_data = bincode::serialize(&rent).unwrap();
+                callbackback(&rent_data);
+            }
+        });
+
+        let context = InstrContext {
+            feature_set,
+            accounts,
+            instruction: instruction.into(),
+            cu_avail: compute_budget.compute_unit_limit,
+        };
+
+        let effects = harness::instr::execute_instr(
+            context,
+            &compute_budget,
+            &mut program_cache,
+            &sysvar_cache,
+        )
+        .unwrap();
+
+        let result = match effects.result {
+            Some(err) => Err(err),
+            None => Ok(()),
+        };
+
         if program.1 {
             assert!(result.is_ok(), "{result:?}");
         } else {
