@@ -1,8 +1,4 @@
-use {
-    crate::banking_stage::consumer::RetryableIndex,
-    solana_clock::{Epoch, Slot},
-    std::fmt::Display,
-};
+use {crate::banking_stage::consumer::RetryableIndex, std::fmt::Display};
 
 /// A unique identifier for a transaction batch.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -22,18 +18,7 @@ impl Display for TransactionBatchId {
 
 pub type TransactionId = usize;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct MaxAge {
-    pub sanitized_epoch: Epoch,
-    pub alt_invalidation_slot: Slot,
-}
-
-impl MaxAge {
-    pub const MAX: Self = Self {
-        sanitized_epoch: Epoch::MAX,
-        alt_invalidation_slot: Slot::MAX,
-    };
-}
+pub use solana_unified_scheduler_logic::MaxAge;
 
 /// Message: [Scheduler -> Worker]
 /// Transactions to be consumed (i.e. executed, recorded, and committed)
