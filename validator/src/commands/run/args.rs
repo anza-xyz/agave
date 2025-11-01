@@ -584,32 +584,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("rocksdb_ledger_compression")
-            .hidden(hidden_unless_forced())
-            .long("rocksdb-ledger-compression")
-            .value_name("COMPRESSION_TYPE")
-            .takes_value(true)
-            .possible_values(&["none", "lz4", "snappy", "zlib"])
-            .default_value(&default_args.rocksdb_ledger_compression)
-            .help(
-                "The compression algorithm that is used to compress transaction status data. \
-                 Turning on compression can save ~10% of the ledger size.",
-            ),
-    )
-    .arg(
-        Arg::with_name("rocksdb_perf_sample_interval")
-            .hidden(hidden_unless_forced())
-            .long("rocksdb-perf-sample-interval")
-            .value_name("ROCKS_PERF_SAMPLE_INTERVAL")
-            .takes_value(true)
-            .validator(is_parsable::<usize>)
-            .default_value(&default_args.rocksdb_perf_sample_interval)
-            .help(
-                "Controls how often RocksDB read/write performance samples are collected. Perf \
-                 samples are collected in 1 / ROCKS_PERF_SAMPLE_INTERVAL sampling rate.",
-            ),
-    )
-    .arg(
         Arg::with_name("skip_startup_ledger_verification")
             .long("skip-startup-ledger-verification")
             .takes_value(false)
@@ -921,19 +895,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                  generally produce higher compression ratio at the expense of speed and memory. \
                  See the zstd manpage for more information.",
             ),
-    )
-    .arg(
-        Arg::with_name("wal_recovery_mode")
-            .long("wal-recovery-mode")
-            .value_name("MODE")
-            .takes_value(true)
-            .possible_values(&[
-                "tolerate_corrupted_tail_records",
-                "absolute_consistency",
-                "point_in_time",
-                "skip_any_corrupted_record",
-            ])
-            .help("Mode to recovery the ledger db write ahead log."),
     )
     .arg(
         Arg::with_name("poh_pinned_cpu_core")
@@ -1341,6 +1302,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
     .args(&rpc_bigtable_config::args())
     .args(&send_transaction_config::args())
     .args(&rpc_bootstrap_config::args())
+    .args(&blockstore_options::args())
 }
 
 fn validators_set(
