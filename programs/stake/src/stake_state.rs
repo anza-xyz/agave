@@ -47,32 +47,6 @@ fn new_stake(stake: u64, voter_pubkey: &Pubkey, credits: u64, activation_epoch: 
     }
 }
 
-// genesis investor accounts
-pub fn create_lockup_stake_account(
-    authorized: &Authorized,
-    lockup: &Lockup,
-    rent: &Rent,
-    lamports: u64,
-) -> AccountSharedData {
-    let mut stake_account = AccountSharedData::new(lamports, StakeStateV2::size_of(), &id());
-
-    let rent_exempt_reserve = rent.minimum_balance(stake_account.data().len());
-    assert!(
-        lamports >= rent_exempt_reserve,
-        "lamports: {lamports} is less than rent_exempt_reserve {rent_exempt_reserve}"
-    );
-
-    stake_account
-        .set_state(&StakeStateV2::Initialized(Meta {
-            authorized: *authorized,
-            lockup: *lockup,
-            rent_exempt_reserve,
-        }))
-        .expect("set_state");
-
-    stake_account
-}
-
 // utility function, used by Bank, tests, genesis for bootstrap
 pub fn create_account(
     authorized: &Pubkey,

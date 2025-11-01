@@ -5,7 +5,9 @@ use {
     agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     bincode::serialize,
     log::*,
-    solana_account::{Account, AccountSharedData, WritableAccount},
+    solana_account::{
+        state_traits::StateMut, Account, AccountSharedData, ReadableAccount, WritableAccount,
+    },
     solana_bls_signatures::{
         keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
         Pubkey as BLSPubkey,
@@ -19,10 +21,10 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
-    solana_sdk_ids::sysvar,
+    solana_sdk_ids::{stake as stake_program, sysvar},
     solana_seed_derivable::SeedDerivable,
     solana_signer::Signer,
-    solana_stake_interface::state::StakeStateV2,
+    solana_stake_interface::state::{Authorized, Lockup, Meta, StakeStateV2},
     solana_stake_program::stake_state,
     solana_system_interface::program as system_program,
     solana_sysvar::{
@@ -470,4 +472,31 @@ pub fn add_epoch_rewards_genesis_account(genesis_config: &mut GenesisConfig) -> 
     genesis_config.add_account(epoch_rewards::id(), account);
 
     lamports
+}
+
+// genesis investor accounts
+pub fn create_lockup_stake_account(
+    authorized: &Authorized,
+    lockup: &Lockup,
+    rent: &Rent,
+    lamports: u64,
+) -> AccountSharedData {
+    let mut stake_account =
+        AccountSharedData::new(lamports, StakeStateV2::size_of(), &stake_program::id());
+
+    let rent_exempt_reserve = rent.minimum_balance(stake_account.data().len());
+    assert!(
+        lamports >= rent_exempt_reserve,
+        "lamports: {lamports} is less than rent_exempt_reserve {rent_exempt_reserve}"
+    );
+
+    stake_account
+        .set_state(&StakeStateV2::Initialized(Meta {
+            authorized: *authorized,
+            lockup: *lockup,
+            rent_exempt_reserve,
+        }))
+        .expect("set_state");
+
+    stake_account
 }
