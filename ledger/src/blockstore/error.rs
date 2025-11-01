@@ -1,6 +1,6 @@
 //! The error that can be produced from Blockstore operations.
 
-use {agave_snapshots::hardened_unpack::UnpackError, log::*, solana_clock::Slot, thiserror::Error};
+use {agave_snapshots::hardened_unpack::UnpackError, solana_clock::Slot, thiserror::Error};
 
 #[derive(Error, Debug)]
 pub enum BlockstoreError {
