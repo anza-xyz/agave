@@ -41,6 +41,7 @@ members = [
     "geyser-plugin-manager",
     "gossip",
     "install",
+    "solana-gossip",
     "io-uring",
     "keygen",
     "lattice-hash",

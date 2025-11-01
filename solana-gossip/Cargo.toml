@@ -1,0 +1,26 @@
+[package]
+name = "solana-gossip"
+version = { workspace = true }
+authors = { workspace = true }
+description = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[[bin]]
+name = "solana-gossip"
+path = "src/main.rs"
+bench = false
+
+[dependencies]
+agave-logger = { workspace = true }
+clap = { workspace = true }
+log = { workspace = true }
+solana-clap-utils = { workspace = true }
+solana-gossip = { workspace = true }
+solana-net-utils = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-streamer = { workspace = true }
+solana-version = { workspace = true }
+
