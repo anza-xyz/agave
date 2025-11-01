@@ -1,5 +1,5 @@
 [package]
-name = "solana-gossip"
+name = "solana-gossip-bin"
 version = { workspace = true }
 authors = { workspace = true }
 description = { workspace = true }
@@ -23,4 +23,3 @@ solana-net-utils = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-streamer = { workspace = true }
 solana-version = { workspace = true }
-
