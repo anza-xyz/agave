@@ -109,6 +109,7 @@ solana-commitment-config = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
+solana-config-interface = { workspace = true, features = ["bincode"] }
 solana-cost-model = { workspace = true }
 solana-cpi = { workspace = true }
 solana-ed25519-program = { workspace = true }

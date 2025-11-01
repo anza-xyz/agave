@@ -11,7 +11,8 @@ use {
         genesis_utils::{
             self, activate_all_features, activate_feature, bootstrap_validator_stake_lamports,
             create_genesis_config_with_leader, create_genesis_config_with_vote_accounts,
-            genesis_sysvar_and_builtin_program_lamports, GenesisConfigInfo, ValidatorVoteKeypairs,
+            create_lockup_stake_account, genesis_sysvar_and_builtin_program_lamports,
+            GenesisConfigInfo, ValidatorVoteKeypairs,
         },
         stake_history::StakeHistory,
         stakes::InvalidCacheEntryReason,
@@ -92,7 +93,6 @@ use {
         instruction as stake_instruction,
         state::{Authorized, Delegation, Lockup, Stake, StakeStateV2},
     },
-    solana_stake_program::stake_state,
     solana_svm::{
         account_loader::{FeesOnlyTransaction, LoadedTransaction},
         rollback_accounts::RollbackAccounts,
@@ -3840,7 +3840,7 @@ fn test_banks_leak() {
             let pubkey = solana_pubkey::new_rand();
             genesis_config.add_account(
                 pubkey,
-                stake_state::create_lockup_stake_account(
+                create_lockup_stake_account(
                     &Authorized::auto(&pubkey),
                     &Lockup::default(),
                     &Rent::default(),
