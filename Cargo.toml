@@ -40,6 +40,7 @@ members = [
     "geyser-plugin-interface",
     "geyser-plugin-manager",
     "gossip",
+    "solana-gossip-cli",
     "install",
     "io-uring",
     "keygen",
@@ -450,6 +451,7 @@ solana-genesis-config = "3.0.0"
 solana-genesis-utils = { path = "genesis-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-gossip = { path = "gossip", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
+solana-gossip-cli = { path = "solana-gossip-cli", version = "=4.0.0-alpha.0" }
 solana-hard-forks = "3.0.0"
 solana-hash = "3.0.0"
 solana-inflation = "3.0.0"

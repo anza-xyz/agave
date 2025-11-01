@@ -8930,6 +8930,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-gossip-cli"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "agave-logger",
+ "clap 2.33.3",
+ "log",
+ "solana-clap-utils",
+ "solana-gossip",
+ "solana-net-utils",
+ "solana-pubkey",
+ "solana-streamer",
+ "solana-version",
+]
+
+[[package]]
 name = "solana-hard-forks"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,0 +1,28 @@
+[package]
+name = "solana-gossip-cli"
+description = "CLI for monitoring a cluster's gossip plane"
+publish = false
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[[bin]]
+name = "solana-gossip"
+path = "src/main.rs"
+
+[dependencies]
+agave-logger = { workspace = true }
+clap = { workspace = true }
+log = { workspace = true }
+solana-clap-utils = { workspace = true }
+solana-gossip = { workspace = true }
+solana-net-utils = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-streamer = { workspace = true }
+solana-version = { workspace = true }
+
+[lints]
+workspace = true
