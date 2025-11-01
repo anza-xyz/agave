@@ -35,3 +35,7 @@ pub mod metrics;
 
 // Logging abstraction module
 pub(crate) mod logging;
+
+pub mod node_address_service;
+#[cfg(feature = "websocket-node-address-service")]
+pub mod websocket_node_address_service;

@@ -1,3 +1,8 @@
+#[allow(deprecated)]
+// Reason: This deprecated function internally creates a
+// PinnedLeaderUpdater. This structure we want to move to tests as soon as
+// we can remove create_leader_updater function.
+use solana_tpu_client_next::leader_updater::create_leader_updater;
 use {
     crossbeam_channel::Receiver as CrossbeamReceiver,
     futures::future::BoxFuture,
@@ -21,7 +26,6 @@ use {
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
         },
-        leader_updater::create_leader_updater,
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
         ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, SendTransactionStats,
@@ -85,12 +89,15 @@ async fn setup_connection_worker_scheduler(
         CommitmentConfig::confirmed(),
     ));
 
+    let config = test_config(stake_identity);
+
     // Setup sending txs
+    let cancel = CancellationToken::new();
+    #[allow(deprecated)]
     let leader_updater = create_leader_updater(rpc_client, websocket_url, Some(tpu_address))
         .await
         .expect("Leader updates was successfully created");
 
-    let cancel = CancellationToken::new();
     let (update_identity_sender, update_identity_receiver) = watch::channel(None);
     let scheduler = ConnectionWorkersScheduler::new(
         leader_updater,
@@ -98,7 +105,6 @@ async fn setup_connection_worker_scheduler(
         update_identity_receiver,
         cancel.clone(),
     );
-    let config = test_config(stake_identity);
     let scheduler = tokio::spawn(scheduler.run(config));
 
     (scheduler, update_identity_sender, cancel)

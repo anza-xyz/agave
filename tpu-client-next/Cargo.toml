@@ -17,36 +17,46 @@ agave-unstable-api = []
 log = ["dep:log"]
 metrics = ["dep:solana-metrics"]
 tracing = ["dep:tracing"]
+websocket-node-address-service = ["dep:solana-pubsub-client", "dep:tokio-stream"]
 
 [dependencies]
 async-trait = { workspace = true }
+futures = { workspace = true }
+futures-util = { workspace = true }
 log = { workspace = true, optional = true }
 lru = { workspace = true }
 quinn = { workspace = true }
 rustls = { workspace = true }
 solana-clock = { workspace = true }
+solana-commitment-config = { workspace = true }
 solana-connection-cache = { workspace = true }
+solana-epoch-schedule = { workspace = true }
 solana-keypair = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true, optional = true }
+solana-pubkey = { workspace = true }
+solana-pubsub-client = { workspace = true, optional = true }
 solana-quic-definitions = { workspace = true }
 solana-rpc-client = { workspace = true }
+solana-rpc-client-api = { workspace = true }
 solana-streamer = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-tls-utils = { workspace = true }
 solana-tpu-client = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tokio-stream = { workspace = true, optional = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
 crossbeam-channel = { workspace = true }
 futures = { workspace = true }
+serde_json = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
-solana-tpu-client-next = { path = ".", features = ["agave-unstable-api"] }
+solana-tpu-client-next = { path = ".", features = ["agave-unstable-api", "websocket-node-address-service"] }
