@@ -1,5 +1,3 @@
-#[allow(deprecated)]
-use crate::quic::QuicServerParams;
 use {
     crate::{
         nonblocking::{
@@ -34,7 +32,7 @@ use {
         pin::Pin,
         // CAUTION: be careful not to introduce any awaits while holding an RwLock.
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
+            atomic::{AtomicU64, Ordering},
             Arc, RwLock,
         },
         task::Poll,
@@ -51,7 +49,7 @@ use {
         // introduce any other awaits while holding the RwLock.
         select,
         task::{self, JoinHandle},
-        time::{sleep, timeout},
+        time::timeout,
     },
     tokio_util::{sync::CancellationToken, task::TaskTracker},
 };
@@ -129,69 +127,6 @@ pub struct SpawnNonBlockingServerResult {
     pub stats: Arc<StreamerStats>,
     pub thread: JoinHandle<()>,
     pub max_concurrent_connections: usize,
-}
-
-#[deprecated(since = "3.0.0", note = "Use spawn_server instead")]
-#[allow(deprecated)]
-pub fn spawn_server_multi(
-    name: &'static str,
-    sockets: impl IntoIterator<Item = UdpSocket>,
-    keypair: &Keypair,
-    packet_sender: Sender<PacketBatch>,
-    exit: Arc<AtomicBool>,
-    staked_nodes: Arc<RwLock<StakedNodes>>,
-    quic_server_params: QuicServerParams,
-) -> Result<SpawnNonBlockingServerResult, QuicServerError> {
-    #[allow(deprecated)]
-    spawn_server(
-        name,
-        sockets,
-        keypair,
-        packet_sender,
-        exit,
-        staked_nodes,
-        quic_server_params,
-    )
-}
-
-#[deprecated(since = "3.1.0", note = "Use spawn_server_with_cancel instead")]
-#[allow(deprecated)]
-pub fn spawn_server(
-    name: &'static str,
-    sockets: impl IntoIterator<Item = UdpSocket>,
-    keypair: &Keypair,
-    packet_sender: Sender<PacketBatch>,
-    exit: Arc<AtomicBool>,
-    staked_nodes: Arc<RwLock<StakedNodes>>,
-    quic_server_params: QuicServerParams,
-) -> Result<SpawnNonBlockingServerResult, QuicServerError> {
-    let cancel = CancellationToken::new();
-    tokio::spawn({
-        let cancel = cancel.clone();
-        async move {
-            loop {
-                if exit.load(Ordering::Relaxed) {
-                    cancel.cancel();
-                    break;
-                }
-                sleep(Duration::from_millis(100)).await;
-            }
-        }
-    });
-    let quic_server_config = QuicStreamerConfig::from(&quic_server_params);
-    let qos_config = SwQosConfig {
-        max_streams_per_ms: quic_server_params.max_streams_per_ms,
-    };
-    spawn_server_with_cancel(
-        name,
-        sockets,
-        keypair,
-        packet_sender,
-        staked_nodes,
-        quic_server_config,
-        qos_config,
-        cancel,
-    )
 }
 
 /// Spawn a streamer instance in the current tokio runtime.

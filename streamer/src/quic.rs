@@ -26,7 +26,7 @@ use {
         net::UdpSocket,
         num::NonZeroUsize,
         sync::{
-            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+            atomic::{AtomicU64, AtomicUsize, Ordering},
             Arc, Mutex, RwLock,
         },
         thread::{self},
@@ -602,44 +602,6 @@ impl StreamerStats {
     }
 }
 
-#[deprecated(since = "3.0.0", note = "Use spawn_server_with_cancel instead")]
-#[allow(deprecated)]
-pub fn spawn_server_multi(
-    thread_name: &'static str,
-    metrics_name: &'static str,
-    sockets: Vec<UdpSocket>,
-    keypair: &Keypair,
-    packet_sender: Sender<PacketBatch>,
-    exit: Arc<AtomicBool>,
-    staked_nodes: Arc<RwLock<StakedNodes>>,
-    quic_server_params: QuicServerParams,
-) -> Result<SpawnServerResult, QuicServerError> {
-    #[allow(deprecated)]
-    spawn_server(
-        thread_name,
-        metrics_name,
-        sockets,
-        keypair,
-        packet_sender,
-        exit,
-        staked_nodes,
-        quic_server_params,
-    )
-}
-
-#[derive(Clone)]
-#[deprecated(since = "3.1.0", note = "Use QuicStreamerConfig instead")]
-pub struct QuicServerParams {
-    pub max_connections_per_peer: usize,
-    pub max_staked_connections: usize,
-    pub max_unstaked_connections: usize,
-    pub max_connections_per_ipaddr_per_min: u64,
-    pub wait_for_chunk_timeout: Duration,
-    pub accumulator_channel_size: usize,
-    pub num_threads: NonZeroUsize,
-    pub max_streams_per_ms: u64,
-}
-
 #[derive(Clone)]
 pub struct QuicStreamerConfig {
     pub max_connections_per_peer: usize,
@@ -661,37 +623,6 @@ pub struct SwQosQuicStreamerConfig {
 pub struct SimpleQosQuicStreamerConfig {
     pub quic_streamer_config: QuicStreamerConfig,
     pub qos_config: SimpleQosConfig,
-}
-
-#[allow(deprecated)]
-impl Default for QuicServerParams {
-    fn default() -> Self {
-        QuicServerParams {
-            max_connections_per_peer: 1,
-            max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS,
-            max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
-            max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
-            wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-            accumulator_channel_size: DEFAULT_ACCUMULATOR_CHANNEL_SIZE,
-            num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
-            max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
-        }
-    }
-}
-
-#[allow(deprecated)]
-impl QuicServerParams {
-    #[cfg(feature = "dev-context-only-utils")]
-    pub const DEFAULT_NUM_SERVER_THREADS_FOR_TEST: NonZeroUsize = NonZeroUsize::new(8).unwrap();
-
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn default_for_tests() -> Self {
-        // Shrink the channel size to avoid a massive allocation for tests
-        Self {
-            num_threads: Self::DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
-            ..Self::default()
-        }
-    }
 }
 
 impl Default for QuicStreamerConfig {
@@ -726,61 +657,6 @@ impl QuicStreamerConfig {
         let conns = self.max_staked_connections + self.max_unstaked_connections;
         conns + conns / 4
     }
-}
-
-#[allow(deprecated)]
-impl From<&QuicServerParams> for QuicStreamerConfig {
-    fn from(params: &QuicServerParams) -> Self {
-        Self {
-            max_connections_per_peer: params.max_connections_per_peer,
-            max_staked_connections: params.max_staked_connections,
-            max_unstaked_connections: params.max_unstaked_connections,
-            max_connections_per_ipaddr_per_min: params.max_connections_per_ipaddr_per_min,
-            wait_for_chunk_timeout: params.wait_for_chunk_timeout,
-            accumulator_channel_size: params.accumulator_channel_size,
-            num_threads: params.num_threads,
-        }
-    }
-}
-
-#[deprecated(since = "3.1.0", note = "Use spawn_server_with_cancel instead")]
-#[allow(deprecated)]
-pub fn spawn_server(
-    thread_name: &'static str,
-    metrics_name: &'static str,
-    sockets: impl IntoIterator<Item = UdpSocket>,
-    keypair: &Keypair,
-    packet_sender: Sender<PacketBatch>,
-    exit: Arc<AtomicBool>,
-    staked_nodes: Arc<RwLock<StakedNodes>>,
-    quic_server_params: QuicServerParams,
-) -> Result<SpawnServerResult, QuicServerError> {
-    let cancel = CancellationToken::new();
-    thread::spawn({
-        let cancel = cancel.clone();
-        move || loop {
-            if exit.load(Ordering::Relaxed) {
-                cancel.cancel();
-                break;
-            }
-            thread::sleep(Duration::from_millis(100));
-        }
-    });
-    let quic_server_config: QuicStreamerConfig = (&quic_server_params).into();
-    let qos_config = SwQosConfig {
-        max_streams_per_ms: quic_server_params.max_streams_per_ms,
-    };
-    spawn_server_with_cancel(
-        thread_name,
-        metrics_name,
-        sockets,
-        keypair,
-        packet_sender,
-        staked_nodes,
-        quic_server_config,
-        qos_config,
-        cancel,
-    )
 }
 
 /// Generic function to spawn a QUIC server with any QoS implementation
