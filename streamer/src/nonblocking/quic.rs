@@ -1322,6 +1322,51 @@ pub mod test {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn test_packet_batcher() {
+        agave_logger::setup();
+        let (pkt_batch_sender, pkt_batch_receiver) = unbounded();
+        let (ptk_sender, pkt_receiver) = unbounded();
+        let cancel = CancellationToken::new();
+        let stats = Arc::new(StreamerStats::default());
+
+        let handle = task::spawn_blocking({
+            let cancel = cancel.clone();
+            move || {
+                run_packet_batch_sender(pkt_batch_sender, pkt_receiver, stats, cancel);
+            }
+        });
+
+        let num_packets = 1000;
+
+        for _i in 0..num_packets {
+            let mut meta = Meta::default();
+            let bytes = Bytes::from("Hello world");
+            let size = bytes.len();
+            meta.size = size;
+            let packet_accum = PacketAccumulator {
+                meta,
+                chunks: smallvec::smallvec![bytes],
+                start_time: Instant::now(),
+            };
+            ptk_sender.send(packet_accum).unwrap();
+        }
+        let mut i = 0;
+        let start = Instant::now();
+        while i < num_packets && start.elapsed().as_secs() < 2 {
+            if let Ok(batch) = pkt_batch_receiver.try_recv() {
+                i += batch.len();
+            } else {
+                sleep(Duration::from_millis(1)).await;
+            }
+        }
+        assert_eq!(i, num_packets);
+        cancel.cancel();
+        // Explicit drop to wake up packet_batch_sender
+        drop(ptk_sender);
+        handle.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_quic_stream_timeout() {
         agave_logger::setup();
         let SpawnTestServerResult {
