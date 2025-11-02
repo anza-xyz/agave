@@ -97,7 +97,7 @@ struct PacketAccumulator {
     pub meta: Meta,
     pub chunks: SmallVec<[Bytes; 2]>,
     pub start_time: Instant,
-    pub remote_pubkey: Option<Pubkey>, // Add this field
+    pub remote_pubkey: Option<Pubkey>,
 }
 
 impl PacketAccumulator {
@@ -106,7 +106,7 @@ impl PacketAccumulator {
             meta,
             chunks: SmallVec::default(),
             start_time: Instant::now(),
-            remote_pubkey: None, // Initialize as None
+            remote_pubkey: None,
         }
     }
 
@@ -1332,7 +1332,13 @@ pub mod test {
         let handle = task::spawn_blocking({
             let cancel = cancel.clone();
             move || {
-                run_packet_batch_sender(pkt_batch_sender, pkt_receiver, stats, cancel);
+                run_packet_batch_sender(
+                    pkt_batch_sender,
+                    pkt_receiver,
+                    stats,
+                    cancel,
+                    false, // Do not send client id
+                );
             }
         });
 

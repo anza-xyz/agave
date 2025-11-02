@@ -154,7 +154,7 @@ pub enum PacketBatch {
     Pinned(PinnedPacketBatch),
     Bytes(BytesPacketBatch),
     Single(BytesPacket),
-    WithClientId(BytesPacketBatchWithClientId), // Add this variant
+    WithClientId(BytesPacketBatchWithClientId),
 }
 
 impl PacketBatch {
