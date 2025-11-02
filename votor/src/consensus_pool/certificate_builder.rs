@@ -158,8 +158,14 @@ impl BuilderType {
                         try_set_bitmap(bitmap0, msg.rank)?;
                     } else {
                         assert_eq!(vote_type, vote_types[1]);
-                        let bitmap = bitmap1.get_or_insert(default_bitvec());
-                        try_set_bitmap(bitmap, msg.rank)?;
+                        match bitmap1 {
+                            Some(bitmap) => try_set_bitmap(bitmap, msg.rank)?,
+                            None => {
+                                let mut bitmap = default_bitvec();
+                                try_set_bitmap(&mut bitmap, msg.rank)?;
+                                *bitmap1 = Some(bitmap);
+                            }
+                        }
                     }
                 }
                 Ok(signature.aggregate_with(msgs.iter().map(|m| &m.signature))?)
