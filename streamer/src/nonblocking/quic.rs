@@ -4,7 +4,6 @@ use {
             connection_rate_limiter::{ConnectionRateLimiter, TotalConnectionRateLimiter},
             qos::{ConnectionContext, QosController},
             stream_throttle::ConnectionStreamCounter,
-            swqos::{SwQos, SwQosConfig},
         },
         quic::{configure_server, QuicServerError, QuicStreamerConfig, StreamerStats},
         streamer::StakedNodes,
@@ -130,44 +129,7 @@ pub struct SpawnNonBlockingServerResult {
 }
 
 /// Spawn a streamer instance in the current tokio runtime.
-pub fn spawn_server_with_cancel(
-    name: &'static str,
-    sockets: impl IntoIterator<Item = UdpSocket>,
-    keypair: &Keypair,
-    packet_sender: Sender<PacketBatch>,
-    staked_nodes: Arc<RwLock<StakedNodes>>,
-    quic_server_params: QuicStreamerConfig,
-    qos_config: SwQosConfig,
-    cancel: CancellationToken,
-) -> Result<SpawnNonBlockingServerResult, QuicServerError>
-where
-{
-    let stats = Arc::<StreamerStats>::default();
-
-    let swqos = Arc::new(SwQos::new(
-        qos_config,
-        quic_server_params.max_staked_connections,
-        quic_server_params.max_unstaked_connections,
-        quic_server_params.max_connections_per_peer,
-        stats.clone(),
-        staked_nodes,
-        cancel.clone(),
-    ));
-
-    spawn_server_with_cancel_and_qos(
-        name,
-        stats,
-        sockets,
-        keypair,
-        packet_sender,
-        quic_server_params,
-        swqos,
-        cancel,
-    )
-}
-
-/// Spawn a streamer instance in the current tokio runtime.
-pub(crate) fn spawn_server_with_cancel_and_qos<Q, C>(
+pub(crate) fn spawn_server<Q, C>(
     name: &'static str,
     stats: Arc<StreamerStats>,
     sockets: impl IntoIterator<Item = UdpSocket>,
@@ -1727,7 +1689,7 @@ pub mod test {
             stats: _,
             thread: t,
             max_concurrent_connections: _,
-        } = spawn_server_with_cancel(
+        } = spawn_stake_weighted_qos_server(
             "quic_streamer_test",
             [s],
             &keypair,
@@ -1761,7 +1723,7 @@ pub mod test {
             stats,
             thread: t,
             max_concurrent_connections: _,
-        } = spawn_server_with_cancel(
+        } = spawn_stake_weighted_qos_server(
             "quic_streamer_test",
             [s],
             &keypair,

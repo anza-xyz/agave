@@ -278,7 +278,7 @@ mod tests {
         solana_signer::Signer,
         solana_streamer::{
             nonblocking::swqos::SwQosConfig,
-            quic::{spawn_server_with_cancel, QuicStreamerConfig, SpawnServerResult},
+            quic::{spawn_stake_wighted_qos_server, QuicStreamerConfig, SpawnServerResult},
             socket::SocketAddrSpace,
             streamer::StakedNodes,
         },
@@ -382,7 +382,7 @@ mod tests {
         let SpawnServerResult {
             thread: quic_server_thread,
             ..
-        } = spawn_server_with_cancel(
+        } = spawn_stake_wighted_qos_server(
             "AlpenglowLocalClusterTest",
             "quic_streamer_test",
             [socket],

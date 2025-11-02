@@ -659,8 +659,9 @@ impl QuicStreamerConfig {
     }
 }
 
-/// Generic function to spawn a QUIC server with any QoS implementation
-fn spawn_server_with_cancel_generic<Q, C>(
+/// Generic function to spawn a tokio runtime with a QUIC server
+/// Generic over QoS implementation
+fn spawn_runtime_and_server<Q, C>(
     thread_name: &'static str,
     metrics_name: &'static str,
     stats: Arc<StreamerStats>,
@@ -678,7 +679,7 @@ where
     let runtime = rt(format!("{thread_name}Rt"), quic_server_params.num_threads);
     let result = {
         let _guard = runtime.enter();
-        crate::nonblocking::quic::spawn_server_with_cancel_and_qos(
+        crate::nonblocking::quic::spawn_server(
             metrics_name,
             stats,
             sockets,
@@ -708,7 +709,8 @@ where
 }
 
 /// Spawns a tokio runtime and a streamer instance inside it.
-pub fn spawn_server_with_cancel(
+/// Uses Stake Weighted QoS
+pub fn spawn_stake_wighted_qos_server(
     thread_name: &'static str,
     metrics_name: &'static str,
     sockets: impl IntoIterator<Item = UdpSocket>,
@@ -729,7 +731,7 @@ pub fn spawn_server_with_cancel(
         staked_nodes,
         cancel.clone(),
     ));
-    spawn_server_with_cancel_generic(
+    spawn_runtime_and_server(
         thread_name,
         metrics_name,
         stats,
@@ -743,7 +745,7 @@ pub fn spawn_server_with_cancel(
 }
 
 /// Spawns a tokio runtime and a streamer instance inside it.
-pub fn spawn_simple_qos_server_with_cancel(
+pub fn spawn_simple_qos_server(
     thread_name: &'static str,
     metrics_name: &'static str,
     sockets: impl IntoIterator<Item = UdpSocket>,
@@ -765,7 +767,7 @@ pub fn spawn_simple_qos_server_with_cancel(
         cancel.clone(),
     ));
 
-    spawn_server_with_cancel_generic(
+    spawn_runtime_and_server(
         thread_name,
         metrics_name,
         stats,
@@ -815,7 +817,7 @@ mod test {
             endpoints: _,
             thread: t,
             key_updater: _,
-        } = spawn_server_with_cancel(
+        } = spawn_stake_wighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
             [s],
@@ -848,7 +850,7 @@ mod test {
             endpoints: _,
             thread: t,
             key_updater: _,
-        } = spawn_simple_qos_server_with_cancel(
+        } = spawn_simple_qos_server(
             "solQuicTest",
             "quic_streamer_test",
             [s],
@@ -914,7 +916,7 @@ mod test {
             endpoints: _,
             thread: t,
             key_updater: _,
-        } = spawn_server_with_cancel(
+        } = spawn_stake_wighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
             [s],
@@ -1007,7 +1009,7 @@ mod test {
             endpoints: _,
             thread: t,
             key_updater: _,
-        } = spawn_server_with_cancel(
+        } = spawn_stake_wighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
             [s],
