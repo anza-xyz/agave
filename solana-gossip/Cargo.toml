@@ -6,13 +6,16 @@ description = "Binary crate providing the Solana Gossip command-line tool."
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-edition = { workspace = true }
 publish = false
+edition = { workspace = true }
 
 [[bin]]
 name = "solana-gossip"
 path = "src/main.rs"
 bench = false
+
+[features]
+agave-unstable-api = []
 
 [dependencies]
 agave-logger = { workspace = true }
