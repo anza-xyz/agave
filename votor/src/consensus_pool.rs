@@ -64,12 +64,10 @@ pub(crate) enum AddCertError {
 }
 
 /// Different failure cases from calling `add_message()`.
-#[derive(Debug, Error)]
+#[derive(Debug, PartialEq, Eq, Error)]
 pub(crate) enum AddMessageError {
-    #[error("adding vote failed: {0}")]
-    AddVote(#[from] AddVoteError),
-    #[error("adding cert failed: {0}")]
-    AddCert(#[from] AddCertError),
+    #[error("internal failure {0}")]
+    Internal(String),
 }
 
 fn get_key_and_stakes(
@@ -356,15 +354,19 @@ impl ConsensusPool {
     ) -> Result<(Option<Slot>, Vec<Arc<Certificate>>), AddMessageError> {
         let current_highest_finalized_slot = self.highest_finalized_slot;
         let new_certficates_to_send = match message {
-            ConsensusMessage::Vote(vote_message) => self.add_vote(
-                epoch_schedule,
-                epoch_stakes_map,
-                root_slot,
-                my_vote_pubkey,
-                vote_message,
-                events,
-            )?,
-            ConsensusMessage::Certificate(cert) => self.add_certificate(root_slot, cert, events)?,
+            ConsensusMessage::Vote(vote_message) => self
+                .add_vote(
+                    epoch_schedule,
+                    epoch_stakes_map,
+                    root_slot,
+                    my_vote_pubkey,
+                    vote_message,
+                    events,
+                )
+                .map_err(|e| AddMessageError::Internal(e.to_string()))?,
+            ConsensusMessage::Certificate(cert) => self
+                .add_certificate(root_slot, cert, events)
+                .map_err(|e| AddMessageError::Internal(e.to_string()))?,
         };
         // If we have a new highest finalized slot, return it
         let new_finalized_slot = if self.highest_finalized_slot > current_highest_finalized_slot {
@@ -1252,10 +1254,10 @@ mod tests {
                 &mut vec![],
             )
             .unwrap_err();
-        assert!(matches!(
+        assert_eq!(
             err,
-            AddMessageError::AddVote(AddVoteError::InvalidRank(100))
-        ));
+            AddMessageError::Internal("Invalid rank: 100".to_string())
+        );
     }
 
     fn assert_single_certificate_range(
