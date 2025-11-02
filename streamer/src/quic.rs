@@ -1131,8 +1131,7 @@ mod test {
         }
 
         debug!(
-            "Final: received {}/{} packets in {} iterations",
-            total_packets, num_packets_sent, iterations
+            "Final: received {total_packets}/{num_packets_sent} packets in {iterations} iterations",
         );
 
         assert!(
