@@ -1143,9 +1143,7 @@ mod test {
 
         assert!(
             total_packets >= num_packets_sent,
-            "Expected at least {} packets with client ID, got {}",
-            num_packets_sent,
-            total_packets
+            "Expected at least {num_packets_sent} packets with client ID, got {total_packets}",
         );
     }
 }
