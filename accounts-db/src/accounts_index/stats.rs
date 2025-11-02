@@ -269,8 +269,14 @@ impl Stats {
             // (aka ref count == 1 and slot list len == 1), and the single slot list entry is
             // stored inline in the slot list itself, then when we have larger slot lists,
             // account for them here.
-            let estimate_mem_bytes = count_in_mem
-                * InMemAccountsIndex::<T, U>::approx_size_of_one_entry()
+            let estimate_mem_bytes =
+                // hash map mem usage is based on capacity, and the footprint of a KV-pair
+                // (we ignore other hash map details, such as load factor)
+                capacity_in_mem * InMemAccountsIndex::<T, U>::size_of_uninitialized()
+                // each value in use we assume has a single entry in the slot list
+                + count_in_mem * InMemAccountsIndex::<T, U>::size_of_single_entry()
+                // and for entries held in mem due to ref count or slot list length, assume
+                // conservatively a slot list with two entries
                 + (held_in_mem_ref_count + held_in_mem_slot_list_len) as usize
                     * size_of::<(Slot, T)>() // <-- size of one slot list entry
                     * 2; // <-- and assume there are two entries
@@ -555,7 +561,13 @@ impl Stats {
                 datapoint_name,
                 (
                     "estimate_mem_bytes",
-                    count_in_mem * InMemAccountsIndex::<T, U>::approx_size_of_one_entry(),
+                    (
+                        // hash map mem usage is based on capacity, and the footprint of a KV-pair
+                        // (we ignore other hash map details, such as load factor)
+                        capacity_in_mem * InMemAccountsIndex::<T, U>::size_of_uninitialized()
+                        // each value in use we assume has a single entry in the slot list
+                        + count_in_mem * InMemAccountsIndex::<T, U>::size_of_single_entry()
+                    ),
                     i64
                 ),
                 ("count_in_mem", count_in_mem, i64),

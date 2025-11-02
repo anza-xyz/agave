@@ -2367,7 +2367,7 @@ mod tests {
         //                      |
         //                     23
 
-        // Testing fork 0 - 10 - 12 - 22 with current slot at 22
+        // Testing fork 0 - 10 - 20 - 22 with current slot at 22
         let mut missing =
             get_entries_to_load(&cache, 22, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program2, false));

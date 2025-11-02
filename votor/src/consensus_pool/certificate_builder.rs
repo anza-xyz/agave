@@ -21,8 +21,10 @@ const MAXIMUM_VALIDATORS: usize = 4096;
 pub(super) enum AggregateError {
     #[error("BLS error: {0}")]
     Bls(#[from] BlsError),
-    #[error("Validator does not exist for given rank: {0}")]
-    ValidatorDoesNotExist(u16),
+    #[error("Invalid rank: {0}")]
+    InvalidRank(u16),
+    #[error("Validator already included")]
+    ValidatorAlreadyIncluded,
 }
 
 /// Different types of errors that can be returned from the [`CertificateBuilder::build()`] function.
@@ -32,8 +34,20 @@ pub enum BuildError {
     Bls(#[from] BlsError),
     #[error("Encoding failed: {0:?}")]
     Encode(EncodeError),
-    #[error("Validator does not exist for given rank: {0}")]
-    ValidatorDoesNotExist(u16),
+    #[error("Invalid rank: {0}")]
+    InvalidRank(usize),
+}
+
+/// Looks up the bit at `rank` in `bitmap` and sets it to true.
+fn try_set_bitmap(bitmap: &mut BitVec<u8, Lsb0>, rank: u16) -> Result<(), AggregateError> {
+    let mut ptr = bitmap
+        .get_mut(rank as usize)
+        .ok_or(AggregateError::InvalidRank(rank))?;
+    if *ptr {
+        return Err(AggregateError::ValidatorAlreadyIncluded);
+    }
+    *ptr = true;
+    Ok(())
 }
 
 /// A builder for creating a `CertificateMessage` by efficiently aggregating BLS signatures.
@@ -65,23 +79,16 @@ impl CertificateBuilder {
 
     /// Aggregates a slice of `VoteMessage`s into the builder.
     pub fn aggregate(&mut self, messages: &[VoteMessage]) -> Result<(), AggregateError> {
-        if messages.is_empty() {
-            return Ok(());
-        }
-
         let vote_types = certificate_limits_and_vote_types(&self.cert_type).1;
         for vote_message in messages {
-            let rank = vote_message.rank as usize;
-            if MAXIMUM_VALIDATORS <= rank {
-                return Err(AggregateError::ValidatorDoesNotExist(vote_message.rank));
-            }
+            let rank = vote_message.rank;
 
             let current_vote_type = VoteType::get_type(&vote_message.vote);
 
             if current_vote_type == vote_types[0] {
-                self.input_bitmap_1.set(rank, true);
+                try_set_bitmap(&mut self.input_bitmap_1, rank)?;
             } else if vote_types.len() == 2 && current_vote_type == vote_types[1] {
-                self.input_bitmap_2.set(rank, true);
+                try_set_bitmap(&mut self.input_bitmap_2, rank)?;
             }
         }
 
@@ -101,12 +108,10 @@ impl CertificateBuilder {
             .last_one()
             .map_or(0, |i| i.saturating_add(1));
         let new_length = last_one_1.max(last_one_2);
+        // checks in `aggregate()` guarantee that this assertion is valid
+        debug_assert!(new_length <= MAXIMUM_VALIDATORS);
         if new_length > MAXIMUM_VALIDATORS {
-            error!(
-                "Bitmap length exceeds maximum allowed: {MAXIMUM_VALIDATORS} should be caught \
-                 during aggregation"
-            );
-            return Err(BuildError::ValidatorDoesNotExist(new_length as u16));
+            return Err(BuildError::InvalidRank(new_length));
         }
 
         input_bitmap_1.resize(new_length, false);
@@ -261,9 +266,7 @@ mod tests {
         };
         assert_eq!(
             builder.aggregate(&[message_out_of_bounds]),
-            Err(AggregateError::ValidatorDoesNotExist(
-                rank_out_of_bounds as u16
-            ))
+            Err(AggregateError::InvalidRank(rank_out_of_bounds as u16))
         );
 
         // Test bls error

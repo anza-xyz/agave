@@ -114,18 +114,13 @@ impl LedgerColumnOptions {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum BlockstoreCompressionType {
+    #[default]
     None,
     Snappy,
     Lz4,
     Zlib,
-}
-
-impl Default for BlockstoreCompressionType {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl BlockstoreCompressionType {

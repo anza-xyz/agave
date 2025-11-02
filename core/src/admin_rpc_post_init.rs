@@ -1,6 +1,6 @@
 use {
     crate::{
-        banking_stage::BankingStage,
+        banking_stage::BankingControlMsg,
         cluster_slots_service::cluster_slots::ClusterSlots,
         repair::{outstanding_requests::OutstandingRequests, serve_repair::ShredRepairType},
     },
@@ -13,6 +13,7 @@ use {
         net::UdpSocket,
         sync::{Arc, RwLock},
     },
+    tokio::sync::mpsc,
 };
 
 /// Key updaters:
@@ -80,5 +81,5 @@ pub struct AdminRpcRequestMetadataPostInit {
     pub outstanding_repair_requests: Arc<RwLock<OutstandingRequests<ShredRepairType>>>,
     pub cluster_slots: Arc<ClusterSlots>,
     pub node: Option<Arc<NodeMultihoming>>,
-    pub banking_stage: Arc<RwLock<Option<BankingStage>>>,
+    pub banking_control_sender: mpsc::Sender<BankingControlMsg>,
 }

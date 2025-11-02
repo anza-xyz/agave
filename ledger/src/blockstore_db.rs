@@ -349,7 +349,7 @@ impl Rocks {
         &self,
         cf: &ColumnFamily,
         key: impl AsRef<[u8]>,
-    ) -> Result<Option<DBPinnableSlice>> {
+    ) -> Result<Option<DBPinnableSlice<'_>>> {
         let opt = self.db.get_pinned_cf(cf, key)?;
         Ok(opt)
     }
@@ -363,7 +363,7 @@ impl Rocks {
         &self,
         cf: &ColumnFamily,
         keys: I,
-    ) -> impl Iterator<Item = Result<Option<DBPinnableSlice>>>
+    ) -> impl Iterator<Item = Result<Option<DBPinnableSlice<'_>>>>
     where
         K: AsRef<[u8]> + 'a + ?Sized,
         I: IntoIterator<Item = &'a K>,
@@ -394,11 +394,11 @@ impl Rocks {
         &self,
         cf: &ColumnFamily,
         iterator_mode: RocksIteratorMode,
-    ) -> DBIterator {
+    ) -> DBIterator<'_> {
         self.db.iterator_cf(cf, iterator_mode)
     }
 
-    pub(crate) fn raw_iterator_cf(&self, cf: &ColumnFamily) -> Result<DBRawIterator> {
+    pub(crate) fn raw_iterator_cf(&self, cf: &ColumnFamily) -> Result<DBRawIterator<'_>> {
         Ok(self.db.raw_iterator_cf(cf))
     }
 

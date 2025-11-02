@@ -881,10 +881,14 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
     }
 
-    /// assumes 1 entry in the slot list. Ignores overhead of the HashMap and such
-    pub const fn approx_size_of_one_entry() -> usize {
-        // with only one entry in the slot list, it is stored inline in the SmallVec
-        size_of::<Pubkey>() + size_of::<AccountMapEntry<T>>()
+    /// The footprint of a single element in the in-mem hashmap
+    pub const fn size_of_uninitialized() -> usize {
+        size_of::<Pubkey>() + size_of::<Box<AccountMapEntry<T>>>()
+    }
+
+    /// The size of an index value, with only a single entry in the slot list
+    pub const fn size_of_single_entry() -> usize {
+        size_of::<AccountMapEntry<T>>()
     }
 
     fn should_evict_based_on_age(

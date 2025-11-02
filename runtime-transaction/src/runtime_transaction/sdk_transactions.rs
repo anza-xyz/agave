@@ -135,7 +135,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
 
 impl TransactionWithMeta for RuntimeTransaction<SanitizedTransaction> {
     #[inline]
-    fn as_sanitized_transaction(&self) -> Cow<SanitizedTransaction> {
+    fn as_sanitized_transaction(&self) -> Cow<'_, SanitizedTransaction> {
         Cow::Borrowed(self)
     }
 

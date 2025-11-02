@@ -917,7 +917,7 @@ impl AccountStorageEntry {
     }
 
     /// Locks obsolete accounts with a read lock and returns the the accounts with the guard
-    pub(crate) fn obsolete_accounts_read_lock(&self) -> RwLockReadGuard<ObsoleteAccounts> {
+    pub(crate) fn obsolete_accounts_read_lock(&self) -> RwLockReadGuard<'_, ObsoleteAccounts> {
         self.obsolete_accounts.read().unwrap()
     }
 
@@ -5050,6 +5050,19 @@ impl AccountsDb {
         // Safe because queries to the index will be reading updates from later roots.
         self.purge_slot_cache_pubkeys(slot, pubkeys, is_dead_slot);
 
+        // Use ReclaimOldSlots to reclaim old slots if marking obsolete accounts and cleaning
+        // Cleaning is enabled if `should_flush_f` is Some.
+        // should_flush_f is set to None when
+        // 1) There's an ongoing scan to avoid reclaiming accounts being scanned.
+        // 2) The slot is > max_clean_root to prevent unrooted slots from reclaiming rooted versions.
+        let reclaim_method = if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled
+            && should_flush_f.is_some()
+        {
+            UpsertReclaim::ReclaimOldSlots
+        } else {
+            UpsertReclaim::IgnoreReclaims
+        };
+
         if !is_dead_slot {
             // This ensures that all updates are written to an AppendVec, before any
             // updates to the index happen, so anybody that sees a real entry in the index,
@@ -5059,19 +5072,6 @@ impl AccountsDb {
                 flush_stats.num_bytes_flushed.0,
                 "flush_slot_cache",
             );
-
-            // Use ReclaimOldSlots to reclaim old slots if marking obsolete accounts and cleaning
-            // Cleaning is enabled if `should_flush_f` is Some.
-            // should_flush_f is set to None when
-            // 1) There's an ongoing scan to avoid reclaiming accounts being scanned.
-            // 2) The slot is > max_clean_root to prevent unrooted slots from reclaiming rooted versions.
-            let reclaim_method = if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled
-                && should_flush_f.is_some()
-            {
-                UpsertReclaim::ReclaimOldSlots
-            } else {
-                UpsertReclaim::IgnoreReclaims
-            };
 
             let (store_accounts_timing_inner, store_accounts_total_inner_us) = measure_us!(self
                 ._store_accounts_frozen(
@@ -5095,12 +5095,23 @@ impl AccountsDb {
         // flushing. That case is handled by retry_to_get_account_accessor()
         assert!(self.accounts_cache.remove_slot(slot).is_some());
 
-        // Add `accounts` to uncleaned_pubkeys since we know they were written
-        // to a storage and should be visited by `clean`.
-        self.uncleaned_pubkeys
-            .entry(slot)
-            .or_default()
-            .extend(accounts.into_iter().map(|(pubkey, _account)| *pubkey));
+        // Add `accounts` to uncleaned_pubkeys since they were written to storage
+        // and should be visited by `clean`.
+        // If old slots were reclaimed, accounts were already cleaned,
+        // but zero lamports need to be visited during clean for full removal.
+        if reclaim_method == UpsertReclaim::ReclaimOldSlots {
+            self.uncleaned_pubkeys.entry(slot).or_default().extend(
+                accounts
+                    .into_iter()
+                    .filter(|(_pubkey, account)| account.is_zero_lamport())
+                    .map(|(pubkey, _account)| pubkey),
+            );
+        } else {
+            self.uncleaned_pubkeys
+                .entry(slot)
+                .or_default()
+                .extend(accounts.into_iter().map(|(pubkey, _account)| *pubkey));
+        }
 
         flush_stats
     }

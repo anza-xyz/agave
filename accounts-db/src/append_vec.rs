@@ -159,7 +159,7 @@ impl ReadWriteState {
         }
     }
 
-    fn append_guard(&self) -> MutexGuard<()> {
+    fn append_guard(&self) -> MutexGuard<'_, ()> {
         match self {
             Self::ReadOnly => panic!("append not allowed in read-only state"),
             Self::Writable { append_lock } => append_lock.lock().unwrap(),
@@ -573,7 +573,7 @@ impl AppendVec {
     /// doesn't overrun the internal buffer. Otherwise return None.
     /// Also return the offset of the first byte after the requested data that
     /// falls on a 64-byte boundary.
-    fn get_slice(slice: ValidSlice, offset: usize, size: usize) -> Option<(&[u8], usize)> {
+    fn get_slice(slice: ValidSlice<'_>, offset: usize, size: usize) -> Option<(&[u8], usize)> {
         // SAFETY: Wrapping math is safe here because if `end` does wrap, the Range
         // parameter to `.get()` will be invalid, and `.get()` will correctly return None.
         let end = offset.wrapping_add(size);
@@ -638,7 +638,7 @@ impl AppendVec {
     /// Return a reference to the type at `offset` if its data doesn't overrun the internal buffer.
     /// Otherwise return None. Also return the offset of the first byte after the requested data
     /// that falls on a 64-byte boundary.
-    fn get_type<T>(slice: ValidSlice, offset: usize) -> Option<(&T, usize)> {
+    fn get_type<T>(slice: ValidSlice<'_>, offset: usize) -> Option<(&T, usize)> {
         let (data, next) = Self::get_slice(slice, offset, mem::size_of::<T>())?;
         let ptr = data.as_ptr().cast();
         //UNSAFE: The cast is safe because the slice is aligned and fits into the memory
@@ -1321,7 +1321,7 @@ impl AppendVec {
     }
 
     /// Returns the way to access this accounts file when archiving
-    pub(crate) fn internals_for_archive(&self) -> InternalsForArchive {
+    pub(crate) fn internals_for_archive(&self) -> InternalsForArchive<'_> {
         match &self.backing {
             AppendVecFileBacking::File(_file) => InternalsForArchive::FileIo(self.path()),
             // note this returns the entire mmap slice, even bytes that we consider invalid

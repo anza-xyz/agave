@@ -301,7 +301,7 @@ impl VoteStorage {
                 }
             })
             .collect::<Vec<_>>();
-        pubkey_with_weight.sort_by(|(w1, _), (w2, _)| w1.partial_cmp(w2).unwrap());
+        pubkey_with_weight.sort_by(|(w1, _), (w2, _)| w2.partial_cmp(w1).unwrap());
         pubkey_with_weight.into_iter().map(|(_, pubkey)| pubkey)
     }
 

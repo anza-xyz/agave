@@ -100,7 +100,7 @@ impl<T: Clone + Copy + PartialEq + std::fmt::Debug> BucketApi<T> {
         }
     }
 
-    fn get_write_bucket(&self) -> RwLockWriteGuard<Option<Bucket<T>>> {
+    fn get_write_bucket(&self) -> RwLockWriteGuard<'_, Option<Bucket<T>>> {
         let mut bucket = self.bucket.write().unwrap();
         if let Some(bucket) = bucket.as_mut() {
             bucket.handle_delayed_grows();

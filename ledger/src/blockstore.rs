@@ -3025,7 +3025,10 @@ impl Blockstore {
     ///
     /// The function will return BlockstoreError::SlotCleanedUp if the input
     /// `slot` has already been cleaned-up.
-    fn check_lowest_cleanup_slot(&self, slot: Slot) -> Result<std::sync::RwLockReadGuard<Slot>> {
+    fn check_lowest_cleanup_slot(
+        &self,
+        slot: Slot,
+    ) -> Result<std::sync::RwLockReadGuard<'_, Slot>> {
         // lowest_cleanup_slot is the last slot that was not cleaned up by LedgerCleanupService
         let lowest_cleanup_slot = self.lowest_cleanup_slot.read().unwrap();
         if *lowest_cleanup_slot > 0 && *lowest_cleanup_slot >= slot {
@@ -3042,7 +3045,7 @@ impl Blockstore {
     /// This function ensures a consistent result by using lowest_cleanup_slot
     /// as the lower bound for reading columns that do not employ strong read
     /// consistency with slot-based delete_range.
-    fn ensure_lowest_cleanup_slot(&self) -> (std::sync::RwLockReadGuard<Slot>, Slot) {
+    fn ensure_lowest_cleanup_slot(&self) -> (std::sync::RwLockReadGuard<'_, Slot>, Slot) {
         let lowest_cleanup_slot = self.lowest_cleanup_slot.read().unwrap();
         let lowest_available_slot = (*lowest_cleanup_slot)
             .checked_add(1)

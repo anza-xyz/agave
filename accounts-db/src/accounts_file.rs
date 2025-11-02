@@ -339,7 +339,7 @@ impl AccountsFile {
     }
 
     /// Returns the way to access this accounts file when archiving
-    pub fn internals_for_archive(&self) -> InternalsForArchive {
+    pub fn internals_for_archive(&self) -> InternalsForArchive<'_> {
         match self {
             Self::AppendVec(av) => av.internals_for_archive(),
             Self::TieredStorage(ts) => InternalsForArchive::Mmap(

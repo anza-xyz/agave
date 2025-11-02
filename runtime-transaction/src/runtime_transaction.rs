@@ -104,11 +104,13 @@ impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
         self.transaction.num_instructions()
     }
 
-    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction> {
+    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction<'_>> {
         self.transaction.instructions_iter()
     }
 
-    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone {
+    fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
         self.transaction.program_instructions_iter()
     }
 
@@ -116,7 +118,7 @@ impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
         self.transaction.static_account_keys()
     }
 
-    fn account_keys(&self) -> AccountKeys {
+    fn account_keys(&self) -> AccountKeys<'_> {
         self.transaction.account_keys()
     }
 
@@ -140,7 +142,9 @@ impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
         self.transaction.num_lookup_tables()
     }
 
-    fn message_address_table_lookups(&self) -> impl Iterator<Item = SVMMessageAddressTableLookup> {
+    fn message_address_table_lookups(
+        &self,
+    ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>> {
         self.transaction.message_address_table_lookups()
     }
 }

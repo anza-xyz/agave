@@ -1,6 +1,6 @@
 use {
     agave_scheduler_bindings::{
-        worker_message_types::{ExecutionResponse, EXECUTION_RESPONSE},
+        worker_message_types::{ExecutionResponse, Resolved, EXECUTION_RESPONSE, RESOLVED},
         TransactionResponseRegion,
     },
     rts_alloc::Allocator,
@@ -13,6 +13,15 @@ pub fn execution_responses_from_iter(
 ) -> Option<TransactionResponseRegion> {
     // SAFETY: EXECUTION_RESPONSE -> ExecutionResponse
     unsafe { from_iterator(allocator, EXECUTION_RESPONSE, iter) }
+}
+
+/// Prepare a [`TransactionResponseRegion`] with [`Resolved`].
+pub fn resolve_responses_from_iter(
+    allocator: &Allocator,
+    iter: impl ExactSizeIterator<Item = Resolved>,
+) -> Option<TransactionResponseRegion> {
+    // SAFETY: RESOLVED -> Resolved
+    unsafe { from_iterator(allocator, RESOLVED, iter) }
 }
 
 /// Prepare a [`TransactionResponseRegion`] from an iterator.

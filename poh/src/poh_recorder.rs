@@ -252,7 +252,11 @@ impl PohRecorder {
                 poh,
                 tick_cache: vec![],
                 working_bank: None,
-                shared_leader_state: SharedLeaderState::new(tick_height, leader_first_tick_height),
+                shared_leader_state: SharedLeaderState::new(
+                    tick_height,
+                    leader_first_tick_height,
+                    next_leader_slot,
+                ),
                 working_bank_sender,
                 clear_bank_signal,
                 start_bank,
@@ -290,6 +294,7 @@ impl PohRecorder {
             None,
             tick_height,
             leader_first_tick_height,
+            next_leader_slot,
         )));
 
         self.leader_last_tick_height = leader_last_tick_height;
@@ -436,11 +441,15 @@ impl PohRecorder {
             }
         }
 
-        let leader_first_tick_height = self.shared_leader_state.load().leader_first_tick_height;
+        let leader_state = self.shared_leader_state.load();
+        let leader_first_tick_height = leader_state.leader_first_tick_height();
+        let next_leader_slot = leader_state.next_leader_slot_range();
+        drop(leader_state);
         self.shared_leader_state.store(Arc::new(LeaderState::new(
             Some(working_bank.bank.clone_without_scheduler()),
             tick_height,
             leader_first_tick_height,
+            next_leader_slot,
         )));
         self.working_bank = Some(working_bank);
 
@@ -475,6 +484,7 @@ impl PohRecorder {
                     None,
                     self.tick_height(),
                     leader_first_tick_height,
+                    next_leader_slot,
                 )));
             }
 
@@ -972,11 +982,16 @@ pub struct SharedLeaderState(Arc<ArcSwap<LeaderState>>);
 
 impl SharedLeaderState {
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn new(tick_height: u64, leader_first_tick_height: Option<u64>) -> Self {
+    fn new(
+        tick_height: u64,
+        leader_first_tick_height: Option<u64>,
+        next_leader_slot_range: Option<(Slot, Slot)>,
+    ) -> Self {
         let inner = LeaderState {
             working_bank: None,
             tick_height: AtomicU64::new(tick_height),
             leader_first_tick_height,
+            next_leader_slot_range,
         };
         Self(Arc::new(ArcSwap::from_pointee(inner)))
     }
@@ -1001,6 +1016,7 @@ pub struct LeaderState {
     working_bank: Option<Arc<Bank>>,
     tick_height: AtomicU64,
     leader_first_tick_height: Option<u64>,
+    next_leader_slot_range: Option<(Slot, Slot)>,
 }
 
 impl LeaderState {
@@ -1009,11 +1025,13 @@ impl LeaderState {
         working_bank: Option<Arc<Bank>>,
         tick_height: u64,
         leader_first_tick_height: Option<u64>,
+        next_leader_slot_range: Option<(u64, u64)>,
     ) -> Self {
         Self {
             working_bank,
             tick_height: AtomicU64::new(tick_height),
             leader_first_tick_height,
+            next_leader_slot_range,
         }
     }
 
@@ -1027,6 +1045,12 @@ impl LeaderState {
 
     pub fn leader_first_tick_height(&self) -> Option<u64> {
         self.leader_first_tick_height
+    }
+
+    /// Returns [first_slot, last_slot] inclusive range for the next
+    /// leader slots.
+    pub fn next_leader_slot_range(&self) -> Option<(Slot, Slot)> {
+        self.next_leader_slot_range
     }
 }
 

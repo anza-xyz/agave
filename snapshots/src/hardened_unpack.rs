@@ -458,6 +458,8 @@ mod tests {
         tar::{Builder, Header},
     };
 
+    const MAX_GENESIS_SIZE_FOR_TESTS: u64 = 1024;
+
     #[test]
     fn test_archive_is_valid_entry() {
         assert!(is_valid_snapshot_archive_entry(
@@ -707,7 +709,7 @@ mod tests {
     fn finalize_and_unpack_genesis(archive: tar::Builder<Vec<u8>>) -> Result<()> {
         let file_creator = file_creator(0, |_| {})?;
         with_finalize_and_unpack(archive, move |a, b| {
-            unpack_genesis(a, file_creator, b, 1024)
+            unpack_genesis(a, file_creator, b, MAX_GENESIS_SIZE_FOR_TESTS)
         })
     }
 
@@ -741,6 +743,37 @@ mod tests {
 
         let result = finalize_and_unpack_genesis(archive);
         assert_matches!(result, Ok(()));
+    }
+
+    #[test]
+    fn test_archive_unpack_genesis_size_limit() {
+        let data: Vec<u8> = (0..MAX_GENESIS_SIZE_FOR_TESTS + 1)
+            .map(|x| x as u8)
+            .collect();
+
+        let mut header = Header::new_gnu();
+        header.set_path("genesis.bin").unwrap();
+        header.set_entry_type(tar::EntryType::Regular);
+
+        {
+            let mut archive = Builder::new(Vec::new());
+            header.set_size(data.len() as u64);
+            header.set_cksum();
+            archive.append(&header, data.as_slice()).unwrap();
+            finalize_and_unpack_genesis(archive).expect_err(&format!(
+                "too large archive: {} than limit: {MAX_GENESIS_SIZE_FOR_TESTS}",
+                data.len()
+            ));
+        }
+
+        {
+            let data = &data[..MAX_GENESIS_SIZE_FOR_TESTS as usize];
+            let mut archive = Builder::new(Vec::new());
+            header.set_size(data.len() as u64);
+            header.set_cksum();
+            archive.append(&header, data).unwrap();
+            finalize_and_unpack_genesis(archive).expect("should unpack max size genesis");
+        }
     }
 
     #[test]
