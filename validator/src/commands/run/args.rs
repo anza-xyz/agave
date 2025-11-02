@@ -783,10 +783,30 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
         Arg::with_name("tpu_max_connections_per_peer")
             .long("tpu-max-connections-per-peer")
             .takes_value(true)
-            .default_value(&default_args.tpu_max_connections_per_peer)
             .validator(is_parsable::<u32>)
             .hidden(hidden_unless_forced())
-            .help("Controls the max concurrent connections per IpAddr."),
+            .help(
+                "Controls the max concurrent connections per IpAddr or staked identity.Overrides \
+                 tpu-max-connections-per-unstaked-peer and tpu-max-connections-per-staked-peer",
+            ),
+    )
+    .arg(
+        Arg::with_name("tpu_max_connections_per_unstaked_peer")
+            .long("tpu-max-connections-per-unstaked-peer")
+            .takes_value(true)
+            .default_value(&default_args.tpu_max_connections_per_unstaked_peer)
+            .validator(is_parsable::<u32>)
+            .hidden(hidden_unless_forced())
+            .help("Controls the max concurrent connections per IpAddr for unstaked clients."),
+    )
+    .arg(
+        Arg::with_name("tpu_max_connections_per_staked_peer")
+            .long("tpu-max-connections-per-staked-peer")
+            .takes_value(true)
+            .default_value(&default_args.tpu_max_connections_per_staked_peer)
+            .validator(is_parsable::<u32>)
+            .hidden(hidden_unless_forced())
+            .help("Controls the max concurrent connections per staked identity."),
     )
     .arg(
         Arg::with_name("tpu_max_staked_connections")

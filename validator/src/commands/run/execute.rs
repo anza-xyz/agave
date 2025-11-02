@@ -78,7 +78,7 @@ use {
         num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
         process::exit,
-        str::FromStr,
+        str::{self, FromStr},
         sync::{atomic::AtomicBool, Arc, RwLock},
     },
 };
@@ -825,8 +825,13 @@ pub fn execute(
     info!("tpu_vortexor_receiver_address is {tpu_vortexor_receiver_address:?}");
     let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
 
-    let tpu_max_connections_per_peer =
-        value_t_or_exit!(matches, "tpu_max_connections_per_peer", u64);
+    let tpu_max_connections_per_peer: Option<u64> = matches
+        .value_of("tpu_max_connections_per_peer")
+        .and_then(|v| v.parse().ok());
+    let tpu_max_connections_per_unstaked_peer = tpu_max_connections_per_peer
+        .unwrap_or_else(|| value_t_or_exit!(matches, "tpu_max_connections_per_unstaked_peer", u64));
+    let tpu_max_connections_per_staked_peer = tpu_max_connections_per_peer
+        .unwrap_or_else(|| value_t_or_exit!(matches, "tpu_max_connections_per_staked_peer", u64));
     let tpu_max_staked_connections = value_t_or_exit!(matches, "tpu_max_staked_connections", u64);
     let tpu_max_unstaked_connections =
         value_t_or_exit!(matches, "tpu_max_unstaked_connections", u64);
@@ -950,7 +955,12 @@ pub fn execute(
 
     let tpu_quic_server_config = SwQosQuicStreamerConfig {
         quic_streamer_config: QuicStreamerConfig {
-            max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
+            max_connections_per_unstaked_peer: tpu_max_connections_per_unstaked_peer
+                .try_into()
+                .unwrap(),
+            max_connections_per_staked_peer: tpu_max_connections_per_staked_peer
+                .try_into()
+                .unwrap(),
             max_staked_connections: tpu_max_staked_connections.try_into().unwrap(),
             max_unstaked_connections: tpu_max_unstaked_connections.try_into().unwrap(),
             max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
@@ -962,7 +972,12 @@ pub fn execute(
 
     let tpu_fwd_quic_server_config = SwQosQuicStreamerConfig {
         quic_streamer_config: QuicStreamerConfig {
-            max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
+            max_connections_per_staked_peer: tpu_max_connections_per_staked_peer
+                .try_into()
+                .unwrap(),
+            max_connections_per_unstaked_peer: tpu_max_connections_per_unstaked_peer
+                .try_into()
+                .unwrap(),
             max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
             max_unstaked_connections: tpu_max_fwd_unstaked_connections.try_into().unwrap(),
             max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
@@ -974,7 +989,7 @@ pub fn execute(
 
     let vote_quic_server_config = SimpleQosQuicStreamerConfig {
         quic_streamer_config: QuicStreamerConfig {
-            max_connections_per_peer: 1,
+            max_connections_per_unstaked_peer: 1,
             max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
             max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
             num_threads: tpu_vote_transaction_receive_threads,

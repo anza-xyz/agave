@@ -363,7 +363,7 @@ async fn test_connection_pruned_and_reopened() {
     } = setup_quic_server(
         None,
         QuicStreamerConfig {
-            max_connections_per_peer: 100,
+            max_connections_per_unstaked_peer: 100,
             max_unstaked_connections: 1,
             ..QuicStreamerConfig::default_for_tests()
         },
@@ -571,7 +571,7 @@ async fn test_rate_limiting() {
     } = setup_quic_server(
         None,
         QuicStreamerConfig {
-            max_connections_per_peer: 100,
+            max_connections_per_unstaked_peer: 100,
             max_connections_per_ipaddr_per_min: 1,
             ..QuicStreamerConfig::default_for_tests()
         },
@@ -636,7 +636,7 @@ async fn test_rate_limiting_establish_connection() {
     } = setup_quic_server(
         None,
         QuicStreamerConfig {
-            max_connections_per_peer: 100,
+            max_connections_per_unstaked_peer: 100,
             max_connections_per_ipaddr_per_min: 1,
             ..QuicStreamerConfig::default_for_tests()
         },
@@ -782,7 +782,7 @@ async fn test_proactive_connection_close_detection() {
     } = setup_quic_server(
         None,
         QuicStreamerConfig {
-            max_connections_per_peer: 1,
+            max_connections_per_unstaked_peer: 1,
             max_unstaked_connections: 1,
             ..QuicStreamerConfig::default_for_tests()
         },
