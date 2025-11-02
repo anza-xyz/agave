@@ -4,7 +4,6 @@ use {
     libc::{iovec, msghdr, sockaddr_storage, socklen_t},
     std::{
         mem::{zeroed, MaybeUninit},
-        ptr,
     },
 };
 
@@ -24,6 +23,5 @@ pub(crate) fn create_msghdr(
     // msg_hdr.msg_control = ptr::null::<libc::c_void>() as *mut _;
     // msg_hdr.msg_controllen = 0;
     // msg_hdr.msg_flags = 0;
-    
     msg_hdr
 }
