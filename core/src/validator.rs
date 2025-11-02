@@ -170,7 +170,7 @@ use {
     strum::VariantNames,
     strum_macros::{Display, EnumCount, EnumIter, EnumString, EnumVariantNames, IntoStaticStr},
     thiserror::Error,
-    tokio::runtime::Runtime as TokioRuntime,
+    tokio::{runtime::Runtime as TokioRuntime, sync::mpsc},
     tokio_util::sync::CancellationToken,
 };
 
@@ -485,8 +485,9 @@ impl ValidatorConfig {
 // `ValidatorStartProgress` contains status information that is surfaced to the node operator over
 // the admin RPC channel to help them to follow the general progress of node startup without
 // having to watch log messages.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum ValidatorStartProgress {
+    #[default]
     Initializing, // Catch all, default state
     SearchingForRpcService,
     DownloadingSnapshot {
@@ -510,12 +511,6 @@ pub enum ValidatorStartProgress {
     // `Running` is the terminal state once the validator fully starts and all services are
     // operational
     Running,
-}
-
-impl Default for ValidatorStartProgress {
-    fn default() -> Self {
-        Self::Initializing
-    }
 }
 
 struct BlockstoreRootScan {
@@ -1702,6 +1697,7 @@ impl Validator {
                 node_multihoming.clone(),
             ))
         };
+        let (banking_control_sender, banking_control_reciever) = mpsc::channel(1);
         let tpu = Tpu::new_with_client(
             &cluster_info,
             &poh_recorder,
@@ -1754,6 +1750,7 @@ impl Validator {
             config.enable_block_production_forwarding,
             config.generator_config.clone(),
             key_notifiers.clone(),
+            banking_control_reciever,
             cancel,
         );
 
@@ -1789,7 +1786,7 @@ impl Validator {
             outstanding_repair_requests,
             cluster_slots,
             node: Some(node_multihoming),
-            banking_stage: tpu.banking_stage(),
+            banking_control_sender,
         });
 
         Ok(Self {

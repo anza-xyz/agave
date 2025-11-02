@@ -148,9 +148,9 @@ pub fn load_validator_accounts(
             })?,
         ];
         let bls_pubkeys: Vec<BLSPubkey> = account_details.bls_pubkey.map_or(Ok(vec![]), |s| {
-            BLSPubkey::from_str(&s).map(|pk| vec![pk]).map_err(|err| {
-                io::Error::new(io::ErrorKind::Other, format!("Invalid BLS pubkey: {err}"))
-            })
+            BLSPubkey::from_str(&s)
+                .map(|pk| vec![pk])
+                .map_err(|err| io::Error::other(format!("Invalid BLS pubkey: {err}")))
         })?;
 
         add_validator_accounts(

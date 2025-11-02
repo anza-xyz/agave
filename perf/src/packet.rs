@@ -209,7 +209,7 @@ impl PacketBatch {
         }
     }
 
-    pub fn par_iter(&self) -> PacketBatchParIter {
+    pub fn par_iter(&self) -> PacketBatchParIter<'_> {
         match self {
             Self::Pinned(batch) => {
                 PacketBatchParIter::Pinned(batch.par_iter().map(PacketRef::from))
@@ -218,7 +218,7 @@ impl PacketBatch {
         }
     }
 
-    pub fn par_iter_mut(&mut self) -> PacketBatchParIterMut {
+    pub fn par_iter_mut(&mut self) -> PacketBatchParIterMut<'_> {
         match self {
             Self::Pinned(batch) => {
                 PacketBatchParIterMut::Pinned(batch.par_iter_mut().map(PacketRefMut::from))

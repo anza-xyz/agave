@@ -62,7 +62,7 @@ impl StakesCache {
         Self(RwLock::new(stakes))
     }
 
-    pub(crate) fn stakes(&self) -> RwLockReadGuard<Stakes<StakeAccount>> {
+    pub(crate) fn stakes(&self) -> RwLockReadGuard<'_, Stakes<StakeAccount>> {
         self.0.read().unwrap()
     }
 

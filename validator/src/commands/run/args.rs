@@ -225,37 +225,10 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Rendezvous with the cluster at this gossip entrypoint"),
     )
     .arg(
-        Arg::with_name("no_snapshot_fetch")
-            .long("no-snapshot-fetch")
-            .takes_value(false)
-            .help(
-                "Do not attempt to fetch a snapshot from the cluster, start from a local snapshot \
-                 if present",
-            ),
-    )
-    .arg(
-        Arg::with_name("no_genesis_fetch")
-            .long("no-genesis-fetch")
-            .takes_value(false)
-            .help("Do not fetch genesis from the cluster"),
-    )
-    .arg(
         Arg::with_name("no_voting")
             .long("no-voting")
             .takes_value(false)
             .help("Launch validator without voting"),
-    )
-    .arg(
-        Arg::with_name("check_vote_account")
-            .long("check-vote-account")
-            .takes_value(true)
-            .value_name("RPC_URL")
-            .requires("entrypoint")
-            .conflicts_with_all(&["no_voting"])
-            .help(
-                "Sanity check vote account state at startup. The JSON RPC endpoint at RPC_URL \
-                 must expose `--full-rpc-api`",
-            ),
     )
     .arg(
         Arg::with_name("restricted_repair_only_mode")
@@ -445,12 +418,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                 "full_snapshot_interval_slots",
             ])
             .help("Disable all snapshot generation"),
-    )
-    .arg(
-        Arg::with_name("no_incremental_snapshots")
-            .long("no-incremental-snapshots")
-            .takes_value(false)
-            .help("Disable incremental snapshots"),
     )
     .arg(
         Arg::with_name("snapshot_interval_slots")
@@ -750,14 +717,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Log when transactions are processed which reference a given key."),
     )
     .arg(
-        Arg::with_name("only_known_rpc")
-            .alias("no-untrusted-rpc")
-            .long("only-known-rpc")
-            .takes_value(false)
-            .requires("known_validators")
-            .help("Use the RPC service of known validators only"),
-    )
-    .arg(
         Arg::with_name("repair_validators")
             .long("repair-validator")
             .validator(is_pubkey)
@@ -962,14 +921,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                  generally produce higher compression ratio at the expense of speed and memory. \
                  See the zstd manpage for more information.",
             ),
-    )
-    .arg(
-        Arg::with_name("max_genesis_archive_unpacked_size")
-            .long("max-genesis-archive-unpacked-size")
-            .value_name("NUMBER")
-            .takes_value(true)
-            .default_value(&default_args.genesis_archive_unpacked_size)
-            .help("maximum total uncompressed file size of downloaded genesis archive"),
     )
     .arg(
         Arg::with_name("wal_recovery_mode")
@@ -1389,6 +1340,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
     .args(&json_rpc_config::args())
     .args(&rpc_bigtable_config::args())
     .args(&send_transaction_config::args())
+    .args(&rpc_bootstrap_config::args())
 }
 
 fn validators_set(

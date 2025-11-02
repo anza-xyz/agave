@@ -91,6 +91,9 @@ impl ProgressTracker {
     fn produce_progress_message(&mut self) -> (ProgressMessage, u64) {
         let leader_state = self.shared_leader_state.load();
         let tick_height = leader_state.tick_height();
+        let (next_leader_range_start, next_leader_range_end) = leader_state
+            .next_leader_slot_range()
+            .unwrap_or((u64::MAX, u64::MAX));
         let progress_message = if let Some(working_bank) = leader_state.working_bank() {
             // If new leader slot grab the cost tracker lock to get limit and shared cost.
             // This avoid needing to lock except on new leader slots.
@@ -104,8 +107,10 @@ impl ProgressTracker {
             }
 
             ProgressMessage {
+                leader_state: agave_scheduler_bindings::IS_LEADER,
                 current_slot: working_bank.slot(),
-                next_leader_slot: working_bank.slot(),
+                next_leader_slot: next_leader_range_start,
+                leader_range_end: next_leader_range_end,
                 remaining_cost_units: self.remaining_block_cost(),
                 current_slot_progress: progress(
                     working_bank.slot(),
@@ -116,11 +121,10 @@ impl ProgressTracker {
         } else {
             let current_slot = slot_from_tick_height(tick_height, self.ticks_per_slot);
             ProgressMessage {
+                leader_state: agave_scheduler_bindings::IS_NOT_LEADER,
                 current_slot,
-                next_leader_slot: leader_state
-                    .leader_first_tick_height()
-                    .map(|tick_height| slot_from_tick_height(tick_height, self.ticks_per_slot))
-                    .unwrap_or(u64::MAX),
+                next_leader_slot: next_leader_range_start,
+                leader_range_end: next_leader_range_end,
                 remaining_cost_units: 0,
                 current_slot_progress: progress(current_slot, tick_height, self.ticks_per_slot),
             }
@@ -161,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_progress_tracker_produce_progress_message() {
-        let mut shared_leader_state = SharedLeaderState::new(0, None);
+        let mut shared_leader_state = SharedLeaderState::new(0, None, None);
         let ticks_per_slot = DEFAULT_TICKS_PER_SLOT;
 
         let mut progress_tracker =
@@ -169,27 +173,48 @@ mod tests {
 
         let (message, tick_height) = progress_tracker.produce_progress_message();
         assert_eq!(tick_height, 0);
+        assert_eq!(
+            message.leader_state,
+            agave_scheduler_bindings::IS_NOT_LEADER
+        );
         assert_eq!(message.current_slot, 0);
         assert_eq!(message.current_slot_progress, 0);
         assert_eq!(message.next_leader_slot, u64::MAX);
+        assert_eq!(message.leader_range_end, u64::MAX);
 
         let expected_tick_height = 2 * ticks_per_slot;
-        shared_leader_state.store(Arc::new(LeaderState::new(None, expected_tick_height, None)));
+        shared_leader_state.store(Arc::new(LeaderState::new(
+            None,
+            expected_tick_height,
+            None,
+            None,
+        )));
         let (message, tick_height) = progress_tracker.produce_progress_message();
         assert_eq!(tick_height, expected_tick_height);
+        assert_eq!(
+            message.leader_state,
+            agave_scheduler_bindings::IS_NOT_LEADER
+        );
         assert_eq!(message.current_slot, 2);
         assert_eq!(message.next_leader_slot, u64::MAX);
+        assert_eq!(message.leader_range_end, u64::MAX);
         assert_eq!(message.current_slot_progress, 0);
 
         shared_leader_state.store(Arc::new(LeaderState::new(
             None,
             expected_tick_height,
             Some(4 * ticks_per_slot),
+            Some((4, 7)),
         )));
         let (message, tick_height) = progress_tracker.produce_progress_message();
         assert_eq!(tick_height, expected_tick_height);
+        assert_eq!(
+            message.leader_state,
+            agave_scheduler_bindings::IS_NOT_LEADER
+        );
         assert_eq!(message.current_slot, 2);
         assert_eq!(message.next_leader_slot, 4);
+        assert_eq!(message.leader_range_end, 7);
         assert_eq!(message.current_slot_progress, 0);
 
         let bank = Arc::new(Bank::new_for_tests(
@@ -199,13 +224,16 @@ mod tests {
             Some(bank.clone()),
             bank.tick_height(),
             Some(4 * ticks_per_slot),
+            Some((4, 7)),
         )));
 
         assert!(!bank.is_complete());
         let (message, tick_height) = progress_tracker.produce_progress_message();
         assert_eq!(tick_height, bank.tick_height());
+        assert_eq!(message.leader_state, agave_scheduler_bindings::IS_LEADER);
         assert_eq!(message.current_slot, bank.slot());
-        assert_eq!(message.next_leader_slot, bank.slot()); // currently leader
+        assert_eq!(message.next_leader_slot, 4);
+        assert_eq!(message.leader_range_end, 7);
         assert_eq!(message.current_slot_progress, 0);
 
         bank.fill_bank_with_ticks_for_tests();
@@ -214,11 +242,14 @@ mod tests {
             Some(bank.clone()),
             bank.tick_height(),
             Some(4 * ticks_per_slot),
+            Some((4, 7)),
         )));
         let (message, tick_height) = progress_tracker.produce_progress_message();
         assert_eq!(tick_height, bank.tick_height());
+        assert_eq!(message.leader_state, agave_scheduler_bindings::IS_LEADER);
         assert_eq!(message.current_slot, bank.slot());
-        assert_eq!(message.next_leader_slot, bank.slot());
+        assert_eq!(message.next_leader_slot, 4);
+        assert_eq!(message.leader_range_end, 7);
         assert_eq!(message.current_slot_progress, 100);
     }
 
@@ -226,7 +257,7 @@ mod tests {
     fn test_progress_tracker_remaining_block_cost() {
         let mut progress_tracker = ProgressTracker::new(
             Arc::default(),
-            SharedLeaderState::new(0, None),
+            SharedLeaderState::new(0, None, None),
             DEFAULT_TICKS_PER_SLOT,
         );
 

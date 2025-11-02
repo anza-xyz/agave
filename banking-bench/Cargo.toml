@@ -49,3 +49,4 @@ solana-time-utils = { workspace = true }
 solana-tpu-client = { workspace = true }
 solana-transaction = { workspace = true }
 solana-version = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }

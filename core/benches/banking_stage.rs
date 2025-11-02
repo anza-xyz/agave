@@ -10,6 +10,7 @@ use {
     },
     solana_vote::vote_transaction::new_tower_sync_transaction,
     solana_vote_program::vote_state::TowerSync,
+    tokio::sync::mpsc,
 };
 
 extern crate test;
@@ -242,6 +243,7 @@ fn bench_banking(
         non_vote_receiver,
         tpu_vote_receiver,
         gossip_vote_receiver,
+        mpsc::channel(1).1,
         num_threads,
         SchedulerConfig {
             scheduler_pacing: SchedulerPacing::Disabled,

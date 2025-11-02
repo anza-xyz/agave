@@ -623,7 +623,7 @@ mod tests {
                 None,
             ),
         );
-        let txs = vec![transfer_tx.clone(), vote_tx.clone(), vote_tx, transfer_tx];
+        let txs = [transfer_tx.clone(), vote_tx.clone(), vote_tx, transfer_tx];
 
         let qos_service = QosService::new(1);
         let txs_costs = qos_service.compute_transaction_costs(
@@ -670,7 +670,7 @@ mod tests {
             CostModel::calculate_cost(&transfer_tx, &FeatureSet::all_enabled()).sum();
         let vote_tx_cost = CostModel::calculate_cost(&vote_tx, &FeatureSet::all_enabled()).sum();
         // make a vec of txs
-        let txs = vec![transfer_tx.clone(), vote_tx.clone(), transfer_tx, vote_tx];
+        let txs = [transfer_tx.clone(), vote_tx.clone(), transfer_tx, vote_tx];
 
         let qos_service = QosService::new(1);
         let txs_costs = qos_service.compute_transaction_costs(
