@@ -750,12 +750,16 @@ pub fn spawn_simple_qos_server(
 mod test {
     use {
         super::*,
-        crate::nonblocking::{quic::test::*, testing_utilities::check_multiple_streams},
-        crossbeam_channel::unbounded,
+        crate::nonblocking::{
+            quic::test::*,
+            testing_utilities::{check_multiple_streams, make_client_endpoint},
+        },
+        crossbeam_channel::{unbounded, Receiver},
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_pubkey::Pubkey,
         solana_signer::Signer,
-        std::{collections::HashMap, net::SocketAddr},
+        std::{collections::HashMap, net::SocketAddr, time::Instant},
+        tokio::time::sleep,
     };
 
     fn rt_for_test() -> Runtime {
@@ -985,5 +989,163 @@ mod test {
         runtime.block_on(check_unstaked_node_connect_failure(server_address));
         cancel.cancel();
         t.join().unwrap();
+    }
+
+    #[test]
+    fn test_quic_server_multiple_packets_with_client_id() {
+        // Send multiple writes from a staked node with SimpleStreamsPerSecond QoS mode
+        // with client ID enabled to verify PacketBatch::WithClientId variant is used
+        agave_logger::setup();
+        let client_keypair = Keypair::new();
+        let rich_node_keypair = Keypair::new();
+
+        let stakes = HashMap::from([
+            (client_keypair.pubkey(), 1_000), // very small staked node
+            (rich_node_keypair.pubkey(), 1_000_000_000),
+        ]);
+        let staked_nodes = StakedNodes::new(
+            Arc::new(stakes),
+            HashMap::<Pubkey, u64>::default(), // overrides
+        );
+
+        let server_params = QuicStreamerConfig {
+            max_unstaked_connections: 0,
+            max_connections_per_peer: 10,
+            send_client_id: true, // Enable client ID sending
+            ..QuicStreamerConfig::default_for_tests()
+        };
+        let qos_config = SimpleQosConfig {
+            max_streams_per_second: 20, // low limit to ensure staked node can send all packets
+        };
+        let server_params = SimpleQosQuicStreamerConfig {
+            quic_streamer_config: server_params,
+            qos_config,
+        };
+        let (t, receiver, server_address, cancel) = setup_simple_qos_quic_server_with_params(
+            server_params,
+            Arc::new(RwLock::new(staked_nodes)),
+        );
+
+        let runtime = rt_for_test();
+        let num_expected_packets = 20;
+
+        runtime.block_on(check_multiple_packets_with_client_id(
+            receiver,
+            server_address,
+            Some(&client_keypair),
+            num_expected_packets,
+        ));
+        cancel.cancel();
+        t.join().unwrap();
+    }
+
+    pub async fn check_multiple_packets_with_client_id(
+        receiver: Receiver<PacketBatch>,
+        server_address: SocketAddr,
+        client_keypair: Option<&Keypair>,
+        num_expected_packets: usize,
+    ) {
+        let conn1 = Arc::new(make_client_endpoint(&server_address, client_keypair).await);
+        let conn2 = Arc::new(make_client_endpoint(&server_address, client_keypair).await);
+
+        println!(
+            "Connections established: {} and {}",
+            conn1.remote_address(),
+            conn2.remote_address()
+        );
+
+        let expected_client_pubkey = client_keypair.map(|kp| kp.pubkey());
+
+        let mut num_packets_sent = 0;
+        for i in 0..num_expected_packets {
+            println!("Sending stream pair {i}");
+            let c1 = conn1.clone();
+            let c2 = conn2.clone();
+
+            let mut s1 = c1.open_uni().await.unwrap();
+            let mut s2 = c2.open_uni().await.unwrap();
+
+            s1.write_all(&[0u8]).await.unwrap();
+            s1.finish().unwrap();
+            println!("Stream {i}.1 sent and finished");
+
+            if i < num_expected_packets - 1 {
+                s2.write_all(&[0u8]).await.unwrap();
+                s2.finish().unwrap();
+                println!("Stream {i}.2 sent and finished");
+                num_packets_sent += 2;
+            } else {
+                num_packets_sent += 1;
+            }
+
+            sleep(Duration::from_millis(200)).await;
+        }
+
+        println!("All streams sent, expecting {num_packets_sent} packets with client ID");
+
+        let now = Instant::now();
+        let mut total_packets = 0;
+        let mut iterations = 0;
+
+        while now.elapsed().as_secs() < 10 {
+            iterations += 1;
+            match receiver.try_recv() {
+                Ok(packet_batch) => {
+                    println!("Received packet batch (iteration {})", iterations);
+
+                    // Verify this is the WithClientId variant
+                    match &packet_batch {
+                        PacketBatch::WithClientId(batch_with_client_id) => {
+                            let batch_len = packet_batch.len();
+                            println!("Received WithClientId batch with {} packets", batch_len);
+
+                            for packet in batch_with_client_id {
+                                assert_eq!(packet.remote_pubkey(), expected_client_pubkey.as_ref());
+                            }
+
+                            total_packets += batch_len;
+                        }
+                        PacketBatch::Pinned(_) => {
+                            panic!(
+                                "Expected PacketBatch::WithClientId but got PacketBatch::Pinned"
+                            );
+                        }
+                        PacketBatch::Bytes(_) => {
+                            panic!("Expected PacketBatch::WithClientId but got PacketBatch::Bytes");
+                        }
+                    }
+                }
+                Err(e) => {
+                    if iterations % 10 == 0 {
+                        println!("No packets yet (iteration {}): {:?}", iterations, e);
+                    }
+                    sleep(Duration::from_millis(100)).await;
+                }
+            }
+
+            if total_packets >= num_packets_sent {
+                println!("Received all expected packets with client ID!");
+                break;
+            }
+
+            if iterations % 50 == 0 {
+                println!(
+                    "Still waiting... received {}/{} packets after {} iterations",
+                    total_packets, num_packets_sent, iterations
+                );
+            }
+        }
+
+        println!(
+            "Final: received {}/{} packets in {} iterations",
+            total_packets, num_packets_sent, iterations
+        );
+
+        assert!(
+            total_packets >= num_packets_sent,
+            "Expected at least {} packets with client ID, got {}",
+            num_packets_sent,
+            total_packets
+        );
     }
 }
