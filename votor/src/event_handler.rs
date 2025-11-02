@@ -3,7 +3,7 @@
 use {
     crate::{
         commitment::{update_commitment_cache, CommitmentType},
-        consensus_metrics::ConsensusMetricsEvent,
+        consensus_metrics::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
         event::{CompletedBlock, VotorEvent, VotorEventReceiver},
         event_handler::stats::EventHandlerStats,
         root_utils::{self, RootContext, SetRootError},
@@ -14,7 +14,7 @@ use {
         votor::{SharedContext, Votor},
     },
     agave_votor_messages::{consensus_message::Block, vote::Vote},
-    crossbeam_channel::{RecvTimeoutError, SendError},
+    crossbeam_channel::{RecvTimeoutError, TrySendError},
     parking_lot::RwLock,
     solana_clock::Slot,
     solana_hash::Hash,
@@ -63,7 +63,7 @@ enum EventLoopError {
     ReceiverDisconnected(#[from] RecvTimeoutError),
 
     #[error("Sender is disconnected")]
-    SenderDisconnected(#[from] SendError<()>),
+    SenderDisconnected,
 
     #[error("Error generating and inserting vote")]
     VotingError(#[from] VoteError),
@@ -97,6 +97,7 @@ impl EventHandler {
                 if let Err(e) = Self::event_loop(ctx) {
                     exit.store(true, Ordering::Relaxed);
                     error!("EventHandler exited with error: {e}");
+                    error!("{:?}", exit.load(Ordering::Relaxed));
                 }
                 info!("EventHandler has stopped");
             })
@@ -165,7 +166,9 @@ impl EventHandler {
             let mut send_votes_batch_time = Measure::start("send_votes_batch");
             for vote in votes {
                 local_context.stats.incr_vote(&vote);
-                vctx.bls_sender.send(vote).map_err(|_| SendError(()))?;
+                vctx.bls_sender
+                    .send(vote)
+                    .map_err(|_| EventLoopError::SenderDisconnected)?;
             }
             send_votes_batch_time.stop();
             local_context.stats.send_votes_batch_time_us = local_context
@@ -209,6 +212,22 @@ impl EventHandler {
         Ok(())
     }
 
+    fn send_to_metrics(
+        consensus_metrics_sender: &ConsensusMetricsEventSender,
+        consensus_metrics_events: Vec<ConsensusMetricsEvent>,
+    ) -> Result<(), EventLoopError> {
+        // Do not kill or block event handler threads just because metrics
+        // send failed (maybe because the queue is full).
+        match consensus_metrics_sender.try_send((Instant::now(), consensus_metrics_events)) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Disconnected(_)) => Err(EventLoopError::SenderDisconnected),
+            Err(e) => {
+                warn!("send_metrics failed: {e:?}");
+                Ok(())
+            }
+        }
+    }
+
     fn handle_event(
         event: VotorEvent,
         timer_manager: &RwLock<TimerManager>,
@@ -229,7 +248,6 @@ impl EventHandler {
             // Block has completed replay
             VotorEvent::Block(CompletedBlock { slot, bank }) => {
                 debug_assert!(bank.is_frozen());
-                let now = Instant::now();
                 let mut consensus_metrics_events =
                     vec![ConsensusMetricsEvent::StartOfSlot { slot }];
                 if slot == first_of_consecutive_leader_slots(slot) {
@@ -244,9 +262,7 @@ impl EventHandler {
                 consensus_metrics_events.push(ConsensusMetricsEvent::MaybeNewEpoch {
                     epoch: bank.epoch(),
                 });
-                vctx.consensus_metrics_sender
-                    .send((now, consensus_metrics_events))
-                    .map_err(|_| SendError(()))?;
+                Self::send_to_metrics(&vctx.consensus_metrics_sender, consensus_metrics_events)?;
                 let (block, parent_block) = Self::get_block_parent_block(&bank);
                 info!("{my_pubkey}: Block {block:?} parent {parent_block:?}");
                 if Self::try_notar(
@@ -303,12 +319,10 @@ impl EventHandler {
 
             // Received a parent ready notification for `slot`
             VotorEvent::ParentReady { slot, parent_block } => {
-                vctx.consensus_metrics_sender
-                    .send((
-                        Instant::now(),
-                        vec![ConsensusMetricsEvent::StartOfSlot { slot }],
-                    ))
-                    .map_err(|_| SendError(()))?;
+                Self::send_to_metrics(
+                    &vctx.consensus_metrics_sender,
+                    vec![ConsensusMetricsEvent::StartOfSlot { slot }],
+                )?;
                 Self::handle_parent_ready_event(
                     slot,
                     parent_block,
@@ -332,14 +346,12 @@ impl EventHandler {
             VotorEvent::Timeout(slot) => {
                 info!("{my_pubkey}: Timeout {slot}");
                 if slot != last_of_consecutive_leader_slots(slot) {
-                    vctx.consensus_metrics_sender
-                        .send((
-                            Instant::now(),
-                            vec![ConsensusMetricsEvent::StartOfSlot {
-                                slot: slot.saturating_add(1),
-                            }],
-                        ))
-                        .map_err(|_| SendError(()))?;
+                    Self::send_to_metrics(
+                        &vctx.consensus_metrics_sender,
+                        vec![ConsensusMetricsEvent::StartOfSlot {
+                            slot: slot.saturating_add(1),
+                        }],
+                    )?;
                 }
                 if vctx.vote_history.voted(slot) {
                     return Ok(votes);
@@ -1669,6 +1681,7 @@ mod tests {
     #[test_case("bls_receiver")]
     #[test_case("commitment_receiver")]
     #[test_case("own_vote_receiver")]
+    #[test_case("consensus_metrics_receiver")]
     fn test_channel_disconnection(channel_name: &str) {
         agave_logger::setup();
         let mut test_context = EventHandlerTestContext::setup();
@@ -1688,13 +1701,17 @@ mod tests {
                 test_context.own_vote_receiver = bounded(100).1;
                 drop(own_vote_receiver);
             }
+            "consensus_metrics_receiver" => {
+                let consensus_metrics_receiver = test_context.consensus_metrics_receiver.clone();
+                test_context.consensus_metrics_receiver = bounded(100).1;
+                drop(consensus_metrics_receiver);
+            }
             _ => panic!("Unknown channel name"),
         }
         // We normally need some event hitting all the senders to trigger exit
         let root_bank = test_context.bank_forks.read().unwrap().root_bank();
         let _ = test_context.create_block_and_send_block_event(1, root_bank);
         test_context.send_parent_ready_event(1, (0, Hash::default()));
-        test_context.wait_for_event_to_be_processed();
         // Verify that the event_handler exits within 5 seconds
         let start = Instant::now();
         while !test_context.exit.load(Ordering::Relaxed) && start.elapsed() < Duration::from_secs(5)
