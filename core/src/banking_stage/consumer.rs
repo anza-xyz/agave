@@ -172,10 +172,13 @@ impl Consumer {
         // Need to filter out transactions since they were sanitized earlier.
         // This means that the transaction may cross and epoch boundary (not allowed),
         //  or account lookup tables may have been closed.
-        let pre_results = txs
-            .iter()
-            .zip(max_ages)
-            .map(|(tx, max_age)| bank.resanitize_transaction_minimally(tx, max_age));
+        let pre_results = txs.iter().zip(max_ages).map(|(tx, max_age)| {
+            bank.resanitize_transaction_minimally(
+                tx,
+                max_age.sanitized_epoch,
+                max_age.alt_invalidation_slot,
+            )
+        });
         self.process_and_record_transactions_with_pre_results(bank, txs, pre_results)
     }
 

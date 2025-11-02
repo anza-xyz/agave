@@ -52,7 +52,6 @@ use {
         versioned::{sanitized::SanitizedVersionedTransaction, VersionedTransaction},
     },
     solana_transaction_error::AddressLoaderError,
-    solana_unified_scheduler_logic::MaxAge,
     solana_unified_scheduler_pool::{BankingStageHelper, DefaultSchedulerPool},
     std::{
         num::NonZeroUsize,
@@ -139,12 +138,8 @@ pub(crate) fn ensure_banking_stage_setup(
                         tx,
                         task_id,
                         packet.meta().size,
-                        MaxAge {
-                            sanitized_epoch: bank.epoch(),
-                            alt_invalidation_slot: estimate_last_valid_slot(
-                                bank.slot().min(deactivation_slot),
-                            ),
-                        },
+                        bank.epoch(),
+                        estimate_last_valid_slot(bank.slot().min(deactivation_slot)),
                     ))
                 });
 

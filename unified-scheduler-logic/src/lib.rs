@@ -452,6 +452,8 @@ const_assert_eq!(mem::size_of::<Task>(), 8);
 
 pub type BlockSize = usize;
 pub const NO_CONSUMED_BLOCK_SIZE: BlockSize = 0;
+pub const MAX_SANITIZED_EPOCH: Epoch = Epoch::MAX;
+pub const MAX_ALT_INVALIDATION_SLOT: Slot = Slot::MAX;
 
 /// [`Token`] for [`UsageQueue`].
 type UsageQueueToken = Token<UsageQueueInner>;
@@ -460,19 +462,6 @@ const_assert_eq!(mem::size_of::<UsageQueueToken>(), 0);
 /// [`Token`] for [task](Task)'s [internal mutable data](`TaskInner::blocked_usage_count`).
 type BlockedUsageCountToken = Token<ShortCounter>;
 const_assert_eq!(mem::size_of::<BlockedUsageCountToken>(), 0);
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct MaxAge {
-    pub sanitized_epoch: Epoch,
-    pub alt_invalidation_slot: Slot,
-}
-
-impl MaxAge {
-    pub const MAX: Self = Self {
-        sanitized_epoch: Epoch::MAX,
-        alt_invalidation_slot: Slot::MAX,
-    };
-}
 
 /// Internal scheduling data about a particular task.
 #[derive(Debug)]
@@ -490,7 +479,8 @@ pub struct TaskInner {
     /// before running.
     blocked_usage_count: TokenCell<ShortCounter>,
     consumed_block_size: BlockSize,
-    max_age: MaxAge,
+    sanitized_epoch: Epoch,
+    alt_invalidation_slot: Slot,
 }
 
 impl TaskInner {
@@ -510,8 +500,12 @@ impl TaskInner {
         self.consumed_block_size
     }
 
-    pub fn max_age(&self) -> &MaxAge {
-        &self.max_age
+    pub fn sanitized_epoch(&self) -> Epoch {
+        self.sanitized_epoch
+    }
+
+    pub fn alt_invalidation_slot(&self) -> Slot {
+        self.alt_invalidation_slot
     }
 
     pub fn transaction(&self) -> &RuntimeTransaction<SanitizedTransaction> {
@@ -1273,7 +1267,8 @@ impl SchedulingStateMachine {
             transaction,
             task_id,
             NO_CONSUMED_BLOCK_SIZE,
-            MaxAge::MAX,
+            MAX_SANITIZED_EPOCH,
+            MAX_ALT_INVALIDATION_SLOT,
             usage_queue_loader,
         )
     }
@@ -1282,14 +1277,16 @@ impl SchedulingStateMachine {
         transaction: RuntimeTransaction<SanitizedTransaction>,
         task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
-        max_age: MaxAge,
+        sanitized_epoch: Epoch,
+        alt_invalidation_slot: Slot,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
         Self::do_create_task(
             transaction,
             task_id,
             consumed_block_size,
-            max_age,
+            sanitized_epoch,
+            alt_invalidation_slot,
             usage_queue_loader,
         )
     }
@@ -1298,7 +1295,8 @@ impl SchedulingStateMachine {
         transaction: RuntimeTransaction<SanitizedTransaction>,
         task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
-        max_age: MaxAge,
+        sanitized_epoch: Epoch,
+        alt_invalidation_slot: Slot,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
         // It's crucial for tasks to be validated with
@@ -1355,7 +1353,8 @@ impl SchedulingStateMachine {
             lock_contexts,
             blocked_usage_count: TokenCell::new(ShortCounter::zero()),
             consumed_block_size,
-            max_age,
+            sanitized_epoch,
+            alt_invalidation_slot,
         })
     }
 

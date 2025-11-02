@@ -34,7 +34,7 @@ use {
     dyn_clone::{clone_trait_object, DynClone},
     log::*,
     scopeguard::defer,
-    solana_clock::Slot,
+    solana_clock::{Epoch, Slot},
     solana_cost_model::cost_model::CostModel,
     solana_ledger::blockstore_processor::{
         execute_batch, TransactionBatchWithIndexes, TransactionStatusSender,
@@ -58,7 +58,7 @@ use {
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::{
-        BlockSize, Capability, MaxAge, OrderedTaskId,
+        BlockSize, Capability, OrderedTaskId,
         SchedulingMode::{self, BlockProduction, BlockVerification},
         SchedulingStateMachine, Task, UsageQueue,
     },
@@ -387,13 +387,15 @@ impl BankingStageHelper {
         transaction: RuntimeTransaction<SanitizedTransaction>,
         task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
-        max_age: MaxAge,
+        sanitized_epoch: Epoch,
+        alt_invalidation_slot: Slot,
     ) -> Task {
         SchedulingStateMachine::create_block_production_task(
             transaction,
             task_id,
             consumed_block_size,
-            max_age,
+            sanitized_epoch,
+            alt_invalidation_slot,
             &mut |pubkey| self.usage_queue_loader.load(pubkey),
         )
     }
@@ -401,9 +403,16 @@ impl BankingStageHelper {
     fn recreate_task(&self, executed_task: Box<ExecutedTask>) -> Task {
         let new_task_id = self.regenerated_task_id(executed_task.task.task_id());
         let consumed_block_size = executed_task.consumed_block_size();
-        let max_age = *executed_task.max_age();
+        let sanitized_epoch = executed_task.sanitized_epoch();
+        let alt_invalidation_slot = executed_task.alt_invalidation_slot();
         let transaction = executed_task.into_transaction();
-        self.create_new_task(transaction, new_task_id, consumed_block_size, max_age)
+        self.create_new_task(
+            transaction,
+            new_task_id,
+            consumed_block_size,
+            sanitized_epoch,
+            alt_invalidation_slot,
+        )
     }
 
     pub fn send_new_task(&self, task: Task) {
@@ -1048,9 +1057,11 @@ impl TaskHandler for DefaultTaskHandler {
                 bank.prepare_unlocked_batch_from_single_tx(transaction)
             }
             BlockProduction => {
-                if let Err(error) =
-                    bank.resanitize_transaction_minimally(transaction, task.max_age())
-                {
+                if let Err(error) = bank.resanitize_transaction_minimally(
+                    transaction,
+                    task.sanitized_epoch(),
+                    task.alt_invalidation_slot(),
+                ) {
                     *result = Err(error);
                     return;
                 }
@@ -1199,8 +1210,12 @@ impl ExecutedTask {
         self.task.consumed_block_size()
     }
 
-    fn max_age(&self) -> &MaxAge {
-        self.task.max_age()
+    fn sanitized_epoch(&self) -> Epoch {
+        self.task.sanitized_epoch()
+    }
+
+    fn alt_invalidation_slot(&self) -> Slot {
+        self.task.alt_invalidation_slot()
     }
 
     fn into_transaction(self) -> RuntimeTransaction<SanitizedTransaction> {
@@ -2789,7 +2804,9 @@ mod tests {
         solana_system_transaction as system_transaction,
         solana_transaction::sanitized::SanitizedTransaction,
         solana_transaction_error::TransactionError,
-        solana_unified_scheduler_logic::NO_CONSUMED_BLOCK_SIZE,
+        solana_unified_scheduler_logic::{
+            MAX_ALT_INVALIDATION_SLOT, MAX_SANITIZED_EPOCH, NO_CONSUMED_BLOCK_SIZE,
+        },
         std::{
             num::Saturating,
             sync::{Arc, RwLock},
@@ -4668,7 +4685,13 @@ mod tests {
             transaction: RuntimeTransaction<SanitizedTransaction>,
             task_id: OrderedTaskId,
         ) -> Task {
-            self.create_new_task(transaction, task_id, NO_CONSUMED_BLOCK_SIZE, MaxAge::MAX)
+            self.create_new_task(
+                transaction,
+                task_id,
+                NO_CONSUMED_BLOCK_SIZE,
+                MAX_SANITIZED_EPOCH,
+                MAX_ALT_INVALIDATION_SLOT,
+            )
         }
     }
 

@@ -166,7 +166,6 @@ use {
         transaction_accounts::KeyedAccountSharedData, TransactionReturnData,
     },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    solana_unified_scheduler_logic::MaxAge,
     solana_vote::vote_account::{VoteAccount, VoteAccountsHashMap},
     std::{
         collections::{HashMap, HashSet},
@@ -3049,17 +3048,18 @@ impl Bank {
     pub fn resanitize_transaction_minimally(
         &self,
         transaction: &impl TransactionWithMeta,
-        max_age: &MaxAge,
+        sanitized_epoch: Epoch,
+        alt_invalidation_slot: Slot,
     ) -> Result<()> {
         // If the transaction was sanitized before this bank's epoch,
         // additional checks are necessary.
-        if self.epoch() != max_age.sanitized_epoch {
+        if self.epoch() != sanitized_epoch {
             // Reserved key set may have changed, so we must verify that
             // no writable keys are reserved.
             self.check_reserved_keys(transaction)?;
         }
 
-        if self.slot() > max_age.alt_invalidation_slot {
+        if self.slot() > alt_invalidation_slot {
             // The address table lookup **may** have expired, but the
             // expiration is not guaranteed since there may have been
             // skipped slot.
