@@ -112,7 +112,7 @@ async fn main() -> anyhow::Result<()> {
         stats,
         thread: run_thread,
         max_concurrent_connections: _,
-    } = solana_streamer::nonblocking::quic::spawn_stake_weighted_qos_server(
+    } = solana_streamer::nonblocking::testing_utilities::spawn_stake_weighted_qos_server(
         "quic_streamer_test",
         [socket.try_clone()?],
         &keypair,
