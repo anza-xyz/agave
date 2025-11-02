@@ -25,7 +25,7 @@ type SerdeStatus<T> = ahash::HashMap<Hash, (usize, Vec<(KeySlice, T)>)>;
 
 /// Serializes the status cache's `slot_deltas` to file at `status_cache_path`
 ///
-/// This fn serializes the status cache into the binary format requried by snapshots.
+/// This fn serializes the status cache into the binary format required by snapshots.
 pub fn serialize_status_cache(
     slot_deltas: &[BankSlotDelta],
     status_cache_path: &Path,

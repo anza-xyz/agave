@@ -286,7 +286,7 @@ impl Rocks {
         // opposed to manual compaction requests on a range.
         // - Periodic compaction operates on individual files once the file
         //   has reached a certain (configurable) age. See comments at
-        //   PERIODIC_COMPACTION_SECONDS for some more deatil.
+        //   PERIODIC_COMPACTION_SECONDS for some more detail.
         // - Manual compaction operates on a range and could end up propagating
         //   through several files and/or levels of the db.
         //
@@ -676,7 +676,7 @@ where
         // run a compaction. Empirically, it has been found that passing the
         // keys leads to more variability in whether rocksdb runs a compaction
         // or not. For the sake of our unit tests, we want the compaction to
-        // run everytime. So, set the keys as None which will result in rocksdb
+        // run every time. So, set the keys as None which will result in rocksdb
         // using the heavier method to determine if a compaction should run
         let (start, end) = (None::<&[u8]>, None::<&[u8]>);
         self.backend.db.compact_range_cf(self.handle(), start, end);

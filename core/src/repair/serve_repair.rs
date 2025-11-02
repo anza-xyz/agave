@@ -69,7 +69,7 @@ use {
 pub const MAX_ORPHAN_REPAIR_RESPONSES: usize = 11;
 // Number of slots to cache their respective repair peers and sampling weights.
 pub(crate) const REPAIR_PEERS_CACHE_CAPACITY: usize = 128;
-// Limit cache entries ttl in order to avoid re-using outdated data.
+// Limit cache entries ttl in order to avoid reusing outdated data.
 const REPAIR_PEERS_CACHE_TTL: Duration = Duration::from_secs(10);
 
 #[cfg(test)]

@@ -28,7 +28,7 @@ use {
 
 /// The maximum connection handshake timeout for QUIC connections.
 /// This is set to 2 seconds, which was the earlier shorter connection idle timeout
-/// which was also used by QUINN to timemout connection handshake.
+/// which was also used by QUINN to timeout connection handshake.
 pub(crate) const DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Interval between retry attempts for creating a new connection. This value is

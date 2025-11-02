@@ -119,7 +119,7 @@ pub struct SharableTransactionBatchRegion {
 pub struct TransactionResponseRegion {
     /// Tag indicating the type of message.
     /// See [`worker_message_types`] for details.
-    /// All inner messages/responses per trasaction will be of the same type.
+    /// All inner messages/responses per transaction will be of the same type.
     pub tag: u8,
     /// The number of transactions in the original message.
     /// This corresponds to the number of inner response

@@ -241,7 +241,7 @@ impl SVMTransactionExecutionCost {
     ///
     /// 61*n^2 + 542
     ///
-    /// Which aproximates the results of benchmarks of light-posiedon
+    /// Which approximates the results of benchmarks of light-posiedon
     /// library[0]. These results assume 1 CU per 33 ns. Examples:
     ///
     /// * 1 input
