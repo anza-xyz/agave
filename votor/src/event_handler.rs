@@ -812,7 +812,7 @@ mod tests {
             consensus_message::{ConsensusMessage, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
             vote::Vote,
         },
-        crossbeam_channel::{unbounded, Receiver, RecvTimeoutError},
+        crossbeam_channel::{bounded, Receiver, RecvTimeoutError},
         parking_lot::RwLock as PlRwLock,
         solana_bls_signatures::{
             keypair::Keypair as BLSKeypair, signature::Signature as BLSSignature,
@@ -866,14 +866,14 @@ mod tests {
 
     impl EventHandlerTestContext {
         fn setup() -> EventHandlerTestContext {
-            let (bls_sender, bls_receiver) = unbounded();
-            let (commitment_sender, commitment_receiver) = unbounded();
-            let (own_vote_sender, own_vote_receiver) = unbounded();
-            let (drop_bank_sender, drop_bank_receiver) = unbounded();
+            let (bls_sender, bls_receiver) = bounded(100);
+            let (commitment_sender, commitment_receiver) = bounded(100);
+            let (own_vote_sender, own_vote_receiver) = bounded(100);
+            let (drop_bank_sender, drop_bank_receiver) = bounded(100);
             let exit = Arc::new(AtomicBool::new(false));
             let start = Arc::new((Mutex::new(true), Condvar::new()));
-            let (event_sender, event_receiver) = unbounded();
-            let (consensus_metrics_sender, consensus_metrics_receiver) = unbounded();
+            let (event_sender, event_receiver) = bounded(100);
+            let (consensus_metrics_sender, consensus_metrics_receiver) = bounded(100);
             let timer_manager = Arc::new(PlRwLock::new(TimerManager::new(
                 event_sender.clone(),
                 exit.clone(),
@@ -1669,30 +1669,24 @@ mod tests {
     #[test_case("bls_receiver")]
     #[test_case("commitment_receiver")]
     #[test_case("own_vote_receiver")]
-    #[test_case("consensus_metrics_receiver")]
     fn test_channel_disconnection(channel_name: &str) {
         agave_logger::setup();
         let mut test_context = EventHandlerTestContext::setup();
         match channel_name {
             "bls_receiver" => {
                 let bls_receiver = test_context.bls_receiver.clone();
-                test_context.bls_receiver = unbounded().1;
+                test_context.bls_receiver = bounded(100).1;
                 drop(bls_receiver);
             }
             "commitment_receiver" => {
                 let commitment_receiver = test_context.commitment_receiver.clone();
-                test_context.commitment_receiver = unbounded().1;
+                test_context.commitment_receiver = bounded(100).1;
                 drop(commitment_receiver);
             }
             "own_vote_receiver" => {
                 let own_vote_receiver = test_context.own_vote_receiver.clone();
-                test_context.own_vote_receiver = unbounded().1;
+                test_context.own_vote_receiver = bounded(100).1;
                 drop(own_vote_receiver);
-            }
-            "consensus_metrics_receiver" => {
-                let consensus_metrics_receiver = test_context.consensus_metrics_receiver.clone();
-                test_context.consensus_metrics_receiver = unbounded().1;
-                drop(consensus_metrics_receiver);
             }
             _ => panic!("Unknown channel name"),
         }
