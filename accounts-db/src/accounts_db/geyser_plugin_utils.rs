@@ -1,6 +1,7 @@
 use {
-    crate::accounts_db::AccountsDb, solana_account::AccountSharedData, solana_clock::Slot,
-    solana_pubkey::Pubkey, solana_transaction::sanitized::SanitizedTransaction,
+    crate::accounts_db::AccountsDb, agave_geyser_notifier::GeyserNotifier,
+    solana_account::AccountSharedData, solana_clock::Slot, solana_pubkey::Pubkey,
+    solana_transaction::sanitized::SanitizedTransaction,
 };
 
 impl AccountsDb {
@@ -21,6 +22,18 @@ impl AccountsDb {
                 write_version,
             );
         }
+
+        // push to shared queue
+        GeyserNotifier::thread_local(|notifier| {
+            let _ = notifier.notify_account_update(
+                pubkey,
+                account,
+                slot,
+                write_version,
+                false, // is_startup
+                txn.map(|t| t.signature()),
+            );
+        });
     }
 }
 
