@@ -55,10 +55,10 @@ other supported target platforms (MacOS and Windows) today and suggested for lin
 be required there as well
 
 ## Networking
-A commercial connection with a public IPv4 address is required.
+A stable connection with a public IPv4 address is required.
 
-- For an unstaked node: 1 GBit/s connection is sufficient.
-- For a staked node: at least 2 GBit/s connection is required, 10 GBit/s of available bandwidth is recommended for stable operation.
+- For an unstaked node: 1 GBit/s symmetric connection is sufficient.
+- For a staked node: at least 2 GBit/s symmetric connection is required, 10 GBit/s of available bandwidth is recommended for stable operation.
 
 ### Firewall
 It is not recommended to run a validator behind a NAT. Operators who choose to
