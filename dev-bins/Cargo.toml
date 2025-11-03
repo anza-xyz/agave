@@ -76,9 +76,9 @@ solana-accounts-db = { path = "../accounts-db", version = "=3.1.0-beta.0", featu
 solana-bench-tps = { path = "../bench-tps", version = "=3.1.0-beta.0" }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", version = "=3.1.0-beta.0", features = ["agave-unstable-api"] }
 solana-clap-utils = { path = "../clap-utils", version = "=3.1.0-beta.0", features = ["agave-unstable-api"] }
-solana-cli-config = { path = "../cli-config", version = "=3.1.0-beta.0", features = ["agave-unstable-api"] }
+solana-cli-config = { path = "../cli-config", version = "=3.1.0-beta.0" }
 solana-cli-output = { path = "../cli-output", version = "=3.1.0-beta.0", features = ["agave-unstable-api"] }
-solana-client = { path = "../client", version = "=3.1.0-beta.0", features = ["agave-unstable-api"] }
+solana-client = { path = "../client", version = "=3.1.0-beta.0" }
 solana-clock = "3.0.0"
 solana-cluster-type = "3.0.0"
 solana-commitment-config = "3.0.0"
@@ -116,9 +116,9 @@ solana-pubkey = { version = "3.0.0", default-features = false }
 solana-quic-client = { path = "../quic-client", version = "=3.1.0-beta.0", features = ["agave-unstable-api"] }
 solana-rent = "3.0.0"
 solana-rpc = { path = "../rpc", version = "=3.1.0-beta.0", features = ["agave-unstable-api"] }
-solana-rpc-client = { path = "../rpc-client", version = "=3.1.0-beta.0", default-features = false, features = ["agave-unstable-api"] }
-solana-rpc-client-api = { path = "../rpc-client-api", version = "=3.1.0-beta.0", features = ["agave-unstable-api"] }
-solana-rpc-client-nonce-utils = { path = "../rpc-client-nonce-utils", version = "=3.1.0-beta.0", features = ["agave-unstable-api"] }
+solana-rpc-client = { path = "../rpc-client", version = "=3.1.0-beta.0", default-features = false }
+solana-rpc-client-api = { path = "../rpc-client-api", version = "=3.1.0-beta.0" }
+solana-rpc-client-nonce-utils = { path = "../rpc-client-nonce-utils", version = "=3.1.0-beta.0" }
 solana-runtime = { path = "../runtime", version = "=3.1.0-beta.0", features = ["agave-unstable-api"] }
 solana-runtime-transaction = { path = "../runtime-transaction", version = "=3.1.0-beta.0", features = ["agave-unstable-api"] }
 solana-sbpf = { version = "=0.13.0", default-features = false }
