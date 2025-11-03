@@ -1,5 +1,5 @@
 [package]
-name = "geyser-shaq-queues"
+name = "agave-geyser-notifier"
 version.workspace = true
 authors.workspace = true
 description.workspace = true
@@ -9,13 +9,14 @@ license.workspace = true
 edition.workspace = true
 
 [dependencies]
+agave-geyser-plugin-interface = { workspace = true }
 geyser-shaq-bindings = { path = "../geyser-shaq-bindings" }
-rts-alloc = "0.2.0"
-shaq = "0.2.0"
+geyser-shaq-queues = { path = "../geyser-shaq-queues" }
+solana-signature = { workspace = true }
+solana-account = { workspace = true }
+solana-clock = { workspace = true }
+solana-pubkey = { workspace = true }
 thiserror = { workspace = true }
-
-[dev-dependencies]
-tempfile = "3.23.0"
 
 [lints]
 workspace = true

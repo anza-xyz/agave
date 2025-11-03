@@ -36,6 +36,7 @@ frozen-abi = [
 ]
 
 [dependencies]
+agave-geyser-notifier = { path = "../geyser-notifier" }
 agave-fs = { workspace = true }
 ahash = { workspace = true }
 bincode = { workspace = true }

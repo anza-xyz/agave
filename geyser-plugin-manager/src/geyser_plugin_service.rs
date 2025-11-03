@@ -30,40 +30,8 @@ use {
     thiserror::Error,
 };
 
-
-/*
-// Legacy mode (existing behavior)
-let service = GeyserPluginService::new(
-    GeyserMode::Legacy,
-    confirmed_bank_receiver,
-    &geyser_plugin_config_files,
-    // ...
-)?;
-
-// OR Queue mode (new behavior) 
-let service = GeyserPluginService::new(
-    GeyserMode::QueueBased { 
-        base_path: "/dev/shm/geyser-queues".to_string(),
-        mode: QueueMode::NonBlocking,
-    },
-    confirmed_bank_receiver,
-    &[], // No plugin config files needed!
-    // ...
-)?;
-*/
-
-#[derive(Default)]
-pub enum GeyserMode {
-    /// Current synchronous plugin callbacks (V1)
-    #[default]
-    Legacy,
-    /// New shared memory queues (V2) 
-    QueueBased { base_path: String },
-}
-
 /// The service managing the Geyser plugin workflow.
 pub struct GeyserPluginService {
-    mode: GeyserMode,
     slot_status_observer: Option<SlotStatusObserver>,
     plugin_manager: Arc<RwLock<GeyserPluginManager>>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
@@ -185,7 +153,6 @@ impl GeyserPluginService {
 
         info!("Started GeyserPluginService");
         Ok(GeyserPluginService {
-            mode: GeyserMode::Legacy, // messy default for now
             slot_status_observer,
             plugin_manager,
             accounts_update_notifier,
