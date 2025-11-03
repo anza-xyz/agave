@@ -33,6 +33,7 @@ use {
         window_service::DuplicateSlotReceiver,
     },
     agave_votor::root_utils,
+    ahash::AHashSet,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     rayon::{prelude::*, ThreadPool},
     solana_accounts_db::contains::Contains,
@@ -3589,6 +3590,7 @@ impl ReplayStage {
     ) -> Vec<Slot> {
         frozen_banks.sort_by_key(|bank| bank.slot());
         let mut new_stats = vec![];
+        let mut vote_slots = AHashSet::new();
         for bank in frozen_banks.iter() {
             let bank_slot = bank.slot();
             // Only time progress map should be missing a bank slot
@@ -3617,6 +3619,7 @@ impl ReplayStage {
                         ancestors,
                         |slot| progress.get_hash(slot),
                         latest_validator_votes_for_frozen_banks,
+                        &mut vote_slots,
                     );
                     // Notify any listeners of the votes found in this newly computed
                     // bank

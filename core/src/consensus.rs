@@ -20,6 +20,7 @@ use {
         tower_vote_state::TowerVoteState,
     },
     crate::replay_stage::DUPLICATE_THRESHOLD,
+    ahash::{AHashMap, AHashSet},
     chrono::prelude::*,
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
@@ -36,10 +37,7 @@ use {
     solana_vote_program::{
         vote_error::VoteError,
         vote_instruction,
-        vote_state::{
-            BlockTimestamp, Lockout, TowerSync, Vote, VoteState1_14_11, VoteStateUpdate,
-            MAX_LOCKOUT_HISTORY,
-        },
+        vote_state::{BlockTimestamp, Lockout, TowerSync, Vote, VoteState1_14_11, VoteStateUpdate},
     },
     std::{
         cmp::Ordering,
@@ -164,7 +162,7 @@ pub const SWITCH_FORK_THRESHOLD: f64 = 0.38;
 pub type Result<T> = std::result::Result<T, TowerError>;
 
 pub type Stake = u64;
-pub type VotedStakes = HashMap<Slot, Stake>;
+pub type VotedStakes = AHashMap<Slot, Stake>;
 pub type PubkeyVotes = Vec<(Pubkey, Slot)>;
 
 pub(crate) struct ComputedBankState {
@@ -410,9 +408,17 @@ impl Tower {
         ancestors: &HashMap<Slot, HashSet<Slot>>,
         get_frozen_hash: impl Fn(Slot) -> Option<Hash>,
         latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
+        vote_slots: &mut AHashSet<Slot>,
     ) -> ComputedBankState {
-        let mut vote_slots = HashSet::new();
-        let mut voted_stakes = HashMap::new();
+        let min_slot = ancestors
+            .get(&bank_slot)
+            .and_then(|ancestors| ancestors.iter().min())
+            .copied()
+            .unwrap_or(bank_slot);
+
+        let total_slots = (bank_slot.saturating_sub(min_slot) + 1) as usize;
+        vote_slots.reserve(total_slots);
+        let mut voted_stakes = AHashMap::with_capacity(total_slots);
         let mut total_stake = 0;
 
         // Tree of intervals of lockouts of the form [slot, slot + slot.lockout],
@@ -471,21 +477,35 @@ impl Tower {
 
             vote_state.process_next_vote_slot(bank_slot);
 
-            for vote in &vote_state.votes {
-                vote_slots.insert(vote.slot());
+            // Only record vote slots that fall within the dense range for this bank
+            // [min_ancestor_of(bank_slot), bank_slot]. Votes earlier than the fork
+            // root will not have entries in `ancestors` and are ignored by
+            // `populate_ancestor_voted_stakes`, and there can be no landed votes
+            // >= `bank_slot`. Bounding here prevents unnecessary range expansion
+            // in the dense maps and keeps behavior identical.
+            for slot in vote_state.votes.iter().filter_map(|v| {
+                let slot = v.slot();
+                (slot >= min_slot).then_some(slot)
+            }) {
+                vote_slots.insert(slot);
             }
 
             if start_root != vote_state.root_slot {
                 if let Some(root) = start_root {
-                    let vote =
-                        Lockout::new_with_confirmation_count(root, MAX_LOCKOUT_HISTORY as u32);
-                    trace!("ROOT: {}", vote.slot());
-                    vote_slots.insert(vote.slot());
+                    // The account's prior root can be older than this fork's root; clamp to
+                    // the same range for the same reason as above.
+                    if root >= min_slot {
+                        trace!("ROOT: {root}");
+                        vote_slots.insert(root);
+                    }
                 }
             }
             if let Some(root) = vote_state.root_slot {
-                let vote = Lockout::new_with_confirmation_count(root, MAX_LOCKOUT_HISTORY as u32);
-                vote_slots.insert(vote.slot());
+                // Likewise, only include the (new) root if it lies within the range this
+                // bank will ever query in `ancestors`.
+                if root >= min_slot {
+                    vote_slots.insert(root);
+                }
             }
 
             // The last vote in the vote stack is a simulated vote on bank_slot, which
@@ -515,7 +535,11 @@ impl Tower {
 
         // TODO: populate_ancestor_voted_stakes only adds zeros. Comment why
         // that is necessary (if so).
-        Self::populate_ancestor_voted_stakes(&mut voted_stakes, vote_slots, ancestors);
+        Self::populate_ancestor_voted_stakes(
+            &mut voted_stakes,
+            vote_slots.iter().copied(),
+            ancestors,
+        );
 
         // As commented above, since the votes at current bank_slot are
         // simulated votes, the voted_stake for `bank_slot` is not populated.
@@ -531,6 +555,8 @@ impl Tower {
                     .copied()
             })
             .unwrap_or(0);
+
+        vote_slots.clear();
 
         ComputedBankState {
             voted_stakes,
@@ -1310,7 +1336,7 @@ impl Tower {
         threshold_depth: usize,
         threshold_size: f64,
         slot: Slot,
-        voted_stakes: &HashMap<Slot, u64>,
+        voted_stakes: &VotedStakes,
         total_stake: u64,
     ) -> ThresholdDecision {
         let Some(threshold_vote) = threshold_vote else {
@@ -2502,6 +2528,7 @@ pub mod test {
             &ancestors,
             |_| Some(Hash::default()),
             &mut latest_validator_votes_for_frozen_banks,
+            &mut AHashSet::new(),
         );
         assert_eq!(voted_stakes[&0], 2);
         assert_eq!(total_stake, 2);
@@ -2549,6 +2576,7 @@ pub mod test {
             &ancestors,
             |_| Some(Hash::default()),
             &mut latest_validator_votes_for_frozen_banks,
+            &mut AHashSet::new(),
         );
         for i in 0..MAX_LOCKOUT_HISTORY {
             assert_eq!(voted_stakes[&(i as u64)], 2);
@@ -2574,7 +2602,7 @@ pub mod test {
     fn test_check_vote_threshold_no_skip_lockout_with_new_root() {
         agave_logger::setup();
         let mut tower = Tower::new_for_tests(4, 0.67);
-        let mut stakes = HashMap::new();
+        let mut stakes = AHashMap::new();
         for i in 0..(MAX_LOCKOUT_HISTORY as u64 + 1) {
             stakes.insert(i, 1);
             tower.record_vote(i, Hash::default());
@@ -2594,7 +2622,7 @@ pub mod test {
     #[test]
     fn test_is_slot_confirmed_unknown_slot() {
         let tower = Tower::new_for_tests(1, 0.67);
-        let stakes = HashMap::new();
+        let stakes = AHashMap::new();
         assert!(!tower.is_slot_confirmed(0, &stakes, 2));
     }
 
@@ -2615,7 +2643,7 @@ pub mod test {
     #[test]
     fn test_is_slot_duplicate_confirmed_unknown_slot() {
         let tower = Tower::new_for_tests(1, 0.67);
-        let stakes = HashMap::new();
+        let stakes = AHashMap::new();
         assert!(!tower.is_slot_duplicate_confirmed(0, &stakes, 100));
     }
 
@@ -2786,7 +2814,7 @@ pub mod test {
     #[test]
     fn test_check_vote_threshold_above_threshold_no_stake() {
         let mut tower = Tower::new_for_tests(1, 0.67);
-        let stakes = HashMap::new();
+        let stakes = AHashMap::new();
         tower.record_vote(0, Hash::default());
         assert!(!tower.check_vote_stake_thresholds(1, &stakes, 2).is_empty());
     }
@@ -2804,7 +2832,7 @@ pub mod test {
 
     #[test]
     fn test_stake_is_updated_for_entire_branch() {
-        let mut voted_stakes = HashMap::new();
+        let mut voted_stakes = AHashMap::new();
         let account = AccountSharedData::from(Account {
             lamports: 1,
             ..Account::default()
@@ -2841,7 +2869,7 @@ pub mod test {
 
         // Initialize tower
         let mut tower = Tower::new_for_tests(VOTE_THRESHOLD_DEPTH, threshold_size);
-
+        let mut vote_slots = AHashSet::new();
         // CASE 1: Record the first VOTE_THRESHOLD tower votes for fork 2. We want to
         // evaluate a vote on slot VOTE_THRESHOLD_DEPTH. The nth most recent vote should be
         // for slot 0, which is common to all account vote states, so we should pass the
@@ -2861,6 +2889,7 @@ pub mod test {
             &ancestors,
             |_| None,
             &mut LatestValidatorVotesForFrozenBanks::default(),
+            &mut vote_slots,
         );
         assert!(tower
             .check_vote_stake_thresholds(vote_to_evaluate, &voted_stakes, total_stake)
@@ -2881,6 +2910,7 @@ pub mod test {
             &ancestors,
             |_| None,
             &mut LatestValidatorVotesForFrozenBanks::default(),
+            &mut vote_slots,
         );
         assert!(!tower
             .check_vote_stake_thresholds(vote_to_evaluate, &voted_stakes, total_stake)
