@@ -220,8 +220,8 @@ impl EventHandler {
         match consensus_metrics_sender.try_send((Instant::now(), consensus_metrics_events)) {
             Ok(()) => Ok(()),
             Err(TrySendError::Disconnected(_)) => Err(EventLoopError::SenderDisconnected),
-            Err(e) => {
-                warn!("send_metrics failed: {e:?}");
+            Err(TrySendError::Full(_)) => {
+                warn!("send_metrics failed: queue is full");
                 Ok(())
             }
         }
