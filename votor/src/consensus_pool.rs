@@ -331,18 +331,16 @@ impl ConsensusPool {
                     &mut self.stats,
                 );
             }
-            Err(e) => {
-                match e {
-                    vote_pool::AddVoteError::Duplicate => {
-                        self.stats.exist_votes = self.stats.exist_votes.saturating_add(1);
-                    }
-                    vote_pool::AddVoteError::Slash => {
-                        self.stats.slashable_behavior =
-                            self.stats.slashable_behavior.saturating_add(1);
-                    }
+            Err(e) => match e {
+                vote_pool::AddVoteError::Duplicate => {
+                    self.stats.exist_votes = self.stats.exist_votes.saturating_add(1);
+                    return Ok(vec![]);
                 }
-                return Err(e.into());
-            }
+                vote_pool::AddVoteError::Slash => {
+                    self.stats.slashable_behavior = self.stats.slashable_behavior.saturating_add(1);
+                    return Err(e.into());
+                }
+            },
         }
         self.stats.incr_ingested_vote(&vote);
         self.update_certificates(&vote, events, total_stake)
