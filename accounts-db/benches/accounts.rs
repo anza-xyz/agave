@@ -122,12 +122,13 @@ fn bench_concurrent_read_write(bencher: &mut Bencher) {
         "concurrent_read_write",
         bencher,
         |accounts, pubkeys| {
+            let ancestors = Ancestors::default();
             let mut rng = rand::thread_rng();
             loop {
                 let i = rng.gen_range(0..pubkeys.len());
                 test::black_box(
                     accounts
-                        .load_without_fixed_root(&Ancestors::default(), &pubkeys[i])
+                        .load_without_fixed_root(&ancestors, &pubkeys[i])
                         .unwrap(),
                 );
             }
@@ -137,17 +138,21 @@ fn bench_concurrent_read_write(bencher: &mut Bencher) {
 
 #[bench]
 fn bench_concurrent_scan_write(bencher: &mut Bencher) {
-    store_accounts_with_possible_contention("concurrent_scan_write", bencher, |accounts, _| loop {
-        test::black_box(
-            accounts
-                .load_by_program(
-                    &Ancestors::default(),
-                    0,
-                    AccountSharedData::default().owner(),
-                    &ScanConfig::default(),
-                )
-                .unwrap(),
-        );
+    store_accounts_with_possible_contention("concurrent_scan_write", bencher, |accounts, _| {
+        let ancestors = Ancestors::default();
+        let scan_cfg = ScanConfig::default();
+        loop {
+            test::black_box(
+                accounts
+                    .load_by_program(
+                        &ancestors,
+                        0,
+                        AccountSharedData::default().owner(),
+                        &scan_cfg,
+                    )
+                    .unwrap(),
+            );
+        }
     })
 }
 
@@ -269,12 +274,13 @@ fn bench_load_largest_accounts(b: &mut Bencher) {
     accounts.accounts_db.add_root_and_flush_write_cache(0);
     let ancestors = Ancestors::from(vec![0]);
     let bank_id = 0;
+    let empty_filter: HashSet<Pubkey> = HashSet::new();
     b.iter(|| {
         accounts.load_largest_accounts(
             &ancestors,
             bank_id,
             20,
-            &HashSet::new(),
+            &empty_filter,
             AccountAddressFilter::Exclude,
             false,
         )
