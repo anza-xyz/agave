@@ -43,7 +43,7 @@ type PoolId = (Slot, VoteType);
 
 /// Different failure cases from calling `add_vote()`.
 #[derive(Debug, Error)]
-pub(crate) enum AddVoteError {
+enum AddVoteError {
     #[error("Conflicting vote type: {0:?} vs existing {1:?} for slot: {2} pubkey: {3}")]
     ConflictingVoteType(VoteType, VoteType, Slot, Pubkey),
     #[error("Epoch stakes missing for epoch: {0}")]
@@ -58,7 +58,7 @@ pub(crate) enum AddVoteError {
 
 /// Different failure cases from calling `add_certificate()`.
 #[derive(Debug, Error)]
-pub(crate) enum AddCertError {
+enum AddCertError {
     #[error("Unrooted slot")]
     UnrootedSlot,
 }
