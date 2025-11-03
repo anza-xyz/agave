@@ -237,6 +237,7 @@ pub(crate) mod external {
     }
 
     type Tx = RuntimeTransaction<ResolvedTransactionView<TransactionPtr>>;
+    type TxView = SanitizedTransactionView<TransactionPtr>;
 
     impl ExternalWorker {
         pub fn new(
@@ -716,7 +717,6 @@ pub(crate) mod external {
             Ok(())
         }
 
-        #[allow(clippy::type_complexity)]
         /// # Safety:
         /// - `responses_ptr` must be aligned and sufficiently sized.
         unsafe fn parse_transactions_and_populate_initial_check_responses<'a>(
@@ -726,7 +726,7 @@ pub(crate) mod external {
             responses_ptr: NonNull<CheckResponse>,
         ) -> (
             Vec<Result<(), TransactionViewError>>,
-            Vec<SanitizedTransactionView<TransactionPtr>>,
+            Vec<TxView>,
             &'a mut [CheckResponse],
         ) {
             let enable_static_instruction_limit = bank
@@ -832,7 +832,7 @@ pub(crate) mod external {
 
         fn check_load_fee_payer_balance(
             parsing_results: &[Result<(), TransactionViewError>],
-            parsed_transactions: &[SanitizedTransactionView<TransactionPtr>],
+            parsed_transactions: &[TxView],
             responses: &mut [CheckResponse],
             working_bank: &Bank,
         ) {
