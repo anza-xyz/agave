@@ -51,8 +51,8 @@ use {
     },
     solana_streamer::{
         quic::{
-            spawn_server_with_cancel, spawn_simple_qos_server_with_cancel,
-            SimpleQosQuicStreamerConfig, SpawnServerResult, SwQosQuicStreamerConfig,
+            spawn_simple_qos_server, spawn_stake_wighted_qos_server, SimpleQosQuicStreamerConfig,
+            SpawnServerResult, SwQosQuicStreamerConfig,
         },
         streamer::StakedNodes,
     },
@@ -217,7 +217,7 @@ impl Tpu {
             endpoints: _,
             thread: tpu_vote_quic_t,
             key_updater: vote_streamer_key_updater,
-        } = spawn_simple_qos_server_with_cancel(
+        } = spawn_simple_qos_server(
             "solQuicTVo",
             "quic_streamer_tpu_vote",
             tpu_vote_quic_sockets,
@@ -236,7 +236,7 @@ impl Tpu {
                 endpoints: _,
                 thread: tpu_quic_t,
                 key_updater,
-            } = spawn_server_with_cancel(
+            } = spawn_stake_wighted_qos_server(
                 "solQuicTpu",
                 "quic_streamer_tpu",
                 transactions_quic_sockets,
@@ -259,7 +259,7 @@ impl Tpu {
                 endpoints: _,
                 thread: tpu_forwards_quic_t,
                 key_updater: forwards_key_updater,
-            } = spawn_server_with_cancel(
+            } = spawn_stake_wighted_qos_server(
                 "solQuicTpuFwd",
                 "quic_streamer_tpu_forwards",
                 transactions_forwards_quic_sockets,

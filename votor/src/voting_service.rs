@@ -278,7 +278,7 @@ mod tests {
         solana_signer::Signer,
         solana_streamer::{
             nonblocking::swqos::SwQosConfig,
-            quic::{spawn_server_with_cancel, QuicStreamerConfig, SpawnServerResult},
+            quic::{spawn_stake_wighted_qos_server, QuicStreamerConfig, SpawnServerResult},
             socket::SocketAddrSpace,
             streamer::StakedNodes,
         },
@@ -366,7 +366,7 @@ mod tests {
         let (_, validator_keypairs) = create_voting_service(bls_receiver, listener_addr);
 
         // Send a BLS message via the VotingService
-        assert!(bls_sender.send(bls_op).is_ok());
+        bls_sender.send(bls_op).unwrap();
 
         // Start a quick streamer to handle quick control packets
         let (sender, receiver) = crossbeam_channel::unbounded();
@@ -382,7 +382,7 @@ mod tests {
         let SpawnServerResult {
             thread: quic_server_thread,
             ..
-        } = spawn_server_with_cancel(
+        } = spawn_stake_wighted_qos_server(
             "AlpenglowLocalClusterTest",
             "quic_streamer_test",
             [socket],

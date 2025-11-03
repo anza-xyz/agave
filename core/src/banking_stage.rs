@@ -485,8 +485,9 @@ impl BankingStage {
         // Shutdown all current threads.
         self.worker_exit_signal.store(true, Ordering::Relaxed);
         while let Some((name, res)) = self.threads.next().await {
-            if let Err(err) = res {
-                error!("Banking worker exited with error; name={name}; err={err:?}");
+            match res.unwrap() {
+                Ok(()) => info!("Banking worker exited cleanly; name={name}"),
+                Err(err) => error!("Banking worker exited with error; name={name}; err={err:?}"),
             }
         }
 
@@ -520,6 +521,8 @@ impl BankingStage {
 
             NamedTask::new(tokio::task::spawn_blocking(|| handle.join()), name)
         }));
+
+        info!("Scheduler spawned");
     }
 
     fn spawn_internal(
@@ -528,6 +531,7 @@ impl BankingStage {
         num_workers: NonZeroUsize,
         scheduler_config: SchedulerConfig,
     ) -> Vec<JoinHandle<()>> {
+        info!("Spawning internal scheduler");
         assert!(num_workers <= BankingStage::max_num_workers());
         let num_workers = num_workers.get();
 
@@ -694,6 +698,7 @@ mod external {
                 workers,
             }: AgaveSession,
         ) -> Vec<JoinHandle<()>> {
+            info!("Spawning external scheduler");
             static_assertions::const_assert!(
                 agave_scheduling_utils::handshake::MAX_WORKERS
                     == BankingStage::max_num_workers().get()
@@ -705,7 +710,6 @@ mod external {
             threads.push(self.spawn_vote_worker());
 
             // Spawn the external consumer workers.
-            // TODO: Pass worker_metrics to progress tracker.
             let mut worker_metrics = Vec::with_capacity(workers.len());
             for (
                 index,
@@ -765,6 +769,7 @@ mod external {
                 self.worker_exit_signal.clone(),
                 progress_tracker,
                 shared_leader_state,
+                worker_metrics,
                 ticks_per_slot,
             ));
 

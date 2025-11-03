@@ -19,8 +19,8 @@ use {
         nonblocking::swqos::SwQosConfig,
         packet::PacketBatchRecycler,
         quic::{
-            spawn_server_with_cancel, QuicStreamerConfig, DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER,
-            DEFAULT_MAX_STAKED_CONNECTIONS,
+            spawn_stake_wighted_qos_server, QuicStreamerConfig,
+            DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER, DEFAULT_MAX_STAKED_CONNECTIONS,
         },
         streamer::{receiver, PacketBatchReceiver, StakedNodes, StreamerReceiveStats},
     },
@@ -276,7 +276,7 @@ fn main() -> Result<()> {
             let (s_reader, r_reader) = unbounded();
             read_channels.push(r_reader);
 
-            let server = spawn_server_with_cancel(
+            let server = spawn_stake_wighted_qos_server(
                 "solRcvrBenVote",
                 "bench_vote_metrics",
                 read_sockets,
