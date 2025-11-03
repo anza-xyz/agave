@@ -160,20 +160,20 @@ impl ConsensusMetrics {
     fn run(&mut self, exit: Arc<AtomicBool>) {
         while !exit.load(Ordering::Relaxed) {
             match self.receiver.recv_timeout(Duration::from_secs(1)) {
-                Ok((received, events)) => {
+                Ok((recorded, events)) => {
                     for event in events {
                         match event {
                             ConsensusMetricsEvent::Vote { id, vote } => {
-                                self.record_vote(id, &vote, received);
+                                self.record_vote(id, &vote, recorded);
                             }
                             ConsensusMetricsEvent::BlockHashSeen { leader, slot } => {
-                                self.record_block_hash_seen(leader, slot, received);
+                                self.record_block_hash_seen(leader, slot, recorded);
                             }
                             ConsensusMetricsEvent::MaybeNewEpoch { epoch } => {
                                 self.maybe_new_epoch(epoch);
                             }
                             ConsensusMetricsEvent::StartOfSlot { slot } => {
-                                self.record_start_of_slot(slot, received);
+                                self.record_start_of_slot(slot, recorded);
                             }
                         }
                     }
@@ -190,23 +190,23 @@ impl ConsensusMetrics {
     }
 
     /// Records a `vote` from the node with `id`.
-    fn record_vote(&mut self, id: Pubkey, vote: &Vote, received: Instant) {
+    fn record_vote(&mut self, id: Pubkey, vote: &Vote, recorded: Instant) {
         let Some(start) = self.start_of_slot.get(&vote.slot()) else {
             self.metrics_recording_failed = self.metrics_recording_failed.saturating_add(1);
             return;
         };
         let node = self.node_metrics.entry(id).or_default();
-        let elapsed = received.duration_since(*start);
+        let elapsed = recorded.duration_since(*start);
         node.record_vote(vote, elapsed);
     }
 
     /// Records when a block for `slot` was seen and the `leader` is responsible for producing it.
-    fn record_block_hash_seen(&mut self, leader: Pubkey, slot: Slot, received: Instant) {
+    fn record_block_hash_seen(&mut self, leader: Pubkey, slot: Slot, recorded: Instant) {
         let Some(start) = self.start_of_slot.get(&slot) else {
             self.metrics_recording_failed = self.metrics_recording_failed.saturating_add(1);
             return;
         };
-        let elapsed = received.duration_since(*start).as_micros();
+        let elapsed = recorded.duration_since(*start).as_micros();
         let elapsed = match elapsed.try_into() {
             Ok(e) => e,
             Err(err) => {
@@ -233,8 +233,8 @@ impl ConsensusMetrics {
     }
 
     /// Records when a given slot started.
-    fn record_start_of_slot(&mut self, slot: Slot, received: Instant) {
-        self.start_of_slot.entry(slot).or_insert(received);
+    fn record_start_of_slot(&mut self, slot: Slot, recorded: Instant) {
+        self.start_of_slot.entry(slot).or_insert(recorded);
     }
 
     /// Performs end of epoch reporting and reset all the statistics for the subsequent epoch.

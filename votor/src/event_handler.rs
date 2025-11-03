@@ -97,7 +97,6 @@ impl EventHandler {
                 if let Err(e) = Self::event_loop(ctx) {
                     exit.store(true, Ordering::Relaxed);
                     error!("EventHandler exited with error: {e}");
-                    error!("{:?}", exit.load(Ordering::Relaxed));
                 }
                 info!("EventHandler has stopped");
             })
@@ -878,6 +877,7 @@ mod tests {
 
     impl EventHandlerTestContext {
         fn setup() -> EventHandlerTestContext {
+            // For tests, we just make each queue bounded at 100, should be enough.
             let (bls_sender, bls_receiver) = bounded(100);
             let (commitment_sender, commitment_receiver) = bounded(100);
             let (own_vote_sender, own_vote_receiver) = bounded(100);
