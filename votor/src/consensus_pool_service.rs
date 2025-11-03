@@ -2,9 +2,11 @@
 //! and notifying votor of new events that occur
 use {
     crate::{
-        commitment::{update_commitment_cache, CommitmentAggregationData, CommitmentType},
+        commitment::{
+            update_commitment_cache, CommitmentAggregationData, CommitmentError, CommitmentType,
+        },
         consensus_pool::{
-            parent_ready_tracker::BlockProductionParent, AddVoteError, ConsensusPool,
+            parent_ready_tracker::BlockProductionParent, AddMessageError, ConsensusPool,
         },
         event::{LeaderWindowInfo, VotorEvent, VotorEventSender},
         voting_service::BLSOp,
@@ -62,10 +64,14 @@ pub(crate) struct ConsensusPoolService {
     t_ingest: JoinHandle<()>,
 }
 
-#[derive(Error, Debug)]
-enum ConsensusPoolServiceError {
+#[derive(Debug, Error)]
+enum ServiceError {
+    #[error("Failed to add message into the consensus pool: {0}")]
+    AddMessage(#[from] AddMessageError),
     #[error("Channel {0} disconnected")]
     ChannelDisconnected(String),
+    #[error("Channel is full")]
+    ChannelFull,
     #[error("Failed to add block event: {0}")]
     FailedToAddBlockEvent(String),
 }
@@ -95,7 +101,7 @@ impl ConsensusPoolService {
         new_certificates_to_send: Vec<Arc<Certificate>>,
         standstill_timer: &mut Instant,
         stats: &mut Stats,
-    ) -> Result<(), AddVoteError> {
+    ) -> Result<(), ServiceError> {
         // If we have a new finalized slot, update the root and send new certificates
         if new_finalized_slot.is_some() {
             // Reset standstill timer
@@ -113,7 +119,7 @@ impl ConsensusPoolService {
         bls_sender: &Sender<BLSOp>,
         certs: Vec<Arc<Certificate>>,
         stats: &mut Stats,
-    ) -> Result<(), AddVoteError> {
+    ) -> Result<(), ServiceError> {
         let certs_len = certs.len();
         for (i, certificate) in certs.into_iter().enumerate() {
             // The BLS cert channel is expected to be large enough, so we don't
@@ -123,13 +129,13 @@ impl ConsensusPoolService {
                     stats.certificates_sent += 1;
                 }
                 Err(TrySendError::Disconnected(_)) => {
-                    return Err(AddVoteError::ChannelDisconnected(
+                    return Err(ServiceError::ChannelDisconnected(
                         "VotingService".to_string(),
                     ));
                 }
                 Err(TrySendError::Full(_)) => {
                     stats.certificates_dropped += certs_len.saturating_sub(i);
-                    return Err(AddVoteError::VotingServiceQueueFull);
+                    return Err(ServiceError::ChannelFull);
                 }
             }
         }
@@ -144,7 +150,7 @@ impl ConsensusPoolService {
         events: &mut Vec<VotorEvent>,
         standstill_timer: &mut Instant,
         stats: &mut Stats,
-    ) -> Result<(), AddVoteError> {
+    ) -> Result<(), ServiceError> {
         match message {
             ConsensusMessage::Certificate(_) => {
                 stats.received_certificates += 1;
@@ -177,9 +183,7 @@ impl ConsensusPoolService {
 
     // Main loop for the consensus pool service. Only exits when signalled or if
     // any channel is disconnected.
-    fn consensus_pool_ingest_loop(
-        ctx: &mut ConsensusPoolContext,
-    ) -> Result<(), ConsensusPoolServiceError> {
+    fn consensus_pool_ingest_loop(ctx: &mut ConsensusPoolContext) -> Result<(), ServiceError> {
         let mut events = vec![];
         let mut my_pubkey = ctx.cluster_info.id();
         let root_bank = ctx.sharable_banks.root();
@@ -234,8 +238,8 @@ impl ConsensusPoolService {
                     &mut stats,
                 ) {
                     Ok(()) => (),
-                    Err(AddVoteError::ChannelDisconnected(channel_name)) => {
-                        return Err(ConsensusPoolServiceError::ChannelDisconnected(channel_name));
+                    Err(ServiceError::ChannelDisconnected(channel_name)) => {
+                        return Err(ServiceError::ChannelDisconnected(channel_name));
                     }
                     Err(e) => {
                         trace!("{my_pubkey}: unable to push standstill certificates into pool {e}");
@@ -247,9 +251,7 @@ impl ConsensusPoolService {
                 .drain(..)
                 .try_for_each(|event| ctx.event_sender.send(event))
                 .map_err(|_| {
-                    ConsensusPoolServiceError::ChannelDisconnected(
-                        "Votor event receiver".to_string(),
-                    )
+                    ServiceError::ChannelDisconnected("Votor event receiver".to_string())
                 })?;
 
             let consensus_message_receiver = ctx.consensus_message_receiver.clone();
@@ -259,7 +261,7 @@ impl ConsensusPoolService {
                 }
                 Err(RecvTimeoutError::Timeout) => continue,
                 Err(RecvTimeoutError::Disconnected) => {
-                    return Err(ConsensusPoolServiceError::ChannelDisconnected(
+                    return Err(ServiceError::ChannelDisconnected(
                         "BLS receiver".to_string(),
                     ));
                 }
@@ -276,8 +278,8 @@ impl ConsensusPoolService {
                     &mut stats,
                 ) {
                     Ok(()) => {}
-                    Err(AddVoteError::ChannelDisconnected(channel_name)) => {
-                        return Err(ConsensusPoolServiceError::ChannelDisconnected(channel_name));
+                    Err(ServiceError::ChannelDisconnected(n)) => {
+                        return Err(ServiceError::ChannelDisconnected(n));
                     }
                     Err(e) => {
                         warn!("{my_pubkey}: process_consensus_message() failed with {e}");
@@ -303,7 +305,7 @@ impl ConsensusPoolService {
         consensus_pool: &mut ConsensusPool,
         votor_events: &mut Vec<VotorEvent>,
         commitment_sender: &Sender<CommitmentAggregationData>,
-    ) -> Result<(Option<Slot>, Vec<Arc<Certificate>>), AddVoteError> {
+    ) -> Result<(Option<Slot>, Vec<Arc<Certificate>>), ServiceError> {
         let (new_finalized_slot, new_certificates_to_send) = consensus_pool.add_message(
             root_bank.epoch_schedule(),
             root_bank.epoch_stakes_map(),
@@ -320,7 +322,12 @@ impl ConsensusPoolService {
             CommitmentType::Finalized,
             new_finalized_slot,
             commitment_sender,
-        )?;
+        )
+        .map_err(|e| match e {
+            CommitmentError::ChannelDisconnected => {
+                ServiceError::ChannelDisconnected("CommitmentSender".to_string())
+            }
+        })?;
         Ok((Some(new_finalized_slot), new_certificates_to_send))
     }
 
@@ -331,7 +338,7 @@ impl ConsensusPoolService {
         ctx: &mut ConsensusPoolContext,
         events: &mut Vec<VotorEvent>,
         stats: &mut Stats,
-    ) -> Result<(), ConsensusPoolServiceError> {
+    ) -> Result<(), ServiceError> {
         let Some(new_highest_parent_ready) = events
             .iter()
             .filter_map(|event| match event {
@@ -354,7 +361,7 @@ impl ConsensusPoolService {
             .leader_schedule_cache
             .slot_leader_at(*highest_parent_ready, Some(&root_bank))
         else {
-            return Err(ConsensusPoolServiceError::FailedToAddBlockEvent(format!(
+            return Err(ServiceError::FailedToAddBlockEvent(format!(
                 "Unable to compute the leader at slot {highest_parent_ready}. Something is wrong, \
                  exiting"
             )));
@@ -388,7 +395,7 @@ impl ConsensusPoolService {
             }
             BlockProductionParent::ParentNotReady => {
                 // This can't happen, place holder depending on how we hook up optimistic
-                return Err(ConsensusPoolServiceError::FailedToAddBlockEvent(
+                return Err(ServiceError::FailedToAddBlockEvent(
                     "Must have a block production parent".to_string(),
                 ));
             }

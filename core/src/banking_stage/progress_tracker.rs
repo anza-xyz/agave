@@ -2,6 +2,7 @@
 //!
 
 use {
+    crate::banking_stage::consume_worker::ConsumeWorkerMetrics,
     agave_scheduler_bindings::ProgressMessage,
     solana_clock::Slot,
     solana_cost_model::cost_tracker::SharedBlockCost,
@@ -20,12 +21,14 @@ pub fn spawn(
     exit: Arc<AtomicBool>,
     mut producer: shaq::Producer<ProgressMessage>,
     shared_leader_state: SharedLeaderState,
+    worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
     ticks_per_slot: u64,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("solProgTrker".to_string())
         .spawn(move || {
-            ProgressTracker::new(exit, shared_leader_state, ticks_per_slot).run(&mut producer);
+            ProgressTracker::new(exit, shared_leader_state, worker_metrics, ticks_per_slot)
+                .run(&mut producer);
         })
         .unwrap()
 }
@@ -33,6 +36,7 @@ pub fn spawn(
 struct ProgressTracker {
     exit: Arc<AtomicBool>,
     shared_leader_state: SharedLeaderState,
+    worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
     ticks_per_slot: u64,
 
     last_observed_leader_slot: Option<Slot>,
@@ -43,12 +47,15 @@ impl ProgressTracker {
     fn new(
         exit: Arc<AtomicBool>,
         shared_leader_state: SharedLeaderState,
+        worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
         ticks_per_slot: u64,
     ) -> Self {
         Self {
             exit,
             shared_leader_state,
+            worker_metrics,
             ticks_per_slot,
+
             last_observed_leader_slot: None,
             limit_and_shared_block_cost: None,
         }
@@ -64,6 +71,11 @@ impl ProgressTracker {
                     break; // external scheduler is so far behind we could not publish a message.
                 }
             }
+
+            self.worker_metrics
+                .iter()
+                .for_each(|metrics| metrics.maybe_report_and_reset());
+
             // Yield to other threads. Sleeping isn't that accurate and we want to avoid
             // missing updates and delaying progress messages to the external.
             std::thread::yield_now();
@@ -168,8 +180,12 @@ mod tests {
         let mut shared_leader_state = SharedLeaderState::new(0, None, None);
         let ticks_per_slot = DEFAULT_TICKS_PER_SLOT;
 
-        let mut progress_tracker =
-            ProgressTracker::new(Arc::default(), shared_leader_state.clone(), ticks_per_slot);
+        let mut progress_tracker = ProgressTracker::new(
+            Arc::default(),
+            shared_leader_state.clone(),
+            vec![],
+            ticks_per_slot,
+        );
 
         let (message, tick_height) = progress_tracker.produce_progress_message();
         assert_eq!(tick_height, 0);
@@ -258,6 +274,7 @@ mod tests {
         let mut progress_tracker = ProgressTracker::new(
             Arc::default(),
             SharedLeaderState::new(0, None, None),
+            vec![],
             DEFAULT_TICKS_PER_SLOT,
         );
 

@@ -39,7 +39,7 @@ fn message_passing_on_all_queues() {
     };
     let pack_to_worker = PackToWorkerMessage {
         flags: 123,
-        max_execution_slot: 100,
+        max_working_slot: 100,
         batch: SharableTransactionBatchRegion {
             num_transactions: 5,
             transactions_offset: 100,
@@ -50,7 +50,7 @@ fn message_passing_on_all_queues() {
             num_transactions: 5,
             transactions_offset: 100,
         },
-        processed: 0x01,
+        processed_code: agave_scheduler_bindings::processed_codes::PROCESSED,
         responses: TransactionResponseRegion {
             tag: 3,
             num_transaction_responses: 2,
@@ -81,7 +81,7 @@ fn message_passing_on_all_queues() {
             };
             assert_eq!(
                 PackToWorkerMessage {
-                    max_execution_slot: pack_to_worker.max_execution_slot + i as u64,
+                    max_working_slot: pack_to_worker.max_working_slot + i as u64,
                     ..pack_to_worker
                 },
                 msg
@@ -142,7 +142,7 @@ fn message_passing_on_all_queues() {
             let mut slot = worker.pack_to_worker.reserve().unwrap();
             unsafe {
                 *slot.as_mut() = PackToWorkerMessage {
-                    max_execution_slot: pack_to_worker.max_execution_slot + i as u64,
+                    max_working_slot: pack_to_worker.max_working_slot + i as u64,
                     ..pack_to_worker
                 }
             };

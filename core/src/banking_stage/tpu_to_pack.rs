@@ -16,6 +16,7 @@ use {
             Arc,
         },
         thread::JoinHandle,
+        time::Duration,
     },
 };
 
@@ -63,6 +64,7 @@ fn tpu_to_pack(
             recv(non_vote_receiver) -> msg => msg,
             recv(gossip_vote_receiver) -> msg => msg,
             recv(tpu_vote_receiver) -> msg => msg,
+            default(Duration::from_secs(1)) => continue,
         } {
             Ok(packet_batches) => packet_batches,
             Err(crossbeam_channel::RecvError) => {
