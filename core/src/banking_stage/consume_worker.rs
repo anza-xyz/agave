@@ -200,7 +200,7 @@ pub(crate) mod external {
         },
         agave_transaction_view::{
             resolved_transaction_view::ResolvedTransactionView, result::TransactionViewError,
-            transaction_view::SanitizedTransactionView,
+            transaction_data::TransactionData, transaction_view::SanitizedTransactionView,
         },
         solana_account::ReadableAccount,
         solana_clock::{Slot, MAX_PROCESSING_AGE},
@@ -830,9 +830,9 @@ pub(crate) mod external {
             }
         }
 
-        fn check_load_fee_payer_balance(
+        fn check_load_fee_payer_balance<D: TransactionData>(
             parsing_results: &[Result<(), TransactionViewError>],
-            parsed_transactions: &[TxView],
+            parsed_transactions: &[SanitizedTransactionView<D>],
             responses: &mut [CheckResponse],
             working_bank: &Bank,
         ) {
@@ -1053,7 +1053,9 @@ pub(crate) mod external {
     mod tests {
         use {
             super::*, agave_scheduler_bindings::SharableTransactionBatchRegion,
-            solana_system_transaction::transfer, solana_transaction::TransactionError,
+            solana_account::AccountSharedData, solana_runtime::genesis_utils,
+            solana_sdk_ids::system_program, solana_system_transaction::transfer,
+            solana_transaction::TransactionError,
         };
 
         #[test]
@@ -1180,18 +1182,8 @@ pub(crate) mod external {
             )
         }
 
-        #[test]
-        fn test_check_populate_initial_messages() {
-            let message = PackToWorkerMessage {
-                flags: pack_message_flags::CHECK | check_flags::LOAD_FEE_PAYER_BALANCE,
-                max_working_slot: 1,
-                batch: SharableTransactionBatchRegion {
-                    num_transactions: 3,
-                    transactions_offset: 0,
-                },
-            };
-
-            let mut responses: Vec<_> = (0..message.batch.num_transactions)
+        fn empty_check_responses(count: u8) -> Vec<CheckResponse> {
+            (0..count)
                 .map(|_| CheckResponse {
                     parsing_and_sanitization_flags: 0,
                     status_check_flags: 0,
@@ -1207,7 +1199,21 @@ pub(crate) mod external {
                         num_pubkeys: 0,
                     },
                 })
-                .collect();
+                .collect()
+        }
+
+        #[test]
+        fn test_check_populate_initial_messages() {
+            let message = PackToWorkerMessage {
+                flags: pack_message_flags::CHECK | check_flags::LOAD_FEE_PAYER_BALANCE,
+                max_working_slot: 1,
+                batch: SharableTransactionBatchRegion {
+                    num_transactions: 3,
+                    transactions_offset: 0,
+                },
+            };
+
+            let mut responses = empty_check_responses(message.batch.num_transactions);
             let responses_ptr = NonNull::new(responses.as_mut_ptr()).unwrap();
 
             unsafe {
@@ -1237,6 +1243,61 @@ pub(crate) mod external {
                     fee_payer_balance_flags::REQUESTED
                 );
             }
+        }
+
+        fn test_serialized_transaction() -> Vec<u8> {
+            let tx = transfer(
+                &solana_keypair::Keypair::new(),
+                &Pubkey::new_unique(),
+                1,
+                solana_hash::Hash::new_unique(),
+            );
+            bincode::serialize(&tx).unwrap()
+        }
+
+        #[test]
+        fn test_check_load_fee_payer_balance() {
+            let tx1 = test_serialized_transaction();
+            let tx2 = test_serialized_transaction();
+
+            let genesis = genesis_utils::create_genesis_config(1_000_000_000);
+            let bank = Bank::new_for_tests(&genesis.genesis_config);
+            let parsing_results = [Ok(()), Err(TransactionViewError::ParseError), Ok(())];
+            let parsed_transactions = [
+                SanitizedTransactionView::try_new_sanitized(&tx1[..], true).unwrap(),
+                SanitizedTransactionView::try_new_sanitized(&tx2[..], true).unwrap(),
+            ];
+            bank.store_account(
+                &parsed_transactions[1].static_account_keys()[0],
+                &AccountSharedData::new(1_000_000_000, 0, &system_program::ID),
+            );
+            let mut responses = empty_check_responses(parsing_results.len() as u8);
+
+            ExternalWorker::check_load_fee_payer_balance(
+                &parsing_results[..],
+                &parsed_transactions[..],
+                &mut responses,
+                &bank,
+            );
+
+            // test-note: requested is not set by this function.
+            assert_eq!(
+                responses[0].fee_payer_balance_flags,
+                fee_payer_balance_flags::PERFORMED
+            );
+            assert_eq!(responses[0].balance_slot, bank.slot());
+            assert_eq!(responses[0].fee_payer_balance, 0);
+
+            assert_eq!(responses[1].fee_payer_balance_flags, 0);
+            assert_eq!(responses[1].balance_slot, 0);
+            assert_eq!(responses[1].fee_payer_balance, 0);
+
+            assert_eq!(
+                responses[2].fee_payer_balance_flags,
+                fee_payer_balance_flags::PERFORMED
+            );
+            assert_eq!(responses[2].balance_slot, bank.slot());
+            assert_eq!(responses[2].fee_payer_balance, 1_000_000_000);
         }
 
         #[test]
