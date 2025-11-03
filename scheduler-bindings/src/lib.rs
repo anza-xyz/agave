@@ -167,6 +167,11 @@ pub mod tpu_message_flags {
     pub const FROM_STAKED_NODE: u8 = 1 << 2;
 }
 
+/// Indicates the node is not leader.
+pub const IS_NOT_LEADER: u8 = 0;
+/// Indicates the node is leader.
+pub const IS_LEADER: u8 = 1;
+
 /// Message: [Agave -> Pack]
 /// Agave passes leader status to the external pack process.
 #[cfg_attr(
@@ -175,11 +180,27 @@ pub mod tpu_message_flags {
 )]
 #[repr(C)]
 pub struct ProgressMessage {
-    /// The current slot.
+    /// Indicates if node is currently leader or not.
+    /// [`IS_LEADER`] if the node is leader.
+    /// [`IS_NOT_LEADER`] if the node is not leader.
+    /// Other values should be considered invalid.
+    pub leader_state: u8,
+    /// The current slot. This along with a leader schedule is not sufficient
+    /// for determining if the node is currently leader. There is a slight
+    /// delay between when a node is supposed to begin its' leader slot, and
+    /// when a bank is ready for processing transactions as leader.
+    /// Using [`Self::leader_state`] for determining if the node is leader
+    /// and has a bank available.
     pub current_slot: u64,
     /// Next known leader slot or u64::MAX if unknown.
-    /// If currently leader, this is equal to `current_slot`.
+    /// This will **not** include the current slot if leader.
+    /// Node is leader for contiguous slots in the inclusive range
+    /// [[`Self::next_leader_slot`], [`Self::leader_range_end`]].
     pub next_leader_slot: u64,
+    /// Next known leader slot range end (inclusive) or u64::MAX if unknown.
+    /// Node is leader for contiguous slots in the inclusive range
+    /// [[`Self::next_leader_slot`], [`Self::leader_range_end`]].
+    pub leader_range_end: u64,
     /// The remaining cost units allowed to be packed in the block.
     /// i.e. block_limit - current_cost_units_used.
     /// Only valid if currently leader, otherwise the value is undefined.
@@ -243,6 +264,11 @@ pub mod pack_message_flags {
     pub const RESOLVE: u16 = 1 << 1;
 }
 
+/// The message was not processed.
+pub const NOT_PROCESSED: u8 = 0;
+/// The message was processed.
+pub const PROCESSED: u8 = 1;
+
 /// Message: [Worker -> Pack]
 /// Message from worker threads in response to a [`PackToWorkerMessage`].
 #[cfg_attr(
@@ -258,11 +284,11 @@ pub struct WorkerToPackMessage {
     /// and is safe to do so - agave will hold no references to this memory
     /// after sending this message.
     pub batch: SharableTransactionBatchRegion,
-    /// `1` if the message was processed.
-    /// `0` if the message could not be processed. This will occur
+    /// [`PROCESSED`] if the message was processed.
+    /// [`NOT_PROCESSED`] if the message could not be processed. This will occur
     /// if the passed message was invalid, and could indicate an issue
     /// with the external pack process.
-    /// If `0`, the value of [`Self::responses`] is undefined.
+    /// If  [`NOT_PROCESSED`], the value of [`Self::responses`] is undefined.
     /// Other values should be considered invalid.
     pub processed: u8,
     /// Response per transaction in the batch.
@@ -401,6 +427,11 @@ pub mod worker_message_types {
     /// Tag indicating [`Resolved`] inner message.
     pub const RESOLVED: u8 = 1;
 
+    /// Resolving was unsuccessful.
+    pub const RESOLVE_FAILURE: u8 = 0;
+    /// Resolving was successful.
+    pub const RESOLVE_SUCCESS: u8 = 1;
+
     #[cfg_attr(
         feature = "dev-context-only-utils",
         derive(Debug, Clone, Copy, PartialEq, Eq)
@@ -408,7 +439,8 @@ pub mod worker_message_types {
     #[repr(C)]
     pub struct Resolved {
         /// Indicates if resolution was successful.
-        /// 0 = false, 1 = true.
+        /// [`RESOLVE_SUCCESS`] if resolving succeeded.
+        /// [`RESOLVE_FAILURE`] if resolved failed.
         /// Other values should be considered invalid.
         pub success: u8,
         /// Slot of the bank used for resolution.

@@ -12,7 +12,7 @@ mod tests {
         solana_perf::packet::PacketBatch,
         solana_quic_client::nonblocking::quic_client::{QuicClient, QuicLazyInitializedEndpoint},
         solana_streamer::{
-            nonblocking::swqos::SwQosConfig,
+            nonblocking::{quic::SpawnNonBlockingServerResult, swqos::SwQosConfig},
             quic::{QuicStreamerConfig, SpawnServerResult},
             streamer::StakedNodes,
         },
@@ -74,7 +74,7 @@ mod tests {
             endpoints: _,
             thread: t,
             key_updater: _,
-        } = solana_streamer::quic::spawn_server_with_cancel(
+        } = solana_streamer::quic::spawn_stake_wighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
             vec![s.try_clone().unwrap()],
@@ -151,12 +151,12 @@ mod tests {
         let (sender, receiver) = unbounded();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let (s, cancel, keypair) = server_args();
-        let solana_streamer::nonblocking::quic::SpawnNonBlockingServerResult {
+        let SpawnNonBlockingServerResult {
             endpoints: _,
             stats: _,
             thread: t,
             max_concurrent_connections: _,
-        } = solana_streamer::nonblocking::quic::spawn_server_with_cancel(
+        } = solana_streamer::nonblocking::testing_utilities::spawn_stake_weighted_qos_server(
             "quic_streamer_test",
             vec![s.try_clone().unwrap()],
             &keypair,
@@ -214,7 +214,7 @@ mod tests {
             endpoints: request_recv_endpoints,
             thread: request_recv_thread,
             key_updater: _,
-        } = solana_streamer::quic::spawn_server_with_cancel(
+        } = solana_streamer::quic::spawn_stake_wighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
             [request_recv_socket.try_clone().unwrap()],
@@ -239,7 +239,7 @@ mod tests {
             endpoints: mut response_recv_endpoints,
             thread: response_recv_thread,
             key_updater: _,
-        } = solana_streamer::quic::spawn_server_with_cancel(
+        } = solana_streamer::quic::spawn_stake_wighted_qos_server(
             "solQuicTest",
             "quic_streamer_test",
             [response_recv_socket],
@@ -327,7 +327,7 @@ mod tests {
             stats: _,
             thread: t,
             max_concurrent_connections: _,
-        } = solana_streamer::nonblocking::quic::spawn_server_with_cancel(
+        } = solana_streamer::nonblocking::testing_utilities::spawn_stake_weighted_qos_server(
             "quic_streamer_test",
             vec![s.try_clone().unwrap()],
             &keypair,

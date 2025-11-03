@@ -128,7 +128,7 @@ mod tests {
         let genesis_config = create_genesis_config(2).genesis_config;
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
 
-        let mut shared_leader_state = SharedLeaderState::new(0, None);
+        let mut shared_leader_state = SharedLeaderState::new(0, None, None);
 
         let decision_maker = DecisionMaker::new(shared_leader_state.clone());
 
@@ -139,12 +139,17 @@ mod tests {
         );
 
         // Active bank.
-        shared_leader_state.store(Arc::new(LeaderState::new(Some(bank.clone()), 0, None)));
+        shared_leader_state.store(Arc::new(LeaderState::new(
+            Some(bank.clone()),
+            0,
+            None,
+            None,
+        )));
         assert_matches!(
             decision_maker.make_consume_or_forward_decision(),
             BufferedPacketsDecision::Consume(_)
         );
-        shared_leader_state.store(Arc::new(LeaderState::new(None, 0, None)));
+        shared_leader_state.store(Arc::new(LeaderState::new(None, 0, None, None)));
 
         // Will be leader shortly - Hold
         for next_leader_slot_offset in [0, 1].into_iter() {
@@ -153,6 +158,7 @@ mod tests {
                 None,
                 0,
                 Some(next_leader_slot * DEFAULT_TICKS_PER_SLOT),
+                Some((next_leader_slot, next_leader_slot + 4)),
             )));
 
             let decision = decision_maker.make_consume_or_forward_decision();
@@ -169,6 +175,7 @@ mod tests {
                 None,
                 0,
                 Some(next_leader_slot * DEFAULT_TICKS_PER_SLOT),
+                Some((next_leader_slot, next_leader_slot + 4)),
             )));
 
             let decision = decision_maker.make_consume_or_forward_decision();
@@ -184,6 +191,7 @@ mod tests {
             None,
             0,
             Some(next_leader_slot * DEFAULT_TICKS_PER_SLOT),
+            Some((next_leader_slot, next_leader_slot + 4)),
         )));
         let decision = decision_maker.make_consume_or_forward_decision();
         assert!(

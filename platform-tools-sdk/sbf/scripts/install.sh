@@ -109,8 +109,8 @@ if [[ ! -e criterion-$version.md || ! -e criterion ]]; then
 fi
 
 # Install platform tools
-tools_version=v1.51
-rust_version=1.84.1
+tools_version=v1.52
+rust_version=1.89.0
 if [[ ! -e platform-tools-$tools_version.md || ! -e platform-tools ]]; then
   (
     set -e

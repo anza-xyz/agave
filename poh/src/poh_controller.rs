@@ -116,7 +116,7 @@ pub struct PohServiceMessageReceiver {
 }
 
 impl PohServiceMessageReceiver {
-    pub(crate) fn try_recv(&self) -> Result<PohServiceMessageGuard, TryRecvError> {
+    pub(crate) fn try_recv(&self) -> Result<PohServiceMessageGuard<'_>, TryRecvError> {
         self.receiver
             .try_recv()
             .map(|message| PohServiceMessageGuard {

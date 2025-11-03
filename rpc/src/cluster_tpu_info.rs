@@ -228,7 +228,7 @@ mod test {
             SocketAddr::from((Ipv4Addr::LOCALHOST, 3333)),
             SocketAddr::from((Ipv4Addr::LOCALHOST, 3333 + QUIC_PORT_OFFSET)),
         );
-        let recent_peers: HashMap<_, _> = vec![
+        let recent_peers: HashMap<_, _> = [
             (
                 validator_vote_keypairs0.node_keypair.pubkey(),
                 validator0_socket,

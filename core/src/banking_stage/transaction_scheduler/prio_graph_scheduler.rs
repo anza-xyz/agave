@@ -111,6 +111,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
         &mut self,
         container: &mut S,
         budget: u64,
+        _relax_intrabatch_account_locks: bool,
         pre_graph_filter: impl Fn(&[&Tx], &mut [bool]),
         pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     ) -> Result<SchedulingSummary, SchedulerError> {
@@ -584,6 +585,7 @@ mod tests {
             scheduler.schedule(
                 &mut container,
                 u64::MAX, // no budget
+                false,
                 test_pre_graph_filter,
                 test_pre_lock_filter
             ),
@@ -603,6 +605,7 @@ mod tests {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
+                false,
                 test_pre_graph_filter,
                 test_pre_lock_filter,
             )
@@ -624,6 +627,7 @@ mod tests {
             .schedule(
                 &mut container,
                 0, // zero budget. nothing should be scheduled
+                false,
                 test_pre_graph_filter,
                 test_pre_lock_filter,
             )
@@ -645,6 +649,7 @@ mod tests {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
+                false,
                 test_pre_graph_filter,
                 test_pre_lock_filter,
             )
@@ -667,6 +672,7 @@ mod tests {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
+                false,
                 test_pre_graph_filter,
                 test_pre_lock_filter,
             )
@@ -694,6 +700,7 @@ mod tests {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
+                false,
                 test_pre_graph_filter,
                 test_pre_lock_filter,
             )
@@ -740,6 +747,7 @@ mod tests {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
+                false,
                 test_pre_graph_filter,
                 test_pre_lock_filter,
             )
@@ -755,6 +763,7 @@ mod tests {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
+                false,
                 test_pre_graph_filter,
                 test_pre_lock_filter,
             )
@@ -774,6 +783,7 @@ mod tests {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
+                false,
                 test_pre_graph_filter,
                 test_pre_lock_filter,
             )
@@ -802,6 +812,7 @@ mod tests {
             .schedule(
                 &mut container,
                 u64::MAX, // no budget
+                false,
                 test_pre_graph_filter,
                 test_pre_lock_filter,
             )

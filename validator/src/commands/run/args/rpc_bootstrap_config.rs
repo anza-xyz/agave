@@ -3,8 +3,13 @@ use {
         bootstrap::RpcBootstrapConfig,
         commands::{FromClapArgMatches, Result},
     },
-    clap::{value_t, ArgMatches},
+    clap::{value_t, Arg, ArgMatches},
+    solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+    std::sync::LazyLock,
 };
+
+static DEFAULT_MAX_GENESIS_ARCHIVE_UNPACKED_SIZE: LazyLock<String> =
+    LazyLock::new(|| MAX_GENESIS_ARCHIVE_UNPACKED_SIZE.to_string());
 
 #[cfg(test)]
 impl Default for RpcBootstrapConfig {
@@ -50,6 +55,48 @@ impl FromClapArgMatches for RpcBootstrapConfig {
             incremental_snapshot_fetch: !no_incremental_snapshots,
         })
     }
+}
+
+pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
+    vec![
+        Arg::with_name("no_genesis_fetch")
+            .long("no-genesis-fetch")
+            .takes_value(false)
+            .help("Do not fetch genesis from the cluster"),
+        Arg::with_name("no_snapshot_fetch")
+            .long("no-snapshot-fetch")
+            .takes_value(false)
+            .help(
+                "Do not attempt to fetch a snapshot from the cluster, start from a local snapshot \
+                 if present",
+            ),
+        Arg::with_name("check_vote_account")
+            .long("check-vote-account")
+            .takes_value(true)
+            .value_name("RPC_URL")
+            .requires("entrypoint")
+            .conflicts_with_all(&["no_voting"])
+            .help(
+                "Sanity check vote account state at startup. The JSON RPC endpoint at RPC_URL \
+                 must expose `--full-rpc-api`",
+            ),
+        Arg::with_name("only_known_rpc")
+            .alias("no-untrusted-rpc")
+            .long("only-known-rpc")
+            .takes_value(false)
+            .requires("known_validators")
+            .help("Use the RPC service of known validators only"),
+        Arg::with_name("max_genesis_archive_unpacked_size")
+            .long("max-genesis-archive-unpacked-size")
+            .value_name("NUMBER")
+            .takes_value(true)
+            .default_value(&DEFAULT_MAX_GENESIS_ARCHIVE_UNPACKED_SIZE)
+            .help("maximum total uncompressed file size of downloaded genesis archive"),
+        Arg::with_name("no_incremental_snapshots")
+            .long("no-incremental-snapshots")
+            .takes_value(false)
+            .help("Disable incremental snapshots"),
+    ]
 }
 
 #[cfg(test)]
@@ -207,5 +254,13 @@ mod tests {
                 expected_args,
             );
         }
+    }
+
+    #[test]
+    fn test_default_max_genesis_archive_unpacked_size_unchanged() {
+        assert_eq!(
+            *DEFAULT_MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+            (10 * 1024 * 1024).to_string()
+        );
     }
 }

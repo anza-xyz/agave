@@ -335,7 +335,7 @@ impl TransactionAccounts {
     pub(crate) fn try_borrow_mut(
         &self,
         index: IndexOfAccount,
-    ) -> Result<AccountRefMut, InstructionError> {
+    ) -> Result<AccountRefMut<'_>, InstructionError> {
         let borrow_counter = self
             .borrow_counters
             .get(index as usize)
@@ -367,7 +367,7 @@ impl TransactionAccounts {
         })
     }
 
-    pub fn try_borrow(&self, index: IndexOfAccount) -> Result<AccountRef, InstructionError> {
+    pub fn try_borrow(&self, index: IndexOfAccount) -> Result<AccountRef<'_>, InstructionError> {
         let borrow_counter = self
             .borrow_counters
             .get(index as usize)

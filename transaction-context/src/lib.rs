@@ -212,7 +212,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
     pub fn get_instruction_context_at_index_in_trace(
         &self,
         index_in_trace: usize,
-    ) -> Result<InstructionContext, InstructionError> {
+    ) -> Result<InstructionContext<'_, '_>, InstructionError> {
         let instruction = self
             .instruction_trace
             .get(index_in_trace)
@@ -232,7 +232,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
     pub fn get_instruction_context_at_nesting_level(
         &self,
         nesting_level: usize,
-    ) -> Result<InstructionContext, InstructionError> {
+    ) -> Result<InstructionContext<'_, '_>, InstructionError> {
         let index_in_trace = *self
             .instruction_stack
             .get(nesting_level)
@@ -254,7 +254,9 @@ impl<'ix_data> TransactionContext<'ix_data> {
     }
 
     /// Returns a view on the current instruction
-    pub fn get_current_instruction_context(&self) -> Result<InstructionContext, InstructionError> {
+    pub fn get_current_instruction_context(
+        &self,
+    ) -> Result<InstructionContext<'_, '_>, InstructionError> {
         let level = self
             .get_instruction_stack_height()
             .checked_sub(1)
@@ -265,7 +267,9 @@ impl<'ix_data> TransactionContext<'ix_data> {
     /// Returns a view on the next instruction. This function assumes it has already been
     /// configured with the correct values in `prepare_next_instruction` or
     /// `prepare_next_top_level_instruction`
-    pub fn get_next_instruction_context(&self) -> Result<InstructionContext, InstructionError> {
+    pub fn get_next_instruction_context(
+        &self,
+    ) -> Result<InstructionContext<'_, '_>, InstructionError> {
         let index_in_trace = self
             .instruction_trace
             .len()
@@ -481,7 +485,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
     }
 
     /// Take ownership of the instruction trace
-    pub fn take_instruction_trace(&mut self) -> Vec<InstructionFrame> {
+    pub fn take_instruction_trace(&mut self) -> Vec<InstructionFrame<'_>> {
         // The last frame is a placeholder for the next instruction to be executed, so it
         // is empty.
         self.instruction_trace.pop();
@@ -642,7 +646,7 @@ impl<'a> InstructionContext<'a, '_> {
     pub fn try_borrow_instruction_account(
         &self,
         index_in_instruction: IndexOfAccount,
-    ) -> Result<BorrowedInstructionAccount, InstructionError> {
+    ) -> Result<BorrowedInstructionAccount<'_, '_>, InstructionError> {
         let instruction_account = *self
             .instruction_accounts
             .get(index_in_instruction as usize)

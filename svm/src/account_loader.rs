@@ -9,7 +9,6 @@ use {
         },
         rollback_accounts::RollbackAccounts,
         transaction_error_metrics::TransactionErrorMetrics,
-        transaction_execution_result::ExecutedTransaction,
     },
     ahash::{AHashMap, AHashSet},
     solana_account::{
@@ -276,23 +275,6 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         }
     }
 
-    pub(crate) fn update_accounts_for_executed_tx(
-        &mut self,
-        message: &impl SVMMessage,
-        executed_transaction: &ExecutedTransaction,
-    ) {
-        if executed_transaction.was_successful() {
-            self.update_accounts_for_successful_tx(
-                message,
-                &executed_transaction.loaded_transaction.accounts,
-            );
-        } else {
-            self.update_accounts_for_failed_tx(
-                &executed_transaction.loaded_transaction.rollback_accounts,
-            );
-        }
-    }
-
     pub(crate) fn update_accounts_for_failed_tx(&mut self, rollback_accounts: &RollbackAccounts) {
         for (account_address, account) in rollback_accounts {
             self.loaded_accounts
@@ -300,7 +282,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         }
     }
 
-    fn update_accounts_for_successful_tx(
+    pub(crate) fn update_accounts_for_successful_tx(
         &mut self,
         message: &impl SVMMessage,
         transaction_accounts: &[KeyedAccountSharedData],

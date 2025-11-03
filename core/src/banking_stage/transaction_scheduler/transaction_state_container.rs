@@ -236,7 +236,7 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
         self.push_ids_into_queue(std::iter::once(priority_id)) > 0
     }
 
-    fn get_vacant_map_entry(&mut self) -> VacantEntry<TransactionState<Tx>> {
+    fn get_vacant_map_entry(&mut self) -> VacantEntry<'_, TransactionState<Tx>> {
         assert!(self.id_to_transaction_state.len() < self.id_to_transaction_state.capacity());
         self.id_to_transaction_state.vacant_entry()
     }

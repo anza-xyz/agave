@@ -848,7 +848,7 @@ impl HeaviestSubtreeForkChoice {
         }
     }
 
-    fn ancestor_iterator(&self, start_slot_hash_key: SlotHashKey) -> AncestorIterator {
+    fn ancestor_iterator(&self, start_slot_hash_key: SlotHashKey) -> AncestorIterator<'_> {
         AncestorIterator::new(start_slot_hash_key, &self.fork_infos)
     }
 

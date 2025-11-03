@@ -26,11 +26,13 @@ impl SVMMessage for SanitizedTransaction {
         SVMMessage::num_instructions(SanitizedTransaction::message(self))
     }
 
-    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction> {
+    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction<'_>> {
         SVMMessage::instructions_iter(SanitizedTransaction::message(self))
     }
 
-    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone {
+    fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
         SVMMessage::program_instructions_iter(SanitizedTransaction::message(self))
     }
 
@@ -38,7 +40,7 @@ impl SVMMessage for SanitizedTransaction {
         SVMMessage::static_account_keys(SanitizedTransaction::message(self))
     }
 
-    fn account_keys(&self) -> AccountKeys {
+    fn account_keys(&self) -> AccountKeys<'_> {
         SVMMessage::account_keys(SanitizedTransaction::message(self))
     }
 
@@ -62,7 +64,9 @@ impl SVMMessage for SanitizedTransaction {
         SVMMessage::num_lookup_tables(SanitizedTransaction::message(self))
     }
 
-    fn message_address_table_lookups(&self) -> impl Iterator<Item = SVMMessageAddressTableLookup> {
+    fn message_address_table_lookups(
+        &self,
+    ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>> {
         SVMMessage::message_address_table_lookups(SanitizedTransaction::message(self))
     }
 }
