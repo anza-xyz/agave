@@ -969,52 +969,6 @@ pub(crate) mod external {
             })
         }
 
-        /// Translate resolved pubkeys results into [`Resolved`] response.
-        fn resolved_pubkeys_to_response(
-            resolving_result: Result<Option<(SharablePubkeys, u64)>, ()>,
-            slot: Slot,
-        ) -> CheckResponse {
-            let resolve_flags = resolve_flags::REQUESTED | resolve_flags::PERFORMED;
-
-            match resolving_result {
-                Ok(Some((resolved_pubkeys, min_alt_deactivation_slot))) => CheckResponse {
-                    parsing_and_sanitization_flags: 0,
-                    status_check_flags: 0,
-                    fee_payer_balance_flags: 0,
-                    resolve_flags,
-                    included_slot: 0,
-                    balance_slot: 0,
-                    fee_payer_balance: 0,
-                    resolution_slot: slot,
-                    min_alt_deactivation_slot,
-                    resolved_pubkeys,
-                },
-
-                _ => {
-                    let resolve_flags = if resolving_result.is_err() {
-                        resolve_flags | resolve_flags::FAILED
-                    } else {
-                        resolve_flags
-                    };
-                    CheckResponse {
-                        parsing_and_sanitization_flags: 0,
-                        status_check_flags: 0,
-                        fee_payer_balance_flags: 0,
-                        resolve_flags,
-                        included_slot: 0,
-                        balance_slot: 0,
-                        fee_payer_balance: 0,
-                        resolution_slot: slot,
-                        min_alt_deactivation_slot: 0,
-                        resolved_pubkeys: SharablePubkeys {
-                            offset: 0,
-                            num_pubkeys: 0,
-                        },
-                    }
-                }
-            }
-        }
-
         /// # Safety
         /// - destination is appropriately sized
         /// - destination does not overlap with loaded_addresses allocation
@@ -1049,7 +1003,7 @@ pub(crate) mod external {
                     | check_flags::LOAD_FEE_PAYER_BALANCE
                     | check_flags::LOAD_ADDRESS_LOOKUP_TABLES;
 
-                flags & !ALLOWED_CHECK_BITS == 0
+                flags != pack_message_flags::CHECK && flags & !ALLOWED_CHECK_BITS == 0
             }
         }
 
@@ -1098,7 +1052,7 @@ pub(crate) mod external {
     #[cfg(test)]
     mod tests {
         use {
-            super::*, agave_scheduler_bindings::worker_message_types::resolve_flags,
+            super::*, agave_scheduler_bindings::SharableTransactionBatchRegion,
             solana_system_transaction::transfer, solana_transaction::TransactionError,
         };
 
@@ -1227,70 +1181,62 @@ pub(crate) mod external {
         }
 
         #[test]
-        fn test_resolved_pubkeys_to_response() {
-            const TEST_SLOT: Slot = 7;
-            assert_eq!(
-                ExternalWorker::resolved_pubkeys_to_response(Err(()), TEST_SLOT),
-                CheckResponse {
-                    parsing_and_sanitization_flags: 0,
-                    status_check_flags: 0,
-                    fee_payer_balance_flags: 0,
-                    resolve_flags: resolve_flags::REQUESTED
-                        | resolve_flags::PERFORMED
-                        | resolve_flags::FAILED,
-                    included_slot: 0,
-                    balance_slot: 0,
-                    fee_payer_balance: 0,
-                    resolution_slot: TEST_SLOT,
-                    min_alt_deactivation_slot: 0,
-                    resolved_pubkeys: SharablePubkeys {
-                        offset: 0,
-                        num_pubkeys: 0
-                    }
-                }
-            );
-
-            assert_eq!(
-                ExternalWorker::resolved_pubkeys_to_response(Ok(None), TEST_SLOT),
-                CheckResponse {
-                    parsing_and_sanitization_flags: 0,
-                    status_check_flags: 0,
-                    fee_payer_balance_flags: 0,
-                    resolve_flags: resolve_flags::REQUESTED | resolve_flags::PERFORMED,
-                    included_slot: 0,
-                    balance_slot: 0,
-                    fee_payer_balance: 0,
-                    resolution_slot: TEST_SLOT,
-                    min_alt_deactivation_slot: 0,
-                    resolved_pubkeys: SharablePubkeys {
-                        offset: 0,
-                        num_pubkeys: 0
-                    }
+        fn test_check_populate_initial_messages() {
+            let message = PackToWorkerMessage {
+                flags: pack_message_flags::CHECK | check_flags::LOAD_FEE_PAYER_BALANCE,
+                max_working_slot: 1,
+                batch: SharableTransactionBatchRegion {
+                    num_transactions: 3,
+                    transactions_offset: 0,
                 },
-            );
-
-            let resolved_pubkeys = SharablePubkeys {
-                offset: 256,
-                num_pubkeys: 21,
             };
-            assert_eq!(
-                ExternalWorker::resolved_pubkeys_to_response(
-                    Ok(Some((resolved_pubkeys, 120))),
-                    TEST_SLOT
-                ),
-                CheckResponse {
+
+            let mut responses: Vec<_> = (0..message.batch.num_transactions)
+                .map(|_| CheckResponse {
                     parsing_and_sanitization_flags: 0,
                     status_check_flags: 0,
                     fee_payer_balance_flags: 0,
-                    resolve_flags: resolve_flags::REQUESTED | resolve_flags::PERFORMED,
+                    resolve_flags: 0,
                     included_slot: 0,
                     balance_slot: 0,
                     fee_payer_balance: 0,
-                    resolution_slot: TEST_SLOT,
-                    min_alt_deactivation_slot: 120,
-                    resolved_pubkeys
-                },
+                    resolution_slot: 0,
+                    min_alt_deactivation_slot: 0,
+                    resolved_pubkeys: SharablePubkeys {
+                        offset: 0,
+                        num_pubkeys: 0,
+                    },
+                })
+                .collect();
+            let responses_ptr = NonNull::new(responses.as_mut_ptr()).unwrap();
+
+            unsafe {
+                ExternalWorker::check_populate_initial_messages(
+                    &message,
+                    &[
+                        Ok(()),
+                        Err(TransactionViewError::ParseError),
+                        Err(TransactionViewError::SanitizeError),
+                    ],
+                    responses_ptr,
+                )
+            };
+
+            assert_eq!(responses[0].parsing_and_sanitization_flags, 0);
+            assert_eq!(
+                responses[1].parsing_and_sanitization_flags,
+                parsing_and_sanitization_flags::FAILED
             );
+            assert_eq!(
+                responses[2].parsing_and_sanitization_flags,
+                parsing_and_sanitization_flags::FAILED
+            );
+            for index in 0..3 {
+                assert_eq!(
+                    responses[index].fee_payer_balance_flags,
+                    fee_payer_balance_flags::REQUESTED
+                );
+            }
         }
 
         #[test]
