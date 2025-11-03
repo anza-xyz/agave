@@ -12,6 +12,7 @@ impl<'a, F: ListFrame> ListView<'a, F> {
         Self { frame, item_buffer }
     }
 
+    #[inline]
     pub(super) fn len(&self) -> usize {
         self.frame.len()
     }

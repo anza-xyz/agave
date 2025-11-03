@@ -19,7 +19,7 @@ use {
         tower_storage::{SavedTower, SavedTowerVersions, TowerStorage},
         tower_vote_state::TowerVoteState,
     },
-    crate::replay_stage::DUPLICATE_THRESHOLD,
+    crate::{consensus::progress_map::LockoutInterval, replay_stage::DUPLICATE_THRESHOLD},
     chrono::prelude::*,
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
@@ -44,10 +44,7 @@ use {
     std::{
         cmp::Ordering,
         collections::{HashMap, HashSet},
-        ops::{
-            Bound::{Included, Unbounded},
-            Deref,
-        },
+        ops::Deref,
     },
     thiserror::Error,
 };
@@ -417,7 +414,12 @@ impl Tower {
 
         // Tree of intervals of lockouts of the form [slot, slot + slot.lockout],
         // keyed by end of the range
-        let mut lockout_intervals = LockoutIntervals::new();
+        let total_votes = vote_accounts
+            .values()
+            .filter(|(voted_stake, _)| *voted_stake != 0)
+            .map(|(_, account)| account.vote_state_view().votes_len())
+            .sum();
+        let mut lockout_intervals = LockoutIntervals::with_capacity(total_votes);
         let mut my_latest_landed_vote = None;
         for (&key, (voted_stake, account)) in vote_accounts.iter() {
             let voted_stake = *voted_stake;
@@ -426,12 +428,11 @@ impl Tower {
             }
             trace!("{vote_account_pubkey} {key} with stake {voted_stake}");
             let mut vote_state = TowerVoteState::from(account.vote_state_view());
-            for vote in &vote_state.votes {
-                lockout_intervals
-                    .entry(vote.last_locked_out_slot())
-                    .or_default()
-                    .push((vote.slot(), key));
-            }
+            lockout_intervals.extend(vote_state.votes.iter().map(|v| LockoutInterval {
+                start: v.slot(),
+                end: v.last_locked_out_slot(),
+                voter: key,
+            }));
 
             if key == *vote_account_pubkey {
                 my_latest_landed_vote = vote_state.nth_recent_lockout(0).map(|l| l.slot());
@@ -1158,35 +1159,38 @@ impl Tower {
             // Find any locked out intervals for vote accounts in this bank with
             // `lockout_interval_end` >= `last_vote`, which implies they are locked out at
             // `last_vote` on another fork.
-            for (_lockout_interval_end, intervals_keyed_by_end) in
-                lockout_intervals.range((Included(last_voted_slot), Unbounded))
+            for LockoutInterval {
+                start: lockout_interval_start,
+                voter: vote_account_pubkey,
+                ..
+            } in lockout_intervals
+                .iter()
+                .filter(|interval| interval.end >= last_voted_slot)
             {
-                for (lockout_interval_start, vote_account_pubkey) in intervals_keyed_by_end {
-                    if locked_out_vote_accounts.contains(vote_account_pubkey) {
-                        continue;
-                    }
+                if locked_out_vote_accounts.contains(vote_account_pubkey) {
+                    continue;
+                }
 
-                    // Only count lockouts on slots that are:
-                    // 1) Not ancestors of `last_vote`, meaning being on different fork
-                    // 2) Not from before the current root as we can't determine if
-                    // anything before the root was an ancestor of `last_vote` or not
-                    if !last_vote_ancestors.contains(lockout_interval_start) && {
-                        // Given a `lockout_interval_start` < root that appears in a
-                        // bank for a `candidate_slot`, it must be that `lockout_interval_start`
-                        // is an ancestor of the current root, because `candidate_slot` is a
-                        // descendant of the current root
-                        *lockout_interval_start > root
-                    } {
-                        let stake = epoch_vote_accounts
-                            .get(vote_account_pubkey)
-                            .map(|(stake, _)| *stake)
-                            .unwrap_or(0);
-                        locked_out_stake += stake;
-                        if (locked_out_stake as f64 / total_stake as f64) > SWITCH_FORK_THRESHOLD {
-                            return SwitchForkDecision::SwitchProof(switch_proof);
-                        }
-                        locked_out_vote_accounts.insert(vote_account_pubkey);
+                // Only count lockouts on slots that are:
+                // 1) Not ancestors of `last_vote`, meaning being on different fork
+                // 2) Not from before the current root as we can't determine if
+                // anything before the root was an ancestor of `last_vote` or not
+                if !last_vote_ancestors.contains(lockout_interval_start) && {
+                    // Given a `lockout_interval_start` < root that appears in a
+                    // bank for a `candidate_slot`, it must be that `lockout_interval_start`
+                    // is an ancestor of the current root, because `candidate_slot` is a
+                    // descendant of the current root
+                    *lockout_interval_start > root
+                } {
+                    let stake = epoch_vote_accounts
+                        .get(vote_account_pubkey)
+                        .map(|(stake, _)| *stake)
+                        .unwrap_or(0);
+                    locked_out_stake += stake;
+                    if (locked_out_stake as f64 / total_stake as f64) > SWITCH_FORK_THRESHOLD {
+                        return SwitchForkDecision::SwitchProof(switch_proof);
                     }
+                    locked_out_vote_accounts.insert(vote_account_pubkey);
                 }
             }
         }
