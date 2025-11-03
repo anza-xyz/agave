@@ -130,6 +130,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-geyser-notifier"
+version = "3.1.0"
+dependencies = [
+ "agave-geyser-plugin-interface",
+ "geyser-shaq-bindings",
+ "geyser-shaq-queues",
+ "solana-account",
+ "solana-clock",
+ "solana-pubkey",
+ "solana-signature",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "agave-geyser-plugin-interface"
 version = "3.1.0"
 dependencies = [
@@ -329,7 +343,7 @@ dependencies = [
  "agave-scheduler-bindings",
  "agave-transaction-view",
  "ahash 0.8.11",
- "rts-alloc",
+ "rts-alloc 0.1.1",
  "solana-pubkey",
 ]
 
@@ -456,6 +470,7 @@ dependencies = [
 name = "agave-validator"
 version = "3.1.0"
 dependencies = [
+ "agave-geyser-notifier",
  "agave-geyser-plugin-interface",
  "assert_cmd",
  "chrono",
@@ -2824,7 +2839,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3274,6 +3289,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "geyser-consumer"
+version = "3.1.0"
+dependencies = [
+ "bs58",
+ "geyser-shaq-queues",
+ "solana-pubkey",
+]
+
+[[package]]
 name = "geyser-shaq-bindings"
 version = "3.1.0"
 
@@ -3282,8 +3306,9 @@ name = "geyser-shaq-queues"
 version = "3.1.0"
 dependencies = [
  "geyser-shaq-bindings",
- "rts-alloc",
- "shaq",
+ "rts-alloc 0.2.0",
+ "shaq 0.2.0",
+ "tempfile",
  "thiserror 2.0.17",
 ]
 
@@ -6189,6 +6214,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rts-alloc"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c55727ea58e2c9c131d8f003dab5aaa7056d99f8292bc6a5dfb299cefe55e60"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "rustc-demangle"
 version = "0.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6256,7 +6290,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.9.2",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6334,7 +6368,7 @@ dependencies = [
  "security-framework 3.2.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6772,6 +6806,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "shaq"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "014fb38bb8370732f76c67752106d2a4b25cc1891ec489c7fc5ab23b27e90a75"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "sharded-slab"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7080,6 +7123,7 @@ dependencies = [
 name = "solana-accounts-db"
 version = "3.1.0"
 dependencies = [
+ "agave-geyser-notifier",
  "agave-io-uring",
  "agave-reserved-account-keys",
  "ahash 0.8.11",
@@ -8206,14 +8250,14 @@ dependencies = [
  "rand_chacha 0.3.1",
  "rayon",
  "rolling-file",
- "rts-alloc",
+ "rts-alloc 0.1.1",
  "rustls 0.23.32",
  "serde",
  "serde_bytes",
  "serde_derive",
  "serde_json",
  "serial_test",
- "shaq",
+ "shaq 0.1.0",
  "slab",
  "solana-account",
  "solana-accounts-db",
@@ -8849,11 +8893,8 @@ name = "solana-geyser-plugin-manager"
 version = "3.1.0"
 dependencies = [
  "agave-geyser-plugin-interface",
- "bincode",
  "bs58",
  "crossbeam-channel",
- "geyser-shaq-bindings",
- "geyser-shaq-queues",
  "json5",
  "jsonrpc-core",
  "libloading",

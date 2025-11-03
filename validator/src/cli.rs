@@ -890,6 +890,13 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .help("Specify the configuration file for the Geyser plugin."),
         )
         .arg(
+            Arg::with_name("geyser_shm_path")
+                .long("geyser-shm-path")
+                .value_name("PATH")
+                .takes_value(true)
+                .help("Enable Geyser V2 shared memory queues at the specified path"),
+        )
+        .arg(
             Arg::with_name("deactivate_feature")
                 .long("deactivate-feature")
                 .takes_value(true)
