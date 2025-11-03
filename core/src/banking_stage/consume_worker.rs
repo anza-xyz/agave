@@ -180,7 +180,7 @@ pub(crate) mod external {
             committer::CommitTransactionDetails,
             scheduler_messages::MaxAge,
             transaction_scheduler::receive_and_buffer::{
-                load_addresses_for_view, translate_to_runtime_view, PacketHandlingError,
+                translate_to_runtime_view, PacketHandlingError,
             },
         },
         agave_scheduler_bindings::{
@@ -199,7 +199,7 @@ pub(crate) mod external {
             transaction_ptr::{TransactionPtr, TransactionPtrBatch},
         },
         agave_transaction_view::{
-            resolved_transaction_view::ResolvedTransactionView,
+            resolved_transaction_view::ResolvedTransactionView, result::TransactionViewError,
             transaction_view::SanitizedTransactionView,
         },
         solana_account::ReadableAccount,
@@ -472,7 +472,264 @@ pub(crate) mod external {
             )
             .ok_or(ExternalConsumeWorkerError::AllocationFailure)?;
 
-            let enable_static_instruction_limit = root_bank
+            // SAFETY: responses_ptr is sufficiently sized and aligned.
+            let (parsing_results, parsed_transactions, response_slice) = unsafe {
+                Self::parse_transactions_and_populate_initial_check_responses(
+                    message,
+                    &batch,
+                    &root_bank,
+                    responses_ptr,
+                )
+            };
+
+            // Check fee-payer if requested.
+            if message.flags & check_flags::LOAD_FEE_PAYER_BALANCE != 0 {
+                Self::check_load_fee_payer_balance(
+                    &parsing_results,
+                    &parsed_transactions,
+                    response_slice,
+                    &working_bank,
+                );
+            }
+
+            // Do resolving next since we (currently) need resolved transactions for status checks.
+            let (parsing_and_resolve_results, txs, max_ages) =
+                Self::translate_transaction_batch(&batch, &root_bank);
+
+            if message.flags & check_flags::LOAD_ADDRESS_LOOKUP_TABLES != 0 {
+                self.check_resolve_pubkeys(
+                    &parsing_results,
+                    &parsing_and_resolve_results,
+                    &txs,
+                    &max_ages,
+                    response_slice,
+                    root_bank.slot(),
+                )?;
+            }
+
+            if message.flags & check_flags::STATUS_CHECKS != 0 {
+                Self::check_status_checks(
+                    &parsing_and_resolve_results,
+                    &txs,
+                    response_slice,
+                    &working_bank,
+                );
+            }
+
+            let response = WorkerToPackMessage {
+                batch: message.batch,
+                processed_code: agave_scheduler_bindings::processed_codes::PROCESSED,
+                responses,
+            };
+
+            let send_ptr = self
+                .sender
+                .reserve()
+                .ok_or(ExternalConsumeWorkerError::SenderDisconnected)?;
+
+            // `reserve` returns valid aligned pointer
+            unsafe { send_ptr.write(response) };
+
+            Ok(())
+        }
+
+        fn consume_response_iterator<'a>(
+            translation_results: &'a [Result<(), PacketHandlingError>],
+            transactions: &'a [impl TransactionWithMeta],
+            commit_results: &'a [CommitTransactionDetails],
+            bank: &'a Bank,
+        ) -> impl ExactSizeIterator<Item = ExecutionResponse> + 'a {
+            assert_eq!(transactions.len(), commit_results.len());
+            let mut transactions_iterator = transactions.iter();
+            let mut commit_result_iterator = commit_results.iter();
+
+            translation_results
+                .iter()
+                .map(move |translation_result| match translation_result {
+                    Ok(()) => {
+                        let tx = transactions_iterator.next().expect(
+                            "transactions must contain element for each successfully translated \
+                             result",
+                        );
+                        let commit_details = commit_result_iterator.next().expect(
+                            "commit result iterator must contain element for each sent transaction",
+                        );
+                        Self::response_from_commit_details(tx, commit_details, bank)
+                    }
+                    Err(err) => ExecutionResponse {
+                        not_included_reason: Self::reason_from_packet_handling_error(err),
+                        cost_units: 0,
+                        fee_payer_balance: 0,
+                    },
+                })
+        }
+
+        /// Return all transactions in the batch as not included with the provided
+        /// reason.
+        fn return_not_included_with_reason(
+            &mut self,
+            message: &PackToWorkerMessage,
+            reason: u8,
+        ) -> Result<(), ExternalConsumeWorkerError> {
+            let response_region = execution_responses_from_iter(
+                &self.allocator,
+                (0..message.batch.num_transactions).map(|_| ExecutionResponse {
+                    not_included_reason: reason,
+                    cost_units: 0,
+                    fee_payer_balance: 0,
+                }),
+            )
+            .ok_or(ExternalConsumeWorkerError::AllocationFailure)?;
+
+            let response_message = WorkerToPackMessage {
+                batch: message.batch,
+                processed_code: agave_scheduler_bindings::processed_codes::PROCESSED,
+                responses: response_region,
+            };
+
+            // Should de-allocate the memory, but this is a non-recoverable
+            // error and so it's not needed.
+            let send_message = self
+                .sender
+                .reserve()
+                .ok_or(ExternalConsumeWorkerError::SenderDisconnected)?;
+
+            unsafe {
+                send_message.write(response_message);
+            }
+            Ok(())
+        }
+
+        fn check_resolve_pubkeys(
+            &self,
+            parsing_results: &[Result<(), TransactionViewError>],
+            parsing_and_resolve_results: &[Result<(), PacketHandlingError>],
+            txs: &[Tx],
+            max_ages: &[MaxAge],
+            responses: &mut [CheckResponse],
+            resolution_slot: Slot,
+        ) -> Result<(), ExternalConsumeWorkerError> {
+            assert_eq!(parsing_results.len(), parsing_and_resolve_results.len());
+            assert_eq!(parsing_results.len(), responses.len());
+
+            let mut resolved_transaction_iter = txs.iter();
+            let mut max_age_iter = max_ages.iter();
+            for (transaction_index, (parsing_result, parsing_and_resolve_results)) in
+                parsing_results
+                    .iter()
+                    .zip(parsing_and_resolve_results.iter())
+                    .enumerate()
+            {
+                if parsing_result.is_err() {
+                    continue;
+                }
+
+                let response = &mut responses[transaction_index];
+                response.resolve_flags |= resolve_flags::PERFORMED;
+                if parsing_and_resolve_results.is_err() {
+                    response.resolve_flags |= resolve_flags::FAILED;
+                    continue;
+                }
+
+                let transaction = resolved_transaction_iter.next().expect(
+                    "resolved_transaction_iter iterator must contain element for each sent parsed \
+                     transaction",
+                );
+                let max_age = max_age_iter.next().expect(
+                    "max_age_iter iterator must contain element for each sent parsed transaction",
+                );
+
+                // There are 3 cases here:
+                // 1. None - Tx format does not support ATL
+                // 2. Some(empty) - V0 Tx with no ATL
+                // 3. Some(keys) - V0 Tx with ATL
+                // Only in case 3 will we create a shared allocation and copy keys.
+                let (sharable_keys, alt_invalidation_slot) = match transaction.loaded_addresses() {
+                    Some(loaded_addresses) if !loaded_addresses.is_empty() => {
+                        let num_pubkeys = loaded_addresses.len();
+                        let pubkeys_allocation = self
+                            .allocator
+                            .allocate(
+                                num_pubkeys.wrapping_mul(core::mem::size_of::<Pubkey>()) as u32
+                            )
+                            .ok_or(ExternalConsumeWorkerError::AllocationFailure)?
+                            .cast();
+                        // SAFETY: non-overlapping and appropriately sized.
+                        unsafe {
+                            Self::copy_loaded_addresses(loaded_addresses, pubkeys_allocation)
+                        };
+                        // SAFETY: pubkeys_allocation was allocated by allocator
+                        let offset = unsafe { self.allocator.offset(pubkeys_allocation.cast()) };
+                        (
+                            SharablePubkeys {
+                                offset,
+                                num_pubkeys: num_pubkeys as u32,
+                            },
+                            max_age.alt_invalidation_slot,
+                        )
+                    }
+                    _ => (
+                        SharablePubkeys {
+                            offset: 0,
+                            num_pubkeys: 0,
+                        },
+                        u64::MAX,
+                    ),
+                };
+
+                response.resolution_slot = resolution_slot;
+                response.resolved_pubkeys = sharable_keys;
+                response.min_alt_deactivation_slot = alt_invalidation_slot;
+            }
+
+            Ok(())
+        }
+
+        fn return_unprocessed_message(
+            &mut self,
+            message: &PackToWorkerMessage,
+            processed_code: u8,
+        ) -> Result<(), ExternalConsumeWorkerError> {
+            assert_ne!(
+                processed_code,
+                agave_scheduler_bindings::processed_codes::PROCESSED
+            );
+            let response = WorkerToPackMessage {
+                batch: message.batch,
+                processed_code,
+                responses: TransactionResponseRegion {
+                    tag: 0,
+                    num_transaction_responses: 0,
+                    transaction_responses_offset: 0,
+                },
+            };
+
+            let send_ptr = self
+                .sender
+                .reserve()
+                .ok_or(ExternalConsumeWorkerError::SenderDisconnected)?;
+
+            // SAFETY: `reserve` guarantees a properly aligned space
+            //         for a `WorkerToPackMessage`
+            unsafe { send_ptr.write(response) };
+
+            Ok(())
+        }
+
+        #[allow(clippy::type_complexity)]
+        /// # Safety:
+        /// - `responses_ptr` must be aligned and sufficiently sized.
+        unsafe fn parse_transactions_and_populate_initial_check_responses<'a>(
+            message: &PackToWorkerMessage,
+            batch: &TransactionPtrBatch,
+            bank: &Bank,
+            responses_ptr: NonNull<CheckResponse>,
+        ) -> (
+            Vec<Result<(), TransactionViewError>>,
+            Vec<SanitizedTransactionView<TransactionPtr>>,
+            &'a mut [CheckResponse],
+        ) {
+            let enable_static_instruction_limit = bank
                 .feature_set
                 .is_active(&agave_feature_set::static_instruction_limit::ID);
             let mut parsing_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
@@ -493,6 +750,33 @@ pub(crate) mod external {
                 }
             }
 
+            // SAFETY: `response_ptr` is valid and of length message.batch.num_transactions
+            unsafe {
+                Self::check_populate_initial_messages(message, &parsing_results, responses_ptr)
+            };
+            // SAFETY: `response_ptr` is valid and of length message.batch.num_transactions
+            //         initial messages populated immediately above, so not possible to have
+            //         uninitialized values either.
+            let response_slice = unsafe {
+                core::slice::from_raw_parts_mut(
+                    responses_ptr.as_ptr(),
+                    usize::from(message.batch.num_transactions),
+                )
+            };
+
+            (parsing_results, parsed_transactions, response_slice)
+        }
+
+        /// Write initial response value for each transaction.
+        /// This allows simpler modification of individual responses in further checks.
+        /// # Safety
+        /// - `responses_ptr` is valid ptr for a slice of [`CheckResponse`] with at least
+        ///   length `message.batch.num_transactions`
+        unsafe fn check_populate_initial_messages(
+            message: &PackToWorkerMessage,
+            parsing_results: &[Result<(), TransactionViewError>],
+            responses_ptr: NonNull<CheckResponse>,
+        ) {
             // Populate initial responses with the result of parsing/sanitization.
             assert_eq!(
                 parsing_results.len(),
@@ -544,353 +828,90 @@ pub(crate) mod external {
                     })
                 };
             }
+        }
 
-            // Check fee-payer if requested.
-            if message.flags & check_flags::LOAD_FEE_PAYER_BALANCE != 0 {
-                let mut parsed_transaction_iter = parsed_transactions.iter();
-                for (transaction_index, parsing_result) in parsing_results.iter().enumerate() {
-                    if parsing_result.is_err() {
-                        continue;
+        fn check_load_fee_payer_balance(
+            parsing_results: &[Result<(), TransactionViewError>],
+            parsed_transactions: &[SanitizedTransactionView<TransactionPtr>],
+            responses: &mut [CheckResponse],
+            working_bank: &Bank,
+        ) {
+            assert_eq!(responses.len(), parsing_results.len());
+
+            let mut parsed_transaction_iter = parsed_transactions.iter();
+            for (transaction_index, parsing_result) in parsing_results.iter().enumerate() {
+                if parsing_result.is_err() {
+                    continue;
+                }
+
+                let transaction = parsed_transaction_iter.next().expect(
+                    "parsed_transaction_iter iterator must contain element for each sent parsed \
+                     transaction",
+                );
+
+                let fee_payer_balance = working_bank
+                    .rc
+                    .accounts
+                    .accounts_db
+                    .load_with_fixed_root(
+                        &working_bank.ancestors,
+                        &transaction.static_account_keys()[0],
+                    )
+                    .map(|(account, _slot)| account.lamports())
+                    .unwrap_or(0);
+
+                let response = &mut responses[transaction_index];
+                response.fee_payer_balance_flags |= fee_payer_balance_flags::PERFORMED;
+                response.fee_payer_balance = fee_payer_balance;
+                response.balance_slot = working_bank.slot();
+            }
+        }
+
+        fn check_status_checks(
+            parsing_and_resolve_results: &[Result<(), PacketHandlingError>],
+            txs: &[Tx],
+            responses: &mut [CheckResponse],
+            working_bank: &Bank,
+        ) {
+            assert_eq!(parsing_and_resolve_results.len(), responses.len());
+
+            let mut error_counters = TransactionErrorMetrics::default();
+            let (status_check_results, included_slots) = working_bank
+                .check_transactions_with_processed_slots(
+                    txs,
+                    &[const { Ok(()) }; MAX_TRANSACTIONS_PER_MESSAGE],
+                    MAX_PROCESSING_AGE,
+                    true,
+                    &mut error_counters,
+                );
+            let included_slots = included_slots.expect("requested to collect processed slots");
+
+            let mut status_check_results_iter =
+                status_check_results.iter().zip(included_slots.iter());
+            for (transaction_index, parsing_and_resolve_result) in
+                parsing_and_resolve_results.iter().enumerate()
+            {
+                if parsing_and_resolve_result.is_err() {
+                    continue;
+                }
+                let (status_check_result, included_slot) = status_check_results_iter
+                    .next()
+                    .expect("status check results must have element for each sent transaction");
+
+                let check_response = &mut responses[transaction_index];
+                check_response.status_check_flags |= status_check_flags::PERFORMED;
+                match status_check_result {
+                    Err(TransactionError::BlockhashNotFound) => {
+                        check_response.status_check_flags |= status_check_flags::TOO_OLD;
                     }
-
-                    let transaction = parsed_transaction_iter.next().expect(
-                        "parsed_transaction_iter iterator must contain element for each sent \
-                         parsed transaction",
-                    );
-
-                    let fee_payer_balance = working_bank
-                        .rc
-                        .accounts
-                        .accounts_db
-                        .load_with_fixed_root(
-                            &working_bank.ancestors,
-                            &transaction.static_account_keys()[0],
-                        )
-                        .map(|(account, _slot)| account.lamports())
-                        .unwrap_or(0);
-
-                    // SAFETY: `transaction_index` is in bounds.
-                    let response = unsafe { responses_ptr.add(transaction_index).as_mut() };
-                    response.fee_payer_balance_flags |= fee_payer_balance_flags::PERFORMED;
-                    response.fee_payer_balance = fee_payer_balance;
-                    response.balance_slot = working_bank.slot();
+                    Err(TransactionError::AlreadyProcessed) => {
+                        check_response.status_check_flags |= status_check_flags::ALREADY_PROCESSED;
+                        check_response.included_slot =
+                            included_slot.expect("included_slot must be set for already processed");
+                    }
+                    _ => {}
                 }
             }
-
-            // Do resolving next since we (currently) need resolved transactions for status checks.
-            let (parsing_and_resolve_results, txs, max_ages) =
-                Self::translate_transaction_batch(&batch, &root_bank);
-
-            if message.flags & check_flags::LOAD_ADDRESS_LOOKUP_TABLES != 0 {
-                let mut resolved_transaction_iter = txs.iter();
-                let mut max_age_iter = max_ages.iter();
-                for (transaction_index, (parsing_result, parsing_and_resolve_results)) in
-                    parsing_results
-                        .iter()
-                        .zip(parsing_and_resolve_results.iter())
-                        .enumerate()
-                {
-                    if parsing_result.is_err() {
-                        continue;
-                    }
-
-                    // SAFETY: `transaction_index` is in bounds.
-                    let response = unsafe { responses_ptr.add(transaction_index).as_mut() };
-                    response.resolve_flags |= resolve_flags::PERFORMED;
-                    if parsing_and_resolve_results.is_err() {
-                        response.resolve_flags |= resolve_flags::FAILED;
-                        continue;
-                    }
-
-                    let transaction = resolved_transaction_iter.next().expect(
-                        "resolved_transaction_iter iterator must contain element for each sent \
-                         parsed transaction",
-                    );
-                    let max_age = max_age_iter.next().expect(
-                        "max_age_iter iterator must contain element for each sent parsed \
-                         transaction",
-                    );
-
-                    // There are 3 cases here:
-                    // 1. None - Tx format does not support ATL
-                    // 2. Some(empty) - V0 Tx with no ATL
-                    // 3. Some(keys) - V0 Tx with ATL
-                    // Only in case 3 will we create a shared allocation and copy keys.
-                    let (sharable_keys, alt_invalidation_slot) = match transaction
-                        .loaded_addresses()
-                    {
-                        Some(loaded_addresses) if !loaded_addresses.is_empty() => {
-                            let num_pubkeys = loaded_addresses.len();
-                            let pubkeys_allocation = self
-                                .allocator
-                                .allocate(
-                                    num_pubkeys.wrapping_mul(core::mem::size_of::<Pubkey>()) as u32
-                                )
-                                .ok_or(ExternalConsumeWorkerError::AllocationFailure)?
-                                .cast();
-                            // SAFETY: non-overlapping and appropriately sized.
-                            unsafe {
-                                Self::copy_loaded_addresses(loaded_addresses, pubkeys_allocation)
-                            };
-                            // SAFETY: pubkeys_allocation was allocated by allocator
-                            let offset =
-                                unsafe { self.allocator.offset(pubkeys_allocation.cast()) };
-                            (
-                                SharablePubkeys {
-                                    offset,
-                                    num_pubkeys: num_pubkeys as u32,
-                                },
-                                max_age.alt_invalidation_slot,
-                            )
-                        }
-                        _ => (
-                            SharablePubkeys {
-                                offset: 0,
-                                num_pubkeys: 0,
-                            },
-                            u64::MAX,
-                        ),
-                    };
-
-                    response.resolution_slot = root_bank.slot();
-                    response.resolved_pubkeys = sharable_keys;
-                    response.min_alt_deactivation_slot = alt_invalidation_slot;
-                }
-            }
-
-            if message.flags & check_flags::STATUS_CHECKS != 0 {
-                let mut error_counters = TransactionErrorMetrics::default();
-                let (status_check_results, included_slots) = working_bank
-                    .check_transactions_with_processed_slots(
-                        &txs,
-                        &[const { Ok(()) }; MAX_TRANSACTIONS_PER_MESSAGE],
-                        MAX_PROCESSING_AGE,
-                        true,
-                        &mut error_counters,
-                    );
-                let included_slots = included_slots.expect("requested to collect processed slots");
-
-                let mut status_check_results_iter =
-                    status_check_results.iter().zip(included_slots.iter());
-                for (transaction_index, parsing_result) in parsing_results.iter().enumerate() {
-                    if parsing_result.is_err() {
-                        continue;
-                    }
-                    let (status_check_result, included_slot) = status_check_results_iter
-                        .next()
-                        .expect("status check results must have element for each sent transaction");
-
-                    let check_response = unsafe { responses_ptr.add(transaction_index).as_mut() };
-                    check_response.status_check_flags |= status_check_flags::PERFORMED;
-                    match status_check_result {
-                        Err(TransactionError::BlockhashNotFound) => {
-                            check_response.status_check_flags |= status_check_flags::TOO_OLD;
-                        }
-                        Err(TransactionError::AlreadyProcessed) => {
-                            check_response.status_check_flags |=
-                                status_check_flags::ALREADY_PROCESSED;
-                            check_response.included_slot = included_slot
-                                .expect("included_slot must be set for already processed");
-                        }
-                        _ => {}
-                    }
-                }
-            }
-
-            let response = WorkerToPackMessage {
-                batch: message.batch,
-                processed_code: agave_scheduler_bindings::processed_codes::PROCESSED,
-                responses,
-            };
-
-            let send_ptr = self
-                .sender
-                .reserve()
-                .ok_or(ExternalConsumeWorkerError::SenderDisconnected)?;
-
-            // `reserve` returns valid aligned pointer
-            unsafe { send_ptr.write(response) };
-
-            Ok(())
-        }
-
-        fn consume_response_iterator<'a>(
-            translation_results: &'a [Result<(), PacketHandlingError>],
-            transactions: &'a [impl TransactionWithMeta],
-            commit_results: &'a [CommitTransactionDetails],
-            bank: &'a Bank,
-        ) -> impl ExactSizeIterator<Item = ExecutionResponse> + 'a {
-            assert_eq!(transactions.len(), commit_results.len());
-            let mut transactions_iterator = transactions.iter();
-            let mut commit_result_iterator = commit_results.iter();
-
-            translation_results
-                .iter()
-                .map(move |translation_result| match translation_result {
-                    Ok(()) => {
-                        let tx = transactions_iterator.next().expect(
-                            "transactions must contain element for each successfully translated \
-                             result",
-                        );
-                        let commit_details = commit_result_iterator.next().expect(
-                            "commit result iterator must contain element for each sent transaction",
-                        );
-                        Self::response_from_commit_details(tx, commit_details, bank)
-                    }
-                    Err(err) => ExecutionResponse {
-                        not_included_reason: Self::reason_from_packet_handling_error(err),
-                        cost_units: 0,
-                        fee_payer_balance: 0,
-                    },
-                })
-        }
-
-        fn resolve_response_iterator(
-            &self,
-            batch: TransactionPtrBatch,
-            bank: &Bank,
-        ) -> Result<impl ExactSizeIterator<Item = CheckResponse>, ExternalConsumeWorkerError>
-        {
-            let enable_static_instruction_limit = bank
-                .feature_set
-                .is_active(&agave_feature_set::static_instruction_limit::ID);
-
-            // We want to load all pubkeys, and copy into allocation (if necessary) before
-            // creating an iterator for the results.
-            let mut resolved_pubkeys = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
-
-            for tx in batch.iter() {
-                resolved_pubkeys.push(self.resolve_transaction_ptr(
-                    tx,
-                    enable_static_instruction_limit,
-                    bank,
-                )?);
-            }
-
-            let slot = bank.slot();
-            Ok(resolved_pubkeys.into_iter().map(move |resolving_result| {
-                Self::resolved_pubkeys_to_response(resolving_result, slot)
-            }))
-        }
-
-        /// Resolve keys given a tx ptr if possible/necessary.
-        ///
-        /// Outer result indicates failure to allocate.
-        /// Inner result indicates a transaction sanitization or resolving failure.
-        /// Option indicates if addresses were loaded.
-        fn resolve_transaction_ptr(
-            &self,
-            tx: TransactionPtr,
-            enable_static_instruction_limit: bool,
-            bank: &Bank,
-        ) -> Result<Result<Option<(SharablePubkeys, u64)>, ()>, ExternalConsumeWorkerError>
-        {
-            let Ok(view) =
-                SanitizedTransactionView::try_new_sanitized(tx, enable_static_instruction_limit)
-            else {
-                return Ok(Err(()));
-            };
-
-            let Ok((maybe_loaded_addresses, deactivation_slot)) =
-                load_addresses_for_view(&view, bank)
-            else {
-                return Ok(Err(()));
-            };
-
-            // There are 3 cases here:
-            // 1. None - Tx format does not support ATL
-            // 2. Some(empty) - V0 Tx with no ATL
-            // 3. Some(keys) - V0 Tx with ATL
-            // Only in case 3 will we create a shared allocation and copy keys.
-            match maybe_loaded_addresses {
-                Some(loaded_addresses) if !loaded_addresses.is_empty() => {
-                    let num_pubkeys = loaded_addresses.len();
-                    let pubkeys_allocation = self
-                        .allocator
-                        .allocate(num_pubkeys.wrapping_mul(core::mem::size_of::<Pubkey>()) as u32)
-                        .ok_or(ExternalConsumeWorkerError::AllocationFailure)?
-                        .cast();
-                    // SAFETY: non-overlapping and appropriately sized.
-                    unsafe { Self::copy_loaded_addresses(&loaded_addresses, pubkeys_allocation) };
-                    // SAFETY: pubkeys_allocation was allocated by allocator
-                    let offset = unsafe { self.allocator.offset(pubkeys_allocation.cast()) };
-                    Ok(Ok(Some((
-                        SharablePubkeys {
-                            offset,
-                            num_pubkeys: num_pubkeys as u32,
-                        },
-                        deactivation_slot,
-                    ))))
-                }
-                _ => Ok(Ok(None)),
-            }
-        }
-
-        /// Return all transactions in the batch as not included with the provided
-        /// reason.
-        fn return_not_included_with_reason(
-            &mut self,
-            message: &PackToWorkerMessage,
-            reason: u8,
-        ) -> Result<(), ExternalConsumeWorkerError> {
-            let response_region = execution_responses_from_iter(
-                &self.allocator,
-                (0..message.batch.num_transactions).map(|_| ExecutionResponse {
-                    not_included_reason: reason,
-                    cost_units: 0,
-                    fee_payer_balance: 0,
-                }),
-            )
-            .ok_or(ExternalConsumeWorkerError::AllocationFailure)?;
-
-            let response_message = WorkerToPackMessage {
-                batch: message.batch,
-                processed_code: agave_scheduler_bindings::processed_codes::PROCESSED,
-                responses: response_region,
-            };
-
-            // Should de-allocate the memory, but this is a non-recoverable
-            // error and so it's not needed.
-            let send_message = self
-                .sender
-                .reserve()
-                .ok_or(ExternalConsumeWorkerError::SenderDisconnected)?;
-
-            unsafe {
-                send_message.write(response_message);
-            }
-            Ok(())
-        }
-
-        fn return_unprocessed_message(
-            &mut self,
-            message: &PackToWorkerMessage,
-            processed_code: u8,
-        ) -> Result<(), ExternalConsumeWorkerError> {
-            assert_ne!(
-                processed_code,
-                agave_scheduler_bindings::processed_codes::PROCESSED
-            );
-            let response = WorkerToPackMessage {
-                batch: message.batch,
-                processed_code,
-                responses: TransactionResponseRegion {
-                    tag: 0,
-                    num_transaction_responses: 0,
-                    transaction_responses_offset: 0,
-                },
-            };
-
-            let send_ptr = self
-                .sender
-                .reserve()
-                .ok_or(ExternalConsumeWorkerError::SenderDisconnected)?;
-
-            // SAFETY: `reserve` guarantees a properly aligned space
-            //         for a `WorkerToPackMessage`
-            unsafe { send_ptr.write(response) };
-
-            Ok(())
         }
 
         /// Translate batch of transactions into usable
