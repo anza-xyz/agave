@@ -376,6 +376,7 @@ mod tests {
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
             runtime_config::RuntimeConfig,
+            stake_utils,
         },
         assert_matches::assert_matches,
         solana_account::{state_traits::StateMut, Account},
@@ -972,7 +973,7 @@ mod tests {
 
         let new_stake_signer = Keypair::new();
         let new_stake_address = new_stake_signer.pubkey();
-        let new_stake_account = Account::from(solana_stake_program::stake_state::create_account(
+        let new_stake_account = Account::from(stake_utils::create_stake_account(
             &new_stake_address,
             &vote_key,
             &vote_account.into(),

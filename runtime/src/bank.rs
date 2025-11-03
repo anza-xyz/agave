@@ -47,6 +47,7 @@ use {
         rent_collector::RentCollector,
         runtime_config::RuntimeConfig,
         stake_account::StakeAccount,
+        stake_utils,
         stake_weighted_timestamp::{
             calculate_stake_weighted_timestamp, MaxAllowableDrift,
             MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST, MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2,
@@ -2309,7 +2310,7 @@ impl Bank {
             .is_active(&feature_set::stake_minimum_delegation_for_rewards::id())
         {
             let num_stake_delegations = stakes.stake_delegations().len();
-            let min_stake_delegation = solana_stake_program::get_minimum_delegation(
+            let min_stake_delegation = stake_utils::get_minimum_delegation(
                 self.feature_set
                     .is_active(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id()),
             )
