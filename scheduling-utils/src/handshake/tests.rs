@@ -50,7 +50,7 @@ fn message_passing_on_all_queues() {
             num_transactions: 5,
             transactions_offset: 100,
         },
-        processed_code: agave_scheduler_bindings::processed_codes::MESSAGE_PROCESSED,
+        processed_code: agave_scheduler_bindings::processed_codes::PROCESSED,
         responses: TransactionResponseRegion {
             tag: 3,
             num_transaction_responses: 2,

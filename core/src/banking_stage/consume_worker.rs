@@ -308,7 +308,7 @@ pub(crate) mod external {
                 return self
                     .return_unprocessed_message(
                         message,
-                        agave_scheduler_bindings::processed_codes::INVALID_MESSAGE,
+                        agave_scheduler_bindings::processed_codes::INVALID,
                     )
                     .map(|()| false);
             }
@@ -413,7 +413,7 @@ pub(crate) mod external {
                 .ok_or(ExternalConsumeWorkerError::AllocationFailure)?;
                 let response = WorkerToPackMessage {
                     batch: message.batch,
-                    processed_code: agave_scheduler_bindings::processed_codes::MESSAGE_PROCESSED,
+                    processed_code: agave_scheduler_bindings::processed_codes::PROCESSED,
                     responses,
                 };
 
@@ -456,7 +456,7 @@ pub(crate) mod external {
 
             let response = WorkerToPackMessage {
                 batch: message.batch,
-                processed_code: agave_scheduler_bindings::processed_codes::MESSAGE_PROCESSED,
+                processed_code: agave_scheduler_bindings::processed_codes::PROCESSED,
                 responses,
             };
 
@@ -602,7 +602,7 @@ pub(crate) mod external {
 
             let response_message = WorkerToPackMessage {
                 batch: message.batch,
-                processed_code: agave_scheduler_bindings::processed_codes::MESSAGE_PROCESSED,
+                processed_code: agave_scheduler_bindings::processed_codes::PROCESSED,
                 responses: response_region,
             };
 
@@ -626,7 +626,7 @@ pub(crate) mod external {
         ) -> Result<(), ExternalConsumeWorkerError> {
             assert_ne!(
                 processed_code,
-                agave_scheduler_bindings::processed_codes::MESSAGE_PROCESSED
+                agave_scheduler_bindings::processed_codes::PROCESSED
             );
             let response = WorkerToPackMessage {
                 batch: message.batch,
@@ -778,7 +778,7 @@ pub(crate) mod external {
             flags == pack_message_flags::EXECUTE
                 || (flags
                     == (pack_message_flags::CHECK
-                        | pack_message_flags::check_flags::RESOLVE_PUBKEYS))
+                        | pack_message_flags::check_flags::LOAD_ADDRESS_LOOKUP_TABLES))
         }
 
         fn response_from_commit_details(
@@ -864,7 +864,7 @@ pub(crate) mod external {
             ));
             assert!(ExternalWorker::validate_message_flags(
                 pack_message_flags::CHECK
-                    | agave_scheduler_bindings::pack_message_flags::check_flags::RESOLVE_PUBKEYS
+                    | agave_scheduler_bindings::pack_message_flags::check_flags::LOAD_ADDRESS_LOOKUP_TABLES
             ));
             assert!(!ExternalWorker::validate_message_flags(
                 pack_message_flags::CHECK

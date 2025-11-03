@@ -268,18 +268,18 @@ pub mod pack_message_flags {
         pub const STATUS_CHECKS: u16 = 1 << 1;
 
         /// Fee-payer balance should be fetched for transactions.
-        pub const GET_FEE_PAYER_BALANCE: u16 = 1 << 2;
+        pub const LOAD_FEE_PAYER_BALANCE: u16 = 1 << 2;
 
         /// Transactions should have ATL pubkeys resolved and returned.
-        pub const RESOLVE_PUBKEYS: u16 = 1 << 3;
+        pub const LOAD_ADDRESS_LOOKUP_TABLES: u16 = 1 << 3;
     }
 }
 
 pub mod processed_codes {
     /// The message was processed.
-    pub const MESSAGE_PROCESSED: u8 = 0;
+    pub const PROCESSED: u8 = 0;
     /// The message was not processed because the message was invalid.
-    pub const INVALID_MESSAGE: u8 = 1;
+    pub const INVALID: u8 = 1;
     /// The message was not processed because `max_working_slot`
     /// was exceeded.
     pub const MAX_WORKING_SLOT_EXCEEDED: u8 = 2;
