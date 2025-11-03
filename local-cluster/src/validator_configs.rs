@@ -34,6 +34,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         run_verification: config.run_verification,
         require_tower: config.require_tower,
         tower_storage: config.tower_storage.clone(),
+        vote_history_storage: config.vote_history_storage.clone(),
         debug_keys: config.debug_keys.clone(),
         contact_debug_interval: config.contact_debug_interval,
         contact_save_interval: config.contact_save_interval,
@@ -80,6 +81,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         tvu_shred_sigverify_threads: config.tvu_shred_sigverify_threads,
         delay_leader_block_for_pending_fork: config.delay_leader_block_for_pending_fork,
         retransmit_xdp: config.retransmit_xdp.clone(),
+        voting_service_test_override: config.voting_service_test_override.clone(),
         repair_handler_type: config.repair_handler_type.clone(),
     }
 }
