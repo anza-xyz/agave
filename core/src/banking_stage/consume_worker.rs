@@ -1237,9 +1237,9 @@ pub(crate) mod external {
                 responses[2].parsing_and_sanitization_flags,
                 parsing_and_sanitization_flags::FAILED
             );
-            for index in 0..3 {
+            for response in responses.iter() {
                 assert_eq!(
-                    responses[index].fee_payer_balance_flags,
+                    response.fee_payer_balance_flags,
                     fee_payer_balance_flags::REQUESTED
                 );
             }
@@ -1311,9 +1311,9 @@ pub(crate) mod external {
             let tx2 = test_serialized_transaction(solana_hash::Hash::new_unique());
             let tx3 = test_serialized_transaction(bank.confirmed_last_blockhash());
 
-            fn to_resolved_view<'a>(
-                tx: &'a [u8],
-            ) -> RuntimeTransaction<ResolvedTransactionView<&'a [u8]>> {
+            fn to_resolved_view(
+                tx: &'_ [u8],
+            ) -> RuntimeTransaction<ResolvedTransactionView<&'_ [u8]>> {
                 RuntimeTransaction::<ResolvedTransactionView<_>>::try_from(
                     RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
                         SanitizedTransactionView::try_new_sanitized(tx, true).unwrap(),
