@@ -1,3 +1,5 @@
+//! Defines ConsensusPool to store received and generated votes and certificates.
+
 use {
     crate::{
         common::{certificate_limits_and_vote_types, vote_to_certificate_ids, Stake},
@@ -88,9 +90,13 @@ fn get_key_and_stakes(
     Ok((*vote_key, stake, epoch_stakes.total_stake()))
 }
 
+/// Container to store received votes and certificates.
+///
+/// Based on received votes and certificates, generates new `VotorEvent`s and generates new certificates.
 pub(crate) struct ConsensusPool {
     cluster_info: Arc<ClusterInfo>,
-    // Vote pools to do bean counting for votes.
+    // Storage for per slot votes.
+    // Adding new votes in the vote uses the prior votes to check for slashable behavior and duplicate votes.
     vote_pools: BTreeMap<Slot, VotePool>,
     /// Completed certificates
     completed_certificates: BTreeMap<CertificateType, Arc<Certificate>>,

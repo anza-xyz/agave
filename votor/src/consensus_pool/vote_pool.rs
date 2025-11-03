@@ -1,3 +1,7 @@
+//! Container to store received votes and associated stakes.
+//!
+//! Also implements various checks for slashable behavior and duplicate votes.
+
 use {
     crate::common::{Stake, VoteType},
     agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
@@ -248,6 +252,8 @@ impl Stakes {
 }
 
 /// Container to store per slot votes and associated stake.
+///
+/// When adding new votes, various checks for slashable behavior and duplicate votes is performed.
 pub(super) struct VotePool {
     /// The slot this instance of the pool is responsible for.
     slot: Slot,
