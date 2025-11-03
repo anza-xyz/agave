@@ -1,11 +1,13 @@
-#![cfg_attr(
-    not(feature = "agave-unstable-api"),
-    deprecated(
-        since = "3.1.0",
-        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
-                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
-                acknowledge use of an interface that may break without warning."
-    )
+#![deprecated(
+    since = "3.1.0",
+    note = "\
+This crate will be REMOVED in Agave v4.0.0 and its name will be taken by the BPF Stake Program. \
+            Users of this crate's public exports must switch to:
+* `stake_state` -> `solana_stake_interface::state`.
+* `points` -> `solana_runtime::inflation_rewards::points`.
+* `id()` / `check_id()` -> `solana_stake_interface::program::_`.
+* `get_minimum_delegation()` will continue to live at the same path.
+* Some convenience functions such as `stake_from()` and `create_account()` are removed."
 )]
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]

@@ -39,7 +39,6 @@ solana-rpc-client-api = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-stake-interface = { workspace = true }
-solana-stake-program = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-transaction = { workspace = true }
 solana-version = { workspace = true }

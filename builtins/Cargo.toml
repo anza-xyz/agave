@@ -22,7 +22,6 @@ solana-loader-v4-program = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
-solana-stake-program = { workspace = true }
 solana-system-program = { workspace = true }
 solana-vote-program = { workspace = true }
 solana-zk-elgamal-proof-program = { workspace = true }
