@@ -29,6 +29,8 @@ pub enum KeyUpdaterType {
     Forward,
     /// For the RPC service
     RpcService,
+    /// BLS all-to-all key updater
+    Bls,
 }
 
 /// Responsible for managing the updaters for identity key change

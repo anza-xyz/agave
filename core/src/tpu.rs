@@ -24,6 +24,7 @@ use {
         tpu_entry_notifier::TpuEntryNotifier,
         validator::{BlockProductionMethod, GeneratorConfig},
     },
+    agave_votor::event::VotorEventSender,
     crossbeam_channel::{bounded, unbounded, Receiver},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -148,6 +149,7 @@ impl Tpu {
         banking_control_receiver: mpsc::Receiver<BankingControlMsg>,
         scheduler_bindings: Option<(PathBuf, mpsc::Sender<BankingControlMsg>)>,
         cancel: CancellationToken,
+        votor_event_sender: VotorEventSender,
     ) -> Self {
         let TpuSockets {
             vote: tpu_vote_sockets,
@@ -338,6 +340,7 @@ impl Tpu {
             bank_forks,
             shred_version,
             xdp_sender,
+            votor_event_sender,
         );
 
         let mut key_notifiers = key_notifiers.write().unwrap();

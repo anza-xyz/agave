@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use {
     agave_votor_messages::vote::Vote,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
@@ -17,6 +15,8 @@ use {
         time::{Duration, Instant},
     },
 };
+
+pub const MAX_IN_FLIGHT_CONSENSUS_EVENTS: usize = 10_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConsensusMetricsEvent {
@@ -97,20 +97,6 @@ impl NodeVoteMetrics {
             }
         }
     }
-}
-
-/// Errors returned from [`AgMetrics::record_vote`].
-#[derive(Debug)]
-pub enum RecordVoteError {
-    /// Could not find start of slot entry.
-    SlotNotFound,
-}
-
-/// Errors returned from [`AgMetrics::record_block_hash_seen`].
-#[derive(Debug)]
-pub enum RecordBlockHashError {
-    /// Could not find start of slot entry.
-    SlotNotFound,
 }
 
 /// Tracks various Consensus related metrics.

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use {
     crate::{
         commitment::{CommitmentAggregationData, CommitmentError},
@@ -147,7 +145,7 @@ fn get_or_insert_bls_keypair(
     Ok(bls_keypair)
 }
 
-fn generate_vote_tx(
+pub fn generate_vote_tx(
     vote: &Vote,
     bank: &Bank,
     vote_account_pubkey: Pubkey,

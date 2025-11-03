@@ -1121,7 +1121,17 @@ pub mod formalize_loaded_transaction_data_size {
 }
 
 pub mod alpenglow {
+    use {solana_keypair::Keypair, std::sync::LazyLock};
+
+    pub static TEST_KEYPAIR: LazyLock<Keypair> = LazyLock::new(|| {
+        Keypair::from_base58_string("2Vzd6oTWU4RtM5UmsSyBH3tAhPSi1sKqMeMC8bF1jzHHLBMRhEWtrfmBV4EmwQbGSwkunk5Wy67kXNAL1ZL1xQhR")
+    });
+
+    #[cfg(not(feature = "dev-context-only-utils"))]
     solana_pubkey::declare_id!("mustRekeyVm2QHYB3JPefBiU4BY3Z6JkW2k3Scw5GWP");
+
+    #[cfg(feature = "dev-context-only-utils")]
+    solana_pubkey::declare_id!("8KpruRFrT59jQ9NfFX9DU6j8a1hW7y6xchvZNQ5rxD4P");
 }
 
 pub mod disable_zk_elgamal_proof_program {

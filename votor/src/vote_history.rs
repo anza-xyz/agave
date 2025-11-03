@@ -250,7 +250,6 @@ impl VoteHistory {
         self.parent_ready_slots.retain(|s, _| *s >= root);
     }
 
-    #[allow(dead_code)]
     /// Save the vote history to `vote_history_storage` signed by `node_keypair`
     pub fn save(
         &self,
