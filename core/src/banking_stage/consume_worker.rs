@@ -867,9 +867,9 @@ pub(crate) mod external {
             }
         }
 
-        fn check_status_checks(
+        fn check_status_checks<D: TransactionData>(
             parsing_and_resolve_results: &[Result<(), PacketHandlingError>],
-            txs: &[Tx],
+            txs: &[RuntimeTransaction<ResolvedTransactionView<D>>],
             responses: &mut [CheckResponse],
             working_bank: &Bank,
         ) {
@@ -1055,7 +1055,7 @@ pub(crate) mod external {
             super::*, agave_scheduler_bindings::SharableTransactionBatchRegion,
             solana_account::AccountSharedData, solana_runtime::genesis_utils,
             solana_sdk_ids::system_program, solana_system_transaction::transfer,
-            solana_transaction::TransactionError,
+            solana_transaction::TransactionError, std::collections::HashSet,
         };
 
         #[test]
@@ -1245,23 +1245,24 @@ pub(crate) mod external {
             }
         }
 
-        fn test_serialized_transaction() -> Vec<u8> {
+        fn test_serialized_transaction(recent_blockhash: solana_hash::Hash) -> Vec<u8> {
             let tx = transfer(
                 &solana_keypair::Keypair::new(),
                 &Pubkey::new_unique(),
                 1,
-                solana_hash::Hash::new_unique(),
+                recent_blockhash,
             );
             bincode::serialize(&tx).unwrap()
         }
 
         #[test]
         fn test_check_load_fee_payer_balance() {
-            let tx1 = test_serialized_transaction();
-            let tx2 = test_serialized_transaction();
-
             let genesis = genesis_utils::create_genesis_config(1_000_000_000);
             let bank = Bank::new_for_tests(&genesis.genesis_config);
+
+            let tx1 = test_serialized_transaction(bank.confirmed_last_blockhash());
+            let tx2 = test_serialized_transaction(bank.confirmed_last_blockhash());
+
             let parsing_results = [Ok(()), Err(TransactionViewError::ParseError), Ok(())];
             let parsed_transactions = [
                 SanitizedTransactionView::try_new_sanitized(&tx1[..], true).unwrap(),
@@ -1298,6 +1299,85 @@ pub(crate) mod external {
             );
             assert_eq!(responses[2].balance_slot, bank.slot());
             assert_eq!(responses[2].fee_payer_balance, 1_000_000_000);
+        }
+
+        #[test]
+        fn test_check_status_checks() {
+            let genesis = genesis_utils::create_genesis_config(1_000_000_000);
+            let (bank, _bank_forks) =
+                Bank::new_for_tests(&genesis.genesis_config).wrap_with_bank_forks_for_tests();
+
+            let tx1 = test_serialized_transaction(bank.confirmed_last_blockhash());
+            let tx2 = test_serialized_transaction(solana_hash::Hash::new_unique());
+            let tx3 = test_serialized_transaction(bank.confirmed_last_blockhash());
+
+            fn to_resolved_view<'a>(
+                tx: &'a [u8],
+            ) -> RuntimeTransaction<ResolvedTransactionView<&'a [u8]>> {
+                RuntimeTransaction::<ResolvedTransactionView<_>>::try_from(
+                    RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+                        SanitizedTransactionView::try_new_sanitized(tx, true).unwrap(),
+                        solana_transaction::sanitized::MessageHash::Compute,
+                        Some(false),
+                    )
+                    .unwrap(),
+                    None,
+                    &HashSet::new(),
+                )
+                .unwrap()
+            }
+
+            let parsing_and_resolve_results = [
+                Ok(()),
+                Err(PacketHandlingError::Sanitization),
+                Ok(()),
+                Ok(()),
+            ];
+            let parsed_transactions = [
+                to_resolved_view(&tx1[..]),
+                to_resolved_view(&tx2[..]),
+                to_resolved_view(&tx3[..]),
+            ];
+
+            // Process transaction 3.
+            bank.store_account(
+                &parsed_transactions[2].static_account_keys()[0],
+                &AccountSharedData::new(1_000_000_000, 0, &system_program::ID),
+            );
+            bank.process_transaction(&bincode::deserialize(&tx3).unwrap())
+                .unwrap();
+
+            // bank.store_account(
+            //     &parsed_transactions[1].static_account_keys()[0],
+            //     &AccountSharedData::new(1_000_000_000, 0, &system_program::ID),
+            // );
+            let mut responses = empty_check_responses(parsing_and_resolve_results.len() as u8);
+
+            ExternalWorker::check_status_checks(
+                &parsing_and_resolve_results,
+                &parsed_transactions,
+                &mut responses,
+                &bank,
+            );
+
+            // test-note: requested is not set by this function.
+            assert_eq!(
+                responses[0].status_check_flags,
+                status_check_flags::PERFORMED
+            );
+
+            assert_eq!(responses[1].status_check_flags, 0);
+
+            assert_eq!(
+                responses[2].status_check_flags,
+                status_check_flags::PERFORMED | status_check_flags::TOO_OLD
+            );
+
+            assert_eq!(
+                responses[3].status_check_flags,
+                status_check_flags::PERFORMED | status_check_flags::ALREADY_PROCESSED
+            );
+            assert_eq!(responses[3].included_slot, bank.slot());
         }
 
         #[test]
