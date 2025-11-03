@@ -260,7 +260,7 @@ mod tests {
             EpochSchedule, DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET, MINIMUM_SLOTS_PER_EPOCH,
         },
         solana_keypair::Keypair,
-        solana_runtime::bank::Bank,
+        solana_runtime::stake_utils,
         solana_signer::Signer,
         std::{sync::Arc, thread::Builder},
     };
@@ -517,7 +517,7 @@ mod tests {
             &vote_account,
             &validator_identity,
             bootstrap_validator_stake_lamports()
-                + solana_stake_program::get_minimum_delegation(
+                + stake_utils::get_minimum_delegation(
                     bank.feature_set.is_active(
                         &agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id(),
                     ),
