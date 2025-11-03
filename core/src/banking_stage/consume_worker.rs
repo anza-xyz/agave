@@ -184,28 +184,35 @@ pub(crate) mod external {
             },
         },
         agave_scheduler_bindings::{
-            pack_message_flags,
+            pack_message_flags::{self, check_flags},
+            processed_codes,
             worker_message_types::{
-                not_included_reasons, resolve_flags, CheckResponse, ExecutionResponse,
+                fee_payer_balance_flags, not_included_reasons, parsing_and_sanitization_flags,
+                resolve_flags, status_check_flags, CheckResponse, ExecutionResponse,
             },
             PackToWorkerMessage, SharablePubkeys, TransactionResponseRegion, WorkerToPackMessage,
             MAX_TRANSACTIONS_PER_MESSAGE,
         },
         agave_scheduling_utils::{
             error::transaction_error_to_not_included_reason,
-            responses_region::{execution_responses_from_iter, resolve_responses_from_iter},
+            responses_region::{allocate_check_response_region, execution_responses_from_iter},
             transaction_ptr::{TransactionPtr, TransactionPtrBatch},
         },
         agave_transaction_view::{
             resolved_transaction_view::ResolvedTransactionView,
             transaction_view::SanitizedTransactionView,
         },
-        solana_clock::Slot,
+        solana_account::ReadableAccount,
+        solana_clock::{Slot, MAX_PROCESSING_AGE},
         solana_cost_model::cost_model::CostModel,
         solana_message::v0::LoadedAddresses,
         solana_pubkey::Pubkey,
-        solana_runtime::{bank::Bank, bank_forks::SharableBanks},
+        solana_runtime::{
+            bank::Bank,
+            bank_forks::{BankPair, SharableBanks},
+        },
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_transaction::TransactionError,
         std::ptr::NonNull,
     };
 
@@ -318,10 +325,10 @@ pub(crate) mod external {
                 .num_messages_processed
                 .fetch_add(1, Ordering::Relaxed);
 
-            if message.flags & agave_scheduler_bindings::pack_message_flags::EXECUTE == 1 {
+            if message.flags & pack_message_flags::EXECUTE == 1 {
                 self.execute_batch(message, should_drain_executes)
             } else {
-                self.resolve_batch(message).map(|()| false)
+                self.check_batch(message).map(|()| false)
             }
         }
 
@@ -433,11 +440,21 @@ pub(crate) mod external {
                 .map(|()| false)
         }
 
-        fn resolve_batch(
+        fn check_batch(
             &mut self,
             message: &PackToWorkerMessage,
         ) -> Result<(), ExternalConsumeWorkerError> {
-            let root_bank = self.sharable_banks.root();
+            let BankPair {
+                root_bank,
+                working_bank,
+            } = self.sharable_banks.load();
+
+            if working_bank.slot() > message.max_working_slot {
+                return self.return_unprocessed_message(
+                    message,
+                    processed_codes::MAX_WORKING_SLOT_EXCEEDED,
+                );
+            }
 
             // SAFETY: Assumption that external scheduler does not pass messages with batch regions
             //         not pointing to valid regions in the allocator.
@@ -448,11 +465,237 @@ pub(crate) mod external {
                 )
             };
 
-            let responses = resolve_responses_from_iter(
+            // Allocate space for all responses.
+            let (responses_ptr, responses) = allocate_check_response_region(
                 &self.allocator,
-                self.resolve_response_iterator(batch, &root_bank)?,
+                usize::from(message.batch.num_transactions),
             )
             .ok_or(ExternalConsumeWorkerError::AllocationFailure)?;
+
+            let enable_static_instruction_limit = root_bank
+                .feature_set
+                .is_active(&agave_feature_set::static_instruction_limit::ID);
+            let mut parsing_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
+            let mut parsed_transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
+            for tx_ptr in batch.iter() {
+                // Parsing and basic sanitization checks
+                match SanitizedTransactionView::try_new_sanitized(
+                    tx_ptr,
+                    enable_static_instruction_limit,
+                ) {
+                    Ok(view) => {
+                        parsing_results.push(Ok(()));
+                        parsed_transactions.push(view);
+                    }
+                    Err(err) => {
+                        parsing_results.push(Err(err));
+                    }
+                }
+            }
+
+            // Populate initial responses with the result of parsing/sanitization.
+            assert_eq!(
+                parsing_results.len(),
+                usize::from(message.batch.num_transactions)
+            );
+            let initial_status_check_flags = if message.flags & check_flags::STATUS_CHECKS != 0 {
+                status_check_flags::REQUESTED
+            } else {
+                0
+            };
+            let initial_fee_payer_balance_flags =
+                if message.flags & check_flags::LOAD_FEE_PAYER_BALANCE != 0 {
+                    fee_payer_balance_flags::REQUESTED
+                } else {
+                    0
+                };
+            let initial_resolve_flags =
+                if message.flags & check_flags::LOAD_ADDRESS_LOOKUP_TABLES != 0 {
+                    resolve_flags::REQUESTED
+                } else {
+                    0
+                };
+            // Setup initial responses with requested checks.
+            // Values only filled in when check is performed.
+            for (transaction_index, parsing_result) in parsing_results.iter().enumerate() {
+                // NOTE: this includes resolution failures since this is a necessary check for further checks.
+                let parsing_and_sanitization_flags = if parsing_result.is_err() {
+                    parsing_and_sanitization_flags::FAILED
+                } else {
+                    0
+                };
+
+                // SAFETY: transaaction_index is in bounds.
+                unsafe {
+                    responses_ptr.add(transaction_index).write(CheckResponse {
+                        parsing_and_sanitization_flags,
+                        status_check_flags: initial_status_check_flags,
+                        fee_payer_balance_flags: initial_fee_payer_balance_flags,
+                        resolve_flags: initial_resolve_flags,
+                        included_slot: 0,
+                        balance_slot: 0,
+                        fee_payer_balance: 0,
+                        resolution_slot: 0,
+                        min_alt_deactivation_slot: 0,
+                        resolved_pubkeys: SharablePubkeys {
+                            offset: 0,
+                            num_pubkeys: 0,
+                        },
+                    })
+                };
+            }
+
+            // Check fee-payer if requested.
+            if message.flags & check_flags::LOAD_FEE_PAYER_BALANCE != 0 {
+                let mut parsed_transaction_iter = parsed_transactions.iter();
+                for (transaction_index, parsing_result) in parsing_results.iter().enumerate() {
+                    if parsing_result.is_err() {
+                        continue;
+                    }
+
+                    let transaction = parsed_transaction_iter.next().expect(
+                        "parsed_transaction_iter iterator must contain element for each sent \
+                         parsed transaction",
+                    );
+
+                    let fee_payer_balance = working_bank
+                        .rc
+                        .accounts
+                        .accounts_db
+                        .load_with_fixed_root(
+                            &working_bank.ancestors,
+                            &transaction.static_account_keys()[0],
+                        )
+                        .map(|(account, _slot)| account.lamports())
+                        .unwrap_or(0);
+
+                    // SAFETY: `transaction_index` is in bounds.
+                    let response = unsafe { responses_ptr.add(transaction_index).as_mut() };
+                    response.fee_payer_balance_flags |= fee_payer_balance_flags::PERFORMED;
+                    response.fee_payer_balance = fee_payer_balance;
+                    response.balance_slot = working_bank.slot();
+                }
+            }
+
+            // Do resolving next since we (currently) need resolved transactions for status checks.
+            let (parsing_and_resolve_results, txs, max_ages) =
+                Self::translate_transaction_batch(&batch, &root_bank);
+
+            if message.flags & check_flags::LOAD_ADDRESS_LOOKUP_TABLES != 0 {
+                let mut resolved_transaction_iter = txs.iter();
+                let mut max_age_iter = max_ages.iter();
+                for (transaction_index, (parsing_result, parsing_and_resolve_results)) in
+                    parsing_results
+                        .iter()
+                        .zip(parsing_and_resolve_results.iter())
+                        .enumerate()
+                {
+                    if parsing_result.is_err() {
+                        continue;
+                    }
+
+                    // SAFETY: `transaction_index` is in bounds.
+                    let response = unsafe { responses_ptr.add(transaction_index).as_mut() };
+                    response.resolve_flags |= resolve_flags::PERFORMED;
+                    if parsing_and_resolve_results.is_err() {
+                        response.resolve_flags |= resolve_flags::FAILED;
+                        continue;
+                    }
+
+                    let transaction = resolved_transaction_iter.next().expect(
+                        "resolved_transaction_iter iterator must contain element for each sent \
+                         parsed transaction",
+                    );
+                    let max_age = max_age_iter.next().expect(
+                        "max_age_iter iterator must contain element for each sent parsed \
+                         transaction",
+                    );
+
+                    // There are 3 cases here:
+                    // 1. None - Tx format does not support ATL
+                    // 2. Some(empty) - V0 Tx with no ATL
+                    // 3. Some(keys) - V0 Tx with ATL
+                    // Only in case 3 will we create a shared allocation and copy keys.
+                    let (sharable_keys, alt_invalidation_slot) = match transaction
+                        .loaded_addresses()
+                    {
+                        Some(loaded_addresses) if !loaded_addresses.is_empty() => {
+                            let num_pubkeys = loaded_addresses.len();
+                            let pubkeys_allocation = self
+                                .allocator
+                                .allocate(
+                                    num_pubkeys.wrapping_mul(core::mem::size_of::<Pubkey>()) as u32
+                                )
+                                .ok_or(ExternalConsumeWorkerError::AllocationFailure)?
+                                .cast();
+                            // SAFETY: non-overlapping and appropriately sized.
+                            unsafe {
+                                Self::copy_loaded_addresses(loaded_addresses, pubkeys_allocation)
+                            };
+                            // SAFETY: pubkeys_allocation was allocated by allocator
+                            let offset =
+                                unsafe { self.allocator.offset(pubkeys_allocation.cast()) };
+                            (
+                                SharablePubkeys {
+                                    offset,
+                                    num_pubkeys: num_pubkeys as u32,
+                                },
+                                max_age.alt_invalidation_slot,
+                            )
+                        }
+                        _ => (
+                            SharablePubkeys {
+                                offset: 0,
+                                num_pubkeys: 0,
+                            },
+                            u64::MAX,
+                        ),
+                    };
+
+                    response.resolution_slot = root_bank.slot();
+                    response.resolved_pubkeys = sharable_keys;
+                    response.min_alt_deactivation_slot = alt_invalidation_slot;
+                }
+            }
+
+            if message.flags & check_flags::STATUS_CHECKS != 0 {
+                let mut error_counters = TransactionErrorMetrics::default();
+                let (status_check_results, included_slots) = working_bank
+                    .check_transactions_with_processed_slots(
+                        &txs,
+                        &[const { Ok(()) }; MAX_TRANSACTIONS_PER_MESSAGE],
+                        MAX_PROCESSING_AGE,
+                        true,
+                        &mut error_counters,
+                    );
+                let included_slots = included_slots.expect("requested to collect processed slots");
+
+                let mut status_check_results_iter =
+                    status_check_results.iter().zip(included_slots.iter());
+                for (transaction_index, parsing_result) in parsing_results.iter().enumerate() {
+                    if parsing_result.is_err() {
+                        continue;
+                    }
+                    let (status_check_result, included_slot) = status_check_results_iter
+                        .next()
+                        .expect("status check results must have element for each sent transaction");
+
+                    let check_response = unsafe { responses_ptr.add(transaction_index).as_mut() };
+                    check_response.status_check_flags |= status_check_flags::PERFORMED;
+                    match status_check_result {
+                        Err(TransactionError::BlockhashNotFound) => {
+                            check_response.status_check_flags |= status_check_flags::TOO_OLD;
+                        }
+                        Err(TransactionError::AlreadyProcessed) => {
+                            check_response.status_check_flags |=
+                                status_check_flags::ALREADY_PROCESSED;
+                            check_response.included_slot = included_slot
+                                .expect("included_slot must be set for already processed");
+                        }
+                        _ => {}
+                    }
+                }
+            }
 
             let response = WorkerToPackMessage {
                 batch: message.batch,
@@ -775,10 +1018,18 @@ pub(crate) mod external {
         }
 
         fn validate_message_flags(flags: u16) -> bool {
-            flags == pack_message_flags::EXECUTE
-                || (flags
-                    == (pack_message_flags::CHECK
-                        | pack_message_flags::check_flags::LOAD_ADDRESS_LOOKUP_TABLES))
+            if flags & pack_message_flags::EXECUTE != 0 {
+                const ALLOWED_EXECUTE_FLAGS: u16 = pack_message_flags::EXECUTE;
+
+                flags & !ALLOWED_EXECUTE_FLAGS == 0
+            } else {
+                const ALLOWED_CHECK_BITS: u16 = pack_message_flags::CHECK
+                    | check_flags::STATUS_CHECKS
+                    | check_flags::LOAD_FEE_PAYER_BALANCE
+                    | check_flags::LOAD_ADDRESS_LOOKUP_TABLES;
+
+                flags & !ALLOWED_CHECK_BITS == 0
+            }
         }
 
         fn response_from_commit_details(

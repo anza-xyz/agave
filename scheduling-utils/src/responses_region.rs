@@ -6,6 +6,7 @@ use {
         TransactionResponseRegion,
     },
     rts_alloc::Allocator,
+    std::ptr::NonNull,
 };
 
 /// Prepare a [`TransactionResponseRegion`] with [`ExecutionResponse`].
@@ -26,6 +27,53 @@ pub fn resolve_responses_from_iter(
     unsafe { from_iterator(allocator, CHECK_RESPONSE, iter) }
 }
 
+/// Allocate region a [`TransactionResponseRegion`] with [`CheckResponse`].
+/// Each [`CheckResponse`] is not yet populated and must be populated by the
+/// caller.
+pub fn allocate_check_response_region(
+    allocator: &Allocator,
+    num_transaction_responses: usize,
+) -> Option<(NonNull<CheckResponse>, TransactionResponseRegion)> {
+    // SAFETY: CHECK_RESPONSE -> CheckResponse
+    unsafe {
+        allocate_response_region::<CheckResponse>(
+            allocator,
+            CHECK_RESPONSE,
+            num_transaction_responses,
+        )
+    }
+}
+
+/// Allocate a response region.
+///
+/// # Safety
+/// - T must be a valid response type
+/// - `tag` must match the `T`
+unsafe fn allocate_response_region<T: Sized>(
+    allocator: &Allocator,
+    tag: u8,
+    num_transaction_responses: usize,
+) -> Option<(NonNull<T>, TransactionResponseRegion)> {
+    let size = num_transaction_responses.wrapping_mul(core::mem::size_of::<T>());
+    let response_ptr = allocator.allocate(size as u32)?.cast::<T>();
+    debug_assert!(
+        response_ptr.is_aligned(),
+        "allocator should guarantee alignment for the response types of interest"
+    );
+
+    // SAFETY: `response_ptr` was allocated from the allocator.
+    let transaction_responses_offset = unsafe { allocator.offset(response_ptr.cast()) };
+
+    Some((
+        response_ptr,
+        TransactionResponseRegion {
+            tag,
+            num_transaction_responses: num_transaction_responses as u8,
+            transaction_responses_offset,
+        },
+    ))
+}
+
 /// Prepare a [`TransactionResponseRegion`] from an iterator.
 ///
 /// # Safety
@@ -37,25 +85,12 @@ unsafe fn from_iterator<T: Sized>(
     iter: impl ExactSizeIterator<Item = T>,
 ) -> Option<TransactionResponseRegion> {
     let num_transaction_responses = iter.len();
-    let size = num_transaction_responses.wrapping_mul(core::mem::size_of::<T>());
-    let response_ptr = allocator.allocate(size as u32)?.cast::<T>();
-
+    let (response_ptr, region) =
+        allocate_response_region(allocator, tag, num_transaction_responses)?;
     for (index, response) in iter.enumerate() {
-        debug_assert!(
-            response_ptr.is_aligned(),
-            "allocator should guarantee alignment for the response types of interest"
-        );
-
         // SAFETY: `response_ptr` is sufficiently sized to fit the response vector.
         unsafe { response_ptr.add(index).write(response) };
     }
 
-    // SAFETY: `response_ptr` was allocated from the allocator.
-    let transaction_responses_offset = unsafe { allocator.offset(response_ptr.cast()) };
-
-    Some(TransactionResponseRegion {
-        tag,
-        num_transaction_responses: num_transaction_responses as u8,
-        transaction_responses_offset,
-    })
+    Some(region)
 }
