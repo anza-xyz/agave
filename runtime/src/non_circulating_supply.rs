@@ -5,7 +5,6 @@ use {
     solana_accounts_db::accounts_index::{AccountIndex, IndexKey, ScanConfig, ScanResult},
     solana_pubkey::Pubkey,
     solana_stake_interface::{self as stake, state::StakeStateV2},
-    solana_stake_program::stake_state,
     std::collections::HashSet,
 };
 
@@ -47,7 +46,9 @@ pub fn calculate_non_circulating_supply(bank: &Bank) -> ScanResult<NonCirculatin
     };
 
     for (pubkey, account) in stake_accounts.iter() {
-        let stake_account = stake_state::from(account).unwrap_or_default();
+        let stake_account = account
+            .deserialize_data::<StakeStateV2>()
+            .unwrap_or_default();
         match stake_account {
             StakeStateV2::Initialized(meta) => {
                 if meta.lockup.is_in_force(&clock, None)

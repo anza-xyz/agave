@@ -20,7 +20,6 @@ use {
     solana_signature::Signature,
     solana_signer::{signers::Signers, unique_signers, Signer},
     solana_stake_interface::{instruction::LockupArgs, state::Lockup},
-    solana_stake_program::stake_state,
     solana_transaction::Transaction,
     std::{env, error::Error, str::FromStr},
 };
@@ -52,7 +51,7 @@ fn get_balances(
 fn get_lockup(client: &RpcClient, address: &Pubkey) -> Result<Lockup, ClientError> {
     client
         .get_account(address)
-        .map(|account| stake_state::lockup_from(&account).unwrap())
+        .map(|account| stake_accounts::lockup_from(&account).unwrap())
 }
 
 fn get_lockups(
