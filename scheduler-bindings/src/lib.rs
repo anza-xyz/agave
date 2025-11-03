@@ -437,40 +437,40 @@ pub mod worker_message_types {
 
     pub mod parsing_and_sanitization_flags {
         /// Flag set if parsing and sanitization failed.
-        pub const FAILED: u8 = 1 << 1;
+        pub const FAILED: u8 = 1 << 0;
     }
 
     pub mod status_check_flags {
         /// Flag set if status checks were requested.
-        pub const REQUESTED: u8 = 1 << 1;
+        pub const REQUESTED: u8 = 1 << 0;
         /// Flag set if status checks were performed. A previous failure
         /// could have caused checks to be skipped.
-        pub const PERFORMED: u8 = 1 << 2;
+        pub const PERFORMED: u8 = 1 << 1;
         /// Flag set if status checks failed due to the transaction being
         /// too old.
-        pub const TOO_OLD: u8 = 1 << 3;
+        pub const TOO_OLD: u8 = 1 << 2;
         /// Flag set if status checks failed due to the transaction already
         /// being processed.
-        pub const ALREADY_PROCESSED: u8 = 1 << 4;
+        pub const ALREADY_PROCESSED: u8 = 1 << 3;
         /// Flag set if status checks failed due to an invalid nonce state.
-        pub const INVALID_NONCE: u8 = 1 << 5;
+        pub const INVALID_NONCE: u8 = 1 << 4;
     }
 
     pub mod fee_payer_balance_flags {
         /// Flag set if fee-payer balance was requested.
-        pub const REQUESTED: u8 = 1 << 1;
+        pub const REQUESTED: u8 = 1 << 0;
         /// Flag set if fee-payer balance fetching was performed. A previous
         /// failure could have caused balance fetching to be skipped.
-        pub const PERFORMED: u8 = 1 << 2;
+        pub const PERFORMED: u8 = 1 << 1;
     }
 
     pub mod resolve_flags {
         /// Flag set if resolving pubkeys was requested.
-        pub const REQUESTED: u8 = 1 << 1;
+        pub const REQUESTED: u8 = 1 << 0;
         /// Flag set if resolving pubkeys was performed.
-        pub const PERFORMED: u8 = 1 << 2;
+        pub const PERFORMED: u8 = 1 << 1;
         /// Flag set if resolving failed.
-        pub const FAILED: u8 = 1 << 3;
+        pub const FAILED: u8 = 1 << 2;
     }
 
     #[cfg_attr(
