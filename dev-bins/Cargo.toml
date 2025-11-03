@@ -76,7 +76,7 @@ solana-accounts-db = { path = "../accounts-db", version = "=4.0.0-alpha.0", feat
 solana-bench-tps = { path = "../bench-tps", version = "=4.0.0-alpha.0" }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-clap-utils = { path = "../clap-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-cli-config = { path = "../cli-config", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
+solana-cli-config = { path = "../cli-config", version = "=4.0.0-alpha.0" }
 solana-cli-output = { path = "../cli-output", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-client = { path = "../client", version = "=4.0.0-alpha.0" }
 solana-clock = "3.0.0"
