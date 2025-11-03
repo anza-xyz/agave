@@ -7,7 +7,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
-include = ["agave-xdp-prog"]
+include = ["Cargo.toml", "src/**", "README", "agave-xdp-prog"]
 
 [[bin]]
 name = "agave-xdp-prog"
