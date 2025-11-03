@@ -107,6 +107,7 @@ Alternatively use the Github UI.
 1. Update [mergify.yml](https://github.com/anza-xyz/agave/blob/master/.mergify.yml) to add backport actions for the new branch and remove actions for the obsolete branch.
 1. Adjust the [Github backport labels](https://github.com/anza-xyz/agave/labels) to add the new branch label and remove the label for the obsolete branch.
 1. Announce on Discord #development that the release branch exists so people know to use the new backport labels.
+1. Update CODEOWNERS on the new branch to `* @anza-xyz/backport-reviewers`
 
 ## Steps to Create a Release
 
