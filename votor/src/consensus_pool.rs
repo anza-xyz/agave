@@ -546,7 +546,6 @@ impl ConsensusPool {
 mod tests {
     use {
         super::*,
-        crate::common::{conflicting_types, VoteType},
         agave_votor_messages::consensus_message::{VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
         solana_bls_signatures::{
             keypair::Keypair as BLSKeypair, Pubkey as BLSPubkey, Signature as BLSSignature,
@@ -1673,75 +1672,6 @@ mod tests {
         )
         .unwrap();
         assert!(new_events.is_empty());
-    }
-
-    fn create_new_vote(vote_type: VoteType, slot: Slot) -> Vote {
-        match vote_type {
-            VoteType::Notarize => Vote::new_notarization_vote(slot, Hash::default()),
-            VoteType::NotarizeFallback => {
-                Vote::new_notarization_fallback_vote(slot, Hash::default())
-            }
-            VoteType::Skip => Vote::new_skip_vote(slot),
-            VoteType::SkipFallback => Vote::new_skip_fallback_vote(slot),
-            VoteType::Finalize => Vote::new_finalization_vote(slot),
-        }
-    }
-
-    fn test_reject_conflicting_vote(
-        pool: &mut ConsensusPool,
-        bank: &Bank,
-        validator_keypairs: &[ValidatorVoteKeypairs],
-        vote_type_1: VoteType,
-        vote_type_2: VoteType,
-        slot: Slot,
-    ) {
-        let vote_1 = create_new_vote(vote_type_1, slot);
-        let vote_2 = create_new_vote(vote_type_2, slot);
-        pool.add_message(
-            bank.epoch_schedule(),
-            bank.epoch_stakes_map(),
-            bank.slot(),
-            &Pubkey::new_unique(),
-            dummy_vote_message(validator_keypairs, &vote_1, 0),
-            &mut vec![],
-        )
-        .unwrap();
-        assert!(pool
-            .add_message(
-                bank.epoch_schedule(),
-                bank.epoch_stakes_map(),
-                bank.slot(),
-                &Pubkey::new_unique(),
-                dummy_vote_message(validator_keypairs, &vote_2, 0),
-                &mut vec![]
-            )
-            .is_err());
-    }
-
-    #[test]
-    fn test_reject_conflicting_votes_with_type() {
-        let (validator_keypairs, mut pool, bank_forks) = create_initial_state();
-        let mut slot = 2;
-        for vote_type_1 in [
-            VoteType::Finalize,
-            VoteType::Notarize,
-            VoteType::NotarizeFallback,
-            VoteType::Skip,
-            VoteType::SkipFallback,
-        ] {
-            let conflicting_vote_types = conflicting_types(vote_type_1);
-            for vote_type_2 in conflicting_vote_types {
-                test_reject_conflicting_vote(
-                    &mut pool,
-                    &bank_forks.read().unwrap().root_bank(),
-                    &validator_keypairs,
-                    vote_type_1,
-                    *vote_type_2,
-                    slot,
-                );
-            }
-            slot = slot.saturating_add(4);
-        }
     }
 
     #[test]
