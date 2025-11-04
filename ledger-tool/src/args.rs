@@ -1,6 +1,7 @@
 use {
     crate::LEDGER_TOOL_DIRECTORY,
     clap::{value_t, value_t_or_exit, values_t, values_t_or_exit, Arg, ArgMatches},
+    log::*,
     solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_accounts_db::{
         accounts_db::{AccountsDbConfig, DEFAULT_MEMLOCK_BUDGET_SIZE},
@@ -271,7 +272,11 @@ pub fn get_accounts_db_config(
     let storage_access = arg_matches
         .value_of("accounts_db_access_storages_method")
         .map(|method| match method {
-            "mmap" => StorageAccess::Mmap,
+            "mmap" => {
+                warn!("Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.");
+                #[allow(deprecated)]
+                StorageAccess::Mmap
+            }
             "file" => StorageAccess::File,
             _ => {
                 // clap will enforce one of the above values is given

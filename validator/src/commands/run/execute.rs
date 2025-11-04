@@ -404,7 +404,11 @@ pub fn execute(
     let storage_access = matches
         .value_of("accounts_db_access_storages_method")
         .map(|method| match method {
-            "mmap" => StorageAccess::Mmap,
+            "mmap" => {
+                warn!("Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.");
+                #[allow(deprecated)]
+                StorageAccess::Mmap
+            }
             "file" => StorageAccess::File,
             _ => {
                 // clap will enforce one of the above values is given
