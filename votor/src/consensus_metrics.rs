@@ -240,60 +240,52 @@ impl ConsensusMetrics {
     }
 
     /// Performs end of epoch reporting and reset all the statistics for the subsequent epoch.
-    fn end_of_epoch_reporting(&mut self, epoch: Epoch) {
+    fn end_of_epoch_reporting(&mut self) {
         for (addr, metrics) in &self.node_metrics {
             let addr = addr.to_string();
-            datapoint_info!("consensus_vote_metrics",
+            datapoint_info!("votor_consensus_metrics",
                 "address" => addr,
                 ("notar_vote_count", metrics.notar.entries(), i64),
-                ("notar_vote_us_mean", metrics.notar.mean().ok(), Option<i64>),
-                ("notar_vote_us_stddev", metrics.notar.stddev(), Option<i64>),
-                ("notar_vote_us_maximum", metrics.notar.maximum().ok(), Option<i64>),
+                ("notar_vote_mean", metrics.notar.mean().ok(), Option<i64>),
+                ("notar_vote_stddev", metrics.notar.stddev(), Option<i64>),
+                ("notar_vote_maximum", metrics.notar.maximum().ok(), Option<i64>),
 
                 ("notar_fallback_vote_count", metrics.notar_fallback.entries(), i64),
-                ("notar_fallback_vote_us_mean", metrics.notar_fallback.mean().ok(), Option<i64>),
-                ("notar_fallback_vote_us_stddev", metrics.notar_fallback.stddev(), Option<i64>),
-                ("notar_fallback_vote_us_maximum", metrics.notar_fallback.maximum().ok(), Option<i64>),
+                ("notar_fallback_vote_mean", metrics.notar_fallback.mean().ok(), Option<i64>),
+                ("notar_fallback_vote_stddev", metrics.notar_fallback.stddev(), Option<i64>),
+                ("notar_fallback_vote_maximum", metrics.notar_fallback.maximum().ok(), Option<i64>),
 
                 ("skip_vote_count", metrics.skip.entries(), i64),
-                ("skip_vote_us_mean", metrics.skip.mean().ok(), Option<i64>),
-                ("skip_vote_us_stddev", metrics.skip.stddev(), Option<i64>),
-                ("skip_vote_us_maximum", metrics.skip.maximum().ok(), Option<i64>),
+                ("skip_vote_mean", metrics.skip.mean().ok(), Option<i64>),
+                ("skip_vote_stddev", metrics.skip.stddev(), Option<i64>),
+                ("skip_vote_maximum", metrics.skip.maximum().ok(), Option<i64>),
 
                 ("skip_fallback_vote_count", metrics.skip_fallback.entries(), i64),
-                ("skip_fallback_vote_us_mean", metrics.skip_fallback.mean().ok(), Option<i64>),
-                ("skip_fallback_vote_us_stddev", metrics.skip_fallback.stddev(), Option<i64>),
-                ("skip_fallback_vote_us_maximum", metrics.skip_fallback.maximum().ok(), Option<i64>),
+                ("skip_fallback_vote_mean", metrics.skip_fallback.mean().ok(), Option<i64>),
+                ("skip_fallback_vote_stddev", metrics.skip_fallback.stddev(), Option<i64>),
+                ("skip_fallback_vote_maximum", metrics.skip_fallback.maximum().ok(), Option<i64>),
 
                 ("finalize_vote_count", metrics.final_.entries(), i64),
-                ("finalize_vote_us_mean", metrics.final_.mean().ok(), Option<i64>),
-                ("finalize_vote_us_stddev", metrics.final_.stddev(), Option<i64>),
-                ("finalize_vote_us_maximum", metrics.final_.maximum().ok(), Option<i64>),
+                ("finalize_vote_mean", metrics.final_.mean().ok(), Option<i64>),
+                ("finalize_vote_stddev", metrics.final_.stddev(), Option<i64>),
+                ("finalize_vote_maximum", metrics.final_.maximum().ok(), Option<i64>),
             );
         }
 
         for (addr, histogram) in &self.leader_metrics {
             let addr = addr.to_string();
-            datapoint_info!("consensus_block_hash_seen_metrics",
+            datapoint_info!("votor_consensus_metrics",
                 "address" => addr,
-                ("block_hash_seen_count", histogram.entries(), i64),
-                ("block_hash_seen_us_mean", histogram.mean().ok(), Option<i64>),
-                ("block_hash_seen_us_stddev", histogram.stddev(), Option<i64>),
-                ("block_hash_seen_us_maximum", histogram.maximum().ok(), Option<i64>),
+                ("blocks_seen_vote_count", histogram.entries(), i64),
+                ("blocks_seen_vote_mean", histogram.mean().ok(), Option<i64>),
+                ("blocks_seen_vote_stddev", histogram.stddev(), Option<i64>),
+                ("blocks_seen_vote_maximum", histogram.maximum().ok(), Option<i64>),
             );
         }
 
-        datapoint_info!(
-            "consensus_metrics_internals",
-            ("start_of_slot_count", self.start_of_slot.len(), i64),
-            (
-                "metrics_recording_failed",
-                self.metrics_recording_failed,
-                i64
-            ),
-        );
-
-        *self = Self::new(epoch, self.receiver.clone());
+        self.node_metrics.clear();
+        self.leader_metrics.clear();
+        self.start_of_slot.clear();
     }
 
     /// This function can be called if there is a new [`Epoch`] and it will carry out end of epoch reporting.
@@ -301,7 +293,7 @@ impl ConsensusMetrics {
         assert!(epoch >= self.current_epoch);
         if epoch != self.current_epoch {
             self.current_epoch = epoch;
-            self.end_of_epoch_reporting(epoch);
+            self.end_of_epoch_reporting();
         }
     }
 }
