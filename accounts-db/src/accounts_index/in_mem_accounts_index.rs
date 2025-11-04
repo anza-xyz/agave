@@ -876,12 +876,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
     }
 
-    /// fill in `evictions_possible` from `iter` by checking age
+    /// fill in `possible_evictions` from `iter` by checking age
     /// Filter as much as possible and capture dirty flag
     /// Skip entries with ref_count != 1 since they will be rejected later anyway
     fn gather_possible_evictions<'a>(
         iter: impl Iterator<Item = (&'a Pubkey, &'a Box<AccountMapEntry<T>>)>,
-        evictions_possible: &mut Vec<(Pubkey, bool)>,
+        possible_evictions: &mut Vec<(Pubkey, bool)>,
         startup: bool,
         current_age: Age,
         ages_flushing_now: Age,
@@ -899,7 +899,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 continue;
             }
 
-            evictions_possible.push((*k, v.dirty()));
+            possible_evictions.push((*k, v.dirty()));
         }
     }
 
@@ -915,14 +915,14 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         _flush_guard: &FlushGuard,
         ages_flushing_now: Age,
     ) -> Vec<(Pubkey, /*is_dirty*/ bool)> {
-        let mut evictions_possible = Vec::new();
+        let mut possible_evictions = Vec::new();
         let m;
         {
             let map = self.map_internal.read().unwrap();
             m = Measure::start("flush_scan"); // we don't care about lock time in this metric - bg threads can wait
             Self::gather_possible_evictions(
                 map.iter(),
-                &mut evictions_possible,
+                &mut possible_evictions,
                 startup,
                 current_age,
                 ages_flushing_now,
@@ -930,7 +930,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
         Self::update_time_stat(&self.stats().flush_scan_us, m);
 
-        evictions_possible
+        possible_evictions
     }
 
     fn write_startup_info_to_disk(&self) {
@@ -1716,16 +1716,28 @@ mod tests {
 
         for current_age in 0..=255 {
             for ages_flushing_now in 0..=255 {
-                let mut evictions_possible = Vec::new();
+                let mut possible_evictions = Vec::new();
                 InMemAccountsIndex::<u64, u64>::gather_possible_evictions(
                     map.iter(),
-                    &mut evictions_possible,
+                    &mut possible_evictions,
                     startup,
                     current_age,
                     ages_flushing_now,
                 );
-                assert_eq!(evictions_possible.len(), 1 + ages_flushing_now as usize);
-                evictions_possible.iter().for_each(|(key, _is_dirty)| {
+                // Verify that the number of entries selected for eviction matches the expected count.
+                // Test setup: map contains 256 entries with ages 0-255 (one entry per age value).
+                //
+                // gather_possible_evictions includes entries where:
+                //   current_age.wrapping_sub(entry.age) <= ages_flushing_now
+                // which is equivalent to:
+                //   entry.age >= current_age - ages_flushing_now (with wrapping)
+                //
+                // This selects entries in the age window [current_age - ages_flushing_now, current_age].
+                // The window size is (ages_flushing_now + 1) because both endpoints are inclusive.
+                //
+                // Example: If current_age=10 and ages_flushing_now=3, we select ages 7,8,9,10 = 4 entries.
+                assert_eq!(possible_evictions.len(), 1 + ages_flushing_now as usize);
+                possible_evictions.iter().for_each(|(key, _is_dirty)| {
                     let entry = map.get(key).unwrap();
                     assert!(
                         InMemAccountsIndex::<u64, u64>::should_evict_based_on_age(
