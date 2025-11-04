@@ -436,7 +436,7 @@ impl Sanitize for Version {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct NodeInstance {
     from: Pubkey,
     wallclock: u64,
@@ -448,6 +448,19 @@ impl Sanitize for NodeInstance {
     fn sanitize(&self) -> Result<(), SanitizeError> {
         sanitize_wallclock(self.wallclock)?;
         self.from.sanitize()
+    }
+}
+
+// Always fail to deserialize NodeInstance payloads.
+impl<'de> Deserialize<'de> for NodeInstance {
+    fn deserialize<D>(_de: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+        D::Error: serde::de::Error,
+    {
+        Err(<D::Error as serde::de::Error>::custom(
+            "NodeInstance is deprecated"
+        ))
     }
 }
 
@@ -551,5 +564,20 @@ mod test {
             &keypair,
         );
         assert_eq!(item.sanitize(), Err(SanitizeError::ValueOutOfBounds));
+    }
+
+    #[test]
+    fn node_instance_packet_is_rejected_early() {
+        let keypair = Keypair::new();
+        let node_instance = CrdsData::NodeInstance(
+            NodeInstance {
+                from: keypair.pubkey(),
+                wallclock: timestamp(),
+                timestamp: 0,
+                token: 0,
+            },
+        );
+        let bytes = bincode::serialize(&node_instance).unwrap();
+        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
     }
 }
