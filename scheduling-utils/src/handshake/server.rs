@@ -185,6 +185,7 @@ impl Server {
 
         Ok((
             AgaveSession {
+                flags: logon.flags,
                 tpu_to_pack: AgaveTpuToPackSession {
                     allocator: tpu_to_pack_allocator,
                     producer: tpu_to_pack_queue,
@@ -339,6 +340,7 @@ impl Server {
 
 /// An initialized scheduling session.
 pub struct AgaveSession {
+    pub flags: u16,
     pub tpu_to_pack: AgaveTpuToPackSession,
     pub progress_tracker: shaq::Producer<ProgressMessage>,
     pub workers: Vec<AgaveWorkerSession>,

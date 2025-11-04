@@ -24,6 +24,8 @@ pub struct ClientLogon {
     pub pack_to_worker_capacity: usize,
     /// The minimum capacity of the `worker_to_pack` queue in messages.
     pub worker_to_pack_capacity: usize,
+    /// Flags that control the behavior of the new scheduling session.
+    pub flags: u16,
     // NB: If adding more fields please ensure:
     // - The fields are zeroable.
     // - If possible the fields are backwards compatible:
@@ -43,4 +45,9 @@ impl ClientLogon {
         // - `Self` is valid for any byte pattern
         Some(unsafe { core::ptr::read_unaligned(buffer.as_ptr().cast()) })
     }
+}
+
+pub mod logon_flags {
+    /// Send the votes to the external scheduler instead of processing them internally.
+    pub const REROUTE_VOTES: u16 = 1 << 0;
 }
