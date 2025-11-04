@@ -52,11 +52,11 @@ pub enum CrdsData {
     AccountsHashes(AccountsHashes), // Deprecated
     EpochSlots(EpochSlotsIndex, EpochSlots),
     #[allow(private_interfaces)]
-    LegacyVersion(LegacyVersion),
+    LegacyVersion(LegacyVersion), // Deprecated
     #[allow(private_interfaces)]
-    Version(Version),
+    Version(Version), // Deprecated
     #[allow(private_interfaces)]
-    NodeInstance(NodeInstance),
+    NodeInstance(NodeInstance), // Deprecated
     DuplicateShred(DuplicateShredIndex, DuplicateShred),
     SnapshotHashes(SnapshotHashes),
     ContactInfo(ContactInfo),
@@ -213,12 +213,13 @@ impl From<&ContactInfo> for CrdsData {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AccountsHashes {
     pub(crate) from: Pubkey,
     pub(crate) hashes: Vec<(Slot, Hash)>,
     pub(crate) wallclock: u64,
 }
+reject_deserialize!(AccountsHashes, "AccountsHashes is deprecated");
 
 impl Sanitize for AccountsHashes {
     fn sanitize(&self) -> Result<(), SanitizeError> {
@@ -254,13 +255,14 @@ impl AccountsHashes {
 type LegacySnapshotHashes = AccountsHashes;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct SnapshotHashes {
     pub from: Pubkey,
     pub full: (Slot, Hash),
     pub incremental: Vec<(Slot, Hash)>,
     pub wallclock: u64,
 }
+reject_deserialize!(SnapshotHashes, "SnapshotHashes is deprecated");
 
 impl Sanitize for SnapshotHashes {
     fn sanitize(&self) -> Result<(), SanitizeError> {
@@ -404,12 +406,13 @@ impl<'de> Deserialize<'de> for Vote {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LegacyVersion {
     from: Pubkey,
     wallclock: u64,
     version: solana_version::LegacyVersion1,
 }
+reject_deserialize!(LegacyVersion, "LegacyVersion is deprecated");
 
 impl Sanitize for LegacyVersion {
     fn sanitize(&self) -> Result<(), SanitizeError> {
@@ -420,12 +423,13 @@ impl Sanitize for LegacyVersion {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Version {
     from: Pubkey,
     wallclock: u64,
     version: solana_version::LegacyVersion2,
 }
+reject_deserialize!(Version, "Version is deprecated");
 
 impl Sanitize for Version {
     fn sanitize(&self) -> Result<(), SanitizeError> {
@@ -443,24 +447,12 @@ pub(crate) struct NodeInstance {
     timestamp: u64, // Timestamp when the instance was created.
     token: u64,     // Randomly generated value at node instantiation.
 }
+reject_deserialize!(NodeInstance, "NodeInstance is deprecated");
 
 impl Sanitize for NodeInstance {
     fn sanitize(&self) -> Result<(), SanitizeError> {
         sanitize_wallclock(self.wallclock)?;
         self.from.sanitize()
-    }
-}
-
-// Always fail to deserialize NodeInstance payloads.
-impl<'de> Deserialize<'de> for NodeInstance {
-    fn deserialize<D>(_de: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-        D::Error: serde::de::Error,
-    {
-        Err(<D::Error as serde::de::Error>::custom(
-            "NodeInstance is deprecated"
-        ))
     }
 }
 
@@ -471,6 +463,21 @@ pub(crate) fn sanitize_wallclock(wallclock: u64) -> Result<(), SanitizeError> {
         Ok(())
     }
 }
+
+macro_rules! reject_deserialize {
+    ($ty:ty, $msg:expr) => {
+        impl<'de> serde::Deserialize<'de> for $ty {
+            fn deserialize<D>(_de: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+                D::Error: serde::de::Error,
+            {
+                Err(serde::de::Error::custom($msg))
+            }
+        }
+    };
+}
+pub(crate) use reject_deserialize;
 
 #[cfg(test)]
 mod test {
@@ -567,17 +574,76 @@ mod test {
     }
 
     #[test]
-    fn node_instance_packet_is_rejected_early() {
+    fn test_deprecated_values_fail_deserialization() {
         let keypair = Keypair::new();
-        let node_instance = CrdsData::NodeInstance(
-            NodeInstance {
-                from: keypair.pubkey(),
-                wallclock: timestamp(),
-                timestamp: 0,
-                token: 0,
-            },
-        );
+
+        // NodeInstance
+        let node_instance = CrdsData::NodeInstance(NodeInstance {
+            from: keypair.pubkey(),
+            wallclock: timestamp(),
+            timestamp: 0,
+            token: 0,
+        });
         let bytes = bincode::serialize(&node_instance).unwrap();
+        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
+
+        #[derive(serde::Serialize)]
+        struct LegacyVersion1Mirror {
+            major: u16,
+            minor: u16,
+            patch: u16,
+            commit: Option<u32>,
+        }
+
+        let legacy_v1: solana_version::LegacyVersion1 = {
+            let bytes = bincode::serialize(&LegacyVersion1Mirror {
+                major: 0,
+                minor: 0,
+                patch: 0,
+                commit: None,
+            })
+            .unwrap();
+            bincode::deserialize(&bytes).unwrap()
+        };
+
+        // LegacyVersion
+        let legacy_version = CrdsData::LegacyVersion(LegacyVersion {
+            from: keypair.pubkey(),
+            wallclock: timestamp(),
+            version: legacy_v1,
+        });
+        let bytes = bincode::serialize(&legacy_version).unwrap();
+        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
+
+        // Version
+        let version = CrdsData::Version(Version {
+            from: keypair.pubkey(),
+            wallclock: timestamp(),
+            version: solana_version::LegacyVersion2::default(),
+        });
+        let bytes = bincode::serialize(&version).unwrap();
+        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
+
+        // LegacyContactInfo
+        let legacy_contact_info = CrdsData::LegacyContactInfo(LegacyContactInfo::default());
+        let bytes = bincode::serialize(&legacy_contact_info).unwrap();
+        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
+
+        // AccountsHashes
+        let mut rng = rand::thread_rng();
+        let accounts_hashes =
+            CrdsData::AccountsHashes(AccountsHashes::new_rand(&mut rng, Some(keypair.pubkey())));
+        let bytes = bincode::serialize(&accounts_hashes).unwrap();
+        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
+
+        // SnapshotHashes
+        let snapshot_hashes = CrdsData::SnapshotHashes(SnapshotHashes {
+            from: keypair.pubkey(),
+            full: (0, Hash::new_unique()),
+            incremental: vec![(0, Hash::new_unique())],
+            wallclock: timestamp(),
+        });
+        let bytes = bincode::serialize(&snapshot_hashes).unwrap();
         assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
     }
 }
