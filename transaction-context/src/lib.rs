@@ -26,11 +26,14 @@ use {
 };
 #[cfg(not(target_os = "solana"))]
 use {solana_account::WritableAccount, solana_rent::Rent};
+use crate::vm_addresses::{GUEST_DEDUPLICATION_MAPS_ADDRESS, GUEST_INSTRUCTION_ACCOUNTS_ADDRESS, GUEST_INSTRUCTION_DATA_BASE_ADDRESS, GUEST_REGION_SIZE};
+use crate::vm_slice::VmSlice;
 
 pub mod instruction;
 pub mod instruction_accounts;
 pub mod transaction_accounts;
 pub mod vm_slice;
+mod vm_addresses;
 
 pub const MAX_ACCOUNTS_PER_TRANSACTION: usize = 256;
 // This is one less than MAX_ACCOUNTS_PER_TRANSACTION because
@@ -79,11 +82,17 @@ pub struct TransactionContext<'ix_data> {
     instruction_stack_capacity: usize,
     instruction_trace_capacity: usize,
     instruction_stack: Vec<usize>,
-    instruction_trace: Vec<InstructionFrame<'ix_data>>,
+    instruction_trace: Vec<InstructionFrame>,
     top_level_instruction_index: usize,
     return_data: TransactionReturnData,
     #[cfg(not(target_os = "solana"))]
     rent: Rent,
+    /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
+    /// Usage: dedup_map[index_in_transaction] = index_in_instruction
+    /// This is a vector of u8s to save memory, since many entries may be unused.
+    instruction_accounts: Vec<InstructionAccount>,
+    deduplication_maps: Vec<u8>,
+    instruction_data: Vec<Cow<'ix_data, [u8]>>,
 }
 
 impl<'ix_data> TransactionContext<'ix_data> {
@@ -104,6 +113,9 @@ impl<'ix_data> TransactionContext<'ix_data> {
             top_level_instruction_index: 0,
             return_data: TransactionReturnData::default(),
             rent,
+            instruction_accounts: Vec::with_capacity(MAX_ACCOUNTS_PER_INSTRUCTION.saturating_mul(instruction_trace_capacity)),
+            deduplication_maps: Vec::with_capacity(MAX_ACCOUNTS_PER_INSTRUCTION.saturating_mul(instruction_trace_capacity)),
+            instruction_data: Vec::with_capacity(instruction_trace_capacity),
         }
     }
 
@@ -248,14 +260,33 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_data: Cow<'ix_data, [u8]>,
     ) -> Result<(), InstructionError> {
         debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
+        let instruction_index = self.instruction_trace.len().saturating_sub(1) as u64;
+        let instruction_accounts_start_address = if self.instruction_trace.len() < 2 {
+            GUEST_INSTRUCTION_ACCOUNTS_ADDRESS
+        } else {
+            let penultimate_instruction = self.instruction_trace.get(self.instruction_trace.len().saturating_sub(2)).unwrap();
+            penultimate_instruction.instruction_accounts.ptr().saturating_add(penultimate_instruction.instruction_accounts.len().saturating_mul(size_of::<InstructionAccount>() as u64))
+        };
+
         let instruction = self
             .instruction_trace
             .last_mut()
             .ok_or(InstructionError::CallDepth)?;
         instruction.program_account_index_in_tx = program_index;
-        instruction.instruction_accounts = instruction_accounts;
-        instruction.instruction_data = instruction_data;
-        instruction.dedup_map = deduplication_map;
+        instruction.dedup_map = VmSlice::new(
+            GUEST_DEDUPLICATION_MAPS_ADDRESS.saturating_add((MAX_ACCOUNTS_PER_INSTRUCTION as u64).saturating_mul(instruction_index)),
+            255
+        );
+        instruction.instruction_accounts = VmSlice::new(
+            instruction_accounts_start_address,
+            instruction_accounts.len() as u64,
+        );
+        instruction.instruction_data = VmSlice::new(
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(instruction_index)), instruction_data.len() as u64);
+        self.instruction_accounts.extend_from_slice(&instruction_accounts);
+        self.deduplication_maps.extend_from_slice(&deduplication_map);
+        self.instruction_data.push(instruction_data);
         Ok(())
     }
 

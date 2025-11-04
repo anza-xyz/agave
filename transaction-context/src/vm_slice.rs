@@ -12,7 +12,7 @@
 use std::marker::PhantomData;
 
 #[repr(C)]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Default)]
 pub struct VmSlice<T> {
     ptr: u64,
     len: u64,
