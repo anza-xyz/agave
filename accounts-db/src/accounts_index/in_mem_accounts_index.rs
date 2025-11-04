@@ -881,7 +881,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// Skip entries with ref_count != 1 since they will be rejected later anyway
     fn gather_possible_evictions<'a>(
         iter: impl Iterator<Item = (&'a Pubkey, &'a Box<AccountMapEntry<T>>)>,
-        possible_evictions: &mut Vec<(Pubkey, bool)>,
+        possible_evictions: &mut Vec<(Pubkey, /*is_dirty*/ bool)>,
         startup: bool,
         current_age: Age,
         ages_flushing_now: Age,
