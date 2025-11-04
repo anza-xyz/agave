@@ -572,18 +572,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Keep this amount of shreds in root slots."),
     )
     .arg(
-        Arg::with_name("rocksdb_shred_compaction")
-            .long("rocksdb-shred-compaction")
-            .value_name("ROCKSDB_COMPACTION_STYLE")
-            .takes_value(true)
-            .possible_values(&["level"])
-            .default_value(&default_args.rocksdb_shred_compaction)
-            .help(
-                "Controls how RocksDB compacts shreds. *WARNING*: You will lose your Blockstore \
-                 data when you switch between options.",
-            ),
-    )
-    .arg(
         Arg::with_name("skip_startup_ledger_verification")
             .long("skip-startup-ledger-verification")
             .takes_value(false)

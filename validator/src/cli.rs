@@ -296,8 +296,6 @@ pub struct DefaultArgs {
     pub snapshot_archive_format: String,
     pub snapshot_zstd_compression_level: String,
 
-    pub rocksdb_shred_compaction: String,
-
     pub accounts_shrink_optimize_total_space: String,
     pub accounts_shrink_ratio: String,
     pub tpu_connection_pool_size: String,
@@ -348,7 +346,6 @@ impl DefaultArgs {
             snapshot_zstd_compression_level: "1".to_string(), // level 1 is optimized for speed
             contact_debug_interval: "120000".to_string(),
             snapshot_version: SnapshotVersion::default(),
-            rocksdb_shred_compaction: "level".to_string(),
             accounts_shrink_optimize_total_space: DEFAULT_ACCOUNTS_SHRINK_OPTIMIZE_TOTAL_SPACE
                 .to_string(),
             accounts_shrink_ratio: DEFAULT_ACCOUNTS_SHRINK_RATIO.to_string(),

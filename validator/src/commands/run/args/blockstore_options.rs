@@ -29,6 +29,7 @@ static DEFAULT_ROCKSDB_FLUSH_THREADS: LazyLock<String> = LazyLock::new(|| {
         .get()
         .to_string()
 });
+const DEFAULT_ROCKSDB_SHRED_COMPACTION: &str = "level";
 
 impl FromClapArgMatches for BlockstoreOptions {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
@@ -123,6 +124,16 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .validator(|num| is_within_range(num, VALID_RANGE_ROCKSDB_FLUSH_THREADS.clone()))
             .hidden(hidden_unless_forced())
             .help("Number of threads to use for rocksdb (Blockstore) memtable flushes"),
+        Arg::with_name("rocksdb_shred_compaction")
+            .long("rocksdb-shred-compaction")
+            .value_name("ROCKSDB_COMPACTION_STYLE")
+            .takes_value(true)
+            .possible_values(&["level"])
+            .default_value(DEFAULT_ROCKSDB_SHRED_COMPACTION)
+            .help(
+                "Controls how RocksDB compacts shreds. *WARNING*: You will lose your Blockstore \
+                 data when you switch between options.",
+            ),
     ]
 }
 
@@ -313,5 +324,10 @@ mod tests {
             *VALID_RANGE_ROCKSDB_FLUSH_THREADS,
             RangeInclusive::new(1, num_cpus::get()),
         );
+    }
+
+    #[test]
+    fn test_default_rocksdb_shred_compaction_unchanged() {
+        assert_eq!(DEFAULT_ROCKSDB_SHRED_COMPACTION, "level");
     }
 }
