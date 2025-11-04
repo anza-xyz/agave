@@ -214,6 +214,7 @@ impl EventHandler {
     fn send_to_metrics(
         consensus_metrics_sender: &ConsensusMetricsEventSender,
         consensus_metrics_events: Vec<ConsensusMetricsEvent>,
+        stats: &mut EventHandlerStats,
     ) -> Result<(), EventLoopError> {
         // Do not kill or block event handler threads just because metrics
         // send failed (maybe because the queue is full).
@@ -221,7 +222,8 @@ impl EventHandler {
             Ok(()) => Ok(()),
             Err(TrySendError::Disconnected(_)) => Err(EventLoopError::SenderDisconnected),
             Err(TrySendError::Full(_)) => {
-                warn!("send_metrics failed: queue is full");
+                warn!("send_to_metrics failed: queue is full");
+                stats.metrics_queue_full = true;
                 Ok(())
             }
         }
@@ -261,7 +263,11 @@ impl EventHandler {
                 consensus_metrics_events.push(ConsensusMetricsEvent::MaybeNewEpoch {
                     epoch: bank.epoch(),
                 });
-                Self::send_to_metrics(&vctx.consensus_metrics_sender, consensus_metrics_events)?;
+                Self::send_to_metrics(
+                    &vctx.consensus_metrics_sender,
+                    consensus_metrics_events,
+                    stats,
+                )?;
                 let (block, parent_block) = Self::get_block_parent_block(&bank);
                 info!("{my_pubkey}: Block {block:?} parent {parent_block:?}");
                 if Self::try_notar(
@@ -321,6 +327,7 @@ impl EventHandler {
                 Self::send_to_metrics(
                     &vctx.consensus_metrics_sender,
                     vec![ConsensusMetricsEvent::StartOfSlot { slot }],
+                    stats,
                 )?;
                 Self::handle_parent_ready_event(
                     slot,
@@ -350,6 +357,7 @@ impl EventHandler {
                         vec![ConsensusMetricsEvent::StartOfSlot {
                             slot: slot.saturating_add(1),
                         }],
+                        stats,
                     )?;
                 }
                 if vctx.vote_history.voted(slot) {

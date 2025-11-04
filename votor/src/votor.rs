@@ -81,7 +81,7 @@ use {
             atomic::{AtomicBool, Ordering},
             Arc, Condvar, Mutex, RwLock,
         },
-        thread,
+        thread::{self, JoinHandle},
         time::Duration,
     },
 };
@@ -147,6 +147,7 @@ pub struct Votor {
     event_handler: EventHandler,
     consensus_pool_service: ConsensusPoolService,
     timer_manager: Arc<PlRwLock<TimerManager>>,
+    consensus_metrics_handle: JoinHandle<()>,
 }
 
 impl Votor {
@@ -249,7 +250,11 @@ impl Votor {
             delta_standstill: DELTA_STANDSTILL,
         };
 
-        ConsensusMetrics::start_metrics_loop(root_epoch, consensus_metrics_receiver, exit.clone());
+        let consensus_metrics_handle = ConsensusMetrics::start_metrics_loop(
+            root_epoch,
+            consensus_metrics_receiver,
+            exit.clone(),
+        );
         let event_handler = EventHandler::new(event_handler_context);
         let consensus_pool_service = ConsensusPoolService::new(consensus_pool_context);
 
@@ -258,6 +263,7 @@ impl Votor {
             event_handler,
             consensus_pool_service,
             timer_manager,
+            consensus_metrics_handle,
         }
     }
 
@@ -302,6 +308,7 @@ impl Votor {
                 }
             }
         }
-        self.event_handler.join()
+        self.event_handler.join()?;
+        self.consensus_metrics_handle.join()
     }
 }
