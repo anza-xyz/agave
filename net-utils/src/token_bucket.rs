@@ -88,6 +88,24 @@ impl TokenBucket {
         }
     }
 
+    /// Returns time in microseconds until `num_tokens` worth of new
+    /// tokens can be minted.
+    ///
+    /// Calculation is performed assuming no demand for smaller
+    /// batches of tokens (actual time may be longer).
+    /// Returns None if num_tokens > bucket capacity.
+    #[inline]
+    pub fn us_to_have_tokens(&self, num_tokens: u64) -> Option<u64> {
+        if num_tokens > self.max_tokens {
+            return None;
+        }
+
+        match self.current_tokens().checked_sub(num_tokens) {
+            Some(missing) => Some((missing as f64 / self.new_tokens_per_us) as u64),
+            None => Some(0),
+        }
+    }
+
     /// Retrieves monotonic time since bucket creation.
     fn time_us(&self) -> u64 {
         cfg_if! {
