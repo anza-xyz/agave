@@ -45,7 +45,10 @@ pub enum CrdsData {
     #[allow(private_interfaces)]
     LegacyContactInfo(LegacyContactInfo),
     Vote(VoteIndex, Vote),
-    LowestSlot(/*DEPRECATED:*/ u8, LowestSlot),
+    LowestSlot(
+        #[serde(deserialize_with = "reject_nonzero_u8")] u8, // u8 is deprecated
+        LowestSlot,
+    ),
     #[allow(private_interfaces)]
     LegacySnapshotHashes(LegacySnapshotHashes), // Deprecated
     #[allow(private_interfaces)]
@@ -334,6 +337,21 @@ impl Sanitize for LowestSlot {
             return Err(SanitizeError::InvalidValue);
         }
         self.from.sanitize()
+    }
+}
+
+fn reject_nonzero_u8<'de, D>(de: D) -> Result<u8, D::Error>
+where
+    D: Deserializer<'de>,
+    D::Error: serde::de::Error,
+{
+    let v = u8::deserialize(de)?;
+    if v == 0 {
+        Ok(v)
+    } else {
+        Err(serde::de::Error::custom(
+            "LowestSlot tag != 0 is deprecated",
+        ))
     }
 }
 
@@ -645,5 +663,17 @@ mod test {
         });
         let bytes = bincode::serialize(&snapshot_hashes).unwrap();
         assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
+
+        // LowestSlot(1, ...)
+        let lowest_slot =
+            CrdsData::LowestSlot(1, LowestSlot::new(keypair.pubkey(), 0, timestamp()));
+        let bytes = bincode::serialize(&lowest_slot).unwrap();
+        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
+
+        // LowestSlot(0, ...) -> should be deserialized successfully
+        let lowest_slot =
+            CrdsData::LowestSlot(0, LowestSlot::new(keypair.pubkey(), 0, timestamp()));
+        let bytes = bincode::serialize(&lowest_slot).unwrap();
+        assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_ok());
     }
 }
