@@ -78,7 +78,7 @@ pub(crate) const SOCKET_READ_TIMEOUT: Duration = Duration::from_secs(1);
 #[derive(Default)]
 pub struct StakedNodes {
     stakes: Arc<HashMap<Pubkey, u64>>,
-    overrides: HashMap<Pubkey, u64>,
+    pub overrides: HashMap<Pubkey, u64>,
     total_stake: u64,
     max_stake: u64,
     min_stake: u64,
