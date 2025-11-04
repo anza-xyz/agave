@@ -10650,9 +10650,9 @@ dependencies = [
 
 [[package]]
 name = "solana-sha256-hasher"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9b912ba6f71cb202c0c3773ec77bf898fa9fe0c78691a2d6859b3b5b8954719"
+checksum = "b2ab77481366a966f895abbc11896d4803d285d258281a992ca89aca3ed0658c"
 dependencies = [
  "sha2 0.10.9",
  "solana-define-syscall 3.0.0",

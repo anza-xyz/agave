@@ -88,7 +88,7 @@ solana-rpc-client = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sanitize = "=3.0.1"
 solana-serde-varint = "=3.0.0"
-solana-sha256-hasher = "=3.0.0"
+solana-sha256-hasher = "=3.0.1"
 solana-short-vec = "=3.0.0"
 solana-signature = { version = "=3.1.0", default-features = false }
 solana-signer = "=3.0.0"
