@@ -134,6 +134,14 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
                 "Controls how RocksDB compacts shreds. *WARNING*: You will lose your Blockstore \
                  data when you switch between options.",
             ),
+        Arg::with_name("limit_ledger_size")
+            .long("limit-ledger-size")
+            .value_name("SHRED_COUNT")
+            .takes_value(true)
+            .min_values(0)
+            .max_values(1)
+            /* .default_value() intentionally not used here! */
+            .help("Keep this amount of shreds in root slots."),
     ]
 }
 

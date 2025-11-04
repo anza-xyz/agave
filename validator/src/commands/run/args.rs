@@ -562,16 +562,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Output snapshot version"),
     )
     .arg(
-        Arg::with_name("limit_ledger_size")
-            .long("limit-ledger-size")
-            .value_name("SHRED_COUNT")
-            .takes_value(true)
-            .min_values(0)
-            .max_values(1)
-            /* .default_value() intentionally not used here! */
-            .help("Keep this amount of shreds in root slots."),
-    )
-    .arg(
         Arg::with_name("skip_startup_ledger_verification")
             .long("skip-startup-ledger-verification")
             .takes_value(false)
