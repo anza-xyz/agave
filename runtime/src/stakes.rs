@@ -13,10 +13,7 @@ use {
     solana_accounts_db::utils::create_account_shared_data,
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    solana_stake_interface::{
-        program as stake_program,
-        state::{Delegation, StakeActivationStatus},
-    },
+    solana_stake_interface::state::{Delegation, StakeActivationStatus},
     solana_vote::vote_account::{VoteAccount, VoteAccounts},
     solana_vote_interface::state::VoteStateVersions,
     std::{
@@ -88,7 +85,7 @@ impl StakesCache {
                     let mut stakes = self.0.write().unwrap();
                     stakes.remove_vote_account(pubkey)
                 };
-            } else if stake_program::check_id(owner) {
+            } else if solana_stake_program::check_id(owner) {
                 let mut stakes = self.0.write().unwrap();
                 stakes.remove_stake_delegation(pubkey, new_rate_activation_epoch);
             }
@@ -124,7 +121,7 @@ impl StakesCache {
                     stakes.remove_vote_account(pubkey)
                 };
             };
-        } else if stake_program::check_id(owner) {
+        } else if solana_stake_program::check_id(owner) {
             match StakeAccount::try_from(create_account_shared_data(account)) {
                 Ok(stake_account) => {
                     let mut stakes = self.0.write().unwrap();
@@ -517,15 +514,9 @@ fn refresh_vote_accounts(
 #[cfg(test)]
 pub(crate) mod tests {
     use {
-        super::*,
-        crate::stake_utils,
-        rayon::ThreadPoolBuilder,
-        solana_account::WritableAccount,
-        solana_pubkey::Pubkey,
-        solana_rent::Rent,
-        solana_stake_interface::{self as stake, state::StakeStateV2},
-        solana_vote_interface::state::VoteStateV4,
-        solana_vote_program::vote_state,
+        super::*, rayon::ThreadPoolBuilder, solana_account::WritableAccount, solana_pubkey::Pubkey,
+        solana_rent::Rent, solana_stake_interface as stake, solana_stake_program::stake_state,
+        solana_vote_interface::state::VoteStateV4, solana_vote_program::vote_state,
     };
 
     //  set up some dummies for a staked node     ((     vote      )  (     stake     ))
@@ -559,7 +550,7 @@ pub(crate) mod tests {
         stake_pubkey: &Pubkey,
     ) -> AccountSharedData {
         let node_pubkey = solana_pubkey::new_rand();
-        stake_utils::create_stake_account(
+        stake_state::create_account(
             stake_pubkey,
             vote_pubkey,
             &vote_state::create_v4_account_with_authorized(
@@ -588,11 +579,7 @@ pub(crate) mod tests {
 
             stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
             stakes_cache.check_and_store(&stake_pubkey, &stake_account, None);
-            let stake = stake_account
-                .deserialize_data::<StakeStateV2>()
-                .unwrap()
-                .stake()
-                .unwrap();
+            let stake = stake_state::stake_from(&stake_account).unwrap();
             {
                 let stakes = stakes_cache.stakes();
                 let vote_accounts = stakes.vote_accounts();
@@ -619,11 +606,7 @@ pub(crate) mod tests {
             let mut stake_account =
                 create_stake_account(42, &vote_pubkey, &solana_pubkey::new_rand());
             stakes_cache.check_and_store(&stake_pubkey, &stake_account, None);
-            let stake = stake_account
-                .deserialize_data::<StakeStateV2>()
-                .unwrap()
-                .stake()
-                .unwrap();
+            let stake = stake_state::stake_from(&stake_account).unwrap();
             {
                 let stakes = stakes_cache.stakes();
                 let vote_accounts = stakes.vote_accounts();
@@ -766,11 +749,7 @@ pub(crate) mod tests {
         // delegates to vote_pubkey
         stakes_cache.check_and_store(&stake_pubkey, &stake_account, None);
 
-        let stake = stake_account
-            .deserialize_data::<StakeStateV2>()
-            .unwrap()
-            .stake()
-            .unwrap();
+        let stake = stake_state::stake_from(&stake_account).unwrap();
 
         {
             let stakes = stakes_cache.stakes();
@@ -835,11 +814,7 @@ pub(crate) mod tests {
 
         stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
         stakes_cache.check_and_store(&stake_pubkey, &stake_account, None);
-        let stake = stake_account
-            .deserialize_data::<StakeStateV2>()
-            .unwrap()
-            .stake()
-            .unwrap();
+        let stake = stake_state::stake_from(&stake_account).unwrap();
 
         {
             let stakes = stakes_cache.stakes();

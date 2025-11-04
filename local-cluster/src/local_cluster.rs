@@ -42,8 +42,9 @@ use {
     solana_signer::{signers::Signers, Signer},
     solana_stake_interface::{
         instruction as stake_instruction,
-        state::{Authorized, Lockup, StakeStateV2},
+        state::{Authorized, Lockup},
     },
+    solana_stake_program::stake_state,
     solana_streamer::{socket::SocketAddrSpace, streamer::StakedNodes},
     solana_system_transaction as system_transaction,
     solana_tpu_client::tpu_client::{
@@ -1105,10 +1106,7 @@ impl LocalCluster {
                 match (stake_account.value, vote_account.value) {
                     (Some(stake_account), Some(vote_account)) => {
                         match (
-                            stake_account
-                                .deserialize_data::<StakeStateV2>()
-                                .ok()
-                                .and_then(|state| state.stake()),
+                            stake_state::stake_from(&stake_account),
                             VoteStateV4::deserialize(vote_account.data(), &vote_account_pubkey)
                                 .ok(),
                         ) {

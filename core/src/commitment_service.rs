@@ -274,11 +274,11 @@ mod tests {
         solana_account::{state_traits::StateMut, Account, ReadableAccount},
         solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
         solana_pubkey::Pubkey,
-        solana_runtime::{
-            genesis_utils::{create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs},
-            stake_utils,
+        solana_runtime::genesis_utils::{
+            create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs,
         },
         solana_signer::Signer,
+        solana_stake_program::stake_state,
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::{
             self, process_slot_vote_unchecked, TowerSync, VoteStateV4, VoteStateVersions,
@@ -409,13 +409,8 @@ mod tests {
             0,
             100,
         );
-        let stake_account1 = stake_utils::create_stake_account(
-            &sk1,
-            &pk1,
-            &vote_account1,
-            &genesis_config.rent,
-            100,
-        );
+        let stake_account1 =
+            stake_state::create_account(&sk1, &pk1, &vote_account1, &genesis_config.rent, 100);
         let sk2 = solana_pubkey::new_rand();
         let pk2 = solana_pubkey::new_rand();
         let mut vote_account2 = vote_state::create_v4_account_with_authorized(
@@ -427,7 +422,7 @@ mod tests {
             50,
         );
         let stake_account2 =
-            stake_utils::create_stake_account(&sk2, &pk2, &vote_account2, &genesis_config.rent, 50);
+            stake_state::create_account(&sk2, &pk2, &vote_account2, &genesis_config.rent, 50);
         let sk3 = solana_pubkey::new_rand();
         let pk3 = solana_pubkey::new_rand();
         let mut vote_account3 = vote_state::create_v4_account_with_authorized(
@@ -438,7 +433,7 @@ mod tests {
             0,
             1,
         );
-        let stake_account3 = stake_utils::create_stake_account(
+        let stake_account3 = stake_state::create_account(
             &sk3,
             &pk3,
             &vote_account3,
@@ -455,7 +450,7 @@ mod tests {
             0,
             1,
         );
-        let stake_account4 = stake_utils::create_stake_account(
+        let stake_account4 = stake_state::create_account(
             &sk4,
             &pk4,
             &vote_account4,
