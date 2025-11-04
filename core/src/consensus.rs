@@ -404,19 +404,14 @@ impl Tower {
     pub(crate) fn collect_vote_lockouts(
         vote_account_pubkey: &Pubkey,
         bank_slot: Slot,
+        root_slot: Slot,
         vote_accounts: &VoteAccountsHashMap,
         ancestors: &HashMap<Slot, HashSet<Slot>>,
         get_frozen_hash: impl Fn(Slot) -> Option<Hash>,
         latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
         vote_slots: &mut AHashSet<Slot>,
     ) -> ComputedBankState {
-        let min_slot = ancestors
-            .get(&bank_slot)
-            .and_then(|ancestors| ancestors.iter().min())
-            .copied()
-            .unwrap_or(bank_slot);
-
-        let total_slots = (bank_slot.saturating_sub(min_slot) + 1) as usize;
+        let total_slots = (bank_slot.saturating_sub(root_slot)) as usize;
         vote_slots.reserve(total_slots);
         let mut voted_stakes = AHashMap::with_capacity(total_slots);
         let mut total_stake = 0;
@@ -477,15 +472,14 @@ impl Tower {
 
             vote_state.process_next_vote_slot(bank_slot);
 
-            // Only record vote slots that fall within the dense range for this bank
-            // [min_ancestor_of(bank_slot), bank_slot]. Votes earlier than the fork
-            // root will not have entries in `ancestors` and are ignored by
+            // Only record vote slots greater than the fork root. Votes earlier
+            // than the fork root will not have entries in `ancestors` and are ignored by
             // `populate_ancestor_voted_stakes`, and there can be no landed votes
             // >= `bank_slot`. Bounding here prevents unnecessary range expansion
             // in the dense maps and keeps behavior identical.
             for slot in vote_state.votes.iter().filter_map(|v| {
                 let slot = v.slot();
-                (slot >= min_slot).then_some(slot)
+                (slot > root_slot).then_some(slot)
             }) {
                 vote_slots.insert(slot);
             }
@@ -494,7 +488,7 @@ impl Tower {
                 if let Some(root) = start_root {
                     // The account's prior root can be older than this fork's root; clamp to
                     // the same range for the same reason as above.
-                    if root >= min_slot {
+                    if root > root_slot {
                         trace!("ROOT: {root}");
                         vote_slots.insert(root);
                     }
@@ -503,7 +497,7 @@ impl Tower {
             if let Some(root) = vote_state.root_slot {
                 // Likewise, only include the (new) root if it lies within the range this
                 // bank will ever query in `ancestors`.
-                if root >= min_slot {
+                if root > root_slot {
                     vote_slots.insert(root);
                 }
             }
@@ -2524,6 +2518,7 @@ pub mod test {
         } = Tower::collect_vote_lockouts(
             &Pubkey::default(),
             1,
+            0,
             &accounts,
             &ancestors,
             |_| Some(Hash::default()),
@@ -2572,6 +2567,7 @@ pub mod test {
         } = Tower::collect_vote_lockouts(
             &Pubkey::default(),
             MAX_LOCKOUT_HISTORY as u64,
+            0,
             &accounts,
             &ancestors,
             |_| Some(Hash::default()),
@@ -2885,6 +2881,7 @@ pub mod test {
         } = Tower::collect_vote_lockouts(
             &Pubkey::default(),
             vote_to_evaluate,
+            0,
             &accounts,
             &ancestors,
             |_| None,
@@ -2906,6 +2903,7 @@ pub mod test {
         } = Tower::collect_vote_lockouts(
             &Pubkey::default(),
             vote_to_evaluate,
+            0,
             &accounts,
             &ancestors,
             |_| None,

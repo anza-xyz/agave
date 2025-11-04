@@ -3612,9 +3612,12 @@ impl ReplayStage {
                         bank,
                         bank_forks,
                     );
+
+                    let root_slot = bank_forks.read().unwrap().root();
                     let computed_bank_state = Tower::collect_vote_lockouts(
                         my_vote_pubkey,
                         bank_slot,
+                        root_slot,
                         &bank.vote_accounts(),
                         ancestors,
                         |slot| progress.get_hash(slot),
