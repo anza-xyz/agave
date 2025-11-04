@@ -16,7 +16,12 @@ pub(crate) trait ConnectionContext: Clone + Send + Sync {
 /// A trait to manage QoS for connections. This includes
 /// 1) deriving the ConnectionContext for a connection
 /// 2) managing connection caching and connection limits, stream limits
-pub(crate) trait QosController<C: ConnectionContext> {
+pub(crate) trait QosController<C: ConnectionContext + Send + Sync> {
+    /// Initialize the controller's async logic (if any)
+    fn async_init(&mut self) -> impl std::future::Future<Output = ()> + std::marker::Send {
+        async {}
+    }
+
     /// Build the ConnectionContext for a connection
     fn build_connection_context(&self, connection: &Connection) -> C;
 
@@ -57,7 +62,7 @@ pub(crate) trait QosController<C: ConnectionContext> {
 }
 
 /// Marker trait to indicate what is the shared state for connections
-pub(crate) trait OpaqueStreamerCounter: Send + Sync + 'static {}
+pub trait OpaqueStreamerCounter: Send + Sync + 'static {}
 
 #[cfg(test)]
 pub(crate) struct NullStreamerCounter;

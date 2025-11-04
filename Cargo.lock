@@ -2254,6 +2254,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tinytemplate",
+ "tokio",
  "walkdir",
 ]
 
@@ -10979,6 +10980,7 @@ dependencies = [
  "bytes",
  "chrono",
  "clap 4.5.31",
+ "criterion",
  "crossbeam-channel",
  "dashmap",
  "futures 0.3.31",
@@ -11001,6 +11003,7 @@ dependencies = [
  "solana-keypair",
  "solana-measure",
  "solana-metrics",
+ "solana-native-token",
  "solana-net-utils",
  "solana-packet 4.0.0",
  "solana-perf",
@@ -11012,6 +11015,7 @@ dependencies = [
  "solana-tls-utils",
  "solana-transaction-error",
  "solana-transaction-metrics-tracker",
+ "static_assertions",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util 0.7.18",

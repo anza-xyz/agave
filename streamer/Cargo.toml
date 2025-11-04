@@ -45,7 +45,8 @@ socket2 = { workspace = true }
 solana-keypair = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
-solana-net-utils = { workspace = true }
+solana-native-token = { workspace = true }
+solana-net-utils = { workspace = true, features = ["agave-unstable-api"] }
 solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-pubkey = { workspace = true }
@@ -55,6 +56,7 @@ solana-time-utils = { workspace = true }
 solana-tls-utils = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-transaction-metrics-tracker = { workspace = true }
+static_assertions = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["rt"] }
@@ -66,5 +68,10 @@ anyhow = { workspace = true }
 assert_matches = { workspace = true }
 chrono = { workspace = true, features = ["now"] }
 clap = { version = "4.5.31", features = ["cargo", "derive", "error-context"] }
+criterion = { workspace = true, features = ["async", "async_tokio"] }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 solana-streamer = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+
+[[bench]]
+name = "bench_refiller"
+harness = false
