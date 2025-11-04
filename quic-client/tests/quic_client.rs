@@ -14,12 +14,12 @@ mod tests {
         solana_streamer::{
             nonblocking::{quic::SpawnNonBlockingServerResult, swqos::SwQosConfig},
             quic::{QuicStreamerConfig, SpawnServerResult},
-            streamer::StakedNodes,
+            streamer::{StakedNodes, VersionedStakedNodes},
         },
         solana_tls_utils::{new_dummy_x509_certificate, QuicClientCertificate},
         std::{
             net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
-            sync::{Arc, RwLock},
+            sync::{atomic::AtomicUsize, Arc, RwLock},
             time::{Duration, Instant},
         },
         tokio::time::sleep,
@@ -68,7 +68,10 @@ mod tests {
         };
         agave_logger::setup();
         let (sender, receiver) = unbounded();
-        let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        let staked_nodes = VersionedStakedNodes {
+            staked_nodes: Arc::new(RwLock::new(StakedNodes::default())),
+            version: Arc::new(AtomicUsize::new(0)),
+        };
         let (s, cancel, keypair) = server_args();
         let SpawnServerResult {
             endpoints: _,
@@ -149,7 +152,10 @@ mod tests {
         };
         agave_logger::setup();
         let (sender, receiver) = unbounded();
-        let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        let staked_nodes = VersionedStakedNodes {
+            staked_nodes: Arc::new(RwLock::new(StakedNodes::default())),
+            version: Arc::new(AtomicUsize::new(0)),
+        };
         let (s, cancel, keypair) = server_args();
         let SpawnNonBlockingServerResult {
             endpoints: _,
@@ -208,7 +214,10 @@ mod tests {
 
         // Request Receiver
         let (sender, receiver) = unbounded();
-        let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        let staked_nodes = VersionedStakedNodes {
+            staked_nodes: Arc::new(RwLock::new(StakedNodes::default())),
+            version: Arc::new(AtomicUsize::new(0)),
+        };
         let (request_recv_socket, request_recv_cancel, keypair) = server_args();
         let SpawnServerResult {
             endpoints: request_recv_endpoints,
@@ -320,7 +329,10 @@ mod tests {
     async fn test_connection_close() {
         agave_logger::setup();
         let (sender, receiver) = unbounded();
-        let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        let staked_nodes = VersionedStakedNodes {
+            staked_nodes: Arc::new(RwLock::new(StakedNodes::default())),
+            version: Arc::new(AtomicUsize::new(0)),
+        };
         let (s, cancel, keypair) = server_args();
         let solana_streamer::nonblocking::quic::SpawnNonBlockingServerResult {
             endpoints: _,

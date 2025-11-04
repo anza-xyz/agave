@@ -18,7 +18,7 @@ use {
     solana_streamer::{
         nonblocking::{quic::SpawnNonBlockingServerResult, swqos::SwQosConfig},
         quic::QuicStreamerConfig,
-        streamer::StakedNodes,
+        streamer::{StakedNodes, VersionedStakedNodes},
     },
     std::{
         collections::HashMap,
@@ -84,6 +84,9 @@ struct Cli {
 
     #[arg(short, long)]
     stake_amounts: String,
+
+    #[arg(short, long, default_value_t = 100_000)]
+    max_tps: u64,
 }
 
 // number of threads as in fn default_num_tpu_transaction_forward_receive_threads
@@ -108,7 +111,7 @@ async fn main() -> anyhow::Result<()> {
         );
         Arc::new(RwLock::new(nodes))
     };
-
+    let staked_nodes = VersionedStakedNodes::new(staked_nodes);
     let cancel = CancellationToken::new();
     let SpawnNonBlockingServerResult {
         endpoints,
@@ -127,6 +130,7 @@ async fn main() -> anyhow::Result<()> {
         SwQosConfig {
             max_connections_per_staked_peer: cli.max_connections_per_staked_peer,
             max_connections_per_unstaked_peer: cli.max_connections_per_unstaked_peer,
+            max_streams_per_ms: cli.max_tps / 1000,
             ..Default::default()
         },
         cancel.clone(),

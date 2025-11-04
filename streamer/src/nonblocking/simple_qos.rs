@@ -9,8 +9,7 @@ use {
             },
         },
         quic::{
-            StreamerStats, DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
-            DEFAULT_MAX_STAKED_CONNECTIONS, DEFAULT_MAX_STREAMS_PER_MS,
+            StreamerStats, DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER, DEFAULT_MAX_STREAMS_PER_MS,
         },
         streamer::StakedNodes,
     },
@@ -39,11 +38,13 @@ pub struct SimpleQosConfig {
     pub max_connections_per_peer: usize,
 }
 
+const DEFAULT_MAX_VOTING_CONNECTIONS: usize = 8000;
+
 impl Default for SimpleQosConfig {
     fn default() -> Self {
         SimpleQosConfig {
             max_streams_per_second: DEFAULT_MAX_STREAMS_PER_MS * 1000,
-            max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS,
+            max_staked_connections: DEFAULT_MAX_VOTING_CONNECTIONS,
             max_connections_per_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
         }
     }

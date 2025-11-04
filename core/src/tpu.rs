@@ -54,7 +54,7 @@ use {
             spawn_simple_qos_server, spawn_stake_wighted_qos_server, SimpleQosQuicStreamerConfig,
             SpawnServerResult, SwQosQuicStreamerConfig,
         },
-        streamer::StakedNodes,
+        streamer::{StakedNodes, VersionedStakedNodes},
     },
     solana_turbine::{
         broadcast_stage::{BroadcastStage, BroadcastStageType},
@@ -65,7 +65,10 @@ use {
         net::{SocketAddr, UdpSocket},
         num::NonZeroUsize,
         path::PathBuf,
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        sync::{
+            atomic::{AtomicBool, AtomicUsize},
+            Arc, RwLock,
+        },
         thread::{self, JoinHandle},
         time::Duration,
     },
@@ -197,6 +200,11 @@ impl Tpu {
             Some(bank_forks.read().unwrap().get_vote_only_mode_signal()),
             tpu_enable_udp,
         );
+
+        let staked_nodes = VersionedStakedNodes {
+            staked_nodes: staked_nodes.clone(),
+            version: Arc::new(AtomicUsize::new(1)),
+        };
 
         let staked_nodes_updater_service = StakedNodesUpdaterService::new(
             exit.clone(),

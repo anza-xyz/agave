@@ -132,7 +132,7 @@ pub(crate) fn spawn_server<Q, C>(
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     quic_server_params: QuicStreamerConfig,
-    qos: Arc<Q>,
+    qos: Q,
     cancel: CancellationToken,
 ) -> Result<SpawnNonBlockingServerResult, QuicServerError>
 where
@@ -237,12 +237,14 @@ async fn run_server<Q, C>(
     stats: Arc<StreamerStats>,
     quic_server_params: QuicStreamerConfig,
     cancel: CancellationToken,
-    qos: Arc<Q>,
+    mut qos: Q,
 ) -> TaskTracker
 where
     Q: QosController<C> + Send + Sync + 'static,
     C: ConnectionContext + Send + Sync + 'static,
 {
+    qos.async_init().await;
+    let qos = Arc::new(qos);
     let quic_server_params = Arc::new(quic_server_params);
     let rate_limiter = Arc::new(ConnectionRateLimiter::new(
         quic_server_params.max_connections_per_ipaddr_per_min,
@@ -857,15 +859,15 @@ fn handle_chunks(
     Ok(StreamState::Finished)
 }
 
-struct ConnectionEntry<S: OpaqueStreamerCounter> {
+pub(crate) struct ConnectionEntry<S: OpaqueStreamerCounter> {
     cancel: CancellationToken,
-    peer_type: ConnectionPeerType,
+    pub(crate) peer_type: ConnectionPeerType,
     last_update: Arc<AtomicU64>,
     port: u16,
     // We do not explicitly use it, but its drop is triggered when ConnectionEntry is dropped.
     _client_connection_tracker: ClientConnectionTracker,
     connection: Option<Connection>,
-    stream_counter: Arc<S>,
+    pub(crate) stream_counter: Arc<S>,
 }
 
 impl<S: OpaqueStreamerCounter> ConnectionEntry<S> {
@@ -1050,7 +1052,14 @@ impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
         }
     }
 
-    // Returns number of connections that were removed
+    /// Return an iterator over connection table entries.
+    pub(crate) fn iter(
+        &self,
+    ) -> indexmap::map::Iter<'_, ConnectionTableKey, Vec<ConnectionEntry<S>>> {
+        self.table.iter()
+    }
+
+    /// Returns number of connections that were removed
     pub(crate) fn remove_connection(
         &mut self,
         key: ConnectionTableKey,
@@ -1110,13 +1119,16 @@ impl Future for EndpointAccept<'_> {
 pub mod test {
     use {
         super::*,
-        crate::nonblocking::{
-            qos::NullStreamerCounter,
-            swqos::SwQosConfig,
-            testing_utilities::{
-                check_multiple_streams, get_client_config, make_client_endpoint, setup_quic_server,
-                spawn_stake_weighted_qos_server, SpawnTestServerResult,
+        crate::{
+            nonblocking::{
+                qos::NullStreamerCounter,
+                swqos::SwQosConfig,
+                testing_utilities::{
+                    check_multiple_streams, get_client_config, make_client_endpoint,
+                    setup_quic_server, spawn_stake_weighted_qos_server, SpawnTestServerResult,
+                },
             },
+            streamer::VersionedStakedNodes,
         },
         assert_matches::assert_matches,
         crossbeam_channel::{unbounded, Receiver},
@@ -1124,7 +1136,7 @@ pub mod test {
         solana_keypair::Keypair,
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_signer::Signer,
-        std::collections::HashMap,
+        std::{collections::HashMap, sync::atomic::AtomicUsize},
         tokio::time::sleep,
     };
 
@@ -1569,6 +1581,10 @@ pub mod test {
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        let staked_nodes = VersionedStakedNodes {
+            staked_nodes,
+            version: Arc::new(AtomicUsize::new(0)),
+        };
         let cancel = CancellationToken::new();
         let SpawnNonBlockingServerResult {
             endpoints: _,
@@ -1604,7 +1620,10 @@ pub mod test {
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
-        let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        let staked_nodes = VersionedStakedNodes {
+            staked_nodes: Arc::new(RwLock::new(StakedNodes::default())),
+            version: Arc::new(AtomicUsize::new(0)),
+        };
         let cancel = CancellationToken::new();
         let SpawnNonBlockingServerResult {
             endpoints: _,
@@ -1970,7 +1989,6 @@ pub mod test {
             stats.total_new_streams.load(Ordering::Relaxed),
             expected_num_txs
         );
-        assert!(stats.throttled_unstaked_streams.load(Ordering::Relaxed) > 0);
     }
 
     #[test]
