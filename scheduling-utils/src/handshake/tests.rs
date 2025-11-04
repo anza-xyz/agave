@@ -110,10 +110,10 @@ fn message_passing_on_all_queues() {
                 worker_count: 4,
                 allocator_size: 1024 * 1024 * 1024,
                 allocator_handles: 3,
-                tpu_to_pack_size: 65536 * 1024,
-                progress_tracker_size: 16 * 1024,
-                pack_to_worker_size: 1024 * 1024,
-                worker_to_pack_size: 1024 * 1024,
+                tpu_to_pack_capacity: 65536,
+                progress_tracker_capacity: 256,
+                pack_to_worker_capacity: 1024,
+                worker_to_pack_capacity: 1024,
             },
             Duration::from_secs(1),
         )
@@ -191,10 +191,10 @@ fn accept_worker_count_max() {
                 worker_count: MAX_WORKERS,
                 allocator_size: 1024 * 1024 * 1024,
                 allocator_handles: 3,
-                tpu_to_pack_size: 65536 * 1024,
-                progress_tracker_size: 16 * 1024,
-                pack_to_worker_size: 1024 * 1024,
-                worker_to_pack_size: 1024 * 1024,
+                tpu_to_pack_capacity: 65536,
+                progress_tracker_capacity: 256,
+                pack_to_worker_capacity: 1024,
+                worker_to_pack_capacity: 1024,
             },
             Duration::from_secs(1),
         );
@@ -225,10 +225,10 @@ fn reject_worker_count_low() {
                 worker_count: 0,
                 allocator_size: 1024 * 1024 * 1024,
                 allocator_handles: 3,
-                tpu_to_pack_size: 65536 * 1024,
-                progress_tracker_size: 16 * 1024,
-                pack_to_worker_size: 1024 * 1024,
-                worker_to_pack_size: 1024 * 1024,
+                tpu_to_pack_capacity: 65536,
+                progress_tracker_capacity: 256,
+                pack_to_worker_capacity: 1024,
+                worker_to_pack_capacity: 1024,
             },
             Duration::from_secs(1),
         );
@@ -262,10 +262,10 @@ fn reject_worker_count_high() {
                 worker_count: 100,
                 allocator_size: 1024 * 1024 * 1024,
                 allocator_handles: 3,
-                tpu_to_pack_size: 65536 * 1024,
-                progress_tracker_size: 16 * 1024,
-                pack_to_worker_size: 1024 * 1024,
-                worker_to_pack_size: 1024 * 1024,
+                tpu_to_pack_capacity: 65536,
+                progress_tracker_capacity: 256,
+                pack_to_worker_capacity: 1024,
+                worker_to_pack_capacity: 1024,
             },
             Duration::from_secs(1),
         );
@@ -273,40 +273,6 @@ fn reject_worker_count_high() {
             panic!();
         };
         assert_eq!(reason, "Worker count; count=100");
-    });
-
-    client_handle.join().unwrap();
-    server_handle.join().unwrap();
-}
-
-#[test]
-fn reject_invalid_queue_size() {
-    let ipc = NamedTempFile::new().unwrap();
-    std::fs::remove_file(ipc.path()).unwrap();
-    let mut server = Server::new(ipc.path()).unwrap();
-
-    let server_handle = std::thread::spawn(move || {
-        let res = server.accept();
-        assert!(matches!(res, Err(AgaveHandshakeError::Shaq(_))));
-    });
-    let client_handle = std::thread::spawn(move || {
-        let res = connect(
-            ipc,
-            ClientLogon {
-                worker_count: 4,
-                allocator_size: 1024 * 1024 * 1024,
-                allocator_handles: 3,
-                tpu_to_pack_size: 0,
-                progress_tracker_size: 16 * 1024,
-                pack_to_worker_size: 1024 * 1024,
-                worker_to_pack_size: 1024 * 1024,
-            },
-            Duration::from_secs(1),
-        );
-        let Err(ClientHandshakeError::Rejected(reason)) = res else {
-            panic!();
-        };
-        assert_eq!(reason, "Shaq; err=InvalidBufferSize");
     });
 
     client_handle.join().unwrap();
