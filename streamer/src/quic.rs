@@ -1015,10 +1015,8 @@ mod test {
             quic_streamer_config: server_params,
             qos_config,
         };
-        let (t, receiver, server_address, cancel) = setup_simple_qos_quic_server_with_params(
-            server_params,
-            Arc::new(RwLock::new(staked_nodes)),
-        );
+        let (t, receiver, server_address, cancel) =
+            setup_simple_qos_quic_server(server_params, Arc::new(RwLock::new(staked_nodes)));
 
         let runtime = rt_for_test();
         let num_expected_packets = 20;
