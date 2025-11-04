@@ -1102,11 +1102,11 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .possible_values(&["enabled", "disabled"])
             .long_help(
-                "Controls the experimental obsolete account tracking. This feature tracks obsolete \
-                 accounts in the account storage entry allowing for earlier cleaning of obsolete \
-                 accounts in the storages and index. At this time this feature is not compatible \
-                 with booting from local snapshot state and must unpack from archives. This value \
-                 is currently enabled by default.",
+                "Controls the experimental obsolete account tracking. This feature tracks \
+                 obsolete accounts in the account storage entry allowing for earlier cleaning of \
+                 obsolete accounts in the storages and index. At this time this feature is not \
+                 compatible with booting from local snapshot state and must unpack from archives. \
+                 This value is currently enabled by default.",
             )
             .hidden(hidden_unless_forced()),
     )
