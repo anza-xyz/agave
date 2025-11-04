@@ -9,6 +9,7 @@ jobs:
     if: github.repository == 'anza-xyz/agave'
     name: benchmark
     runs-on: benchmark
+    environment: protected
     strategy:
       fail-fast: false
       matrix:

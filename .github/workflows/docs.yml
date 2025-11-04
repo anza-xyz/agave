@@ -75,6 +75,7 @@ jobs:
     # the name is used by .mergify.yml as well
     name: build & deploy docs
     runs-on: ubuntu-22.04
+    environment: protected
     steps:
       - name: Checkout
         uses: actions/checkout@v5
