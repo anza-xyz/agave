@@ -69,7 +69,6 @@ members = [
     "programs/compute-budget-bench",
     "programs/ed25519-tests",
     "programs/loader-v4",
-    "programs/stake",
     "programs/system",
     "programs/vote",
     "programs/zk-elgamal-proof",
