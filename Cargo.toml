@@ -256,7 +256,7 @@ dashmap = "5.5.3"
 derivation-path = { version = "0.2.0", default-features = false }
 derive-where = "1.6.0"
 derive_more = { version = "2.0.1", features = ["full"] }
-dialoguer = "0.10.4"
+dialoguer = "0.12.0"
 digest = "0.10.7"
 dir-diff = "0.3.3"
 dirs-next = "2.0.0"
