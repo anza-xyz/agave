@@ -79,8 +79,8 @@ pub struct SwQos {
     staked_stream_load_ema: Arc<StakedStreamLoadEMA>,
     stats: Arc<StreamerStats>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
-    unstaked_connection_table: Arc<Mutex<ConnectionTable>>,
-    staked_connection_table: Arc<Mutex<ConnectionTable>>,
+    unstaked_connection_table: Arc<Mutex<ConnectionTable<ConnectionStreamCounter>>>,
+    staked_connection_table: Arc<Mutex<ConnectionTable<ConnectionStreamCounter>>>,
 }
 
 // QoS Params for Stake weighted QoS
@@ -210,7 +210,7 @@ impl SwQos {
         &self,
         client_connection_tracker: ClientConnectionTracker,
         connection: &Connection,
-        mut connection_table_l: MutexGuard<ConnectionTable>,
+        mut connection_table_l: MutexGuard<ConnectionTable<ConnectionStreamCounter>>,
         conn_context: &SwQosConnectionContext,
     ) -> Result<
         (
@@ -254,6 +254,7 @@ impl SwQos {
                     conn_context.peer_type(),
                     conn_context.last_update.clone(),
                     max_connections_per_peer,
+                    || Arc::new(ConnectionStreamCounter::new()),
                 )
             {
                 update_open_connections_stat(&self.stats, &connection_table_l);
@@ -285,7 +286,7 @@ impl SwQos {
 
     fn prune_unstaked_connection_table(
         &self,
-        unstaked_connection_table: &mut ConnectionTable,
+        unstaked_connection_table: &mut ConnectionTable<ConnectionStreamCounter>,
         max_unstaked_connections: usize,
         stats: Arc<StreamerStats>,
     ) {
@@ -305,7 +306,7 @@ impl SwQos {
         &self,
         client_connection_tracker: ClientConnectionTracker,
         connection: &Connection,
-        connection_table: Arc<Mutex<ConnectionTable>>,
+        connection_table: Arc<Mutex<ConnectionTable<ConnectionStreamCounter>>>,
         max_connections: usize,
         conn_context: &SwQosConnectionContext,
     ) -> Result<
@@ -610,7 +611,6 @@ pub mod test {
     }
 
     #[test]
-
     fn test_max_allowed_uni_streams() {
         assert_eq!(
             compute_max_allowed_uni_streams(ConnectionPeerType::Unstaked, 0),
