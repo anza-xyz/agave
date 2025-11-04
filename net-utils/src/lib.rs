@@ -79,13 +79,16 @@ pub(crate) const IP_ECHO_SERVER_RESPONSE_LENGTH: usize = HEADER_LENGTH + 23;
     note = "Use `get_public_ip_addr_with_binding` instead"
 )]
 pub fn get_public_ip_addr(ip_echo_server_addr: &SocketAddr) -> Result<IpAddr, String> {
-    let fut = ip_echo_server_request(*ip_echo_server_addr, IpEchoServerMessage::default());
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| e.to_string())?;
-    let resp = rt.block_on(fut).map_err(|e| e.to_string())?;
-    Ok(resp.address)
+    #[allow(deprecated)]
+    {
+        let fut = ip_echo_server_request(*ip_echo_server_addr, IpEchoServerMessage::default());
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| e.to_string())?;
+        let resp = rt.block_on(fut).map_err(|e| e.to_string())?;
+        Ok(resp.address)
+    }
 }
 
 /// Determine the public IP address of this machine by asking an ip_echo_server at the given
@@ -461,8 +464,11 @@ pub fn bind_to_with_config_non_blocking(
 )]
 /// binds both a UdpSocket and a TcpListener
 pub fn bind_common(ip_addr: IpAddr, port: u16) -> io::Result<(UdpSocket, TcpListener)> {
-    let config = sockets::SocketConfiguration::default();
-    sockets::bind_common_with_config(ip_addr, port, config)
+    #[allow(deprecated)]
+    {
+        let config = sockets::SocketConfiguration::default();
+        sockets::bind_common_with_config(ip_addr, port, config)
+    }
 }
 
 #[deprecated(

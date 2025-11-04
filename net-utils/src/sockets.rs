@@ -217,7 +217,17 @@ pub fn bind_in_range_with_config(
 }
 
 #[deprecated(since = "3.0.0", note = "Please bind to specific ports instead")]
+#[allow(deprecated)]
 pub fn bind_with_any_port_with_config(
+    ip_addr: IpAddr,
+    config: SocketConfiguration,
+) -> io::Result<UdpSocket> {
+    _bind_with_any_port_with_config(ip_addr, config)
+}
+
+// this private method works around a cargo bug involving nested deprecations
+// remove it with the above deprecated public method
+fn _bind_with_any_port_with_config(
     ip_addr: IpAddr,
     config: SocketConfiguration,
 ) -> io::Result<UdpSocket> {
