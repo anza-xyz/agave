@@ -15,9 +15,7 @@ use {
         sync::Arc,
     },
 };
-
-const GUEST_REGION_SIZE: u64 = 1 << 32;
-const GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS: u64 = 9 * GUEST_REGION_SIZE;
+use crate::vm_addresses::{GUEST_ACCOUNT_PAYLOAD_BASE_ADDRESS, GUEST_REGION_SIZE};
 
 /// This struct is shared with programs. Do not alter its fields.
 #[repr(C)]
