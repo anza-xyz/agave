@@ -4,7 +4,7 @@ use {
         leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
-    crate::banking_stage::consumer::RetryableIndex,
+    crate::banking_stage::consumer::{ExecutionFlags, RetryableIndex},
     crossbeam_channel::{Receiver, SendError, Sender, TryRecvError},
     solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -121,6 +121,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             bank,
             &work.transactions,
             &work.max_ages,
+            ExecutionFlags::default(),
         );
         self.metrics.update_for_consume(&output);
         self.metrics.has_data.store(true, Ordering::Relaxed);
@@ -184,7 +185,7 @@ pub(crate) mod external {
             },
         },
         agave_scheduler_bindings::{
-            pack_message_flags::{self, check_flags},
+            pack_message_flags::{self, check_flags, execution_flags},
             processed_codes,
             worker_message_types::{
                 fee_payer_balance_flags, not_included_reasons, parsing_and_sanitization_flags,
@@ -388,10 +389,26 @@ pub(crate) mod external {
                 let (translation_results, transactions, max_ages) =
                     Self::translate_transaction_batch(&batch, bank);
 
+                // Enforce all or nothing on translation_results.
+                let execution_flags = ExecutionFlags {
+                    drop_on_failure: message.flags & execution_flags::DROP_ON_FAILURE != 0,
+                    all_or_nothing: message.flags & execution_flags::ALL_OR_NOTHING != 0,
+                };
+                if execution_flags.all_or_nothing && translation_results.len() != transactions.len()
+                {
+                    self.send_execution_response(
+                        message,
+                        Self::all_or_nothing_translate_iterator(&translation_results),
+                    )?;
+
+                    return Ok(false);
+                }
+
                 let output = self.consumer.process_and_record_aged_transactions(
                     bank,
                     &transactions,
                     &max_ages,
+                    execution_flags,
                 );
 
                 self.metrics.update_for_consume(&output);
@@ -409,29 +426,16 @@ pub(crate) mod external {
                     continue; // recording failed, try again on next slot if possible.
                 };
 
-                let responses = execution_responses_from_iter(
-                    &self.allocator,
+                self.send_execution_response(
+                    message,
                     Self::consume_response_iterator(
                         &translation_results,
                         &transactions,
                         &commit_results,
                         bank,
                     ),
-                )
-                .ok_or(ExternalConsumeWorkerError::AllocationFailure)?;
-                let response = WorkerToPackMessage {
-                    batch: message.batch,
-                    processed_code: agave_scheduler_bindings::processed_codes::PROCESSED,
-                    responses,
-                };
+                )?;
 
-                let send_ptr = self
-                    .sender
-                    .reserve()
-                    .ok_or(ExternalConsumeWorkerError::SenderDisconnected)?;
-
-                // `reserve` returns valid aligned pointer
-                unsafe { send_ptr.write(response) };
                 return Ok(false);
             }
 
@@ -532,6 +536,42 @@ pub(crate) mod external {
             unsafe { send_ptr.write(response) };
 
             Ok(())
+        }
+
+        fn send_execution_response(
+            &mut self,
+            message: &PackToWorkerMessage,
+            iter: impl ExactSizeIterator<Item = ExecutionResponse>,
+        ) -> Result<(), ExternalConsumeWorkerError> {
+            let responses = execution_responses_from_iter(&self.allocator, iter)
+                .ok_or(ExternalConsumeWorkerError::AllocationFailure)?;
+            let response = WorkerToPackMessage {
+                batch: message.batch,
+                processed_code: agave_scheduler_bindings::processed_codes::PROCESSED,
+                responses,
+            };
+
+            // `reserve` returns valid aligned pointer
+            let send_ptr = self
+                .sender
+                .reserve()
+                .ok_or(ExternalConsumeWorkerError::SenderDisconnected)?;
+            unsafe { send_ptr.write(response) };
+
+            Ok(())
+        }
+
+        fn all_or_nothing_translate_iterator(
+            translation_results: &[Result<(), PacketHandlingError>],
+        ) -> impl ExactSizeIterator<Item = ExecutionResponse> + '_ {
+            translation_results.iter().map(|res| ExecutionResponse {
+                not_included_reason: match res {
+                    Ok(_) => not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
+                    Err(err) => Self::reason_from_packet_handling_error(err),
+                },
+                cost_units: 0,
+                fee_payer_balance: 0,
+            })
         }
 
         fn consume_response_iterator<'a>(
@@ -1178,6 +1218,35 @@ pub(crate) mod external {
                         cost_units: 0,
                         fee_payer_balance: 0,
                     }
+                ]
+            )
+        }
+
+        #[test]
+        fn test_all_or_nothing_translate_iterator() {
+            let translation_results = vec![Ok(()), Err(PacketHandlingError::Sanitization), Ok(())];
+
+            let responses = ExternalWorker::all_or_nothing_translate_iterator(&translation_results)
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                responses,
+                &[
+                    ExecutionResponse {
+                        not_included_reason: not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
+                        cost_units: 0,
+                        fee_payer_balance: 0
+                    },
+                    ExecutionResponse {
+                        not_included_reason: not_included_reasons::SANITIZE_FAILURE,
+                        cost_units: 0,
+                        fee_payer_balance: 0,
+                    },
+                    ExecutionResponse {
+                        not_included_reason: not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
+                        cost_units: 0,
+                        fee_payer_balance: 0,
+                    },
                 ]
             )
         }
