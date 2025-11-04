@@ -1,16 +1,21 @@
 use {
     crate::{
-        instruction_accounts::BorrowedInstructionAccount, IndexOfAccount, InstructionAccount,
-        TransactionContext,
+        instruction_accounts::BorrowedInstructionAccount,
+        vm_addresses::{
+            GUEST_DEDUPLICATION_MAPS_ADDRESS, GUEST_INSTRUCTION_ACCOUNTS_ADDRESS,
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS, GUEST_REGION_SIZE,
+        },
+        vm_slice::VmSlice,
+        IndexOfAccount, InstructionAccount, TransactionContext, MAX_ACCOUNTS_PER_TRANSACTION,
     },
     solana_account::ReadableAccount,
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
-    std::{borrow::Cow, collections::HashSet},
+    std::{collections::HashSet, ops::Range},
 };
-use crate::vm_slice::VmSlice;
 
 /// Instruction shared between runtime and programs.
+#[repr(C)]
 #[derive(Debug, Default)]
 pub struct InstructionFrame {
     pub nesting_level: usize,
@@ -18,6 +23,88 @@ pub struct InstructionFrame {
     pub instruction_accounts: VmSlice<InstructionAccount>,
     pub dedup_map: VmSlice<u8>,
     pub instruction_data: VmSlice<u8>,
+}
+
+impl InstructionFrame {
+    /// This function retrieves the range to index transaction_context.instruction_accounts
+    pub fn instruction_accounts_range(&self) -> Range<usize> {
+        let first_account_index = self
+            .instruction_accounts
+            .ptr()
+            .saturating_sub(GUEST_INSTRUCTION_ACCOUNTS_ADDRESS)
+            .checked_div(size_of::<InstructionAccount>() as u64)
+            .unwrap();
+        (first_account_index as usize)
+            ..(first_account_index.saturating_add(self.instruction_accounts.len()) as usize)
+    }
+
+    /// This function correctly creates the instruction accounts slice to be shared with programs.
+    /// Since the logic is similar to `instruction_accounts_range`, keep this function close to the
+    /// latter.
+    fn set_instruction_slice(
+        &mut self,
+        trace_len: u64,
+        penultimate_slice: Option<VmSlice<InstructionAccount>>,
+        instruction_accounts_len: usize,
+    ) {
+        let instruction_accounts_start_address = if trace_len < 2 {
+            GUEST_INSTRUCTION_ACCOUNTS_ADDRESS
+        } else {
+            penultimate_slice.unwrap().ptr().saturating_add(
+                penultimate_slice
+                    .unwrap()
+                    .len()
+                    .saturating_mul(size_of::<InstructionAccount>() as u64),
+            )
+        };
+
+        self.instruction_accounts = VmSlice::new(
+            instruction_accounts_start_address,
+            instruction_accounts_len as u64,
+        );
+    }
+
+    /// This function retrieves the range to index transaction_context.deduplication_maps
+    pub fn deduplication_map_range(&self, instruction_index: usize) -> Range<usize> {
+        instruction_index.saturating_mul(MAX_ACCOUNTS_PER_TRANSACTION)
+            ..instruction_index
+                .saturating_add(1)
+                .saturating_mul(MAX_ACCOUNTS_PER_TRANSACTION)
+    }
+
+    /// This function correctly creates the deduplication map slice to be shared with programs.
+    /// Since the logic is similar to `deduplication_map_range`, keep this function close to the
+    /// latter.
+    fn set_deduplication_slice(&mut self, instruction_index: u64) {
+        self.dedup_map = VmSlice::new(
+            GUEST_DEDUPLICATION_MAPS_ADDRESS.saturating_add(
+                (MAX_ACCOUNTS_PER_TRANSACTION as u64).saturating_mul(instruction_index),
+            ),
+            MAX_ACCOUNTS_PER_TRANSACTION as u64,
+        );
+    }
+
+    /// This function correctly creates the instruction data slice to be shared with programs.
+    fn set_instruction_data_slice(&mut self, instruction_index: u64, instruction_data_len: u64) {
+        self.instruction_data = VmSlice::new(
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(instruction_index)),
+            instruction_data_len,
+        );
+    }
+
+    pub fn configure_vm_slices(
+        &mut self,
+        instruction_index: u64,
+        trace_len: u64,
+        penultimate_slice: Option<VmSlice<InstructionAccount>>,
+        instruction_accounts_len: usize,
+        instruction_data_len: u64,
+    ) {
+        self.set_deduplication_slice(instruction_index);
+        self.set_instruction_slice(trace_len, penultimate_slice, instruction_accounts_len);
+        self.set_instruction_data_slice(instruction_index, instruction_data_len);
+    }
 }
 
 /// View interface to read instructions.
