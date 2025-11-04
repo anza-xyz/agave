@@ -136,7 +136,8 @@ fn allocate_and_reserve_message(
     let allocated_ptr = allocator.allocate(packet_size as u32)?;
 
     // Reserve space in the producer queue for the packet message.
-    let Some(tpu_to_pack_message) = producer.reserve() else {
+    // SAFETY: we always write the message (TODO: should be refactored)
+    let Some(tpu_to_pack_message) = (unsafe { producer.reserve() }) else {
         // Free the allocated packet if we can't reserve space in the queue.
         // SAFETY: `allocated_ptr` was allocated from `allocator`.
         unsafe {

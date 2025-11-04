@@ -280,7 +280,7 @@ pub(crate) mod external {
                     should_drain_executes = false;
                 }
 
-                match self.receiver.try_read() {
+                match self.receiver.try_read_ptr() {
                     Some(message) => {
                         did_work = true;
                         self.sender.sync();
@@ -527,13 +527,9 @@ pub(crate) mod external {
                 responses,
             };
 
-            let send_ptr = self
-                .sender
-                .reserve()
-                .ok_or(ExternalConsumeWorkerError::SenderDisconnected)?;
-
-            // `reserve` returns valid aligned pointer
-            unsafe { send_ptr.write(response) };
+            self.sender
+                .try_write(response)
+                .map_err(|_| ExternalConsumeWorkerError::SenderDisconnected)?;
 
             Ok(())
         }
@@ -551,12 +547,9 @@ pub(crate) mod external {
                 responses,
             };
 
-            // `reserve` returns valid aligned pointer
-            let send_ptr = self
-                .sender
-                .reserve()
-                .ok_or(ExternalConsumeWorkerError::SenderDisconnected)?;
-            unsafe { send_ptr.write(response) };
+            self.sender
+                .try_write(response)
+                .map_err(|_| ExternalConsumeWorkerError::SenderDisconnected)?;
 
             Ok(())
         }
@@ -630,14 +623,10 @@ pub(crate) mod external {
 
             // Should de-allocate the memory, but this is a non-recoverable
             // error and so it's not needed.
-            let send_message = self
-                .sender
-                .reserve()
-                .ok_or(ExternalConsumeWorkerError::SenderDisconnected)?;
+            self.sender
+                .try_write(response_message)
+                .map_err(|_| ExternalConsumeWorkerError::SenderDisconnected)?;
 
-            unsafe {
-                send_message.write(response_message);
-            }
             Ok(())
         }
 
@@ -745,14 +734,9 @@ pub(crate) mod external {
                 },
             };
 
-            let send_ptr = self
-                .sender
-                .reserve()
-                .ok_or(ExternalConsumeWorkerError::SenderDisconnected)?;
-
-            // SAFETY: `reserve` guarantees a properly aligned space
-            //         for a `WorkerToPackMessage`
-            unsafe { send_ptr.write(response) };
+            self.sender
+                .try_write(response)
+                .map_err(|_| ExternalConsumeWorkerError::SenderDisconnected)?;
 
             Ok(())
         }

@@ -234,7 +234,8 @@ impl Server {
             let minimum_file_size = shaq::minimum_file_size::<T>(capacity);
             let file_size = Self::align_file_size(minimum_file_size, huge);
 
-            shaq::Producer::create(&file, file_size).map(|producer| (file, producer))
+            // SAFETY: uniqely creating as producer
+            unsafe { shaq::Producer::create(&file, file_size) }.map(|producer| (file, producer))
         };
 
         // Try to create with huge pages, fallback to regular pages.
@@ -252,7 +253,8 @@ impl Server {
             let minimum_file_size = shaq::minimum_file_size::<PackToWorkerMessage>(capacity);
             let file_size = Self::align_file_size(minimum_file_size, huge);
 
-            shaq::Consumer::create(&file, file_size).map(|producer| (file, producer))
+            // SAFETY: uniquely creating as consumer.
+            unsafe { shaq::Consumer::create(&file, file_size) }.map(|producer| (file, producer))
         };
 
         // Try to create with huge pages, fallback to regular pages.
