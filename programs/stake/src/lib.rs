@@ -5,7 +5,7 @@ This crate will be REMOVED in Agave v4.0.0 and its name will be taken by the BPF
             Users of this crate's public exports must switch to:
 * `stake_state` -> `solana_stake_interface::state`.
 * `points` -> `solana_runtime::inflation_rewards::points`.
-* `id()` / `check_id()` -> `solana_sdk_ids::sysvar::stake::_`.
+* `id()` / `check_id()` -> `solana_stake_interface::program::_`.
 * `get_minimum_delegation()` will continue to live at the same path.
 * Some convenience functions such as `stake_from()` and `create_account()` are removed."
 )]
