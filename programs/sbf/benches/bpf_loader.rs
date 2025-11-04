@@ -39,7 +39,7 @@ use {
     solana_sdk_ids::{bpf_loader, native_loader},
     solana_signer::Signer,
     solana_svm_feature_set::SVMFeatureSet,
-    solana_transaction_context::InstructionAccount,
+    solana_transaction_context::instruction_accounts::InstructionAccount,
     std::{mem, sync::Arc},
     test::Bencher,
 };

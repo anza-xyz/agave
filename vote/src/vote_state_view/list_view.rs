@@ -68,6 +68,11 @@ where
             None
         }
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.view.len().saturating_sub(self.index + self.rev_index);
+        (remaining, Some(remaining))
+    }
 }
 
 impl<'a, F: ListFrame> DoubleEndedIterator for ListViewIter<'a, F>

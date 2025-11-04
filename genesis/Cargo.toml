@@ -61,7 +61,6 @@ solana-runtime = { workspace = true }
 solana-sdk-ids = "=3.0.0"
 solana-signer = "=3.0.0"
 solana-stake-interface = { version = "=2.0.1", features = ["borsh"] }
-solana-stake-program = { workspace = true }
 solana-time-utils = "3.0.0"
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }

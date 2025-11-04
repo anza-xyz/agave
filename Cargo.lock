@@ -429,7 +429,7 @@ dependencies = [
  "libloading",
  "log",
  "num_cpus",
- "predicates",
+ "predicates 2.1.5",
  "pretty_assertions",
  "qualifier_attr",
  "rand 0.8.5",
@@ -1101,7 +1101,7 @@ checksum = "9834fcc22e0874394a010230586367d4a3e9f11b560f469262678547e1d2575e"
 dependencies = [
  "bstr 1.4.0",
  "doc-comment",
- "predicates",
+ "predicates 2.1.5",
  "predicates-core",
  "predicates-tree",
  "wait-timeout",
@@ -2583,11 +2583,11 @@ dependencies = [
 
 [[package]]
 name = "dialoguer"
-version = "0.10.4"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59c6f2989294b9a498d3ad5491a79c6deb604617378e1cdc4bfc1c1361fe2f87"
+checksum = "25f104b501bf2364e78d0d3974cbc774f738f5865306ed128e1e0d7499c0ad96"
 dependencies = [
- "console 0.15.11",
+ "console 0.16.1",
  "shell-words",
  "tempfile",
  "zeroize",
@@ -2869,18 +2869,18 @@ dependencies = [
 
 [[package]]
 name = "enum-iterator"
-version = "1.5.0"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fd242f399be1da0a5354aa462d57b4ab2b4ee0683cc552f7c007d2d12d36e94"
+checksum = "a4549325971814bda7a44061bf3fe7e487d447cba01e4220a4b454d630d7a016"
 dependencies = [
  "enum-iterator-derive",
 ]
 
 [[package]]
 name = "enum-iterator-derive"
-version = "1.3.0"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03cdc46ec28bd728e67540c528013c6a10eb69a02eb31078a1bda695438cbfb8"
+checksum = "685adfa4d6f3d765a26bc5dbc936577de9abf756c1feeb3089b01dd395034842"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2956,7 +2956,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4783,29 +4783,28 @@ dependencies = [
 
 [[package]]
 name = "mockall"
-version = "0.11.4"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c84490118f2ee2d74570d114f3d0493cbf02790df303d2707606c3e14e07c96"
+checksum = "39a6bfcc6c8c7eed5ee98b9c3e33adc726054389233e201c95dab2d41a3839d2"
 dependencies = [
  "cfg-if 1.0.4",
  "downcast",
  "fragile",
- "lazy_static",
  "mockall_derive",
- "predicates",
+ "predicates 3.1.3",
  "predicates-tree",
 ]
 
 [[package]]
 name = "mockall_derive"
-version = "0.11.4"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22ce75669015c4f47b289fd4d4f56e894e4c96003ffdf3ac51313126f94c6cbb"
+checksum = "25ca3004c2efe9011bd4e461bd8256445052b9615405b4f7ea43fc8ca5c20898"
 dependencies = [
  "cfg-if 1.0.4",
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.106",
 ]
 
 [[package]]
@@ -5501,6 +5500,16 @@ dependencies = [
  "normalize-line-endings",
  "predicates-core",
  "regex",
+]
+
+[[package]]
+name = "predicates"
+version = "3.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5d19ee57562043d37e82899fade9a22ebab7be9cef5026b07fda9cdd4293573"
+dependencies = [
+ "anstyle",
+ "predicates-core",
 ]
 
 [[package]]
@@ -6375,7 +6384,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.9.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6453,7 +6462,7 @@ dependencies = [
  "security-framework 3.2.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7256,7 +7265,7 @@ dependencies = [
  "solana-signer",
  "solana-slot-hashes",
  "solana-slot-history",
- "solana-stake-program",
+ "solana-stake-interface",
  "solana-svm",
  "solana-svm-transaction",
  "solana-system-interface",
@@ -7638,7 +7647,6 @@ dependencies = [
  "solana-program-runtime",
  "solana-pubkey",
  "solana-sdk-ids",
- "solana-stake-program",
  "solana-system-program",
  "solana-vote-program",
  "solana-zk-elgamal-proof-program",
@@ -7660,7 +7668,6 @@ dependencies = [
  "solana-loader-v4-program",
  "solana-pubkey",
  "solana-sdk-ids",
- "solana-stake-program",
  "solana-system-program",
  "solana-vote-program",
  "static_assertions",
@@ -7677,7 +7684,7 @@ dependencies = [
  "clap 3.2.23",
  "itertools 0.12.1",
  "log",
- "predicates",
+ "predicates 2.1.5",
  "regex",
  "reqwest 0.12.24",
  "semver 1.0.27",
@@ -8291,7 +8298,6 @@ dependencies = [
  "solana-signer",
  "solana-slot-hashes",
  "solana-slot-history",
- "solana-stake-program",
  "solana-streamer",
  "solana-svm",
  "solana-svm-timings",
@@ -8770,7 +8776,6 @@ dependencies = [
  "solana-sdk-ids",
  "solana-signer",
  "solana-stake-interface",
- "solana-stake-program",
  "solana-time-utils",
  "solana-version",
  "solana-vote",
@@ -9182,7 +9187,6 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-stake-interface",
- "solana-stake-program",
  "solana-storage-bigtable",
  "solana-storage-proto",
  "solana-streamer",
@@ -9333,7 +9337,6 @@ dependencies = [
  "solana-signer",
  "solana-slot-hashes",
  "solana-stake-interface",
- "solana-stake-program",
  "solana-streamer",
  "solana-system-interface",
  "solana-system-transaction",
@@ -9873,7 +9876,6 @@ dependencies = [
  "solana-signer",
  "solana-stable-layout",
  "solana-stake-interface",
- "solana-stake-program",
  "solana-svm",
  "solana-svm-log-collector",
  "solana-svm-timings",
@@ -10103,7 +10105,6 @@ dependencies = [
  "solana-signer",
  "solana-slot-history",
  "solana-stake-interface",
- "solana-stake-program",
  "solana-storage-bigtable",
  "solana-streamer",
  "solana-svm",
@@ -10167,7 +10168,6 @@ dependencies = [
  "solana-keypair",
  "solana-message",
  "solana-pubkey",
- "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-signature",
  "solana-signer",
@@ -10365,6 +10365,7 @@ dependencies = [
  "solana-compute-budget",
  "solana-compute-budget-instruction",
  "solana-compute-budget-interface",
+ "solana-config-interface",
  "solana-cost-model",
  "solana-cpi",
  "solana-ed25519-program",
@@ -10416,7 +10417,6 @@ dependencies = [
  "solana-slot-hashes",
  "solana-slot-history",
  "solana-stake-interface",
- "solana-stake-program",
  "solana-svm",
  "solana-svm-callback",
  "solana-svm-timings",
@@ -10783,7 +10783,6 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-stake-interface",
- "solana-stake-program",
  "solana-sysvar",
  "solana-transaction",
  "solana-version",
@@ -10809,27 +10808,6 @@ dependencies = [
  "solana-system-interface",
  "solana-sysvar",
  "solana-sysvar-id",
-]
-
-[[package]]
-name = "solana-stake-program"
-version = "4.0.0-alpha.0"
-dependencies = [
- "agave-feature-set",
- "bincode",
- "log",
- "solana-account",
- "solana-clock",
- "solana-config-interface",
- "solana-genesis-config",
- "solana-native-token",
- "solana-pubkey",
- "solana-rent",
- "solana-sdk-ids",
- "solana-stake-interface",
- "solana-sysvar",
- "solana-transaction-context",
- "solana-vote-interface",
 ]
 
 [[package]]
@@ -12600,7 +12578,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.0.2",
- "windows-sys 0.61.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

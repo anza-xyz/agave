@@ -682,6 +682,7 @@ mod tests {
                 RewardInfo, VoteReward,
             },
             stake_account::StakeAccount,
+            stake_utils,
             stakes::Stakes,
         },
         agave_feature_set::FeatureSet,
@@ -1413,5 +1414,79 @@ mod tests {
         let vote_reward_c = accumulator.vote_rewards.get(&vote_pubkey_c).unwrap();
         assert_eq!(vote_reward_c.commission, 10);
         assert_eq!(vote_reward_c.vote_rewards, 50);
+    }
+
+    #[test]
+    fn test_epoch_rewards_cache_multiple_forks() {
+        let (mut genesis_config, _mint_keypair) =
+            create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+
+        const NUM_STAKES: usize = 1000;
+
+        for _i in 0..NUM_STAKES {
+            let vote_pubkey = Pubkey::new_unique();
+            let stake_pubkey = Pubkey::new_unique();
+
+            genesis_config.accounts.insert(
+                vote_pubkey,
+                vote_state::create_v4_account_with_authorized(
+                    &vote_pubkey,
+                    &Pubkey::new_unique(),
+                    &Pubkey::new_unique(),
+                    None,
+                    0,
+                    100_000_000_000,
+                )
+                .into(),
+            );
+
+            let stake_lamports = 1_000_000_000_000;
+            let stake_account = stake_utils::create_stake_account(
+                &stake_pubkey,
+                &vote_pubkey,
+                &vote_state::create_v4_account_with_authorized(
+                    &vote_pubkey,
+                    &Pubkey::new_unique(),
+                    &Pubkey::new_unique(),
+                    None,
+                    0,
+                    100_000_000_000,
+                ),
+                &genesis_config.rent,
+                stake_lamports,
+            );
+            genesis_config
+                .accounts
+                .insert(stake_pubkey, stake_account.into());
+        }
+
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let slots_per_epoch = bank.epoch_schedule().slots_per_epoch;
+        {
+            let cache = bank.epoch_rewards_calculation_cache.lock().unwrap();
+            assert!(
+                !cache.contains_key(&bank.parent_hash()),
+                "cache should be empty"
+            );
+        }
+
+        let bank_fork1 =
+            Bank::new_from_parent(Arc::clone(&bank), &Pubkey::default(), slots_per_epoch);
+        {
+            let cache = bank_fork1.epoch_rewards_calculation_cache.lock().unwrap();
+            assert!(
+                cache.contains_key(&bank_fork1.parent_hash()),
+                "cache should be populated"
+            );
+        }
+
+        let bank_fork2 = Bank::new_from_parent(bank, &Pubkey::default(), slots_per_epoch);
+        {
+            let cache = bank_fork2.epoch_rewards_calculation_cache.lock().unwrap();
+            assert!(
+                cache.contains_key(&bank_fork2.parent_hash()),
+                "cache should be populated"
+            );
+        }
     }
 }

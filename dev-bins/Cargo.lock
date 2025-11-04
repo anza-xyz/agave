@@ -175,7 +175,6 @@ dependencies = [
  "solana-shred-version",
  "solana-signature",
  "solana-stake-interface",
- "solana-stake-program",
  "solana-storage-bigtable",
  "solana-streamer",
  "solana-svm-callback",
@@ -899,7 +898,7 @@ dependencies = [
  "bstr",
  "doc-comment",
  "libc",
- "predicates 3.1.3",
+ "predicates",
  "predicates-core",
  "predicates-tree",
  "wait-timeout",
@@ -2066,11 +2065,11 @@ dependencies = [
 
 [[package]]
 name = "dialoguer"
-version = "0.10.4"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59c6f2989294b9a498d3ad5491a79c6deb604617378e1cdc4bfc1c1361fe2f87"
+checksum = "25f104b501bf2364e78d0d3974cbc774f738f5865306ed128e1e0d7499c0ad96"
 dependencies = [
- "console 0.15.11",
+ "console 0.16.1",
  "shell-words",
  "tempfile",
  "zeroize",
@@ -2331,9 +2330,9 @@ dependencies = [
 
 [[package]]
 name = "enum-iterator"
-version = "1.5.0"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fd242f399be1da0a5354aa462d57b4ab2b4ee0683cc552f7c007d2d12d36e94"
+checksum = "a4549325971814bda7a44061bf3fe7e487d447cba01e4220a4b454d630d7a016"
 dependencies = [
  "enum-iterator-derive",
 ]
@@ -2548,15 +2547,6 @@ checksum = "dc5a4e564e38c699f2880d3fda590bedc2e69f3f84cd48b457bd892ce61d0aa9"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
-]
-
-[[package]]
-name = "float-cmp"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
-dependencies = [
- "num-traits",
 ]
 
 [[package]]
@@ -4084,29 +4074,28 @@ dependencies = [
 
 [[package]]
 name = "mockall"
-version = "0.11.4"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c84490118f2ee2d74570d114f3d0493cbf02790df303d2707606c3e14e07c96"
+checksum = "39a6bfcc6c8c7eed5ee98b9c3e33adc726054389233e201c95dab2d41a3839d2"
 dependencies = [
  "cfg-if 1.0.4",
  "downcast",
  "fragile",
- "lazy_static",
  "mockall_derive",
- "predicates 2.1.5",
+ "predicates",
  "predicates-tree",
 ]
 
 [[package]]
 name = "mockall_derive"
-version = "0.11.4"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22ce75669015c4f47b289fd4d4f56e894e4c96003ffdf3ac51313126f94c6cbb"
+checksum = "25ca3004c2efe9011bd4e461bd8256445052b9615405b4f7ea43fc8ca5c20898"
 dependencies = [
  "cfg-if 1.0.4",
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.106",
 ]
 
 [[package]]
@@ -4198,12 +4187,6 @@ name = "nonzero_ext"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
-
-[[package]]
-name = "normalize-line-endings"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61807f77802ff30975e01f4f071c8ba10c022052f98b3294119f3e615d13e5be"
 
 [[package]]
 name = "num"
@@ -4732,20 +4715,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
 dependencies = [
  "zerocopy",
-]
-
-[[package]]
-name = "predicates"
-version = "2.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59230a63c37f3e18569bdb90e4a89cbf5bf8b06fea0b84e65ea10cc4df47addd"
-dependencies = [
- "difflib",
- "float-cmp",
- "itertools 0.10.5",
- "normalize-line-endings",
- "predicates-core",
- "regex",
 ]
 
 [[package]]
@@ -6207,7 +6176,7 @@ dependencies = [
  "solana-sha256-hasher",
  "solana-signer",
  "solana-slot-hashes",
- "solana-stake-program",
+ "solana-stake-interface",
  "solana-svm-transaction",
  "solana-system-interface",
  "solana-sysvar",
@@ -6596,7 +6565,6 @@ dependencies = [
  "solana-program-runtime",
  "solana-pubkey",
  "solana-sdk-ids",
- "solana-stake-program",
  "solana-system-program",
  "solana-vote-program",
  "solana-zk-elgamal-proof-program",
@@ -6615,7 +6583,6 @@ dependencies = [
  "solana-loader-v4-program",
  "solana-pubkey",
  "solana-sdk-ids",
- "solana-stake-program",
  "solana-system-program",
  "solana-vote-program",
 ]
@@ -7393,7 +7360,6 @@ dependencies = [
  "solana-sdk-ids",
  "solana-signer",
  "solana-stake-interface",
- "solana-stake-program",
  "solana-time-utils",
  "solana-version",
  "solana-vote-program",
@@ -7740,7 +7706,6 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-stake-interface",
- "solana-stake-program",
  "solana-storage-bigtable",
  "solana-storage-proto",
  "solana-streamer",
@@ -7878,7 +7843,6 @@ dependencies = [
  "solana-signer",
  "solana-slot-hashes",
  "solana-stake-interface",
- "solana-stake-program",
  "solana-streamer",
  "solana-system-interface",
  "solana-system-transaction",
@@ -8493,7 +8457,6 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-slot-history",
- "solana-stake-program",
  "solana-storage-bigtable",
  "solana-streamer",
  "solana-svm",
@@ -8677,6 +8640,7 @@ dependencies = [
  "solana-compute-budget",
  "solana-compute-budget-instruction",
  "solana-compute-budget-interface",
+ "solana-config-interface",
  "solana-cost-model",
  "solana-cpi",
  "solana-ed25519-program",
@@ -8723,7 +8687,6 @@ dependencies = [
  "solana-slot-hashes",
  "solana-slot-history",
  "solana-stake-interface",
- "solana-stake-program",
  "solana-svm",
  "solana-svm-callback",
  "solana-svm-timings",
@@ -9051,27 +9014,6 @@ dependencies = [
  "solana-system-interface",
  "solana-sysvar",
  "solana-sysvar-id",
-]
-
-[[package]]
-name = "solana-stake-program"
-version = "4.0.0-alpha.0"
-dependencies = [
- "agave-feature-set",
- "bincode",
- "log",
- "solana-account",
- "solana-clock",
- "solana-config-interface",
- "solana-genesis-config",
- "solana-native-token",
- "solana-pubkey",
- "solana-rent",
- "solana-sdk-ids",
- "solana-stake-interface",
- "solana-sysvar",
- "solana-transaction-context",
- "solana-vote-interface",
 ]
 
 [[package]]
