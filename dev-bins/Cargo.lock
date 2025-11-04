@@ -2065,11 +2065,11 @@ dependencies = [
 
 [[package]]
 name = "dialoguer"
-version = "0.10.4"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59c6f2989294b9a498d3ad5491a79c6deb604617378e1cdc4bfc1c1361fe2f87"
+checksum = "25f104b501bf2364e78d0d3974cbc774f738f5865306ed128e1e0d7499c0ad96"
 dependencies = [
- "console 0.15.11",
+ "console 0.16.1",
  "shell-words",
  "tempfile",
  "zeroize",
