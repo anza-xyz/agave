@@ -8,22 +8,20 @@ use {
     solana_pubkey::Pubkey,
     std::{borrow::Cow, collections::HashSet},
 };
+use crate::vm_slice::VmSlice;
 
 /// Instruction shared between runtime and programs.
-#[derive(Debug, Clone, Default)]
-pub struct InstructionFrame<'ix_data> {
+#[derive(Debug, Default)]
+pub struct InstructionFrame {
     pub nesting_level: usize,
     pub program_account_index_in_tx: IndexOfAccount,
-    pub instruction_accounts: Vec<InstructionAccount>,
-    /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
-    /// Usage: dedup_map[index_in_transaction] = index_in_instruction
-    /// This is a vector of u8s to save memory, since many entries may be unused.
-    pub(crate) dedup_map: Vec<u16>,
-    pub instruction_data: Cow<'ix_data, [u8]>,
+    pub instruction_accounts: VmSlice<InstructionAccount>,
+    pub dedup_map: VmSlice<u8>,
+    pub instruction_data: VmSlice<u8>,
 }
 
 /// View interface to read instructions.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct InstructionContext<'a, 'ix_data> {
     pub(crate) transaction_context: &'a TransactionContext<'ix_data>,
     // The rest of the fields are redundant shortcuts
