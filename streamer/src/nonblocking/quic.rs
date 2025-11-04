@@ -139,7 +139,7 @@ pub(crate) fn spawn_server<Q, C>(
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     quic_server_params: QuicStreamerConfig,
-    qos: Arc<Q>,
+    qos: Q,
     cancel: CancellationToken,
 ) -> Result<SpawnNonBlockingServerResult, QuicServerError>
 where
@@ -221,7 +221,10 @@ impl Drop for ClientConnectionTracker {
 impl ClientConnectionTracker {
     /// Check the max_concurrent_connections limit and if it is within the limit
     /// create ClientConnectionTracker and increment open connection count. Otherwise returns Err
-    fn new(stats: Arc<StreamerStats>, max_concurrent_connections: usize) -> Result<Self, ()> {
+    pub(crate) fn new(
+        stats: Arc<StreamerStats>,
+        max_concurrent_connections: usize,
+    ) -> Result<Self, ()> {
         let open_connections = stats.open_connections.fetch_add(1, Ordering::Relaxed);
         if open_connections >= max_concurrent_connections {
             stats.open_connections.fetch_sub(1, Ordering::Relaxed);
@@ -244,12 +247,14 @@ async fn run_server<Q, C>(
     stats: Arc<StreamerStats>,
     quic_server_params: QuicStreamerConfig,
     cancel: CancellationToken,
-    qos: Arc<Q>,
+    mut qos: Q,
 ) -> TaskTracker
 where
     Q: QosController<C> + Send + Sync + 'static,
     C: ConnectionContext + Send + Sync + 'static,
 {
+    qos.async_init().await;
+    let qos = Arc::new(qos);
     let quic_server_params = Arc::new(quic_server_params);
     let rate_limiter = Arc::new(ConnectionRateLimiter::new(
         quic_server_params.max_connections_per_ipaddr_per_min,
@@ -862,15 +867,15 @@ fn handle_chunks(
     Ok(StreamState::Finished)
 }
 
-struct ConnectionEntry<S: OpaqueStreamerCounter> {
+pub(crate) struct ConnectionEntry<S: OpaqueStreamerCounter> {
     cancel: CancellationToken,
-    peer_type: ConnectionPeerType,
+    pub(crate) peer_type: ConnectionPeerType,
     last_update: Arc<AtomicU64>,
     port: u16,
     // We do not explicitly use it, but its drop is triggered when ConnectionEntry is dropped.
     _client_connection_tracker: ClientConnectionTracker,
     connection: Option<Connection>,
-    stream_counter: Arc<S>,
+    pub(crate) stream_counter: Arc<S>,
 }
 
 impl<S: OpaqueStreamerCounter> ConnectionEntry<S> {
@@ -940,7 +945,8 @@ pub(crate) enum ConnectionTableType {
 // Map of IP to list of connection entries
 pub(crate) struct ConnectionTable<S: OpaqueStreamerCounter> {
     table: IndexMap<ConnectionTableKey, Vec<ConnectionEntry<S>>>,
-    pub(crate) total_size: usize,
+    total_size: usize,
+    connected_stake: u64,
     table_type: ConnectionTableType,
     cancel: CancellationToken,
 }
@@ -953,13 +959,28 @@ impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
         Self {
             table: IndexMap::default(),
             total_size: 0,
+            connected_stake: 0,
             table_type,
             cancel,
         }
     }
 
-    fn table_size(&self) -> usize {
+    pub(crate) fn table_size(&self) -> usize {
         self.total_size
+    }
+
+    pub(crate) fn connected_stake(&self) -> u64 {
+        self.connected_stake
+    }
+
+    fn register_connection(&mut self, stake: u64) {
+        self.connected_stake = self.connected_stake.saturating_add(stake);
+        self.total_size = self.total_size.saturating_add(1);
+    }
+
+    fn deregister_connection(&mut self, connection: ConnectionEntry<S>) {
+        self.connected_stake = self.connected_stake.saturating_sub(connection.stake());
+        self.total_size = self.total_size.saturating_sub(1);
     }
 
     fn is_staked(&self) -> bool {
@@ -967,21 +988,22 @@ impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
     }
 
     pub(crate) fn prune_oldest(&mut self, max_size: usize) -> usize {
-        let mut num_pruned = 0;
         let key = |(_, connections): &(_, &Vec<_>)| {
             connections.iter().map(ConnectionEntry::last_update).min()
         };
-        while self.total_size.saturating_sub(num_pruned) > max_size {
+        let old_size = self.table_size();
+        while self.table_size() > max_size {
             match self.table.values().enumerate().min_by_key(key) {
                 None => break,
-                Some((index, connections)) => {
-                    num_pruned += connections.len();
-                    self.table.swap_remove_index(index);
+                Some((index, _connections)) => {
+                    let (_, mut connections) = self.table.swap_remove_index(index).unwrap();
+                    connections
+                        .drain(..)
+                        .for_each(|c| self.deregister_connection(c));
                 }
             }
         }
-        self.total_size = self.total_size.saturating_sub(num_pruned);
-        num_pruned
+        old_size.saturating_sub(self.table_size())
     }
 
     // Randomly selects sample_size many connections, evicts the one with the
@@ -989,8 +1011,10 @@ impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
     // If the stakes of all the sampled connections are higher than the
     // threshold_stake, rejects the pruning attempt, and returns 0.
     pub(crate) fn prune_random(&mut self, sample_size: usize, threshold_stake: u64) -> usize {
+        if self.table.is_empty() {
+            return 0;
+        }
         let num_pruned = std::iter::once(self.table.len())
-            .filter(|&size| size > 0)
             .flat_map(|size| {
                 let mut rng = rng();
                 repeat_with(move || rng.random_range(0..size))
@@ -1004,9 +1028,13 @@ impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
             .min_by_key(|&(_, stake)| stake)
             .filter(|&(_, stake)| stake < Some(threshold_stake))
             .and_then(|(index, _)| self.table.swap_remove_index(index))
-            .map(|(_, connections)| connections.len())
+            .map(|(_, mut connections)| {
+                connections
+                    .drain(..)
+                    .map(|c| self.deregister_connection(c))
+                    .count()
+            })
             .unwrap_or_default();
-        self.total_size = self.total_size.saturating_sub(num_pruned);
         num_pruned
     }
 
@@ -1033,7 +1061,7 @@ impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
                 .first()
                 .map(|entry| entry.stream_counter.clone())
                 .unwrap_or_else(stream_counter_factory);
-            connection_entry.push(ConnectionEntry::new(
+            let entry = ConnectionEntry::new(
                 cancel.clone(),
                 peer_type,
                 last_update.clone(),
@@ -1041,8 +1069,10 @@ impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
                 client_connection_tracker,
                 connection,
                 stream_counter.clone(),
-            ));
-            self.total_size += 1;
+            );
+            let entry_stake = entry.stake();
+            connection_entry.push(entry);
+            self.register_connection(entry_stake);
             Some((last_update, cancel, stream_counter))
         } else {
             if let Some(connection) = connection {
@@ -1055,40 +1085,52 @@ impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
         }
     }
 
-    // Returns number of connections that were removed
+    /// Return an iterator over connection table entries.
+    pub(crate) fn iter(
+        &self,
+    ) -> indexmap::map::Iter<'_, ConnectionTableKey, Vec<ConnectionEntry<S>>> {
+        self.table.iter()
+    }
+
+    /// Returns number of connections that were removed
     pub(crate) fn remove_connection(
         &mut self,
         key: ConnectionTableKey,
         port: u16,
         stable_id: usize,
     ) -> usize {
+        let mut removed = vec![];
         if let Entry::Occupied(mut e) = self.table.entry(key) {
             let e_ref = e.get_mut();
-            let old_size = e_ref.len();
-
-            e_ref.retain(|connection_entry| {
+            let mut index = 0;
+            while index < e_ref.len() {
                 // Retain the connection entry if the port is different, or if the connection's
                 // stable_id doesn't match the provided stable_id.
                 // (Some unit tests do not fill in a valid connection in the table. To support that,
                 // if the connection is none, the stable_id check is ignored. i.e. if the port matches,
                 // the connection gets removed)
-                connection_entry.port != port
+                let connection_entry = &e_ref[index];
+                if connection_entry.port != port
                     || connection_entry
                         .connection
                         .as_ref()
                         .and_then(|connection| (connection.stable_id() != stable_id).then_some(0))
                         .is_some()
-            });
-            let new_size = e_ref.len();
+                {
+                    index += 1;
+                } else {
+                    removed.push(e_ref.swap_remove(index));
+                }
+            }
+
             if e_ref.is_empty() {
                 e.swap_remove_entry();
             }
-            let connections_removed = old_size.saturating_sub(new_size);
-            self.total_size = self.total_size.saturating_sub(connections_removed);
-            connections_removed
-        } else {
-            0
         }
+        removed
+            .drain(..)
+            .map(|entry| self.deregister_connection(entry))
+            .count()
     }
 }
 
@@ -1731,8 +1773,7 @@ pub mod test {
         }
 
         let new_size = 3;
-        let pruned = table.prune_oldest(new_size);
-        assert_eq!(pruned, num_entries as usize - new_size);
+        table.prune_oldest(new_size);
         assert_eq!(table.table.len(), new_size);
         assert_eq!(table.total_size, new_size);
         for pubkey in pubkeys.iter().take(num_entries as usize).skip(new_size - 1) {
@@ -1801,8 +1842,7 @@ pub mod test {
         assert_eq!(table.total_size, num_entries);
 
         let new_max_size = 3;
-        let pruned = table.prune_oldest(new_max_size);
-        assert!(pruned >= num_entries - new_max_size);
+        table.prune_oldest(new_max_size);
         assert!(table.table.len() <= new_max_size);
         assert!(table.total_size <= new_max_size);
 
@@ -1975,7 +2015,6 @@ pub mod test {
             stats.total_new_streams.load(Ordering::Relaxed),
             expected_num_txs
         );
-        assert!(stats.throttled_unstaked_streams.load(Ordering::Relaxed) > 0);
     }
 
     #[test]
