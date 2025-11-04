@@ -1,32 +1,36 @@
 use {
     crate::{
         nonblocking::{
-            qos::{ConnectionContext, QosController},
+            qos::{get_shared_state, ConnectionContext, ConnectionTableSharedState, QosController},
             quic::{
                 get_connection_stake, update_open_connections_stat, ClientConnectionTracker,
                 ConnectionHandlerError, ConnectionPeerType, ConnectionTable, ConnectionTableKey,
                 ConnectionTableType,
-            },
-            stream_throttle::{
-                throttle_stream, ConnectionStreamCounter, STREAM_THROTTLING_INTERVAL,
             },
         },
         quic::{StreamerStats, DEFAULT_MAX_STREAMS_PER_MS},
         streamer::StakedNodes,
     },
     quinn::Connection,
+    solana_net_utils::token_bucket::TokenBucket,
     solana_time_utils as timing,
     std::{
+        any::Any,
         future::Future,
         sync::{
             atomic::{AtomicU64, Ordering},
             Arc, RwLock,
         },
+        time::Duration,
     },
-    tokio::sync::{Mutex, MutexGuard},
+    tokio::{
+        sync::{Mutex, MutexGuard},
+        time::sleep,
+    },
     tokio_util::sync::CancellationToken,
 };
 
+const THROTTLING_INTERVAL: Duration = Duration::from_millis(20);
 #[derive(Clone)]
 pub struct SimpleQosConfig {
     pub max_streams_per_second: u64,
@@ -37,6 +41,12 @@ impl Default for SimpleQosConfig {
         SimpleQosConfig {
             max_streams_per_second: DEFAULT_MAX_STREAMS_PER_MS * 1000,
         }
+    }
+}
+
+impl ConnectionTableSharedState for TokenBucket {
+    fn as_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
+        self.clone()
     }
 }
 
@@ -77,14 +87,7 @@ impl SimpleQos {
         connection: &Connection,
         mut connection_table_l: MutexGuard<ConnectionTable>,
         conn_context: &SimpleQosConnectionContext,
-    ) -> Result<
-        (
-            Arc<AtomicU64>,
-            CancellationToken,
-            Arc<ConnectionStreamCounter>,
-        ),
-        ConnectionHandlerError,
-    > {
+    ) -> Result<(Arc<AtomicU64>, CancellationToken, Arc<TokenBucket>), ConnectionHandlerError> {
         let remote_addr = connection.remote_address();
 
         debug!(
@@ -92,21 +95,30 @@ impl SimpleQos {
             conn_context.peer_type(),
             remote_addr,
         );
-
+        let key = ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey);
         if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
             .try_add_connection(
-                ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey),
+                key,
                 remote_addr.port(),
                 client_connection_tracker,
                 Some(connection.clone()),
                 conn_context.peer_type(),
                 conn_context.last_update.clone(),
                 self.max_connections_per_peer,
+                || {
+                    Arc::new(TokenBucket::new(
+                        self.max_streams_per_second,
+                        self.max_streams_per_second,
+                        self.max_streams_per_second as f64,
+                    ))
+                },
             )
         {
+            let stream_counter = get_shared_state(stream_counter)
+                .expect("Downcast must succeed here since we have created the relevant object");
+
             update_open_connections_stat(&self.stats, &connection_table_l);
             drop(connection_table_l);
-
             Ok((last_update, cancel_connection, stream_counter))
         } else {
             self.stats
@@ -114,11 +126,6 @@ impl SimpleQos {
                 .fetch_add(1, Ordering::Relaxed);
             Err(ConnectionHandlerError::ConnectionAddError)
         }
-    }
-
-    fn max_streams_per_throttling_interval(&self, _context: &SimpleQosConnectionContext) -> u64 {
-        let interval_ms = STREAM_THROTTLING_INTERVAL.as_millis() as u64;
-        (self.max_streams_per_second * interval_ms / 1000).max(1)
     }
 }
 
@@ -128,7 +135,7 @@ pub struct SimpleQosConnectionContext {
     remote_pubkey: Option<solana_pubkey::Pubkey>,
     remote_address: std::net::SocketAddr,
     last_update: Arc<AtomicU64>,
-    stream_counter: Option<Arc<ConnectionStreamCounter>>,
+    stream_counter: Option<Arc<TokenBucket>>,
 }
 
 impl ConnectionContext for SimpleQosConnectionContext {
@@ -213,14 +220,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
         }
     }
 
-    fn on_stream_accepted(&self, conn_context: &SimpleQosConnectionContext) {
-        conn_context
-            .stream_counter
-            .as_ref()
-            .unwrap()
-            .stream_count
-            .fetch_add(1, Ordering::Relaxed);
-    }
+    fn on_stream_accepted(&self, _conn_context: &SimpleQosConnectionContext) {}
 
     fn on_stream_error(&self, _conn_context: &SimpleQosConnectionContext) {}
 
@@ -261,20 +261,28 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
         async move {
             let peer_type = context.peer_type();
             let remote_addr = context.remote_address;
-            let stream_counter: &Arc<ConnectionStreamCounter> =
-                context.stream_counter.as_ref().unwrap();
+            let stream_counter = context
+                .stream_counter
+                .as_ref()
+                .expect("This will always be populated before streams are opened");
 
-            let max_streams_per_throttling_interval =
-                self.max_streams_per_throttling_interval(context);
-
-            throttle_stream(
-                &self.stats,
-                peer_type,
-                remote_addr,
-                stream_counter,
-                max_streams_per_throttling_interval,
-            )
-            .await;
+            while stream_counter.consume_tokens(1).is_err() {
+                debug!("Throttling stream from {remote_addr:?}");
+                self.stats.throttled_streams.fetch_add(1, Ordering::Relaxed);
+                match peer_type {
+                    ConnectionPeerType::Unstaked => {
+                        self.stats
+                            .throttled_unstaked_streams
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
+                    ConnectionPeerType::Staked(_) => {
+                        self.stats
+                            .throttled_staked_streams
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+                sleep(THROTTLING_INTERVAL).await;
+            }
         }
     }
 }
@@ -285,6 +293,7 @@ mod tests {
         super::*,
         crate::{
             nonblocking::{
+                qos::NullConnectionTableSharedState,
                 quic::{ConnectionTable, ConnectionTableType},
                 testing_utilities::get_client_config,
             },
@@ -419,9 +428,8 @@ mod tests {
 
         // Verify success
         assert!(result.is_ok());
-        let (_last_update, cancel_token, stream_counter) = result.unwrap();
+        let (_last_update, cancel_token, _stream_counter) = result.unwrap();
         assert!(!cancel_token.is_cancelled());
-        assert_eq!(stream_counter.stream_count.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test]
@@ -462,6 +470,7 @@ mod tests {
             ConnectionPeerType::Staked(1000),
             Arc::new(AtomicU64::new(0)),
             1, // max_connections_per_peer
+            || Arc::new(NullConnectionTableSharedState {}),
         );
 
         let connection_table_guard = tokio::sync::Mutex::new(connection_table);
@@ -492,10 +501,6 @@ mod tests {
 
         // Verify failure due to connection limit
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ConnectionHandlerError::ConnectionAddError
-        ));
 
         // Verify stats were updated
         assert_eq!(stats.connection_add_failed.load(Ordering::Relaxed), 1);
@@ -644,9 +649,11 @@ mod tests {
         // Create staked nodes with both keypairs
         let staked_nodes =
             create_staked_nodes_with_keypairs(&server_keypair, &client_keypair, stake_amount);
-
+        let config = SimpleQosConfig {
+            max_streams_per_second: 1,
+        };
         let simple_qos = SimpleQos::new(
-            SimpleQosConfig::default(),
+            config.clone(),
             10,  // max_connections_per_peer
             100, // max_staked_connections
             stats.clone(),
@@ -677,15 +684,6 @@ mod tests {
 
         // Verify context was updated with stream counter
         assert!(conn_context.stream_counter.is_some());
-        assert_eq!(
-            conn_context
-                .stream_counter
-                .as_ref()
-                .unwrap()
-                .stream_count
-                .load(Ordering::Relaxed),
-            0
-        );
 
         // Verify stats were updated
         assert_eq!(
@@ -931,17 +929,6 @@ mod tests {
         // Verify last_update was updated (should be same or newer)
         let updated_last_update = conn_context.last_update.load(Ordering::Relaxed);
         assert!(updated_last_update >= initial_last_update);
-
-        // Verify stream counter starts at 0
-        assert_eq!(
-            conn_context
-                .stream_counter
-                .as_ref()
-                .unwrap()
-                .stream_count
-                .load(Ordering::Relaxed),
-            0
-        );
     }
 
     #[tokio::test]
@@ -983,27 +970,6 @@ mod tests {
 
         assert!(result.is_some()); // Connection should be added successfully
         assert!(conn_context.stream_counter.is_some()); // Stream counter should be set
-
-        // Record initial stream count
-        let initial_stream_count = conn_context
-            .stream_counter
-            .as_ref()
-            .unwrap()
-            .stream_count
-            .load(Ordering::Relaxed);
-        assert_eq!(initial_stream_count, 0);
-
-        // Test - call on_stream_accepted
-        simple_qos.on_stream_accepted(&conn_context);
-
-        // Verify stream count was incremented
-        let updated_stream_count = conn_context
-            .stream_counter
-            .as_ref()
-            .unwrap()
-            .stream_count
-            .load(Ordering::Relaxed);
-        assert_eq!(updated_stream_count, initial_stream_count + 1);
     }
 
     #[tokio::test]
@@ -1076,10 +1042,11 @@ mod tests {
 
         let staked_nodes =
             create_staked_nodes_with_keypairs(&server_keypair, &client_keypair, stake_amount);
-
         // Set a specific max_streams_per_second for testing
+        let max_streams_per_second = 10;
+
         let qos_config = SimpleQosConfig {
-            max_streams_per_second: 10, // 10 streams per second
+            max_streams_per_second,
         };
 
         let simple_qos = SimpleQos::new(
@@ -1111,12 +1078,16 @@ mod tests {
         // Test - call on_new_stream and measure timing
         let start_time = std::time::Instant::now();
 
-        simple_qos.on_new_stream(&conn_context).await;
+        // This should take roughlt 1 second to complete
+        // due to rate limit (since we allow initial burst)
+        for _ in 0..max_streams_per_second * 2 {
+            simple_qos.on_new_stream(&conn_context).await;
+        }
 
         let elapsed = start_time.elapsed();
 
-        // The function should complete (may or may not sleep depending on current throttling state)
-        // We just verify it doesn't panic and completes successfully
-        assert!(elapsed < std::time::Duration::from_secs(1)); // Should not take too long
+        // we can not verify precisely so we check rough bounds
+        assert!(elapsed > std::time::Duration::from_millis(950)); // Should not take too little time!
+        assert!(elapsed < std::time::Duration::from_millis(1200)); // Should not take too long!
     }
 }

@@ -1,7 +1,7 @@
 use {
     crate::{
         nonblocking::{
-            qos::{ConnectionContext, QosController},
+            qos::{get_shared_state, ConnectionContext, QosController},
             quic::{
                 get_connection_stake, update_open_connections_stat, ClientConnectionTracker,
                 ConnectionHandlerError, ConnectionPeerType, ConnectionTable, ConnectionTableKey,
@@ -241,11 +241,15 @@ impl SwQos {
                     conn_context.peer_type(),
                     conn_context.last_update.clone(),
                     max_connections_per_peer,
+                    || Arc::new(ConnectionStreamCounter::new()),
                 )
             {
                 update_open_connections_stat(&self.stats, &connection_table_l);
                 drop(connection_table_l);
 
+                let stream_counter = get_shared_state(stream_counter).expect(
+                    "Downcast should succeed since we have created the object to begin with",
+                );
                 if let Ok(receive_window) = receive_window {
                     connection.set_receive_window(receive_window);
                 }

@@ -1,7 +1,11 @@
 use {
-    crate::{nonblocking::quic::ConnectionPeerType, quic::StreamerStats},
+    crate::{
+        nonblocking::{qos::ConnectionTableSharedState, quic::ConnectionPeerType},
+        quic::StreamerStats,
+    },
     percentage::Percentage,
     std::{
+        any::Any,
         cmp,
         sync::{
             atomic::{AtomicU64, Ordering},
@@ -194,6 +198,12 @@ impl StakedStreamLoadEMA {
 pub struct ConnectionStreamCounter {
     pub(crate) stream_count: AtomicU64,
     last_throttling_instant: RwLock<tokio::time::Instant>,
+}
+
+impl ConnectionTableSharedState for ConnectionStreamCounter {
+    fn as_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
+        self.clone()
+    }
 }
 
 impl ConnectionStreamCounter {
