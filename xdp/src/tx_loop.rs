@@ -75,7 +75,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
         RingSizes::default()
     });
 
-    let frame_count = (rx_size + tx_size) * 2;
+    let frame_count = rx_size + tx_size;
 
     // try to allocate huge pages first, then fall back to regular pages
     const HUGE_2MB: usize = 2 * 1024 * 1024;
@@ -93,7 +93,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
         caps::raise(None, CapSet::Effective, cap).unwrap();
     }
 
-    let Ok((mut socket, tx)) = Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size) else {
+    let Ok((mut socket, tx)) = Socket::tx(queue, umem, zero_copy, tx_size, tx_size) else {
         panic!("failed to create AF_XDP socket on queue {queue_id:?}");
     };
 
