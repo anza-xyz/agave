@@ -426,11 +426,19 @@ pub fn execute(
         })
         .unwrap_or_default();
 
-    let mark_obsolete_accounts = if matches.is_present("accounts_db_mark_obsolete_accounts") {
-        MarkObsoleteAccounts::Enabled
-    } else {
-        MarkObsoleteAccounts::Disabled
-    };
+    let mark_obsolete_accounts = matches
+        .value_of("accounts_db_mark_obsolete_accounts")
+        .map(|mark_obsolete_accounts| {
+            match mark_obsolete_accounts {
+                "enabled" => MarkObsoleteAccounts::Enabled,
+                "disabled" => MarkObsoleteAccounts::Disabled,
+                _ => {
+                    // clap will enforce one of the above values is given
+                    unreachable!("invalid value given to accounts_db_mark_obsolete_accounts")
+                }
+            }
+        })
+        .unwrap_or_default();
 
     let accounts_db_config = AccountsDbConfig {
         index: Some(accounts_index_config),
