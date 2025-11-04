@@ -327,14 +327,17 @@ pub fn run_local_faucet_with_port(
 ) {
     thread::spawn(move || {
         let faucet_addr = socketaddr!(Ipv4Addr::UNSPECIFIED, port);
-        let faucet = Arc::new(Mutex::new(Faucet::new(
-            faucet_keypair,
-            time_input,
-            per_time_cap,
-            per_request_cap,
-        )));
-        let runtime = Runtime::new().unwrap();
-        runtime.block_on(run_faucet(faucet, faucet_addr, Some(sender)));
+        #[allow(deprecated)]
+        {
+            let faucet = Arc::new(Mutex::new(Faucet::new(
+                faucet_keypair,
+                time_input,
+                per_time_cap,
+                per_request_cap,
+            )));
+            let runtime = Runtime::new().unwrap();
+            runtime.block_on(run_faucet(faucet, faucet_addr, Some(sender)));
+        }
     });
 }
 
