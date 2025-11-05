@@ -10,6 +10,7 @@ use {
     },
     solana_perf::packet::PacketBatch,
     solana_quic_definitions::NotifyKeyUpdate,
+    solana_streamer::streamer::VersionedStakedNodes,
     solana_streamer::{
         nonblocking::{quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT, swqos::SwQosConfig},
         quic::{
@@ -106,7 +107,7 @@ impl Vortexor {
     #[allow(clippy::too_many_arguments)]
     pub fn create_vortexor(
         tpu_sockets: TpuSockets,
-        staked_nodes: Arc<RwLock<StakedNodes>>,
+        staked_nodes: VersionedStakedNodes,
         tpu_sender: Sender<PacketBatch>,
         tpu_fwd_sender: Sender<PacketBatch>,
         max_connections_per_peer: usize,

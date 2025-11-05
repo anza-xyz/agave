@@ -22,7 +22,9 @@ use {
             spawn_stake_wighted_qos_server, QuicStreamerConfig,
             DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER, DEFAULT_MAX_STAKED_CONNECTIONS,
         },
-        streamer::{receiver, PacketBatchReceiver, StakedNodes, StreamerReceiveStats},
+        streamer::{
+            receiver, PacketBatchReceiver, StakedNodes, StreamerReceiveStats, VersionedStakedNodes,
+        },
     },
     solana_transaction::Transaction,
     solana_vote_program::{vote_instruction, vote_state::Vote},
@@ -276,13 +278,17 @@ fn main() -> Result<()> {
             let (s_reader, r_reader) = unbounded();
             read_channels.push(r_reader);
 
+            let staked_nodes = VersionedStakedNodes {
+                staked_nodes: quic_params.staked_nodes.clone(),
+                version: Arc::new(AtomicUsize::new(0)),
+            };
             let server = spawn_stake_wighted_qos_server(
                 "solRcvrBenVote",
                 "bench_vote_metrics",
                 read_sockets,
                 &quic_params.identity_keypair,
                 s_reader,
-                quic_params.staked_nodes.clone(),
+                staked_nodes,
                 quic_server_params,
                 qos_config,
                 cancel.clone(),

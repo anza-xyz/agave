@@ -1,5 +1,7 @@
 use {
-    crate::{nonblocking::qos::ConnectionTableSharedState, quic::StreamerStats},
+    crate::nonblocking::qos::ConnectionTableSharedState,
+    crate::{nonblocking::quic::ConnectionPeerType, quic::StreamerStats, streamer::StakedNodes},
+    percentage::Percentage,
     solana_pubkey::Pubkey,
     std::{
         any::Any,
@@ -11,6 +13,7 @@ use {
         },
         time::Duration,
     },
+    tokio::sync::watch,
     tokio::time::sleep,
 };
 
@@ -25,9 +28,10 @@ pub const REFILL_INTERVAL: Duration = Duration::from_millis(10);
 /// for idle connections (to handle bursts of arrivals)
 const MAX_BURST: u64 = 2;
 
+#[derive(Clone)]
 pub struct StreamQuotas {
     pub mapping: HashMap<Pubkey, usize>,
-    pub entries: Vec<QuotaEntry>,
+    pub entries: Vec<Arc<QuotaEntry>>,
     pub total_stake: u64,
 }
 
@@ -114,7 +118,7 @@ impl QuotaEntry {
         }
     }
 
-    fn try_refill(&self, refill_amount: u64, my_max_tokens: u64) -> u64 {
+    pub fn try_refill(&self, refill_amount: u64, my_max_tokens: u64) -> u64 {
         // TODO optimize
         let current = self.tokens.load(Ordering::Relaxed);
         // this is technically a race, but since the other threads can only
@@ -138,14 +142,21 @@ impl QuotaEntry {
 }
 
 impl StreamQuotas {
-    pub fn new(stakes: &HashMap<Pubkey, u64>) -> Self {
-        let mut mapping = HashMap::with_capacity(stakes.len());
-        let mut entries = Vec::with_capacity(stakes.len());
+    pub fn new(stakes: &StakedNodes) -> Self {
+        let overrides = &stakes.overrides;
+        let total_len = overrides.len() + stakes.stakes.len();
+        let mut mapping = HashMap::with_capacity(total_len);
+        let mut entries = Vec::with_capacity(total_len);
         let mut total_stake = 0;
-        for (&address, &stake) in stakes.iter() {
-            let entry = QuotaEntry::new(address, stake);
-            total_stake += entry.effective_stake();
-            entries.push(entry);
+        for (&address, &stake) in overrides.iter() {
+            entries.push(Arc::new(QuotaEntry::new(address, stake)));
+            total_stake += stake;
+        }
+        for (&address, &stake) in stakes.stakes.iter() {
+            if !overrides.contains_key(&address) {
+                entries.push(Arc::new(QuotaEntry::new(address, stake)));
+                total_stake += stake;
+            }
         }
         //entries.sort();
         for (index, entry) in entries.iter().enumerate() {
@@ -160,27 +171,58 @@ impl StreamQuotas {
 }
 
 #[allow(clippy::arithmetic_side_effects)]
-pub async fn refill_task(quotas: Arc<StreamQuotas>, max_tps: u64) {
+pub async fn refill_task(test_stream_quotas_receiver: watch::Receiver<StreamQuotas>, max_tps: u64) {
     // amount of refill per interval
     let token_fill_rate: u64 = max_tps * 1000 / REFILL_INTERVAL.as_millis() as u64;
-    let quotas = quotas.as_ref();
     loop {
-        let mut overflow = 0;
-        let total_tokens_to_refill = (overflow + token_fill_rate).min(token_fill_rate * 2);
+        {
+            let quotas = test_stream_quotas_receiver.borrow();
+            let mut overflow = 0;
+            let total_tokens_to_refill = (overflow + token_fill_rate).min(token_fill_rate * 2);
 
-        for entry in quotas.entries.iter() {
-            // fraction of total amount to deposit in this token bucket
-            let my_fraction = total_tokens_to_refill * entry.effective_stake() / quotas.total_stake;
-            // maximal amount this bucket should be able to hold
-            let my_max_tokens =
-                token_fill_rate * MAX_BURST * entry.effective_stake() / quotas.total_stake;
+            for entry in quotas.entries.iter() {
+                // fraction of total amount to deposit in this token bucket
+                let my_fraction =
+                    total_tokens_to_refill * entry.effective_stake() / quotas.total_stake;
+                // maximal amount this bucket should be able to hold
+                let my_max_tokens =
+                    token_fill_rate * MAX_BURST * entry.effective_stake() / quotas.total_stake;
 
-            // store any leftover tokens for next iteration of the fill loop
-            overflow += entry.try_refill(my_fraction, my_max_tokens)
+                // store any leftover tokens for next iteration of the fill loop
+                overflow += entry.try_refill(my_fraction, my_max_tokens)
+            }
         }
         tokio::time::sleep(REFILL_INTERVAL).await;
     }
 }
+// {
+//         let base_fill_per_tick = 10000;
+//         let max_tokens_in_bucket = 1000;
+//         loop {
+//             {
+//                 let quotas = test_stream_quotas_receiver.borrow();
+
+//                 let mut total_tokens_to_refill = 0;
+//                 let mut overflow = 0;
+//                 total_tokens_to_refill =
+//                     (overflow + base_fill_per_tick).min(base_fill_per_tick * 2);
+//                 dbg!(total_tokens_to_refill);
+
+//                 for entry in quotas.entries.iter() {
+//                     let my_fraction =
+//                         total_tokens_to_refill * entry.stake / quotas.total_stake;
+//                     let my_max_tokens =
+//                         base_fill_per_tick * 2 * entry.stake / quotas.total_stake;
+
+//                     dbg!(entry.address);
+//                     // store any leftover tokens for next iteration of the fill loop
+//                     overflow += entry.try_refill(my_fraction, my_max_tokens)
+//                 }
+//             }
+//             tokio::time::sleep(REFILL_INTERVAL).await;
+//         }
+//     });
+// }
 
 #[cfg(test)]
 pub mod test {}

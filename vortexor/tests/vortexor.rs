@@ -17,7 +17,7 @@ use {
             DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
         },
         socket::SocketAddrSpace,
-        streamer::StakedNodes,
+        streamer::{StakedNodes, VersionedStakedNodes},
     },
     solana_vortexor::{
         cli::{DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER, DEFAULT_NUM_QUIC_ENDPOINTS},
@@ -28,7 +28,7 @@ use {
     std::{
         collections::HashMap,
         sync::{
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc, RwLock,
         },
         time::Duration,
@@ -63,6 +63,10 @@ async fn test_vortexor() {
         Arc::new(stakes),
         HashMap::<Pubkey, u64>::default(), // overrides
     )));
+    let staked_nodes = VersionedStakedNodes {
+        staked_nodes,
+        version: Arc::new(AtomicUsize::new(0)),
+    };
 
     let vortexor = Vortexor::create_vortexor(
         tpu_sockets,
@@ -140,7 +144,10 @@ fn test_stake_update() {
 
     let rpc_load_balancer = Arc::new(rpc_load_balancer);
     // Now create a stake updater service
-    let shared_staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+    let shared_staked_nodes = VersionedStakedNodes {
+        staked_nodes: Arc::new(RwLock::new(StakedNodes::default())),
+        version: Arc::new(AtomicUsize::new(0)),
+    };
     let staked_nodes_updater_service = StakeUpdater::new(
         exit.clone(),
         rpc_load_balancer.clone(),
@@ -152,7 +159,7 @@ fn test_stake_update() {
     let start_of_stake_updater = std::time::Instant::now();
     let stake_updater_timeout = Duration::from_secs(10); // conservative timeout to ensure stable test
     loop {
-        let stakes = shared_staked_nodes.read().unwrap();
+        let stakes = shared_staked_nodes.staked_nodes.read().unwrap();
         if let Some(stake) = stakes.get_node_stake(pubkey) {
             info!("Stake for {pubkey}: {stake}");
             assert_eq!(stake, default_node_stake);

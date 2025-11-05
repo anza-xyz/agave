@@ -15,6 +15,7 @@ use {
     solana_keypair::Keypair,
     solana_net_utils::sockets::{bind_to_with_config, SocketConfiguration},
     solana_pubkey::Pubkey,
+    solana_streamer::streamer::VersionedStakedNodes,
     solana_streamer::{
         nonblocking::{quic::SpawnNonBlockingServerResult, swqos::SwQosConfig},
         quic::QuicStreamerConfig,
@@ -26,7 +27,7 @@ use {
         net::SocketAddr,
         path::Path,
         str::FromStr as _,
-        sync::{Arc, RwLock},
+        sync::{atomic::AtomicUsize, Arc, RwLock},
         time::Duration,
     },
     tokio::time::sleep,
@@ -105,6 +106,10 @@ async fn main() -> anyhow::Result<()> {
             load_staked_nodes_overrides(&cli.stake_amounts)?,
         );
         Arc::new(RwLock::new(nodes))
+    };
+    let staked_nodes = VersionedStakedNodes {
+        staked_nodes,
+        version: Arc::new(AtomicUsize::new(0)),
     };
 
     let cancel = CancellationToken::new();
