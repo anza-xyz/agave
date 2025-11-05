@@ -1,5 +1,8 @@
 use {
-    crate::commands::{FromClapArgMatches, Result},
+    crate::{
+        cli::thread_args::{new_thread_arg, ThreadArg},
+        commands::{FromClapArgMatches, Result},
+    },
     clap::{value_t, Arg, ArgMatches},
     solana_clap_utils::{
         hidden_unless_forced,
@@ -12,18 +15,24 @@ use {
     std::{num::NonZeroUsize, ops::RangeInclusive, sync::LazyLock},
 };
 
-static VALID_RANGE_ROCKSDB_COMPACTION_THREADS: LazyLock<RangeInclusive<usize>> =
-    LazyLock::new(|| RangeInclusive::new(1, num_cpus::get()));
+struct RocksdbCompactionThreadsArg;
+impl ThreadArg for RocksdbCompactionThreadsArg {
+    const NAME: &'static str = "rocksdb_compaction_threads";
+    const LONG_NAME: &'static str = "rocksdb-compaction-threads";
+    const HELP: &'static str = "Number of threads to use for rocksdb (Blockstore) compactions";
+
+    fn default() -> usize {
+        solana_ledger::blockstore::default_num_compaction_threads().get()
+    }
+}
+
 static VALID_RANGE_ROCKSDB_FLUSH_THREADS: LazyLock<RangeInclusive<usize>> =
     LazyLock::new(|| RangeInclusive::new(1, num_cpus::get()));
 
 const DEFAULT_ROCKSDB_LEDGER_COMPRESSION: &str = "none";
 const DEFAULT_ROCKSDB_PERF_SAMPLE_INTERVAL: &str = "0";
-static DEFAULT_ROCKSDB_COMPACTION_THREADS: LazyLock<String> = LazyLock::new(|| {
-    solana_ledger::blockstore::default_num_compaction_threads()
-        .get()
-        .to_string()
-});
+static DEFAULT_ROCKSDB_COMPACTION_THREADS: LazyLock<String> =
+    LazyLock::new(|| RocksdbCompactionThreadsArg::default().to_string());
 static DEFAULT_ROCKSDB_FLUSH_THREADS: LazyLock<String> = LazyLock::new(|| {
     solana_ledger::blockstore::default_num_flush_threads()
         .get()
@@ -58,7 +67,7 @@ impl FromClapArgMatches for BlockstoreOptions {
         };
 
         let rocksdb_compaction_threads =
-            value_t!(matches, "rocksdb_compaction_threads", NonZeroUsize)?;
+            value_t!(matches, RocksdbCompactionThreadsArg::NAME, NonZeroUsize)?;
 
         let rocksdb_flush_threads = value_t!(matches, "rocksdb_flush_threads", NonZeroUsize)?;
 
@@ -108,14 +117,7 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
                 "Controls how often RocksDB read/write performance samples are collected. Perf \
                  samples are collected in 1 / ROCKS_PERF_SAMPLE_INTERVAL sampling rate.",
             ),
-        Arg::with_name("rocksdb_compaction_threads")
-            .long("rocksdb-compaction-threads")
-            .takes_value(true)
-            .value_name("NUMBER")
-            .default_value(&DEFAULT_ROCKSDB_COMPACTION_THREADS)
-            .validator(|num| is_within_range(num, VALID_RANGE_ROCKSDB_COMPACTION_THREADS.clone()))
-            .hidden(hidden_unless_forced())
-            .help("Number of threads to use for rocksdb (Blockstore) compactions"),
+        new_thread_arg::<RocksdbCompactionThreadsArg>(&DEFAULT_ROCKSDB_COMPACTION_THREADS),
         Arg::with_name("rocksdb_flush_threads")
             .long("rocksdb-flush-threads")
             .takes_value(true)
@@ -313,7 +315,7 @@ mod tests {
     #[test]
     fn test_valid_range_rocksdb_compaction_threads_unchanged() {
         assert_eq!(
-            *VALID_RANGE_ROCKSDB_COMPACTION_THREADS,
+            RocksdbCompactionThreadsArg::range(),
             RangeInclusive::new(1, num_cpus::get()),
         );
     }

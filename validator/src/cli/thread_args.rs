@@ -78,7 +78,7 @@ pub fn thread_args<'a>(defaults: &DefaultThreadArgs) -> Vec<Arg<'_, 'a>> {
     ]
 }
 
-fn new_thread_arg<'a, T: ThreadArg>(default: &str) -> Arg<'_, 'a> {
+pub(crate) fn new_thread_arg<'a, T: ThreadArg>(default: &str) -> Arg<'_, 'a> {
     Arg::with_name(T::NAME)
         .long(T::LONG_NAME)
         .takes_value(true)
