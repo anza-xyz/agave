@@ -326,7 +326,7 @@ pub(crate) struct EventHandlerStats {
     slot_tracking_map: BTreeMap<Slot, SlotTracking>,
 
     /// Whether the send metrics queue has been full.
-    pub(crate) metrics_queue_full: bool,
+    pub(super) metrics_queue_full: bool,
 
     root_slot: Slot,
     last_report_time: Instant,
