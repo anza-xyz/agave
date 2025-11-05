@@ -6,8 +6,7 @@ use {
                 get_connection_stake, update_open_connections_stat, ClientConnectionTracker,
                 ConnectionHandlerError, ConnectionPeerType, ConnectionTable, ConnectionTableKey,
                 ConnectionTableType, CONNECTION_CLOSE_CODE_DISALLOWED,
-                CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT, CONNECTION_CLOSE_REASON_DISALLOWED,
-                CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT,
+                CONNECTION_CLOSE_REASON_DISALLOWED,
             },
             stream_throttle::{
                 throttle_stream, ConnectionStreamCounter, StakedStreamLoadEMA,
@@ -18,14 +17,7 @@ use {
         streamer::StakedNodes,
     },
     percentage::Percentage,
-    quinn::{Connection, VarInt, VarIntBoundsExceeded},
-    solana_packet::PACKET_DATA_SIZE,
-    solana_quic_definitions::{
-        QUIC_MAX_STAKED_CONCURRENT_STREAMS, QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO,
-        QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS, QUIC_MIN_STAKED_CONCURRENT_STREAMS,
-        QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO, QUIC_TOTAL_STAKED_CONCURRENT_STREAMS,
-        QUIC_UNSTAKED_RECEIVE_WINDOW_RATIO,
-    },
+    quinn::Connection,
     solana_time_utils as timing,
     std::{
         future::Future,
@@ -37,6 +29,34 @@ use {
     tokio::sync::{Mutex, MutexGuard},
     tokio_util::sync::CancellationToken,
 };
+
+/// Target max bitrate for an unstaked connection
+/// This is max raw network bitrare, actual TPS will be enforced
+/// by the throttling logic. This directly impacts the amount of RAM
+/// that a connection can require to support RX buffers.
+///
+/// This needs to be constrained to ensure that we can admit a lot of unstaked
+/// connections without consuming too much RAM. The 4Mbps target for unstaked connection
+/// allows for about 1200 TPS with mean TX size of 400 bytes, and will still allow 100 TPS
+/// at maximal planned TX size of 4096 bytes.
+pub(crate) const TARGET_UNSTAKED_KBPS: u64 = 4000;
+
+/// Target max bitrate for a staked connection with maximum
+/// stake amount through the cluster. Connections will get
+/// bitrates interpolated between this and [`TARGET_UNSTAKED_KBPS`]
+/// based on their actual stake amount relative to maximum.
+/// This is only the max network bitrare, actual TPS will be enforced
+/// by the throttling logic.
+///
+/// We want to allocate more bandwidth to staked nodes, since we have a
+/// fairly small number of staked nodes. We want to keep this as large
+/// as is reasonable to ensure that the staked connections can submit as
+/// many transactions as they have available. Of course we do not want
+/// to make this infinitely large to avoid the TPU bandwidth exhaustion
+/// if all staked nodes decide to use their allowance at the same time.
+/// Current value chosen to allow about 25000 TPS, and limit the total
+/// TPU bandwidth per identity to 80 Mbps.
+pub(crate) const TARGET_MAX_STAKED_KBPS: u64 = TARGET_UNSTAKED_KBPS * 20;
 
 #[derive(Clone)]
 pub struct SwQosConfig {
@@ -67,7 +87,6 @@ pub struct SwQos {
 pub struct SwQosConnectionContext {
     peer_type: ConnectionPeerType,
     max_stake: u64,
-    min_stake: u64,
     remote_pubkey: Option<solana_pubkey::Pubkey>,
     total_stake: u64,
     in_staked_table: bool,
@@ -119,76 +138,6 @@ impl SwQos {
     }
 }
 
-/// Calculate the ratio for per connection receive window from a staked peer
-fn compute_receive_window_ratio_for_staked_node(max_stake: u64, min_stake: u64, stake: u64) -> u64 {
-    // Testing shows the maximum throughput from a connection is achieved at receive_window =
-    // PACKET_DATA_SIZE * 10. Beyond that, there is not much gain. We linearly map the
-    // stake to the ratio range from QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO to
-    // QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO. Where the linear algebra of finding the ratio 'r'
-    // for stake 's' is,
-    // r(s) = a * s + b. Given the max_stake, min_stake, max_ratio, min_ratio, we can find
-    // a and b.
-
-    if stake > max_stake {
-        return QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO;
-    }
-
-    let max_ratio = QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO;
-    let min_ratio = QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO;
-    if max_stake > min_stake {
-        let a = (max_ratio - min_ratio) as f64 / (max_stake - min_stake) as f64;
-        let b = max_ratio as f64 - ((max_stake as f64) * a);
-        let ratio = (a * stake as f64) + b;
-        ratio.round() as u64
-    } else {
-        QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO
-    }
-}
-
-fn compute_recieve_window(
-    max_stake: u64,
-    min_stake: u64,
-    peer_type: ConnectionPeerType,
-) -> Result<VarInt, VarIntBoundsExceeded> {
-    match peer_type {
-        ConnectionPeerType::Unstaked => {
-            VarInt::from_u64(PACKET_DATA_SIZE as u64 * QUIC_UNSTAKED_RECEIVE_WINDOW_RATIO)
-        }
-        ConnectionPeerType::Staked(peer_stake) => {
-            let ratio =
-                compute_receive_window_ratio_for_staked_node(max_stake, min_stake, peer_stake);
-            VarInt::from_u64(PACKET_DATA_SIZE as u64 * ratio)
-        }
-    }
-}
-
-fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stake: u64) -> usize {
-    match peer_type {
-        ConnectionPeerType::Staked(peer_stake) => {
-            // No checked math for f64 type. So let's explicitly check for 0 here
-            if total_stake == 0 || peer_stake > total_stake {
-                warn!(
-                    "Invalid stake values: peer_stake: {peer_stake:?}, total_stake: \
-                     {total_stake:?}"
-                );
-
-                QUIC_MIN_STAKED_CONCURRENT_STREAMS
-            } else {
-                let delta = (QUIC_TOTAL_STAKED_CONCURRENT_STREAMS
-                    - QUIC_MIN_STAKED_CONCURRENT_STREAMS) as f64;
-
-                (((peer_stake as f64 / total_stake as f64) * delta) as usize
-                    + QUIC_MIN_STAKED_CONCURRENT_STREAMS)
-                    .clamp(
-                        QUIC_MIN_STAKED_CONCURRENT_STREAMS,
-                        QUIC_MAX_STAKED_CONCURRENT_STREAMS,
-                    )
-            }
-        }
-        ConnectionPeerType::Unstaked => QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
-    }
-}
-
 impl SwQos {
     fn cache_new_connection(
         &self,
@@ -204,62 +153,33 @@ impl SwQos {
         ),
         ConnectionHandlerError,
     > {
-        if let Ok(max_uni_streams) = VarInt::from_u64(compute_max_allowed_uni_streams(
+        let remote_addr = connection.remote_address();
+        debug!(
+            "Peer {remote_addr}: type {:?}, total stake {}",
             conn_context.peer_type(),
             conn_context.total_stake,
-        ) as u64)
+        );
+
+        if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
+            .try_add_connection(
+                ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey),
+                remote_addr.port(),
+                client_connection_tracker,
+                Some(connection.clone()),
+                conn_context.peer_type(),
+                conn_context.last_update.clone(),
+                self.max_connections_per_peer,
+            )
         {
-            let remote_addr = connection.remote_address();
-            let receive_window = compute_recieve_window(
-                conn_context.max_stake,
-                conn_context.min_stake,
-                conn_context.peer_type(),
-            );
+            update_open_connections_stat(&self.stats, &connection_table_l);
+            drop(connection_table_l);
 
-            debug!(
-                "Peer type {:?}, total stake {}, max streams {} receive_window {:?} from peer {}",
-                conn_context.peer_type(),
-                conn_context.total_stake,
-                max_uni_streams.into_inner(),
-                receive_window,
-                remote_addr,
-            );
-
-            if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
-                .try_add_connection(
-                    ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey),
-                    remote_addr.port(),
-                    client_connection_tracker,
-                    Some(connection.clone()),
-                    conn_context.peer_type(),
-                    conn_context.last_update.clone(),
-                    self.max_connections_per_peer,
-                )
-            {
-                update_open_connections_stat(&self.stats, &connection_table_l);
-                drop(connection_table_l);
-
-                if let Ok(receive_window) = receive_window {
-                    connection.set_receive_window(receive_window);
-                }
-                connection.set_max_concurrent_uni_streams(max_uni_streams);
-
-                Ok((last_update, cancel_connection, stream_counter))
-            } else {
-                self.stats
-                    .connection_add_failed
-                    .fetch_add(1, Ordering::Relaxed);
-                Err(ConnectionHandlerError::ConnectionAddError)
-            }
+            Ok((last_update, cancel_connection, stream_counter))
         } else {
-            connection.close(
-                CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT.into(),
-                CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT,
-            );
             self.stats
-                .connection_add_failed_invalid_stream_count
+                .connection_add_failed
                 .fetch_add(1, Ordering::Relaxed);
-            Err(ConnectionHandlerError::MaxStreamError)
+            Err(ConnectionHandlerError::ConnectionAddError)
         }
     }
 
@@ -330,7 +250,6 @@ impl QosController<SwQosConnectionContext> for SwQos {
             SwQosConnectionContext {
                 peer_type: ConnectionPeerType::Unstaked,
                 max_stake: 0,
-                min_stake: 0,
                 total_stake: 0,
                 remote_pubkey: None,
                 in_staked_table: false,
@@ -338,7 +257,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                 stream_counter: None,
                 last_update: Arc::new(AtomicU64::new(timing::timestamp())),
             },
-            |(pubkey, stake, total_stake, max_stake, min_stake)| {
+            |(pubkey, stake, total_stake, max_stake)| {
                 // The heuristic is that the stake should be large enough to have 1 stream pass through within one throttle
                 // interval during which we allow max (MAX_STREAMS_PER_MS * STREAM_THROTTLING_INTERVAL_MS) streams.
 
@@ -358,7 +277,6 @@ impl QosController<SwQosConnectionContext> for SwQos {
                 SwQosConnectionContext {
                     peer_type,
                     max_stake,
-                    min_stake,
                     total_stake,
                     remote_pubkey: Some(pubkey),
                     in_staked_table: false,
@@ -543,6 +461,31 @@ impl QosController<SwQosConnectionContext> for SwQos {
             .await;
         }
     }
+
+    fn get_max_bitrate_kbps(&self, context: &SwQosConnectionContext) -> u64 {
+        get_max_bitrate_kbps(context.peer_type, context.max_stake)
+    }
+}
+
+// computes max_bitrate as a linear interpolation between TARGET_UNSTAKED_KBPS and
+// TARGET_MAX_STAKED_KBPS based on stake amount
+fn get_max_bitrate_kbps(peer_type: ConnectionPeerType, max_stake: u64) -> u64 {
+    let stake = match peer_type {
+        ConnectionPeerType::Unstaked => 0,
+        ConnectionPeerType::Staked(peer_stake) => peer_stake,
+    }
+    .min(max_stake);
+
+    // real cluster always has staked nodes, but unittests may have 100% unstaked
+    if max_stake == 0 {
+        return TARGET_UNSTAKED_KBPS;
+    }
+
+    let max_rate = TARGET_MAX_STAKED_KBPS;
+    let min_rate = TARGET_UNSTAKED_KBPS;
+    // Linear interpolation between min and max as
+    // stake approaches max_stake
+    min_rate + ((stake as u128 * (max_rate - min_rate) as u128) / (max_stake as u128)) as u64
 }
 
 #[cfg(test)]
@@ -551,63 +494,19 @@ pub mod test {
 
     #[test]
     fn test_cacluate_receive_window_ratio_for_staked_node() {
-        let mut max_stake = 10000;
-        let mut min_stake = 0;
-        let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, min_stake);
-        assert_eq!(ratio, QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO);
+        let max_stake = 10000;
 
-        let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake);
-        let max_ratio = QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO;
-        assert_eq!(ratio, max_ratio);
+        let rate = get_max_bitrate_kbps(ConnectionPeerType::Unstaked, max_stake);
+        assert_eq!(rate, TARGET_UNSTAKED_KBPS);
 
-        let ratio =
-            compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake / 2);
-        let average_ratio =
-            (QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO + QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO) / 2;
-        assert_eq!(ratio, average_ratio);
+        let rate = get_max_bitrate_kbps(ConnectionPeerType::Staked(max_stake), max_stake);
+        assert_eq!(rate, TARGET_MAX_STAKED_KBPS);
 
-        max_stake = 10000;
-        min_stake = 10000;
-        let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake);
-        assert_eq!(ratio, max_ratio);
+        let rate = get_max_bitrate_kbps(ConnectionPeerType::Staked(max_stake / 2), max_stake);
+        let average_ratio = (TARGET_MAX_STAKED_KBPS + TARGET_UNSTAKED_KBPS) / 2;
+        assert_eq!(rate, average_ratio);
 
-        max_stake = 0;
-        min_stake = 0;
-        let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake);
-        assert_eq!(ratio, max_ratio);
-
-        max_stake = 1000;
-        min_stake = 10;
-        let ratio =
-            compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake + 10);
-        assert_eq!(ratio, max_ratio);
-    }
-
-    #[test]
-
-    fn test_max_allowed_uni_streams() {
-        assert_eq!(
-            compute_max_allowed_uni_streams(ConnectionPeerType::Unstaked, 0),
-            QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS
-        );
-        assert_eq!(
-            compute_max_allowed_uni_streams(ConnectionPeerType::Staked(10), 0),
-            QUIC_MIN_STAKED_CONCURRENT_STREAMS
-        );
-        let delta =
-            (QUIC_TOTAL_STAKED_CONCURRENT_STREAMS - QUIC_MIN_STAKED_CONCURRENT_STREAMS) as f64;
-        assert_eq!(
-            compute_max_allowed_uni_streams(ConnectionPeerType::Staked(1000), 10000),
-            QUIC_MAX_STAKED_CONCURRENT_STREAMS,
-        );
-        assert_eq!(
-            compute_max_allowed_uni_streams(ConnectionPeerType::Staked(100), 10000),
-            ((delta / (100_f64)) as usize + QUIC_MIN_STAKED_CONCURRENT_STREAMS)
-                .min(QUIC_MAX_STAKED_CONCURRENT_STREAMS)
-        );
-        assert_eq!(
-            compute_max_allowed_uni_streams(ConnectionPeerType::Unstaked, 10000),
-            QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS
-        );
+        let rate = get_max_bitrate_kbps(ConnectionPeerType::Staked(max_stake + 10), max_stake);
+        assert_eq!(rate, TARGET_MAX_STAKED_KBPS);
     }
 }

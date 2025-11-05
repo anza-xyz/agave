@@ -30,6 +30,9 @@ pub(crate) trait QosController<C: ConnectionContext> {
         context: &mut C,
     ) -> impl Future<Output = Option<CancellationToken>> + Send;
 
+    /// Calculate the intended bandwidth allocation for a given peer in kbps
+    fn get_max_bitrate_kbps(&self, context: &C) -> u64;
+
     /// Called when a new stream is received on a connection
     fn on_new_stream(&self, context: &C) -> impl Future<Output = ()> + Send;
 
