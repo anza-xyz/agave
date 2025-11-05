@@ -326,7 +326,7 @@ pub(crate) struct EventHandlerStats {
     slot_tracking_map: BTreeMap<Slot, SlotTracking>,
 
     /// Whether the send metrics queue has been full.
-    pub(super) metrics_queue_full: bool,
+    pub(super) metrics_queue_became_full: bool,
 
     root_slot: Slot,
     last_report_time: Instant,
@@ -371,7 +371,7 @@ impl EventHandlerStats {
             slot_tracking_map: BTreeMap::new(),
             root_slot: 0,
             last_report_time: Instant::now(),
-            metrics_queue_full: false,
+            metrics_queue_became_full: false,
         }
     }
 
@@ -477,7 +477,7 @@ impl EventHandlerStats {
             ),
             ("set_root_count", self.set_root_count as i64, i64),
             ("timeout_set", self.timeout_set as i64, i64),
-            ("metrics_queue_full", self.metrics_queue_full, bool)
+            ("metrics_queue_became_full", self.metrics_queue_became_full, bool)
         );
         datapoint_info!(
             "event_handler_timing",
