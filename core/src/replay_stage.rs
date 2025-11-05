@@ -697,6 +697,7 @@ impl ReplayStage {
             let unfrozen_gossip_verified_vote_hashes = UnfrozenGossipVerifiedVoteHashes::default();
             let mut latest_validator_votes_for_frozen_banks =
                 LatestValidatorVotesForFrozenBanks::default();
+            let mut vote_slots = HashSet::default();
             let mut tracked_vote_transactions: Vec<TrackedVoteTransaction> = Vec::new();
             let mut has_new_vote_been_rooted = !wait_for_vote_to_start_leader;
             let mut last_vote_refresh_time = LastVoteRefreshTime {
@@ -930,6 +931,7 @@ impl ReplayStage {
                         &bank_forks,
                         &mut tbft_structs.heaviest_subtree_fork_choice,
                         &mut latest_validator_votes_for_frozen_banks,
+                        &mut vote_slots,
                     );
                     compute_bank_stats_time.stop();
 
@@ -3586,10 +3588,10 @@ impl ReplayStage {
         bank_forks: &RwLock<BankForks>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
         latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
+        vote_slots: &mut HashSet<Slot, ahash::RandomState>,
     ) -> Vec<Slot> {
         frozen_banks.sort_by_key(|bank| bank.slot());
         let mut new_stats = vec![];
-        let mut vote_slots = HashSet::default();
         for bank in frozen_banks.iter() {
             let bank_slot = bank.slot();
             // Only time progress map should be missing a bank slot
@@ -3621,7 +3623,7 @@ impl ReplayStage {
                         ancestors,
                         |slot| progress.get_hash(slot),
                         latest_validator_votes_for_frozen_banks,
-                        &mut vote_slots,
+                        vote_slots,
                     );
                     // Notify any listeners of the votes found in this newly computed
                     // bank
@@ -5462,6 +5464,7 @@ pub(crate) mod tests {
             &my_keypairs.vote_keypair,
             None,
         );
+        let mut vote_slots = HashSet::default();
 
         // Test confirmations
         let ancestors = bank_forks.read().unwrap().ancestors();
@@ -5483,6 +5486,7 @@ pub(crate) mod tests {
             &bank_forks,
             &mut heaviest_subtree_fork_choice,
             &mut latest_validator_votes_for_frozen_banks,
+            &mut vote_slots,
         );
 
         // bank 0 has no votes, should not send any votes on the channel
@@ -5534,6 +5538,7 @@ pub(crate) mod tests {
             &bank_forks,
             &mut heaviest_subtree_fork_choice,
             &mut latest_validator_votes_for_frozen_banks,
+            &mut vote_slots,
         );
 
         // Bank 1 had one vote
@@ -5569,6 +5574,7 @@ pub(crate) mod tests {
             &bank_forks,
             &mut heaviest_subtree_fork_choice,
             &mut latest_validator_votes_for_frozen_banks,
+            &mut vote_slots,
         );
         // No new stats should have been computed
         assert!(newly_computed.is_empty());
@@ -5595,6 +5601,7 @@ pub(crate) mod tests {
         let mut latest_validator_votes_for_frozen_banks =
             LatestValidatorVotesForFrozenBanks::default();
         let ancestors = vote_simulator.bank_forks.read().unwrap().ancestors();
+        let mut vote_slots = HashSet::default();
 
         let my_vote_pubkey = vote_simulator.vote_pubkeys[0];
         ReplayStage::compute_bank_stats(
@@ -5608,6 +5615,7 @@ pub(crate) mod tests {
             &vote_simulator.bank_forks,
             heaviest_subtree_fork_choice,
             &mut latest_validator_votes_for_frozen_banks,
+            &mut vote_slots,
         );
 
         let bank1 = vote_simulator.bank_forks.read().unwrap().get(1).unwrap();
@@ -5648,6 +5656,7 @@ pub(crate) mod tests {
         let votes = vec![2];
         cluster_votes.insert(my_node_pubkey, votes.clone());
         vote_simulator.fill_bank_forks(forks, &cluster_votes, true);
+        let mut vote_slots = HashSet::default();
 
         // Fill banks with votes
         for vote in votes {
@@ -5676,6 +5685,7 @@ pub(crate) mod tests {
             &vote_simulator.bank_forks,
             &mut vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             &mut vote_simulator.latest_validator_votes_for_frozen_banks,
+            &mut vote_slots,
         );
 
         frozen_banks.sort_by_key(|bank| bank.slot());
@@ -6750,6 +6760,7 @@ pub(crate) mod tests {
             bank_forks,
             ..
         } = vote_simulator;
+        let mut vote_slots = HashSet::default();
 
         let root_bank = bank_forks.read().unwrap().root_bank();
         let my_pubkey = leader_schedule_cache
@@ -6801,6 +6812,7 @@ pub(crate) mod tests {
             &bank_forks,
             &mut HeaviestSubtreeForkChoice::new_from_bank_forks(bank_forks.clone()),
             &mut LatestValidatorVotesForFrozenBanks::default(),
+            &mut vote_slots,
         );
 
         // Check status is true
@@ -6838,6 +6850,7 @@ pub(crate) mod tests {
                 .expect("Expected to be able to open database ledger"),
         );
         let mut tower = Tower::new_for_tests(8, 2.0 / 3.0);
+        let mut vote_slots = HashSet::default();
 
         // All forks have same weight so heaviest bank to vote/reset on should be the tip of
         // the fork with the lower slot
@@ -6848,6 +6861,7 @@ pub(crate) mod tests {
             &mut vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             &mut vote_simulator.latest_validator_votes_for_frozen_banks,
             None,
+            &mut vote_slots,
         );
         assert_eq!(vote_fork.unwrap(), 4);
         assert_eq!(reset_fork.unwrap(), 4);
@@ -6864,6 +6878,7 @@ pub(crate) mod tests {
             &mut vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             &mut vote_simulator.latest_validator_votes_for_frozen_banks,
             None,
+            &mut vote_slots,
         );
         assert!(vote_fork.is_none());
         assert_eq!(reset_fork, Some(5));
@@ -6908,6 +6923,7 @@ pub(crate) mod tests {
             &mut vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             &mut vote_simulator.latest_validator_votes_for_frozen_banks,
             None,
+            &mut vote_slots,
         );
         assert!(vote_fork.is_none());
         assert_eq!(reset_fork, Some(5));
@@ -6935,6 +6951,7 @@ pub(crate) mod tests {
             &mut vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             &mut vote_simulator.latest_validator_votes_for_frozen_banks,
             None,
+            &mut vote_slots,
         );
         assert!(vote_fork.is_none());
         assert_eq!(reset_fork, Some(9));
@@ -6982,6 +6999,7 @@ pub(crate) mod tests {
             &mut vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             &mut vote_simulator.latest_validator_votes_for_frozen_banks,
             None,
+            &mut vote_slots,
         );
         assert!(vote_fork.is_none());
         assert_eq!(reset_fork.unwrap(), 9);
@@ -7008,6 +7026,7 @@ pub(crate) mod tests {
             &mut vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             &mut vote_simulator.latest_validator_votes_for_frozen_banks,
             None,
+            &mut vote_slots,
         );
         assert!(vote_fork.is_none());
         assert_eq!(reset_fork.unwrap(), 5);
@@ -7057,6 +7076,7 @@ pub(crate) mod tests {
                 .expect("Expected to be able to open database ledger"),
         );
         let mut tower = Tower::new_for_tests(8, 0.67);
+        let mut vote_slots = HashSet::default();
 
         // All forks have same weight so heaviest bank to vote/reset on should be the tip of
         // the fork with the lower slot
@@ -7067,6 +7087,7 @@ pub(crate) mod tests {
             &mut vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             &mut vote_simulator.latest_validator_votes_for_frozen_banks,
             None,
+            &mut vote_slots,
         );
         assert_eq!(vote_fork.unwrap(), 4);
         assert_eq!(reset_fork.unwrap(), 4);
@@ -7111,6 +7132,7 @@ pub(crate) mod tests {
             &mut vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             &mut vote_simulator.latest_validator_votes_for_frozen_banks,
             None,
+            &mut vote_slots,
         );
         assert!(vote_fork.is_none());
         assert_eq!(reset_fork, Some(3));
@@ -7146,6 +7168,7 @@ pub(crate) mod tests {
             &mut vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             &mut vote_simulator.latest_validator_votes_for_frozen_banks,
             None,
+            &mut vote_slots,
         );
 
         // Should now pick the next heaviest fork that is not a descendant of 2, which is 6.
@@ -7186,6 +7209,7 @@ pub(crate) mod tests {
             &mut vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             &mut vote_simulator.latest_validator_votes_for_frozen_banks,
             None,
+            &mut vote_slots,
         );
         // Should now pick the heaviest fork 4 again, but lockouts apply so fork 4
         // is not votable, which avoids voting for 4 again.
@@ -7386,6 +7410,7 @@ pub(crate) mod tests {
             vote_simulator,
             ..
         } = replay_components;
+        let mut vote_slots = HashSet::default();
 
         let VoteSimulator {
             mut progress,
@@ -7416,6 +7441,7 @@ pub(crate) mod tests {
             &bank_forks,
             &mut tbft_structs.heaviest_subtree_fork_choice,
             &mut latest_validator_votes_for_frozen_banks,
+            &mut vote_slots,
         );
 
         // Try to switch to vote to the heaviest slot 6, then return the vote results
@@ -7528,6 +7554,7 @@ pub(crate) mod tests {
 
         let ancestors = bank_forks.read().unwrap().ancestors();
         let descendants = bank_forks.read().unwrap().descendants();
+        let mut vote_slots = HashSet::default();
 
         ReplayStage::compute_bank_stats(
             &Pubkey::new_unique(),
@@ -7540,6 +7567,7 @@ pub(crate) mod tests {
             &bank_forks,
             &mut tbft_structs.heaviest_subtree_fork_choice,
             &mut latest_validator_votes_for_frozen_banks,
+            &mut vote_slots,
         );
         // Try to switch to vote to the heaviest slot 5, then return the vote results
         let (heaviest_bank, heaviest_bank_on_same_fork) = tbft_structs
@@ -8208,6 +8236,7 @@ pub(crate) mod tests {
             mut progress,
             ..
         } = vote_simulator;
+        let mut vote_slots = HashSet::default();
 
         let has_new_vote_been_rooted = false;
         let mut tracked_vote_transactions = vec![];
@@ -8324,6 +8353,7 @@ pub(crate) mod tests {
             &bank_forks,
             &mut tbft_structs.heaviest_subtree_fork_choice,
             &mut latest_validator_votes_for_frozen_banks,
+            &mut vote_slots,
         );
         assert_eq!(tower.last_voted_slot(), Some(last_voted_slot));
         assert_eq!(progress.my_latest_landed_vote(tip_of_voted_fork), Some(0));
@@ -8828,6 +8858,7 @@ pub(crate) mod tests {
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
         latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
         my_vote_pubkey: Option<Pubkey>,
+        vote_slots: &mut HashSet<Slot, ahash::RandomState>,
     ) -> (Option<Slot>, Option<Slot>, Vec<HeaviestForkFailures>) {
         let mut frozen_banks: Vec<_> = bank_forks
             .read()
@@ -8848,6 +8879,7 @@ pub(crate) mod tests {
             bank_forks,
             heaviest_subtree_fork_choice,
             latest_validator_votes_for_frozen_banks,
+            vote_slots,
         );
         let (heaviest_bank, heaviest_bank_on_same_fork) = heaviest_subtree_fork_choice
             .select_forks(&frozen_banks, tower, progress, ancestors, bank_forks);
@@ -8981,6 +9013,7 @@ pub(crate) mod tests {
         let (bank_forks, mut progress) = (vote_simulator.bank_forks, vote_simulator.progress);
         let bank_hash = |slot| bank_forks.read().unwrap().bank_hash(slot).unwrap();
         let my_vote_pubkey = vote_simulator.vote_pubkeys[0];
+        let mut vote_slots = HashSet::default();
         let mut tower = Tower::default();
         tower.node_pubkey = vote_simulator.node_pubkeys[0];
         tower.record_vote(0, bank_hash(0));
@@ -8993,6 +9026,7 @@ pub(crate) mod tests {
             &mut vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             &mut vote_simulator.latest_validator_votes_for_frozen_banks,
             Some(my_vote_pubkey),
+            &mut vote_slots,
         );
 
         assert_eq!(vote_fork, None);
@@ -9012,6 +9046,7 @@ pub(crate) mod tests {
             &mut vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             &mut vote_simulator.latest_validator_votes_for_frozen_banks,
             Some(my_vote_pubkey),
+            &mut vote_slots,
         );
 
         assert_eq!(vote_fork, None);
@@ -9068,6 +9103,7 @@ pub(crate) mod tests {
         tower.node_pubkey = vote_simulator.node_pubkeys[0];
         tower.record_vote(0, bank_hash(0));
         tower.record_vote(1, bank_hash(1));
+        let mut vote_slots = HashSet::default();
 
         let (vote_fork, reset_fork, failures) = run_compute_and_select_forks(
             &bank_forks,
@@ -9076,6 +9112,7 @@ pub(crate) mod tests {
             &mut vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             &mut vote_simulator.latest_validator_votes_for_frozen_banks,
             Some(my_vote_pubkey),
+            &mut vote_slots,
         );
 
         assert_eq!(vote_fork, None);
@@ -9089,6 +9126,7 @@ pub(crate) mod tests {
             &mut vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             &mut vote_simulator.latest_validator_votes_for_frozen_banks,
             Some(my_vote_pubkey),
+            &mut vote_slots,
         );
 
         assert_eq!(vote_fork, None);
