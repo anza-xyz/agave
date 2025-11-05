@@ -142,7 +142,7 @@ impl VotingService {
         };
 
         let thread_hdl = Builder::new()
-            .name("solVoteService".to_string())
+            .name("solAlpenVoteService".to_string())
             .spawn(move || {
                 let mut staked_validators_cache = StakedValidatorsCache::new(
                     bank_forks.clone(),
@@ -152,6 +152,7 @@ impl VotingService {
                     alpenglow_port_override,
                 );
 
+                info!("AlpenglowVotingService has started");
                 loop {
                     let Ok(bls_op) = bls_receiver.recv() else {
                         break;
@@ -165,6 +166,7 @@ impl VotingService {
                         &mut staked_validators_cache,
                     );
                 }
+                info!("AlpenglowVotingService has stopped");
             })
             .unwrap();
         Self { thread_hdl }

@@ -20,7 +20,7 @@ use {
         packet::PacketBatchRecycler,
         quic::{
             spawn_stake_wighted_qos_server, QuicStreamerConfig,
-            DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER, DEFAULT_MAX_STAKED_CONNECTIONS,
+            DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER, DEFAULT_MAX_STAKED_CONNECTIONS,
         },
         streamer::{receiver, PacketBatchReceiver, StakedNodes, StreamerReceiveStats},
     },
@@ -197,7 +197,7 @@ fn main() -> Result<()> {
     let max_connections: usize =
         value_t!(matches, "max-connections", usize).unwrap_or(DEFAULT_MAX_STAKED_CONNECTIONS);
     let max_connections_per_peer: usize = value_t!(matches, "max-connections-per-peer", usize)
-        .unwrap_or(DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER);
+        .unwrap_or(DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER);
     let max_connections_per_ipaddr_per_min: usize =
         value_t!(matches, "max-connections-per-ipaddr-per-min", usize).unwrap_or(1024); // Default value for max connections per ipaddr per minute
     let connection_pool_size: usize =
@@ -267,7 +267,7 @@ fn main() -> Result<()> {
                 max_connections_per_ipaddr_per_min: max_connections_per_ipaddr_per_min
                     .try_into()
                     .unwrap(),
-                max_connections_per_peer,
+                max_connections_per_unstaked_peer: max_connections_per_peer,
                 max_staked_connections: max_connections,
                 max_unstaked_connections: 0,
                 ..Default::default()

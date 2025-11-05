@@ -19,6 +19,8 @@ Release channels have their own copy of this changelog:
 #### Changes
 ### Validator
 #### Breaking
+#### Deprecations
+* Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
 
 ## 3.1.0
 ### RPC

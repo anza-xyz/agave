@@ -121,7 +121,7 @@ impl Vortexor {
     ) -> Self {
         let quic_server_params = SwQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
-                max_connections_per_peer,
+                max_connections_per_unstaked_peer: max_connections_per_peer,
                 max_staked_connections: max_tpu_staked_connections,
                 max_unstaked_connections: max_tpu_unstaked_connections,
                 max_connections_per_ipaddr_per_min,

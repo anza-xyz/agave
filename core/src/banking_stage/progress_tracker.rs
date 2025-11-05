@@ -89,8 +89,7 @@ impl ProgressTracker {
         message: ProgressMessage,
     ) -> bool {
         producer.sync();
-        if let Some(reserved_ptr) = producer.reserve() {
-            unsafe { reserved_ptr.write(message) };
+        if producer.try_write(message).is_ok() {
             producer.commit();
             true
         } else {

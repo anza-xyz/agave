@@ -54,7 +54,8 @@ impl Default for SwQosConfig {
 pub struct SwQos {
     max_staked_connections: usize,
     max_unstaked_connections: usize,
-    max_connections_per_peer: usize,
+    max_connections_per_staked_peer: usize,
+    max_connections_per_unstaked_peer: usize,
     staked_stream_load_ema: Arc<StakedStreamLoadEMA>,
     stats: Arc<StreamerStats>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
@@ -91,7 +92,8 @@ impl SwQos {
         qos_config: SwQosConfig,
         max_staked_connections: usize,
         max_unstaked_connections: usize,
-        max_connections_per_peer: usize,
+        max_connections_per_staked_peer: usize,
+        max_connections_per_unstaked_peer: usize,
         stats: Arc<StreamerStats>,
         staked_nodes: Arc<RwLock<StakedNodes>>,
         cancel: CancellationToken,
@@ -99,7 +101,8 @@ impl SwQos {
         Self {
             max_staked_connections,
             max_unstaked_connections,
-            max_connections_per_peer,
+            max_connections_per_staked_peer,
+            max_connections_per_unstaked_peer,
             staked_stream_load_ema: Arc::new(StakedStreamLoadEMA::new(
                 stats.clone(),
                 max_unstaked_connections,
@@ -225,6 +228,10 @@ impl SwQos {
                 remote_addr,
             );
 
+            let max_connections_per_peer = match conn_context.peer_type() {
+                ConnectionPeerType::Unstaked => self.max_connections_per_unstaked_peer,
+                ConnectionPeerType::Staked(_) => self.max_connections_per_staked_peer,
+            };
             if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
                 .try_add_connection(
                     ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey),
@@ -233,7 +240,7 @@ impl SwQos {
                     Some(connection.clone()),
                     conn_context.peer_type(),
                     conn_context.last_update.clone(),
-                    self.max_connections_per_peer,
+                    max_connections_per_peer,
                 )
             {
                 update_open_connections_stat(&self.stats, &connection_table_l);

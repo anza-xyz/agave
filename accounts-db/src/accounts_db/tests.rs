@@ -2568,7 +2568,7 @@ fn test_select_candidates_by_total_usage_no_candidates() {
     assert_eq!(0, next_candidates.len());
 }
 
-#[test_case(StorageAccess::Mmap)]
+#[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
 #[test_case(StorageAccess::File)]
 fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: StorageAccess) {
     // three candidates, one selected for shrink, one is put back to the candidate list and one is ignored
@@ -2635,7 +2635,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: S
     assert!(next_candidates.contains(&store2_slot));
 }
 
-#[test_case(StorageAccess::Mmap)]
+#[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
 #[test_case(StorageAccess::File)]
 fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: StorageAccess) {
     // three candidates, 2 are selected for shrink, one is ignored
@@ -2699,7 +2699,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: S
     assert_eq!(0, next_candidates.len());
 }
 
-#[test_case(StorageAccess::Mmap)]
+#[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
 #[test_case(StorageAccess::File)]
 fn test_select_candidates_by_total_usage_all_clean(storage_access: StorageAccess) {
     // 2 candidates, they must be selected to achieve the target alive ratio
@@ -4797,7 +4797,7 @@ fn test_remove_uncleaned_slots_and_collect_pubkeys_up_to_slot() {
     assert!(candidates_contain(&pubkey3));
 }
 
-#[test_case(StorageAccess::Mmap)]
+#[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
 #[test_case(StorageAccess::File)]
 fn test_shrink_productive(storage_access: StorageAccess) {
     agave_logger::setup();
@@ -4833,7 +4833,7 @@ fn test_shrink_productive(storage_access: StorageAccess) {
     assert!(!AccountsDb::is_shrinking_productive(&store));
 }
 
-#[test_case(StorageAccess::Mmap)]
+#[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
 #[test_case(StorageAccess::File)]
 fn test_is_candidate_for_shrink(storage_access: StorageAccess) {
     agave_logger::setup();
@@ -6335,7 +6335,7 @@ fn insert_store(db: &AccountsDb, append_vec: Arc<AccountStorageEntry>) {
     db.storage.insert(append_vec.slot(), append_vec);
 }
 
-#[test_case(StorageAccess::Mmap)]
+#[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
 #[test_case(StorageAccess::File)]
 #[should_panic(expected = "self.storage.remove")]
 fn test_handle_dropped_roots_for_ancient_assert(storage_access: StorageAccess) {

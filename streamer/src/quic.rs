@@ -37,7 +37,10 @@ use {
 };
 
 // allow multiple connections for NAT and any open/close overlap
-pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;
+pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER: usize = 8;
+
+// allow multiple connections per ID for geo-distributed forwarders
+pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER: usize = 8;
 
 pub const DEFAULT_MAX_STAKED_CONNECTIONS: usize = 2000;
 
@@ -216,7 +219,6 @@ pub struct StreamerStats {
     pub(crate) total_unstaked_packets_sent_for_batching: AtomicUsize,
     pub(crate) throttled_staked_streams: AtomicUsize,
     pub(crate) throttled_unstaked_streams: AtomicUsize,
-    pub(crate) connection_rate_limiter_length: AtomicUsize,
     // All connections in various states such as Incoming, Connecting, Connection
     pub(crate) open_connections: AtomicUsize,
     pub(crate) open_staked_connections: AtomicUsize,
@@ -556,11 +558,6 @@ impl StreamerStats {
                 i64
             ),
             (
-                "connection_rate_limiter_length",
-                self.connection_rate_limiter_length.load(Ordering::Relaxed),
-                i64
-            ),
-            (
                 "outstanding_incoming_connection_attempts",
                 self.outstanding_incoming_connection_attempts
                     .load(Ordering::Relaxed),
@@ -604,7 +601,8 @@ impl StreamerStats {
 
 #[derive(Clone)]
 pub struct QuicStreamerConfig {
-    pub max_connections_per_peer: usize,
+    pub max_connections_per_unstaked_peer: usize,
+    pub max_connections_per_staked_peer: usize,
     pub max_staked_connections: usize,
     pub max_unstaked_connections: usize,
     pub max_connections_per_ipaddr_per_min: u64,
@@ -628,7 +626,8 @@ pub struct SimpleQosQuicStreamerConfig {
 impl Default for QuicStreamerConfig {
     fn default() -> Self {
         Self {
-            max_connections_per_peer: 1,
+            max_connections_per_unstaked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER,
+            max_connections_per_staked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
             max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS,
             max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
@@ -648,6 +647,8 @@ impl QuicStreamerConfig {
         // Shrink the channel size to avoid a massive allocation for tests
         Self {
             accumulator_channel_size: 100_000,
+            max_connections_per_unstaked_peer: 1,
+            max_connections_per_staked_peer: 1,
             num_threads: Self::DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
             ..Self::default()
         }
@@ -726,7 +727,8 @@ pub fn spawn_stake_wighted_qos_server(
         qos_config,
         quic_server_params.max_staked_connections,
         quic_server_params.max_unstaked_connections,
-        quic_server_params.max_connections_per_peer,
+        quic_server_params.max_connections_per_unstaked_peer,
+        quic_server_params.max_connections_per_unstaked_peer,
         stats.clone(),
         staked_nodes,
         cancel.clone(),
@@ -760,7 +762,7 @@ pub fn spawn_simple_qos_server(
 
     let simple_qos = Arc::new(SimpleQos::new(
         qos_config,
-        quic_server_params.max_connections_per_peer,
+        quic_server_params.max_connections_per_unstaked_peer,
         quic_server_params.max_staked_connections,
         stats.clone(),
         staked_nodes,
@@ -914,7 +916,7 @@ mod test {
             sender,
             staked_nodes,
             QuicStreamerConfig {
-                max_connections_per_peer: 2,
+                max_connections_per_unstaked_peer: 2,
                 ..QuicStreamerConfig::default_for_tests()
             },
             SwQosConfig::default(),

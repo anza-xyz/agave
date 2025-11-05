@@ -96,8 +96,9 @@ fn handle_packet_batches(
             };
             let packet_size = packet_bytes.len();
 
+            // SAFETY: message written by `copy_pack_and_populate_message` below.
             let Some((allocated_ptr, tpu_to_pack_message)) =
-                allocate_and_reserve_message(allocator, producer, packet_size)
+                (unsafe { allocate_and_reserve_message(allocator, producer, packet_size) })
             else {
                 warn!("Failed to allocate/reserve message. Dropping the rest of the batch.");
                 break 'batch_loop;
@@ -127,7 +128,9 @@ fn handle_packet_batches(
     producer.commit();
 }
 
-fn allocate_and_reserve_message(
+/// # Safety
+/// - returned `TpuToPackMessage` pointer must be populated with a valid message.
+unsafe fn allocate_and_reserve_message(
     allocator: &Allocator,
     producer: &mut shaq::Producer<TpuToPackMessage>,
     packet_size: usize,
@@ -136,7 +139,8 @@ fn allocate_and_reserve_message(
     let allocated_ptr = allocator.allocate(packet_size as u32)?;
 
     // Reserve space in the producer queue for the packet message.
-    let Some(tpu_to_pack_message) = producer.reserve() else {
+    // SAFETY: unsafe condition of the function is that the message is populated
+    let Some(tpu_to_pack_message) = (unsafe { producer.reserve() }) else {
         // Free the allocated packet if we can't reserve space in the queue.
         // SAFETY: `allocated_ptr` was allocated from `allocator`.
         unsafe {
