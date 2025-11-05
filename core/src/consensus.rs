@@ -410,7 +410,7 @@ impl Tower {
         latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
         vote_slots: &mut HashSet<Slot, ahash::RandomState>,
     ) -> ComputedBankState {
-        let total_slots = (bank_slot.saturating_sub(root_slot)) as usize;
+        let total_slots = bank_slot.saturating_sub(root_slot) as usize;
         vote_slots.reserve(total_slots);
         let mut voted_stakes =
             HashMap::with_capacity_and_hasher(total_slots, ahash::RandomState::default());
