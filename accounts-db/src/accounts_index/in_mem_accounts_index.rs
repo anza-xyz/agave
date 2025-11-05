@@ -876,16 +876,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
     }
 
-    /// fill in `possible_evictions` from `iter` by checking age
+    /// Collect possible evictions from `iter` by checking age
     /// Filter as much as possible and capture dirty flag
     /// Skip entries with ref_count != 1 since they will be rejected later anyway
     fn gather_possible_evictions<'a>(
         iter: impl Iterator<Item = (&'a Pubkey, &'a Box<AccountMapEntry<T>>)>,
-        possible_evictions: &mut Vec<(Pubkey, /*is_dirty*/ bool)>,
         startup: bool,
         current_age: Age,
         ages_flushing_now: Age,
-    ) {
+    ) -> Vec<(Pubkey, /*is_dirty*/ bool)> {
+        let mut possible_evictions = Vec::new();
         for (k, v) in iter {
             if !startup && current_age.wrapping_sub(v.age()) > ages_flushing_now {
                 // not planning to evict this item from memory within 'ages_flushing_now' ages
@@ -901,6 +901,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
             possible_evictions.push((*k, v.dirty()));
         }
+        possible_evictions
     }
 
     /// scan loop
@@ -915,19 +916,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         _flush_guard: &FlushGuard,
         ages_flushing_now: Age,
     ) -> Vec<(Pubkey, /*is_dirty*/ bool)> {
-        let mut possible_evictions = Vec::new();
-        let m;
-        {
+        let (possible_evictions, m) = {
             let map = self.map_internal.read().unwrap();
-            m = Measure::start("flush_scan"); // we don't care about lock time in this metric - bg threads can wait
-            Self::gather_possible_evictions(
+            let m = Measure::start("flush_scan"); // we don't care about lock time in this metric - bg threads can wait
+            let possible_evictions = Self::gather_possible_evictions(
                 map.iter(),
-                &mut possible_evictions,
                 startup,
                 current_age,
                 ages_flushing_now,
             );
-        }
+            (possible_evictions, m)
+        };
         Self::update_time_stat(&self.stats().flush_scan_us, m);
 
         possible_evictions
@@ -1716,10 +1715,8 @@ mod tests {
 
         for current_age in 0..=255 {
             for ages_flushing_now in 0..=255 {
-                let mut possible_evictions = Vec::new();
-                InMemAccountsIndex::<u64, u64>::gather_possible_evictions(
+                let possible_evictions = InMemAccountsIndex::<u64, u64>::gather_possible_evictions(
                     map.iter(),
-                    &mut possible_evictions,
                     startup,
                     current_age,
                     ages_flushing_now,
