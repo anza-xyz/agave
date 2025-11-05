@@ -153,6 +153,7 @@ impl Consumer {
             bank,
             txs,
             check_results.into_iter(),
+            ExecutionFlags::default(),
         );
 
         // Accumulate error counters from the initial checks into final results
@@ -168,6 +169,7 @@ impl Consumer {
         bank: &Bank,
         txs: &[impl TransactionWithMeta],
         max_ages: &[MaxAge],
+        flags: ExecutionFlags,
     ) -> ProcessTransactionBatchOutput {
         // Need to filter out transactions since they were sanitized earlier.
         // This means that the transaction may cross and epoch boundary (not allowed),
@@ -195,7 +197,7 @@ impl Consumer {
 
             Ok(())
         });
-        self.process_and_record_transactions_with_pre_results(bank, txs, pre_results)
+        self.process_and_record_transactions_with_pre_results(bank, txs, pre_results, flags)
     }
 
     fn process_and_record_transactions_with_pre_results(
@@ -203,6 +205,7 @@ impl Consumer {
         bank: &Bank,
         txs: &[impl TransactionWithMeta],
         pre_results: impl Iterator<Item = Result<(), TransactionError>>,
+        flags: ExecutionFlags,
     ) -> ProcessTransactionBatchOutput {
         let (
             (transaction_qos_cost_results, cost_model_throttled_transactions_count),
@@ -228,7 +231,7 @@ impl Consumer {
         // WouldExceedMaxAccountCostLimit, WouldExceedMaxVoteCostLimit
         // and WouldExceedMaxAccountDataCostLimit
         let execute_and_commit_transactions_output =
-            self.execute_and_commit_transactions_locked(bank, &batch, ExecutionFlags::default());
+            self.execute_and_commit_transactions_locked(bank, &batch, flags);
 
         // Once the accounts are new transactions can enter the pipeline to process them
         let (_, unlock_us) = measure_us!(drop(batch));

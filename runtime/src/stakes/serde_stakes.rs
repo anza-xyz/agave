@@ -5,7 +5,7 @@ use {
     serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    solana_stake_program::stake_state::Stake,
+    solana_stake_interface::state::Stake,
     solana_vote::vote_account::VoteAccounts,
     std::{collections::HashMap, sync::Arc},
 };
@@ -187,8 +187,11 @@ impl Serialize for SerdeStakeAccountMapToStakeFormat {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::stakes::StakesCache, rand::Rng, solana_rent::Rent,
-        solana_stake_interface::state::Delegation, solana_stake_program::stake_state,
+        super::*,
+        crate::{stake_utils, stakes::StakesCache},
+        rand::Rng,
+        solana_rent::Rent,
+        solana_stake_interface::state::Delegation,
         solana_vote_program::vote_state,
     };
 
@@ -199,7 +202,7 @@ mod tests {
         let node_pubkey = Pubkey::new_unique();
         stake_delegations.insert(
             Pubkey::new_unique(),
-            StakeAccount::try_from(stake_state::create_account(
+            StakeAccount::try_from(stake_utils::create_stake_account(
                 &Pubkey::new_unique(),
                 &vote_pubkey,
                 &vote_state::create_v4_account_with_authorized(
@@ -281,7 +284,7 @@ mod tests {
             for _ in 0..rng.gen_range(10usize..20) {
                 let stake_pubkey = solana_pubkey::new_rand();
                 let rent = Rent::with_slots_per_epoch(rng.gen());
-                let stake_account = stake_state::create_account(
+                let stake_account = stake_utils::create_stake_account(
                     &stake_pubkey, // authorized
                     &vote_pubkey,
                     &vote_account,

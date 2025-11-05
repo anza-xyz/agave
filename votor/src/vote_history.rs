@@ -508,9 +508,9 @@ mod test {
         vote_history.add_vote(vote_2);
 
         // Save to storage
-        assert!(vote_history
+        vote_history
             .save(&vote_history_storage, &node_keypair)
-            .is_ok());
+            .unwrap();
         // Restore from storage
         let restored_vote_history =
             VoteHistory::restore(&vote_history_storage, &node_keypair.pubkey())

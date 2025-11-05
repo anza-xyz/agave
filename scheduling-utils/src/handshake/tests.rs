@@ -39,7 +39,7 @@ fn message_passing_on_all_queues() {
     };
     let pack_to_worker = PackToWorkerMessage {
         flags: 123,
-        max_execution_slot: 100,
+        max_working_slot: 100,
         batch: SharableTransactionBatchRegion {
             num_transactions: 5,
             transactions_offset: 100,
@@ -50,7 +50,7 @@ fn message_passing_on_all_queues() {
             num_transactions: 5,
             transactions_offset: 100,
         },
-        processed: 0x01,
+        processed_code: agave_scheduler_bindings::processed_codes::PROCESSED,
         responses: TransactionResponseRegion {
             tag: 3,
             num_transaction_responses: 2,
@@ -81,7 +81,7 @@ fn message_passing_on_all_queues() {
             };
             assert_eq!(
                 PackToWorkerMessage {
-                    max_execution_slot: pack_to_worker.max_execution_slot + i as u64,
+                    max_working_slot: pack_to_worker.max_working_slot + i as u64,
                     ..pack_to_worker
                 },
                 msg
@@ -110,10 +110,11 @@ fn message_passing_on_all_queues() {
                 worker_count: 4,
                 allocator_size: 1024 * 1024 * 1024,
                 allocator_handles: 3,
-                tpu_to_pack_size: 65536 * 1024,
-                progress_tracker_size: 16 * 1024,
-                pack_to_worker_size: 1024 * 1024,
-                worker_to_pack_size: 1024 * 1024,
+                tpu_to_pack_capacity: 65536,
+                progress_tracker_capacity: 256,
+                pack_to_worker_capacity: 1024,
+                worker_to_pack_capacity: 1024,
+                flags: 0,
             },
             Duration::from_secs(1),
         )
@@ -142,7 +143,7 @@ fn message_passing_on_all_queues() {
             let mut slot = worker.pack_to_worker.reserve().unwrap();
             unsafe {
                 *slot.as_mut() = PackToWorkerMessage {
-                    max_execution_slot: pack_to_worker.max_execution_slot + i as u64,
+                    max_working_slot: pack_to_worker.max_working_slot + i as u64,
                     ..pack_to_worker
                 }
             };
@@ -191,10 +192,11 @@ fn accept_worker_count_max() {
                 worker_count: MAX_WORKERS,
                 allocator_size: 1024 * 1024 * 1024,
                 allocator_handles: 3,
-                tpu_to_pack_size: 65536 * 1024,
-                progress_tracker_size: 16 * 1024,
-                pack_to_worker_size: 1024 * 1024,
-                worker_to_pack_size: 1024 * 1024,
+                tpu_to_pack_capacity: 65536,
+                progress_tracker_capacity: 256,
+                pack_to_worker_capacity: 1024,
+                worker_to_pack_capacity: 1024,
+                flags: 0,
             },
             Duration::from_secs(1),
         );
@@ -225,10 +227,11 @@ fn reject_worker_count_low() {
                 worker_count: 0,
                 allocator_size: 1024 * 1024 * 1024,
                 allocator_handles: 3,
-                tpu_to_pack_size: 65536 * 1024,
-                progress_tracker_size: 16 * 1024,
-                pack_to_worker_size: 1024 * 1024,
-                worker_to_pack_size: 1024 * 1024,
+                tpu_to_pack_capacity: 65536,
+                progress_tracker_capacity: 256,
+                pack_to_worker_capacity: 1024,
+                worker_to_pack_capacity: 1024,
+                flags: 0,
             },
             Duration::from_secs(1),
         );
@@ -262,10 +265,11 @@ fn reject_worker_count_high() {
                 worker_count: 100,
                 allocator_size: 1024 * 1024 * 1024,
                 allocator_handles: 3,
-                tpu_to_pack_size: 65536 * 1024,
-                progress_tracker_size: 16 * 1024,
-                pack_to_worker_size: 1024 * 1024,
-                worker_to_pack_size: 1024 * 1024,
+                tpu_to_pack_capacity: 65536,
+                progress_tracker_capacity: 256,
+                pack_to_worker_capacity: 1024,
+                worker_to_pack_capacity: 1024,
+                flags: 0,
             },
             Duration::from_secs(1),
         );
@@ -273,40 +277,6 @@ fn reject_worker_count_high() {
             panic!();
         };
         assert_eq!(reason, "Worker count; count=100");
-    });
-
-    client_handle.join().unwrap();
-    server_handle.join().unwrap();
-}
-
-#[test]
-fn reject_invalid_queue_size() {
-    let ipc = NamedTempFile::new().unwrap();
-    std::fs::remove_file(ipc.path()).unwrap();
-    let mut server = Server::new(ipc.path()).unwrap();
-
-    let server_handle = std::thread::spawn(move || {
-        let res = server.accept();
-        assert!(matches!(res, Err(AgaveHandshakeError::Shaq(_))));
-    });
-    let client_handle = std::thread::spawn(move || {
-        let res = connect(
-            ipc,
-            ClientLogon {
-                worker_count: 4,
-                allocator_size: 1024 * 1024 * 1024,
-                allocator_handles: 3,
-                tpu_to_pack_size: 0,
-                progress_tracker_size: 16 * 1024,
-                pack_to_worker_size: 1024 * 1024,
-                worker_to_pack_size: 1024 * 1024,
-            },
-            Duration::from_secs(1),
-        );
-        let Err(ClientHandshakeError::Rejected(reason)) = res else {
-            panic!();
-        };
-        assert_eq!(reason, "Shaq; err=InvalidBufferSize");
     });
 
     client_handle.join().unwrap();

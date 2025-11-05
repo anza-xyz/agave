@@ -36,5 +36,6 @@ pub fn get_thread_count() -> usize {
             similar instead"
 )]
 pub fn get_max_thread_count() -> usize {
+    #[allow(deprecated)]
     get_thread_count().saturating_mul(2)
 }

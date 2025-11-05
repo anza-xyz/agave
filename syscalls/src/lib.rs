@@ -2152,7 +2152,7 @@ mod tests {
         solana_stable_layout::stable_instruction::StableInstruction,
         solana_stake_interface::stake_history::{self, StakeHistory, StakeHistoryEntry},
         solana_sysvar_id::SysvarId,
-        solana_transaction_context::{IndexOfAccount, InstructionAccount},
+        solana_transaction_context::{instruction_accounts::InstructionAccount, IndexOfAccount},
         std::{
             hash::{DefaultHasher, Hash, Hasher},
             mem,
