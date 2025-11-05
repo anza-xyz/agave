@@ -223,7 +223,7 @@ impl EventHandler {
             Err(TrySendError::Disconnected(_)) => Err(EventLoopError::SenderDisconnected),
             Err(TrySendError::Full(_)) => {
                 warn!("send_to_metrics failed: queue is full");
-                stats.metrics_queue_full = true;
+                stats.metrics_queue_became_full = true;
                 Ok(())
             }
         }
