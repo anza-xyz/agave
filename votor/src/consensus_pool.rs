@@ -33,7 +33,7 @@ use {
     thiserror::Error,
 };
 
-mod certificate_builder;
+pub mod certificate_builder;
 pub(crate) mod parent_ready_tracker;
 mod slot_stake_counters;
 mod stats;
