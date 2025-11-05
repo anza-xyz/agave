@@ -149,7 +149,7 @@ impl ConsensusMetrics {
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         Builder::new()
-            .name("solConsensusMetrics".into())
+            .name("solConsMetrics".into())
             .spawn(move || {
                 info!("ConsensusMetricsService has started");
                 let mut metrics = Self::new(epoch, receiver);
