@@ -368,6 +368,7 @@ pub struct ValidatorConfig {
     pub block_production_num_workers: NonZeroUsize,
     pub block_production_scheduler_config: SchedulerConfig,
     pub enable_block_production_forwarding: bool,
+    pub enable_scheduler_bindings: bool,
     pub generator_config: Option<GeneratorConfig>,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
     pub wen_restart_proto_path: Option<PathBuf>,
@@ -449,6 +450,7 @@ impl ValidatorConfig {
             block_production_scheduler_config: SchedulerConfig::default(),
             // enable forwarding by default for tests
             enable_block_production_forwarding: true,
+            enable_scheduler_bindings: false,
             generator_config: None,
             use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup::default(),
             wen_restart_proto_path: None,
@@ -1751,6 +1753,12 @@ impl Validator {
             config.generator_config.clone(),
             key_notifiers.clone(),
             banking_control_reciever,
+            config.enable_scheduler_bindings.then(|| {
+                (
+                    ledger_path.join("scheduler_bindings.ipc"),
+                    banking_control_sender.clone(),
+                )
+            }),
             cancel,
         );
 

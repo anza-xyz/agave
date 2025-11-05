@@ -406,6 +406,7 @@ fn main() {
     genesis.log_messages_bytes_limit = value_t!(matches, "log_messages_bytes_limit", usize).ok();
     genesis.transaction_account_lock_limit =
         value_t!(matches, "transaction_account_lock_limit", usize).ok();
+    genesis.enable_scheduler_bindings = matches.is_present("enable_scheduler_bindings");
 
     let tower_storage = Arc::new(FileTowerStorage::new(ledger_path.clone()));
 

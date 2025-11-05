@@ -867,6 +867,12 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .help("Specify the configuration file for the Geyser plugin."),
         )
         .arg(
+            Arg::with_name("enable_scheduler_bindings")
+                .long("enable-scheduler-bindings")
+                .takes_value(false)
+                .help("Enables external processes to connect and manage block production"),
+        )
+        .arg(
             Arg::with_name("deactivate_feature")
                 .long("deactivate-feature")
                 .takes_value(true)
