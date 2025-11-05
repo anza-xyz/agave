@@ -25,8 +25,10 @@ pub type LeaderSchedule = Box<dyn LeaderScheduleVariant>;
 pub trait LeaderScheduleVariant:
     std::fmt::Debug + Send + Sync + Index<u64, Output = Pubkey>
 {
-    fn get_slot_leaders(&self) -> &[Pubkey];
+    fn get_slot_leaders(&self) -> Box<dyn Iterator<Item = &Pubkey> + '_>;
+    fn get_unrepeated_slot_leaders(&self) -> &[Pubkey];
     fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Vec<usize>>;
+    fn num_slots(&self) -> usize;
 
     /// Get the vote account address for the given epoch slot index. This is
     /// guaranteed to be Some if the leader schedule is keyed by vote account
@@ -65,10 +67,6 @@ pub trait LeaderScheduleVariant:
             }
         }
     }
-
-    fn num_slots(&self) -> usize {
-        self.get_slot_leaders().len()
-    }
 }
 
 // Note: passing in zero keyed stakes will cause a panic.
@@ -78,20 +76,18 @@ fn stake_weighted_slot_leaders(
     len: u64,
     repeat: u64,
 ) -> Vec<Pubkey> {
+    debug_assert!(
+        len % repeat == 0,
+        "expected `len` {len} to be divisible by `repeat` {repeat}"
+    );
     sort_stakes(&mut keyed_stakes);
     let (keys, stakes): (Vec<_>, Vec<_>) = keyed_stakes.into_iter().unzip();
     let weighted_index = WeightedIndex::new(stakes).unwrap();
     let mut seed = [0u8; 32];
     seed[0..8].copy_from_slice(&epoch.to_le_bytes());
     let rng = &mut ChaChaRng::from_seed(seed);
-    let mut current_slot_leader = Pubkey::default();
-    (0..len)
-        .map(|i| {
-            if i % repeat == 0 {
-                current_slot_leader = keys[weighted_index.sample(rng)];
-            }
-            current_slot_leader
-        })
+    (0..len / repeat)
+        .map(|_| keys[weighted_index.sample(rng)])
         .collect()
 }
 
