@@ -5774,19 +5774,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sha-1"
-version = "0.9.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99cd6713db3cf16b6c84e06321e049a9b9f699826e16096d23bbcc44d15d51a6"
-dependencies = [
- "block-buffer 0.9.0",
- "cfg-if 1.0.4",
- "cpufeatures",
- "digest 0.9.0",
- "opaque-debug",
-]
-
-[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5974,17 +5961,17 @@ dependencies = [
 
 [[package]]
 name = "soketto"
-version = "0.7.1"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41d1c5305e39e09653383c2c7244f2f78b3bcae37cf50c64cb4789c9f5096ec2"
+checksum = "2e859df029d160cb88608f5d7df7fb4753fd20fdfb4de5644f3d8b8440841721"
 dependencies = [
- "base64 0.13.1",
+ "base64 0.22.1",
  "bytes",
  "futures 0.3.31",
  "httparse",
  "log",
  "rand 0.8.5",
- "sha-1",
+ "sha1",
 ]
 
 [[package]]
