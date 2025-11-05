@@ -593,8 +593,9 @@ impl QuicStreamerConfig {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn default_for_tests() -> Self {
-        // Shrink the channel size to avoid a massive allocation for tests
         Self {
+            max_connections_per_unstaked_peer: 1,
+            max_connections_per_staked_peer: 1,
             num_threads: Self::DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
             ..Self::default()
         }
