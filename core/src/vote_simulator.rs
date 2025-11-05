@@ -185,7 +185,7 @@ impl VoteSimulator {
             .frozen_banks()
             .map(|(_slot, bank)| bank)
             .collect();
-
+        let mut vote_slots = HashSet::default();
         let _ = ReplayStage::compute_bank_stats(
             my_pubkey,
             &ancestors,
@@ -197,6 +197,7 @@ impl VoteSimulator {
             &self.bank_forks,
             &mut self.tbft_structs.heaviest_subtree_fork_choice,
             &mut self.latest_validator_votes_for_frozen_banks,
+            &mut vote_slots,
         );
 
         let vote_bank = self
