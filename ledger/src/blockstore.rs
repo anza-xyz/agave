@@ -5784,14 +5784,14 @@ pub mod tests {
             assert_eq!(blockstore.get_slot_entries(slot, 0).unwrap(), vec![]);
 
             let meta = blockstore.meta(slot).unwrap().unwrap();
-            if num_shreds % 2 == 0 {
+            if num_shreds.is_multiple_of(2) {
                 assert_eq!(meta.received, num_shreds);
             } else {
                 trace!("got here");
                 assert_eq!(meta.received, num_shreds - 1);
             }
             assert_eq!(meta.consumed, 0);
-            if num_shreds % 2 == 0 {
+            if num_shreds.is_multiple_of(2) {
                 assert_eq!(meta.last_index, Some(num_shreds - 1));
             } else {
                 assert_eq!(meta.last_index, None);
@@ -9357,7 +9357,7 @@ pub mod tests {
             .is_empty());
 
         // Fetch all signatures for address 0, three at a time
-        assert!(all0.len() % 3 == 0);
+        assert!(all0.len().is_multiple_of(3));
         for i in (0..all0.len()).step_by(3) {
             let results = blockstore
                 .get_confirmed_signatures_for_address2(

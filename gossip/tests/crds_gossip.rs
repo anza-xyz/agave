@@ -458,7 +458,7 @@ fn network_run_push(
                 }
             }
         }
-        if now % CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS == 0 && now > 0 {
+        if now.is_multiple_of(CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS) && now > 0 {
             network_values.par_iter().for_each(|node| {
                 node.gossip.refresh_push_active_set(
                     &node.keypair,

@@ -173,7 +173,7 @@ impl Counter {
         let lograte = self.lograte.load(Ordering::Relaxed);
         let metricsrate = self.metricsrate.load(Ordering::Relaxed);
 
-        if times % lograte == 0 && times > 0 && log_enabled!(level) {
+        if times.is_multiple_of(lograte) && times > 0 && log_enabled!(level) {
             log!(
                 level,
                 "COUNTER:{{\"name\": \"{}\", \"counts\": {}, \"samples\": {times}, \"now\": \

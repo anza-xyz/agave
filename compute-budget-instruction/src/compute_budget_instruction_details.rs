@@ -190,7 +190,7 @@ impl ComputeBudgetInstructionDetails {
 
     #[inline]
     fn sanitize_requested_heap_size(bytes: u32) -> bool {
-        (MIN_HEAP_FRAME_BYTES..=MAX_HEAP_FRAME_BYTES).contains(&bytes) && bytes % 1024 == 0
+        (MIN_HEAP_FRAME_BYTES..=MAX_HEAP_FRAME_BYTES).contains(&bytes) && bytes.is_multiple_of(1024)
     }
 
     fn calculate_default_compute_unit_limit(&self, feature_set: &FeatureSet) -> u32 {

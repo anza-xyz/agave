@@ -375,7 +375,7 @@ impl RangeProof {
     // Following the dalek rangeproof library signature for now. The exact method signature can be
     // changed.
     pub fn from_bytes(slice: &[u8]) -> Result<RangeProof, RangeProofVerificationError> {
-        if slice.len() % 32 != 0 {
+        if !slice.len().is_multiple_of(32) {
             return Err(RangeProofVerificationError::Deserialization);
         }
         if slice.len() < 7 * 32 {

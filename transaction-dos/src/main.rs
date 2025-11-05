@@ -174,7 +174,7 @@ fn run_transactions_dos(
 
     let account_groups = maybe_account_groups.unwrap_or(1);
 
-    assert!(account_keypairs.len() % account_groups == 0);
+    assert!(account_keypairs.len().is_multiple_of(account_groups));
 
     let account_group_size = account_keypairs.len() / account_groups;
 

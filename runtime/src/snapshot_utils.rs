@@ -1838,7 +1838,7 @@ pub fn should_take_full_snapshot(
     block_height: Slot,
     full_snapshot_archive_interval_slots: Slot,
 ) -> bool {
-    block_height % full_snapshot_archive_interval_slots == 0
+    block_height.is_multiple_of(full_snapshot_archive_interval_slots)
 }
 
 pub fn should_take_incremental_snapshot(
@@ -1846,7 +1846,7 @@ pub fn should_take_incremental_snapshot(
     incremental_snapshot_archive_interval_slots: Slot,
     latest_full_snapshot_slot: Option<Slot>,
 ) -> bool {
-    block_height % incremental_snapshot_archive_interval_slots == 0
+    block_height.is_multiple_of(incremental_snapshot_archive_interval_slots)
         && latest_full_snapshot_slot.is_some()
 }
 

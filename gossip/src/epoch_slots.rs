@@ -30,7 +30,7 @@ impl Sanitize for Uncompressed {
         if self.num >= MAX_SLOTS_PER_ENTRY {
             return Err(SanitizeError::ValueOutOfBounds);
         }
-        if self.slots.len() % 8 != 0 {
+        if !self.slots.len().is_multiple_of(8) {
             // Uncompressed::new() ensures the length is always a multiple of 8
             return Err(SanitizeError::ValueOutOfBounds);
         }

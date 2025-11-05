@@ -123,7 +123,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         let last_entries = {
             if last_tick_height == bank.max_tick_height()
                 && bank.slot() > MINIMUM_DUPLICATE_SLOT
-                && self.num_slots_broadcasted % DUPLICATE_RATE == 0
+                && self.num_slots_broadcasted.is_multiple_of(DUPLICATE_RATE)
                 && self.recent_blockhash.is_some()
             {
                 let entry_batch_len = receive_results.entries.len();

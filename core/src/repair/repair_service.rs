@@ -1437,7 +1437,7 @@ mod test {
             // between shreds received; So this should either insert the
             // last shred in each slot, or exclude missing shreds after the
             // last inserted shred from expected repairs.
-            if index % nth == 0 || index + 1 == num_shreds_per_slot {
+            if index.is_multiple_of(nth) || index + 1 == num_shreds_per_slot {
                 shreds_to_write.insert(0, shreds.remove(i as usize));
             } else if i < num_shreds_per_slot {
                 missing_indexes_per_slot.insert(0, index);
