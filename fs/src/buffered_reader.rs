@@ -47,12 +47,12 @@ impl<const N: usize> Stack<N> {
 
     #[inline(always)]
     unsafe fn as_slice(&self) -> &[u8] {
-        slice::from_raw_parts(self.0.as_ptr() as *const u8, N)
+        unsafe { slice::from_raw_parts(self.0.as_ptr() as *const u8, N) }
     }
 
     #[inline(always)]
     unsafe fn as_mut_slice(&mut self) -> &mut [u8] {
-        slice::from_raw_parts_mut(self.0.as_mut_ptr() as *mut u8, N)
+        unsafe { slice::from_raw_parts_mut(self.0.as_mut_ptr() as *mut u8, N) }
     }
 }
 
