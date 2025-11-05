@@ -454,8 +454,7 @@ impl JsonRpcRequestProcessor {
         let genesis_hash = bank.hash();
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank = bank_forks.read().unwrap().root_bank();
-        let blockstore: Arc<Blockstore> =
-            Arc::new(Blockstore::open(&get_tmp_ledger_path!()).unwrap());
+        let blockstore = Arc::new(Blockstore::open(&get_tmp_ledger_path!()).unwrap());
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(0));
         let exit = Arc::new(AtomicBool::new(false));
         let cluster_info = Arc::new({
