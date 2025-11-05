@@ -79,6 +79,7 @@ use {
     solana_time_utils::timestamp,
     solana_transaction::Transaction,
     solana_vote::vote_transaction::VoteTransaction,
+    solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
     std::{
         collections::{HashMap, HashSet},
         num::{NonZeroUsize, Saturating},
@@ -3678,6 +3679,12 @@ impl ReplayStage {
 
             Self::cache_tower_stats(progress, tower, bank_slot, ancestors);
         }
+
+        // `vote_slots` steady state is 32 entries (tower height), but may grow if a node is experiencing a partition.
+        // As such, this should generally be a noop, but should avoid maintaining unnecessary capacity in
+        // exceptional cases.
+        vote_slots.shrink_to(MAX_LOCKOUT_HISTORY + 1);
+
         new_stats
     }
 
