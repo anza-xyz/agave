@@ -3592,6 +3592,7 @@ impl ReplayStage {
     ) -> Vec<Slot> {
         frozen_banks.sort_by_key(|bank| bank.slot());
         let mut new_stats = vec![];
+        let root_slot = bank_forks.read().unwrap().root();
         for bank in frozen_banks.iter() {
             let bank_slot = bank.slot();
             // Only time progress map should be missing a bank slot
@@ -3614,7 +3615,6 @@ impl ReplayStage {
                         bank_forks,
                     );
 
-                    let root_slot = bank_forks.read().unwrap().root();
                     let computed_bank_state = Tower::collect_vote_lockouts(
                         my_vote_pubkey,
                         bank_slot,
