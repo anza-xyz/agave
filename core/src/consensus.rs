@@ -20,7 +20,6 @@ use {
         tower_vote_state::TowerVoteState,
     },
     crate::replay_stage::DUPLICATE_THRESHOLD,
-    ahash::{AHashMap, AHashSet},
     chrono::prelude::*,
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
@@ -162,7 +161,7 @@ pub const SWITCH_FORK_THRESHOLD: f64 = 0.38;
 pub type Result<T> = std::result::Result<T, TowerError>;
 
 pub type Stake = u64;
-pub type VotedStakes = AHashMap<Slot, Stake>;
+pub type VotedStakes = HashMap<Slot, Stake, ahash::RandomState>;
 pub type PubkeyVotes = Vec<(Pubkey, Slot)>;
 
 pub(crate) struct ComputedBankState {
@@ -409,11 +408,12 @@ impl Tower {
         ancestors: &HashMap<Slot, HashSet<Slot>>,
         get_frozen_hash: impl Fn(Slot) -> Option<Hash>,
         latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
-        vote_slots: &mut AHashSet<Slot>,
+        vote_slots: &mut HashSet<Slot, ahash::RandomState>,
     ) -> ComputedBankState {
         let total_slots = (bank_slot.saturating_sub(root_slot)) as usize;
         vote_slots.reserve(total_slots);
-        let mut voted_stakes = AHashMap::with_capacity(total_slots);
+        let mut voted_stakes =
+            HashMap::with_capacity_and_hasher(total_slots, ahash::RandomState::default());
         let mut total_stake = 0;
 
         // Tree of intervals of lockouts of the form [slot, slot + slot.lockout],
@@ -2523,7 +2523,7 @@ pub mod test {
             &ancestors,
             |_| Some(Hash::default()),
             &mut latest_validator_votes_for_frozen_banks,
-            &mut AHashSet::new(),
+            &mut HashSet::default(),
         );
         assert_eq!(voted_stakes[&0], 2);
         assert_eq!(total_stake, 2);
@@ -2572,7 +2572,7 @@ pub mod test {
             &ancestors,
             |_| Some(Hash::default()),
             &mut latest_validator_votes_for_frozen_banks,
-            &mut AHashSet::new(),
+            &mut HashSet::default(),
         );
         for i in 0..MAX_LOCKOUT_HISTORY {
             assert_eq!(voted_stakes[&(i as u64)], 2);
@@ -2598,7 +2598,7 @@ pub mod test {
     fn test_check_vote_threshold_no_skip_lockout_with_new_root() {
         agave_logger::setup();
         let mut tower = Tower::new_for_tests(4, 0.67);
-        let mut stakes = AHashMap::new();
+        let mut stakes = HashMap::default();
         for i in 0..(MAX_LOCKOUT_HISTORY as u64 + 1) {
             stakes.insert(i, 1);
             tower.record_vote(i, Hash::default());
@@ -2618,7 +2618,7 @@ pub mod test {
     #[test]
     fn test_is_slot_confirmed_unknown_slot() {
         let tower = Tower::new_for_tests(1, 0.67);
-        let stakes = AHashMap::new();
+        let stakes = HashMap::default();
         assert!(!tower.is_slot_confirmed(0, &stakes, 2));
     }
 
@@ -2639,7 +2639,7 @@ pub mod test {
     #[test]
     fn test_is_slot_duplicate_confirmed_unknown_slot() {
         let tower = Tower::new_for_tests(1, 0.67);
-        let stakes = AHashMap::new();
+        let stakes = HashMap::default();
         assert!(!tower.is_slot_duplicate_confirmed(0, &stakes, 100));
     }
 
@@ -2810,7 +2810,7 @@ pub mod test {
     #[test]
     fn test_check_vote_threshold_above_threshold_no_stake() {
         let mut tower = Tower::new_for_tests(1, 0.67);
-        let stakes = AHashMap::new();
+        let stakes = HashMap::default();
         tower.record_vote(0, Hash::default());
         assert!(!tower.check_vote_stake_thresholds(1, &stakes, 2).is_empty());
     }
@@ -2828,7 +2828,7 @@ pub mod test {
 
     #[test]
     fn test_stake_is_updated_for_entire_branch() {
-        let mut voted_stakes = AHashMap::new();
+        let mut voted_stakes = HashMap::default();
         let account = AccountSharedData::from(Account {
             lamports: 1,
             ..Account::default()
@@ -2865,7 +2865,7 @@ pub mod test {
 
         // Initialize tower
         let mut tower = Tower::new_for_tests(VOTE_THRESHOLD_DEPTH, threshold_size);
-        let mut vote_slots = AHashSet::new();
+        let mut vote_slots = HashSet::default();
         // CASE 1: Record the first VOTE_THRESHOLD tower votes for fork 2. We want to
         // evaluate a vote on slot VOTE_THRESHOLD_DEPTH. The nth most recent vote should be
         // for slot 0, which is common to all account vote states, so we should pass the
