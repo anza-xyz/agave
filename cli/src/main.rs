@@ -24,16 +24,13 @@ use {
 fn parse_settings(matches: &ArgMatches<'_>) -> Result<bool, Box<dyn error::Error>> {
     let parse_args = match matches.subcommand() {
         ("config", Some(matches)) => {
-            let config_file = match matches.value_of("config_file") {
-                None => {
-                    println!(
-                        "{} Either provide the `--config` arg or ensure home directory exists to \
-                         use the default config location",
-                        style("No config file found.").bold()
-                    );
-                    return Ok(false);
-                }
-                Some(config_file) => config_file,
+            let Some(config_file) = matches.value_of("config_file") else {
+                println!(
+                    "{} Either provide the `--config` arg or ensure home directory exists to use \
+                     the default config location",
+                    style("No config file found.").bold()
+                );
+                return Ok(false);
             };
             let mut config = Config::load(config_file).unwrap_or_default();
 
