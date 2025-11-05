@@ -142,7 +142,7 @@ impl VotingService {
         };
 
         let thread_hdl = Builder::new()
-            .name("solAlpenVoteService".to_string())
+            .name("solVotorVoteSvc".to_string())
             .spawn(move || {
                 let mut staked_validators_cache = StakedValidatorsCache::new(
                     bank_forks.clone(),
