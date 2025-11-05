@@ -8,7 +8,7 @@ use {
             write_eth_header, write_ip_header, write_udp_header, ETH_HEADER_SIZE, IP_HEADER_SIZE,
             UDP_HEADER_SIZE,
         },
-        route::AtomicRouter,
+        route::NextHop,
         set_cpu_affinity,
         socket::{Socket, Tx, TxRing},
         umem::{Frame as _, PageAlignedMemory, SliceUmem, SliceUmemFrame, Umem as _},
@@ -21,14 +21,13 @@ use {
     libc::{sysconf, _SC_PAGESIZE},
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr},
-        sync::Arc,
         thread,
         time::Duration,
     },
 };
 
 #[allow(clippy::too_many_arguments)]
-pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
+pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<NextHop>>(
     cpu_id: usize,
     dev: &NetworkDevice,
     queue_id: QueueId,
@@ -36,10 +35,9 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
     src_mac: Option<MacAddress>,
     src_ip: Option<Ipv4Addr>,
     src_port: u16,
-    dest_mac: Option<MacAddress>,
     receiver: Receiver<(A, T)>,
     drop_sender: Sender<(A, T)>,
-    atomic_router: Arc<AtomicRouter>,
+    route_fn: R,
 ) {
     log::info!(
         "starting xdp loop on {} queue {queue_id:?} cpu {cpu_id}",
@@ -199,12 +197,14 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                     panic!("IPv6 not supported");
                 };
 
-                let dest_mac = if let Some(mac) = dest_mac {
-                    mac
-                } else {
-                    // lock free route lookup
-                    let router = atomic_router.load();
-                    let next_hop = router.route(addr.ip()).unwrap();
+                let dest_mac = {
+                    let ip = addr.ip();
+                    let Some(next_hop) = route_fn(&ip) else {
+                        log::warn!("dropping packet: no route for turbine peer {addr}");
+                        batched_packets -= 1;
+                        umem.release(frame.offset());
+                        continue;
+                    };
 
                     // we need the MAC address to send the packet
                     let Some(dest_mac) = next_hop.mac_addr else {

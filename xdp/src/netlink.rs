@@ -209,7 +209,7 @@ impl NetlinkSocket {
         }
 
         // Larger rcvbuf to survive bursts of updates
-        let rcvbuf: i32 = 1 << 20;
+        let rcvbuf: i32 = 1 << 16;
         unsafe {
             setsockopt(
                 sock.as_raw_fd(),
@@ -743,7 +743,7 @@ pub struct InterfaceInfo {
     pub dev_type: u16,
 }
 
-// Get all interfaces via netlink (based off of FD: fd_netdev_netlink_load_table)
+// Get all interfaces via netlink
 pub fn netlink_get_interfaces() -> Result<Vec<InterfaceInfo>, io::Error> {
     let socket = NetlinkSocket::open()?;
 

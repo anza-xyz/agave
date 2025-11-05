@@ -219,10 +219,12 @@ impl XdpRetransmitter {
                             None,
                             src_ip,
                             src_port,
-                            None,
                             receiver,
                             drop_sender,
-                            atomic_router,
+                            move |ip| {
+                                let r = atomic_router.load();
+                                r.route(*ip).ok()
+                            },
                         )
                     })
                     .unwrap(),
