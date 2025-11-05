@@ -1247,9 +1247,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     occupied.remove();
                 }
             }
-            if map.capacity() > 2 * map.len() {
-                map.shrink_to_fit();
-            }
             let capacity_post = map.capacity();
             drop(map);
             stats.update_in_mem_capacity(capacity_pre, capacity_post);
