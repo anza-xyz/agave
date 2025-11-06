@@ -842,7 +842,10 @@ mod test {
                 // correct snapshot requests ourself.
                 if bank.block_height().is_multiple_of(FULL_SNAPSHOT_INTERVAL) {
                     send_snapshot_request(Arc::clone(&bank), SnapshotRequestKind::FullSnapshot);
-                } else if bank.block_height().is_multiple_of(INCREMENTAL_SNAPSHOT_INTERVAL) {
+                } else if bank
+                    .block_height()
+                    .is_multiple_of(INCREMENTAL_SNAPSHOT_INTERVAL)
+                {
                     send_snapshot_request(
                         Arc::clone(&bank),
                         SnapshotRequestKind::IncrementalSnapshot,
