@@ -43,18 +43,8 @@ fn is_supported_route_type(ty: u8) -> bool {
 }
 
 #[inline]
-fn is_supported_route_table_id_u8(table: u8) -> bool {
+fn is_supported_route_table_id(table: u8) -> bool {
     table == RT_TABLE_UNSPEC || table == RT_TABLE_MAIN || table == RT_TABLE_LOCAL
-}
-
-#[inline]
-fn is_supported_route_table_id_opt_u32(table: Option<u32>) -> bool {
-    match table {
-        None => true,
-        Some(t) => {
-            t == RT_TABLE_UNSPEC as u32 || t == RT_TABLE_MAIN as u32 || t == RT_TABLE_LOCAL as u32
-        }
-    }
 }
 
 // Removes cloned routes, non-main/local table routes, and invalid route types
@@ -63,7 +53,10 @@ pub(crate) fn is_valid_route(route: &RouteEntry) -> bool {
     if route.flags & RTM_F_CLONED != 0 {
         return false;
     }
-    if !is_supported_route_table_id_opt_u32(route.table) {
+    if !match route.table {
+        None => true,
+        Some(t) => is_supported_route_table_id(t as u8),
+    } {
         return false;
     }
     is_supported_route_type(route.type_)
@@ -238,7 +231,7 @@ pub(crate) fn is_supported_ipv4_route_header(msg: &NetlinkMessage) -> bool {
     if rt.rtm_flags & RTM_F_CLONED != 0 {
         return false;
     }
-    if !is_supported_route_table_id_u8(rt.rtm_table) {
+    if !is_supported_route_table_id(rt.rtm_table) {
         return false;
     }
     is_supported_route_type(rt.rtm_type)
