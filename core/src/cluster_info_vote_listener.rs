@@ -57,8 +57,11 @@ use {
 pub type ThresholdConfirmedSlots = Vec<(Slot, Hash)>;
 pub type VerifiedVoteTransactionsSender = Sender<Vec<Transaction>>;
 pub type VerifiedVoteTransactionsReceiver = Receiver<Vec<Transaction>>;
-pub type VerifiedVoteSender = Sender<(Pubkey, Vec<Slot>)>;
-pub type VerifiedVoteReceiver = Receiver<(Pubkey, Vec<Slot>)>;
+// Send side of verified voter channel.
+// Each message contains the Pubkey of the voter and the list of slots for which its votes were verified.
+pub type VerifiedVoterSender = Sender<(Pubkey, Vec<Slot>)>;
+// Receive side of verified voter channel.
+pub type VerifiedVoterReceiver = Receiver<(Pubkey, Vec<Slot>)>;
 pub type GossipVerifiedVoteHashSender = Sender<(Pubkey, Slot, Hash)>;
 pub type GossipVerifiedVoteHashReceiver = Receiver<(Pubkey, Slot, Hash)>;
 pub type DuplicateConfirmedSlotsSender = Sender<ThresholdConfirmedSlots>;
@@ -193,7 +196,7 @@ impl ClusterInfoVoteListener {
         vote_tracker: Arc<VoteTracker>,
         bank_forks: Arc<RwLock<BankForks>>,
         subscriptions: Option<Arc<RpcSubscriptions>>,
-        verified_vote_sender: VerifiedVoteSender,
+        verified_voter_sender: VerifiedVoterSender,
         gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
         replay_votes_receiver: ReplayVoteReceiver,
         blockstore: Arc<Blockstore>,
@@ -231,7 +234,7 @@ impl ClusterInfoVoteListener {
                     dumped_slot_subscription,
                     subscriptions.as_deref(),
                     gossip_verified_vote_hash_sender,
-                    verified_vote_sender,
+                    verified_voter_sender,
                     replay_votes_receiver,
                     blockstore,
                     bank_notification_sender,
@@ -319,7 +322,7 @@ impl ClusterInfoVoteListener {
         dumped_slot_subscription: DumpedSlotSubscription,
         subscriptions: Option<&RpcSubscriptions>,
         gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
-        verified_vote_sender: VerifiedVoteSender,
+        verified_voter_sender: VerifiedVoterSender,
         replay_votes_receiver: ReplayVoteReceiver,
         blockstore: Arc<Blockstore>,
         bank_notification_sender: Option<BankNotificationSenderConfig>,
@@ -356,7 +359,7 @@ impl ClusterInfoVoteListener {
                 &root_bank,
                 subscriptions,
                 &gossip_verified_vote_hash_sender,
-                &verified_vote_sender,
+                &verified_voter_sender,
                 &replay_votes_receiver,
                 &bank_notification_sender,
                 &duplicate_confirmed_slot_sender,
@@ -390,7 +393,7 @@ impl ClusterInfoVoteListener {
         root_bank: &Bank,
         subscriptions: Option<&RpcSubscriptions>,
         gossip_verified_vote_hash_sender: &GossipVerifiedVoteHashSender,
-        verified_vote_sender: &VerifiedVoteSender,
+        verified_voter_sender: &VerifiedVoterSender,
         replay_votes_receiver: &ReplayVoteReceiver,
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
         duplicate_confirmed_slot_sender: &Option<DuplicateConfirmedSlotsSender>,
@@ -423,7 +426,7 @@ impl ClusterInfoVoteListener {
                     root_bank,
                     subscriptions,
                     gossip_verified_vote_hash_sender,
-                    verified_vote_sender,
+                    verified_voter_sender,
                     bank_notification_sender,
                     duplicate_confirmed_slot_sender,
                     vote_processing_time,
@@ -445,7 +448,7 @@ impl ClusterInfoVoteListener {
         vote_tracker: &VoteTracker,
         root_bank: &Bank,
         rpc_subscriptions: Option<&RpcSubscriptions>,
-        verified_vote_sender: &VerifiedVoteSender,
+        verified_voter_sender: &VerifiedVoterSender,
         gossip_verified_vote_hash_sender: &GossipVerifiedVoteHashSender,
         diff: &mut HashMap<Slot, HashMap<Pubkey, bool>>,
         new_optimistic_confirmed_slots: &mut ThresholdConfirmedSlots,
@@ -596,7 +599,7 @@ impl ClusterInfoVoteListener {
             if let Some(rpc_subscriptions) = rpc_subscriptions {
                 rpc_subscriptions.notify_vote(*vote_pubkey, vote, vote_transaction_signature);
             }
-            let _ = verified_vote_sender.send((*vote_pubkey, vote_slots));
+            let _ = verified_voter_sender.send((*vote_pubkey, vote_slots));
         }
     }
 
@@ -608,7 +611,7 @@ impl ClusterInfoVoteListener {
         root_bank: &Bank,
         subscriptions: Option<&RpcSubscriptions>,
         gossip_verified_vote_hash_sender: &GossipVerifiedVoteHashSender,
-        verified_vote_sender: &VerifiedVoteSender,
+        verified_voter_sender: &VerifiedVoterSender,
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
         duplicate_confirmed_slot_sender: &Option<DuplicateConfirmedSlotsSender>,
         vote_processing_time: &mut Option<VoteProcessingTiming>,
@@ -634,7 +637,7 @@ impl ClusterInfoVoteListener {
                 vote_tracker,
                 root_bank,
                 subscriptions,
-                verified_vote_sender,
+                verified_voter_sender,
                 gossip_verified_vote_hash_sender,
                 &mut diff,
                 &mut new_optimistic_confirmed_slots,
@@ -857,7 +860,7 @@ mod tests {
             ..
         } = setup();
         let (votes_sender, votes_receiver) = unbounded();
-        let (verified_vote_sender, _verified_vote_receiver) = unbounded();
+        let (verified_voter_sender, _verified_voter_receiver) = unbounded();
         let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = unbounded();
         let (replay_votes_sender, replay_votes_receiver) = unbounded();
         let mut latest_vote_slot_per_validator = HashMap::new();
@@ -892,7 +895,7 @@ mod tests {
             &bank3,
             Some(&subscriptions),
             &gossip_verified_vote_hash_sender,
-            &verified_vote_sender,
+            &verified_voter_sender,
             &replay_votes_receiver,
             &None,
             &None,
@@ -927,7 +930,7 @@ mod tests {
             &bank3,
             Some(&subscriptions),
             &gossip_verified_vote_hash_sender,
-            &verified_vote_sender,
+            &verified_voter_sender,
             &replay_votes_receiver,
             &None,
             &None,
@@ -991,7 +994,7 @@ mod tests {
         let (votes_txs_sender, votes_txs_receiver) = unbounded();
         let (replay_votes_sender, replay_votes_receiver) = unbounded();
         let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = unbounded();
-        let (verified_vote_sender, verified_vote_receiver) = unbounded();
+        let (verified_voter_sender, verified_voter_receiver) = unbounded();
         let mut latest_vote_slot_per_validator = HashMap::new();
         let mut bank_hash_cache = BankHashCache::new(bank_forks);
 
@@ -1021,7 +1024,7 @@ mod tests {
             &bank0,
             Some(&subscriptions),
             &gossip_verified_vote_hash_sender,
-            &verified_vote_sender,
+            &verified_voter_sender,
             &replay_votes_receiver,
             &None,
             &None,
@@ -1065,24 +1068,24 @@ mod tests {
         }
 
         // Check that the received votes were pushed to other components
-        // subscribing via `verified_vote_receiver`
+        // subscribing via `verified_voter_receiver`
         let all_expected_slots: BTreeSet<_> = gossip_vote_slots
             .clone()
             .into_iter()
             .chain(replay_vote_slots.clone())
             .collect();
-        let mut pubkey_to_votes: HashMap<Pubkey, BTreeSet<Slot>> = HashMap::new();
-        for (received_pubkey, new_votes) in verified_vote_receiver.try_iter() {
-            let already_received_votes = pubkey_to_votes.entry(received_pubkey).or_default();
-            for new_vote in new_votes {
-                // `new_vote` should only be received once
-                assert!(already_received_votes.insert(new_vote));
+        let mut pubkey_to_slots: HashMap<Pubkey, BTreeSet<Slot>> = HashMap::new();
+        for (received_pubkey, new_slots) in verified_voter_receiver.try_iter() {
+            let already_received_slots = pubkey_to_slots.entry(received_pubkey).or_default();
+            for new_slot in new_slots {
+                // `new_slot` should only be received once
+                assert!(already_received_slots.insert(new_slot));
             }
         }
-        assert_eq!(pubkey_to_votes.len(), validator_voting_keypairs.len());
+        assert_eq!(pubkey_to_slots.len(), validator_voting_keypairs.len());
         for keypairs in &validator_voting_keypairs {
             assert_eq!(
-                *pubkey_to_votes
+                *pubkey_to_slots
                     .get(&keypairs.vote_keypair.pubkey())
                     .unwrap(),
                 all_expected_slots
@@ -1151,7 +1154,7 @@ mod tests {
         // Send some votes to process
         let (votes_txs_sender, votes_txs_receiver) = unbounded();
         let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = unbounded();
-        let (verified_vote_sender, verified_vote_receiver) = unbounded();
+        let (verified_voter_sender, verified_voter_receiver) = unbounded();
         let (_replay_votes_sender, replay_votes_receiver) = unbounded();
         let mut latest_vote_slot_per_validator = HashMap::new();
         let mut bank_hash_cache = BankHashCache::new(bank_forks);
@@ -1191,7 +1194,7 @@ mod tests {
             &bank0,
             Some(&subscriptions),
             &gossip_verified_vote_hash_sender,
-            &verified_vote_sender,
+            &verified_voter_sender,
             &replay_votes_receiver,
             &None,
             &None,
@@ -1204,12 +1207,10 @@ mod tests {
 
         // Check that the received votes were pushed to other components
         // subscribing via a channel
-        let received_votes: Vec<_> = verified_vote_receiver.try_iter().collect();
-        assert_eq!(received_votes.len(), validator_voting_keypairs.len());
-        for (expected_pubkey_vote, received_pubkey_vote) in
-            expected_votes.iter().zip(received_votes.iter())
-        {
-            assert_eq!(expected_pubkey_vote, received_pubkey_vote);
+        let received_voters = verified_voter_receiver.try_iter().collect::<Vec<_>>();
+        assert_eq!(received_voters.len(), validator_voting_keypairs.len());
+        for (expected_voter, received_voter) in expected_votes.iter().zip(received_voters.iter()) {
+            assert_eq!(expected_voter, received_voter);
         }
 
         // Check that all the votes were registered for each validator correctly
@@ -1240,7 +1241,7 @@ mod tests {
 
     fn run_test_process_votes3(switch_proof_hash: Option<Hash>) {
         let (votes_sender, votes_receiver) = unbounded();
-        let (verified_vote_sender, _verified_vote_receiver) = unbounded();
+        let (verified_voter_sender, _verified_voter_receiver) = unbounded();
         let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = unbounded();
         let (replay_votes_sender, replay_votes_receiver): (ReplayVoteSender, ReplayVoteReceiver) =
             unbounded();
@@ -1304,7 +1305,7 @@ mod tests {
                     &bank,
                     Some(&subscriptions),
                     &gossip_verified_vote_hash_sender,
-                    &verified_vote_sender,
+                    &verified_voter_sender,
                     &replay_votes_receiver,
                     &None,
                     &None,
@@ -1385,7 +1386,7 @@ mod tests {
             None,
         )];
 
-        let (verified_vote_sender, _verified_vote_receiver) = unbounded();
+        let (verified_voter_sender, _verified_voter_receiver) = unbounded();
         let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = unbounded();
         ClusterInfoVoteListener::filter_and_confirm_with_new_votes(
             &vote_tracker,
@@ -1400,7 +1401,7 @@ mod tests {
             &bank,
             Some(&subscriptions),
             &gossip_verified_vote_hash_sender,
-            &verified_vote_sender,
+            &verified_voter_sender,
             &None,
             &None,
             &mut None,
@@ -1449,7 +1450,7 @@ mod tests {
             &new_root_bank,
             Some(&subscriptions),
             &gossip_verified_vote_hash_sender,
-            &verified_vote_sender,
+            &verified_voter_sender,
             &None,
             &None,
             &mut None,
@@ -1639,7 +1640,7 @@ mod tests {
         let mut latest_vote_slot_per_validator = HashMap::new();
         let mut bank_hash_cache = BankHashCache::new(bank_forks);
 
-        let (verified_vote_sender, _verified_vote_receiver) = unbounded();
+        let (verified_voter_sender, _verified_voter_receiver) = unbounded();
         let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = unbounded();
         let mut diff = HashMap::default();
         let mut new_optimistic_confirmed_slots = vec![];
@@ -1663,7 +1664,7 @@ mod tests {
             &vote_tracker,
             &bank,
             Some(&subscriptions),
-            &verified_vote_sender,
+            &verified_voter_sender,
             &gossip_verified_vote_hash_sender,
             &mut diff,
             &mut new_optimistic_confirmed_slots,
@@ -1696,7 +1697,7 @@ mod tests {
             &vote_tracker,
             &bank,
             Some(&subscriptions),
-            &verified_vote_sender,
+            &verified_voter_sender,
             &gossip_verified_vote_hash_sender,
             &mut diff,
             &mut new_optimistic_confirmed_slots,
