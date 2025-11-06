@@ -109,13 +109,18 @@ impl Node {
         }
         let socket_config = SocketConfig::default();
 
-        let (tvu_port, mut tvu_sockets) = multi_bind_in_range_with_config(
-            bind_ip_addr,
-            port_range,
-            socket_config,
-            num_tvu_receive_sockets.get(),
-        )
-        .expect("tvu multi_bind");
+        let ((tvu_port, tvu_socket), (tvu_quic_port, tvu_quic)) =
+            bind_two_in_range_with_offset_and_config(
+                bind_ip_addr,
+                port_range,
+                QUIC_PORT_OFFSET,
+                socket_config,
+                socket_config,
+            )
+            .expect("tvu/tvu_quic bind");
+        let mut tvu_sockets =
+            bind_more_with_config(tvu_socket, num_tvu_receive_sockets.get(), socket_config)
+                .expect("tvu multi_bind");
         // Multihoming RX for TVU
         tvu_sockets.append(
             &mut Self::bind_to_extra_ip(
@@ -127,10 +132,6 @@ impl Node {
             .expect("Secondary bind TVU"),
         );
         let tvu_addresses = Self::get_socket_addrs(&tvu_sockets);
-
-        let (tvu_quic_port, tvu_quic) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
-                .expect("tvu_quic bind");
 
         let ((tpu_port, tpu_socket), (tpu_port_quic, tpu_quic)) =
             bind_two_in_range_with_offset_and_config(
