@@ -82,7 +82,8 @@ mod tests {
         let mut timeouts_received = 0;
         while timeouts_received < 2 && Instant::now().duration_since(start) < Duration::from_secs(2)
         {
-            if let Ok(event) = event_receiver.recv_timeout(Duration::from_millis(200)) {
+            let res = event_receiver.recv_timeout(Duration::from_millis(200));
+            if let Ok(event) = res {
                 match event {
                     VotorEvent::Timeout(s) => {
                         assert_eq!(s, slot);
