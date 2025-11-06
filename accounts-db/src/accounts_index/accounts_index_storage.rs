@@ -9,7 +9,7 @@ use {
         num::NonZeroUsize,
         sync::{
             atomic::{AtomicBool, Ordering},
-            Arc, Mutex,
+            Arc,
         },
         thread::{Builder, JoinHandle},
     },
@@ -21,10 +21,6 @@ pub struct AccountsIndexStorage<T: IndexValue, U: DiskIndexValue + From<T> + Int
 
     pub storage: Arc<BucketMapHolder<T, U>>,
     pub in_mem: Box<[Arc<InMemAccountsIndex<T, U>>]>,
-    exit: Arc<AtomicBool>,
-
-    /// set_startup(true) creates bg threads which are kept alive until set_startup(false)
-    startup_worker_threads: Mutex<Option<BgThreads>>,
 }
 
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Debug for AccountsIndexStorage<T, U> {
@@ -106,25 +102,12 @@ impl BgThreads {
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexStorage<T, U> {
     /// startup=true causes:
     ///      in mem to act in a way that flushes to disk asap
-    ///      also creates some additional bg threads to facilitate flushing to disk asap
     /// startup=false is 'normal' operation
     pub(crate) fn set_startup(&self, startup: Startup) {
-        if startup == Startup::StartupWithExtraThreads && self.storage.is_disk_index_enabled() {
-            // create some additional bg threads to help get things to the disk index asap
-            *self.startup_worker_threads.lock().unwrap() = Some(BgThreads::new(
-                &self.storage,
-                &self.in_mem,
-                accounts_index::default_num_flush_threads(),
-                false, // cannot advance age from any of these threads
-                self.exit.clone(),
-            ));
-        }
         let is_startup = startup != Startup::Normal;
         self.storage.set_startup(is_startup);
         if !is_startup {
             // transitioning from startup to !startup (ie. steady state)
-            // shutdown the bg threads
-            *self.startup_worker_threads.lock().unwrap() = None;
             // maybe shrink hashmaps
             self.shrink_to_fit();
         }
@@ -157,11 +140,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexStorage<
             .collect();
 
         Self {
-            _bg_threads: BgThreads::new(&storage, &in_mem, num_flush_threads, true, exit.clone()),
+            _bg_threads: BgThreads::new(&storage, &in_mem, num_flush_threads, true, exit),
             storage,
             in_mem,
-            startup_worker_threads: Mutex::default(),
-            exit,
         }
     }
 }

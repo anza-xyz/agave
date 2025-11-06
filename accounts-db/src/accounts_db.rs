@@ -6474,8 +6474,7 @@ impl AccountsDb {
         }
         let num_storages = storages.len();
 
-        self.accounts_index
-            .set_startup(Startup::StartupWithExtraThreads);
+        self.accounts_index.set_startup(Startup::Startup);
         let storage_info = StorageSizeAndCountMap::default();
 
         /// Accumulator for the values produced while generating the index
