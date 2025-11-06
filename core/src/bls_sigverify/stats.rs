@@ -5,8 +5,8 @@ use std::{
 
 pub(crate) const STATS_INTERVAL_DURATION: Duration = Duration::from_secs(1);
 
-#[derive(Debug, Default)]
-pub(crate) struct BLSPacketStats {
+#[derive(Debug)]
+pub(crate) struct BLSPreVerifyPacketStats {
     pub(crate) recv_batches_us_hist: histogram::Histogram, // time to call recv_batch
     pub(crate) verify_batches_pp_us_hist: histogram::Histogram, // per-packet time to call verify_batch
     pub(crate) dedup_packets_pp_us_hist: histogram::Histogram, // per-packet time to call verify_batch
@@ -17,18 +17,34 @@ pub(crate) struct BLSPacketStats {
     pub(crate) total_packets: usize,
     pub(crate) total_dedup: usize,
     pub(crate) total_dedup_time_us: usize,
-    pub(crate) total_verify_time_us: usize,
+    pub(crate) last_stats_logged: Instant,
 }
 
-impl BLSPacketStats {
-    pub(crate) fn maybe_report(&self) {
-        // No need to report a datapoint if no batches/packets received
-        if self.total_batches == 0 {
+impl BLSPreVerifyPacketStats {
+    pub(crate) fn new() -> Self {
+        Self {
+            recv_batches_us_hist: histogram::Histogram::default(),
+            verify_batches_pp_us_hist: histogram::Histogram::default(),
+            dedup_packets_pp_us_hist: histogram::Histogram::default(),
+            batches_hist: histogram::Histogram::default(),
+            packets_hist: histogram::Histogram::default(),
+            num_deduper_saturations: 0,
+            total_batches: 0,
+            total_packets: 0,
+            total_dedup: 0,
+            total_dedup_time_us: 0,
+            last_stats_logged: Instant::now(),
+        }
+    }
+
+    pub(crate) fn maybe_report(&mut self) {
+        let now = Instant::now();
+        let time_since_last_log = now.duration_since(self.last_stats_logged);
+        if time_since_last_log < STATS_INTERVAL_DURATION {
             return;
         }
-
         datapoint_info!(
-            "tpu-consensus-messages",
+            "bls_sig_verifier_packet_stats",
             (
                 "recv_batches_us_90pct",
                 self.recv_batches_us_hist.percentile(90.0).unwrap_or(0),
@@ -110,13 +126,13 @@ impl BLSPacketStats {
             ("total_packets", self.total_packets, i64),
             ("total_dedup", self.total_dedup, i64),
             ("total_dedup_time_us", self.total_dedup_time_us, i64),
-            ("total_verify_time_us", self.total_verify_time_us, i64),
         );
+        *self = BLSPreVerifyPacketStats::new();
     }
 }
 
-// We are adding our own stats because we do BLS decoding in batch verification,
-// and we send one BLS message at a time. So it makes sense to have finer-grained stats
+// Finer grained stats compared to other verifiers because BLS decoding
+// is done in batch verification and we send one BLS message at a time.
 #[derive(Debug)]
 pub(crate) struct BLSSigVerifierStats {
     pub(crate) total_valid_packets: AtomicU64,
@@ -130,6 +146,7 @@ pub(crate) struct BLSSigVerifierStats {
     pub(crate) votes_batch_parallel_verify_elapsed_us: AtomicU64,
     pub(crate) certs_batch_count: AtomicU64,
     pub(crate) certs_batch_elapsed_us: AtomicU64,
+    pub(crate) verify_elapsed_us: AtomicU64,
 
     pub(crate) sent: AtomicU64,
     pub(crate) sent_failed: AtomicU64,
@@ -162,6 +179,7 @@ impl BLSSigVerifierStats {
             votes_batch_parallel_verify_elapsed_us: AtomicU64::new(0),
             certs_batch_count: AtomicU64::new(0),
             certs_batch_elapsed_us: AtomicU64::new(0),
+            verify_elapsed_us: AtomicU64::new(0),
 
             sent: AtomicU64::new(0),
             sent_failed: AtomicU64::new(0),
@@ -237,6 +255,11 @@ impl BLSSigVerifierStats {
             (
                 "certs_batch_elapsed_us",
                 self.certs_batch_elapsed_us.load(Ordering::Relaxed) as i64,
+                i64
+            ),
+            (
+                "verify_elapsed_us",
+                self.verify_elapsed_us.load(Ordering::Relaxed) as i64,
                 i64
             ),
             ("sent", self.sent.load(Ordering::Relaxed) as i64, i64),

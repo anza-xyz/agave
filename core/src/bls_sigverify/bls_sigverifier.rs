@@ -97,6 +97,7 @@ impl BLSSigVerifier {
         &mut self,
         mut batches: Vec<PacketBatch>,
     ) -> Result<(), BLSSigVerifyServiceError<ConsensusMessage>> {
+        let mut verify_time = Measure::start("sigverify_batch_time");
         let mut preprocess_time = Measure::start("preprocess");
         // TODO(sam): ideally we want to avoid heap allocation, but let's use
         //            `Vec` for now for clarity and then optimize for the final version
@@ -216,6 +217,10 @@ impl BLSSigVerifier {
             || self.verify_and_send_votes(votes_to_verify),
             || self.verify_and_send_certificates(certs_to_verify, &root_bank),
         );
+        verify_time.stop();
+        self.stats
+            .verify_elapsed_us
+            .fetch_add(verify_time.as_us(), Ordering::Relaxed);
 
         votes_result?;
         certs_result?;

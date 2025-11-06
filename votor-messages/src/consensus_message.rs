@@ -1,4 +1,4 @@
-//! Put BLS message here so all clients can agree on the format
+//! Put Alpenglow consensus messages here so all clients can agree on the format.
 use {
     crate::vote::Vote,
     serde::{Deserialize, Serialize},
@@ -53,41 +53,21 @@ impl CertificateType {
     /// Get the slot of the certificate
     pub fn slot(&self) -> Slot {
         match self {
-            CertificateType::Finalize(slot)
-            | CertificateType::FinalizeFast(slot, _)
-            | CertificateType::Notarize(slot, _)
-            | CertificateType::NotarizeFallback(slot, _)
-            | CertificateType::Skip(slot) => *slot,
+            Self::Finalize(slot)
+            | Self::FinalizeFast(slot, _)
+            | Self::Notarize(slot, _)
+            | Self::NotarizeFallback(slot, _)
+            | Self::Skip(slot) => *slot,
         }
-    }
-
-    /// Is this a fast finalize certificate?
-    pub fn is_fast_finalization(&self) -> bool {
-        matches!(self, Self::FinalizeFast(_, _))
-    }
-
-    /// Is this a finalize / fast finalize certificate?
-    pub fn is_finalization(&self) -> bool {
-        matches!(self, Self::Finalize(_) | Self::FinalizeFast(_, _))
-    }
-
-    /// Is this a notarize fallback certificate?
-    pub fn is_notarize_fallback(&self) -> bool {
-        matches!(self, Self::NotarizeFallback(_, _))
-    }
-
-    /// Is this a skip certificate?
-    pub fn is_skip(&self) -> bool {
-        matches!(self, Self::Skip(_))
     }
 
     /// Gets the block associated with this certificate, if present
     pub fn to_block(self) -> Option<Block> {
         match self {
-            CertificateType::Finalize(_) | CertificateType::Skip(_) => None,
-            CertificateType::Notarize(slot, block_id)
-            | CertificateType::NotarizeFallback(slot, block_id)
-            | CertificateType::FinalizeFast(slot, block_id) => Some((slot, block_id)),
+            Self::Finalize(_) | Self::Skip(_) => None,
+            Self::Notarize(slot, block_id)
+            | Self::NotarizeFallback(slot, block_id)
+            | Self::FinalizeFast(slot, block_id) => Some((slot, block_id)),
         }
     }
 

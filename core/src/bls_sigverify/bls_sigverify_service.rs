@@ -1,5 +1,5 @@
 use {
-    crate::bls_sigverify::{bls_sigverifier::BLSSigVerifier, stats::BLSPacketStats},
+    crate::bls_sigverify::{bls_sigverifier::BLSSigVerifier, stats::BLSPreVerifyPacketStats},
     agave_votor_messages::consensus_message::ConsensusMessage,
     core::time::Duration,
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, TrySendError},
@@ -10,10 +10,7 @@ use {
     },
     solana_streamer::streamer::{self, StreamerError},
     solana_time_utils as timing,
-    std::{
-        thread::{self, Builder, JoinHandle},
-        time::Instant,
-    },
+    std::thread::{self, Builder, JoinHandle},
     thiserror::Error,
 };
 
@@ -63,7 +60,7 @@ impl BLSSigverifyService {
         deduper: &Deduper<K, [u8]>,
         recvr: &Receiver<PacketBatch>,
         verifier: &mut BLSSigVerifier,
-        stats: &mut BLSPacketStats,
+        stats: &mut BLSPreVerifyPacketStats,
     ) -> Result<(), ConsensusMessage> {
         let (mut batches, num_packets, recv_duration) = streamer::recv_packet_batches(recvr)?;
 
@@ -110,7 +107,6 @@ impl BLSSigverifyService {
         stats.total_packets += num_packets;
         stats.total_dedup += discard_or_dedup_fail;
         stats.total_dedup_time_us += dedup_time.as_us() as usize;
-        stats.total_verify_time_us += verify_time.as_us() as usize;
 
         Ok(())
     }
@@ -119,8 +115,7 @@ impl BLSSigverifyService {
         packet_receiver: Receiver<PacketBatch>,
         mut verifier: BLSSigVerifier,
     ) -> JoinHandle<()> {
-        let mut stats = BLSPacketStats::default();
-        let mut last_print = Instant::now();
+        let mut stats = BLSPreVerifyPacketStats::new();
         const MAX_DEDUPER_AGE: Duration = Duration::from_secs(2);
         const DEDUPER_FALSE_POSITIVE_RATE: f64 = 0.001;
         const DEDUPER_NUM_BITS: u64 = 63_999_979;
@@ -152,11 +147,7 @@ impl BLSSigverifyService {
                             }
                         }
                     }
-                    if last_print.elapsed().as_secs() > 2 {
-                        stats.maybe_report();
-                        stats = BLSPacketStats::default();
-                        last_print = Instant::now();
-                    }
+                    stats.maybe_report();
                 }
             })
             .unwrap()
