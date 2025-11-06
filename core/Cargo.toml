@@ -49,7 +49,7 @@ agave-scheduling-utils = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-verified-packet-receiver = { workspace = true }
-agave-votor = { workspace = true, features = ["agave-unstable-api"] }
+agave-votor = { workspace = true }
 agave-votor-messages = { workspace = true }
 ahash = { workspace = true }
 anyhow = { workspace = true }
@@ -115,18 +115,18 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 solana-genesis-config = { workspace = true }
 solana-genesis-utils = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
-solana-gossip = { workspace = true, features = ["agave-unstable-api"] }
+solana-gossip = { workspace = true }
 solana-hard-forks = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
-solana-ledger = { workspace = true, features = ["agave-unstable-api"] }
+solana-ledger = { workspace = true }
 solana-loader-v3-interface = { workspace = true }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-native-token = { workspace = true }
-solana-net-utils = { workspace = true, features = ["agave-unstable-api"] }
+solana-net-utils = { workspace = true }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-packet = { workspace = true }
@@ -165,7 +165,7 @@ solana-tpu-client-next = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
-solana-turbine = { workspace = true, features = ["agave-unstable-api"] }
+solana-turbine = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }
 solana-unified-scheduler-pool = { workspace = true }
 solana-validator-exit = { workspace = true }

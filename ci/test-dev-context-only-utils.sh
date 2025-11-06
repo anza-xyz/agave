@@ -20,7 +20,7 @@ export CARGO_INCREMENTAL=0
 
 _ sccache --show-stats
 
-scripts/check-dev-context-only-utils.sh check-all-targets "$@"
+scripts/check-dev-context-only-utils.sh check-all-targets "$@" --features agave-unstable-api
 scripts/check-dev-context-only-utils.sh check-bins-and-lib "$@" --features agave-unstable-api
 
 # This shows final stats while stopping the sccache background server as well

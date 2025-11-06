@@ -32,7 +32,7 @@ solana-compute-budget-program = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
-solana-loader-v4-program = { workspace = true, features = ["agave-unstable-api"] }
+solana-loader-v4-program = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-system-program = { workspace = true }
