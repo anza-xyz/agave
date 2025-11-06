@@ -76,48 +76,11 @@ pub struct NetlinkSocket {
 
 impl NetlinkSocket {
     fn open() -> Result<Self, io::Error> {
-        // Safety: libc wrapper
-        let sock = unsafe { socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE) };
-        if sock < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: `socket` returns a file descriptor.
-        let sock = unsafe { OwnedFd::from_raw_fd(sock) };
-
-        let enable = 1i32;
-        // Safety: libc wrapper
-        if unsafe {
-            setsockopt(
-                sock.as_raw_fd(),
-                SOL_NETLINK,
-                NETLINK_EXT_ACK,
-                &enable as *const _ as *const _,
-                mem::size_of::<i32>() as u32,
-            )
-        } < 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-
-        // Safety: sockaddr_nl is POD so this is safe
-        let mut addr = unsafe { mem::zeroed::<sockaddr_nl>() };
-        addr.nl_family = AF_NETLINK as u16;
-        let mut addr_len = mem::size_of::<sockaddr_nl>() as u32;
-        // Safety: libc wrapper
-        if unsafe {
-            getsockname(
-                sock.as_raw_fd(),
-                &mut addr as *mut _ as *mut _,
-                &mut addr_len as *mut _,
-            )
-        } < 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-
+        let sock = Self::create_raw_socket()?;
+        let nl_pid = Self::get_nl_pid(sock.as_raw_fd())?;
         Ok(Self {
             sock,
-            _nl_pid: addr.nl_pid,
+            _nl_pid: nl_pid,
         })
     }
 
@@ -187,11 +150,7 @@ impl NetlinkSocket {
     /// Opens a listener socket for netlink updates
     /// NETLINK_ROUTE socket subscribed to `groups` bitmask
     pub fn open_multicast_listener(groups: u32) -> Result<Self, io::Error> {
-        let raw = unsafe { socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE) };
-        if raw < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let sock = unsafe { OwnedFd::from_raw_fd(raw) };
+        let sock = Self::create_raw_socket()?;
 
         // Subscribe to multicast groups
         let mut addr: sockaddr_nl = unsafe { mem::zeroed() };
@@ -220,23 +179,45 @@ impl NetlinkSocket {
             );
         }
 
-        let mut name: sockaddr_nl = unsafe { mem::zeroed() };
-        let mut len = mem::size_of::<sockaddr_nl>() as u32;
+        let nl_pid = Self::get_nl_pid(sock.as_raw_fd())?;
+        Ok(Self {
+            sock,
+            _nl_pid: nl_pid,
+        })
+    }
+
+    #[inline]
+    fn create_raw_socket() -> Result<OwnedFd, io::Error> {
+        let raw = unsafe { socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE) };
+        if raw < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let sock = unsafe { OwnedFd::from_raw_fd(raw) };
+
+        let enable = 1i32;
         if unsafe {
-            getsockname(
+            setsockopt(
                 sock.as_raw_fd(),
-                &mut name as *mut _ as *mut _,
-                &mut len as *mut _,
+                SOL_NETLINK,
+                NETLINK_EXT_ACK,
+                &enable as *const _ as *const _,
+                mem::size_of::<i32>() as u32,
             )
         } < 0
         {
             return Err(io::Error::last_os_error());
         }
+        Ok(sock)
+    }
 
-        Ok(Self {
-            sock,
-            _nl_pid: name.nl_pid,
-        })
+    #[inline]
+    fn get_nl_pid(fd: std::os::fd::RawFd) -> Result<u32, io::Error> {
+        let mut name: sockaddr_nl = unsafe { mem::zeroed() };
+        let mut len = mem::size_of::<sockaddr_nl>() as u32;
+        if unsafe { getsockname(fd, &mut name as *mut _ as *mut _, &mut len as *mut _) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(name.nl_pid)
     }
 
     #[inline]
