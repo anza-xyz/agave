@@ -145,7 +145,9 @@ impl Server {
         Ok(logon)
     }
 
-    fn setup_session(logon: ClientLogon) -> Result<(AgaveSession, Vec<File>), AgaveHandshakeError> {
+    pub fn setup_session(
+        logon: ClientLogon,
+    ) -> Result<(AgaveSession, Vec<File>), AgaveHandshakeError> {
         // Setup the allocator in shared memory (`worker_count` & `allocator_handles` have been
         // validated so this won't panic).
         let (allocator_file, tpu_to_pack_allocator) = Self::create_allocator(&logon)?;

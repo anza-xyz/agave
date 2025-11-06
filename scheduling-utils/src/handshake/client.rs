@@ -132,7 +132,7 @@ fn recv_response(stream: &mut UnixStream) -> Result<Vec<i32>, ClientHandshakeErr
     Ok(fds)
 }
 
-fn setup_session(
+pub fn setup_session(
     logon: &ClientLogon,
     fds: Vec<i32>,
 ) -> Result<ClientSession, ClientHandshakeError> {
