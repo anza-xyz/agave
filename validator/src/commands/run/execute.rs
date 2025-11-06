@@ -6,7 +6,6 @@ use {
         commands::{run::args::RunArgs, FromClapArgMatches},
         ledger_lockfile, lock_ledger,
     },
-    agave_logger::redirect_stderr_to_file,
     agave_snapshots::{
         paths::BANK_SNAPSHOTS_DIR,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
@@ -120,7 +119,7 @@ pub fn execute(
         println!("log file: {}", logfile.display());
     }
     let use_progress_bar = logfile.is_none();
-    let _logger_thread = redirect_stderr_to_file(logfile);
+    agave_logger::initialize_logging(logfile.clone());
 
     info!("{} {}", crate_name!(), solana_version);
     info!("Starting validator with: {:#?}", std::env::args_os());
@@ -520,6 +519,7 @@ pub fn execute(
     );
 
     let mut validator_config = ValidatorConfig {
+        logfile,
         require_tower: matches.is_present("require_tower"),
         tower_storage,
         halt_at_slot: value_t!(matches, "dev_halt_at_slot", Slot).ok(),
@@ -1055,6 +1055,7 @@ pub fn execute(
         File::create(filename).map_err(|err| format!("unable to create {filename}: {err}"))?;
     }
     info!("Validator initialized");
+    validator.listen_for_signals()?;
     validator.join();
     info!("Validator exiting..");
 

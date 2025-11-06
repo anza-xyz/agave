@@ -6801,6 +6801,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-feature-set",
+ "agave-logger",
  "agave-scheduler-bindings",
  "agave-scheduling-utils",
  "agave-snapshots",
@@ -6843,6 +6844,7 @@ dependencies = [
  "serde",
  "serde_bytes",
  "shaq",
+ "signal-hook",
  "slab",
  "solana-account",
  "solana-accounts-db",
