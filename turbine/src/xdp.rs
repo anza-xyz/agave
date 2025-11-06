@@ -5,10 +5,11 @@ use {
     agave_xdp::{
         device::{NetworkDevice, QueueId},
         load_xdp_program,
-        route::AtomicRouter,
+        route::Router,
         route_monitor::RouteMonitor,
         tx_loop::tx_loop,
     },
+    arc_swap::ArcSwap,
     crossbeam_channel::TryRecvError,
     std::{thread::Builder, time::Duration},
 };
@@ -164,8 +165,8 @@ impl XdpRetransmitter {
             .map(|_| crossbeam_channel::bounded(config.rtx_channel_cap))
             .unzip::<_, _, Vec<_>, Vec<_>>();
 
-        // Create atomic router for lock-free updates
-        let atomic_router = Arc::new(AtomicRouter::new()?);
+        // Create router handle (ArcSwap) for lock-free updates
+        let atomic_router = Arc::new(ArcSwap::from_pointee(Router::new()?));
         let monitor_handle = RouteMonitor::start(
             Arc::clone(&atomic_router),
             exit.clone(),

@@ -9593,6 +9593,7 @@ dependencies = [
  "agave-feature-set",
  "agave-votor",
  "agave-xdp",
+ "arc-swap",
  "bincode",
  "bytes",
  "caps",
