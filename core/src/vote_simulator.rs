@@ -7,7 +7,7 @@ use {
             fork_choice::{select_vote_and_reset_forks, SelectVoteAndResetForkResult},
             heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice,
             latest_validator_votes_for_frozen_banks::LatestValidatorVotesForFrozenBanks,
-            progress_map::{ForkProgress, ProgressMap},
+            progress_map::{ForkProgress, LockoutInterval, ProgressMap},
             tower_vote_state::TowerVoteState,
             Tower,
         },
@@ -285,9 +285,11 @@ impl VoteSimulator {
             .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0))
             .fork_stats
             .lockout_intervals
-            .entry(lockout_interval.1)
-            .or_default()
-            .push((lockout_interval.0, *vote_account_pubkey));
+            .push(LockoutInterval {
+                start: lockout_interval.0,
+                end: lockout_interval.1,
+                voter: *vote_account_pubkey,
+            });
     }
 
     pub fn clear_lockout_intervals(&mut self, slot: Slot) {

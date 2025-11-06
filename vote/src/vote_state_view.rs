@@ -133,6 +133,11 @@ impl VoteStateView {
         })
     }
 
+    #[inline]
+    pub fn votes_len(&self) -> usize {
+        self.votes_view().len()
+    }
+
     pub fn last_lockout(&self) -> Option<Lockout> {
         self.votes_view().last().map(|item| {
             Lockout::new_with_confirmation_count(item.slot(), item.confirmation_count())
