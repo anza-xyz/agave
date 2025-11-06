@@ -4,8 +4,9 @@ use {
             is_supported_ipv4_neigh_header, is_supported_ipv4_route_header, is_valid_link_update,
             parse_ifinfomsg, parse_rtm_newneigh, parse_rtm_newroute, NetlinkMessage, NetlinkSocket,
         },
-        route::{AtomicRouter, WorkingRouter},
+        route::Router,
     },
+    arc_swap::ArcSwap,
     libc::{
         poll, pollfd, POLLERR, POLLHUP, POLLIN, POLLNVAL, RTMGRP_IPV4_ROUTE, RTMGRP_LINK,
         RTMGRP_NEIGH, RTM_DELLINK, RTM_DELNEIGH, RTM_DELROUTE, RTM_NEWLINK, RTM_NEWNEIGH,
@@ -30,7 +31,7 @@ impl RouteMonitor {
     /// if any relevant updates arrived, update working routing table
     /// once drain window expires, publish the working routing table to the atomic router
     pub fn start(
-        atomic_router: Arc<AtomicRouter>,
+        atomic_router: Arc<ArcSwap<Router>>,
         exit: Arc<AtomicBool>,
         drain_window: Duration,
     ) -> thread::JoinHandle<()> {
@@ -44,13 +45,15 @@ impl RouteMonitor {
                 }
             };
 
-            let mut working = None;
+            let mut working: Option<Router> = None;
+            let mut dirty = false;
             loop {
                 if exit.load(Ordering::Relaxed) {
                     break;
                 }
                 if working.is_none() {
-                    working = Some(WorkingRouter::from_atomic_router(&atomic_router));
+                    let snapshot = atomic_router.load();
+                    working = Some((**snapshot).clone());
                 }
 
                 let mut pfd = pollfd {
@@ -63,7 +66,9 @@ impl RouteMonitor {
                     Ok(rv) => rv,
                     Err(e) => {
                         warn!("poll error: {e}");
-                        let _ = atomic_router.resync();
+                        if let Ok(r) = Router::new() {
+                            atomic_router.store(Arc::new(r));
+                        }
                         working = None;
                         continue;
                     }
@@ -78,7 +83,9 @@ impl RouteMonitor {
                         match NetlinkSocket::open_multicast_listener(groups) {
                             Ok(s) => {
                                 sock = s;
-                                let _ = atomic_router.resync();
+                                if let Ok(r) = Router::new() {
+                                    atomic_router.store(Arc::new(r));
+                                }
                                 working = None;
                             }
                             Err(e) => {
@@ -99,12 +106,15 @@ impl RouteMonitor {
                     let rv = match Self::drain_netlink_socket(
                         &sock,
                         working.as_mut().expect("working initialized"),
+                        &mut dirty,
                         deadline,
                     ) {
                         Ok(rv) => rv,
                         Err(e) => {
                             error!("drain netlink socket failed: {e}");
-                            if let Err(e) = atomic_router.resync() {
+                            if let Ok(r) = Router::new() {
+                                atomic_router.store(Arc::new(r));
+                            } else {
                                 error!("resync failed: {e}");
                             }
                             working = None;
@@ -119,7 +129,9 @@ impl RouteMonitor {
                             match NetlinkSocket::open_multicast_listener(groups) {
                                 Ok(s) => {
                                     sock = s;
-                                    let _ = atomic_router.resync();
+                                    if let Ok(r) = Router::new() {
+                                        atomic_router.store(Arc::new(r));
+                                    }
                                     working = None;
                                 }
                                 Err(e) => {
@@ -146,7 +158,9 @@ impl RouteMonitor {
                         Ok(rv) => rv,
                         Err(e) => {
                             warn!("poll error during drain window wait: {e}");
-                            let _ = atomic_router.resync();
+                            if let Ok(r) = Router::new() {
+                                atomic_router.store(Arc::new(r));
+                            }
                             working = None;
                             break;
                         }
@@ -159,7 +173,9 @@ impl RouteMonitor {
                             match NetlinkSocket::open_multicast_listener(groups) {
                                 Ok(s) => {
                                     sock = s;
-                                    let _ = atomic_router.resync();
+                                    if let Ok(r) = Router::new() {
+                                        atomic_router.store(Arc::new(r));
+                                    }
                                     working = None;
                                 }
                                 Err(e) => {
@@ -172,11 +188,11 @@ impl RouteMonitor {
                     }
                 }
 
-                if let Some(w) = working.as_mut() {
-                    if w.dirty_routes() || w.dirty_neigh() || w.dirty_interfaces() {
-                        atomic_router.publish_snapshot(w);
-                        w.clear_dirty();
+                if dirty {
+                    if let Some(w) = working.as_ref() {
+                        atomic_router.store(Arc::new(w.clone()));
                     }
+                    dirty = false;
                 }
             }
         })
@@ -185,7 +201,8 @@ impl RouteMonitor {
     #[inline]
     fn drain_netlink_socket(
         sock: &NetlinkSocket,
-        working: &mut WorkingRouter,
+        working: &mut Router,
+        dirty: &mut bool,
         deadline: Instant,
     ) -> Result<Revents, Error> {
         let mut pfd = pollfd {
@@ -216,7 +233,7 @@ impl RouteMonitor {
                     if msgs.is_empty() {
                         break;
                     }
-                    Self::process_netlink_updates(working, &msgs);
+                    Self::process_netlink_updates(working, dirty, &msgs);
                 }
                 Err(e) => {
                     warn!("recv during drain failed: {e}");
@@ -228,42 +245,42 @@ impl RouteMonitor {
     }
 
     #[inline]
-    fn process_netlink_updates(work: &mut WorkingRouter, msgs: &[NetlinkMessage]) {
+    fn process_netlink_updates(work: &mut Router, dirty: &mut bool, msgs: &[NetlinkMessage]) {
         for m in msgs {
             match m.header.nlmsg_type {
                 RTM_NEWROUTE if is_supported_ipv4_route_header(m) => {
                     if let Some(r) = parse_rtm_newroute(m) {
-                        work.upsert_route(r);
+                        *dirty |= work.upsert_route(r);
                     }
                 }
                 RTM_DELROUTE if is_supported_ipv4_route_header(m) => {
                     if let Some(r) = parse_rtm_newroute(m) {
-                        work.delete_route(r);
+                        *dirty |= work.delete_route(r);
                     }
                 }
                 RTM_NEWNEIGH if is_supported_ipv4_neigh_header(m) => {
                     if let Some(n) = parse_rtm_newneigh(m, None) {
-                        work.upsert_neighbor(n);
+                        *dirty |= work.upsert_neighbor(n);
                     }
                 }
                 RTM_DELNEIGH if is_supported_ipv4_neigh_header(m) => {
                     if let Some(n) = parse_rtm_newneigh(m, None) {
                         if let Some(IpAddr::V4(ip)) = n.destination {
-                            work.delete_neighbor(ip, n.ifindex);
+                            *dirty |= work.delete_neighbor(ip, n.ifindex);
                         }
                     }
                 }
                 RTM_NEWLINK => {
                     if is_valid_link_update(m) {
                         if let Some(interface_info) = parse_ifinfomsg(m) {
-                            work.upsert_interface(interface_info);
+                            *dirty |= work.upsert_interface(interface_info);
                         }
                     }
                 }
                 RTM_DELLINK => {
                     if is_valid_link_update(m) {
                         if let Some(interface_info) = parse_ifinfomsg(m) {
-                            work.delete_interface(interface_info.if_index);
+                            *dirty |= work.delete_interface(interface_info.if_index);
                         }
                     }
                 }
@@ -277,8 +294,8 @@ impl RouteMonitor {
 fn handle_revents(
     rv: Revents,
     revents_bits: i16,
-    atomic_router: &Arc<AtomicRouter>,
-    working: &mut Option<WorkingRouter>,
+    atomic_router: &Arc<ArcSwap<Router>>,
+    working: &mut Option<Router>,
 ) -> LoopControl {
     match rv {
         Revents::Ready => LoopControl::Proceed,
@@ -292,7 +309,9 @@ fn handle_revents(
         }
         Revents::Error => {
             warn!("netlink socket POLLERR; resyncing router snapshot");
-            let _ = atomic_router.resync();
+            if let Ok(r) = Router::new() {
+                atomic_router.store(Arc::new(r));
+            }
             *working = None;
             LoopControl::Skip
         }
