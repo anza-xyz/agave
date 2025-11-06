@@ -580,10 +580,10 @@ mod tests {
         },
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_nonce_account::verify_nonce_account,
-        solana_poh::record_channels::record_channels,
+        solana_poh::record_channels::{record_channels, RecordReceiver},
         solana_pubkey::Pubkey,
         solana_rpc::transaction_status_service::TransactionStatusService,
-        solana_runtime::prioritization_fee_cache::PrioritizationFeeCache,
+        solana_runtime::{bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_system_interface::program as system_program,
@@ -597,11 +597,57 @@ mod tests {
             slice,
             sync::{
                 atomic::{AtomicBool, AtomicU64},
-                Arc,
+                Arc, RwLock,
             },
         },
         test_case::test_case,
     };
+
+    struct TestFrame {
+        mint_keypair: Keypair,
+        bank: Arc<Bank>,
+        _bank_forks: Arc<RwLock<BankForks>>,
+        record_receiver: RecordReceiver,
+        consumer: Consumer,
+    }
+
+    fn setup_test(relax_intrabatch_account_locks: bool) -> TestFrame {
+        agave_logger::setup();
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config_with_leader(
+            10_000,
+            &Pubkey::new_unique(),
+            bootstrap_validator_stake_lamports(),
+        );
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        if !relax_intrabatch_account_locks {
+            bank.deactivate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
+        }
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+
+        let (record_sender, mut record_receiver) = record_channels(false);
+        let recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
+
+        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+        let committer = Committer::new(
+            None,
+            replay_vote_sender,
+            Arc::new(PrioritizationFeeCache::new(0u64)),
+        );
+        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+
+        TestFrame {
+            mint_keypair,
+            bank,
+            _bank_forks: bank_forks,
+            record_receiver,
+            consumer,
+        }
+    }
 
     fn execute_transactions_for_test(
         bank: Arc<Bank>,
@@ -669,37 +715,21 @@ mod tests {
 
     #[test]
     fn test_bank_process_and_record_transactions() {
-        agave_logger::setup();
-        let GenesisConfigInfo {
-            genesis_config,
+        let TestFrame {
             mint_keypair,
-            ..
-        } = create_genesis_config_with_leader(
-            10_000,
-            &Pubkey::new_unique(),
-            bootstrap_validator_stake_lamports(),
-        );
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
-        let pubkey = solana_pubkey::new_rand();
+            bank,
+            _bank_forks,
+            mut record_receiver,
+            consumer,
+        } = setup_test(true);
 
+        let pubkey = solana_pubkey::new_rand();
         let transactions = sanitize_transactions(vec![system_transaction::transfer(
             &mint_keypair,
             &pubkey,
             1,
-            genesis_config.hash(),
+            bank.confirmed_last_blockhash(),
         )]);
-
-        let (record_sender, mut record_receiver) = record_channels(false);
-        let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let committer = Committer::new(
-            None,
-            replay_vote_sender,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
-        );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         let process_transactions_batch_output =
             consumer.process_and_record_transactions(&bank, &transactions);
@@ -733,7 +763,7 @@ mod tests {
             &mint_keypair,
             &pubkey,
             2,
-            genesis_config.hash(),
+            bank.confirmed_last_blockhash(),
         )]);
 
         let process_transactions_batch_output =
@@ -771,17 +801,13 @@ mod tests {
 
     #[test]
     fn test_bank_nonce_update_blockhash_queried_before_transaction_record() {
-        agave_logger::setup();
-        let GenesisConfigInfo {
-            genesis_config,
+        let TestFrame {
             mint_keypair,
-            ..
-        } = create_genesis_config_with_leader(
-            10_000,
-            &Pubkey::new_unique(),
-            bootstrap_validator_stake_lamports(),
-        );
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+            bank,
+            _bank_forks,
+            record_receiver: _record_receiver,
+            consumer,
+        } = setup_test(true);
         let pubkey = Pubkey::new_unique();
 
         // setup nonce account with a durable nonce different from the current
@@ -806,23 +832,12 @@ mod tests {
             &mint_keypair,
             nonce_hash,
         )]);
-
-        let (record_sender, mut record_receiver) = record_channels(false);
-        let recorder = TransactionRecorder::new(record_sender);
-
-        record_receiver.restart(bank.bank_id());
+        // get original backhash before we tick to the end.
+        let bank_hash = bank.last_blockhash();
 
         while bank.tick_height() != bank.max_tick_height() - 1 {
             bank.register_default_tick_for_test();
         }
-
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let committer = Committer::new(
-            None,
-            replay_vote_sender,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
-        );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         let process_transactions_batch_output =
             consumer.process_and_record_transactions(&bank, &transactions);
@@ -846,7 +861,7 @@ mod tests {
         // check that the nonce was advanced to the current bank's last blockhash
         // rather than the current bank's blockhash as would occur had the update
         // blockhash been queried _after_ transaction recording
-        let expected_nonce = DurableNonce::from_blockhash(&genesis_config.hash());
+        let expected_nonce = DurableNonce::from_blockhash(&bank_hash);
         let expected_nonce_hash = expected_nonce.as_hash();
         let nonce_account = bank.get_account(&nonce_pubkey).unwrap();
         assert!(verify_nonce_account(&nonce_account, expected_nonce_hash).is_some());
@@ -854,34 +869,22 @@ mod tests {
 
     #[test]
     fn test_bank_process_and_record_transactions_all_unexecuted() {
-        agave_logger::setup();
-        let GenesisConfigInfo {
-            genesis_config,
+        let TestFrame {
             mint_keypair,
-            ..
-        } = create_slow_genesis_config(10_000);
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
-        let pubkey = solana_pubkey::new_rand();
+            bank,
+            _bank_forks,
+            record_receiver: _record_receiver,
+            consumer,
+        } = setup_test(true);
 
+        let pubkey = solana_pubkey::new_rand();
         let transactions = {
             let mut tx =
-                system_transaction::transfer(&mint_keypair, &pubkey, 1, genesis_config.hash());
+                system_transaction::transfer(&mint_keypair, &pubkey, 1, bank.last_blockhash());
             // Add duplicate account key
             tx.message.account_keys.push(pubkey);
             sanitize_transactions(vec![tx])
         };
-
-        let (record_sender, mut record_receiver) = record_channels(false);
-        let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let committer = Committer::new(
-            None,
-            replay_vote_sender,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
-        );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         let process_transactions_batch_output =
             consumer.process_and_record_transactions(&bank, &transactions);
@@ -918,31 +921,15 @@ mod tests {
     fn test_bank_process_and_record_transactions_cost_tracker(
         relax_intrabatch_account_locks: bool,
     ) {
-        agave_logger::setup();
-        let GenesisConfigInfo {
-            genesis_config,
+        let TestFrame {
             mint_keypair,
-            ..
-        } = create_slow_genesis_config(10_000);
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        if !relax_intrabatch_account_locks {
-            bank.deactivate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
-        }
-        bank.ns_per_slot = u128::MAX;
-        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+            bank,
+            _bank_forks,
+            record_receiver: _record_receiver,
+            consumer,
+        } = setup_test(relax_intrabatch_account_locks);
+
         let pubkey = solana_pubkey::new_rand();
-
-        let (record_sender, mut record_receiver) = record_channels(false);
-        let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let committer = Committer::new(
-            None,
-            replay_vote_sender,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
-        );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         let get_block_cost = || bank.read_cost_tracker().unwrap().block_cost();
         let get_tx_count = || bank.read_cost_tracker().unwrap().transaction_count();
@@ -957,7 +944,7 @@ mod tests {
             &mint_keypair,
             &pubkey,
             1,
-            genesis_config.hash(),
+            bank.last_blockhash(),
         )]);
 
         let process_transactions_batch_output =
@@ -983,18 +970,18 @@ mod tests {
             system_transaction::allocate(
                 &mint_keypair,
                 &allocate_keypair,
-                genesis_config.hash(),
+                bank.last_blockhash(),
                 100,
             ),
             // this one won't execute in process_and_record_transactions from shared account lock overlap
-            system_transaction::transfer(&mint_keypair, &pubkey, 2, genesis_config.hash()),
+            system_transaction::transfer(&mint_keypair, &pubkey, 2, bank.last_blockhash()),
         ]);
 
         let conflicting_transaction = sanitize_transactions(vec![system_transaction::transfer(
             &Keypair::new(),
             &pubkey,
             1,
-            genesis_config.hash(),
+            bank.last_blockhash(),
         )]);
         bank.try_lock_accounts(&conflicting_transaction);
 
@@ -1068,23 +1055,19 @@ mod tests {
         relax_intrabatch_account_locks: bool,
         use_duplicate_transaction: bool,
     ) {
-        agave_logger::setup();
-        let GenesisConfigInfo {
-            genesis_config,
+        let TestFrame {
             mint_keypair,
-            ..
-        } = create_slow_genesis_config(10_000);
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        if !relax_intrabatch_account_locks {
-            bank.deactivate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
-        }
-        bank.ns_per_slot = u128::MAX;
-        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+            bank,
+            _bank_forks,
+            record_receiver: _record_receiver,
+            consumer,
+        } = setup_test(relax_intrabatch_account_locks);
+
         let pubkey = solana_pubkey::new_rand();
         let pubkey1 = solana_pubkey::new_rand();
 
         let transactions = sanitize_transactions(vec![
-            system_transaction::transfer(&mint_keypair, &pubkey, 1, genesis_config.hash()),
+            system_transaction::transfer(&mint_keypair, &pubkey, 1, bank.last_blockhash()),
             system_transaction::transfer(
                 &mint_keypair,
                 if use_duplicate_transaction {
@@ -1093,25 +1076,13 @@ mod tests {
                     &pubkey1
                 },
                 1,
-                genesis_config.hash(),
+                bank.last_blockhash(),
             ),
         ]);
         assert_eq!(
             transactions[0].message_hash() == transactions[1].message_hash(),
             use_duplicate_transaction
         );
-
-        let (record_sender, mut record_receiver) = record_channels(false);
-        let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let committer = Committer::new(
-            None,
-            replay_vote_sender,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
-        );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         // with simd83 and no duplicate, we take a cross-batch lock on an account to create a conflict
         // with a duplicate transaction and simd83 it comes from message hash equality in the batch
@@ -1122,7 +1093,7 @@ mod tests {
                     &Keypair::new(),
                     &pubkey1,
                     1,
-                    genesis_config.hash(),
+                    bank.last_blockhash(),
                 )]);
             bank.try_lock_accounts(&conflicting_transaction);
         }
@@ -1312,13 +1283,13 @@ mod tests {
 
     #[test]
     fn test_process_transactions_returns_unprocessed_txs() {
-        agave_logger::setup();
-        let GenesisConfigInfo {
-            genesis_config,
+        let TestFrame {
             mint_keypair,
-            ..
-        } = create_slow_genesis_config(10_000);
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+            bank,
+            _bank_forks,
+            mut record_receiver,
+            consumer,
+        } = setup_test(true);
 
         let pubkey = solana_pubkey::new_rand();
 
@@ -1326,21 +1297,11 @@ mod tests {
             &mint_keypair,
             &pubkey,
             1,
-            genesis_config.hash(),
+            bank.last_blockhash(),
         )]);
 
-        // Poh Recorder has no working bank, so should throw MaxHeightReached error on
-        // record
-        let (record_sender, _record_receiver) = record_channels(false);
-        let recorder = TransactionRecorder::new(record_sender);
-
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let committer = Committer::new(
-            None,
-            replay_vote_sender,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
-        );
-        let consumer = Consumer::new(committer, recorder.clone(), QosService::new(1), None);
+        // Channel shutdown should result in error returned on record.
+        record_receiver.shutdown();
 
         let process_transactions_summary =
             consumer.process_and_record_transactions(&bank, &transactions);
