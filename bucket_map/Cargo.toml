@@ -36,6 +36,3 @@ fs_extra = { workspace = true }
 rayon = { workspace = true }
 solana-bucket-map = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
-
-[[bench]]
-name = "bucket_map"
