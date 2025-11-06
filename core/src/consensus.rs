@@ -413,13 +413,12 @@ impl Tower {
             HashMap::with_capacity_and_hasher(total_slots, ahash::RandomState::default());
         let mut total_stake = 0;
 
-        // Tree of intervals of lockouts of the form [slot, slot + slot.lockout],
-        // keyed by end of the range
         let total_votes = vote_accounts
             .values()
             .filter(|(voted_stake, _)| *voted_stake != 0)
             .map(|(_, account)| account.vote_state_view().votes_len())
             .sum();
+        // Flat list of intervals of lockouts of the form {voter, start, end}.
         let mut lockout_intervals = LockoutIntervals::with_capacity(total_votes);
         let mut my_latest_landed_vote = None;
         for (&key, (voted_stake, account)) in vote_accounts.iter() {
@@ -429,11 +428,6 @@ impl Tower {
             }
             trace!("{vote_account_pubkey} {key} with stake {voted_stake}");
             let mut vote_state = TowerVoteState::from(account.vote_state_view());
-            lockout_intervals.extend(vote_state.votes.iter().map(|v| LockoutInterval {
-                start: v.slot(),
-                end: v.last_locked_out_slot(),
-                voter: key,
-            }));
 
             if key == *vote_account_pubkey {
                 my_latest_landed_vote = vote_state.nth_recent_lockout(0).map(|l| l.slot());
@@ -473,16 +467,38 @@ impl Tower {
 
             vote_state.process_next_vote_slot(bank_slot);
 
+            // Should be a noop since we preallocated outside the loop.
+            lockout_intervals.reserve(vote_state.votes.len());
+            let lockout_i_ptr = lockout_intervals.as_mut_ptr();
             // Only record vote slots greater than the fork root. Votes earlier
             // than the fork root will not have entries in `ancestors` and are ignored by
             // `populate_ancestor_voted_stakes`, and there can be no landed votes
             // >= `bank_slot`. Bounding here prevents unnecessary range expansion
             // in the dense maps and keeps behavior identical.
-            for slot in vote_state.votes.iter().filter_map(|v| {
-                let slot = v.slot();
-                (slot > root_slot).then_some(slot)
-            }) {
+            for vote in vote_state
+                .votes
+                .iter()
+                .filter(|vote| vote.slot() > root_slot)
+            {
+                let slot = vote.slot();
                 vote_slots.insert(slot);
+
+                let len = lockout_intervals.len();
+                // Prefer manual writes to avoid capacity and bounds checks incurred by push,
+                // since we have already guaranteed capacity.
+                //
+                // SAFETY:
+                // - `len` points to the next free slot in the vector.
+                // - We have guaranteed capacity for `vote_state.votes.len()` elements,
+                //   which is greater than or equal to the number of filtered votes.
+                unsafe {
+                    lockout_i_ptr.add(len).write(LockoutInterval {
+                        start: slot,
+                        end: vote.last_locked_out_slot(),
+                        voter: key,
+                    });
+                    lockout_intervals.set_len(len + 1);
+                }
             }
 
             if start_root != vote_state.root_slot {
