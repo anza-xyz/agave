@@ -92,14 +92,14 @@ pub(crate) const MIN_ALLOWED_RTT_MS: u64 = 50;
 /// This puts an upper bound on the total amount of bytes we may have to buffer
 /// for a given client, irrespective of stake and RTT. This serves as an upper
 /// bound on memory consumption.
-pub(crate) const MAX_ALLOWED_RX_WINDOW: u32 = 2000 * 1000;
+pub(crate) const MAX_ALLOWED_RX_WINDOW: u32 = 2048 * 1024;
 
 /// Expected mean size of a transaction for the purpose of
 /// receive window <=> streams conversions;
 /// essentially, num_rx_streams = rx_window/MEAN_TRANSACTION_SIZE.
 /// Based on MNB statistics it should be ~600,
 /// but we allow some margin to allow for smaller TXs.
-pub(crate) const MEAN_TRANSACTION_SIZE: usize = 400;
+pub(crate) const MEAN_TRANSACTION_SIZE: u32 = 400;
 
 /// Maximal possible amount of streams to allocate per connection
 ///
@@ -108,7 +108,7 @@ pub(crate) const MEAN_TRANSACTION_SIZE: usize = 400;
 /// The total amount needed depends on desired bandwidth, transaction size
 /// and RTT. This constant puts an upper bound on number of streams to
 /// limit memory consumption.
-const MAX_ALLOWED_UNI_STREAMS: u64 = MAX_ALLOWED_RX_WINDOW as u64 / MEAN_TRANSACTION_SIZE as u64;
+const MAX_ALLOWED_UNI_STREAMS: u32 = MAX_ALLOWED_RX_WINDOW / MEAN_TRANSACTION_SIZE;
 
 /// Total new connection counts per second. Heuristically taken from
 /// the default staked and unstaked connection limits. Might be adjusted
@@ -452,14 +452,24 @@ pub(crate) fn update_open_connections_stat(
 }
 
 /// Compute the RX window based on bandwidth-delay-product
-fn compute_receive_window(max_receive_rate_kbps: u64, rtt: Duration) -> VarInt {
+///
+/// This will attempt to match reference TPS for high-latency connections,
+/// and will not artifically slow down connections with latency < [`MIN_ALLOWED_RTT_MS`]
+fn compute_receive_window_and_max_streams(reference_tps: u64, rtt: Duration) -> (VarInt, VarInt) {
+    // the desired transfer rate in bytes/second for RX window computation
+    let reference_transfer_rate = reference_tps * MEAN_TRANSACTION_SIZE as u64;
     // truncate here is safe since u64 millis is an eternity
-    let millis = (rtt.as_millis() as u64).clamp(MIN_ALLOWED_RTT_MS, MAX_ALLOWED_RTT_MS);
-    // Compute the receive window in bytes as max_rx_rate * rtt / 8,
-    let receive_window = (max_receive_rate_kbps * millis) / 8;
+    let rtt_milliseconds = (rtt.as_millis() as u64).clamp(MIN_ALLOWED_RTT_MS, MAX_ALLOWED_RTT_MS);
+    // Compute the receive window in bytes as reference_transfer_rate * rtt,
+    let receive_window = reference_transfer_rate * rtt_milliseconds;
     // hard constraint the RX window to avoid excess memory use
     let receive_window = receive_window.min(MAX_ALLOWED_RX_WINDOW as u64) as u32;
-    VarInt::from_u32(receive_window)
+    // compute max_streams in flight
+    let max_streams = (receive_window / MEAN_TRANSACTION_SIZE).min(MAX_ALLOWED_UNI_STREAMS);
+    (
+        VarInt::from_u32(receive_window),
+        VarInt::from_u32(max_streams),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -751,17 +761,13 @@ async fn handle_connection<Q, C>(
     let peer_type = context.peer_type();
     let remote_addr = connection.remote_address();
     connection.set_max_concurrent_bi_streams(VarInt::from_u32(0));
-    let max_receive_rate_kbps = qos.get_max_bitrate_kbps(&context);
-    let initial_rx_window = compute_receive_window(max_receive_rate_kbps, connection.rtt());
+    let max_target_tps_per_connection = qos.reference_tps(&context);
+    let (initial_rx_window, max_streams) =
+        compute_receive_window_and_max_streams(max_target_tps_per_connection, connection.rtt());
     connection.set_receive_window(initial_rx_window);
-    let max_streams = VarInt::from_u64(
-        (initial_rx_window.into_inner() / MEAN_TRANSACTION_SIZE as u64)
-            .min(MAX_ALLOWED_UNI_STREAMS),
-    )
-    .expect("dividing VarInt by positive integer will never overflow VarInt");
     connection.set_max_concurrent_uni_streams(max_streams);
     debug!(
-        "quic new connection {remote_addr}, max_receive_rate {max_receive_rate_kbps} Kbps \
+        "quic new connection {remote_addr}, max_receive_rate {max_target_tps_per_connection} Kbps \
          (receive_window {initial_rx_window} max_streams {max_streams:?} RTT {rtt}ms), streams: \
          {streams} connections: {connections}",
         rtt = connection.rtt().as_millis(),
@@ -871,12 +877,15 @@ async fn handle_connection<Q, C>(
         stats.active_streams.fetch_sub(1, Ordering::Relaxed);
         qos.on_stream_closed(&context);
         if (stream_number % 128) == 0 {
-            let new_window = compute_receive_window(max_receive_rate_kbps, connection.rtt());
+            let (new_window, _) = compute_receive_window_and_max_streams(
+                max_target_tps_per_connection,
+                connection.rtt(),
+            );
             trace!(
                 "Updating receive window for {remote_addr:?} to {new_window:?} based on rtt {:?} \
                  and target bitrate {} kbps",
                 connection.rtt(),
-                max_receive_rate_kbps
+                max_target_tps_per_connection
             );
             connection.set_receive_window(new_window);
             // we do not update number of allowed streams here since

@@ -5,7 +5,7 @@ use {
             quic::{
                 get_connection_stake, update_open_connections_stat, ClientConnectionTracker,
                 ConnectionHandlerError, ConnectionPeerType, ConnectionTable, ConnectionTableKey,
-                ConnectionTableType, MEAN_TRANSACTION_SIZE,
+                ConnectionTableType,
             },
             stream_throttle::{
                 throttle_stream, ConnectionStreamCounter, STREAM_THROTTLING_INTERVAL,
@@ -160,9 +160,9 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
         }
     }
 
-    fn get_max_bitrate_kbps(&self, _context: &SimpleQosConnectionContext) -> u64 {
-        // choose max_bitrate with 4x margin
-        self.max_streams_per_second * 4 * MEAN_TRANSACTION_SIZE as u64 * 8 / 1000
+    fn reference_tps(&self, _context: &SimpleQosConnectionContext) -> u64 {
+        // allocate network bandwidth with 4x margin
+        self.max_streams_per_second * 4
     }
 
     #[allow(clippy::manual_async_fn)]

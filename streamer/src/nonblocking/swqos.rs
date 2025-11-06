@@ -30,33 +30,35 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-/// Target max bitrate for an unstaked connection
-/// This is max raw network bitrare, actual TPS will be enforced
+/// Reference TPS for an unstaked (or very low-staked) connection.
+/// This defines the raw network buffer allocations, actual TPS will be enforced
 /// by the throttling logic. This directly impacts the amount of RAM
 /// that a connection can require to support RX buffers.
 ///
 /// This needs to be constrained to ensure that we can admit a lot of unstaked
-/// connections without consuming too much RAM. The 4Mbps target for unstaked connection
-/// allows for about 1200 TPS with mean TX size of 400 bytes, and will still allow 100 TPS
-/// at maximal planned TX size of 4096 bytes.
-pub(crate) const TARGET_UNSTAKED_KBPS: u64 = 4000;
+/// connections without consuming too much RAM.
+pub(crate) const UNSTAKED_CONNECTION_REFERENCE_TPS: u64 = 1250;
 
-/// Target max bitrate for a staked connection with maximum
+/// Reference max TPS for a single staked connection with maximum
 /// stake amount through the cluster. Connections will get
-/// bitrates interpolated between this and [`TARGET_UNSTAKED_KBPS`]
+/// buffer allocations based on a TPS target interpolated
+/// between this and [`TARGET_BASE_TPS_PER_CONNECTION`],
 /// based on their actual stake amount relative to maximum.
-/// This is only the max network bitrare, actual TPS will be enforced
+/// This affects the RX bufffers only, true TPS will be enforced
 /// by the throttling logic.
 ///
-/// We want to allocate more bandwidth to staked nodes, since we have a
-/// fairly small number of staked nodes. We want to keep this as large
+/// We generally want to allocate more bandwidth to staked nodes, since
+/// we have fairly small number of them. We want to keep this as large
 /// as is reasonable to ensure that the staked connections can submit as
 /// many transactions as they have available. Of course we do not want
 /// to make this infinitely large to avoid the TPU bandwidth exhaustion
-/// if all staked nodes decide to use their allowance at the same time.
-/// Current value chosen to allow about 25000 TPS, and limit the total
-/// TPU bandwidth per identity to 80 Mbps.
-pub(crate) const TARGET_MAX_STAKED_KBPS: u64 = TARGET_UNSTAKED_KBPS * 20;
+/// if all staked nodes decide to use their allowance at the same time,
+/// as it takes time for them to receive feedback from the server and slow
+/// down.
+///
+/// Current value chosen to allow about 25000 TPS per connection (200K TPS
+/// per staked identity if it uses all 8 connections).
+pub(crate) const MAX_STAKED_CONNECTION_REFERENCE_TPS: u64 = UNSTAKED_CONNECTION_REFERENCE_TPS * 20;
 
 #[derive(Clone)]
 pub struct SwQosConfig {
@@ -462,14 +464,14 @@ impl QosController<SwQosConnectionContext> for SwQos {
         }
     }
 
-    fn get_max_bitrate_kbps(&self, context: &SwQosConnectionContext) -> u64 {
-        get_max_bitrate_kbps(context.peer_type, context.max_stake)
+    fn reference_tps(&self, context: &SwQosConnectionContext) -> u64 {
+        get_reference_tps(context.peer_type, context.max_stake)
     }
 }
 
-// computes max_bitrate as a linear interpolation between TARGET_UNSTAKED_KBPS and
-// TARGET_MAX_STAKED_KBPS based on stake amount
-fn get_max_bitrate_kbps(peer_type: ConnectionPeerType, max_stake: u64) -> u64 {
+/// computes refernce TPS as a linear interpolation between [`UNSTAKED_CONNECTION_REFERENCE_TPS`] and
+/// [`MAX_STAKED_CONNECTION_REFERENCE_TPS`] based on the actual stake amount
+fn get_reference_tps(peer_type: ConnectionPeerType, max_stake: u64) -> u64 {
     let stake = match peer_type {
         ConnectionPeerType::Unstaked => 0,
         ConnectionPeerType::Staked(peer_stake) => peer_stake,
@@ -478,11 +480,11 @@ fn get_max_bitrate_kbps(peer_type: ConnectionPeerType, max_stake: u64) -> u64 {
 
     // real cluster always has staked nodes, but unittests may have 100% unstaked
     if max_stake == 0 {
-        return TARGET_UNSTAKED_KBPS;
+        return UNSTAKED_CONNECTION_REFERENCE_TPS;
     }
 
-    let max_rate = TARGET_MAX_STAKED_KBPS;
-    let min_rate = TARGET_UNSTAKED_KBPS;
+    let max_rate = MAX_STAKED_CONNECTION_REFERENCE_TPS;
+    let min_rate = UNSTAKED_CONNECTION_REFERENCE_TPS;
     // Linear interpolation between min and max as
     // stake approaches max_stake
     min_rate + ((stake as u128 * (max_rate - min_rate) as u128) / (max_stake as u128)) as u64
@@ -493,20 +495,21 @@ pub mod test {
     use super::*;
 
     #[test]
-    fn test_cacluate_receive_window_ratio_for_staked_node() {
+    fn test_cacluate_refernce_tps_for_staked_node() {
         let max_stake = 10000;
 
-        let rate = get_max_bitrate_kbps(ConnectionPeerType::Unstaked, max_stake);
-        assert_eq!(rate, TARGET_UNSTAKED_KBPS);
+        let rate = get_reference_tps(ConnectionPeerType::Unstaked, max_stake);
+        assert_eq!(rate, UNSTAKED_CONNECTION_REFERENCE_TPS);
 
-        let rate = get_max_bitrate_kbps(ConnectionPeerType::Staked(max_stake), max_stake);
-        assert_eq!(rate, TARGET_MAX_STAKED_KBPS);
+        let rate = get_reference_tps(ConnectionPeerType::Staked(max_stake), max_stake);
+        assert_eq!(rate, MAX_STAKED_CONNECTION_REFERENCE_TPS);
 
-        let rate = get_max_bitrate_kbps(ConnectionPeerType::Staked(max_stake / 2), max_stake);
-        let average_ratio = (TARGET_MAX_STAKED_KBPS + TARGET_UNSTAKED_KBPS) / 2;
+        let rate = get_reference_tps(ConnectionPeerType::Staked(max_stake / 2), max_stake);
+        let average_ratio =
+            (MAX_STAKED_CONNECTION_REFERENCE_TPS + UNSTAKED_CONNECTION_REFERENCE_TPS) / 2;
         assert_eq!(rate, average_ratio);
 
-        let rate = get_max_bitrate_kbps(ConnectionPeerType::Staked(max_stake + 10), max_stake);
-        assert_eq!(rate, TARGET_MAX_STAKED_KBPS);
+        let rate = get_reference_tps(ConnectionPeerType::Staked(max_stake + 10), max_stake);
+        assert_eq!(rate, MAX_STAKED_CONNECTION_REFERENCE_TPS);
     }
 }
