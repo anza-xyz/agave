@@ -460,8 +460,8 @@ fn compute_receive_window_and_max_streams(reference_tps: u64, rtt: Duration) -> 
     let reference_transfer_rate = reference_tps * MEAN_TRANSACTION_SIZE as u64;
     // truncate here is safe since u64 millis is an eternity
     let rtt_milliseconds = (rtt.as_millis() as u64).clamp(MIN_ALLOWED_RTT_MS, MAX_ALLOWED_RTT_MS);
-    // Compute the receive window in bytes as reference_transfer_rate * rtt,
-    let receive_window = reference_transfer_rate * rtt_milliseconds;
+    // Compute the receive window in bytes as transfer_rate * rtt,
+    let receive_window = reference_transfer_rate * rtt_milliseconds / 1000;
     // hard constraint the RX window to avoid excess memory use
     let receive_window = receive_window.min(MAX_ALLOWED_RX_WINDOW as u64) as u32;
     // compute max_streams in flight

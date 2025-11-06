@@ -37,7 +37,7 @@ use {
 ///
 /// This needs to be constrained to ensure that we can admit a lot of unstaked
 /// connections without consuming too much RAM.
-pub(crate) const UNSTAKED_CONNECTION_REFERENCE_TPS: u64 = 1250;
+pub(crate) const UNSTAKED_CONNECTION_REFERENCE_TPS: u64 = 6000;
 
 /// Reference max TPS for a single staked connection with maximum
 /// stake amount through the cluster. Connections will get
@@ -56,9 +56,8 @@ pub(crate) const UNSTAKED_CONNECTION_REFERENCE_TPS: u64 = 1250;
 /// as it takes time for them to receive feedback from the server and slow
 /// down.
 ///
-/// Current value chosen to allow about 25000 TPS per connection (200K TPS
-/// per staked identity if it uses all 8 connections).
-pub(crate) const MAX_STAKED_CONNECTION_REFERENCE_TPS: u64 = UNSTAKED_CONNECTION_REFERENCE_TPS * 20;
+/// Current value chosen based on legacy values (todo:increase it at least 5x)
+pub(crate) const MAX_STAKED_CONNECTION_REFERENCE_TPS: u64 = UNSTAKED_CONNECTION_REFERENCE_TPS * 4;
 
 #[derive(Clone)]
 pub struct SwQosConfig {
