@@ -604,7 +604,7 @@ async fn handle_connection<Q, C>(
     );
     stats.total_connections.fetch_add(1, Ordering::Relaxed);
 
-    'conn: loop {
+    'conn: for stream_index in 0.. {
         // Wait for new streams. If the peer is disconnected we get a cancellation signal and stop
         // the connection task.
         let mut stream = select! {
@@ -699,7 +699,7 @@ async fn handle_connection<Q, C>(
         }
 
         stats.active_streams.fetch_sub(1, Ordering::Relaxed);
-        qos.on_stream_closed(&context);
+        qos.on_stream_closed(&connection, &context, stream_index);
     }
 
     let removed_connection_count = qos.remove_connection(&context, connection).await;

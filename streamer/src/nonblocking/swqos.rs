@@ -37,10 +37,16 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-/// Below this latency, we apply the legacy logic (no BDP scaling)
-/// Above this latency, we increase the RX window and number of streams
+/// Below this RTT, we apply the legacy logic (no BDP scaling)
+/// Above this RTT, we increase the RX window and number of streams
 /// as RTT increases to preserve reasonable bandwidth.
-const REFERENCE_LATENCY_MS: u64 = 50;
+const REFERENCE_RTT_MS: u64 = 50;
+
+/// Above this RTT we stop scaling for BDP
+const MAX_RTT_MS: u64 = 350;
+
+/// After receiving this many streams, update the RX window
+const RX_WINDOW_UPDATE_INTERVAL_STREAMS: u64 = 256;
 
 #[derive(Clone)]
 pub struct SwQosConfig {
@@ -169,7 +175,7 @@ fn compute_recieve_window(
         }
     };
     // scale for BDP
-    let rx_window = rx_window * rtt_millis.max(REFERENCE_LATENCY_MS) / REFERENCE_LATENCY_MS;
+    let rx_window = rx_window * rtt_millis.max(REFERENCE_RTT_MS) / REFERENCE_RTT_MS;
     VarInt::from_u32(rx_window.min(u32::MAX as u64) as u32)
 }
 
@@ -202,7 +208,7 @@ fn compute_max_allowed_uni_streams(
         }
         ConnectionPeerType::Unstaked => QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
     };
-    let streams = streams as u64 * rtt_millis.max(REFERENCE_LATENCY_MS) / REFERENCE_LATENCY_MS;
+    let streams = streams as u64 * rtt_millis.max(REFERENCE_RTT_MS) / REFERENCE_RTT_MS;
     streams.min(u32::MAX as u64) as u32
 }
 
@@ -221,16 +227,17 @@ impl SwQos {
         ),
         ConnectionHandlerError,
     > {
-        let rtt = connection.rtt();
+        // get current RTT and limit it to MAX_RTT_MS
+        let rtt_millis = (connection.rtt().as_millis() as u64).min(MAX_RTT_MS);
         let max_uni_streams = VarInt::from_u32(compute_max_allowed_uni_streams(
-            rtt.as_millis() as u64, // this cast will never overflow for plausible RTT
+            rtt_millis,
             conn_context.peer_type(),
             conn_context.total_stake,
         ));
 
         let remote_addr = connection.remote_address();
         let receive_window = compute_recieve_window(
-            rtt.as_millis() as u64, // this cast will never overflow for plausible RTT
+            rtt_millis,
             conn_context.max_stake,
             conn_context.min_stake,
             conn_context.peer_type(),
@@ -498,8 +505,25 @@ impl QosController<SwQosConnectionContext> for SwQos {
         self.staked_stream_load_ema.update_ema_if_needed();
     }
 
-    fn on_stream_closed(&self, _conn_context: &SwQosConnectionContext) {
+    fn on_stream_closed(
+        &self,
+        connection: &Connection,
+        conn_context: &SwQosConnectionContext,
+        stream_index: u64,
+    ) {
         self.staked_stream_load_ema.update_ema_if_needed();
+        if stream_index % RX_WINDOW_UPDATE_INTERVAL_STREAMS == 0 {
+            // get current RTT and limit it to MAX_RTT_MS
+            let rtt_millis = (connection.rtt().as_millis() as u64).min(MAX_RTT_MS);
+
+            let receive_window = compute_recieve_window(
+                rtt_millis,
+                conn_context.max_stake,
+                conn_context.min_stake,
+                conn_context.peer_type(),
+            );
+            connection.set_receive_window(receive_window);
+        }
     }
 
     #[allow(clippy::manual_async_fn)]
@@ -599,22 +623,18 @@ pub mod test {
 
     fn test_max_allowed_uni_streams() {
         assert_eq!(
-            compute_max_allowed_uni_streams(REFERENCE_LATENCY_MS, ConnectionPeerType::Unstaked, 0),
+            compute_max_allowed_uni_streams(REFERENCE_RTT_MS, ConnectionPeerType::Unstaked, 0),
             QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS as u32
         );
         assert_eq!(
-            compute_max_allowed_uni_streams(
-                REFERENCE_LATENCY_MS,
-                ConnectionPeerType::Staked(10),
-                0
-            ),
+            compute_max_allowed_uni_streams(REFERENCE_RTT_MS, ConnectionPeerType::Staked(10), 0),
             QUIC_MIN_STAKED_CONCURRENT_STREAMS as u32
         );
         let delta =
             (QUIC_TOTAL_STAKED_CONCURRENT_STREAMS - QUIC_MIN_STAKED_CONCURRENT_STREAMS) as f64;
         assert_eq!(
             compute_max_allowed_uni_streams(
-                REFERENCE_LATENCY_MS,
+                REFERENCE_RTT_MS,
                 ConnectionPeerType::Staked(1000),
                 10000
             ),
@@ -622,7 +642,7 @@ pub mod test {
         );
         assert_eq!(
             compute_max_allowed_uni_streams(
-                REFERENCE_LATENCY_MS,
+                REFERENCE_RTT_MS,
                 ConnectionPeerType::Staked(100),
                 10000
             ),
@@ -630,11 +650,7 @@ pub mod test {
                 .min(QUIC_MAX_STAKED_CONCURRENT_STREAMS) as u32
         );
         assert_eq!(
-            compute_max_allowed_uni_streams(
-                REFERENCE_LATENCY_MS,
-                ConnectionPeerType::Unstaked,
-                10000
-            ),
+            compute_max_allowed_uni_streams(REFERENCE_RTT_MS, ConnectionPeerType::Unstaked, 10000),
             QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS as u32
         );
     }

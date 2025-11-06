@@ -224,7 +224,13 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
 
     fn on_stream_error(&self, _conn_context: &SimpleQosConnectionContext) {}
 
-    fn on_stream_closed(&self, _conn_context: &SimpleQosConnectionContext) {}
+    fn on_stream_closed(
+        &self,
+        _connection: &Connection,
+        _conn_context: &SimpleQosConnectionContext,
+        _stream_index: u64,
+    ) {
+    }
 
     #[allow(clippy::manual_async_fn)]
     fn remove_connection(
