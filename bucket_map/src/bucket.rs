@@ -15,11 +15,11 @@ use {
         restart::RestartableBucket,
         MaxSearch, RefCount,
     },
+    ahash::AHasher,
     rand::{thread_rng, Rng},
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     std::{
-        collections::hash_map::DefaultHasher,
         fs,
         hash::{Hash, Hasher},
         num::NonZeroU64,
@@ -822,7 +822,7 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
     }
 
     fn bucket_index_ix(key: &Pubkey, random: u64) -> u64 {
-        let mut s = DefaultHasher::new();
+        let mut s = AHasher::default();
         key.hash(&mut s);
         //the locally generated random will make it hard for an attacker
         //to deterministically cause all the pubkeys to land in the same
