@@ -20,6 +20,12 @@ Release channels have their own copy of this changelog:
 * Added `--enable-scheduler-bindings` which binds an IPC server at `<ledger-path>/scheduler_bindings.ipc` for external schedulers to connect to.
 ### Validator
 #### Breaking
+* All monorepo crates falling outside the
+[backward compatibility policy](https://docs.anza.xyz/backwards-compatibility) are now part
+of the Agave Unstable API and their symbols have been made private. Enable the
+`agave-unstable-api` crate feature to acknowledge use of an interface that may break
+without warning.
+
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
 
