@@ -81,7 +81,6 @@ fn append_vec_sequential_read(bencher: &mut Bencher, storage_access: StorageAcce
     let mut indexes = add_test_accounts(&vec, size);
     bencher.iter(|| {
         let (sample, pos) = indexes.pop().unwrap();
-        println!("reading pos {sample} {pos}");
         vec.get_stored_account_callback(pos, |account| {
             let (_pubkey, test) = create_test_account(sample);
             assert_eq!(account.data(), test.data());
