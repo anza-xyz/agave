@@ -13,8 +13,8 @@ use {
     solana_sdk_ids::bpf_loader_deprecated,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     solana_transaction_context::{
-        BorrowedInstructionAccount, IndexOfAccount, InstructionContext,
-        MAX_ACCOUNTS_PER_INSTRUCTION,
+        instruction::InstructionContext, instruction_accounts::BorrowedInstructionAccount,
+        IndexOfAccount, MAX_ACCOUNTS_PER_INSTRUCTION,
     },
     std::mem::{self, size_of},
 };
@@ -680,7 +680,8 @@ mod tests {
         solana_sdk_ids::bpf_loader,
         solana_system_interface::MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
         solana_transaction_context::{
-            InstructionAccount, TransactionContext, MAX_ACCOUNTS_PER_TRANSACTION,
+            instruction_accounts::InstructionAccount, TransactionContext,
+            MAX_ACCOUNTS_PER_TRANSACTION,
         },
         std::{
             borrow::Cow,

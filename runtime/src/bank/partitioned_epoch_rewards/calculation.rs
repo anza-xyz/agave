@@ -672,8 +672,8 @@ mod tests {
                 partitioned_epoch_rewards::{
                     tests::{
                         build_partitioned_stake_rewards, create_default_reward_bank,
-                        create_reward_bank, create_reward_bank_with_specific_stakes, RewardBank,
-                        SLOTS_PER_EPOCH,
+                        create_reward_bank, create_reward_bank_with_specific_stakes,
+                        populate_vote_accounts_with_votes, RewardBank, SLOTS_PER_EPOCH,
                     },
                     EpochRewardPhase, EpochRewardStatus, PartitionedStakeRewards,
                     StartBlockHeightAndPartitionedRewards,
@@ -682,7 +682,8 @@ mod tests {
                 RewardInfo, VoteReward,
             },
             stake_account::StakeAccount,
-            stakes::Stakes,
+            stake_utils,
+            stakes::{tests::create_staked_node_accounts, Stakes},
         },
         agave_feature_set::FeatureSet,
         rayon::ThreadPoolBuilder,
@@ -693,7 +694,10 @@ mod tests {
         solana_stake_interface::state::{Delegation, StakeStateV2},
         solana_vote_interface::state::VoteStateV4,
         solana_vote_program::vote_state,
-        std::sync::{Arc, RwLockReadGuard},
+        std::{
+            collections::HashSet,
+            sync::{Arc, RwLockReadGuard},
+        },
     };
 
     #[test]
@@ -1413,5 +1417,227 @@ mod tests {
         let vote_reward_c = accumulator.vote_rewards.get(&vote_pubkey_c).unwrap();
         assert_eq!(vote_reward_c.commission, 10);
         assert_eq!(vote_reward_c.vote_rewards, 50);
+    }
+
+    #[test]
+    fn test_epoch_rewards_cache_multiple_forks() {
+        let (mut genesis_config, _mint_keypair) =
+            create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+
+        const NUM_STAKES: usize = 1000;
+
+        for _i in 0..NUM_STAKES {
+            let vote_pubkey = Pubkey::new_unique();
+            let stake_pubkey = Pubkey::new_unique();
+
+            genesis_config.accounts.insert(
+                vote_pubkey,
+                vote_state::create_v4_account_with_authorized(
+                    &vote_pubkey,
+                    &Pubkey::new_unique(),
+                    &Pubkey::new_unique(),
+                    None,
+                    0,
+                    100_000_000_000,
+                )
+                .into(),
+            );
+
+            let stake_lamports = 1_000_000_000_000;
+            let stake_account = stake_utils::create_stake_account(
+                &stake_pubkey,
+                &vote_pubkey,
+                &vote_state::create_v4_account_with_authorized(
+                    &vote_pubkey,
+                    &Pubkey::new_unique(),
+                    &Pubkey::new_unique(),
+                    None,
+                    0,
+                    100_000_000_000,
+                ),
+                &genesis_config.rent,
+                stake_lamports,
+            );
+            genesis_config
+                .accounts
+                .insert(stake_pubkey, stake_account.into());
+        }
+
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let slots_per_epoch = bank.epoch_schedule().slots_per_epoch;
+        {
+            let cache = bank.epoch_rewards_calculation_cache.lock().unwrap();
+            assert!(
+                !cache.contains_key(&bank.parent_hash()),
+                "cache should be empty"
+            );
+        }
+
+        let bank_fork1 =
+            Bank::new_from_parent(Arc::clone(&bank), &Pubkey::default(), slots_per_epoch);
+        {
+            let cache = bank_fork1.epoch_rewards_calculation_cache.lock().unwrap();
+            assert!(
+                cache.contains_key(&bank_fork1.parent_hash()),
+                "cache should be populated"
+            );
+        }
+
+        let bank_fork2 = Bank::new_from_parent(bank, &Pubkey::default(), slots_per_epoch);
+        {
+            let cache = bank_fork2.epoch_rewards_calculation_cache.lock().unwrap();
+            assert!(
+                cache.contains_key(&bank_fork2.parent_hash()),
+                "cache should be populated"
+            );
+        }
+    }
+
+    fn add_voters_and_populate(
+        bank: &Arc<Bank>,
+        voters: &mut HashSet<Pubkey>,
+        stakers: &mut HashSet<Pubkey>,
+        count: usize,
+        stake_lamports: u64,
+        commission: u8,
+    ) {
+        for _ in 0..count {
+            let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
+                create_staked_node_accounts(stake_lamports);
+            bank.store_account_and_update_capitalization(&vote_pubkey, &vote_account);
+            bank.store_account_and_update_capitalization(&stake_pubkey, &stake_account);
+            voters.insert(vote_pubkey);
+            stakers.insert(stake_pubkey);
+        }
+        populate_vote_accounts_with_votes(bank, voters.iter().copied(), commission);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn assert_cached_rewards(
+        bank: &Arc<Bank>,
+        expected_cache_len: usize,
+        expected_voters: &HashSet<Pubkey>,
+        expected_stakers: &HashSet<Pubkey>,
+        expected_vote_rewards: u64,
+        expected_stake_rewards: u64,
+        expected_rewards: u64,
+        expected_points: u128,
+        parent_capitalization: Option<u64>,
+    ) {
+        let cache = bank.epoch_rewards_calculation_cache.lock().unwrap();
+        assert_eq!(cache.len(), expected_cache_len);
+        let partitioned = cache.get(&bank.parent_hash()).unwrap().as_ref();
+        let VoteRewardsAccounts {
+            accounts_with_rewards,
+            total_vote_rewards_lamports,
+            ..
+        } = &partitioned.vote_account_rewards;
+        let StakeRewardCalculation {
+            stake_rewards,
+            total_stake_rewards_lamports,
+            ..
+        } = &partitioned.stake_rewards;
+        let point_value = &partitioned.point_value;
+        let voters: HashSet<_> = accounts_with_rewards
+            .iter()
+            .map(|(pubkey, _reward, _acc)| *pubkey)
+            .collect();
+        let stakers: HashSet<_> = stake_rewards
+            .rewards
+            .iter()
+            .filter_map(|reward| reward.as_ref())
+            .map(|reward| reward.stake_pubkey)
+            .collect();
+        assert_eq!(expected_voters, &voters);
+        assert_eq!(expected_stakers, &stakers);
+        assert_eq!(*total_vote_rewards_lamports, expected_vote_rewards);
+        assert_eq!(*total_stake_rewards_lamports, expected_stake_rewards);
+        assert_eq!(point_value.rewards, expected_rewards);
+        assert_eq!(point_value.points, expected_points);
+        if let Some(parent_cap) = parent_capitalization {
+            assert_eq!(bank.capitalization(), parent_cap + expected_vote_rewards);
+        }
+    }
+
+    #[test]
+    fn test_epoch_boundary() {
+        let delegations = 100;
+        let stake_lamports = 2_000_000_000;
+        let stakes: Vec<_> = (0..delegations).map(|_| stake_lamports).collect();
+        let (
+            RewardBank {
+                bank: bank1,
+                voters,
+                stakers,
+                ..
+            },
+            _bank_forks,
+        ) = create_reward_bank_with_specific_stakes(
+            stakes,
+            PartitionedEpochRewardsConfig::default().stake_account_stores_per_block,
+            SLOTS_PER_EPOCH,
+        );
+        let mut voters: HashSet<_> = voters.into_iter().collect();
+        let mut stakers: HashSet<_> = stakers.into_iter().collect();
+
+        // The sysvar account holds the rent-exempt lamport added after
+        // reward calculation, so the bank capitalization exceeds the cached
+        // value by this amount.
+        let epoch_rewards_sysvar_balance = bank1.get_balance(&solana_sysvar::epoch_rewards::id());
+        assert_eq!(epoch_rewards_sysvar_balance, 1);
+
+        assert_cached_rewards(
+            &bank1,
+            1,                     // expected_cache_len
+            &voters,               // expected_voters
+            &stakers,              // expected_stakers
+            0,                     // expected_vote_rewards
+            12300,                 // expected_stake_rewards
+            12392,                 // expected_rewards
+            8_400_000_000_000u128, // expected_points
+            None,                  // parent_capitalization
+        );
+
+        add_voters_and_populate(&bank1, &mut voters, &mut stakers, 5, 5_000_000_000, 10);
+        let parent_capitalization = bank1.capitalization();
+
+        let bank2 = Arc::new(Bank::new_from_parent(
+            Arc::clone(&bank1),
+            &Pubkey::default(),
+            SLOTS_PER_EPOCH * 2,
+        ));
+
+        assert_cached_rewards(
+            &bank2,
+            2,                           // expected_cache_len
+            &voters,                     // expected_voters
+            &stakers,                    // expected_stakers
+            1245,                        // expected_vote_rewards
+            11810,                       // expected_stake_rewards
+            13163,                       // expected_rewards
+            9_450_000_000_000u128,       // expected_points
+            Some(parent_capitalization), // parent_capitalization
+        );
+
+        add_voters_and_populate(&bank2, &mut voters, &mut stakers, 10, 8_000_000_000, 10);
+        let parent_capitalization = bank2.capitalization();
+
+        let bank3 = Arc::new(Bank::new_from_parent(
+            Arc::clone(&bank2),
+            &Pubkey::default(),
+            SLOTS_PER_EPOCH * 3,
+        ));
+
+        assert_cached_rewards(
+            &bank3,
+            3,                           // expected_cache_len
+            &voters,                     // expected_voters
+            &stakers,                    // expected_stakers
+            1525,                        // expected_vote_rewards
+            13930,                       // expected_stake_rewards
+            15629,                       // expected_rewards
+            12_810_000_000_000u128,      // expected_points
+            Some(parent_capitalization), // parent_capitalization
+        );
     }
 }

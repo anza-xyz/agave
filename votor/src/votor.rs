@@ -45,7 +45,9 @@ use {
     crate::{
         commitment::CommitmentAggregationData,
         common::DELTA_STANDSTILL,
-        consensus_metrics::ConsensusMetrics,
+        consensus_metrics::{
+            ConsensusMetrics, ConsensusMetricsEventReceiver, ConsensusMetricsEventSender,
+        },
         consensus_pool_service::{ConsensusPoolContext, ConsensusPoolService},
         event::{LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
         event_handler::{EventHandler, EventHandlerContext},
@@ -79,7 +81,7 @@ use {
             atomic::{AtomicBool, Ordering},
             Arc, Condvar, Mutex, RwLock,
         },
-        thread,
+        thread::{self, JoinHandle},
         time::Duration,
     },
 };
@@ -119,10 +121,12 @@ pub struct VotorConfig {
     pub leader_window_notifier: Arc<LeaderWindowNotifier>,
     pub event_sender: VotorEventSender,
     pub own_vote_sender: Sender<ConsensusMessage>,
+    pub consensus_metrics_sender: ConsensusMetricsEventSender,
 
     // Receivers
     pub event_receiver: VotorEventReceiver,
     pub consensus_message_receiver: Receiver<ConsensusMessage>,
+    pub consensus_metrics_receiver: ConsensusMetricsEventReceiver,
 }
 
 /// Context shared with block creation, replay, gossip, banking stage etc
@@ -143,6 +147,7 @@ pub struct Votor {
     event_handler: EventHandler,
     consensus_pool_service: ConsensusPoolService,
     timer_manager: Arc<PlRwLock<TimerManager>>,
+    consensus_metrics_handle: JoinHandle<()>,
 }
 
 impl Votor {
@@ -170,6 +175,8 @@ impl Votor {
             event_receiver,
             own_vote_sender,
             consensus_message_receiver,
+            consensus_metrics_sender,
+            consensus_metrics_receiver,
         } = config;
 
         let start = Arc::new((Mutex::new(false), Condvar::new()));
@@ -189,9 +196,6 @@ impl Votor {
             vote_history_storage,
         };
 
-        let consensus_metrics = Arc::new(PlRwLock::new(ConsensusMetrics::new(
-            sharable_banks.root().epoch(),
-        )));
         let voting_context = VotingContext {
             vote_history,
             vote_account_pubkey: vote_account,
@@ -204,7 +208,7 @@ impl Votor {
             commitment_sender: commitment_sender.clone(),
             wait_to_vote_slot,
             sharable_banks: sharable_banks.clone(),
-            consensus_metrics: consensus_metrics.clone(),
+            consensus_metrics_sender: consensus_metrics_sender.clone(),
         };
 
         let root_context = RootContext {
@@ -217,7 +221,6 @@ impl Votor {
         let timer_manager = Arc::new(PlRwLock::new(TimerManager::new(
             event_sender.clone(),
             exit.clone(),
-            consensus_metrics,
         )));
 
         let event_handler_context = EventHandlerContext {
@@ -229,6 +232,8 @@ impl Votor {
             voting_context,
             root_context,
         };
+
+        let root_epoch = sharable_banks.root().epoch();
 
         let consensus_pool_context = ConsensusPoolContext {
             exit: exit.clone(),
@@ -245,6 +250,11 @@ impl Votor {
             delta_standstill: DELTA_STANDSTILL,
         };
 
+        let consensus_metrics_handle = ConsensusMetrics::start_metrics_loop(
+            root_epoch,
+            consensus_metrics_receiver,
+            exit.clone(),
+        );
         let event_handler = EventHandler::new(event_handler_context);
         let consensus_pool_service = ConsensusPoolService::new(consensus_pool_context);
 
@@ -253,6 +263,7 @@ impl Votor {
             event_handler,
             consensus_pool_service,
             timer_manager,
+            consensus_metrics_handle,
         }
     }
 
@@ -297,6 +308,7 @@ impl Votor {
                 }
             }
         }
-        self.event_handler.join()
+        self.event_handler.join()?;
+        self.consensus_metrics_handle.join()
     }
 }

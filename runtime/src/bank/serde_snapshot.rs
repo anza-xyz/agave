@@ -79,7 +79,7 @@ mod tests {
 
     /// Test roundtrip serialize/deserialize of a bank
     #[test_matrix(
-        [StorageAccess::Mmap, StorageAccess::File]
+        [#[allow(deprecated)] StorageAccess::Mmap, StorageAccess::File]
     )]
     fn test_serialize_bank_snapshot(storage_access: StorageAccess) {
         let (mut genesis_config, _) = create_genesis_config(500);
@@ -180,7 +180,7 @@ mod tests {
         bank.flush_accounts_cache_slot_for_tests()
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_extra_fields_eof(storage_access: StorageAccess) {
         agave_logger::setup();

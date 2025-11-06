@@ -64,6 +64,7 @@ use {
         collections::HashMap,
         net::{SocketAddr, UdpSocket},
         num::NonZeroUsize,
+        path::PathBuf,
         sync::{atomic::AtomicBool, Arc, RwLock},
         thread::{self, JoinHandle},
         time::Duration,
@@ -164,6 +165,7 @@ impl Tpu {
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
         key_notifiers: Arc<RwLock<KeyUpdaters>>,
         banking_control_receiver: mpsc::Receiver<BankingControlMsg>,
+        scheduler_bindings: Option<(PathBuf, mpsc::Sender<BankingControlMsg>)>,
         cancel: CancellationToken,
     ) -> Self {
         let TpuSockets {
@@ -346,6 +348,13 @@ impl Tpu {
             bank_forks.clone(),
             prioritization_fee_cache.clone(),
         );
+
+        #[cfg(unix)]
+        if let Some((path, banking_control_sender)) = scheduler_bindings {
+            super::scheduler_bindings_server::spawn(&path, banking_control_sender);
+        }
+        #[cfg(not(unix))]
+        assert!(scheduler_bindings.is_none());
 
         let SpawnForwardingStageResult {
             join_handle: forwarding_stage,

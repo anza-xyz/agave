@@ -81,11 +81,9 @@ pub fn no_passphrase_arg<'a>() -> Arg<'a> {
 
 #[deprecated(since = "2.0.0", note = "Please use `try_get_language` instead")]
 pub fn acquire_language(matches: &ArgMatches) -> Language {
-    match matches
-        .get_one::<String>(LANGUAGE_ARG.name)
-        .unwrap()
-        .as_str()
-    {
+    #[allow(deprecated)]
+    let language_name = LANGUAGE_ARG.name;
+    match matches.get_one::<String>(language_name).unwrap().as_str() {
         "english" => Language::English,
         "chinese-simplified" => Language::ChineseSimplified,
         "chinese-traditional" => Language::ChineseTraditional,

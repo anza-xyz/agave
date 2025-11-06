@@ -1059,8 +1059,8 @@ struct CleaningInfo {
 /// * Enabled - mark accounts obsolete during write cache flush
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarkObsoleteAccounts {
-    #[default]
     Disabled,
+    #[default]
     Enabled,
 }
 

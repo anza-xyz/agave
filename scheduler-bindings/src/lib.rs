@@ -260,7 +260,20 @@ pub mod pack_message_flags {
     /// the message is processed.
     pub const EXECUTE: u16 = 1;
 
-    pub mod execution_flags {}
+    pub mod execution_flags {
+        /// Should failing transactions within the batch be dropped (no fee charged & not
+        /// committed).
+        pub const DROP_ON_FAILURE: u16 = 1 << 1;
+        /// If any transaction in the batch is not committed then the entire batch should not be
+        /// committed.
+        ///
+        /// # Note
+        ///
+        /// Without `drop_on_failure` this flag will still allow processed but failing transactions
+        /// to be committed. If both flags are set then any failing transaction will cause all
+        /// transactions to be aborted.
+        pub const ALL_OR_NOTHING: u16 = 1 << 2;
+    }
 
     pub mod check_flags {
         /// Transactions should check status: if transaction has already been processed

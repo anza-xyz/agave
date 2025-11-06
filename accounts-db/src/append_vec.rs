@@ -290,6 +290,7 @@ impl AppendVec {
         data.flush().unwrap();
 
         let backing = match storage_access {
+            #[allow(deprecated)]
             StorageAccess::Mmap => {
                 //UNSAFE: Required to create a Mmap
                 let mmap = unsafe { MmapMut::map_mut(&data) };
@@ -483,9 +484,11 @@ impl AppendVec {
         Self::sanitize_len_and_size(current_len, file_size as usize)?;
 
         // AppendVec is in read-only mode, but mmap access requires file to be writable
+        #[allow(deprecated)]
+        let is_writable = storage_access == StorageAccess::Mmap;
         let data = OpenOptions::new()
             .read(true)
-            .write(storage_access == StorageAccess::Mmap)
+            .write(is_writable)
             .create(false)
             .open(&path)?;
 
@@ -1424,7 +1427,7 @@ pub mod tests {
         assert_eq!(&def1, &def2);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     #[should_panic(expected = "FileSizeTooSmall(0)")]
     fn test_append_vec_new_bad_size(storage_access: StorageAccess) {
@@ -1432,7 +1435,7 @@ pub mod tests {
         let _av = AppendVec::new(&path.path, true, 0, storage_access);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_append_vec_new_from_file_bad_size(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_append_vec_new_from_file_bad_size");
@@ -1489,7 +1492,7 @@ pub mod tests {
         assert_matches!(result, Err(ref message) if message.to_string().contains("is larger than file size (1048576)"));
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_append_vec_one(storage_access: StorageAccess) {
         let path = get_append_vec_path("test_append");
@@ -1514,7 +1517,7 @@ pub mod tests {
         assert_eq!(av.get_account_test(index), None);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_append_vec_one_with_data(storage_access: StorageAccess) {
         let path = get_append_vec_path("test_append");
@@ -1531,7 +1534,7 @@ pub mod tests {
         truncate_and_test(av, index);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_remaining_bytes(storage_access: StorageAccess) {
         let path = get_append_vec_path("test_append");
@@ -1572,7 +1575,7 @@ pub mod tests {
         assert_eq!(av.remaining_bytes(), sz64 - u64_align!(av_len) as u64);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_append_vec_data(storage_access: StorageAccess) {
         let path = get_append_vec_path("test_append_data");
@@ -1656,6 +1659,7 @@ pub mod tests {
             &path.path,
             true,
             file_size,
+            #[allow(deprecated)]
             StorageAccess::Mmap,
         ));
         let slot = 42;
@@ -1784,7 +1788,7 @@ pub mod tests {
         }
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_append_vec_append_many(storage_access: StorageAccess) {
         let path = get_append_vec_path("test_append_many");
@@ -1835,7 +1839,7 @@ pub mod tests {
         trace!("sequential read time: {} ms", now.elapsed().as_millis());
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_new_from_file_crafted_zero_lamport_account(storage_access: StorageAccess) {
         // This test verifies that when we sanitize on load, that we fail sanitizing if we load an account with zero lamports that does not have all default value fields.
@@ -1908,7 +1912,7 @@ pub mod tests {
         assert_matches!(result, Err(ref message) if message.to_string().contains("incorrect layout/length/data"));
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_new_from_file_crafted_data_len(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_new_from_file_crafted_data_len");
@@ -1944,7 +1948,7 @@ pub mod tests {
         assert_matches!(result, Err(ref message) if message.to_string().contains("incorrect layout/length/data"));
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_append_vec_reset(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_append_vec_reset");
@@ -1957,7 +1961,7 @@ pub mod tests {
         assert_eq!(av.len(), 0);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_append_vec_flush(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_append_vec_flush");
@@ -1975,7 +1979,7 @@ pub mod tests {
         assert_eq!(num_account, 1);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_append_vec_reopen_as_readonly(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_append_vec_flush");
@@ -2001,7 +2005,7 @@ pub mod tests {
         }
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_new_from_file_too_large_data_len(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_new_from_file_too_large_data_len");
@@ -2038,7 +2042,7 @@ pub mod tests {
         assert_matches!(result, Err(ref message) if message.to_string().contains("incorrect layout/length/data"));
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_new_from_file_crafted_executable(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_new_from_crafted_executable");
@@ -2109,7 +2113,7 @@ pub mod tests {
         assert_eq!(mem::size_of::<AccountMeta>(), 0x38);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_get_account_shared_data_from_truncated_file(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_get_account_shared_data_from_truncated_file");
@@ -2142,7 +2146,7 @@ pub mod tests {
         assert!(result.is_none()); // Expect None to be returned.
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_get_account_sizes(storage_access: StorageAccess) {
         const NUM_ACCOUNTS: usize = 37;
@@ -2270,14 +2274,14 @@ pub mod tests {
     }
 
     /// Test `scan_pubkey` for a valid account storage.
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_scan_pubkeys(storage_access: StorageAccess) {
         test_scan_pubkeys_helper(storage_access, |_, size| size);
     }
 
     /// Test `scan_pubkey` for storage with incomplete account meta data.
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_scan_pubkeys_incomplete_data(storage_access: StorageAccess) {
         test_scan_pubkeys_helper(storage_access, |path, size| {
@@ -2294,7 +2298,7 @@ pub mod tests {
     }
 
     /// Test `scan_pubkey` for storage which is missing the last account data
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_scan_pubkeys_missing_account_data(storage_access: StorageAccess) {
         test_scan_pubkeys_helper(storage_access, |path, size| {
@@ -2369,14 +2373,14 @@ pub mod tests {
         )
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_scan_stored_accounts_no_data(storage_access: StorageAccess) {
         test_scan_stored_accounts_no_data_helper(storage_access, |_, size| size);
     }
 
     /// Test `scan_stored_accounts_no_data` for storage with incomplete account meta data.
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_scan_stored_accounts_no_data_incomplete_data(storage_access: StorageAccess) {
         test_scan_stored_accounts_no_data_helper(storage_access, |path, size| {
@@ -2393,7 +2397,7 @@ pub mod tests {
     }
 
     /// Test `scan_stored_accounts_no_data` for storage which is missing the last account data
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_scan_stored_accounts_no_data_missing_account_data(storage_access: StorageAccess) {
         test_scan_stored_accounts_no_data_helper(storage_access, |path, size| {
@@ -2467,14 +2471,14 @@ pub mod tests {
     }
 
     /// Test `scan_accounts_stored_meta` for a normal/good storage.
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_scan_accounts_stored_meta(storage_access: StorageAccess) {
         test_scan_accounts_stored_meta_helper(storage_access, |_, size| size);
     }
 
     /// Test `scan_accounts_stored_meta` for a storage with incomplete account meta data.
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_scan_accounts_stored_meta_incomplete_meta_data(storage_access: StorageAccess) {
         test_scan_accounts_stored_meta_helper(storage_access, |path, size| {
@@ -2491,7 +2495,7 @@ pub mod tests {
     }
 
     /// Test `scan_accounts_stored_meta` for a storage that is missing the last account data.
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_scan_accounts_stored_meta_missing_account_data(storage_access: StorageAccess) {
         test_scan_accounts_stored_meta_helper(storage_access, |path, size| {
@@ -2536,7 +2540,7 @@ pub mod tests {
     // Test to make sure that `is_dirty` is tracked properly
     // * `reopen_as_readonly()` moves `is_dirty`
     // * `flush()` clears `is_dirty`
-    #[test_matrix([false, true], [StorageAccess::Mmap, StorageAccess::File])]
+    #[test_matrix([false, true], [#[allow(deprecated)] StorageAccess::Mmap, StorageAccess::File])]
     fn test_is_dirty(begins_dirty: bool, storage_access: StorageAccess) {
         let file = get_append_vec_path("test_is_dirty");
 

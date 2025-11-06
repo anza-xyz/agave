@@ -1521,7 +1521,7 @@ mod tests {
         );
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_bank_fields_from_snapshot(storage_access: StorageAccess) {
         let collector = Pubkey::new_unique();
@@ -1820,7 +1820,7 @@ mod tests {
     ///     - remove Account2's reference back to slot 2 by transferring from the mint to Account2
     ///     - take a full snap shot
     ///     - verify that recovery from full snapshot does not bring account1 back to life
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_snapshots_handle_zero_lamport_accounts(storage_access: StorageAccess) {
         let collector = Pubkey::new_unique();
@@ -2082,7 +2082,7 @@ mod tests {
         .unwrap();
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_bank_from_snapshot_dir(storage_access: StorageAccess) {
         let genesis_config = GenesisConfig::default();

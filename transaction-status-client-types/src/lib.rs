@@ -70,9 +70,8 @@ impl fmt::Display for UiTransactionEncoding {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[derive(Default)]
 pub enum TransactionDetails {
     #[default]
     Full,

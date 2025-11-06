@@ -58,7 +58,11 @@ fn append_vec_append_file(bencher: &mut Bencher) {
 
 #[bench]
 fn append_vec_append_mmap(bencher: &mut Bencher) {
-    append_vec_append(bencher, StorageAccess::Mmap);
+    append_vec_append(
+        bencher,
+        #[allow(deprecated)]
+        StorageAccess::Mmap,
+    );
 }
 
 fn add_test_accounts(vec: &AppendVec, size: usize) -> Vec<(usize, usize)> {
@@ -77,7 +81,6 @@ fn append_vec_sequential_read(bencher: &mut Bencher, storage_access: StorageAcce
     let mut indexes = add_test_accounts(&vec, size);
     bencher.iter(|| {
         let (sample, pos) = indexes.pop().unwrap();
-        println!("reading pos {sample} {pos}");
         vec.get_stored_account_callback(pos, |account| {
             let (_pubkey, test) = create_test_account(sample);
             assert_eq!(account.data(), test.data());
@@ -93,7 +96,11 @@ fn append_vec_sequential_read_file(bencher: &mut Bencher) {
 
 #[bench]
 fn append_vec_sequential_read_mmap(bencher: &mut Bencher) {
-    append_vec_sequential_read(bencher, StorageAccess::Mmap);
+    append_vec_sequential_read(
+        bencher,
+        #[allow(deprecated)]
+        StorageAccess::Mmap,
+    );
 }
 
 fn append_vec_random_read(bencher: &mut Bencher, storage_access: StorageAccess) {
@@ -118,7 +125,11 @@ fn append_vec_random_read_file(bencher: &mut Bencher) {
 
 #[bench]
 fn append_vec_random_read_mmap(bencher: &mut Bencher) {
-    append_vec_random_read(bencher, StorageAccess::Mmap);
+    append_vec_random_read(
+        bencher,
+        #[allow(deprecated)]
+        StorageAccess::Mmap,
+    );
 }
 
 fn append_vec_concurrent_append_read(bencher: &mut Bencher, storage_access: StorageAccess) {
@@ -162,7 +173,11 @@ fn append_vec_concurrent_append_read_file(bencher: &mut Bencher) {
 
 #[bench]
 fn append_vec_concurrent_append_read_mmap(bencher: &mut Bencher) {
-    append_vec_concurrent_append_read(bencher, StorageAccess::Mmap);
+    append_vec_concurrent_append_read(
+        bencher,
+        #[allow(deprecated)]
+        StorageAccess::Mmap,
+    );
 }
 
 fn append_vec_concurrent_read_append(bencher: &mut Bencher, storage_access: StorageAccess) {
@@ -208,5 +223,9 @@ fn append_vec_concurrent_read_append_file(bencher: &mut Bencher) {
 
 #[bench]
 fn append_vec_concurrent_read_append_mmap(bencher: &mut Bencher) {
-    append_vec_concurrent_read_append(bencher, StorageAccess::Mmap);
+    append_vec_concurrent_read_append(
+        bencher,
+        #[allow(deprecated)]
+        StorageAccess::Mmap,
+    );
 }

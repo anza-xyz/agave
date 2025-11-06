@@ -33,6 +33,7 @@ where
     T: FromStr,
     T::Err: Display,
 {
+    #[allow(deprecated)]
     is_parsable_generic::<T, &str>(string)
 }
 
@@ -66,6 +67,7 @@ where
     note = "please use `clap::value_parser!(Pubkey)` instead"
 )]
 pub fn is_pubkey(string: &str) -> Result<(), String> {
+    #[allow(deprecated)]
     is_parsable_generic::<Pubkey, _>(string)
 }
 
@@ -78,6 +80,7 @@ pub fn is_hash<T>(string: T) -> Result<(), String>
 where
     T: AsRef<str> + Display,
 {
+    #[allow(deprecated)]
     is_parsable_generic::<Hash, _>(string)
 }
 
@@ -106,6 +109,7 @@ pub fn is_keypair_or_ask_keyword<T>(string: T) -> Result<(), String>
 where
     T: AsRef<str> + Display,
 {
+    #[allow(deprecated)]
     if string.as_ref() == ASK_KEYWORD {
         return Ok(());
     }
@@ -121,13 +125,16 @@ where
             `SignerSourceParserBuilder::default().allow_prompt().allow_legacy().build()` instead"
 )]
 pub fn is_prompt_signer_source(string: &str) -> Result<(), String> {
+    #[allow(deprecated)]
     if string == ASK_KEYWORD {
         return Ok(());
     }
-    match SignerSource::parse(string)
+    #[allow(deprecated)]
+    let signer_source_kind = SignerSource::parse(string)
         .map_err(|err| format!("{err}"))?
-        .kind
-    {
+        .kind;
+    match signer_source_kind {
+        #[allow(deprecated)]
         SignerSourceKind::Prompt => Ok(()),
         _ => Err(format!(
             "Unable to parse input as `prompt:` URI scheme or `ASK` keyword: {string}"
@@ -243,7 +250,9 @@ pub fn is_url_or_moniker<T>(string: T) -> Result<(), String>
 where
     T: AsRef<str> + Display,
 {
-    match url::Url::parse(&normalize_to_url_if_moniker(string.as_ref())) {
+    #[allow(deprecated)]
+    let normalized = normalize_to_url_if_moniker(string.as_ref());
+    match url::Url::parse(&normalized) {
         Ok(url) => {
             if url.has_host() {
                 Ok(())
@@ -274,6 +283,7 @@ pub fn is_epoch<T>(epoch: T) -> Result<(), String>
 where
     T: AsRef<str> + Display,
 {
+    #[allow(deprecated)]
     is_parsable_generic::<Epoch, _>(epoch)
 }
 
@@ -285,6 +295,7 @@ pub fn is_slot<T>(slot: T) -> Result<(), String>
 where
     T: AsRef<str> + Display,
 {
+    #[allow(deprecated)]
     is_parsable_generic::<Slot, _>(slot)
 }
 
@@ -313,6 +324,7 @@ pub fn is_port<T>(port: T) -> Result<(), String>
 where
     T: AsRef<str> + Display,
 {
+    #[allow(deprecated)]
     is_parsable_generic::<u16, _>(port)
 }
 
