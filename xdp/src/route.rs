@@ -291,8 +291,6 @@ impl Router {
     }
 }
 
-// removed AtomicRouter and WorkingRouter; mutate Router in place
-
 #[cfg(test)]
 mod tests {
     use {

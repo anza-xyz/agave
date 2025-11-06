@@ -795,8 +795,7 @@ pub fn parse_ifinfomsg(msg: &NetlinkMessage) -> Option<InterfaceInfo> {
     let ifi = parse_into_ifinfomsg(msg)?;
 
     // Filter interface types
-    let ifi_type = ifi.ifi_type;
-    if ifi_type != ARPHRD_ETHER && ifi_type != ARPHRD_LOOPBACK && ifi_type != ARPHRD_IPGRE {
+    if !is_valid_interface_type(ifi.ifi_type) {
         return None;
     }
 
@@ -823,10 +822,13 @@ pub fn parse_ifinfomsg(msg: &NetlinkMessage) -> Option<InterfaceInfo> {
     })
 }
 
+fn is_valid_interface_type(type_: u16) -> bool {
+    matches!(type_, ARPHRD_ETHER | ARPHRD_LOOPBACK | ARPHRD_IPGRE)
+}
+
 pub(crate) fn is_valid_link_update(msg: &NetlinkMessage) -> bool {
     if let Some(if_info_msg) = parse_into_ifinfomsg(msg) {
-        let ifi_type = if_info_msg.ifi_type;
-        return ifi_type == ARPHRD_ETHER || ifi_type == ARPHRD_LOOPBACK || ifi_type == ARPHRD_IPGRE;
+        return is_valid_interface_type(if_info_msg.ifi_type);
     }
     false
 }
