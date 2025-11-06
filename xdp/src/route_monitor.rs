@@ -27,9 +27,10 @@ use {
 pub struct RouteMonitor;
 
 impl RouteMonitor {
-    /// subscribes RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH and drain for `drain_window`
-    /// if any relevant updates arrived, update working routing table
-    /// once drain window expires, publish the working routing table to the atomic router
+    /// Subscribes to RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH | RTMGRP_LINK multicast groups
+    /// Drains the netlink socket for `drain_window`
+    /// If any relevant updates arrive, update working routing table
+    /// Once drain window expires, publish the working routing table to the atomic router
     pub fn start(
         atomic_router: Arc<ArcSwap<Router>>,
         exit: Arc<AtomicBool>,
@@ -65,7 +66,7 @@ impl RouteMonitor {
                 let rv = match poll_helper(&mut pfd, -1) {
                     Ok(rv) => rv,
                     Err(e) => {
-                        warn!("poll error: {e}");
+                        error!("poll error: {e}");
                         if let Ok(r) = Router::new() {
                             atomic_router.store(Arc::new(r));
                         }
@@ -112,12 +113,23 @@ impl RouteMonitor {
                         Ok(rv) => rv,
                         Err(e) => {
                             error!("drain netlink socket failed: {e}");
-                            if let Ok(r) = Router::new() {
-                                atomic_router.store(Arc::new(r));
-                            } else {
-                                error!("resync failed: {e}");
+                            // Attempt to recreate the multicast listener on read errors as well
+                            drop(sock);
+                            match NetlinkSocket::open_multicast_listener(groups) {
+                                Ok(s) => {
+                                    sock = s;
+                                    if let Ok(r) = Router::new() {
+                                        atomic_router.store(Arc::new(r));
+                                    } else {
+                                        error!("resync failed: {e}");
+                                    }
+                                    working = None;
+                                }
+                                Err(e) => {
+                                    error!("netlink recreate bind failed after recv error: {e}");
+                                    return;
+                                }
                             }
-                            working = None;
                             break;
                         }
                     };
@@ -157,7 +169,7 @@ impl RouteMonitor {
                     let rv = match poll_helper(&mut pfd, remain_ms) {
                         Ok(rv) => rv,
                         Err(e) => {
-                            warn!("poll error during drain window wait: {e}");
+                            error!("poll error during drain window wait: {e}");
                             if let Ok(r) = Router::new() {
                                 atomic_router.store(Arc::new(r));
                             }
@@ -236,7 +248,7 @@ impl RouteMonitor {
                     Self::process_netlink_updates(working, dirty, &msgs);
                 }
                 Err(e) => {
-                    warn!("recv during drain failed: {e}");
+                    debug!("recv during drain failed: {e}");
                     return Err(e);
                 }
             }
