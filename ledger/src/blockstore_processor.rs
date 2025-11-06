@@ -246,7 +246,7 @@ pub fn execute_batch<'a>(
             batch.sanitized_transactions(),
         ))
     } else {
-        // Unified scheduler block production wihout metadata recording
+        // Unified scheduler block production without metadata recording
         Ok(vec![])
     };
     check_block_costs_elapsed.stop();
@@ -1095,7 +1095,7 @@ fn verify_ticks(
 
         // If the bank is in the alpenglow epoch, but the parent is from an epoch
         // where the feature flag is not active, we must verify ticks that correspond
-        // to the epoch in which PoH is active. This verification is criticial, as otherwise
+        // to the epoch in which PoH is active. This verification is critical, as otherwise
         // a leader could jump the gun and publish a block in the alpenglow epoch without waiting
         // the appropriate time as determined by PoH in the prior epoch.
         if bank.slot() >= first_alpenglow_slot && next_bank_tick_height == max_bank_tick_height {
@@ -5242,7 +5242,7 @@ pub mod tests {
             }),
         );
 
-        // pre_commit_callback() should alwasy be called regardless of tx_result
+        // pre_commit_callback() should always be called regardless of tx_result
         assert!(is_called);
 
         if should_commit {

@@ -1374,7 +1374,7 @@ impl Blockstore {
         }
     }
 
-    // Bypasses erasure recovery becuase it is called from broadcast stage
+    // Bypasses erasure recovery because it is called from broadcast stage
     // when inserting own shreds during leader slots.
     pub fn insert_cow_shreds<'a>(
         &self,
@@ -1863,7 +1863,7 @@ impl Blockstore {
                 .map(Cow::into_owned)
             else {
                 error!(
-                    "Shred {shred_id:?} indiciated by merkle root meta {merkle_root_meta:?} is \
+                    "Shred {shred_id:?} indicated by merkle root meta {merkle_root_meta:?} is \
                      missing from blockstore. This should only happen in extreme cases where \
                      blockstore cleanup has caught up to the root. Skipping the merkle root \
                      consistency check"
@@ -2100,7 +2100,7 @@ impl Blockstore {
                     .map(Cow::into_owned)
                 else {
                     error!(
-                        "Last index data shred {shred_id:?} indiciated by slot meta {slot_meta:?} \
+                        "Last index data shred {shred_id:?} indicated by slot meta {slot_meta:?} \
                          is missing from blockstore. This should only happen in extreme cases \
                          where blockstore cleanup has caught up to the root. Skipping data shred \
                          insertion"
@@ -2150,7 +2150,7 @@ impl Blockstore {
                     .map(Cow::into_owned)
                 else {
                     error!(
-                        "Last received data shred {shred_id:?} indiciated by slot meta \
+                        "Last received data shred {shred_id:?} indicated by slot meta \
                          {slot_meta:?} is missing from blockstore. This should only happen in \
                          extreme cases where blockstore cleanup has caught up to the root. \
                          Skipping data shred insertion"
@@ -3873,7 +3873,7 @@ impl Blockstore {
         if let Some(prev_value) = self.bank_hash_cf.get(slot).unwrap() {
             if prev_value.frozen_hash() == frozen_hash && prev_value.is_duplicate_confirmed() {
                 // Don't overwrite is_duplicate_confirmed == true with is_duplicate_confirmed == false,
-                // which may happen on startup when procesing from blockstore processor because the
+                // which may happen on startup when processing from blockstore processor because the
                 // blocks may not reflect earlier observed gossip votes from before the restart.
                 return;
             }
@@ -7647,7 +7647,7 @@ pub mod tests {
             blockstore.insert_shreds(slot_shreds, None, false).unwrap();
         }
 
-        // Slot doesnt exist, iterator should be empty
+        // Slot doesn't exist, iterator should be empty
         let shred_iter = blockstore.slot_data_iterator(5, 0).unwrap();
         let result: Vec<_> = shred_iter.collect();
         assert_eq!(result, vec![]);

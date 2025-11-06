@@ -56,7 +56,7 @@ impl VortexorReceiverAdapter {
                     packets_sender,
                     forward_stage_sender,
                 ) {
-                    info!("Quiting VortexorReceiverAdapter: {msg}");
+                    info!("Quitting VortexorReceiverAdapter: {msg}");
                 }
             })
             .unwrap();

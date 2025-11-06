@@ -862,7 +862,7 @@ type KnownSnapshotHashes = HashMap<(Slot, Hash), HashSet<(Slot, Hash)>>;
 /// queried for their individual snapshot hashes, their results will be checked against this
 /// map to verify correctness.
 ///
-/// NOTE: Only a single snashot hash is allowed per slot.  If somehow two known validators have
+/// NOTE: Only a single snapshot hash is allowed per slot.  If somehow two known validators have
 /// a snapshot hash with the same slot and _different_ hashes, the second will be skipped.
 /// This applies to both full and incremental snapshot hashes.
 fn get_snapshot_hashes_from_known_validators(

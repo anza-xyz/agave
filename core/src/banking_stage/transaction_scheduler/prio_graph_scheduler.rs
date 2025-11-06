@@ -798,7 +798,7 @@ mod tests {
     fn test_schedule_over_full_container() {
         let (mut scheduler, _work_receivers, _finished_work_sender) = create_test_frame(1);
 
-        // set up a container is larger enough that single pass of schedulling will not deplete it.
+        // set up a container is larger enough that single pass of scheduling will not deplete it.
         let capacity = scheduler
             .config
             .max_scanned_transactions_per_scheduling_pass

@@ -44,7 +44,7 @@ const DEFAULT_CLEANUP_SLOT_INTERVAL: u64 = 512;
 // checks when we know that the latest root could not have advanced far enough
 //
 // Given that the timing of new slots/roots is not exact, divide by 10 to avoid
-// a long wait incase a check occurs just before the interval has elapsed
+// a long wait in case a check occurs just before the interval has elapsed
 const LOOP_LIMITER: Duration =
     Duration::from_millis(DEFAULT_CLEANUP_SLOT_INTERVAL * DEFAULT_MS_PER_SLOT / 10);
 

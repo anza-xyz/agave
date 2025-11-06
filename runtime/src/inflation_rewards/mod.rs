@@ -575,10 +575,10 @@ mod tests {
             )
         );
 
-        // credits_observed is auto-rewinded when vote_state credits are assumed to have been
+        // credits_observed is auto-rewound when vote_state credits are assumed to have been
         // recreated
         stake.credits_observed = 1000;
-        // this is new behavior 1; return the post-recreation rewinded credits from the vote account
+        // this is new behavior 1; return the post-recreation rewound credits from the vote account
         assert_eq!(
             CalculatedStakePoints {
                 points: 0,
