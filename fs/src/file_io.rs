@@ -145,7 +145,7 @@ pub trait FileCreator {
 }
 
 pub fn file_creator<'a>(
-    buf_size: usize,
+    desired_buf_size: usize,
     io_setup: IoSetupState,
     file_complete: impl FnMut(PathBuf) + 'a,
 ) -> io::Result<Box<dyn FileCreator + 'a>> {
@@ -153,7 +153,8 @@ pub fn file_creator<'a>(
     if agave_io_uring::io_uring_supported() {
         use crate::io_uring::file_creator::{IoUringFileCreator, DEFAULT_WRITE_SIZE};
 
-        if buf_size >= DEFAULT_WRITE_SIZE {
+        if let Ok(buf_size) = io_setup.acquire_memlock_budget(DEFAULT_WRITE_SIZE, desired_buf_size)
+        {
             let io_uring_creator =
                 IoUringFileCreator::with_buffer_capacity(buf_size, io_setup, file_complete)?;
             return Ok(Box::new(io_uring_creator));
@@ -163,7 +164,10 @@ pub fn file_creator<'a>(
     {
         let _ = io_setup;
     }
-    Ok(Box::new(SyncIoFileCreator::new(buf_size, file_complete)))
+    Ok(Box::new(SyncIoFileCreator::new(
+        desired_buf_size,
+        file_complete,
+    )))
 }
 
 pub struct SyncIoFileCreator<'a> {
@@ -240,9 +244,13 @@ mod tests {
         std::{
             fs,
             io::{Cursor, Write},
+            sync::LazyLock,
         },
         tempfile::tempfile,
     };
+
+    static IO_SETUP_FOR_TESTS: LazyLock<IoSetupState> =
+        LazyLock::new(|| IoSetupState::new_with_memlock_budget(8 * 1024 * 1024));
 
     #[test]
     fn test_read_into_buffer() {
@@ -365,7 +373,7 @@ mod tests {
         let mut callback_invoked_path = None;
 
         // Instantiate FileCreator
-        let mut creator = file_creator(2 << 20, IoSetupState::default(), |path| {
+        let mut creator = file_creator(2 << 20, IO_SETUP_FOR_TESTS.clone(), |path| {
             callback_invoked_path.replace(path);
         })?;
 
@@ -390,7 +398,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let mut callback_counter = 0;
 
-        let mut creator = file_creator(2 << 20, IoSetupState::default(), |path: PathBuf| {
+        let mut creator = file_creator(2 << 20, IO_SETUP_FOR_TESTS.clone(), |path: PathBuf| {
             let contents = read_file_to_string(&path);
             assert!(contents.starts_with("File "));
             callback_counter += 1;

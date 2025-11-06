@@ -1,4 +1,10 @@
-use std::{io, sync::Arc};
+use std::{
+    io,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 
 #[cfg(target_os = "linux")]
 const SQPOLL_IDLE_WAIT_TIME: u32 = 50;
@@ -21,6 +27,12 @@ pub struct IoSetupState {
 }
 
 impl IoSetupState {
+    pub fn new_with_memlock_budget(memlock_budget: usize) -> Self {
+        Self {
+            inner: Arc::new(IoSetupStateInner::new_with_memlock_budget(memlock_budget)),
+        }
+    }
+
     /// Enables shared io-uring worker pool and sqpoll based kernel thread.
     ///
     /// The sqpoll thread will drain submission queues from all io-uring instances created
@@ -31,6 +43,34 @@ impl IoSetupState {
         Ok(Self {
             inner: Arc::new(inner.with_shared_sqpoll()?),
         })
+    }
+
+    pub fn acquire_memlock_budget(
+        &self,
+        min_size: usize,
+        desired_size: usize,
+    ) -> io::Result<usize> {
+        let calc_budget_after_acquire = |available_budget: usize| {
+            if available_budget < min_size {
+                None
+            } else {
+                Some(available_budget.saturating_sub(desired_size.max(min_size)))
+            }
+        };
+        match self.inner.memlock_budget.fetch_update(
+            Ordering::Release,
+            Ordering::Acquire,
+            calc_budget_after_acquire,
+        ) {
+            Ok(commited_budget) => {
+                Ok(commited_budget
+                    .saturating_sub(calc_budget_after_acquire(commited_budget).unwrap()))
+            }
+            Err(_) => Err(io::Error::new(
+                io::ErrorKind::QuotaExceeded,
+                "failed to acquire memlock budget",
+            )),
+        }
     }
 
     /// Return new io-uring builder that is attached shared worker pool (if configured).
@@ -57,12 +97,21 @@ impl Default for IoSetupState {
 
 #[derive(Default)]
 struct IoSetupStateInner {
+    memlock_budget: AtomicUsize,
+
     #[cfg(target_os = "linux")]
     shared_sqpoll_io_uring: Option<io_uring::IoUring>,
 }
 
 impl IoSetupStateInner {
-    pub fn with_shared_sqpoll(self) -> io::Result<Self> {
+    fn new_with_memlock_budget(memlock_budget: usize) -> Self {
+        Self {
+            memlock_budget: AtomicUsize::new(memlock_budget),
+            ..Default::default()
+        }
+    }
+
+    fn with_shared_sqpoll(self) -> io::Result<Self> {
         #[cfg(target_os = "linux")]
         {
             let sqpoll_io_uring = io_uring::IoUring::builder()
@@ -70,11 +119,12 @@ impl IoSetupStateInner {
                 .build(1)?;
             Ok(Self {
                 shared_sqpoll_io_uring: Some(sqpoll_io_uring),
+                ..self
             })
         }
         #[cfg(not(target_os = "linux"))]
         {
-            Ok(Self {})
+            Ok(self)
         }
     }
 }
