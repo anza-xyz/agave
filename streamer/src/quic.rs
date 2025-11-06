@@ -1004,7 +1004,7 @@ mod test {
 
         let server_params = QuicStreamerConfig {
             max_unstaked_connections: 0,
-            max_connections_per_peer: 10,
+            max_connections_per_staked_peer: 10,
             send_client_id: true, // Enable sending client ID
             ..QuicStreamerConfig::default_for_tests()
         };
@@ -1104,6 +1104,11 @@ mod test {
                         }
                         PacketBatch::Bytes(_) => {
                             panic!("Expected PacketBatch::WithClientId but got PacketBatch::Bytes");
+                        }
+                        PacketBatch::Single(_) => {
+                            panic!(
+                                "Expected PacketBatch::WithClientId but got PacketBatch::Single"
+                            );
                         }
                     }
                 }
