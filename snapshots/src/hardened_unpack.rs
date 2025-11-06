@@ -452,7 +452,10 @@ fn is_valid_genesis_archive_entry<'a>(
 mod tests {
     use {
         super::*,
-        agave_fs::{file_io::file_creator, io_setup::IoSetupState},
+        agave_fs::{
+            file_io::file_creator,
+            io_setup::{IoSetupState, MEMLOCK_BUDGET_SIZE_FOR_TESTS},
+        },
         assert_matches::assert_matches,
         std::{io::BufReader, sync::LazyLock},
         tar::{Builder, Header},
@@ -461,7 +464,7 @@ mod tests {
     const MAX_GENESIS_SIZE_FOR_TESTS: u64 = 1024;
 
     static IO_SETUP_FOR_TESTS: LazyLock<IoSetupState> =
-        LazyLock::new(|| IoSetupState::new_with_memlock_budget(1024 * 1024));
+        LazyLock::new(|| IoSetupState::new_with_memlock_budget(MEMLOCK_BUDGET_SIZE_FOR_TESTS));
 
     #[test]
     fn test_archive_is_valid_entry() {

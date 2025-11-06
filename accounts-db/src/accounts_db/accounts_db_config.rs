@@ -1,7 +1,7 @@
+pub use agave_fs::io_setup::DEFAULT_MEMLOCK_BUDGET_SIZE;
 use {
     super::{
         AccountShrinkThreshold, MarkObsoleteAccounts, DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION,
-        MEMLOCK_BUDGET_SIZE_FOR_TESTS,
     },
     crate::{
         accounts_file::StorageAccess,
@@ -13,6 +13,7 @@ use {
             PartitionedEpochRewardsConfig, DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
         },
     },
+    agave_fs::io_setup::MEMLOCK_BUDGET_SIZE_FOR_TESTS,
     std::{num::NonZeroUsize, path::PathBuf},
 };
 

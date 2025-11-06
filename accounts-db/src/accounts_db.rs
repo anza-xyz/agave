@@ -25,6 +25,7 @@ pub mod tests;
 
 pub use accounts_db_config::{
     AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
+    DEFAULT_MEMLOCK_BUDGET_SIZE,
 };
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
@@ -103,13 +104,6 @@ const UNREF_ACCOUNTS_BATCH_SIZE: usize = 10_000;
 
 const DEFAULT_FILE_SIZE: u64 = 4 * 1024 * 1024;
 const DEFAULT_NUM_DIRS: u32 = 4;
-
-// This value reflects recommended memory lock limit documented in the validator's
-// setup instructions at docs/src/operations/guides/validator-start.md allowing use of
-// several io_uring instances with fixed buffers for large disk IO operations.
-pub const DEFAULT_MEMLOCK_BUDGET_SIZE: usize = 2_000_000_000;
-// Linux distributions often have some small memory lock limit (e.g. 8MB) that we can tap into.
-const MEMLOCK_BUDGET_SIZE_FOR_TESTS: usize = 4_000_000;
 
 // When getting accounts for shrinking from the index, this is the # of accounts to lookup per thread.
 // This allows us to split up accounts index accesses across multiple threads.

@@ -241,6 +241,7 @@ impl FileCreator for SyncIoFileCreator<'_> {
 mod tests {
     use {
         super::*,
+        crate::io_setup::MEMLOCK_BUDGET_SIZE_FOR_TESTS,
         std::{
             fs,
             io::{Cursor, Write},
@@ -250,7 +251,7 @@ mod tests {
     };
 
     static IO_SETUP_FOR_TESTS: LazyLock<IoSetupState> =
-        LazyLock::new(|| IoSetupState::new_with_memlock_budget(8 * 1024 * 1024));
+        LazyLock::new(|| IoSetupState::new_with_memlock_budget(MEMLOCK_BUDGET_SIZE_FOR_TESTS));
 
     #[test]
     fn test_read_into_buffer() {

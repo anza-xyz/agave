@@ -9,6 +9,13 @@ use std::{
 #[cfg(target_os = "linux")]
 const SQPOLL_IDLE_WAIT_TIME: u32 = 50;
 
+// This value reflects recommended memory lock limit documented in the validator's
+// setup instructions at docs/src/operations/guides/validator-start.md allowing use of
+// several io_uring instances with fixed buffers for large disk IO operations.
+pub const DEFAULT_MEMLOCK_BUDGET_SIZE: usize = 2_000_000_000;
+// Linux distributions often have some small memory lock limit (e.g. 8MB) that we can tap into.
+pub const MEMLOCK_BUDGET_SIZE_FOR_TESTS: usize = 4_000_000;
+
 /// State used by IO utilities for managing shared resources and configuration during setup.
 ///
 /// This may include io_uring file descriptors, lockable memory budget to register in kernel,
@@ -27,6 +34,11 @@ pub struct IoSetupState {
 }
 
 impl IoSetupState {
+    /// Creates a new `IoSetupState` with the specified memlock budget.
+    ///
+    /// The memlock budget is used to limit the amount of memory that can be locked by the kernel
+    /// through io_uring utilities, such that buffer sizes can be adjusted for available `ulimit`
+    /// with fallback to sync IO if necessary.
     pub fn new_with_memlock_budget(memlock_budget: usize) -> Self {
         Self {
             inner: Arc::new(IoSetupStateInner::new_with_memlock_budget(memlock_budget)),
@@ -45,6 +57,10 @@ impl IoSetupState {
         })
     }
 
+    /// Attempt to acquire `desired_size` (but at least `min_size`) bytes from the memlock budget.
+    ///
+    /// If available available budget is below `min_size` then `Err` is returned, otherwise
+    /// `Ok(acquired_size)` is returned where `min_size <= acquired_size <= desired_size`.
     pub fn acquire_memlock_budget(
         &self,
         min_size: usize,
