@@ -638,7 +638,7 @@ mod tests {
             },
             vote::Vote,
         },
-        solana_bls_signatures::{Keypair as BLSKeypair, Signature},
+        solana_bls_signatures::{Keypair as BLSKeypair, Signature as BLSSignature},
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_perf::packet::{Packet, PinnedPacketBatch},
@@ -860,7 +860,7 @@ mod tests {
         // Send a packet with invalid rank
         let messages_invalid_rank = vec![ConsensusMessage::Vote(VoteMessage {
             vote: Vote::new_finalization_vote(5),
-            signature: Signature::default(),
+            signature: BLSSignature::default(),
             rank: 1000, // Invalid rank
         })];
         assert!(verifier
