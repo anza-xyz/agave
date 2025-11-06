@@ -165,8 +165,8 @@ pub(crate) struct ComputedBankState {
     pub voted_stakes: VotedStakes,
     pub total_stake: Stake,
     pub fork_stake: Stake,
-    // Tree of intervals of lockouts of the form [slot, slot + slot.lockout],
-    // keyed by end of the range
+    /// Flat list of intervals of lockouts of the form {voter, start, end}
+    /// ([`crate::consensus::progress_map::LockoutInterval`]).
     pub lockout_intervals: LockoutIntervals,
     pub my_latest_landed_vote: Option<Slot>,
 }
@@ -413,13 +413,12 @@ impl Tower {
             HashMap::with_capacity_and_hasher(total_slots, ahash::RandomState::default());
         let mut total_stake = 0;
 
-        // Tree of intervals of lockouts of the form [slot, slot + slot.lockout],
-        // keyed by end of the range
         let total_votes = vote_accounts
             .values()
             .filter(|(voted_stake, _)| *voted_stake != 0)
             .map(|(_, account)| account.vote_state_view().votes_len())
             .sum();
+        // Flat list of intervals of lockouts of the form {voter, start, end}.
         let mut lockout_intervals = LockoutIntervals::with_capacity(total_votes);
         let mut my_latest_landed_vote = None;
         for (&key, (voted_stake, account)) in vote_accounts.iter() {
@@ -1177,8 +1176,9 @@ impl Tower {
                 .fork_stats
                 .lockout_intervals;
             // Find any locked out intervals for vote accounts in this bank with
-            // `lockout_interval_end` >= `last_vote`, which implies they are locked out at
-            // `last_vote` on another fork.
+            // `lockout_interval_end` >= `last_vote`, which implies that the most recent tower slot is locked out
+            // at `last_vote` on another fork. We also consider the remaining tower slots, however these older slots
+            // could be from before the fork so we must filter by their ancestry.
             for LockoutInterval {
                 start: lockout_interval_start,
                 voter: vote_account_pubkey,
