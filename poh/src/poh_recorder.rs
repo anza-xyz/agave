@@ -190,6 +190,11 @@ pub struct PohRecorder {
 
     // Alpenglow related migration things
     pub is_alpenglow_enabled: bool,
+
+    /// When alpenglow is enabled there will be no ticks apart from a final one
+    /// to complete the block. This tick will not be verified, and we use this
+    /// flag to unset hashes_per_tick
+    alpenglow_enabled: bool,
 }
 
 impl PohRecorder {
@@ -273,13 +278,14 @@ impl PohRecorder {
                 is_exited,
                 entries: Vec::with_capacity(64),
                 is_alpenglow_enabled: false,
+                alpenglow_enabled: false,
             },
             working_bank_receiver,
         )
     }
 
     // synchronize PoH with a bank
-    pub(crate) fn reset(&mut self, reset_bank: Arc<Bank>, next_leader_slot: Option<(Slot, Slot)>) {
+    pub fn reset(&mut self, reset_bank: Arc<Bank>, next_leader_slot: Option<(Slot, Slot)>) {
         self.clear_bank(false);
         let tick_height = self.reset_poh(reset_bank, true);
 
@@ -301,8 +307,7 @@ impl PohRecorder {
     }
 
     // Returns the index of `transactions.first()` in the slot, if being tracked by WorkingBank
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    pub(crate) fn record(
+    pub fn record(
         &mut self,
         bank_id: BankId,
         mixins: Vec<Hash>,
@@ -416,7 +421,7 @@ impl PohRecorder {
         }
     }
 
-    pub(crate) fn set_bank(&mut self, bank: BankWithScheduler) {
+    pub fn set_bank(&mut self, bank: BankWithScheduler) {
         assert!(self.working_bank.is_none());
         let working_bank = WorkingBank {
             min_tick_height: bank.tick_height(),
@@ -512,9 +517,14 @@ impl PohRecorder {
     #[must_use]
     fn reset_poh(&mut self, reset_bank: Arc<Bank>, reset_start_bank: bool) -> u64 {
         let blockhash = reset_bank.last_blockhash();
+        let hashes_per_tick = if self.alpenglow_enabled {
+            None
+        } else {
+            *reset_bank.hashes_per_tick()
+        };
         let poh_hash = {
             let mut poh = self.poh.lock().unwrap();
-            poh.reset(blockhash, *reset_bank.hashes_per_tick());
+            poh.reset(blockhash, hashes_per_tick);
             poh.hash
         };
         info!(
@@ -891,6 +901,52 @@ impl PohRecorder {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn clear_bank_for_test(&mut self) {
         self.clear_bank(true);
+    }
+
+    pub fn tick_alpenglow(&mut self, slot_max_tick_height: u64) {
+        let (poh_entry, tick_lock_contention_us) = measure_us!({
+            let mut poh_l = self.poh.lock().unwrap();
+            poh_l.tick()
+        });
+        self.metrics.tick_lock_contention_us += tick_lock_contention_us;
+
+        if let Some(poh_entry) = poh_entry {
+            self.shared_leader_state
+                .0
+                .load()
+                .tick_height
+                .store(slot_max_tick_height, Ordering::Release);
+
+            // Should be empty in most cases, but reset just to be safe
+            self.tick_cache = vec![];
+            self.tick_cache.push((
+                Entry {
+                    num_hashes: poh_entry.num_hashes,
+                    hash: poh_entry.hash,
+                    transactions: vec![],
+                },
+                self.shared_leader_state
+                    .0
+                    .load()
+                    .tick_height
+                    .load(Ordering::Acquire),
+            ));
+
+            let (_flush_res, flush_cache_and_tick_us) = measure_us!(self.flush_cache(true));
+            self.metrics.flush_cache_tick_us += flush_cache_and_tick_us;
+        }
+    }
+
+    pub fn enable_alpenglow(&mut self) {
+        info!("Enabling Alpenglow, migrating poh to low power mode");
+        self.alpenglow_enabled = true;
+        self.tick_cache = vec![];
+        {
+            let mut poh = self.poh.lock().unwrap();
+            let hashes_per_tick = None;
+            let current_hash = poh.hash;
+            poh.reset(current_hash, hashes_per_tick);
+        }
     }
 }
 

@@ -157,12 +157,12 @@ impl GenerateVoteTxResult {
 
 // Implement a destructor for the ReplayStage thread to signal it exited
 // even on panics
-struct Finalizer {
+pub(crate) struct Finalizer {
     exit_sender: Arc<AtomicBool>,
 }
 
 impl Finalizer {
-    fn new(exit_sender: Arc<AtomicBool>) -> Self {
+    pub(crate) fn new(exit_sender: Arc<AtomicBool>) -> Self {
         Finalizer { exit_sender }
     }
 }
@@ -4342,7 +4342,7 @@ impl ReplayStage {
             generate_new_bank_forks_write_lock.as_us();
     }
 
-    fn new_bank_from_parent_with_notify(
+    pub(crate) fn new_bank_from_parent_with_notify(
         parent: Arc<Bank>,
         slot: u64,
         root_slot: u64,

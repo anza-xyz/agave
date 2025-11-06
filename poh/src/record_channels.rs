@@ -191,7 +191,7 @@ impl RecordReceiver {
     }
 
     /// Check if the channel is shutdown.
-    pub(crate) fn is_shutdown(&self) -> bool {
+    pub fn is_shutdown(&self) -> bool {
         BankIdAllowedInsertions::bank_id(self.bank_id_allowed_insertions.0.load(Ordering::Acquire))
             == BankIdAllowedInsertions::DISABLED_BANK_ID
     }
