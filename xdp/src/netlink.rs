@@ -585,6 +585,17 @@ pub struct RouteEntry {
     pub flags: u32,
 }
 
+impl RouteEntry {
+    #[inline]
+    pub fn same_key(&self, other: &Self) -> bool {
+        self.family == other.family
+            && self.dst_len == other.dst_len
+            && self.destination == other.destination
+            && self.table == other.table
+            && self.type_ == other.type_
+    }
+}
+
 #[repr(C)]
 #[allow(non_camel_case_types)]
 struct rtmsg {

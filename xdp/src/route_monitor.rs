@@ -245,42 +245,42 @@ impl RouteMonitor {
     }
 
     #[inline]
-    fn process_netlink_updates(work: &mut Router, dirty: &mut bool, msgs: &[NetlinkMessage]) {
+    fn process_netlink_updates(working: &mut Router, dirty: &mut bool, msgs: &[NetlinkMessage]) {
         for m in msgs {
             match m.header.nlmsg_type {
                 RTM_NEWROUTE if is_supported_ipv4_route_header(m) => {
                     if let Some(r) = parse_rtm_newroute(m) {
-                        *dirty |= work.upsert_route(r);
+                        *dirty |= working.upsert_route(r);
                     }
                 }
                 RTM_DELROUTE if is_supported_ipv4_route_header(m) => {
                     if let Some(r) = parse_rtm_newroute(m) {
-                        *dirty |= work.delete_route(r);
+                        *dirty |= working.delete_route(r);
                     }
                 }
                 RTM_NEWNEIGH if is_supported_ipv4_neigh_header(m) => {
                     if let Some(n) = parse_rtm_newneigh(m, None) {
-                        *dirty |= work.upsert_neighbor(n);
+                        *dirty |= working.upsert_neighbor(n);
                     }
                 }
                 RTM_DELNEIGH if is_supported_ipv4_neigh_header(m) => {
                     if let Some(n) = parse_rtm_newneigh(m, None) {
                         if let Some(IpAddr::V4(ip)) = n.destination {
-                            *dirty |= work.delete_neighbor(ip, n.ifindex);
+                            *dirty |= working.delete_neighbor(ip, n.ifindex);
                         }
                     }
                 }
                 RTM_NEWLINK => {
                     if is_valid_link_update(m) {
                         if let Some(interface_info) = parse_ifinfomsg(m) {
-                            *dirty |= work.upsert_interface(interface_info);
+                            *dirty |= working.upsert_interface(interface_info);
                         }
                     }
                 }
                 RTM_DELLINK => {
                     if is_valid_link_update(m) {
                         if let Some(interface_info) = parse_ifinfomsg(m) {
-                            *dirty |= work.delete_interface(interface_info.if_index);
+                            *dirty |= working.delete_interface(interface_info.if_index);
                         }
                     }
                 }

@@ -140,18 +140,6 @@ impl Router {
         })
     }
 
-    pub fn clone_neighbors(&self) -> Vec<NeighborEntry> {
-        self.arp_table.neighbors.clone()
-    }
-
-    pub fn clone_routes(&self) -> Vec<RouteEntry> {
-        self.routes.clone()
-    }
-
-    pub fn clone_interfaces(&self) -> HashMap<u32, InterfaceInfo> {
-        self.interfaces.clone()
-    }
-
     pub fn default(&self) -> Result<NextHop, RouteError> {
         let default_route = self
             .routes
@@ -226,15 +214,6 @@ impl ArpTable {
 
 impl Router {
     #[inline]
-    fn same_key(a: &RouteEntry, b: &RouteEntry) -> bool {
-        a.family == b.family
-            && a.dst_len == b.dst_len
-            && a.destination == b.destination
-            && a.table == b.table
-            && a.type_ == b.type_
-    }
-
-    #[inline]
     fn neighbor_key(n: &NeighborEntry) -> Option<(i32, Ipv4Addr)> {
         match n.destination {
             Some(IpAddr::V4(ip)) => Some((n.ifindex, ip)),
@@ -243,11 +222,7 @@ impl Router {
     }
 
     pub fn upsert_route(&mut self, new_route: RouteEntry) -> bool {
-        if let Some(i) = self
-            .routes
-            .iter()
-            .position(|old| Self::same_key(old, &new_route))
-        {
+        if let Some(i) = self.routes.iter().position(|old| old.same_key(&new_route)) {
             if self.routes[i] != new_route {
                 self.routes[i] = new_route;
                 return true;
@@ -260,11 +235,7 @@ impl Router {
     }
 
     pub fn delete_route(&mut self, new_route: RouteEntry) -> bool {
-        if let Some(i) = self
-            .routes
-            .iter()
-            .position(|old| Self::same_key(old, &new_route))
-        {
+        if let Some(i) = self.routes.iter().position(|old| old.same_key(&new_route)) {
             self.routes.swap_remove(i);
             return true;
         }
@@ -391,7 +362,7 @@ mod tests {
     #[test]
     fn test_working_upsert_and_delete_route() {
         let mut router = Router::new().unwrap();
-        let before_routes = router.clone_routes();
+        let before_routes_len = router.routes.len();
 
         // Create a unique, private IPv4 /32 route to avoid collisions
         let test_dst = Ipv4Addr::new(10, 255, 255, 123);
@@ -413,21 +384,19 @@ mod tests {
 
         // Upsert new route and check that it was inserted and routes are dirty
         assert!(router.upsert_route(route.clone()));
-        let after_insert_routes = router.clone_routes();
-        assert!(after_insert_routes.iter().any(|r| r == &route));
-        assert!(after_insert_routes.len() >= before_routes.len());
+        assert!(router.routes.iter().any(|r| r == &route));
+        assert!(router.routes.len() >= before_routes_len);
 
         // Delete using same key should remove the route
         assert!(router.delete_route(route.clone()));
-        let after_delete_routes = router.clone_routes();
-        assert!(after_delete_routes.iter().all(|r| r != &route));
-        assert!(after_delete_routes.len() == before_routes.len());
+        assert!(router.routes.iter().all(|r| r != &route));
+        assert_eq!(router.routes.len(), before_routes_len);
     }
 
     #[test]
     fn test_working_upsert_and_delete_neighbor() {
         let mut router = Router::new().unwrap();
-        let before_neigh = router.clone_neighbors();
+        let before_neigh_len = router.arp_table.neighbors.len();
 
         // Create a unique, private neighbor entry on a dummy ifindex
         let neigh_ip = Ipv4Addr::new(10, 255, 255, 77);
@@ -440,21 +409,19 @@ mod tests {
 
         // Upsert new neighbor and check that it was inserted and neighbors are dirty
         assert!(router.upsert_neighbor(entry.clone()));
-        let after_insert_neigh = router.clone_neighbors();
-        assert!(after_insert_neigh.iter().any(|n| n == &entry));
-        assert!(after_insert_neigh.len() >= before_neigh.len());
+        assert!(router.arp_table.neighbors.iter().any(|n| n == &entry));
+        assert!(router.arp_table.neighbors.len() >= before_neigh_len);
 
         // Delete neighbor and check that it was deleted
         assert!(router.delete_neighbor(neigh_ip, 1));
-        let after_delete_neigh = router.clone_neighbors();
-        assert!(after_delete_neigh.iter().all(|n| n != &entry));
-        assert!(after_delete_neigh.len() == before_neigh.len());
+        assert!(router.arp_table.neighbors.iter().all(|n| n != &entry));
+        assert_eq!(router.arp_table.neighbors.len(), before_neigh_len);
     }
 
     #[test]
     fn test_working_upsert_and_delete_interface() {
         let mut router = Router::new().unwrap();
-        let before_ifaces = router.clone_interfaces();
+        let before_ifaces_len = router.interfaces.len();
 
         // Create a new, synthetic interface
         let if_index = 424242u32;
@@ -466,17 +433,15 @@ mod tests {
 
         // Upsert interface and check that it was inserted and interfaces are dirty
         assert!(router.upsert_interface(iface.clone()));
-        let after_insert_ifaces = router.clone_interfaces();
-        assert!(after_insert_ifaces.contains_key(&if_index));
-        let inserted = after_insert_ifaces.get(&if_index).unwrap();
+        assert!(router.interfaces.contains_key(&if_index));
+        let inserted = router.interfaces.get(&if_index).unwrap();
         assert_eq!(inserted.if_name, "test424242");
         assert_eq!(inserted.dev_type, ARPHRD_ETHER);
-        assert!(after_insert_ifaces.len() >= before_ifaces.len());
+        assert!(router.interfaces.len() >= before_ifaces_len);
 
         // Delete the interface and check that it is removed
         assert!(router.delete_interface(if_index));
-        let after_delete_ifaces = router.clone_interfaces();
-        assert!(!after_delete_ifaces.contains_key(&if_index));
-        assert_eq!(after_delete_ifaces.len(), before_ifaces.len());
+        assert!(!router.interfaces.contains_key(&if_index));
+        assert_eq!(router.interfaces.len(), before_ifaces_len);
     }
 }
