@@ -70,7 +70,7 @@ impl<T> Deref for RuntimeTransaction<T> {
         &self.transaction
     }
 }
-impl<T: SVMMessage> SVMStaticMessage for RuntimeTransaction<T> {
+impl<T: SVMStaticMessage> SVMStaticMessage for RuntimeTransaction<T> {
     fn num_write_locks(&self) -> u64 {
         self.transaction.num_write_locks()
     }
