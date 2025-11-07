@@ -84,7 +84,8 @@ impl RingDirRemover {
             // dir.set_finished_scanning(), we must close the dir fd now. Otherwise it gets
             // closed by the last UnlinkOp::complete() call.
             if dir.scanned_and_unlinked() {
-                if let Some(fd) = dir.fd.take() {
+                let fd = dir.fd.take();
+                if let Some(fd) = fd {
                     self.ring
                         .push(Op::Close(CloseOp::new(dir_key, fd.into_raw_fd())))?;
                 }

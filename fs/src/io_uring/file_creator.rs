@@ -469,7 +469,7 @@ impl<'a> WriteOp {
         let WriteOp {
             file_key,
             offset,
-            ref mut buf,
+            buf,
             buf_offset,
             write_len,
         } = self;
