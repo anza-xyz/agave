@@ -12,6 +12,7 @@ use {
         consensus_message::{Certificate, CertificateType, ConsensusMessage, VoteMessage},
         vote::Vote,
     },
+    ahash::{AHashMap, AHashSet},
     bitvec::prelude::{BitVec, Lsb0},
     crossbeam_channel::{Sender, TrySendError},
     rayon::iter::{
@@ -20,6 +21,7 @@ use {
     solana_bls_signatures::{
         pubkey::{Pubkey as BlsPubkey, PubkeyProjective, VerifiablePubkey},
         signature::SignatureProjective,
+        BlsError,
     },
     solana_clock::Slot,
     solana_measure::measure::Measure,
@@ -213,6 +215,7 @@ impl BLSSigVerifier {
             .preprocess_elapsed_us
             .fetch_add(preprocess_time.as_us(), Ordering::Relaxed);
 
+        // This uses the global thread pool.
         let (votes_result, certs_result) = rayon::join(
             || self.verify_and_send_votes(votes_to_verify),
             || self.verify_and_send_certificates(certs_to_verify, &root_bank),
@@ -268,18 +271,19 @@ impl BLSSigVerifier {
             .total_valid_packets
             .fetch_add(verified_votes.len() as u64, Ordering::Relaxed);
 
-        let mut verified_votes_by_pubkey: HashMap<Pubkey, Vec<Slot>> = HashMap::new();
+        let mut verified_votes_by_pubkey: AHashMap<Pubkey, AHashSet<Slot>> = AHashMap::new();
+        self.stats
+            .received_votes
+            .fetch_add(verified_votes.len() as u64, Ordering::Relaxed);
         for vote in verified_votes {
-            self.stats.received_votes.fetch_add(1, Ordering::Relaxed);
             if vote.vote_message.vote.is_notarization_or_finalization()
                 || vote.vote_message.vote.is_notarize_fallback()
             {
                 let slot = vote.vote_message.vote.slot();
-                let cur_slots: &mut Vec<Slot> =
-                    verified_votes_by_pubkey.entry(vote.pubkey).or_default();
-                if !cur_slots.contains(&slot) {
-                    cur_slots.push(slot);
-                }
+                verified_votes_by_pubkey
+                    .entry(vote.pubkey)
+                    .or_default()
+                    .insert(slot);
             }
 
             // Send the BLS vote messaage to certificate pool
@@ -301,7 +305,10 @@ impl BLSSigVerifier {
 
         // Send votes
         for (pubkey, slots) in verified_votes_by_pubkey {
-            match self.verified_votes_sender.try_send((pubkey, slots)) {
+            match self
+                .verified_votes_sender
+                .try_send((pubkey, slots.into_iter().collect()))
+            {
                 Ok(()) => {
                     self.stats
                         .verified_votes_sent
@@ -319,18 +326,11 @@ impl BLSSigVerifier {
         Ok(())
     }
 
-    fn verify_votes(&self, votes_to_verify: Vec<VoteToVerify>) -> Vec<VoteToVerify> {
-        if votes_to_verify.is_empty() {
-            return vec![];
-        }
-
-        self.stats.votes_batch_count.fetch_add(1, Ordering::Relaxed);
-        let mut votes_batch_optimistic_time = Measure::start("votes_batch_optimistic");
-
-        let payloads = votes_to_verify
-            .iter()
-            .map(|v| self.get_vote_payload(&v.vote_message.vote))
-            .collect::<Vec<_>>();
+    fn verify_optimistically(
+        &self,
+        votes_to_verify: &Vec<VoteToVerify>,
+        payloads: &Vec<Arc<Vec<u8>>>,
+    ) -> Result<bool, BlsError> {
         let mut grouped_pubkeys: HashMap<&Arc<Vec<u8>>, Vec<&BlsPubkey>> = HashMap::new();
         for (v, payload) in votes_to_verify.iter().zip(payloads.iter()) {
             grouped_pubkeys
@@ -350,40 +350,45 @@ impl BLSSigVerifier {
             .into_iter()
             .map(|pks| PubkeyProjective::par_aggregate(pks.into_par_iter()))
             .collect();
+        let aggregate_pubkeys = aggregate_pubkeys_result?;
 
-        let verified_optimistically = if let Ok(aggregate_pubkeys) = aggregate_pubkeys_result {
-            let signatures = votes_to_verify
-                .par_iter()
-                .map(|v| &v.vote_message.signature);
-            if let Ok(aggregate_signature) = SignatureProjective::par_aggregate(signatures) {
-                if distinct_messages == 1 {
-                    let payload_slice = distinct_payloads[0].as_slice();
-                    aggregate_pubkeys[0]
-                        .verify_signature(&aggregate_signature, payload_slice)
-                        .unwrap_or(false)
-                } else {
-                    let payload_slices: Vec<&[u8]> =
-                        distinct_payloads.iter().map(|p| p.as_slice()).collect();
-
-                    let aggregate_pubkeys_affine: Vec<BlsPubkey> =
-                        aggregate_pubkeys.into_iter().map(|pk| pk.into()).collect();
-
-                    SignatureProjective::par_verify_distinct_aggregated(
-                        &aggregate_pubkeys_affine,
-                        &aggregate_signature.into(),
-                        &payload_slices,
-                    )
-                    .unwrap_or(false)
-                }
-            } else {
-                false
-            }
+        let signatures = votes_to_verify
+            .par_iter()
+            .map(|v| &v.vote_message.signature);
+        let aggregate_signature = SignatureProjective::par_aggregate(signatures)?;
+        if distinct_messages == 1 {
+            let payload_slice = distinct_payloads[0].as_slice();
+            let aggregate_pubkey: PubkeyProjective = aggregate_pubkeys[0];
+            aggregate_pubkey.verify_signature(&aggregate_signature, payload_slice)
         } else {
-            // Public key aggregation failed.
-            false
-        };
+            let payload_slices: Vec<&[u8]> =
+                distinct_payloads.iter().map(|p| p.as_slice()).collect();
 
-        if verified_optimistically {
+            let aggregate_pubkeys_affine: Vec<BlsPubkey> =
+                aggregate_pubkeys.into_iter().map(|pk| pk.into()).collect();
+
+            SignatureProjective::par_verify_distinct_aggregated(
+                &aggregate_pubkeys_affine,
+                &aggregate_signature.into(),
+                &payload_slices,
+            )
+        }
+    }
+
+    fn verify_votes(&self, votes_to_verify: Vec<VoteToVerify>) -> Vec<VoteToVerify> {
+        if votes_to_verify.is_empty() {
+            return vec![];
+        }
+
+        let payloads = votes_to_verify
+            .iter()
+            .map(|v| self.get_vote_payload(&v.vote_message.vote))
+            .collect::<Vec<_>>();
+
+        self.stats.votes_batch_count.fetch_add(1, Ordering::Relaxed);
+        let mut votes_batch_optimistic_time = Measure::start("votes_batch_optimistic");
+
+        if let Ok(true) = self.verify_optimistically(&votes_to_verify, &payloads) {
             votes_batch_optimistic_time.stop();
             self.stats
                 .votes_batch_optimistic_elapsed_us
