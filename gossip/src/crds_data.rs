@@ -258,14 +258,13 @@ impl AccountsHashes {
 type LegacySnapshotHashes = AccountsHashes;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct SnapshotHashes {
     pub from: Pubkey,
     pub full: (Slot, Hash),
     pub incremental: Vec<(Slot, Hash)>,
     pub wallclock: u64,
 }
-reject_deserialize!(SnapshotHashes, "SnapshotHashes is deprecated");
 
 impl Sanitize for SnapshotHashes {
     fn sanitize(&self) -> Result<(), SanitizeError> {
@@ -654,14 +653,11 @@ mod test {
         let bytes = bincode::serialize(&accounts_hashes).unwrap();
         assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
 
-        // SnapshotHashes
-        let snapshot_hashes = CrdsData::SnapshotHashes(SnapshotHashes {
-            from: keypair.pubkey(),
-            full: (0, Hash::new_unique()),
-            incremental: vec![(0, Hash::new_unique())],
-            wallclock: timestamp(),
-        });
-        let bytes = bincode::serialize(&snapshot_hashes).unwrap();
+        // LegacySnapshotHashes
+        let legacy_snapshot_hashes = CrdsData::LegacySnapshotHashes(
+            LegacySnapshotHashes::new_rand(&mut rng, Some(keypair.pubkey())),
+        );
+        let bytes = bincode::serialize(&legacy_snapshot_hashes).unwrap();
         assert!(bincode::deserialize::<CrdsData>(&bytes[..]).is_err());
 
         // LowestSlot(1, ...)
