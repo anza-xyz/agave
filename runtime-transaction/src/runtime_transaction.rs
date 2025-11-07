@@ -18,8 +18,10 @@ use {
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_svm_transaction::{
-        instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
-        svm_message::SVMMessage, svm_transaction::SVMTransaction,
+        instruction::SVMInstruction,
+        message_address_table_lookup::SVMMessageAddressTableLookup,
+        svm_message::{SVMMessage, SVMStaticMessage},
+        svm_transaction::SVMTransaction,
     },
 };
 
@@ -68,6 +70,17 @@ impl<T> Deref for RuntimeTransaction<T> {
         &self.transaction
     }
 }
+impl<T: SVMMessage> SVMStaticMessage for RuntimeTransaction<T> {
+    fn num_write_locks(&self) -> u64 {
+        self.transaction.num_write_locks()
+    }
+
+    fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
+        self.transaction.program_instructions_iter()
+    }
+}
 
 impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
     fn num_transaction_signatures(&self) -> u64 {
@@ -92,10 +105,6 @@ impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
             .num_secp256r1_instruction_signatures()
     }
 
-    fn num_write_locks(&self) -> u64 {
-        self.transaction.num_write_locks()
-    }
-
     fn recent_blockhash(&self) -> &Hash {
         self.transaction.recent_blockhash()
     }
@@ -106,12 +115,6 @@ impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
 
     fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction<'_>> {
         self.transaction.instructions_iter()
-    }
-
-    fn program_instructions_iter(
-        &self,
-    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
-        self.transaction.program_instructions_iter()
     }
 
     fn static_account_keys(&self) -> &[Pubkey] {

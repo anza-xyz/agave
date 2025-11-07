@@ -19,8 +19,20 @@ static_assertions::const_assert_eq!(
 );
 const NONCED_TX_MARKER_IX_INDEX: u8 = 0;
 
+pub trait SVMStaticMessage {
+    /// Returns the number of requested write-locks in this message.
+    /// This does not consider if write-locks are demoted.
+    fn num_write_locks(&self) -> u64;
+
+    /// Return an iterator over the instructions in the message, paired with
+    /// the pubkey of the program.
+    fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone;
+}
+
 // - Debug to support legacy logging
-pub trait SVMMessage: Debug {
+pub trait SVMMessage: Debug + SVMStaticMessage {
     /// Return the number of transaction-level signatures in the message.
     fn num_transaction_signatures(&self) -> u64;
     /// Return the number of ed25519 precompile signatures in the message.
@@ -36,10 +48,6 @@ pub trait SVMMessage: Debug {
         default_precompile_signature_count(&secp256r1_program::ID, self.program_instructions_iter())
     }
 
-    /// Returns the number of requested write-locks in this message.
-    /// This does not consider if write-locks are demoted.
-    fn num_write_locks(&self) -> u64;
-
     /// Return the recent blockhash.
     fn recent_blockhash(&self) -> &Hash;
 
@@ -48,12 +56,6 @@ pub trait SVMMessage: Debug {
 
     /// Return an iterator over the instructions in the message.
     fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction<'_>>;
-
-    /// Return an iterator over the instructions in the message, paired with
-    /// the pubkey of the program.
-    fn program_instructions_iter(
-        &self,
-    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone;
 
     /// Return the list of static account keys.
     fn static_account_keys(&self) -> &[Pubkey];

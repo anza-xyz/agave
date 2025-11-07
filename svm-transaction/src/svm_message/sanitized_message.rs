@@ -1,21 +1,31 @@
 use {
     crate::{
-        instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
-        svm_message::SVMMessage,
+        instruction::SVMInstruction,
+        message_address_table_lookup::SVMMessageAddressTableLookup,
+        svm_message::{SVMMessage, SVMStaticMessage},
     },
     solana_hash::Hash,
     solana_message::{AccountKeys, SanitizedMessage},
     solana_pubkey::Pubkey,
 };
 
+impl SVMStaticMessage for SanitizedMessage {
+    fn num_write_locks(&self) -> u64 {
+        SanitizedMessage::num_write_locks(self)
+    }
+
+    fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
+        SanitizedMessage::program_instructions_iter(self)
+            .map(|(pubkey, ix)| (pubkey, SVMInstruction::from(ix)))
+    }
+}
+
 // Implement for the "reference" `SanitizedMessage` type.
 impl SVMMessage for SanitizedMessage {
     fn num_transaction_signatures(&self) -> u64 {
         u64::from(self.header().num_required_signatures)
-    }
-
-    fn num_write_locks(&self) -> u64 {
-        SanitizedMessage::num_write_locks(self)
     }
 
     fn recent_blockhash(&self) -> &Hash {
@@ -30,13 +40,6 @@ impl SVMMessage for SanitizedMessage {
         SanitizedMessage::instructions(self)
             .iter()
             .map(SVMInstruction::from)
-    }
-
-    fn program_instructions_iter(
-        &self,
-    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
-        SanitizedMessage::program_instructions_iter(self)
-            .map(|(pubkey, ix)| (pubkey, SVMInstruction::from(ix)))
     }
 
     fn static_account_keys(&self) -> &[Pubkey] {

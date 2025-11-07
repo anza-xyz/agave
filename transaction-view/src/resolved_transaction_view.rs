@@ -15,8 +15,10 @@ use {
     solana_sdk_ids::bpf_loader_upgradeable,
     solana_signature::Signature,
     solana_svm_transaction::{
-        instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
-        svm_message::SVMMessage, svm_transaction::SVMTransaction,
+        instruction::SVMInstruction,
+        message_address_table_lookup::SVMMessageAddressTableLookup,
+        svm_message::{SVMMessage, SVMStaticMessage},
+        svm_transaction::SVMTransaction,
     },
     std::collections::HashSet,
 };
@@ -155,13 +157,26 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
     }
 }
 
+impl<D: TransactionData> SVMStaticMessage for ResolvedTransactionView<D> {
+    fn num_write_locks(&self) -> u64 {
+        self.view.num_requested_write_locks()
+    }
+
+    fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            &solana_pubkey::Pubkey,
+            solana_svm_transaction::instruction::SVMInstruction<'_>,
+        ),
+    > + Clone {
+        self.view.program_instructions_iter()
+    }
+}
+
 impl<D: TransactionData> SVMMessage for ResolvedTransactionView<D> {
     fn num_transaction_signatures(&self) -> u64 {
         u64::from(self.view.num_required_signatures())
-    }
-
-    fn num_write_locks(&self) -> u64 {
-        self.view.num_requested_write_locks()
     }
 
     fn recent_blockhash(&self) -> &Hash {
@@ -174,17 +189,6 @@ impl<D: TransactionData> SVMMessage for ResolvedTransactionView<D> {
 
     fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction<'_>> {
         self.view.instructions_iter()
-    }
-
-    fn program_instructions_iter(
-        &self,
-    ) -> impl Iterator<
-        Item = (
-            &solana_pubkey::Pubkey,
-            solana_svm_transaction::instruction::SVMInstruction<'_>,
-        ),
-    > + Clone {
-        self.view.program_instructions_iter()
     }
 
     fn static_account_keys(&self) -> &[Pubkey] {
