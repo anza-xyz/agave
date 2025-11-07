@@ -14,6 +14,9 @@ name = "solana-gossip"
 path = "src/main.rs"
 bench = false
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 agave-logger = { workspace = true }
 clap = { workspace = true }
