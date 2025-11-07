@@ -248,6 +248,10 @@ impl<const SANITIZED: bool, D: TransactionData> Debug for TransactionView<SANITI
 }
 
 impl<D: TransactionData> SVMStaticMessage for TransactionView<true, D> {
+    fn num_transaction_signatures(&self) -> u64 {
+        self.num_signatures() as u64
+    }
+
     fn num_write_locks(&self) -> u64 {
         self.num_requested_write_locks()
     }

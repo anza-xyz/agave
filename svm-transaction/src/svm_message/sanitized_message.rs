@@ -10,6 +10,10 @@ use {
 };
 
 impl SVMStaticMessage for SanitizedMessage {
+    fn num_transaction_signatures(&self) -> u64 {
+        u64::from(self.header().num_required_signatures)
+    }
+
     fn num_write_locks(&self) -> u64 {
         SanitizedMessage::num_write_locks(self)
     }
@@ -24,10 +28,6 @@ impl SVMStaticMessage for SanitizedMessage {
 
 // Implement for the "reference" `SanitizedMessage` type.
 impl SVMMessage for SanitizedMessage {
-    fn num_transaction_signatures(&self) -> u64 {
-        u64::from(self.header().num_required_signatures)
-    }
-
     fn recent_blockhash(&self) -> &Hash {
         SanitizedMessage::recent_blockhash(self)
     }

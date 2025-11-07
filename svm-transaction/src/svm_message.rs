@@ -20,6 +20,24 @@ static_assertions::const_assert_eq!(
 const NONCED_TX_MARKER_IX_INDEX: u8 = 0;
 
 pub trait SVMStaticMessage {
+    /// Return the number of transaction-level signatures in the message.
+    fn num_transaction_signatures(&self) -> u64;
+
+    /// Return the number of ed25519 precompile signatures in the message.
+    fn num_ed25519_signatures(&self) -> u64 {
+        default_precompile_signature_count(&ed25519_program::ID, self.program_instructions_iter())
+    }
+
+    /// Return the number of secp256k1 precompile signatures in the message.
+    fn num_secp256k1_signatures(&self) -> u64 {
+        default_precompile_signature_count(&secp256k1_program::ID, self.program_instructions_iter())
+    }
+
+    /// Return the number of secp256r1 precompile signatures in the message.
+    fn num_secp256r1_signatures(&self) -> u64 {
+        default_precompile_signature_count(&secp256r1_program::ID, self.program_instructions_iter())
+    }
+
     /// Returns the number of requested write-locks in this message.
     /// This does not consider if write-locks are demoted.
     fn num_write_locks(&self) -> u64;
@@ -33,21 +51,6 @@ pub trait SVMStaticMessage {
 
 // - Debug to support legacy logging
 pub trait SVMMessage: Debug + SVMStaticMessage {
-    /// Return the number of transaction-level signatures in the message.
-    fn num_transaction_signatures(&self) -> u64;
-    /// Return the number of ed25519 precompile signatures in the message.
-    fn num_ed25519_signatures(&self) -> u64 {
-        default_precompile_signature_count(&ed25519_program::ID, self.program_instructions_iter())
-    }
-    /// Return the number of secp256k1 precompile signatures in the message.
-    fn num_secp256k1_signatures(&self) -> u64 {
-        default_precompile_signature_count(&secp256k1_program::ID, self.program_instructions_iter())
-    }
-    /// Return the number of secp256r1 precompile signatures in the message.
-    fn num_secp256r1_signatures(&self) -> u64 {
-        default_precompile_signature_count(&secp256r1_program::ID, self.program_instructions_iter())
-    }
-
     /// Return the recent blockhash.
     fn recent_blockhash(&self) -> &Hash;
 

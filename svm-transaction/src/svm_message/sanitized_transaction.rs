@@ -11,6 +11,10 @@ use {
 };
 
 impl SVMStaticMessage for SanitizedTransaction {
+    fn num_transaction_signatures(&self) -> u64 {
+        SVMStaticMessage::num_transaction_signatures(SanitizedTransaction::message(self))
+    }
+
     fn num_write_locks(&self) -> u64 {
         SVMStaticMessage::num_write_locks(SanitizedTransaction::message(self))
     }
@@ -23,10 +27,6 @@ impl SVMStaticMessage for SanitizedTransaction {
 }
 
 impl SVMMessage for SanitizedTransaction {
-    fn num_transaction_signatures(&self) -> u64 {
-        SVMMessage::num_transaction_signatures(SanitizedTransaction::message(self))
-    }
-
     fn recent_blockhash(&self) -> &Hash {
         SVMMessage::recent_blockhash(SanitizedTransaction::message(self))
     }
