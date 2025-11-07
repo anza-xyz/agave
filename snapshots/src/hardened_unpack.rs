@@ -452,13 +452,19 @@ fn is_valid_genesis_archive_entry<'a>(
 mod tests {
     use {
         super::*,
-        agave_fs::file_io::file_creator,
+        agave_fs::{
+            file_io::file_creator,
+            io_setup::{IoSetupState, MEMLOCK_BUDGET_SIZE_FOR_TESTS},
+        },
         assert_matches::assert_matches,
-        std::io::BufReader,
+        std::{io::BufReader, sync::LazyLock},
         tar::{Builder, Header},
     };
 
     const MAX_GENESIS_SIZE_FOR_TESTS: u64 = 1024;
+
+    static IO_SETUP_FOR_TESTS: LazyLock<IoSetupState> =
+        LazyLock::new(|| IoSetupState::new_with_memlock_budget(MEMLOCK_BUDGET_SIZE_FOR_TESTS));
 
     #[test]
     fn test_archive_is_valid_entry() {
@@ -699,7 +705,7 @@ mod tests {
     }
 
     fn finalize_and_unpack_snapshot(archive: tar::Builder<Vec<u8>>) -> Result<()> {
-        let file_creator = file_creator(256, |_| {})?;
+        let file_creator = file_creator(256, IO_SETUP_FOR_TESTS.clone(), |_| {})?;
         with_finalize_and_unpack(archive, move |a, b| {
             unpack_snapshot_with_processors(a, file_creator, b, &[PathBuf::new()], |_, _| {})
                 .map(|_| ())
@@ -707,7 +713,7 @@ mod tests {
     }
 
     fn finalize_and_unpack_genesis(archive: tar::Builder<Vec<u8>>) -> Result<()> {
-        let file_creator = file_creator(0, |_| {})?;
+        let file_creator = file_creator(0, IO_SETUP_FOR_TESTS.clone(), |_| {})?;
         with_finalize_and_unpack(archive, move |a, b| {
             unpack_genesis(a, file_creator, b, MAX_GENESIS_SIZE_FOR_TESTS)
         })
@@ -990,7 +996,7 @@ mod tests {
         archive.append(&header, data).unwrap();
         let result = with_finalize_and_unpack(archive, |ar, tmp| {
             let tmp_path_buf = tmp.to_path_buf();
-            let file_creator = file_creator(256, move |path| {
+            let file_creator = file_creator(256, IO_SETUP_FOR_TESTS.clone(), move |path| {
                 assert_eq!(path, tmp_path_buf.join("accounts_dest/123.456"))
             })
             .expect("must make file_creator");
