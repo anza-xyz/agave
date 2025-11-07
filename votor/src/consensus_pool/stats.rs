@@ -142,7 +142,11 @@ impl ConsensusPoolStats {
     fn report(&self) {
         datapoint_info!(
             "consensus_pool_stats",
-            ("slashable_behavior", self.slashable_behavior as i64, i64),
+            (
+                "vote-pool-slashable_behavior",
+                self.slashable_behavior as i64,
+                i64
+            ),
             ("event_safe_to_skip", self.event_safe_to_skip as i64, i64),
             (
                 "event_safe_to_notarize",
