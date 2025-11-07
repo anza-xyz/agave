@@ -178,14 +178,27 @@ impl<Tx> UsageCostDetails<'_, Tx> {
 #[derive(Debug)]
 pub struct WritableKeysTransaction(pub Vec<Pubkey>);
 
+impl solana_svm_transaction::svm_message::SVMStaticMessage for WritableKeysTransaction {
+    fn num_write_locks(&self) -> u64 {
+        unimplemented!("WritableKeysTransaction::num_write_locks")
+    }
+
+    fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            &Pubkey,
+            solana_svm_transaction::instruction::SVMInstruction<'_>,
+        ),
+    > + Clone {
+        core::iter::empty()
+    }
+}
+
 #[cfg(feature = "dev-context-only-utils")]
 impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction {
     fn num_transaction_signatures(&self) -> u64 {
         unimplemented!("WritableKeysTransaction::num_transaction_signatures")
-    }
-
-    fn num_write_locks(&self) -> u64 {
-        unimplemented!("WritableKeysTransaction::num_write_locks")
     }
 
     fn recent_blockhash(&self) -> &solana_hash::Hash {
@@ -199,17 +212,6 @@ impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction
     fn instructions_iter(
         &self,
     ) -> impl Iterator<Item = solana_svm_transaction::instruction::SVMInstruction<'_>> {
-        core::iter::empty()
-    }
-
-    fn program_instructions_iter(
-        &self,
-    ) -> impl Iterator<
-        Item = (
-            &Pubkey,
-            solana_svm_transaction::instruction::SVMInstruction<'_>,
-        ),
-    > + Clone {
         core::iter::empty()
     }
 
