@@ -9,7 +9,7 @@ use {
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
-    solana_svm_transaction::instruction::SVMInstruction,
+    solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMStaticMessage},
 };
 
 // alias for convenience
@@ -244,6 +244,18 @@ impl<const SANITIZED: bool, D: TransactionData> Debug for TransactionView<SANITI
             .field("instructions", &self.instructions_iter())
             .field("address_table_lookups", &self.address_table_lookup_iter())
             .finish()
+    }
+}
+
+impl<D: TransactionData> SVMStaticMessage for TransactionView<true, D> {
+    fn num_write_locks(&self) -> u64 {
+        self.num_requested_write_locks()
+    }
+
+    fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
+        self.program_instructions_iter()
     }
 }
 
