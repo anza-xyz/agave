@@ -19,13 +19,15 @@ use {
         stake_updater::{StakeUpdater, STAKE_REFRESH_SLEEP_DURATION},
         vortexor::Vortexor,
     },
-    std::sync::atomic::AtomicUsize,
     std::{
         collections::HashMap,
         env,
         net::{IpAddr, SocketAddr},
         path::PathBuf,
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        sync::{
+            atomic::{AtomicBool, AtomicUsize},
+            Arc, RwLock,
+        },
     },
     tokio_util::sync::CancellationToken,
 };

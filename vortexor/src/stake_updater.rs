@@ -3,18 +3,16 @@
 
 use {
     crate::rpc_load_balancer::RpcLoadBalancer,
-    itertools::Itertools,
     log::{info, warn},
     solana_client::client_error,
     solana_pubkey::Pubkey,
-    solana_streamer::streamer::StakedNodes,
     solana_streamer::streamer::VersionedStakedNodes,
     std::{
         collections::HashMap,
         str::FromStr,
         sync::{
             atomic::{AtomicBool, Ordering},
-            Arc, RwLock,
+            Arc,
         },
         thread::{self, sleep, Builder, JoinHandle},
         time::{Duration, Instant},

@@ -9049,6 +9049,7 @@ dependencies = [
  "solana-keypair",
  "solana-measure",
  "solana-metrics",
+ "solana-native-token",
  "solana-net-utils",
  "solana-packet",
  "solana-perf",

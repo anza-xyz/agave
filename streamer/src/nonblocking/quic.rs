@@ -132,7 +132,7 @@ pub(crate) fn spawn_server<Q, C>(
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     quic_server_params: QuicStreamerConfig,
-    qos: Arc<Q>,
+    qos: Q,
     cancel: CancellationToken,
 ) -> Result<SpawnNonBlockingServerResult, QuicServerError>
 where
@@ -237,12 +237,14 @@ async fn run_server<Q, C>(
     stats: Arc<StreamerStats>,
     quic_server_params: QuicStreamerConfig,
     cancel: CancellationToken,
-    qos: Arc<Q>,
+    mut qos: Q,
 ) -> TaskTracker
 where
     Q: QosController<C> + Send + Sync + 'static,
     C: ConnectionContext + Send + Sync + 'static,
 {
+    qos.async_init().await;
+    let qos = Arc::new(qos);
     let quic_server_params = Arc::new(quic_server_params);
     let rate_limiter = Arc::new(ConnectionRateLimiter::new(
         quic_server_params.max_connections_per_ipaddr_per_min,
@@ -855,15 +857,15 @@ fn handle_chunks(
     Ok(StreamState::Finished)
 }
 
-struct ConnectionEntry {
+pub(crate) struct ConnectionEntry {
     cancel: CancellationToken,
-    peer_type: ConnectionPeerType,
+    pub(crate) peer_type: ConnectionPeerType,
     last_update: Arc<AtomicU64>,
     port: u16,
     // We do not explicitly use it, but its drop is triggered when ConnectionEntry is dropped.
     _client_connection_tracker: ClientConnectionTracker,
     connection: Option<Connection>,
-    stream_counter: Arc<dyn ConnectionTableSharedState>,
+    pub(crate) stream_counter: Arc<dyn ConnectionTableSharedState>,
 }
 
 impl ConnectionEntry {
@@ -1052,6 +1054,9 @@ impl ConnectionTable {
         }
     }
 
+    pub(crate) fn iter(&self) -> indexmap::map::Iter<'_, ConnectionTableKey, Vec<ConnectionEntry>> {
+        self.table.iter()
+    }
     // Returns number of connections that were removed
     pub(crate) fn remove_connection(
         &mut self,
@@ -1354,7 +1359,11 @@ pub mod test {
         } = setup_quic_server(
             None,
             QuicStreamerConfig::default_for_tests(),
-            SwQosConfig::default(),
+            SwQosConfig {
+                max_connections_per_unstaked_peer: 1,
+                max_connections_per_staked_peer: 1,
+                ..Default::default()
+            },
         );
         check_block_multiple_connections(server_address).await;
         cancel.cancel();
@@ -1375,10 +1384,13 @@ pub mod test {
         } = setup_quic_server(
             None,
             QuicStreamerConfig {
-                max_connections_per_unstaked_peer: 2,
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig::default(),
+            SwQosConfig {
+                max_connections_per_unstaked_peer: 2,
+                max_connections_per_staked_peer: 2,
+                ..Default::default()
+            },
         );
 
         let client_socket = bind_to_localhost_unique().expect("should bind - client");
@@ -1589,10 +1601,12 @@ pub mod test {
             sender,
             staked_nodes,
             QuicStreamerConfig {
-                max_unstaked_connections: 0, // Do not allow any connection from unstaked clients/nodes
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig::default(),
+            SwQosConfig {
+                max_unstaked_connections: 0, // Do not allow any connection from unstaked clients/nodes
+                ..Default::default()
+            },
             cancel.clone(),
         )
         .unwrap();
@@ -1626,10 +1640,12 @@ pub mod test {
             sender,
             staked_nodes,
             QuicStreamerConfig {
-                max_connections_per_unstaked_peer: 2,
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig::default(),
+            SwQosConfig {
+                max_connections_per_unstaked_peer: 2,
+                ..Default::default()
+            },
             cancel.clone(),
         )
         .unwrap();
@@ -1976,7 +1992,6 @@ pub mod test {
             stats.total_new_streams.load(Ordering::Relaxed),
             expected_num_txs
         );
-        assert!(stats.throttled_unstaked_streams.load(Ordering::Relaxed) > 0);
     }
 
     #[test]

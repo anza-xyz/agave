@@ -9,10 +9,16 @@ use {
                 CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT, CONNECTION_CLOSE_REASON_DISALLOWED,
                 CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT,
             },
-            stream_throttle::{refill_task, ConnectionStreamCounter, StreamQuotas, BASE_STAKE},
+            stream_throttle::{
+                refill_task, ConnectionStreamCounter, StakedStreamQuotas, BASE_STAKE_SOL,
+            },
         },
-        quic::{StreamerStats, DEFAULT_MAX_STREAMS_PER_MS},
-        streamer::{StakedNodes, VersionedStakedNodes},
+        quic::{
+            StreamerStats, DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
+            DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER, DEFAULT_MAX_STAKED_CONNECTIONS,
+            DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
+        },
+        streamer::VersionedStakedNodes,
     },
     percentage::Percentage,
     quinn::{Connection, VarInt, VarIntBoundsExceeded},
@@ -25,36 +31,41 @@ use {
     },
     solana_time_utils as timing,
     std::{
-        collections::HashMap,
         future::Future,
         sync::{
             atomic::{AtomicU64, Ordering},
-            Arc, RwLock,
+            Arc,
         },
         time::Duration,
     },
-    tokio::{
-        sync::{watch, Mutex, MutexGuard},
-        time::sleep,
-    },
+    tokio::sync::{watch, Mutex, MutexGuard},
     tokio_util::sync::CancellationToken,
 };
 
 #[derive(Clone)]
 pub struct SwQosConfig {
     pub max_streams_per_ms: u64,
+    pub max_staked_connections: usize,
+    pub max_unstaked_connections: usize,
+    pub max_connections_per_staked_peer: usize,
+    pub max_connections_per_unstaked_peer: usize,
 }
 
 impl Default for SwQosConfig {
     fn default() -> Self {
         SwQosConfig {
             max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
+            max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS,
+            max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
+            max_connections_per_staked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
+            max_connections_per_unstaked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER,
         }
     }
 }
 
 pub struct SwQos {
     max_staked_connections: usize,
+    max_streams_per_ms: u64,
     max_unstaked_connections: usize,
     max_connections_per_staked_peer: usize,
     max_connections_per_unstaked_peer: usize,
@@ -62,7 +73,7 @@ pub struct SwQos {
     staked_nodes: VersionedStakedNodes,
     unstaked_connection_table: Arc<Mutex<ConnectionTable>>,
     staked_connection_table: Arc<Mutex<ConnectionTable>>,
-    test_stream_quotas_receiver: watch::Receiver<StreamQuotas>,
+    staked_stream_quotas_receiver: Option<watch::Receiver<StakedStreamQuotas>>,
 }
 
 // QoS Params for Stake weighted QoS
@@ -75,9 +86,7 @@ pub struct SwQosConnectionContext {
     total_stake: u64,
     in_staked_table: bool,
     last_update: Arc<AtomicU64>,
-    remote_address: std::net::SocketAddr,
     stream_counter: Option<Arc<ConnectionStreamCounter>>,
-    quota_index: usize,
 }
 
 impl ConnectionContext for SwQosConnectionContext {
@@ -87,70 +96,6 @@ impl ConnectionContext for SwQosConnectionContext {
 
     fn remote_pubkey(&self) -> Option<solana_pubkey::Pubkey> {
         self.remote_pubkey
-    }
-}
-
-impl SwQos {
-    pub fn new(
-        qos_config: SwQosConfig,
-        max_staked_connections: usize,
-        max_unstaked_connections: usize,
-        max_connections_per_staked_peer: usize,
-        max_connections_per_unstaked_peer: usize,
-        stats: Arc<StreamerStats>,
-        staked_nodes: VersionedStakedNodes,
-        cancel: CancellationToken,
-    ) -> Self {
-        // PRobably better to use RwLock here
-        let (test_stream_quotas_sender, test_stream_quotas_receiver) =
-            watch::channel(StreamQuotas {
-                mapping: HashMap::new(),
-                entries: Vec::new(),
-                total_stake: 1,
-            });
-        {
-            let staked_nodes = staked_nodes.clone();
-            tokio::spawn(async move {
-                let mut last_seen_version = 0;
-                loop {
-                    if staked_nodes.version.load(Ordering::Relaxed) > last_seen_version {
-                        last_seen_version = staked_nodes.version.load(Ordering::Relaxed);
-
-                        let stream_quotas = {
-                            let guard = staked_nodes.staked_nodes.read().unwrap();
-                            StreamQuotas::new(&guard)
-                        };
-                        if test_stream_quotas_sender.send(stream_quotas).is_err() {
-                            error!("Receiver dropped, stopping stake quota updater");
-                            break;
-                        }
-                    }
-                    tokio::time::sleep(Duration::from_secs(5)).await;
-                }
-            })
-        };
-        tokio::spawn(refill_task(
-            test_stream_quotas_receiver.clone(),
-            qos_config.max_streams_per_ms * 1000,
-        ));
-
-        Self {
-            max_staked_connections,
-            max_unstaked_connections,
-            max_connections_per_staked_peer,
-            max_connections_per_unstaked_peer,
-            stats,
-            staked_nodes,
-            unstaked_connection_table: Arc::new(Mutex::new(ConnectionTable::new(
-                ConnectionTableType::Unstaked,
-                cancel.clone(),
-            ))),
-            staked_connection_table: Arc::new(Mutex::new(ConnectionTable::new(
-                ConnectionTableType::Staked,
-                cancel,
-            ))),
-            test_stream_quotas_receiver,
-        }
     }
 }
 
@@ -225,6 +170,32 @@ fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stake: u
 }
 
 impl SwQos {
+    pub fn new(
+        qos_config: SwQosConfig,
+        stats: Arc<StreamerStats>,
+        staked_nodes: VersionedStakedNodes,
+        cancel: CancellationToken,
+    ) -> Self {
+        Self {
+            max_staked_connections: qos_config.max_staked_connections,
+            max_unstaked_connections: qos_config.max_unstaked_connections,
+            max_connections_per_staked_peer: qos_config.max_connections_per_staked_peer,
+            max_connections_per_unstaked_peer: qos_config.max_connections_per_unstaked_peer,
+            max_streams_per_ms: qos_config.max_streams_per_ms,
+            stats,
+            staked_nodes,
+            unstaked_connection_table: Arc::new(Mutex::new(ConnectionTable::new(
+                ConnectionTableType::Unstaked,
+                cancel.clone(),
+            ))),
+            staked_connection_table: Arc::new(Mutex::new(ConnectionTable::new(
+                ConnectionTableType::Staked,
+                cancel,
+            ))),
+            staked_stream_quotas_receiver: None,
+        }
+    }
+
     fn cache_new_connection(
         &self,
         client_connection_tracker: ClientConnectionTracker,
@@ -260,20 +231,41 @@ impl SwQos {
                 remote_addr,
             );
 
-            let max_connections_per_peer = match conn_context.peer_type() {
-                ConnectionPeerType::Unstaked => self.max_connections_per_unstaked_peer,
-                ConnectionPeerType::Staked(_) => self.max_connections_per_staked_peer,
-            };
+            let key = ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey);
+            let (max_connections_per_peer, stream_counter_prototype) =
+                match conn_context.peer_type() {
+                    ConnectionPeerType::Unstaked => (self.max_connections_per_unstaked_peer, None),
+                    ConnectionPeerType::Staked(_) => {
+                        let quota = self
+                            .staked_stream_quotas_receiver
+                            .as_ref()
+                            .unwrap()
+                            .borrow()
+                            .entries[&conn_context
+                            .remote_pubkey
+                            .expect("Staked peers have pubkeys")]
+                            .clone();
+                        (
+                            self.max_connections_per_staked_peer,
+                            Some(ConnectionStreamCounter::new(quota)),
+                        )
+                    }
+                };
             if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
                 .try_add_connection(
-                    ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey),
+                    key,
                     remote_addr.port(),
                     client_connection_tracker,
                     Some(connection.clone()),
                     conn_context.peer_type(),
                     conn_context.last_update.clone(),
                     max_connections_per_peer,
-                    || Arc::new(ConnectionStreamCounter::new()),
+                    move || {
+                        Arc::new(
+                            stream_counter_prototype
+                                .unwrap_or_else(ConnectionStreamCounter::new_unstaked),
+                        )
+                    },
                 )
             {
                 update_open_connections_stat(&self.stats, &connection_table_l);
@@ -360,6 +352,44 @@ impl SwQos {
 }
 
 impl QosController<SwQosConnectionContext> for SwQos {
+    async fn async_init(&mut self) {
+        // PRobably better to use RwLock here
+        let (staked_stream_quotas_sender, staked_stream_quotas_receiver) = watch::channel(
+            StakedStreamQuotas::new(&self.staked_nodes.staked_nodes.read().unwrap()),
+        );
+        {
+            // stake updater task
+            let staked_nodes = self.staked_nodes.clone();
+            tokio::spawn(async move {
+                let mut last_seen_version = 0;
+                loop {
+                    let new_version = staked_nodes.version.load(Ordering::Relaxed);
+                    if new_version > last_seen_version {
+                        debug!(
+                            "Loading staked nodes version {new_version} (was {last_seen_version})"
+                        );
+                        last_seen_version = new_version;
+                        let stream_quotas = {
+                            let guard = staked_nodes.staked_nodes.read().unwrap();
+                            StakedStreamQuotas::new(&guard)
+                        };
+                        if staked_stream_quotas_sender.send(stream_quotas).is_err() {
+                            error!("Receiver dropped, stopping stake quota updater");
+                            break;
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+            })
+        };
+        tokio::spawn(refill_task(
+            staked_stream_quotas_receiver.clone(),
+            self.unstaked_connection_table.clone(),
+            self.max_streams_per_ms * 1000,
+        ));
+        self.staked_stream_quotas_receiver = Some(staked_stream_quotas_receiver);
+    }
+
     fn build_connection_context(&self, connection: &Connection) -> SwQosConnectionContext {
         get_connection_stake(connection, &self.staked_nodes.staked_nodes).map_or(
             SwQosConnectionContext {
@@ -369,18 +399,14 @@ impl QosController<SwQosConnectionContext> for SwQos {
                 total_stake: 0,
                 remote_pubkey: None,
                 in_staked_table: false,
-                remote_address: connection.remote_address(),
                 stream_counter: None,
                 last_update: Arc::new(AtomicU64::new(timing::timestamp())),
-                quota_index: 0, //FIXME
             },
             |(pubkey, stake, total_stake, max_stake, min_stake)| {
-                let index = { self.test_stream_quotas_receiver.borrow().mapping[&pubkey] };
-
                 let peer_type = {
                     // If it is a staked connection with ultra low stake, treat it as unstaked.
                     // This prevents 1-SOL nodes from polluting the staked nodes table.
-                    if stake < BASE_STAKE {
+                    if stake < BASE_STAKE_SOL {
                         ConnectionPeerType::Unstaked
                     } else {
                         ConnectionPeerType::Staked(stake)
@@ -394,10 +420,8 @@ impl QosController<SwQosConnectionContext> for SwQos {
                     total_stake,
                     remote_pubkey: Some(pubkey),
                     in_staked_table: false,
-                    remote_address: connection.remote_address(),
                     last_update: Arc::new(AtomicU64::new(timing::timestamp())),
                     stream_counter: None,
-                    quota_index: index,
                 }
             },
         )
@@ -545,14 +569,9 @@ impl QosController<SwQosConnectionContext> for SwQos {
     #[allow(clippy::manual_async_fn)]
     fn on_new_stream(&self, context: &SwQosConnectionContext) -> impl Future<Output = ()> + Send {
         async move {
-            let peer_type = context.peer_type();
-            let remote_addr = context.remote_address;
             let stream_counter: &Arc<ConnectionStreamCounter> =
                 context.stream_counter.as_ref().unwrap();
-
-            let entry =
-                { &self.test_stream_quotas_receiver.borrow().entries[context.quota_index].clone() };
-            entry.wait_for_token(&self.stats).await;
+            stream_counter.quota.wait_for_token(&self.stats).await;
         }
     }
 }

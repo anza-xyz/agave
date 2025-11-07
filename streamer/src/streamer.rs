@@ -91,6 +91,13 @@ pub struct VersionedStakedNodes {
 }
 
 impl VersionedStakedNodes {
+    pub fn new(staked_nodes: Arc<RwLock<StakedNodes>>) -> Self {
+        Self {
+            staked_nodes,
+            version: Arc::new(AtomicUsize::new(1)),
+        }
+    }
+
     pub fn update(&self, new_stakes: StakedNodes) {
         *self.staked_nodes.write().unwrap() = new_stakes;
         self.version.fetch_add(1, Ordering::Relaxed);

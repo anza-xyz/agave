@@ -15,11 +15,10 @@ use {
     solana_keypair::Keypair,
     solana_net_utils::sockets::{bind_to_with_config, SocketConfiguration},
     solana_pubkey::Pubkey,
-    solana_streamer::streamer::VersionedStakedNodes,
     solana_streamer::{
         nonblocking::{quic::SpawnNonBlockingServerResult, swqos::SwQosConfig},
         quic::QuicStreamerConfig,
-        streamer::StakedNodes,
+        streamer::{StakedNodes, VersionedStakedNodes},
     },
     std::{
         collections::HashMap,
@@ -27,7 +26,7 @@ use {
         net::SocketAddr,
         path::Path,
         str::FromStr as _,
-        sync::{atomic::AtomicUsize, Arc, RwLock},
+        sync::{Arc, RwLock},
         time::Duration,
     },
     tokio::time::sleep,
@@ -83,6 +82,9 @@ struct Cli {
 
     #[arg(short, long)]
     stake_amounts: String,
+
+    #[arg(short, long, default_value_t = 100_000)]
+    max_tps: u64,
 }
 
 // number of threads as in fn default_num_tpu_transaction_forward_receive_threads
@@ -107,11 +109,7 @@ async fn main() -> anyhow::Result<()> {
         );
         Arc::new(RwLock::new(nodes))
     };
-    let staked_nodes = VersionedStakedNodes {
-        staked_nodes,
-        version: Arc::new(AtomicUsize::new(0)),
-    };
-
+    let staked_nodes = VersionedStakedNodes::new(staked_nodes);
     let cancel = CancellationToken::new();
     let SpawnNonBlockingServerResult {
         endpoints,
@@ -125,10 +123,14 @@ async fn main() -> anyhow::Result<()> {
         sender,
         staked_nodes,
         QuicStreamerConfig {
-            max_connections_per_unstaked_peer: cli.max_connections_per_peer,
             ..QuicStreamerConfig::default()
         },
-        SwQosConfig::default(),
+        SwQosConfig {
+            max_connections_per_unstaked_peer: cli.max_connections_per_peer,
+
+            max_streams_per_ms: cli.max_tps / 1000,
+            ..Default::default()
+        },
         cancel.clone(),
     )?;
     info!("Server listening on {}", socket.local_addr()?);

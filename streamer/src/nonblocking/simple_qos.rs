@@ -8,7 +8,9 @@ use {
                 ConnectionTableType,
             },
         },
-        quic::{StreamerStats, DEFAULT_MAX_STREAMS_PER_MS},
+        quic::{
+            StreamerStats, DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER, DEFAULT_MAX_STREAMS_PER_MS,
+        },
         streamer::StakedNodes,
     },
     quinn::Connection,
@@ -33,12 +35,16 @@ use {
 const THROTTLING_INTERVAL: Duration = Duration::from_millis(20);
 #[derive(Clone)]
 pub struct SimpleQosConfig {
+    pub max_staked_connections: u64,
     pub max_streams_per_second: u64,
+    pub max_connections_per_peer: usize,
 }
 
 impl Default for SimpleQosConfig {
     fn default() -> Self {
         SimpleQosConfig {
+            max_staked_connections: 4000,
+            max_connections_per_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
             max_streams_per_second: DEFAULT_MAX_STREAMS_PER_MS * 1000,
         }
     }
@@ -62,16 +68,14 @@ pub struct SimpleQos {
 impl SimpleQos {
     pub fn new(
         qos_config: SimpleQosConfig,
-        max_connections_per_peer: usize,
-        max_staked_connections: usize,
         stats: Arc<StreamerStats>,
         staked_nodes: Arc<RwLock<StakedNodes>>,
         cancel: CancellationToken,
     ) -> Self {
         Self {
             max_streams_per_second: qos_config.max_streams_per_second,
-            max_connections_per_peer,
-            max_staked_connections,
+            max_connections_per_peer: qos_config.max_connections_per_peer,
+            max_staked_connections: qos_config.max_staked_connections as usize,
             stats,
             staked_nodes,
             staked_connection_table: Arc::new(Mutex::new(ConnectionTable::new(
@@ -389,8 +393,6 @@ mod tests {
 
         let simple_qos = SimpleQos::new(
             SimpleQosConfig::default(),
-            10,  // max_connections_per_peer
-            100, // max_staked_connections
             stats.clone(),
             staked_nodes,
             cancel.clone(),
@@ -440,9 +442,10 @@ mod tests {
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
 
         let simple_qos = SimpleQos::new(
-            SimpleQosConfig::default(),
-            1,   // max_connections_per_peer (set to 1 to trigger limit)
-            100, // max_staked_connections
+            SimpleQosConfig {
+                max_connections_per_peer: 1,
+                ..Default::default()
+            },
             stats.clone(),
             staked_nodes,
             cancel.clone(),
@@ -515,8 +518,6 @@ mod tests {
 
         let simple_qos = SimpleQos::new(
             SimpleQosConfig::default(),
-            10,  // max_connections_per_peer
-            100, // max_staked_connections
             stats.clone(),
             staked_nodes,
             cancel.clone(),
@@ -571,8 +572,6 @@ mod tests {
 
         let simple_qos = SimpleQos::new(
             SimpleQosConfig::default(),
-            10,  // max_connections_per_peer
-            100, // max_staked_connections
             stats.clone(),
             staked_nodes,
             cancel.clone(),
@@ -610,8 +609,6 @@ mod tests {
 
         let simple_qos = SimpleQos::new(
             SimpleQosConfig::default(),
-            10,  // max_connections_per_peer
-            100, // max_staked_connections
             stats.clone(),
             staked_nodes,
             cancel.clone(),
@@ -651,15 +648,10 @@ mod tests {
             create_staked_nodes_with_keypairs(&server_keypair, &client_keypair, stake_amount);
         let config = SimpleQosConfig {
             max_streams_per_second: 1,
+            ..Default::default()
         };
-        let simple_qos = SimpleQos::new(
-            config.clone(),
-            10,  // max_connections_per_peer
-            100, // max_staked_connections
-            stats.clone(),
-            staked_nodes,
-            cancel.clone(),
-        );
+        let simple_qos =
+            SimpleQos::new(config.clone(), stats.clone(), staked_nodes, cancel.clone());
 
         let client_tracker = ClientConnectionTracker {
             stats: stats.clone(),
@@ -703,8 +695,6 @@ mod tests {
 
         let simple_qos = SimpleQos::new(
             SimpleQosConfig::default(),
-            10,  // max_connections_per_peer
-            100, // max_staked_connections
             stats.clone(),
             staked_nodes,
             cancel.clone(),
@@ -765,9 +755,10 @@ mod tests {
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(Arc::new(stakes), overrides)));
 
         let simple_qos = SimpleQos::new(
-            SimpleQosConfig::default(),
-            10, // max_connections_per_peer
-            1,  // max_staked_connections (set to 1 to trigger pruning)
+            SimpleQosConfig {
+                max_staked_connections: 1,
+                ..Default::default()
+            },
             stats.clone(),
             staked_nodes,
             cancel.clone(),
@@ -834,9 +825,10 @@ mod tests {
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(Arc::new(stakes), overrides)));
 
         let simple_qos = SimpleQos::new(
-            SimpleQosConfig::default(),
-            10, // max_connections_per_peer
-            1,  // max_staked_connections (set to 1)
+            SimpleQosConfig {
+                max_staked_connections: 1,
+                ..Default::default()
+            },
             stats.clone(),
             staked_nodes,
             cancel.clone(),
@@ -895,8 +887,6 @@ mod tests {
 
         let simple_qos = SimpleQos::new(
             SimpleQosConfig::default(),
-            10,  // max_connections_per_peer
-            100, // max_staked_connections
             stats.clone(),
             staked_nodes,
             cancel.clone(),
@@ -947,8 +937,6 @@ mod tests {
 
         let simple_qos = SimpleQos::new(
             SimpleQosConfig::default(),
-            10,  // max_connections_per_peer
-            100, // max_staked_connections
             stats.clone(),
             staked_nodes,
             cancel.clone(),
@@ -988,8 +976,6 @@ mod tests {
 
         let simple_qos = SimpleQos::new(
             SimpleQosConfig::default(),
-            10,  // max_connections_per_peer
-            100, // max_staked_connections
             stats.clone(),
             staked_nodes,
             cancel.clone(),
@@ -1047,16 +1033,10 @@ mod tests {
 
         let qos_config = SimpleQosConfig {
             max_streams_per_second,
+            ..Default::default()
         };
 
-        let simple_qos = SimpleQos::new(
-            qos_config,
-            10,  // max_connections_per_peer
-            100, // max_staked_connections
-            stats.clone(),
-            staked_nodes,
-            cancel.clone(),
-        );
+        let simple_qos = SimpleQos::new(qos_config, stats.clone(), staked_nodes, cancel.clone());
 
         let client_tracker = ClientConnectionTracker {
             stats: stats.clone(),
