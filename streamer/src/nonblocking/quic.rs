@@ -855,7 +855,7 @@ fn handle_chunks(
     Ok(StreamState::Finished)
 }
 
-struct ConnectionEntry {
+pub(crate) struct ConnectionEntry {
     cancel: CancellationToken,
     peer_type: ConnectionPeerType,
     last_update: Arc<AtomicU64>,
@@ -863,7 +863,7 @@ struct ConnectionEntry {
     // We do not explicitly use it, but its drop is triggered when ConnectionEntry is dropped.
     _client_connection_tracker: ClientConnectionTracker,
     connection: Option<Connection>,
-    stream_counter: Arc<dyn ConnectionTableSharedState>,
+    pub(crate) stream_counter: Arc<dyn ConnectionTableSharedState>,
 }
 
 impl ConnectionEntry {
@@ -1052,6 +1052,11 @@ impl ConnectionTable {
         }
     }
 
+    pub(crate) fn iter(
+        &self,
+    ) -> indexmap::map::Values<'_, ConnectionTableKey, Vec<ConnectionEntry>> {
+        self.table.values()
+    }
     // Returns number of connections that were removed
     pub(crate) fn remove_connection(
         &mut self,

@@ -6,7 +6,7 @@ use {
             simple_qos::{SimpleQos, SimpleQosConfig},
             swqos::{SwQos, SwQosConfig},
         },
-        streamer::{StakedNodes, VersionedStakedNodes},
+        streamer::VersionedStakedNodes,
     },
     crossbeam_channel::Sender,
     pem::Pem,
@@ -27,7 +27,7 @@ use {
         num::NonZeroUsize,
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering},
-            Arc, Mutex, RwLock,
+            Arc, Mutex,
         },
         thread::{self},
         time::Duration,

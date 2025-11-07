@@ -1,7 +1,12 @@
 use {
-    crate::nonblocking::qos::ConnectionTableSharedState,
-    crate::{nonblocking::quic::ConnectionPeerType, quic::StreamerStats, streamer::StakedNodes},
-    percentage::Percentage,
+    crate::{
+        nonblocking::{
+            qos::{get_shared_state, ConnectionTableSharedState},
+            quic::ConnectionTable,
+        },
+        quic::StreamerStats,
+        streamer::StakedNodes,
+    },
     solana_pubkey::Pubkey,
     std::{
         any::Any,
@@ -13,8 +18,10 @@ use {
         },
         time::Duration,
     },
-    tokio::sync::watch,
-    tokio::time::sleep,
+    tokio::{
+        sync::{watch, Mutex},
+        time::sleep,
+    },
 };
 
 /// This will be added to the true stake amount in the
@@ -29,9 +36,9 @@ pub const REFILL_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_BURST: u64 = 2;
 
 #[derive(Clone)]
-pub struct StreamQuotas {
-    pub mapping: HashMap<Pubkey, usize>,
-    pub entries: Vec<Arc<QuotaEntry>>,
+pub struct StakedStreamQuotas {
+    pub entries: HashMap<Pubkey, Arc<QuotaEntry>>,
+    refill_order: Vec<Arc<QuotaEntry>>,
     pub total_stake: u64,
 }
 
@@ -43,11 +50,18 @@ pub struct QuotaEntry {
     pub tokens: AtomicU64,
 }
 
-pub struct ConnectionStreamCounter {}
+pub struct ConnectionStreamCounter {
+    pub quota: Arc<QuotaEntry>,
+}
 
 impl ConnectionStreamCounter {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(quota: Arc<QuotaEntry>) -> Self {
+        Self { quota }
+    }
+    pub fn new_unstaked() -> Self {
+        Self {
+            quota: Arc::new(QuotaEntry::new(Pubkey::new_unique(), 0)),
+        }
     }
 }
 impl ConnectionTableSharedState for ConnectionStreamCounter {
@@ -141,88 +155,100 @@ impl QuotaEntry {
     }
 }
 
-impl StreamQuotas {
+impl StakedStreamQuotas {
     pub fn new(stakes: &StakedNodes) -> Self {
         let overrides = &stakes.overrides;
         let total_len = overrides.len() + stakes.stakes.len();
-        let mut mapping = HashMap::with_capacity(total_len);
-        let mut entries = Vec::with_capacity(total_len);
-        let mut total_stake = 0;
+
+        let mut quotas = StakedStreamQuotas::with_capacity(total_len);
+
         for (&address, &stake) in overrides.iter() {
-            entries.push(Arc::new(QuotaEntry::new(address, stake)));
-            total_stake += stake;
+            quotas.insert(address, QuotaEntry::new(address, stake));
         }
         for (&address, &stake) in stakes.stakes.iter() {
             if !overrides.contains_key(&address) {
-                entries.push(Arc::new(QuotaEntry::new(address, stake)));
-                total_stake += stake;
+                quotas.insert(address, QuotaEntry::new(address, stake));
             }
         }
-        //entries.sort();
-        for (index, entry) in entries.iter().enumerate() {
-            mapping.insert(entry.address, index);
+        for entry in quotas.entries.values() {
+            quotas.refill_order.push(entry.clone());
         }
-        StreamQuotas {
-            entries,
-            mapping,
-            total_stake,
+        quotas.refill_order.sort();
+        quotas
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        StakedStreamQuotas {
+            entries: HashMap::with_capacity(capacity),
+            refill_order: Vec::with_capacity(capacity),
+            total_stake: 1, //  to avoid zero division checks everywhere
         }
+    }
+
+    fn insert(&mut self, address: Pubkey, entry: QuotaEntry) {
+        self.total_stake += entry.stake;
+        self.entries.insert(address, Arc::new(entry));
     }
 }
 
 #[allow(clippy::arithmetic_side_effects)]
-pub async fn refill_task(test_stream_quotas_receiver: watch::Receiver<StreamQuotas>, max_tps: u64) {
+pub async fn refill_task(
+    staked_stream_quotas_receiver: watch::Receiver<StakedStreamQuotas>,
+    unstaked_connection_table: Arc<Mutex<ConnectionTable>>,
+    max_tps: u64,
+) {
     // amount of refill per interval
     let token_fill_rate: u64 = max_tps * 1000 / REFILL_INTERVAL.as_millis() as u64;
+    let mut last_iter_unstaked_effective_stake = 0;
+    let mut overflow = 0;
     loop {
+        let total_tokens_to_refill = (overflow + token_fill_rate).min(token_fill_rate * 2);
+        overflow = 0;
+        let total_stake;
+        // fill the staked portion
+        // overflow from higher staked nodes immediately cascades to the lower staked nodes
         {
-            let quotas = test_stream_quotas_receiver.borrow();
-            let mut overflow = 0;
-            let total_tokens_to_refill = (overflow + token_fill_rate).min(token_fill_rate * 2);
-
-            for entry in quotas.entries.iter() {
+            let quotas = staked_stream_quotas_receiver.borrow();
+            total_stake = last_iter_unstaked_effective_stake + quotas.total_stake;
+            for entry in quotas.refill_order.iter() {
                 // fraction of total amount to deposit in this token bucket
-                let my_fraction =
-                    total_tokens_to_refill * entry.effective_stake() / quotas.total_stake;
+                let my_fraction = total_tokens_to_refill * entry.effective_stake() / total_stake;
                 // maximal amount this bucket should be able to hold
                 let my_max_tokens =
-                    token_fill_rate * MAX_BURST * entry.effective_stake() / quotas.total_stake;
+                    token_fill_rate * MAX_BURST * entry.effective_stake() / total_stake;
 
+                // fill the bucket with all available tokens (new + overflow from last iter)
                 // store any leftover tokens for next iteration of the fill loop
-                overflow += entry.try_refill(my_fraction, my_max_tokens)
+                overflow = entry.try_refill(my_fraction + overflow, my_max_tokens)
+            }
+        }
+        // fill the unstaked buckets
+        // overflow does not cascade, as there is no fair order of redistribution
+        // so we rely on proportional redistribution here
+        {
+            let guard = unstaked_connection_table.lock().await;
+            last_iter_unstaked_effective_stake = guard.total_size as u64 * BASE_STAKE;
+            for entry in guard.iter() {
+                if let Some(entry) = entry.first() {
+                    let entry: Arc<ConnectionStreamCounter> =
+                        get_shared_state(entry.stream_counter.clone())
+                            .expect("Can not fail to downcast here");
+                    let entry = &entry.quota;
+                    // fraction of total amount to deposit in this token bucket
+                    let my_fraction =
+                        total_tokens_to_refill * entry.effective_stake() / total_stake;
+                    // maximal amount this bucket should be able to hold
+                    let my_max_tokens =
+                        token_fill_rate * MAX_BURST * entry.effective_stake() / total_stake;
+
+                    // store any leftover tokens for next iteration of the fill loop
+                    overflow += entry.try_refill(my_fraction, my_max_tokens)
+                }
             }
         }
         tokio::time::sleep(REFILL_INTERVAL).await;
     }
 }
-// {
-//         let base_fill_per_tick = 10000;
-//         let max_tokens_in_bucket = 1000;
-//         loop {
-//             {
-//                 let quotas = test_stream_quotas_receiver.borrow();
-
-//                 let mut total_tokens_to_refill = 0;
-//                 let mut overflow = 0;
-//                 total_tokens_to_refill =
-//                     (overflow + base_fill_per_tick).min(base_fill_per_tick * 2);
-//                 dbg!(total_tokens_to_refill);
-
-//                 for entry in quotas.entries.iter() {
-//                     let my_fraction =
-//                         total_tokens_to_refill * entry.stake / quotas.total_stake;
-//                     let my_max_tokens =
-//                         base_fill_per_tick * 2 * entry.stake / quotas.total_stake;
-
-//                     dbg!(entry.address);
-//                     // store any leftover tokens for next iteration of the fill loop
-//                     overflow += entry.try_refill(my_fraction, my_max_tokens)
-//                 }
-//             }
-//             tokio::time::sleep(REFILL_INTERVAL).await;
-//         }
-//     });
-// }
 
 #[cfg(test)]
 pub mod test {}
