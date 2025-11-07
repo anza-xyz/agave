@@ -5,11 +5,13 @@ use {
             simulate_for_compute_unit_limit, ComputeUnitConfig, WithComputeUnitConfig,
         },
         feature::get_feature_activation_epoch,
+        rpc_subscriptions::{subscribe, SubscriptionWithClient},
         spend_utils::{resolve_spend_tx_and_check_account_balance, SpendAmount},
     },
     clap::{value_t, value_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand},
     console::style,
     crossbeam_channel::unbounded,
+    jsonrpsee::rpc_params,
     serde::{Deserialize, Serialize},
     solana_account::{from_account, state_traits::StateMut, Account},
     solana_clap_utils::{
@@ -27,13 +29,13 @@ use {
         },
         *,
     },
+    solana_client::rpc_response::{Response, RpcLogsResponse},
     solana_clock::{self as clock, Clock, Epoch, Slot},
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
     solana_message::Message,
     solana_nonce::state::State as NonceState,
     solana_pubkey::Pubkey,
-    solana_pubsub_client::pubsub_client::PubsubClient,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rent::Rent,
     solana_rpc_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient},
@@ -62,17 +64,16 @@ use {
     std::{
         collections::{BTreeMap, HashMap, HashSet, VecDeque},
         fmt,
+        future::Future,
         num::Saturating,
         rc::Rc,
         str::FromStr,
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc,
-        },
+        sync::Arc,
         thread::sleep,
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     },
     thiserror::Error,
+    tokio::runtime::Builder,
 };
 
 const DEFAULT_RPC_PORT_STR: &str = "8899";
@@ -1677,16 +1678,18 @@ pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> Pr
         config.commitment.commitment
     );
 
-    let (_client, receiver) = PubsubClient::logs_subscribe(
+    let mut sub: SubscriptionWithClient<Response<RpcLogsResponse>> = subscribe(
         &config.websocket_url,
-        filter.clone(),
-        RpcTransactionLogsConfig {
-            commitment: Some(config.commitment),
-        },
+        "logs",
+        rpc_params![
+            filter,
+            RpcTransactionLogsConfig {
+                commitment: Some(config.commitment)
+            }
+        ],
     )?;
-
     loop {
-        match receiver.recv() {
+        match sub.recv() {
             Ok(logs) => {
                 println!("Transaction executed in slot {}:", logs.context.slot);
                 println!("  Signature: {}", logs.value.signature);
@@ -1710,14 +1713,12 @@ pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> Pr
 }
 
 pub fn process_live_slots(config: &CliConfig) -> ProcessResult {
-    let exit = Arc::new(AtomicBool::new(false));
-
     let mut current: Option<SlotInfo> = None;
-    let mut message = "".to_string();
 
     let slot_progress = new_spinner_progress_bar();
     slot_progress.set_message("Connecting...");
-    let (mut client, receiver) = PubsubClient::slot_subscribe(&config.websocket_url)?;
+    let mut sub: SubscriptionWithClient<SlotInfo> =
+        subscribe(&config.websocket_url, "slot", rpc_params![])?;
     slot_progress.set_message("Connected.");
 
     let spacer = "|";
@@ -1726,14 +1727,9 @@ pub fn process_live_slots(config: &CliConfig) -> ProcessResult {
     let mut last_root = u64::MAX;
     let mut last_root_update = Instant::now();
     let mut slots_per_second = f64::NAN;
-    loop {
-        if exit.load(Ordering::Relaxed) {
-            eprintln!("{message}");
-            client.shutdown().unwrap();
-            break;
-        }
 
-        match receiver.recv() {
+    loop {
+        match sub.recv() {
             Ok(new_info) => {
                 if last_root == u64::MAX {
                     last_root = new_info.root;
@@ -1747,14 +1743,15 @@ pub fn process_live_slots(config: &CliConfig) -> ProcessResult {
                     last_root = root;
                 }
 
-                message = if slots_per_second.is_nan() {
+                let message = if slots_per_second.is_nan() {
                     format!("{new_info:?}")
                 } else {
                     format!(
-                        "{new_info:?} | root slot advancing at {slots_per_second:.2} slots/second"
+                        "{new_info:?} | root slot advancing at {slots_per_second:.2} \
+                             slots/second"
                     )
                 };
-                slot_progress.set_message(message.clone());
+                slot_progress.set_message(message);
 
                 if let Some(previous) = current {
                     let slot_delta = (new_info.slot as i64).saturating_sub(previous.slot as i64);
@@ -1789,7 +1786,6 @@ pub fn process_live_slots(config: &CliConfig) -> ProcessResult {
             }
         }
     }
-
     Ok("".to_string())
 }
 
