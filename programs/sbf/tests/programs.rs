@@ -57,7 +57,7 @@ use {
         transaction_processor::ExecutionRecordingConfig,
     },
     solana_svm_timings::ExecuteTimings,
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_svm_type_overrides::rand,
     solana_system_interface::{program as system_program, MAX_PERMITTED_DATA_LENGTH},
     solana_transaction::Transaction,
@@ -3884,7 +3884,7 @@ fn test_program_fees() {
     .unwrap();
     let fee_budget_limits = FeeBudgetLimits::from(
         process_compute_budget_instructions(
-            SVMMessage::program_instructions_iter(&sanitized_message),
+            SVMStaticMessage::program_instructions_iter(&sanitized_message),
             &feature_set,
         )
         .unwrap_or_default(),
@@ -3917,7 +3917,7 @@ fn test_program_fees() {
     .unwrap();
     let fee_budget_limits = FeeBudgetLimits::from(
         process_compute_budget_instructions(
-            SVMMessage::program_instructions_iter(&sanitized_message),
+            SVMStaticMessage::program_instructions_iter(&sanitized_message),
             &feature_set,
         )
         .unwrap_or_default(),
