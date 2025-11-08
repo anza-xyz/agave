@@ -3,7 +3,7 @@
 use {
     super::standard_repair_handler::StandardRepairHandler,
     crate::{
-        cluster_info_vote_listener::VerifiedVoterReceiver,
+        cluster_info_vote_listener::VerifiedVoterSlotsReceiver,
         cluster_slots_service::cluster_slots::ClusterSlots,
         repair::{
             ancestor_hashes_service::{
@@ -384,7 +384,7 @@ impl Default for RepairSlotRange {
 
 struct RepairChannels {
     repair_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
-    verified_voter_receiver: VerifiedVoterReceiver,
+    verified_voter_slots_receiver: VerifiedVoterSlotsReceiver,
     dumped_slots_receiver: DumpedSlotsReceiver,
     popular_pruned_forks_sender: PopularPrunedForksSender,
 }
@@ -397,7 +397,7 @@ pub struct RepairServiceChannels {
 impl RepairServiceChannels {
     pub fn new(
         repair_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
-        verified_voter_receiver: VerifiedVoterReceiver,
+        verified_voter_slots_receiver: VerifiedVoterSlotsReceiver,
         dumped_slots_receiver: DumpedSlotsReceiver,
         popular_pruned_forks_sender: PopularPrunedForksSender,
         ancestor_hashes_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
@@ -407,7 +407,7 @@ impl RepairServiceChannels {
         Self {
             repair_channels: RepairChannels {
                 repair_request_quic_sender,
-                verified_voter_receiver,
+                verified_voter_slots_receiver,
                 dumped_slots_receiver,
                 popular_pruned_forks_sender,
             },
@@ -485,7 +485,7 @@ impl RepairService {
         repair_weight: &mut RepairWeight,
         popular_pruned_forks_requests: &mut HashSet<Slot>,
         dumped_slots_receiver: &DumpedSlotsReceiver,
-        verified_voter_receiver: &VerifiedVoterReceiver,
+        verified_voter_slots_receiver: &VerifiedVoterSlotsReceiver,
         repair_metrics: &mut RepairMetrics,
     ) {
         // Purge outdated slots from the weighting heuristic
@@ -526,7 +526,7 @@ impl RepairService {
         // Add new votes to the weighting heuristic
         let mut get_votes_elapsed = Measure::start("get_votes_elapsed");
         let mut slot_to_vote_pubkeys: HashMap<Slot, Vec<Pubkey>> = HashMap::new();
-        verified_voter_receiver
+        verified_voter_slots_receiver
             .try_iter()
             .for_each(|(vote_pubkey, vote_slots)| {
                 for slot in vote_slots {
@@ -690,7 +690,7 @@ impl RepairService {
     ) {
         let RepairChannels {
             repair_request_quic_sender,
-            verified_voter_receiver,
+            verified_voter_slots_receiver,
             dumped_slots_receiver,
             popular_pruned_forks_sender,
         } = repair_channels;
@@ -711,7 +711,7 @@ impl RepairService {
             repair_weight,
             popular_pruned_forks_requests,
             dumped_slots_receiver,
-            verified_voter_receiver,
+            verified_voter_slots_receiver,
             repair_metrics,
         );
 
