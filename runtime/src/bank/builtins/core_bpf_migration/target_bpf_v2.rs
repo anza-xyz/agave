@@ -5,7 +5,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_loader_v3_interface::get_program_data_address,
     solana_pubkey::Pubkey,
-    solana_sdk_ids::bpf_loader,
+    solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable},
 };
 
 /// The account details of a Loader v2 BPF program slated to be upgraded.
@@ -44,14 +44,20 @@ impl TargetBpfV2 {
 
         let program_data_address = get_program_data_address(program_address);
 
-        // The program data account should not exist.
-        if bank
-            .get_account_with_fixed_root(&program_data_address)
-            .is_some()
-        {
-            return Err(CoreBpfMigrationError::ProgramHasDataAccount(
-                *program_address,
-            ));
+        // The program data account is expected not to exist.
+        if let Some(account) = bank.get_account_with_fixed_root(&program_data_address) {
+            // It is possible that the program data account had lamports sent to it,
+            // which would make the account to be found. If the owner is the loader v3,
+            // then it is a genuine program data account and the migration must already
+            // been performed. In this case, we fail; otherwise, we burn and purge the
+            // account before migration.
+            if account.owner() == &bpf_loader_upgradeable::id() {
+                return Err(CoreBpfMigrationError::ProgramHasDataAccount(
+                    *program_address,
+                ));
+            } else {
+                bank.burn_and_purge_account(&program_data_address, account);
+            }
         }
 
         Ok(Self {
