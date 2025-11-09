@@ -13,6 +13,10 @@ use {
     thiserror::Error,
 };
 
+/// As per the Alpenglow paper, a validator is allowed to vote notar fallback on at most 3 different block id for a given slot.
+/// A validator that votes for more block_ids in a given slot is committing a slashable behavior.
+const MAX_NOTAR_FALLBACK_PER_VALIDATOR: usize = 3;
+
 #[derive(Debug, PartialEq, Eq, Error)]
 pub(crate) enum AddVoteError {
     #[error("duplicate vote")]
@@ -87,10 +91,10 @@ impl InternalVotePool {
                     }
                     Entry::Occupied(mut e) => {
                         let map = e.get_mut();
-                        let len = map.len();
+                        let map_len = map.len();
                         match map.entry(notar_fallback.block_id) {
                             Entry::Vacant(map_e) => {
-                                if len == 3 {
+                                if map_len == MAX_NOTAR_FALLBACK_PER_VALIDATOR {
                                     Err(AddVoteError::Slash)
                                 } else {
                                     map_e.insert(vote);
