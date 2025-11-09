@@ -133,7 +133,8 @@ impl BuilderType {
             }
             CertificateType::Finalize(_)
             | CertificateType::FinalizeFast(_, _)
-            | CertificateType::Notarize(_, _) => Self::SingleVote {
+            | CertificateType::Notarize(_, _)
+            | CertificateType::Genesis(_, _) => Self::SingleVote {
                 signature: SignatureProjective::identity(),
                 bitmap: default_bitvec(),
             },

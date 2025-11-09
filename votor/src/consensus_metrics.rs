@@ -86,6 +86,7 @@ impl NodeVoteMetrics {
             Vote::Skip(_) => self.skip.increment(elapsed),
             Vote::SkipFallback(_) => self.skip_fallback.increment(elapsed),
             Vote::Finalize(_) => self.final_.increment(elapsed),
+            Vote::Genesis(_) => Ok(()),
         };
         match res {
             Ok(()) => (),

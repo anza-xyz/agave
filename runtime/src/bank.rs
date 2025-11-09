@@ -67,6 +67,9 @@ use {
     agave_syscalls::{
         create_program_runtime_environment_v1, create_program_runtime_environment_v2,
     },
+    agave_votor_messages::{
+        consensus_message::Certificate, migration::GENESIS_CERTIFICATE_ACCOUNT,
+    },
     ahash::AHashSet,
     dashmap::DashMap,
     log::*,
@@ -2772,6 +2775,21 @@ impl Bank {
         blockhash_queue
             .get_hash_age(blockhash)
             .map(|age| self.block_height + MAX_PROCESSING_AGE as u64 - age)
+    }
+
+    /// Query the alpenglow genesis certificate account.
+    /// All frozen alpenglow banks will have this account populated and TowerBFT banks will not.
+    ///
+    /// The same is true for alpenglow banks yet to be frozen except for the first alpenglow bank:
+    /// - The first alpenglow bank will contain a special marker that populates this account
+    /// - If `get_alpenglow_genesis_certificate` is called before the marker is processed by replay
+    ///   this account will be empty.
+    /// - If `get_alpenglow_genesis_certificate` is called after the marker is processed, we return the certificate
+    pub fn get_alpenglow_genesis_certificate(&self) -> Option<Certificate> {
+        self.get_account(&GENESIS_CERTIFICATE_ACCOUNT).map(|acct| {
+            acct.deserialize_data()
+                .expect("Programmer error deserializing genesis certificate")
+        })
     }
 
     pub fn confirmed_last_blockhash(&self) -> Hash {
