@@ -55,7 +55,7 @@ impl InternalVotePool {
     ///
     /// Checks for different types of slashable behavior and duplicate votes returning appropriate errors.
     fn add_vote(&mut self, voter: Pubkey, vote: VoteMessage) -> Result<(), AddVoteError> {
-        assert_eq!(self.slot, vote.vote.slot());
+        debug_assert_eq!(self.slot, vote.vote.slot());
         match vote.vote {
             Vote::Notarize(notar) => {
                 if self.skip.contains_key(&voter) {
@@ -133,7 +133,7 @@ impl InternalVotePool {
                     return Err(AddVoteError::Slash);
                 }
                 if let Some(map) = self.notar_fallback.get(&voter) {
-                    assert!(!map.is_empty());
+                    debug_assert!(!map.is_empty());
                     return Err(AddVoteError::Slash);
                 }
                 match self.finalize.entry(voter) {
@@ -211,7 +211,7 @@ impl Stakes {
     ///
     /// Returns the total stake of the corresponding type (and block id in case of notar or notar-fallback) after the update.
     fn add_stake(&mut self, voter_stake: Stake, vote: &Vote) -> Stake {
-        assert_eq!(self.slot, vote.slot());
+        debug_assert_eq!(self.slot, vote.slot());
         match vote {
             Vote::Notarize(notar) => {
                 let stake = self.notar.entry(notar.block_id).or_default();
@@ -282,7 +282,7 @@ impl VotePool {
         voter_stake: Stake,
         msg: VoteMessage,
     ) -> Result<Stake, AddVoteError> {
-        assert_eq!(self.slot, msg.vote.slot());
+        debug_assert_eq!(self.slot, msg.vote.slot());
         let vote = msg.vote;
         self.votes.add_vote(voter, msg)?;
         Ok(self.stakes.add_stake(voter_stake, &vote))
