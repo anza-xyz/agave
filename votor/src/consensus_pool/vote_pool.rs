@@ -22,7 +22,7 @@ pub(crate) enum AddVoteError {
 }
 
 /// Container to store per slot votes.
-struct Votes {
+struct InternalVotePool {
     /// The slot this instance of Votes is responsible for.
     slot: Slot,
     /// Skip votes are stored in map indexed by validator.
@@ -39,7 +39,7 @@ struct Votes {
     notar_fallback: BTreeMap<Pubkey, BTreeMap<Hash, VoteMessage>>,
 }
 
-impl Votes {
+impl InternalVotePool {
     fn new(slot: Slot) -> Self {
         Self {
             slot,
@@ -259,7 +259,7 @@ pub(super) struct VotePool {
     /// The slot this instance of the pool is responsible for.
     slot: Slot,
     /// Stores seen votes.
-    votes: Votes,
+    votes: InternalVotePool,
     /// Stores total stake that voted.
     stakes: Stakes,
 }
@@ -268,7 +268,7 @@ impl VotePool {
     pub(super) fn new(slot: Slot) -> Self {
         Self {
             slot,
-            votes: Votes::new(slot),
+            votes: InternalVotePool::new(slot),
             stakes: Stakes::new(slot),
         }
     }
@@ -318,7 +318,7 @@ mod test {
         let rank = 1;
         let slot = 1;
 
-        let mut votes = Votes::new(slot);
+        let mut votes = InternalVotePool::new(slot);
         let skip = VoteMessage {
             vote: Vote::new_skip_vote(slot),
             signature,
@@ -335,7 +335,7 @@ mod test {
             Err(AddVoteError::Slash)
         ));
 
-        let mut votes = Votes::new(slot);
+        let mut votes = InternalVotePool::new(slot);
         let notar = VoteMessage {
             vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
             signature,
@@ -352,7 +352,7 @@ mod test {
             Err(AddVoteError::Slash)
         ));
 
-        let mut votes = Votes::new(slot);
+        let mut votes = InternalVotePool::new(slot);
         let notar = VoteMessage {
             vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
             signature,
@@ -372,7 +372,7 @@ mod test {
         let rank = 1;
         let slot = 1;
 
-        let mut votes = Votes::new(slot);
+        let mut votes = InternalVotePool::new(slot);
         let finalize = VoteMessage {
             vote: Vote::new_finalization_vote(slot),
             signature,
@@ -389,7 +389,7 @@ mod test {
             Err(AddVoteError::Slash)
         ));
 
-        let mut votes = Votes::new(slot);
+        let mut votes = InternalVotePool::new(slot);
         for _ in 0..3 {
             let nf = VoteMessage {
                 vote: Vote::new_notarization_fallback_vote(slot, Hash::new_unique()),
@@ -408,7 +408,7 @@ mod test {
             Err(AddVoteError::Slash)
         ));
 
-        let mut votes = Votes::new(slot);
+        let mut votes = InternalVotePool::new(slot);
         let nf = VoteMessage {
             vote: Vote::new_notarization_fallback_vote(slot, Hash::new_unique()),
             signature,
@@ -428,7 +428,7 @@ mod test {
         let rank = 1;
         let slot = 1;
 
-        let mut votes = Votes::new(slot);
+        let mut votes = InternalVotePool::new(slot);
         let notar = VoteMessage {
             vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
             signature,
@@ -445,7 +445,7 @@ mod test {
             Err(AddVoteError::Slash)
         ));
 
-        let mut votes = Votes::new(slot);
+        let mut votes = InternalVotePool::new(slot);
         let finalize = VoteMessage {
             vote: Vote::new_finalization_vote(slot),
             signature,
@@ -462,7 +462,7 @@ mod test {
             Err(AddVoteError::Slash)
         ));
 
-        let mut votes = Votes::new(slot);
+        let mut votes = InternalVotePool::new(slot);
         let skip = VoteMessage {
             vote: Vote::new_finalization_vote(slot),
             signature,
@@ -482,7 +482,7 @@ mod test {
         let rank = 1;
         let slot = 1;
 
-        let mut votes = Votes::new(slot);
+        let mut votes = InternalVotePool::new(slot);
         let finalize = VoteMessage {
             vote: Vote::new_finalization_vote(slot),
             signature,
@@ -499,7 +499,7 @@ mod test {
             Err(AddVoteError::Slash)
         ));
 
-        let mut votes = Votes::new(slot);
+        let mut votes = InternalVotePool::new(slot);
         let sf = VoteMessage {
             vote: Vote::new_skip_fallback_vote(slot),
             signature,
@@ -519,7 +519,7 @@ mod test {
         let rank = 1;
         let slot = 1;
 
-        let mut votes = Votes::new(slot);
+        let mut votes = InternalVotePool::new(slot);
         let skip = VoteMessage {
             vote: Vote::new_skip_vote(slot),
             signature,
@@ -536,7 +536,7 @@ mod test {
             Err(AddVoteError::Slash)
         ));
 
-        let mut votes = Votes::new(slot);
+        let mut votes = InternalVotePool::new(slot);
         let sf = VoteMessage {
             vote: Vote::new_skip_fallback_vote(slot),
             signature,
@@ -553,7 +553,7 @@ mod test {
             Err(AddVoteError::Slash)
         ));
 
-        let mut votes = Votes::new(slot);
+        let mut votes = InternalVotePool::new(slot);
         let finalize = VoteMessage {
             vote: Vote::new_finalization_vote(slot),
             signature,
