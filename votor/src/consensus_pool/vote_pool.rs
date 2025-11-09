@@ -1,6 +1,7 @@
 //! Container to store received votes and associated stakes.
 //!
-//! Also implements various checks for slashable behavior and duplicate votes.
+//! Implements various checks for slashable behavior as defined by the Alpenglow paper.
+//! Further detects duplicate votes which are defined as identical vote from the same sender received multiple times.
 
 use {
     crate::common::{Stake, VoteType},
