@@ -74,5 +74,4 @@ tokio = { workspace = true, features = ["full"] }
 solana-cpi = { workspace = true }
 solana-program = { workspace = true }
 solana-program-test = { path = ".", features = ["agave-unstable-api"] }
-solana-stake-program = { workspace = true }
 test-case = { workspace = true }

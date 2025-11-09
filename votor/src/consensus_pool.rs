@@ -1530,11 +1530,14 @@ mod tests {
             .unwrap();
         }
         assert_eq!(new_events.len(), 1);
-        if let VotorEvent::SafeToNotar((event_slot, event_block_id)) = new_events[0] {
-            assert_eq!(block_id, event_block_id);
-            assert_eq!(slot, event_slot);
-        } else {
-            panic!("Expected SafeToNotar event");
+        match new_events[0] {
+            VotorEvent::SafeToNotar((event_slot, event_block_id)) => {
+                assert_eq!(block_id, event_block_id);
+                assert_eq!(slot, event_slot);
+            }
+            _ => {
+                panic!("Expected SafeToNotar event");
+            }
         }
         new_events.clear();
 
@@ -1585,16 +1588,20 @@ mod tests {
             .unwrap();
         }
         assert_eq!(new_events.len(), 2);
-        if let VotorEvent::SafeToSkip(event_slot) = new_events[0] {
-            assert_eq!(slot, event_slot);
-        } else {
-            panic!("Expected SafeToSkip event");
+        match new_events[0] {
+            VotorEvent::SafeToSkip(event_slot) => {
+                assert_eq!(slot, event_slot);
+            }
+            _ => {
+                panic!("Expected SafeToSkip event");
+            }
         }
-        if let VotorEvent::SafeToNotar((event_slot, event_block_id)) = new_events[1] {
-            assert_eq!(block_id, event_block_id);
-            assert_eq!(slot, event_slot);
-        } else {
-            panic!("Expected SafeToNotar event");
+        match new_events[1] {
+            VotorEvent::SafeToNotar((event_slot, event_block_id)) => {
+                assert_eq!(block_id, event_block_id);
+                assert_eq!(slot, event_slot);
+            }
+            _ => panic!("Expected SafeToNotar event"),
         }
         new_events.clear();
 
@@ -1615,11 +1622,12 @@ mod tests {
         }
 
         assert_eq!(new_events.len(), 1);
-        if let VotorEvent::SafeToNotar((event_slot, event_block_id)) = new_events[0] {
-            assert_eq!(duplicate_block_id, event_block_id);
-            assert_eq!(slot, event_slot);
-        } else {
-            panic!("Expected SafeToNotar event");
+        match new_events[0] {
+            VotorEvent::SafeToNotar((event_slot, event_block_id)) => {
+                assert_eq!(duplicate_block_id, event_block_id);
+                assert_eq!(slot, event_slot);
+            }
+            _ => panic!("Expected SafeToNotar event"),
         }
     }
 
@@ -1660,10 +1668,9 @@ mod tests {
             .unwrap();
         }
         assert_eq!(new_events.len(), 1);
-        if let VotorEvent::SafeToSkip(event_slot) = new_events[0] {
-            assert_eq!(slot, event_slot);
-        } else {
-            panic!("Expected SafeToSkip event");
+        match new_events[0] {
+            VotorEvent::SafeToSkip(event_slot) => assert_eq!(slot, event_slot),
+            _ => panic!("Expected SafeToSkip event"),
         }
         new_events.clear();
         // Add 10% more notarize, will not send new SafeToSkip because the event was already sent

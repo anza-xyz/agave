@@ -11,9 +11,11 @@ use {
         genesis_utils::{
             self, activate_all_features, activate_feature, bootstrap_validator_stake_lamports,
             create_genesis_config_with_leader, create_genesis_config_with_vote_accounts,
-            genesis_sysvar_and_builtin_program_lamports, GenesisConfigInfo, ValidatorVoteKeypairs,
+            create_lockup_stake_account, genesis_sysvar_and_builtin_program_lamports,
+            GenesisConfigInfo, ValidatorVoteKeypairs,
         },
         stake_history::StakeHistory,
+        stake_utils,
         stakes::InvalidCacheEntryReason,
         status_cache::MAX_CACHE_ENTRIES,
     },
@@ -89,10 +91,9 @@ use {
     solana_signature::Signature,
     solana_signer::Signer,
     solana_stake_interface::{
-        instruction as stake_instruction,
+        instruction as stake_instruction, program as stake_program,
         state::{Authorized, Delegation, Lockup, Stake, StakeStateV2},
     },
-    solana_stake_program::stake_state,
     solana_svm::{
         account_loader::{FeesOnlyTransaction, LoadedTransaction},
         rollback_accounts::RollbackAccounts,
@@ -583,7 +584,8 @@ impl Bank {
         reward_calc_tracer: Option<impl RewardCalcTracer>,
     ) -> StakeDelegationsMap {
         let stakes = self.stakes_cache.stakes();
-        let stake_delegations = self.filter_stake_delegations(&stakes);
+        let stake_delegations = stakes.stake_delegations_vec();
+        let stake_delegations = self.filter_stake_delegations(stake_delegations);
         // Obtain all unique voter pubkeys from stake delegations.
         fn merge(mut acc: HashSet<Pubkey>, other: HashSet<Pubkey>) -> HashSet<Pubkey> {
             if acc.len() < other.len() {
@@ -595,6 +597,7 @@ impl Bank {
         let voter_pubkeys = thread_pool.install(|| {
             stake_delegations
                 .par_iter()
+                .filter_map(|stake_delegation| stake_delegation)
                 .fold(
                     HashSet::default,
                     |mut voter_pubkeys, (_stake_pubkey, stake_account)| {
@@ -662,7 +665,8 @@ impl Bank {
         };
         thread_pool.install(|| {
             stake_delegations
-                .into_par_iter()
+                .par_iter()
+                .filter_map(|stake_delegation| stake_delegation)
                 .for_each(push_stake_delegation);
         });
         stake_delegations_map
@@ -3239,7 +3243,7 @@ fn test_bank_cloned_stake_delegations() {
     genesis_config.rent = Rent::default();
 
     for (pubkey, account) in
-        solana_program_binaries::by_id(&solana_stake_program::id(), &genesis_config.rent)
+        solana_program_binaries::by_id(&stake_program::id(), &genesis_config.rent)
             .unwrap()
             .into_iter()
     {
@@ -3258,7 +3262,7 @@ fn test_bank_cloned_stake_delegations() {
         let rent = &bank.rent_collector().rent;
         let vote_rent_exempt_reserve = rent.minimum_balance(VoteStateV4::size_of());
         let stake_rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
-        let minimum_delegation = solana_stake_program::get_minimum_delegation(
+        let minimum_delegation = stake_utils::get_minimum_delegation(
             bank.feature_set
                 .is_active(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id()),
         );
@@ -3840,7 +3844,7 @@ fn test_banks_leak() {
             let pubkey = solana_pubkey::new_rand();
             genesis_config.add_account(
                 pubkey,
-                stake_state::create_lockup_stake_account(
+                create_lockup_stake_account(
                     &Authorized::auto(&pubkey),
                     &Lockup::default(),
                     &Rent::default(),

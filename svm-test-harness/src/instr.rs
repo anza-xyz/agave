@@ -22,8 +22,8 @@ use {
     solana_svm_log_collector::LogCollector,
     solana_svm_timings::ExecuteTimings,
     solana_transaction_context::{
-        transaction_accounts::KeyedAccountSharedData, IndexOfAccount, InstructionAccount,
-        TransactionContext,
+        instruction_accounts::InstructionAccount, transaction_accounts::KeyedAccountSharedData,
+        IndexOfAccount, TransactionContext,
     },
     std::sync::Arc,
 };

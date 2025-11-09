@@ -317,6 +317,7 @@ mod tests {
                 tests::create_genesis_config,
             },
             inflation_rewards::points::PointValue,
+            stake_utils,
         },
         rand::Rng,
         solana_account::from_account,
@@ -330,7 +331,6 @@ mod tests {
             stake_flags::StakeFlags,
             state::{Meta, Stake},
         },
-        solana_stake_program::stake_state,
         solana_sysvar as sysvar,
         solana_vote_program::vote_state,
         std::sync::Arc,
@@ -418,7 +418,7 @@ mod tests {
             // store account in Bank, since distribution now checks for account existence
             let lamports = stake_reward.stake_account.lamports()
                 - stake_reward.stake_reward_info.lamports as u64;
-            let validator_stake_account = stake_state::create_account(
+            let validator_stake_account = stake_utils::create_stake_account(
                 &stake_reward.stake_pubkey,
                 &validator_vote_pubkey,
                 &validator_vote_account,
@@ -445,7 +445,7 @@ mod tests {
             0,
             42,
             num_partitions,
-            PointValue {
+            &PointValue {
                 rewards: total_rewards,
                 points: total_points,
             },

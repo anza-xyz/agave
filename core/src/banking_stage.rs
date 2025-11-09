@@ -485,8 +485,9 @@ impl BankingStage {
         // Shutdown all current threads.
         self.worker_exit_signal.store(true, Ordering::Relaxed);
         while let Some((name, res)) = self.threads.next().await {
-            if let Err(err) = res {
-                error!("Banking worker exited with error; name={name}; err={err:?}");
+            match res.unwrap() {
+                Ok(()) => info!("Banking worker exited cleanly; name={name}"),
+                Err(err) => error!("Banking worker exited with error; name={name}; err={err:?}"),
             }
         }
 
@@ -520,6 +521,8 @@ impl BankingStage {
 
             NamedTask::new(tokio::task::spawn_blocking(|| handle.join()), name)
         }));
+
+        info!("Scheduler spawned");
     }
 
     fn spawn_internal(
@@ -528,6 +531,7 @@ impl BankingStage {
         num_workers: NonZeroUsize,
         scheduler_config: SchedulerConfig,
     ) -> Vec<JoinHandle<()>> {
+        info!("Spawning internal scheduler");
         assert!(num_workers <= BankingStage::max_num_workers());
         let num_workers = num_workers.get();
 
@@ -681,7 +685,10 @@ mod external {
     use {
         super::*,
         crate::banking_stage::consume_worker::external::ExternalWorker,
-        agave_scheduling_utils::handshake::server::{AgaveSession, AgaveWorkerSession},
+        agave_scheduling_utils::handshake::{
+            logon_flags,
+            server::{AgaveSession, AgaveWorkerSession},
+        },
         tpu_to_pack::BankingPacketReceivers,
     };
 
@@ -689,20 +696,36 @@ mod external {
         pub(super) fn spawn_external(
             &self,
             AgaveSession {
+                flags,
                 tpu_to_pack,
                 progress_tracker,
                 workers,
             }: AgaveSession,
         ) -> Vec<JoinHandle<()>> {
+            info!("Spawning external scheduler");
             static_assertions::const_assert!(
                 agave_scheduling_utils::handshake::MAX_WORKERS
                     == BankingStage::max_num_workers().get()
             );
             assert!(workers.len() <= BankingStage::max_num_workers().get());
 
-            // Spawn vote worker.
+            // Potentially spawn vote worker.
             let mut threads = Vec::with_capacity(workers.len() + 3);
-            threads.push(self.spawn_vote_worker());
+            let tpu_to_pack_receivers = if flags & logon_flags::REROUTE_VOTES != 0 {
+                BankingPacketReceivers {
+                    non_vote_receiver: self.non_vote_receiver.clone(),
+                    gossip_vote_receiver: Some(self.gossip_vote_receiver.clone()),
+                    tpu_vote_receiver: Some(self.tpu_vote_receiver.clone()),
+                }
+            } else {
+                threads.push(self.spawn_vote_worker());
+
+                BankingPacketReceivers {
+                    non_vote_receiver: self.non_vote_receiver.clone(),
+                    gossip_vote_receiver: None,
+                    tpu_vote_receiver: None,
+                }
+            };
 
             // Spawn the external consumer workers.
             let mut worker_metrics = Vec::with_capacity(workers.len());
@@ -719,7 +742,6 @@ mod external {
                 let consume_worker = ExternalWorker::new(
                     id,
                     self.worker_exit_signal.clone(),
-                    pack_to_worker,
                     Consumer::new(
                         self.committer.clone(),
                         self.transaction_recorder.clone(),
@@ -737,20 +759,16 @@ mod external {
                     Builder::new()
                         .name(format!("solECoWorker{id:02}"))
                         .spawn(move || {
-                            let _ = consume_worker.run();
+                            let _ = consume_worker.run(pack_to_worker);
                         })
                         .unwrap(),
                 );
             }
 
-            // Spawn tpu_to_pack.
+            // Spawn tpu to pack.
             threads.push(tpu_to_pack::spawn(
                 self.worker_exit_signal.clone(),
-                BankingPacketReceivers {
-                    non_vote_receiver: self.non_vote_receiver.clone(),
-                    gossip_vote_receiver: None,
-                    tpu_vote_receiver: None,
-                },
+                tpu_to_pack_receivers,
                 tpu_to_pack,
             ));
 

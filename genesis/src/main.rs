@@ -26,7 +26,7 @@ use {
     solana_feature_gate_interface as feature,
     solana_fee_calculator::FeeRateGovernor,
     solana_genesis::{
-        genesis_accounts::add_genesis_accounts, Base64Account, StakedValidatorAccountInfo,
+        genesis_accounts::add_genesis_stake_accounts, Base64Account, StakedValidatorAccountInfo,
         ValidatorAccountsFile,
     },
     solana_genesis_config::GenesisConfig,
@@ -41,11 +41,16 @@ use {
     solana_rent::Rent,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
-    solana_runtime::genesis_utils::bls_pubkey_to_compressed_bytes,
+    solana_runtime::{
+        genesis_utils::{
+            add_genesis_epoch_rewards_account, add_genesis_stake_config_account,
+            bls_pubkey_to_compressed_bytes,
+        },
+        stake_utils,
+    },
     solana_sdk_ids::system_program,
     solana_signer::Signer,
     solana_stake_interface::state::StakeStateV2,
-    solana_stake_program::stake_state,
     solana_vote_program::vote_state::{self, VoteStateV4},
     std::{
         collections::HashMap,
@@ -272,7 +277,7 @@ fn add_validator_accounts(
 
         genesis_config.add_account(
             *stake_pubkey,
-            stake_state::create_account(
+            stake_utils::create_stake_account(
                 authorized_pubkey.unwrap_or(identity_pubkey),
                 vote_pubkey,
                 &vote_account,
@@ -793,7 +798,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         );
     }
 
-    solana_stake_program::add_genesis_accounts(&mut genesis_config);
+    add_genesis_stake_config_account(&mut genesis_config);
+    add_genesis_epoch_rewards_account(&mut genesis_config);
 
     if is_alpenglow {
         solana_runtime::genesis_utils::activate_all_features_alpenglow(&mut genesis_config);
@@ -829,7 +835,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .map(|account| account.lamports)
         .sum::<u64>();
 
-    add_genesis_accounts(&mut genesis_config, issued_lamports - faucet_lamports);
+    add_genesis_stake_accounts(&mut genesis_config, issued_lamports - faucet_lamports);
 
     let parse_address = |address: &str, input_type: &str| {
         address.parse::<Pubkey>().unwrap_or_else(|err| {
@@ -1422,7 +1428,7 @@ mod tests {
                     let stake_account = AccountSharedData::new(
                         b64_account.stake_lamports,
                         StakeStateV2::size_of(),
-                        &solana_stake_program::id(),
+                        &stake::program::id(),
                     );
                     let rent_exempt_reserve =
                         &Rent::default().minimum_balance(stake_account.data().len());

@@ -96,28 +96,30 @@ fn handle_packet_batches(
             };
             let packet_size = packet_bytes.len();
 
-            let Some((allocated_ptr, tpu_to_pack_message)) =
-                allocate_and_reserve_message(allocator, producer, packet_size)
-            else {
-                warn!("Failed to allocate/reserve message. Dropping the rest of the batch.");
+            // Allocate space for the packet to be copied into.
+            let Some(allocated_ptr) = allocator.allocate(packet_size as u32) else {
+                warn!("Failed to allocate. Dropping the rest of the batch.");
                 break 'batch_loop;
             };
-
             // Get the offset of the allocated pointer in the allocator.
             // SAFETY: `allocated_ptr` was allocated from `allocator`.
             let allocated_ptr_offset_in_allocator = unsafe { allocator.offset(allocated_ptr) };
 
             // SAFETY:
             // - `allocated_ptr` is valid for `packet_size` bytes.
-            // - `tpu_to_pack_message` is a valid pointer to a `TpuToPackMessage`.
-            unsafe {
+            let message = unsafe {
                 copy_packet_and_populate_message(
                     packet_bytes,
                     packet.meta(),
                     allocated_ptr,
                     allocated_ptr_offset_in_allocator,
-                    tpu_to_pack_message,
-                );
+                )
+            };
+
+            if producer.try_write(message).is_err() {
+                // SAFETY: `allocated_ptr` was allocated by `allocator`
+                //         and not previously freed.
+                unsafe { allocator.free(allocated_ptr) };
             }
         }
     }
@@ -127,37 +129,14 @@ fn handle_packet_batches(
     producer.commit();
 }
 
-fn allocate_and_reserve_message(
-    allocator: &Allocator,
-    producer: &mut shaq::Producer<TpuToPackMessage>,
-    packet_size: usize,
-) -> Option<(NonNull<u8>, NonNull<TpuToPackMessage>)> {
-    // Allocate enough memory for the packet in the allocator.
-    let allocated_ptr = allocator.allocate(packet_size as u32)?;
-
-    // Reserve space in the producer queue for the packet message.
-    let Some(tpu_to_pack_message) = producer.reserve() else {
-        // Free the allocated packet if we can't reserve space in the queue.
-        // SAFETY: `allocated_ptr` was allocated from `allocator`.
-        unsafe {
-            allocator.free(allocated_ptr);
-        }
-        return None;
-    };
-
-    Some((allocated_ptr, tpu_to_pack_message))
-}
-
 /// # Safety:
 /// - `allocated_ptr` must be valid for `packet_bytes.len()` bytes.
-/// - `tpu_to_pack_message` must be a valid pointer to a `TpuToPackMessage`.
 unsafe fn copy_packet_and_populate_message(
     packet_bytes: &[u8],
     packet_meta: &solana_packet::Meta,
     allocated_ptr: NonNull<u8>,
     allocated_ptr_offset_in_allocator: usize,
-    tpu_to_pack_message: NonNull<TpuToPackMessage>,
-) {
+) -> TpuToPackMessage {
     // Copy the packet data into the allocated memory.
     // SAFETY:
     // - `allocated_ptr` is valid for `packet_size` bytes.
@@ -182,14 +161,10 @@ unsafe fn copy_packet_and_populate_message(
     // Get the source address of the packet - convert to expected format.
     let src_addr = map_src_addr(packet_meta.addr);
 
-    // Populate the message and write it to the queue.
-    // SAFETY: `tpu_to_pack_message` is a valid pointer to a `TpuToPackMessage`.
-    unsafe {
-        tpu_to_pack_message.write(TpuToPackMessage {
-            transaction,
-            flags: tpu_message_flags,
-            src_addr,
-        });
+    TpuToPackMessage {
+        transaction,
+        flags: tpu_message_flags,
+        src_addr,
     }
 }
 
@@ -233,25 +208,16 @@ mod tests {
 
         // Buffer to simulate allocated memory
         let mut buffer = [0u8; 256];
-        let mut tpu_to_pack_message = TpuToPackMessage {
-            transaction: SharableTransactionRegion {
-                offset: 0,
-                length: 0,
-            },
-            flags: 0,
-            src_addr: [0; 16],
-        };
         const DUMMY_OFFSET: usize = 42;
 
-        unsafe {
+        let tpu_to_pack_message = unsafe {
             copy_packet_and_populate_message(
                 packet_bytes.as_slice(),
                 &packet_meta,
                 NonNull::new(buffer.as_mut_ptr()).unwrap(),
                 DUMMY_OFFSET,
-                NonNull::new(&mut tpu_to_pack_message as *mut TpuToPackMessage).unwrap(),
-            );
-        }
+            )
+        };
 
         assert_eq!(&buffer[..packet_bytes.len()], packet_bytes.as_slice());
         assert_eq!(tpu_to_pack_message.transaction.offset, DUMMY_OFFSET);

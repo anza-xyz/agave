@@ -28,7 +28,9 @@ use {
         verifier::RequisiteVerifier,
     },
     solana_sdk_ids::{bpf_loader_upgradeable, sysvar},
-    solana_transaction_context::{IndexOfAccount, InstructionAccount, InstructionContext},
+    solana_transaction_context::{
+        instruction::InstructionContext, instruction_accounts::InstructionAccount, IndexOfAccount,
+    },
     std::{
         collections::HashMap,
         fmt::{self, Debug, Formatter},
@@ -251,7 +253,7 @@ impl<'a, 'b> LazyAnalysis<'a, 'b> {
         }
     }
 
-    fn analyze(&mut self) -> &Analysis {
+    fn analyze(&mut self) -> &Analysis<'_> {
         if let Some(ref analysis) = self.analysis {
             return analysis;
         }

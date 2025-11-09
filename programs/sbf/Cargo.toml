@@ -154,15 +154,16 @@ solana-sbf-rust-param-passing-dep = { path = "rust/param_passing_dep", version =
 solana-sbf-rust-r2-instruction-data-pointer = { path = "rust/r2_instruction_data_pointer", version = "=4.0.0-alpha.0" }
 solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=4.0.0-alpha.0" }
 solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=4.0.0-alpha.0" }
-solana-sbpf = "=0.13.0"
+solana-sbpf = "=0.13.1"
 solana-sdk-ids = "=3.0.0"
 solana-secp256k1-recover = "=3.0.0"
-solana-sha256-hasher = { version = "=3.0.0", features = ["sha2"] }
+solana-sha256-hasher = { version = "=3.0.1", features = ["sha2"] }
 solana-stake-interface = { version = "=2.0.1", features = ["bincode"] }
 solana-svm = { path = "../../svm", version = "=4.0.0-alpha.0" }
 solana-svm-callback = { path = "../../svm-callback", version = "=4.0.0-alpha.0" }
 solana-svm-feature-set = { path = "../../svm-feature-set", version = "=4.0.0-alpha.0" }
 solana-svm-log-collector = { path = "../../svm-log-collector", version = "=4.0.0-alpha.0" }
+solana-svm-test-harness = { path = "../../svm-test-harness", version = "=4.0.0-alpha.0" }
 solana-svm-timings = { path = "../../svm-timings", version = "=4.0.0-alpha.0" }
 solana-svm-transaction = { path = "../../svm-transaction", version = "=4.0.0-alpha.0" }
 solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.0.0-alpha.0" }
@@ -243,6 +244,7 @@ solana-svm = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-svm-log-collector = { workspace = true }
+solana-svm-test-harness = { workspace = true }
 solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }

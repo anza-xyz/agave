@@ -145,27 +145,18 @@ impl Server {
         Ok(logon)
     }
 
-    fn setup_session(logon: ClientLogon) -> Result<(AgaveSession, Vec<File>), AgaveHandshakeError> {
+    pub fn setup_session(
+        logon: ClientLogon,
+    ) -> Result<(AgaveSession, Vec<File>), AgaveHandshakeError> {
         // Setup the allocator in shared memory (`worker_count` & `allocator_handles` have been
         // validated so this won't panic).
-        let allocator_count = GLOBAL_ALLOCATORS
-            .checked_add(logon.worker_count)
-            .unwrap()
-            .checked_add(logon.allocator_handles)
-            .unwrap();
-        let allocator_file = Self::create_shmem()?;
-        let tpu_to_pack_allocator = Allocator::create(
-            &allocator_file,
-            logon.allocator_size,
-            u32::try_from(allocator_count).unwrap(),
-            2 * 1024 * 1024,
-            0,
-        )?;
+        let (allocator_file, tpu_to_pack_allocator) = Self::create_allocator(&logon)?;
 
         // Setup the global queues.
-        let (tpu_to_pack_file, tpu_to_pack_queue) = Self::create_producer(logon.tpu_to_pack_size)?;
+        let (tpu_to_pack_file, tpu_to_pack_queue) =
+            Self::create_producer(logon.tpu_to_pack_capacity, true)?;
         let (progress_tracker_file, progress_tracker) =
-            Self::create_producer(logon.progress_tracker_size)?;
+            Self::create_producer(logon.progress_tracker_capacity, false)?;
 
         // Setup the worker sessions.
         let (worker_files, workers) = (0..logon.worker_count).try_fold(
@@ -179,9 +170,9 @@ impl Server {
                 let allocator = unsafe { Allocator::join(&allocator_file, worker_index) }?;
 
                 let (pack_to_worker_file, pack_to_worker) =
-                    Self::create_consumer(logon.pack_to_worker_size)?;
+                    Self::create_consumer(logon.pack_to_worker_capacity)?;
                 let (worker_to_pack_file, worker_to_pack) =
-                    Self::create_producer(logon.worker_to_pack_size)?;
+                    Self::create_producer(logon.worker_to_pack_capacity, true)?;
 
                 fds.extend([pack_to_worker_file, worker_to_pack_file]);
                 workers.push(AgaveWorkerSession {
@@ -196,6 +187,7 @@ impl Server {
 
         Ok((
             AgaveSession {
+                flags: logon.flags,
                 tpu_to_pack: AgaveTpuToPackSession {
                     allocator: tpu_to_pack_allocator,
                     producer: tpu_to_pack_queue,
@@ -210,20 +202,65 @@ impl Server {
         ))
     }
 
-    fn create_producer<T>(size: usize) -> Result<(File, shaq::Producer<T>), ShaqError> {
-        let file = Self::create_shmem()?;
-        let queue = shaq::Producer::create(&file, size)?;
+    fn create_allocator(logon: &ClientLogon) -> Result<(File, Allocator), RtsAllocError> {
+        let allocator_count = GLOBAL_ALLOCATORS
+            .checked_add(logon.worker_count)
+            .unwrap()
+            .checked_add(logon.allocator_handles)
+            .unwrap();
 
-        Ok((file, queue))
+        let create = |huge: bool| {
+            let allocator_file = Self::create_shmem(huge)?;
+            let allocator_file_size = Self::align_file_size(logon.allocator_size, huge);
+
+            Allocator::create(
+                &allocator_file,
+                allocator_file_size,
+                u32::try_from(allocator_count).unwrap(),
+                2 * 1024 * 1024,
+                0,
+            )
+            .map(|allocator| (allocator_file, allocator))
+        };
+
+        // Try to create with huge pages, fallback to regular pages.
+        create(true).or_else(|_| create(false))
+    }
+
+    fn create_producer<T>(
+        capacity: usize,
+        huge: bool,
+    ) -> Result<(File, shaq::Producer<T>), ShaqError> {
+        let create = |huge: bool| {
+            let file = Self::create_shmem(huge)?;
+            let minimum_file_size = shaq::minimum_file_size::<T>(capacity);
+            let file_size = Self::align_file_size(minimum_file_size, huge);
+
+            // SAFETY: uniqely creating as producer
+            unsafe { shaq::Producer::create(&file, file_size) }.map(|producer| (file, producer))
+        };
+
+        // Try to create with huge pages, fallback to regular pages.
+        match huge {
+            true => create(true).or_else(|_| create(false)),
+            false => create(false),
+        }
     }
 
     fn create_consumer(
-        size: usize,
+        capacity: usize,
     ) -> Result<(File, shaq::Consumer<PackToWorkerMessage>), ShaqError> {
-        let file = Self::create_shmem()?;
-        let queue = shaq::Consumer::create(&file, size)?;
+        let create = |huge: bool| {
+            let file = Self::create_shmem(huge)?;
+            let minimum_file_size = shaq::minimum_file_size::<PackToWorkerMessage>(capacity);
+            let file_size = Self::align_file_size(minimum_file_size, huge);
 
-        Ok((file, queue))
+            // SAFETY: uniquely creating as consumer.
+            unsafe { shaq::Consumer::create(&file, file_size) }.map(|producer| (file, producer))
+        };
+
+        // Try to create with huge pages, fallback to regular pages.
+        create(true).or_else(|_| create(false))
     }
 
     #[cfg(any(
@@ -232,9 +269,14 @@ impl Server {
         target_os = "android",
         target_os = "emscripten"
     ))]
-    fn create_shmem() -> Result<File, std::io::Error> {
+    fn create_shmem(huge: bool) -> Result<File, std::io::Error> {
+        let flags = match huge {
+            true => libc::MFD_HUGETLB | libc::MFD_HUGE_2MB,
+            false => 0,
+        };
+
         unsafe {
-            let ret = libc::memfd_create(SHMEM_NAME.as_ptr(), 0);
+            let ret = libc::memfd_create(SHMEM_NAME.as_ptr(), flags);
             if ret == -1 {
                 return Err(std::io::Error::last_os_error());
             }
@@ -249,7 +291,11 @@ impl Server {
         target_os = "android",
         target_os = "emscripten"
     )))]
-    fn create_shmem() -> Result<File, std::io::Error> {
+    fn create_shmem(huge: bool) -> Result<File, std::io::Error> {
+        if huge {
+            return Err(std::io::ErrorKind::Unsupported.into());
+        }
+
         unsafe {
             // Clean up the previous link if one exists.
             let ret = libc::shm_unlink(SHMEM_NAME.as_ptr());
@@ -287,10 +333,18 @@ impl Server {
             Ok(file)
         }
     }
+
+    fn align_file_size(size: usize, huge: bool) -> usize {
+        match huge {
+            true => size.next_multiple_of(2 * 1024 * 1024),
+            false => size.next_multiple_of(4096),
+        }
+    }
 }
 
 /// An initialized scheduling session.
 pub struct AgaveSession {
+    pub flags: u16,
     pub tpu_to_pack: AgaveTpuToPackSession,
     pub progress_tracker: shaq::Producer<ProgressMessage>,
     pub workers: Vec<AgaveWorkerSession>,

@@ -840,9 +840,12 @@ mod test {
 
                 // Since we're not using `BankForks::set_root()`, we have to handle sending the
                 // correct snapshot requests ourself.
-                if bank.block_height() % FULL_SNAPSHOT_INTERVAL == 0 {
+                if bank.block_height().is_multiple_of(FULL_SNAPSHOT_INTERVAL) {
                     send_snapshot_request(Arc::clone(&bank), SnapshotRequestKind::FullSnapshot);
-                } else if bank.block_height() % INCREMENTAL_SNAPSHOT_INTERVAL == 0 {
+                } else if bank
+                    .block_height()
+                    .is_multiple_of(INCREMENTAL_SNAPSHOT_INTERVAL)
+                {
                     send_snapshot_request(
                         Arc::clone(&bank),
                         SnapshotRequestKind::IncrementalSnapshot,

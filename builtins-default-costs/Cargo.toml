@@ -35,7 +35,6 @@ solana-frozen-abi = { workspace = true, optional = true, features = [
 solana-loader-v4-program = { workspace = true, features = ["agave-unstable-api"] }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
-solana-stake-program = { workspace = true }
 solana-system-program = { workspace = true }
 solana-vote-program = { workspace = true }
 

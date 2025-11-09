@@ -1,5 +1,6 @@
 //! A command-line executable for monitoring a cluster's gossip plane.
-
+#[allow(deprecated)]
+use solana_gossip::{contact_info::ContactInfo, gossip_service::discover};
 use {
     clap::{
         crate_description, crate_name, value_t, value_t_or_exit, App, AppSettings, Arg, ArgMatches,
@@ -11,7 +12,6 @@ use {
         input_parsers::{keypair_of, pubkeys_of},
         input_validators::{is_keypair_or_ask_keyword, is_port, is_pubkey},
     },
-    solana_gossip::{contact_info::ContactInfo, gossip_service::discover},
     solana_pubkey::Pubkey,
     solana_streamer::socket::SocketAddrSpace,
     std::{
@@ -192,6 +192,16 @@ fn parse_bind_address(matches: &ArgMatches, entrypoint_addr: Option<SocketAddr>)
     }
 }
 
+// allow deprecations here to workaround limitations with dependency specification in
+// multi-target crates and agave-unstable-api. `ContactInfo` is deprecated here, but we
+// cannot specify deprecation allowances on function arguments. since this function is
+// private, we apply the allowance to the entire body as a refactor that would limit it
+// to a wrapper is going to be too invasive
+//
+// this mitigation can be removed once the solana-gossip binary target is moved to its
+// own crate and we can correctly depend on the solana-gossip lib crate with
+// `agave-unstable-api` enabled
+#[allow(deprecated)]
 fn process_spy_results(
     timeout: Option<u64>,
     validators: Vec<ContactInfo>,
@@ -213,7 +223,11 @@ fn process_spy_results(
         }
         if let Some(nodes) = pubkeys {
             for node in nodes {
-                if !validators.iter().any(|x| x.pubkey() == node) {
+                if !validators.iter().any(|x| {
+                    #[allow(deprecated)]
+                    let pubkey = x.pubkey();
+                    pubkey == node
+                }) {
                     eprintln!("Error: Could not find node {node:?}");
                     exit(1);
                 }
@@ -272,6 +286,7 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
     }
 
     let discover_timeout = Duration::from_secs(timeout.unwrap_or(u64::MAX));
+    #[allow(deprecated)]
     let (_all_peers, validators) = discover(
         identity_keypair,
         entrypoint_addr.as_ref(),
@@ -320,6 +335,7 @@ fn process_rpc_url(
             .expect("need non-zero shred-version to join the cluster");
     }
 
+    #[allow(deprecated)]
     let (_all_peers, validators) = discover(
         None, // keypair
         entrypoint_addr.as_ref(),
@@ -335,13 +351,18 @@ fn process_rpc_url(
     let rpc_addrs: Vec<_> = validators
         .iter()
         .filter(|node| {
-            any || all
-                || node
-                    .gossip()
+            any || all || {
+                #[allow(deprecated)]
+                let addrs = node.gossip();
+                addrs
                     .map(|addr| Some(addr) == entrypoint_addr)
                     .unwrap_or_default()
+            }
         })
-        .filter_map(ContactInfo::rpc)
+        .filter_map(
+            #[allow(deprecated)]
+            ContactInfo::rpc,
+        )
         .filter(|addr| socket_addr_space.check(addr))
         .collect();
 

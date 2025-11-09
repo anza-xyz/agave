@@ -62,21 +62,22 @@ fn message_passing_on_all_queues() {
         let mut session = server.accept().unwrap();
 
         // Send a tpu_to_pack message.
-        let mut slot = session.tpu_to_pack.producer.reserve().unwrap();
-        unsafe { *slot.as_mut() = tpu_to_pack };
+        session.tpu_to_pack.producer.try_write(tpu_to_pack).unwrap();
         session.tpu_to_pack.producer.commit();
 
         // Send a progress_tracker message.
-        let mut slot = session.progress_tracker.reserve().unwrap();
-        unsafe { *slot.as_mut() = progress_tracker };
+        session
+            .progress_tracker
+            .try_write(progress_tracker)
+            .unwrap();
         session.progress_tracker.commit();
 
         // Receive pack_to_worker messages.
         for (i, worker) in session.workers.iter_mut().enumerate() {
             let msg = loop {
                 worker.pack_to_worker.sync();
-                if let Some(slot) = worker.pack_to_worker.try_read() {
-                    break unsafe { *slot.as_ref() };
+                if let Some(msg) = worker.pack_to_worker.try_read() {
+                    break *msg;
                 }
             };
             assert_eq!(
@@ -90,16 +91,16 @@ fn message_passing_on_all_queues() {
 
         // Send worker_to_pack messages.
         for (i, worker) in session.workers.iter_mut().enumerate() {
-            let mut slot = worker.worker_to_pack.reserve().unwrap();
-            unsafe {
-                *slot.as_mut() = WorkerToPackMessage {
+            worker
+                .worker_to_pack
+                .try_write(WorkerToPackMessage {
                     batch: SharableTransactionBatchRegion {
                         num_transactions: worker_to_pack.batch.num_transactions + i as u8,
                         ..worker_to_pack.batch
                     },
                     ..worker_to_pack
-                }
-            };
+                })
+                .unwrap();
             worker.worker_to_pack.commit();
         }
     });
@@ -110,10 +111,11 @@ fn message_passing_on_all_queues() {
                 worker_count: 4,
                 allocator_size: 1024 * 1024 * 1024,
                 allocator_handles: 3,
-                tpu_to_pack_size: 65536 * 1024,
-                progress_tracker_size: 16 * 1024,
-                pack_to_worker_size: 1024 * 1024,
-                worker_to_pack_size: 1024 * 1024,
+                tpu_to_pack_capacity: 65536,
+                progress_tracker_capacity: 256,
+                pack_to_worker_capacity: 1024,
+                worker_to_pack_capacity: 1024,
+                flags: 0,
             },
             Duration::from_secs(1),
         )
@@ -123,7 +125,7 @@ fn message_passing_on_all_queues() {
         let msg = loop {
             session.tpu_to_pack.sync();
             if let Some(msg) = session.tpu_to_pack.try_read() {
-                break unsafe { *msg.as_ref() };
+                break *msg;
             };
         };
         assert_eq!(msg, tpu_to_pack);
@@ -132,20 +134,20 @@ fn message_passing_on_all_queues() {
         let msg = loop {
             session.progress_tracker.sync();
             if let Some(msg) = session.progress_tracker.try_read() {
-                break unsafe { *msg.as_ref() };
+                break *msg;
             };
         };
         assert_eq!(msg, progress_tracker);
 
         // Send pack_to_worker messages.
         for (i, worker) in session.workers.iter_mut().enumerate() {
-            let mut slot = worker.pack_to_worker.reserve().unwrap();
-            unsafe {
-                *slot.as_mut() = PackToWorkerMessage {
+            worker
+                .pack_to_worker
+                .try_write(PackToWorkerMessage {
                     max_working_slot: pack_to_worker.max_working_slot + i as u64,
                     ..pack_to_worker
-                }
-            };
+                })
+                .unwrap();
             worker.pack_to_worker.commit();
         }
 
@@ -153,8 +155,8 @@ fn message_passing_on_all_queues() {
         for (i, worker) in session.workers.iter_mut().enumerate() {
             let msg = loop {
                 worker.worker_to_pack.sync();
-                if let Some(slot) = worker.worker_to_pack.try_read() {
-                    break unsafe { *slot.as_ref() };
+                if let Some(msg) = worker.worker_to_pack.try_read() {
+                    break *msg;
                 }
             };
             assert_eq!(
@@ -191,10 +193,11 @@ fn accept_worker_count_max() {
                 worker_count: MAX_WORKERS,
                 allocator_size: 1024 * 1024 * 1024,
                 allocator_handles: 3,
-                tpu_to_pack_size: 65536 * 1024,
-                progress_tracker_size: 16 * 1024,
-                pack_to_worker_size: 1024 * 1024,
-                worker_to_pack_size: 1024 * 1024,
+                tpu_to_pack_capacity: 65536,
+                progress_tracker_capacity: 256,
+                pack_to_worker_capacity: 1024,
+                worker_to_pack_capacity: 1024,
+                flags: 0,
             },
             Duration::from_secs(1),
         );
@@ -225,10 +228,11 @@ fn reject_worker_count_low() {
                 worker_count: 0,
                 allocator_size: 1024 * 1024 * 1024,
                 allocator_handles: 3,
-                tpu_to_pack_size: 65536 * 1024,
-                progress_tracker_size: 16 * 1024,
-                pack_to_worker_size: 1024 * 1024,
-                worker_to_pack_size: 1024 * 1024,
+                tpu_to_pack_capacity: 65536,
+                progress_tracker_capacity: 256,
+                pack_to_worker_capacity: 1024,
+                worker_to_pack_capacity: 1024,
+                flags: 0,
             },
             Duration::from_secs(1),
         );
@@ -262,10 +266,11 @@ fn reject_worker_count_high() {
                 worker_count: 100,
                 allocator_size: 1024 * 1024 * 1024,
                 allocator_handles: 3,
-                tpu_to_pack_size: 65536 * 1024,
-                progress_tracker_size: 16 * 1024,
-                pack_to_worker_size: 1024 * 1024,
-                worker_to_pack_size: 1024 * 1024,
+                tpu_to_pack_capacity: 65536,
+                progress_tracker_capacity: 256,
+                pack_to_worker_capacity: 1024,
+                worker_to_pack_capacity: 1024,
+                flags: 0,
             },
             Duration::from_secs(1),
         );
@@ -273,40 +278,6 @@ fn reject_worker_count_high() {
             panic!();
         };
         assert_eq!(reason, "Worker count; count=100");
-    });
-
-    client_handle.join().unwrap();
-    server_handle.join().unwrap();
-}
-
-#[test]
-fn reject_invalid_queue_size() {
-    let ipc = NamedTempFile::new().unwrap();
-    std::fs::remove_file(ipc.path()).unwrap();
-    let mut server = Server::new(ipc.path()).unwrap();
-
-    let server_handle = std::thread::spawn(move || {
-        let res = server.accept();
-        assert!(matches!(res, Err(AgaveHandshakeError::Shaq(_))));
-    });
-    let client_handle = std::thread::spawn(move || {
-        let res = connect(
-            ipc,
-            ClientLogon {
-                worker_count: 4,
-                allocator_size: 1024 * 1024 * 1024,
-                allocator_handles: 3,
-                tpu_to_pack_size: 0,
-                progress_tracker_size: 16 * 1024,
-                pack_to_worker_size: 1024 * 1024,
-                worker_to_pack_size: 1024 * 1024,
-            },
-            Duration::from_secs(1),
-        );
-        let Err(ClientHandshakeError::Rejected(reason)) = res else {
-            panic!();
-        };
-        assert_eq!(reason, "Shaq; err=InvalidBufferSize");
     });
 
     client_handle.join().unwrap();

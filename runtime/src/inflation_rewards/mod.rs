@@ -7,8 +7,11 @@ use {
     },
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
-    solana_stake_interface::{error::StakeError, stake_history::StakeHistory},
-    solana_stake_program::stake_state::{Stake, StakeStateV2},
+    solana_stake_interface::{
+        error::StakeError,
+        stake_history::StakeHistory,
+        state::{Stake, StakeStateV2},
+    },
     solana_vote::vote_state_view::VoteStateView,
 };
 

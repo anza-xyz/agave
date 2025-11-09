@@ -19,7 +19,7 @@ use {
         tower_storage::{SavedTower, SavedTowerVersions, TowerStorage},
         tower_vote_state::TowerVoteState,
     },
-    crate::replay_stage::DUPLICATE_THRESHOLD,
+    crate::{consensus::progress_map::LockoutInterval, replay_stage::DUPLICATE_THRESHOLD},
     chrono::prelude::*,
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
@@ -36,18 +36,12 @@ use {
     solana_vote_program::{
         vote_error::VoteError,
         vote_instruction,
-        vote_state::{
-            BlockTimestamp, Lockout, TowerSync, Vote, VoteState1_14_11, VoteStateUpdate,
-            MAX_LOCKOUT_HISTORY,
-        },
+        vote_state::{BlockTimestamp, Lockout, TowerSync, Vote, VoteState1_14_11, VoteStateUpdate},
     },
     std::{
         cmp::Ordering,
         collections::{HashMap, HashSet},
-        ops::{
-            Bound::{Included, Unbounded},
-            Deref,
-        },
+        ops::Deref,
     },
     thiserror::Error,
 };
@@ -164,15 +158,15 @@ pub const SWITCH_FORK_THRESHOLD: f64 = 0.38;
 pub type Result<T> = std::result::Result<T, TowerError>;
 
 pub type Stake = u64;
-pub type VotedStakes = HashMap<Slot, Stake>;
+pub type VotedStakes = HashMap<Slot, Stake, ahash::RandomState>;
 pub type PubkeyVotes = Vec<(Pubkey, Slot)>;
 
 pub(crate) struct ComputedBankState {
     pub voted_stakes: VotedStakes,
     pub total_stake: Stake,
     pub fork_stake: Stake,
-    // Tree of intervals of lockouts of the form [slot, slot + slot.lockout],
-    // keyed by end of the range
+    /// Flat list of intervals of lockouts of the form {voter, start, end}
+    /// ([`crate::consensus::progress_map::LockoutInterval`]).
     pub lockout_intervals: LockoutIntervals,
     pub my_latest_landed_vote: Option<Slot>,
 }
@@ -406,18 +400,26 @@ impl Tower {
     pub(crate) fn collect_vote_lockouts(
         vote_account_pubkey: &Pubkey,
         bank_slot: Slot,
+        root_slot: Slot,
         vote_accounts: &VoteAccountsHashMap,
         ancestors: &HashMap<Slot, HashSet<Slot>>,
         get_frozen_hash: impl Fn(Slot) -> Option<Hash>,
         latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
+        vote_slots: &mut HashSet<Slot, ahash::RandomState>,
     ) -> ComputedBankState {
-        let mut vote_slots = HashSet::new();
-        let mut voted_stakes = HashMap::new();
+        let total_slots = bank_slot.saturating_sub(root_slot) as usize;
+        vote_slots.reserve(total_slots);
+        let mut voted_stakes =
+            HashMap::with_capacity_and_hasher(total_slots, ahash::RandomState::default());
         let mut total_stake = 0;
 
-        // Tree of intervals of lockouts of the form [slot, slot + slot.lockout],
-        // keyed by end of the range
-        let mut lockout_intervals = LockoutIntervals::new();
+        let total_votes = vote_accounts
+            .values()
+            .filter(|(voted_stake, _)| *voted_stake != 0)
+            .map(|(_, account)| account.vote_state_view().votes_len())
+            .sum();
+        // Flat list of intervals of lockouts of the form {voter, start, end}.
+        let mut lockout_intervals = LockoutIntervals::with_capacity(total_votes);
         let mut my_latest_landed_vote = None;
         for (&key, (voted_stake, account)) in vote_accounts.iter() {
             let voted_stake = *voted_stake;
@@ -426,12 +428,11 @@ impl Tower {
             }
             trace!("{vote_account_pubkey} {key} with stake {voted_stake}");
             let mut vote_state = TowerVoteState::from(account.vote_state_view());
-            for vote in &vote_state.votes {
-                lockout_intervals
-                    .entry(vote.last_locked_out_slot())
-                    .or_default()
-                    .push((vote.slot(), key));
-            }
+            lockout_intervals.extend(vote_state.votes.iter().map(|v| LockoutInterval {
+                start: v.slot(),
+                end: v.last_locked_out_slot(),
+                voter: key,
+            }));
 
             if key == *vote_account_pubkey {
                 my_latest_landed_vote = vote_state.nth_recent_lockout(0).map(|l| l.slot());
@@ -471,21 +472,34 @@ impl Tower {
 
             vote_state.process_next_vote_slot(bank_slot);
 
-            for vote in &vote_state.votes {
-                vote_slots.insert(vote.slot());
+            // Only record vote slots greater than the fork root. Votes earlier
+            // than the fork root will not have entries in `ancestors` and are ignored by
+            // `populate_ancestor_voted_stakes`, and there can be no landed votes
+            // >= `bank_slot`. Bounding here prevents unnecessary range expansion
+            // in the dense maps and keeps behavior identical.
+            for slot in vote_state.votes.iter().filter_map(|v| {
+                let slot = v.slot();
+                (slot > root_slot).then_some(slot)
+            }) {
+                vote_slots.insert(slot);
             }
 
             if start_root != vote_state.root_slot {
                 if let Some(root) = start_root {
-                    let vote =
-                        Lockout::new_with_confirmation_count(root, MAX_LOCKOUT_HISTORY as u32);
-                    trace!("ROOT: {}", vote.slot());
-                    vote_slots.insert(vote.slot());
+                    // The account's prior root can be older than this fork's root; clamp to
+                    // the same range for the same reason as above.
+                    if root > root_slot {
+                        trace!("ROOT: {root}");
+                        vote_slots.insert(root);
+                    }
                 }
             }
             if let Some(root) = vote_state.root_slot {
-                let vote = Lockout::new_with_confirmation_count(root, MAX_LOCKOUT_HISTORY as u32);
-                vote_slots.insert(vote.slot());
+                // Likewise, only include the (new) root if it lies within the range this
+                // bank will ever query in `ancestors`.
+                if root > root_slot {
+                    vote_slots.insert(root);
+                }
             }
 
             // The last vote in the vote stack is a simulated vote on bank_slot, which
@@ -515,7 +529,11 @@ impl Tower {
 
         // TODO: populate_ancestor_voted_stakes only adds zeros. Comment why
         // that is necessary (if so).
-        Self::populate_ancestor_voted_stakes(&mut voted_stakes, vote_slots, ancestors);
+        Self::populate_ancestor_voted_stakes(
+            &mut voted_stakes,
+            vote_slots.iter().copied(),
+            ancestors,
+        );
 
         // As commented above, since the votes at current bank_slot are
         // simulated votes, the voted_stake for `bank_slot` is not populated.
@@ -531,6 +549,8 @@ impl Tower {
                     .copied()
             })
             .unwrap_or(0);
+
+        vote_slots.clear();
 
         ComputedBankState {
             voted_stakes,
@@ -1156,37 +1176,41 @@ impl Tower {
                 .fork_stats
                 .lockout_intervals;
             // Find any locked out intervals for vote accounts in this bank with
-            // `lockout_interval_end` >= `last_vote`, which implies they are locked out at
-            // `last_vote` on another fork.
-            for (_lockout_interval_end, intervals_keyed_by_end) in
-                lockout_intervals.range((Included(last_voted_slot), Unbounded))
+            // `lockout_interval_end` >= `last_vote`, which implies that the most recent tower slot is locked out
+            // at `last_vote` on another fork. We also consider the remaining tower slots, however these older slots
+            // could be from before the fork so we must filter by their ancestry.
+            for LockoutInterval {
+                start: lockout_interval_start,
+                voter: vote_account_pubkey,
+                ..
+            } in lockout_intervals
+                .iter()
+                .filter(|interval| interval.end >= last_voted_slot)
             {
-                for (lockout_interval_start, vote_account_pubkey) in intervals_keyed_by_end {
-                    if locked_out_vote_accounts.contains(vote_account_pubkey) {
-                        continue;
-                    }
+                if locked_out_vote_accounts.contains(vote_account_pubkey) {
+                    continue;
+                }
 
-                    // Only count lockouts on slots that are:
-                    // 1) Not ancestors of `last_vote`, meaning being on different fork
-                    // 2) Not from before the current root as we can't determine if
-                    // anything before the root was an ancestor of `last_vote` or not
-                    if !last_vote_ancestors.contains(lockout_interval_start) && {
-                        // Given a `lockout_interval_start` < root that appears in a
-                        // bank for a `candidate_slot`, it must be that `lockout_interval_start`
-                        // is an ancestor of the current root, because `candidate_slot` is a
-                        // descendant of the current root
-                        *lockout_interval_start > root
-                    } {
-                        let stake = epoch_vote_accounts
-                            .get(vote_account_pubkey)
-                            .map(|(stake, _)| *stake)
-                            .unwrap_or(0);
-                        locked_out_stake += stake;
-                        if (locked_out_stake as f64 / total_stake as f64) > SWITCH_FORK_THRESHOLD {
-                            return SwitchForkDecision::SwitchProof(switch_proof);
-                        }
-                        locked_out_vote_accounts.insert(vote_account_pubkey);
+                // Only count lockouts on slots that are:
+                // 1) Not ancestors of `last_vote`, meaning being on different fork
+                // 2) Not from before the current root as we can't determine if
+                // anything before the root was an ancestor of `last_vote` or not
+                if !last_vote_ancestors.contains(lockout_interval_start) && {
+                    // Given a `lockout_interval_start` < root that appears in a
+                    // bank for a `candidate_slot`, it must be that `lockout_interval_start`
+                    // is an ancestor of the current root, because `candidate_slot` is a
+                    // descendant of the current root
+                    *lockout_interval_start > root
+                } {
+                    let stake = epoch_vote_accounts
+                        .get(vote_account_pubkey)
+                        .map(|(stake, _)| *stake)
+                        .unwrap_or(0);
+                    locked_out_stake += stake;
+                    if (locked_out_stake as f64 / total_stake as f64) > SWITCH_FORK_THRESHOLD {
+                        return SwitchForkDecision::SwitchProof(switch_proof);
                     }
+                    locked_out_vote_accounts.insert(vote_account_pubkey);
                 }
             }
         }
@@ -1310,7 +1334,7 @@ impl Tower {
         threshold_depth: usize,
         threshold_size: f64,
         slot: Slot,
-        voted_stakes: &HashMap<Slot, u64>,
+        voted_stakes: &VotedStakes,
         total_stake: u64,
     ) -> ThresholdDecision {
         let Some(threshold_vote) = threshold_vote else {
@@ -2498,10 +2522,12 @@ pub mod test {
         } = Tower::collect_vote_lockouts(
             &Pubkey::default(),
             1,
+            0,
             &accounts,
             &ancestors,
             |_| Some(Hash::default()),
             &mut latest_validator_votes_for_frozen_banks,
+            &mut HashSet::default(),
         );
         assert_eq!(voted_stakes[&0], 2);
         assert_eq!(total_stake, 2);
@@ -2545,10 +2571,12 @@ pub mod test {
         } = Tower::collect_vote_lockouts(
             &Pubkey::default(),
             MAX_LOCKOUT_HISTORY as u64,
+            0,
             &accounts,
             &ancestors,
             |_| Some(Hash::default()),
             &mut latest_validator_votes_for_frozen_banks,
+            &mut HashSet::default(),
         );
         for i in 0..MAX_LOCKOUT_HISTORY {
             assert_eq!(voted_stakes[&(i as u64)], 2);
@@ -2574,7 +2602,7 @@ pub mod test {
     fn test_check_vote_threshold_no_skip_lockout_with_new_root() {
         agave_logger::setup();
         let mut tower = Tower::new_for_tests(4, 0.67);
-        let mut stakes = HashMap::new();
+        let mut stakes = HashMap::default();
         for i in 0..(MAX_LOCKOUT_HISTORY as u64 + 1) {
             stakes.insert(i, 1);
             tower.record_vote(i, Hash::default());
@@ -2594,7 +2622,7 @@ pub mod test {
     #[test]
     fn test_is_slot_confirmed_unknown_slot() {
         let tower = Tower::new_for_tests(1, 0.67);
-        let stakes = HashMap::new();
+        let stakes = HashMap::default();
         assert!(!tower.is_slot_confirmed(0, &stakes, 2));
     }
 
@@ -2615,7 +2643,7 @@ pub mod test {
     #[test]
     fn test_is_slot_duplicate_confirmed_unknown_slot() {
         let tower = Tower::new_for_tests(1, 0.67);
-        let stakes = HashMap::new();
+        let stakes = HashMap::default();
         assert!(!tower.is_slot_duplicate_confirmed(0, &stakes, 100));
     }
 
@@ -2786,7 +2814,7 @@ pub mod test {
     #[test]
     fn test_check_vote_threshold_above_threshold_no_stake() {
         let mut tower = Tower::new_for_tests(1, 0.67);
-        let stakes = HashMap::new();
+        let stakes = HashMap::default();
         tower.record_vote(0, Hash::default());
         assert!(!tower.check_vote_stake_thresholds(1, &stakes, 2).is_empty());
     }
@@ -2804,7 +2832,7 @@ pub mod test {
 
     #[test]
     fn test_stake_is_updated_for_entire_branch() {
-        let mut voted_stakes = HashMap::new();
+        let mut voted_stakes = HashMap::default();
         let account = AccountSharedData::from(Account {
             lamports: 1,
             ..Account::default()
@@ -2841,7 +2869,7 @@ pub mod test {
 
         // Initialize tower
         let mut tower = Tower::new_for_tests(VOTE_THRESHOLD_DEPTH, threshold_size);
-
+        let mut vote_slots = HashSet::default();
         // CASE 1: Record the first VOTE_THRESHOLD tower votes for fork 2. We want to
         // evaluate a vote on slot VOTE_THRESHOLD_DEPTH. The nth most recent vote should be
         // for slot 0, which is common to all account vote states, so we should pass the
@@ -2857,10 +2885,12 @@ pub mod test {
         } = Tower::collect_vote_lockouts(
             &Pubkey::default(),
             vote_to_evaluate,
+            0,
             &accounts,
             &ancestors,
             |_| None,
             &mut LatestValidatorVotesForFrozenBanks::default(),
+            &mut vote_slots,
         );
         assert!(tower
             .check_vote_stake_thresholds(vote_to_evaluate, &voted_stakes, total_stake)
@@ -2877,10 +2907,12 @@ pub mod test {
         } = Tower::collect_vote_lockouts(
             &Pubkey::default(),
             vote_to_evaluate,
+            0,
             &accounts,
             &ancestors,
             |_| None,
             &mut LatestValidatorVotesForFrozenBanks::default(),
+            &mut vote_slots,
         );
         assert!(!tower
             .check_vote_stake_thresholds(vote_to_evaluate, &voted_stakes, total_stake)

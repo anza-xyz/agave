@@ -2408,6 +2408,7 @@ pub struct NodeConfig {
     pub bind_ip_addrs: BindIpAddrs,
     pub public_tpu_addr: Option<SocketAddr>,
     pub public_tpu_forwards_addr: Option<SocketAddr>,
+    pub public_tvu_addr: Option<SocketAddr>,
     pub vortexor_receiver_addr: Option<SocketAddr>,
 
     /// The number of TVU receive sockets to create
@@ -2882,6 +2883,7 @@ mod tests {
             bind_ip_addrs: BindIpAddrs::new(vec![IpAddr::V4(ip)]).unwrap(),
             public_tpu_addr: None,
             public_tpu_forwards_addr: None,
+            public_tvu_addr: None,
             num_tvu_receive_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_tvu_retransmit_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_quic_endpoints: DEFAULT_NUM_QUIC_ENDPOINTS,
@@ -2907,6 +2909,7 @@ mod tests {
             bind_ip_addrs: BindIpAddrs::new(vec![ip]).unwrap(),
             public_tpu_addr: None,
             public_tpu_forwards_addr: None,
+            public_tvu_addr: None,
             num_tvu_receive_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_tvu_retransmit_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_quic_endpoints: DEFAULT_NUM_QUIC_ENDPOINTS,

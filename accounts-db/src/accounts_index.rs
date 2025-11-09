@@ -1740,13 +1740,7 @@ pub(crate) enum Startup {
     Normal,
     /// startup (not steady state execution)
     /// requesting 'startup'-like behavior where in-mem acct idx items are flushed asap
-    #[cfg(test)]
     Startup,
-    /// startup (not steady state execution)
-    /// but also requesting additional threads to be running to flush the acct idx to disk asap
-    /// The idea is that the best perf to ssds will be with multiple threads,
-    ///  but during steady state, we can't allocate as many threads because we'd starve the rest of the system.
-    StartupWithExtraThreads,
 }
 
 #[cfg(test)]

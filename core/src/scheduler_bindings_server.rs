@@ -5,6 +5,7 @@ use {
 
 pub(crate) fn spawn(path: &Path, session_sender: mpsc::Sender<BankingControlMsg>) {
     // NB: Panic on start if we can't bind.
+    let _ = std::fs::remove_file(path);
     let mut listener = handshake::server::Server::new(path).unwrap();
 
     std::thread::Builder::new()

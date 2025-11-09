@@ -556,7 +556,7 @@ impl MockAlpenglowConsensus {
             return false;
         }
 
-        slot % interval == 0
+        slot.is_multiple_of(interval)
     }
 
     pub(crate) fn signal_new_slot(&mut self, slot: Slot, root_bank: &Bank) {

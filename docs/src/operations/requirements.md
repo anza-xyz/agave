@@ -55,13 +55,16 @@ other supported target platforms (MacOS and Windows) today and suggested for lin
 be required there as well
 
 ## Networking
-Internet service should be at least 1GBbit/s symmetric, commercial. 10GBit/s preferred (especially for mainnet-beta).
-A dedicated public IP address is preferred.
+A stable connection with a public IPv4 address is required.
+
+- For an unstaked node: 1 GBit/s symmetric connection is sufficient.
+- For a staked node: at least 2 GBit/s symmetric connection is required, 10 GBit/s of available bandwidth is recommended for stable operation.
 
 ### Firewall
 It is not recommended to run a validator behind a NAT. Operators who choose to
 do so should be comfortable configuring their networking equipment and debugging
-any traversal issues on their own.
+any traversal issues on their own. Upstream agave will generally not accept
+patches to support operation behind NAT.
 
 The following traffic needs to be allowed. Furthermore, there should not be any traffic filtering from your validator to internet.
 
@@ -69,7 +72,7 @@ The following traffic needs to be allowed. Furthermore, there should not be any 
 
 | Source | Destination         | Protocol    | Port(s)    | Comment                                                                                                                  |
 |--------|---------------------|-------------|------------|--------------------------------------------------------------------------------------------------------------------------|
-| any    | your validator's IP | TCP and UDP | 8000-10000 | P2P protocols (gossip, turbine, repair, etc). This can be limited to any free 13 port range with  `--dynamic-port-range` |
+| any    | your validator's IP | TCP and UDP | 8000-8030 | P2P protocols (gossip, turbine, repair, etc). This can be limited to any free port range with  `--dynamic-port-range` |
 
 #### Recommended
 When you manage your validator via SSH it is recommended to limit the allowed SSH traffic to your validator management IP.
@@ -88,4 +91,3 @@ the internet on staked, mainnet-beta validators.
 |----------|---------------------|----------|---------|--------------------------------------------------------|
 | RPC user | your validator's IP | TCP      | 8899    | JSONRPC over HTTP. Change with `--rpc-port RPC_PORT`   |
 | RPC user | your validator's IP | TCP      | 8900    | JSONRPC over Websockets. Derived. Uses  `RPC_PORT + 1` |
-

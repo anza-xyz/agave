@@ -126,18 +126,6 @@ impl SocketConfiguration {
     }
 }
 
-#[allow(deprecated)]
-impl From<crate::SocketConfig> for SocketConfiguration {
-    fn from(value: crate::SocketConfig) -> Self {
-        Self {
-            reuseport: value.reuseport,
-            recv_buffer_size: value.recv_buffer_size,
-            send_buffer_size: value.send_buffer_size,
-            non_blocking: false,
-        }
-    }
-}
-
 #[cfg(any(windows, target_os = "ios"))]
 fn set_reuse_port<T>(_socket: &T) -> io::Result<()> {
     Ok(())
@@ -214,20 +202,6 @@ pub fn bind_in_range_with_config(
     Err(io::Error::other(format!(
         "No available UDP ports in {range:?}"
     )))
-}
-
-#[deprecated(since = "3.0.0", note = "Please bind to specific ports instead")]
-pub fn bind_with_any_port_with_config(
-    ip_addr: IpAddr,
-    config: SocketConfiguration,
-) -> io::Result<UdpSocket> {
-    let sock = udp_socket_with_config(config)?;
-    let addr = SocketAddr::new(ip_addr, 0);
-    let bind = sock.bind(&SockAddr::from(addr));
-    match bind {
-        Ok(_) => Result::Ok(sock.into()),
-        Err(err) => Err(io::Error::other(format!("No available UDP port: {err}"))),
-    }
 }
 
 /// binds num sockets to the same port in a range with config

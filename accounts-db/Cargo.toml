@@ -23,7 +23,7 @@ dev-context-only-utils = [
     "dep:solana-keypair",
     "dep:solana-rent",
     "dep:solana-signer",
-    "dep:solana-stake-program",
+    "dep:solana-stake-interface",
     "dep:solana-vote-program",
     "solana-account/dev-context-only-utils",
     "solana-transaction/dev-context-only-utils",
@@ -89,7 +89,7 @@ solana-reward-info = { workspace = true, features = ["serde"] }
 solana-sha256-hasher = { workspace = true }
 solana-signer = { workspace = true, optional = true }
 solana-slot-hashes = { workspace = true }
-solana-stake-program = { workspace = true, optional = true }
+solana-stake-interface = { workspace = true, optional = true }
 solana-svm-transaction = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar = { workspace = true }

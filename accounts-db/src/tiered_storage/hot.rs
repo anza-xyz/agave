@@ -130,7 +130,7 @@ impl HotAccountOffset {
         }
 
         // Hot accounts are aligned based on HOT_ACCOUNT_ALIGNMENT.
-        if offset % HOT_ACCOUNT_ALIGNMENT != 0 {
+        if !offset.is_multiple_of(HOT_ACCOUNT_ALIGNMENT) {
             return Err(TieredStorageError::OffsetAlignmentError(
                 offset,
                 HOT_ACCOUNT_ALIGNMENT,
