@@ -76,19 +76,19 @@ impl InternalVotePool {
                     }
                 }
             }
-            Vote::NotarizeFallback(nf) => {
+            Vote::NotarizeFallback(notar_fallback) => {
                 if self.finalize.contains_key(&voter) {
                     return Err(AddVoteError::Slash);
                 }
                 match self.notar_fallback.entry(voter) {
                     Entry::Vacant(e) => {
-                        e.insert(BTreeMap::from([(nf.block_id, vote)]));
+                        e.insert(BTreeMap::from([(notar_fallback.block_id, vote)]));
                         Ok(())
                     }
                     Entry::Occupied(mut e) => {
                         let map = e.get_mut();
                         let len = map.len();
-                        match map.entry(nf.block_id) {
+                        match map.entry(notar_fallback.block_id) {
                             Entry::Vacant(map_e) => {
                                 if len == 3 {
                                     Err(AddVoteError::Slash)
