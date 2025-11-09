@@ -82,9 +82,7 @@ impl InternalVotePool {
                 }
                 match self.notar_fallback.entry(voter) {
                     Entry::Vacant(e) => {
-                        let mut map = BTreeMap::new();
-                        map.insert(nf.block_id, vote);
-                        e.insert(map);
+                        e.insert(BTreeMap::from([(nf.block_id, vote)]));
                         Ok(())
                     }
                     Entry::Occupied(mut e) => {
