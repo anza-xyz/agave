@@ -1,5 +1,3 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     crossbeam_channel::{Receiver, SendError, Sender, TryRecvError},
     solana_clock::Slot,
@@ -28,12 +26,11 @@ pub struct PohController {
     /// This is necessary because crossbeam does not support peeking the
     /// channel.
     pending_message: Arc<AtomicUsize>,
-    track_last_bank: bool,
     last_bank: Option<BankWithScheduler>,
 }
 
 impl PohController {
-    pub fn new(track_last_bank: bool) -> (Self, PohServiceMessageReceiver) {
+    pub fn new() -> (Self, PohServiceMessageReceiver) {
         const CHANNEL_SIZE: usize = 16; // small size, we should never hit this.
         let (sender, receiver) = crossbeam_channel::bounded(CHANNEL_SIZE);
         let pending_message = Arc::new(AtomicUsize::new(0));
@@ -45,16 +42,10 @@ impl PohController {
             Self {
                 sender,
                 pending_message,
-                track_last_bank,
                 last_bank: None,
             },
             receiver,
         )
-    }
-
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    pub(crate) fn new_for_test() -> (Self, PohServiceMessageReceiver) {
-        Self::new(false)
     }
 
     pub fn has_pending_message(&self) -> bool {
@@ -114,16 +105,18 @@ impl PohController {
         &mut self,
         message: PohServiceMessage,
     ) -> Result<(), SendError<PohServiceMessage>> {
-        let cleared_bank = if self.track_last_bank {
-            match &message {
-                PohServiceMessage::SetBank { bank } => {
+        let cleared_bank = match &message {
+            PohServiceMessage::SetBank { bank } => {
+                if bank.has_installed_active_bp_scheduler() {
                     self.last_bank = Some(bank.clone_with_scheduler());
-                    None
                 }
-                PohServiceMessage::Reset { .. } => self.last_bank.take(),
+                None
             }
-        } else {
-            None
+            PohServiceMessage::Reset { .. } => {
+                // This could happen due to an abandoned leader fork, which needs a special
+                // book-keeping below if unified scheduler was installed for the bank.
+                self.last_bank.take()
+            }
         };
 
         self.pending_message.fetch_add(1, Ordering::AcqRel);
@@ -132,6 +125,7 @@ impl PohController {
         if let Some(cleared_bank) = cleared_bank {
             // This must be done without poh_recorder lock being held; otherwise deadlock would
             // occur. So, we can't nicely hide this impl detail inside PohRecorder::reset()..
+            // Also, this must be done outside the PohService thread.
             cleared_bank.ensure_return_abandoned_bp_scheduler_to_scheduler_pool();
         }
 

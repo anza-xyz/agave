@@ -320,6 +320,22 @@ impl BankForks {
         bank
     }
 
+    #[must_use]
+    pub fn toggle_unified_scheduler_block_production_mode(&self, enable: bool) -> bool {
+        if let Some(scheduler_pool) = &self.scheduler_pool {
+            scheduler_pool.toggle_block_production_mode(enable)
+        } else {
+            // unified scheduler pool isn't installed to begin with
+            if enable {
+                // Should fail when enabling
+                false
+            } else {
+                // Should succeed when disabling
+                true
+            }
+        }
+    }
+
     pub fn insert_from_ledger(&mut self, bank: Bank) -> BankWithScheduler {
         self.highest_slot_at_startup = std::cmp::max(self.highest_slot_at_startup, bank.slot());
         self.insert(bank)

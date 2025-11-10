@@ -1070,11 +1070,7 @@ impl Validator {
         let (record_sender, record_receiver) = record_channels(transaction_status_sender.is_some());
         let transaction_recorder = TransactionRecorder::new(record_sender);
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
-        let track_last_bank = matches!(
-            config.block_production_method,
-            BlockProductionMethod::UnifiedScheduler
-        );
-        let (poh_controller, poh_service_message_receiver) = PohController::new(track_last_bank);
+        let (poh_controller, poh_service_message_receiver) = PohController::new();
 
         let (banking_tracer, tracer_thread) =
             BankingTracer::new((config.banking_trace_dir_byte_limit > 0).then_some((
@@ -1090,7 +1086,9 @@ impl Validator {
         } else {
             info!("Disabled banking trace");
         }
-        let banking_tracer_channels = match (
+        let banking_tracer_channels = banking_tracer.create_channels();
+
+        match (
             &config.block_verification_method,
             &config.block_production_method,
         ) {
@@ -1104,12 +1102,10 @@ impl Validator {
                     Some(replay_vote_sender.clone()),
                     prioritization_fee_cache.clone(),
                 );
-
-                let channels = banking_tracer.create_channels_for_scheduler_pool(&scheduler_pool);
                 ensure_banking_stage_setup(
                     &scheduler_pool,
                     &bank_forks,
-                    &channels,
+                    &banking_tracer_channels,
                     &poh_recorder,
                     transaction_recorder.clone(),
                     config.block_production_num_workers,
@@ -1118,7 +1114,6 @@ impl Validator {
                     .write()
                     .unwrap()
                     .install_scheduler_pool(scheduler_pool);
-                channels
             }
             _ => {
                 info!("no scheduler pool is installed for block verification/production...");
@@ -1128,7 +1123,6 @@ impl Validator {
                          scheduler isn't enabled"
                     );
                 }
-                banking_tracer.create_channels(false)
             }
         }
 

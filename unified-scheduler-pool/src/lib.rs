@@ -232,6 +232,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> BlockProductionSchedulerInner<S
         }
     }
 
+    fn is_not_spawned(&self) -> bool {
+        match self {
+            Self::NotSpawned => true,
+            Self::Pooled(_) | Self::Taken(_) => false,
+        }
+    }
+
     fn take_pooled(&mut self) -> S::Inner {
         let id = {
             let Self::Pooled(inner) = &self else {
@@ -767,9 +774,19 @@ where
     fn return_scheduler(&self, scheduler: S::Inner) {
         // Refer to the comment in is_aborted() as to the exact definition of the concept of
         // _trashed_ and the interaction among different parts of unified scheduler.
-        let should_trash = scheduler.is_trashed();
         let mut block_production_scheduler_inner =
             self.block_production_scheduler_inner.lock().unwrap();
+        let is_block_production_scheduler = block_production_scheduler_inner.can_put(&scheduler);
+        let is_block_production_disabled = matches!(
+            self.banking_stage_status(),
+            Some(BankingStageStatus::Disabled)
+        );
+        let should_trash = if is_block_production_scheduler && is_block_production_disabled {
+            info!("Forcibly trashing scheduler due to disabled block production mode");
+            true
+        } else {
+            scheduler.is_trashed()
+        };
 
         if should_trash {
             // Note that the following steps are tightly in sync with the bp
@@ -777,14 +794,16 @@ where
 
             // Maintain the runtime invariant established in register_banking_stage() about
             // the availability of pooled block production scheduler by re-spawning one.
-            if block_production_scheduler_inner.can_put(&scheduler) {
+            if is_block_production_scheduler {
                 block_production_scheduler_inner.trash_taken();
-                // To prevent block-production scheduler from being taken in
-                // do_take_resumed_scheduler() by different thread at this very moment, the
-                // preceding `.trash_taken()` and following `.put_spawned()` must be done
-                // atomically. That's why we pass around MutexGuard into
-                // spawn_block_production_scheduler().
-                self.spawn_block_production_scheduler(&mut block_production_scheduler_inner);
+                if !is_block_production_disabled {
+                    // To prevent block-production scheduler from being taken in
+                    // do_take_resumed_scheduler() by different thread at this very moment, the
+                    // preceding `.trash_taken()` and following `.put_spawned()` must be done
+                    // atomically. That's why we pass around MutexGuard into
+                    // spawn_block_production_scheduler().
+                    self.spawn_block_production_scheduler(&mut block_production_scheduler_inner);
+                }
             }
 
             // Delay drop()-ing this trashed returned scheduler inner by stashing it in
@@ -796,7 +815,7 @@ where
                 .expect("not poisoned")
                 .push(scheduler);
             sleepless_testing::at(CheckPoint::ReturningSchedulerTrashed);
-        } else if block_production_scheduler_inner.can_put(&scheduler) {
+        } else if is_block_production_scheduler {
             block_production_scheduler_inner.put_returned(scheduler);
         } else {
             self.scheduler_inners
@@ -810,13 +829,18 @@ where
     #[cfg(test)]
     fn do_take_scheduler(&self, context: SchedulingContext) -> S {
         self.do_take_resumed_scheduler(context, initialized_result_with_timings())
+            .unwrap()
     }
 
     fn do_take_resumed_scheduler(
         &self,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-    ) -> S {
+    ) -> Option<S> {
+        if !self.supported_scheduling_mode.is_supported(context.mode()) {
+            return None;
+        }
+
         assert_matches!(result_with_timings, (Ok(_), _));
 
         match context.mode() {
@@ -826,27 +850,28 @@ where
                 if let Some((inner, _pooled_at)) =
                     self.scheduler_inners.lock().expect("not poisoned").pop()
                 {
-                    S::from_inner(inner, context, result_with_timings)
+                    Some(S::from_inner(inner, context, result_with_timings))
                 } else {
-                    S::spawn(self.self_arc(), context, result_with_timings)
+                    Some(S::spawn(self.self_arc(), context, result_with_timings))
                 }
             }
             BlockProduction => {
+                if matches!(
+                    self.banking_stage_status()
+                        .expect("register_banking_stage() isn't called yet"),
+                    BankingStageStatus::Disabled
+                ) {
+                    return None;
+                }
+
                 // There must be a pooled block-production scheduler at this point because prior
                 // register_banking_stage() invocation should have spawned such one.
-                assert!(
-                    self.banking_stage_handler_context
-                        .lock()
-                        .expect("not poisoned")
-                        .is_some(),
-                    "register_banking_stage() isn't called yet",
-                );
                 let inner = self
                     .block_production_scheduler_inner
                     .lock()
                     .expect("not poisoned")
                     .take_pooled();
-                S::from_inner(inner, context, result_with_timings)
+                Some(S::from_inner(inner, context, result_with_timings))
             }
         }
     }
@@ -877,9 +902,7 @@ where
         });
         // Immediately start a block production scheduler, so that the scheduler can start
         // buffering tasks, which are preprocessed as much as possible.
-        self.spawn_block_production_scheduler(
-            &mut self.block_production_scheduler_inner.lock().unwrap(),
-        );
+        assert!(self.toggle_block_production_mode(true));
     }
 
     fn unregister_banking_stage(&self) {
@@ -901,6 +924,14 @@ where
             .unwrap()
             .as_mut()
             .map(|context| context.banking_stage_monitor.status())
+    }
+
+    fn toggle_banking_packet_receiver(&self, enable: bool) {
+        let mut context = self.banking_stage_handler_context.lock().unwrap();
+        let context = context.as_mut().unwrap();
+        context
+            .banking_stage_monitor
+            .toggle_banking_packet_receiver(enable);
     }
 
     fn create_handler_context(
@@ -1021,13 +1052,8 @@ where
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
     ) -> Option<InstalledSchedulerBox> {
-        if !self.supported_scheduling_mode.is_supported(context.mode()) {
-            return None;
-        }
-
-        Some(Box::new(
-            self.do_take_resumed_scheduler(context, result_with_timings),
-        ))
+        self.do_take_resumed_scheduler(context, result_with_timings)
+            .map(|s| Box::new(s) as InstalledSchedulerBox)
     }
 
     fn register_timeout_listener(&self, timeout_listener: TimeoutListener) {
@@ -1077,6 +1103,31 @@ where
         this.cleaner_thread.join().unwrap();
 
         info!("SchedulerPool::uninstalled_from_bank_forks(): ...finished");
+    }
+
+    fn toggle_block_production_mode(&self, enable: bool) -> bool {
+        if !self.block_production_supported() {
+            info!("toggle_block_production_mode: unsupported: enable: {enable}");
+            // block production isn't supported to begin with.
+            if enable {
+                // Fail always for enabling the unsupported mode.
+                return false;
+            } else {
+                // Succeed always for disabling the never enabled mode.
+                return true;
+            }
+        }
+
+        if enable {
+            let mut block_production_scheduler_inner =
+                self.block_production_scheduler_inner.lock().unwrap();
+            if block_production_scheduler_inner.is_not_spawned() {
+                self.spawn_block_production_scheduler(&mut block_production_scheduler_inner);
+            }
+        }
+        self.toggle_banking_packet_receiver(enable);
+        info!("toggle_block_production_mode: succeeded: enable: {enable}");
+        true
     }
 }
 
@@ -2726,11 +2777,13 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
 pub enum BankingStageStatus {
     Active,
     Inactive,
+    Disabled,
     Exited,
 }
 
 pub trait BankingStageMonitor: Send + Debug {
     fn status(&mut self) -> BankingStageStatus;
+    fn toggle_banking_packet_receiver(&mut self, _enable: bool) {}
 }
 
 #[derive(Debug)]

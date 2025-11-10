@@ -69,6 +69,9 @@ pub trait InstalledSchedulerPool: Send + Sync + Debug {
     fn register_timeout_listener(&self, timeout_listener: TimeoutListener);
 
     fn uninstalled_from_bank_forks(self: Arc<Self>);
+
+    #[must_use]
+    fn toggle_block_production_mode(&self, enable: bool) -> bool;
 }
 
 #[derive(Debug)]
@@ -504,7 +507,7 @@ impl BankWithScheduler {
         )
     }
 
-    fn has_installed_active_bp_scheduler(&self) -> bool {
+    pub fn has_installed_active_bp_scheduler(&self) -> bool {
         if let SchedulerStatus::Active(scheduler) = &*self.inner.scheduler.read().unwrap() {
             matches!(scheduler.context().mode(), SchedulingMode::BlockProduction)
         } else {
@@ -592,14 +595,16 @@ impl BankWithScheduler {
     }
 
     pub fn ensure_return_abandoned_bp_scheduler_to_scheduler_pool(&self) {
-        if self.has_installed_active_bp_scheduler() {
-            if let Some((result, _timings)) = self.wait_for_completed_scheduler() {
-                info!(
-                    "Reaped cleared tpu_bank and returned abandoned bp scheduler: {} {:?}",
-                    self.slot(),
-                    result
-                );
-            }
+        if !self.has_installed_active_bp_scheduler() {
+            return;
+        }
+
+        if let Some((result, _timings)) = self.wait_for_completed_scheduler() {
+            info!(
+                "Reaped cleared tpu_bank and returned abandoned bp scheduler: {} {:?}",
+                self.slot(),
+                result
+            );
         }
     }
 

@@ -426,29 +426,21 @@ impl BankingStage {
             threads: FuturesUnordered::default(),
         };
 
-        match block_production_method {
-            BlockProductionMethod::CentralScheduler
-            | BlockProductionMethod::CentralSchedulerGreedy => {
-                // Spawn the manager thread.
-                let thread = std::thread::Builder::new()
-                    .name("BankingMgr".to_string())
-                    .spawn(move || {
-                        let rt = tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()
-                            .unwrap();
-                        rt.block_on(manager.run(BankingControlMsg::Internal {
-                            block_production_method,
-                            num_workers,
-                            config: scheduler_config,
-                        }))
-                    })
+        // Spawn the manager thread.
+        let thread = std::thread::Builder::new()
+            .name("BankingMgr".to_string())
+            .spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
                     .unwrap();
-            }
-            BlockProductionMethod::UnifiedScheduler => {
-                // no op
-            }
-        }
+                rt.block_on(manager.run(BankingControlMsg::Internal {
+                    block_production_method,
+                    num_workers,
+                    config: scheduler_config,
+                }))
+            })
+            .unwrap();
 
         BankingStageHandle {
             banking_shutdown_signal,
@@ -465,8 +457,7 @@ impl BankingStage {
 
                 _ = self.banking_shutdown_signal.cancelled() => break,
                 Some(args) = self.banking_control_receiver.recv() => self.cycle_threads(args).await,
-                opt = self.threads.next() => {
-                    let (name, res) = opt.unwrap();
+                Some((name, res)) = self.threads.next() => {
                     match res.unwrap() {
                         Ok(()) => error!("Banking worker exited unexpectedly; name={name}"),
                         Err(err) => error!("Banking worker exited with error; name={name}; err={err:?}"),
@@ -513,14 +504,20 @@ impl BankingStage {
                 block_production_method,
                 num_workers,
                 config,
-            } => self.spawn_internal(
-                matches!(
-                    block_production_method,
-                    BlockProductionMethod::CentralSchedulerGreedy
-                ),
-                num_workers,
-                config,
-            ),
+            } => match block_production_method {
+                BlockProductionMethod::CentralScheduler => {
+                    self.spawn_internal_central(false, num_workers, config)
+                }
+                BlockProductionMethod::CentralSchedulerGreedy => {
+                    self.spawn_internal_central(true, num_workers, config)
+                }
+                BlockProductionMethod::UnifiedScheduler => {
+                    if !self.toggle_internal_unified(true) {
+                        error!("Spawning unified scheduler failed");
+                    }
+                    vec![]
+                }
+            },
             #[cfg(unix)]
             BankingControlMsg::External { session } => self.spawn_external(session),
         };
@@ -534,12 +531,14 @@ impl BankingStage {
         info!("Scheduler spawned");
     }
 
-    fn spawn_internal(
+    fn spawn_internal_central(
         &self,
         use_greedy_scheduler: bool,
         num_workers: NonZeroUsize,
         scheduler_config: SchedulerConfig,
     ) -> Vec<JoinHandle<()>> {
+        assert!(self.toggle_internal_unified(false));
+
         info!("Spawning internal scheduler");
         assert!(num_workers <= BankingStage::max_num_workers());
         let num_workers = num_workers.get();
@@ -643,6 +642,13 @@ impl BankingStage {
         }
 
         threads
+    }
+
+    fn toggle_internal_unified(&self, enable: bool) -> bool {
+        self.bank_forks
+            .read()
+            .unwrap()
+            .toggle_unified_scheduler_block_production_mode(enable)
     }
 
     fn spawn_vote_worker(&self) -> JoinHandle<()> {
@@ -834,10 +840,13 @@ pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
         .write()
         .unwrap()
         .insert_with_scheduling_mode(SchedulingMode::BlockProduction, tpu_bank);
-    if poh_controller
-        .set_bank(tpu_bank.clone_with_scheduler())
-        .is_err()
-    {
+    let tpu_bank_for_poh = tpu_bank.clone_with_scheduler();
+    let set_bank_res = if tpu_bank.has_installed_active_bp_scheduler() {
+        poh_controller.set_bank_sync(tpu_bank_for_poh)
+    } else {
+        poh_controller.set_bank(tpu_bank_for_poh)
+    };
+    if set_bank_res.is_err() {
         warn!("Failed to set poh bank, poh service is disconnected");
     }
     tpu_bank.unpause_new_block_production_scheduler();
@@ -937,7 +946,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(false);
+        } = banking_tracer.create_channels();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
             Blockstore::open(ledger_path.path())
@@ -997,7 +1006,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(false);
+        } = banking_tracer.create_channels();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
             Blockstore::open(ledger_path.path())
@@ -1073,7 +1082,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(false);
+        } = banking_tracer.create_channels();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
             Blockstore::open(ledger_path.path())
@@ -1201,7 +1210,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(false);
+        } = banking_tracer.create_channels();
 
         // Process a batch that includes a transaction that receives two lamports.
         let alice = Keypair::new();
@@ -1376,7 +1385,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(false);
+        } = banking_tracer.create_channels();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
             Blockstore::open(ledger_path.path())

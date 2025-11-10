@@ -755,11 +755,7 @@ impl BankingSimulator {
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let (record_sender, record_receiver) = record_channels(false);
         let transaction_recorder = TransactionRecorder::new(record_sender);
-        let track_last_bank = matches!(
-            block_production_method,
-            BlockProductionMethod::UnifiedScheduler
-        );
-        let (poh_controller, poh_service_message_receiver) = PohController::new(track_last_bank);
+        let (poh_controller, poh_service_message_receiver) = PohController::new();
         let poh_service = PohService::new(
             poh_recorder.clone(),
             &genesis_config.poh_config,
@@ -791,19 +787,16 @@ impl BankingSimulator {
         info!("Enabled banking retracer (dir_byte_limit: {BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT})",);
 
         let num_workers = BankingStage::default_num_workers();
-        let banking_tracer_channels = if let Some(pool) = unified_scheduler_pool {
-            let channels = retracer.create_channels_for_scheduler_pool(&pool);
+        let banking_tracer_channels = retracer.create_channels();
+        if let Some(pool) = unified_scheduler_pool {
             ensure_banking_stage_setup(
                 &pool,
                 &bank_forks,
-                &channels,
+                &banking_tracer_channels,
                 &poh_recorder,
                 transaction_recorder.clone(),
                 num_workers,
             );
-            channels
-        } else {
-            retracer.create_channels(false)
         };
         let Channels {
             non_vote_sender,

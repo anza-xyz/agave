@@ -764,7 +764,7 @@ mod tests {
             .map(|x| x.parse().unwrap())
             .unwrap_or(DEFAULT_HASHES_PER_BATCH);
         let (_record_sender, record_receiver) = record_channels(false);
-        let (_poh_controller, poh_service_message_receiver) = PohController::new_for_test();
+        let (_poh_controller, poh_service_message_receiver) = PohController::new();
         let poh_service = PohService::new(
             poh_recorder.clone(),
             &poh_config,
@@ -893,7 +893,7 @@ mod tests {
         // Queue a new record & service message at the same time.
         let (record_sender, mut record_receiver) = record_channels(false);
         record_receiver.restart(bank.bank_id());
-        let (mut poh_controller, poh_service_message_receiver) = PohController::new_for_test();
+        let (mut poh_controller, poh_service_message_receiver) = PohController::new();
         poh_controller.reset(bank.clone(), None).unwrap();
         record_sender
             .try_send(Record {

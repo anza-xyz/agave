@@ -454,7 +454,8 @@ fn main() {
         )))
         .unwrap();
     let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-    let banking_tracer_channels = if matches!(
+    let banking_tracer_channels = banking_tracer.create_channels();
+    if matches!(
         block_production_method,
         BlockProductionMethod::UnifiedScheduler
     ) {
@@ -465,20 +466,16 @@ fn main() {
             Some(replay_vote_sender.clone()),
             prioritization_fee_cache.clone(),
         );
-        let channels = banking_tracer.create_channels_for_scheduler_pool(&pool);
         ensure_banking_stage_setup(
             &pool,
             &bank_forks,
-            &channels,
+            &banking_tracer_channels,
             &poh_recorder,
             transaction_recorder.clone(),
             block_production_num_workers,
         );
         bank_forks.write().unwrap().install_scheduler_pool(pool);
-        channels
-    } else {
-        banking_tracer.create_channels(false)
-    };
+    }
     let Channels {
         non_vote_sender,
         non_vote_receiver,
