@@ -430,11 +430,19 @@ pub fn execute(
         })
         .unwrap_or_default();
 
-    let mark_obsolete_accounts = if matches.is_present("accounts_db_mark_obsolete_accounts") {
-        MarkObsoleteAccounts::Enabled
-    } else {
-        MarkObsoleteAccounts::Disabled
-    };
+    let mark_obsolete_accounts = matches
+        .value_of("accounts_db_mark_obsolete_accounts")
+        .map(|mark_obsolete_accounts| {
+            match mark_obsolete_accounts {
+                "enabled" => MarkObsoleteAccounts::Enabled,
+                "disabled" => MarkObsoleteAccounts::Disabled,
+                _ => {
+                    // clap will enforce one of the above values is given
+                    unreachable!("invalid value given to accounts_db_mark_obsolete_accounts")
+                }
+            }
+        })
+        .unwrap_or_default();
 
     let accounts_db_config = AccountsDbConfig {
         index: Some(accounts_index_config),
@@ -815,6 +823,20 @@ pub fn execute(
         })
         .transpose()?;
 
+    let public_tvu_addr = matches
+        .value_of("public_tvu_addr")
+        .map(|public_tvu_addr| {
+            solana_net_utils::parse_host_port(public_tvu_addr)
+                .map_err(|err| format!("failed to parse --public-tvu-address: {err}"))
+        })
+        .transpose()?;
+
+    if bind_addresses.len() > 1 && public_tvu_addr.is_some() {
+        Err(String::from(
+            "--public-tvu-address can not be used in a multihoming context",
+        ))?;
+    }
+
     let tpu_vortexor_receiver_address =
         matches
             .value_of("tpu_vortexor_receiver_address")
@@ -857,6 +879,7 @@ pub fn execute(
         bind_ip_addrs: bind_addresses,
         public_tpu_addr,
         public_tpu_forwards_addr,
+        public_tvu_addr,
         num_tvu_receive_sockets: tvu_receive_threads,
         num_tvu_retransmit_sockets: tvu_retransmit_threads,
         num_quic_endpoints,

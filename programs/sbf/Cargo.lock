@@ -266,8 +266,8 @@ dependencies = [
  "core_affinity",
  "crossbeam-channel",
  "fd-lock",
- "indicatif 0.18.0",
- "itertools 0.12.1",
+ "indicatif 0.18.2",
+ "itertools 0.13.0",
  "jsonrpc-core",
  "jsonrpc-core-client",
  "jsonrpc-derive",
@@ -356,7 +356,7 @@ dependencies = [
  "crossbeam-channel",
  "dashmap",
  "histogram",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "log",
  "lru",
  "parking_lot 0.12.2",
@@ -2241,6 +2241,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "enum-as-inner"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1e6a265c649f3f5979b601d26f1d05ada116434c87741c9493cb56218f76cbc"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+]
+
+[[package]]
 name = "enum-iterator"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2825,6 +2837,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2540771e65fc8cb83cd6e8a237f70c319bd5c29f78ed1084ba5d50eeac86f7f9"
 
 [[package]]
+name = "heck"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+
+[[package]]
 name = "hermit-abi"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3337,9 +3355,9 @@ dependencies = [
 
 [[package]]
 name = "indicatif"
-version = "0.18.0"
+version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70a646d946d06bedbbc4cac4c218acf4bbf2d87757a784857025f4d447e4e1cd"
+checksum = "ade6dfcba0dfb62ad59e59e7241ec8912af34fd29e0e743e3db992bd278e8b65"
 dependencies = [
  "console 0.16.1",
  "portable-atomic",
@@ -3368,9 +3386,9 @@ dependencies = [
 
 [[package]]
 name = "io-uring"
-version = "0.7.10"
+version = "0.7.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "046fa2d4d00aea763528b4950358d0ead425372445dc8ff86312b3c69ff7727b"
+checksum = "fdd7bddefd0a8833b88a4b68f90dae22c7450d11b354198baee3874fd811b344"
 dependencies = [
  "bitflags 2.10.0",
  "cfg-if 1.0.4",
@@ -4794,7 +4812,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "119533552c9a7ffacc21e099c24a0ac8bb19c2a2a3f363de84cd9b844feab270"
 dependencies = [
  "bytes",
- "heck",
+ "heck 0.4.0",
  "itertools 0.10.5",
  "lazy_static",
  "log",
@@ -5678,9 +5696,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.15.0"
+version = "3.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6093cd8c01b25262b84927e0f7151692158fab02d961e04c979d3903eba7ecc5"
+checksum = "aa66c845eee442168b2c8134fec70ac50dc20e760769c8ba0ad1319ca1959b04"
 dependencies = [
  "serde_core",
  "serde_with_macros",
@@ -5688,9 +5706,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.15.0"
+version = "3.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7e6c180db0816026a61afa1cff5344fb7ebded7e4d3062772179f2501481c27"
+checksum = "b91a903660542fced4e99881aa481bdbaec1634568ee02e0b8bd57c64cb38955"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -6011,7 +6029,7 @@ dependencies = [
  "crossbeam-channel",
  "dashmap",
  "indexmap 2.11.4",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "log",
  "lz4",
  "memmap2 0.9.8",
@@ -6306,6 +6324,7 @@ dependencies = [
 name = "solana-bucket-map"
 version = "4.0.0-alpha.0"
 dependencies = [
+ "ahash 0.8.11",
  "bv",
  "bytemuck",
  "bytemuck_derive",
@@ -6404,7 +6423,7 @@ dependencies = [
  "clap",
  "console 0.16.1",
  "humantime",
- "indicatif 0.18.0",
+ "indicatif 0.18.2",
  "pretty-hex",
  "semver",
  "serde",
@@ -6443,7 +6462,7 @@ dependencies = [
  "futures 0.3.31",
  "futures-util",
  "indexmap 2.11.4",
- "indicatif 0.18.0",
+ "indicatif 0.18.2",
  "log",
  "quinn",
  "rayon",
@@ -6648,7 +6667,7 @@ dependencies = [
  "derive_more 2.0.1",
  "futures 0.3.31",
  "histogram",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "libc",
  "log",
  "lru",
@@ -7164,7 +7183,7 @@ dependencies = [
  "crossbeam-channel",
  "flate2",
  "indexmap 2.11.4",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "log",
  "lru",
  "num-traits",
@@ -7367,7 +7386,7 @@ dependencies = [
  "eager",
  "fs_extra",
  "futures 0.3.31",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "lazy-lru",
  "log",
  "lru",
@@ -7582,7 +7601,7 @@ dependencies = [
  "bytes",
  "cfg-if 1.0.4",
  "dashmap",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "log",
  "nix",
  "rand 0.8.5",
@@ -7866,7 +7885,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "base64 0.22.1",
  "bincode",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "log",
  "percentage",
  "rand 0.8.5",
@@ -8007,7 +8026,7 @@ dependencies = [
  "async-lock",
  "async-trait",
  "futures 0.3.31",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "log",
  "quinn",
  "quinn-proto",
@@ -8100,7 +8119,7 @@ dependencies = [
  "bs58",
  "crossbeam-channel",
  "dashmap",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "jsonrpc-core",
  "jsonrpc-core-client",
  "jsonrpc-derive",
@@ -8182,7 +8201,7 @@ dependencies = [
  "bincode",
  "bs58",
  "futures 0.3.31",
- "indicatif 0.18.0",
+ "indicatif 0.18.2",
  "log",
  "reqwest 0.12.24",
  "reqwest-middleware",
@@ -8296,7 +8315,7 @@ dependencies = [
  "dir-diff",
  "fnv",
  "im",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "libc",
  "log",
  "lz4",
@@ -8445,7 +8464,7 @@ dependencies = [
  "borsh",
  "byteorder 1.5.0",
  "elf",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "log",
  "miow",
  "net2",
@@ -8491,6 +8510,7 @@ dependencies = [
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
+ "solana-svm-test-harness",
  "solana-svm-timings",
  "solana-svm-transaction",
  "solana-svm-type-overrides",
@@ -9196,9 +9216,9 @@ dependencies = [
 
 [[package]]
 name = "solana-sbpf"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b17d5d12dd959f2b219dabad634a7994ad2434b5c91b9d0025a77acdce45f41"
+checksum = "b15b079e08471a9dbfe1e48b2c7439c85aa2a055cbd54eddd8bd257b0a7dbb29"
 dependencies = [
  "byteorder 1.5.0",
  "combine 3.8.1",
@@ -9295,7 +9315,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "async-trait",
  "crossbeam-channel",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "log",
  "solana-client",
  "solana-clock",
@@ -9540,7 +9560,7 @@ dependencies = [
  "futures-util",
  "histogram",
  "indexmap 2.11.4",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "libc",
  "log",
  "nix",
@@ -9639,6 +9659,38 @@ dependencies = [
 [[package]]
 name = "solana-svm-measure"
 version = "4.0.0-alpha.0"
+
+[[package]]
+name = "solana-svm-test-harness"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "agave-feature-set",
+ "agave-logger",
+ "agave-precompiles",
+ "agave-syscalls",
+ "bincode",
+ "solana-account",
+ "solana-builtins",
+ "solana-clock",
+ "solana-compute-budget",
+ "solana-epoch-schedule",
+ "solana-instruction",
+ "solana-instruction-error",
+ "solana-last-restart-slot",
+ "solana-precompile-error",
+ "solana-program-runtime",
+ "solana-pubkey",
+ "solana-rent",
+ "solana-sdk-ids",
+ "solana-stable-layout",
+ "solana-svm",
+ "solana-svm-callback",
+ "solana-svm-log-collector",
+ "solana-svm-timings",
+ "solana-sysvar-id",
+ "solana-transaction-context",
+ "thiserror 2.0.17",
+]
 
 [[package]]
 name = "solana-svm-timings"
@@ -9841,7 +9893,7 @@ dependencies = [
  "bincode",
  "futures-util",
  "indexmap 2.11.4",
- "indicatif 0.18.0",
+ "indicatif 0.18.2",
  "log",
  "rayon",
  "solana-client-traits",
@@ -10029,7 +10081,7 @@ dependencies = [
  "caps",
  "crossbeam-channel",
  "futures 0.3.31",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "lazy-lru",
  "log",
  "lru",
@@ -10090,6 +10142,7 @@ name = "solana-unified-scheduler-logic"
 version = "4.0.0-alpha.0"
 dependencies = [
  "assert_matches",
+ "solana-clock",
  "solana-pubkey",
  "solana-runtime-transaction",
  "solana-transaction",
@@ -10154,7 +10207,7 @@ name = "solana-vote"
 version = "4.0.0-alpha.0"
 dependencies = [
  "bincode",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "log",
  "rand 0.8.5",
  "serde",
@@ -10338,7 +10391,7 @@ dependencies = [
  "bytemuck",
  "bytemuck_derive",
  "curve25519-dalek 4.1.3",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "merlin",
  "num-derive",
  "num-traits",
@@ -10646,7 +10699,7 @@ version = "0.24.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e385be0d24f186b4ce2f9982191e7101bb737312ad61c1f2f984f34bcf85d59"
 dependencies = [
- "heck",
+ "heck 0.4.0",
  "proc-macro2",
  "quote",
  "rustversion",
@@ -10737,14 +10790,15 @@ dependencies = [
 
 [[package]]
 name = "sysctl"
-version = "0.4.6"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "225e483f02d0ad107168dc57381a8a40c3aeea6abe47f37506931f861643cfa8"
+checksum = "cca424247104946a59dacd27eaad296223b7feec3d168a6dd04585183091eb0b"
 dependencies = [
- "bitflags 1.2.1",
+ "bitflags 2.10.0",
  "byteorder 1.5.0",
+ "enum-as-inner",
  "libc",
- "thiserror 1.0.69",
+ "thiserror 2.0.17",
  "walkdir",
 ]
 

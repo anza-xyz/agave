@@ -34,7 +34,7 @@ impl DerefMut for LargeBuffer {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
             Self::Vec(buf) => buf.as_mut_slice(),
-            Self::HugeTable(ref mut mem) => mem.deref_mut(),
+            Self::HugeTable(mem) => mem.deref_mut(),
         }
     }
 }
@@ -43,7 +43,7 @@ impl AsMut<[u8]> for LargeBuffer {
     fn as_mut(&mut self) -> &mut [u8] {
         match self {
             Self::Vec(vec) => vec.as_mut_slice(),
-            LargeBuffer::HugeTable(ref mut mem) => mem,
+            LargeBuffer::HugeTable(mem) => mem,
         }
     }
 }

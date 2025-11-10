@@ -742,7 +742,6 @@ mod external {
                 let consume_worker = ExternalWorker::new(
                     id,
                     self.worker_exit_signal.clone(),
-                    pack_to_worker,
                     Consumer::new(
                         self.committer.clone(),
                         self.transaction_recorder.clone(),
@@ -760,7 +759,7 @@ mod external {
                     Builder::new()
                         .name(format!("solECoWorker{id:02}"))
                         .spawn(move || {
-                            let _ = consume_worker.run();
+                            let _ = consume_worker.run(pack_to_worker);
                         })
                         .unwrap(),
                 );

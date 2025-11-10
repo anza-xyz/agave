@@ -71,6 +71,16 @@ use {
     },
     test_case::test_matrix,
 };
+#[cfg(all(
+    any(feature = "sbf_c", feature = "sbf_rust"),
+    not(feature = "sbf_sanity_list")
+))]
+use {
+    solana_account::Account,
+    solana_program_runtime::sysvar_cache::SysvarCache,
+    solana_sdk_ids::sysvar::rent,
+    solana_svm_test_harness::{self as harness, fixture::instr_context::InstrContext},
+};
 
 #[cfg(feature = "sbf_rust")]
 fn process_transaction_and_record_inner(
@@ -226,31 +236,75 @@ fn test_program_sbf_sanity() {
     for program in programs.iter() {
         println!("Test program: {:?}", program.0);
 
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config(50);
+        let program_elf = harness::file::load_program_elf(program.0);
+        let program_id = Pubkey::new_unique();
 
-        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let mut bank_client = BankClient::new_shared(bank);
-        let authority_keypair = Keypair::new();
+        let feature_set = FeatureSet::all_enabled();
 
-        // Call user program
-        let (_bank, program_id) = load_program_of_loader_v4(
-            &mut bank_client,
-            &bank_forks,
-            &mint_keypair,
-            &authority_keypair,
-            program.0,
-        );
+        let pubkey1 = Pubkey::new_unique();
+        let pubkey2 = Pubkey::new_unique();
 
         let account_metas = vec![
-            AccountMeta::new(mint_keypair.pubkey(), true),
-            AccountMeta::new(Keypair::new().pubkey(), false),
+            AccountMeta::new(pubkey1, true),
+            AccountMeta::new(pubkey2, false),
         ];
         let instruction = Instruction::new_with_bytes(program_id, &[1], account_metas);
-        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
+
+        let accounts = vec![
+            (
+                program_id,
+                Account {
+                    owner: loader_v4::id(),
+                    ..Default::default() // <-- Stubbed
+                },
+            ),
+            (pubkey1, Account::default()),
+            (pubkey2, Account::default()),
+        ];
+
+        let compute_budget = ComputeBudget::new_with_defaults(false, false);
+
+        let mut program_cache =
+            harness::program_cache::new_with_builtins(&feature_set, /* slot */ 0);
+        harness::program_cache::add_program(
+            &mut program_cache,
+            &program_id,
+            &loader_v4::id(),
+            &program_elf,
+            &feature_set,
+            &compute_budget,
+        );
+
+        let mut sysvar_cache = SysvarCache::default();
+        sysvar_cache.fill_missing_entries(|pubkey, callbackback| {
+            if pubkey == &rent::id() {
+                // Add the default Rent sysvar.
+                let rent = Rent::default();
+                let rent_data = bincode::serialize(&rent).unwrap();
+                callbackback(&rent_data);
+            }
+        });
+
+        let context = InstrContext {
+            feature_set,
+            accounts,
+            instruction: instruction.into(),
+            cu_avail: compute_budget.compute_unit_limit,
+        };
+
+        let effects = harness::instr::execute_instr(
+            context,
+            &compute_budget,
+            &mut program_cache,
+            &sysvar_cache,
+        )
+        .unwrap();
+
+        let result = match effects.result {
+            Some(err) => Err(err),
+            None => Ok(()),
+        };
+
         if program.1 {
             assert!(result.is_ok(), "{result:?}");
         } else {
@@ -879,25 +933,30 @@ fn test_program_sbf_invoke_sanity() {
         do_invoke_success(
             TEST_MAX_ACCOUNT_INFOS_OK,
             &[],
-            &[invoked_program_id.clone()],
+            std::slice::from_ref(&invoked_program_id),
             &bank,
         );
 
         do_invoke_success(
             TEST_CU_USAGE_MINIMUM,
             &[],
-            &[noop_program_id.clone()],
+            std::slice::from_ref(&noop_program_id),
             &bank,
         );
 
         do_invoke_success(
             TEST_CU_USAGE_BASELINE,
             &[],
-            &[noop_program_id.clone()],
+            std::slice::from_ref(&noop_program_id),
             &bank,
         );
 
-        do_invoke_success(TEST_CU_USAGE_MAX, &[], &[noop_program_id.clone()], &bank);
+        do_invoke_success(
+            TEST_CU_USAGE_MAX,
+            &[],
+            std::slice::from_ref(&noop_program_id),
+            &bank,
+        );
 
         let bank = bank_with_feature_deactivated(
             &bank_forks,
@@ -912,7 +971,7 @@ fn test_program_sbf_invoke_sanity() {
         do_invoke_success(
             TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_SIMD_0339,
             &[],
-            &[invoked_program_id.clone()],
+            std::slice::from_ref(&invoked_program_id),
             &bank,
         );
 
@@ -928,7 +987,7 @@ fn test_program_sbf_invoke_sanity() {
         do_invoke_success(
             TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_INCREASE_TX_ACCOUNT_LOCK_BEFORE_SIMD_0339,
             &[],
-            &[invoked_program_id.clone()],
+            std::slice::from_ref(&invoked_program_id),
             &bank,
         );
         let bank = bank_with_feature_activated(
@@ -1014,7 +1073,7 @@ fn test_program_sbf_invoke_sanity() {
         do_invoke_failure_test_local(
             TEST_PRIVILEGE_ESCALATION_SIGNER,
             TransactionError::InstructionError(0, InstructionError::PrivilegeEscalation),
-            &[invoked_program_id.clone()],
+            std::slice::from_ref(&invoked_program_id),
             None,
             &bank,
         );
@@ -1022,7 +1081,7 @@ fn test_program_sbf_invoke_sanity() {
         do_invoke_failure_test_local(
             TEST_PRIVILEGE_ESCALATION_WRITABLE,
             TransactionError::InstructionError(0, InstructionError::PrivilegeEscalation),
-            &[invoked_program_id.clone()],
+            std::slice::from_ref(&invoked_program_id),
             None,
             &bank,
         );
@@ -1177,7 +1236,7 @@ fn test_program_sbf_invoke_sanity() {
         do_invoke_failure_test_local(
             TEST_RETURN_ERROR,
             TransactionError::InstructionError(0, InstructionError::Custom(42)),
-            &[invoked_program_id.clone()],
+            std::slice::from_ref(&invoked_program_id),
             None,
             &bank,
         );
@@ -1185,7 +1244,7 @@ fn test_program_sbf_invoke_sanity() {
         do_invoke_failure_test_local(
             TEST_PRIVILEGE_DEESCALATION_ESCALATION_SIGNER,
             TransactionError::InstructionError(0, InstructionError::PrivilegeEscalation),
-            &[invoked_program_id.clone()],
+            std::slice::from_ref(&invoked_program_id),
             None,
             &bank,
         );
@@ -1193,7 +1252,7 @@ fn test_program_sbf_invoke_sanity() {
         do_invoke_failure_test_local(
             TEST_PRIVILEGE_DEESCALATION_ESCALATION_WRITABLE,
             TransactionError::InstructionError(0, InstructionError::PrivilegeEscalation),
-            &[invoked_program_id.clone()],
+            std::slice::from_ref(&invoked_program_id),
             None,
             &bank,
         );
@@ -1201,7 +1260,7 @@ fn test_program_sbf_invoke_sanity() {
         do_invoke_failure_test_local_with_compute_check(
             TEST_WRITABLE_DEESCALATION_WRITABLE,
             TransactionError::InstructionError(0, InstructionError::ReadonlyDataModified),
-            &[invoked_program_id.clone()],
+            std::slice::from_ref(&invoked_program_id),
             None,
             true, // should_deplete_compute_meter
             &bank,
@@ -1268,7 +1327,7 @@ fn test_program_sbf_invoke_sanity() {
         do_invoke_failure_test_local(
             TEST_DUPLICATE_PRIVILEGE_ESCALATION_SIGNER,
             TransactionError::InstructionError(0, InstructionError::PrivilegeEscalation),
-            &[invoked_program_id.clone()],
+            std::slice::from_ref(&invoked_program_id),
             None,
             &bank,
         );
@@ -1276,7 +1335,7 @@ fn test_program_sbf_invoke_sanity() {
         do_invoke_failure_test_local(
             TEST_DUPLICATE_PRIVILEGE_ESCALATION_WRITABLE,
             TransactionError::InstructionError(0, InstructionError::PrivilegeEscalation),
-            &[invoked_program_id.clone()],
+            std::slice::from_ref(&invoked_program_id),
             None,
             &bank,
         );
@@ -2663,6 +2722,7 @@ fn test_program_sbf_realloc() {
         // disable when needed
         if !stricter_abi_and_runtime_constraints {
             feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let mut bank_client = BankClient::new_shared(bank.clone());
@@ -3932,6 +3992,7 @@ fn test_cpi_account_ownership_writability() {
         let mut feature_set = FeatureSet::all_enabled();
         if !stricter_abi_and_runtime_constraints {
             feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
 
         bank.feature_set = Arc::new(feature_set);
@@ -4133,6 +4194,7 @@ fn test_cpi_account_data_updates() {
         let mut feature_set = FeatureSet::all_enabled();
         if !stricter_abi_and_runtime_constraints {
             feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
 
         bank.feature_set = Arc::new(feature_set);
@@ -4584,6 +4646,7 @@ fn test_deny_access_beyond_current_length() {
         // disable when needed
         if !stricter_abi_and_runtime_constraints {
             feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let mut bank_client = BankClient::new_shared(bank);
@@ -4652,6 +4715,7 @@ fn test_deny_executable_write() {
         // disable when needed
         if !stricter_abi_and_runtime_constraints {
             feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let mut bank_client = BankClient::new_shared(bank);
@@ -4707,6 +4771,7 @@ fn test_update_callee_account() {
         // disable when needed
         if !stricter_abi_and_runtime_constraints {
             feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let mut bank_client = BankClient::new_shared(bank.clone());
@@ -4991,6 +5056,7 @@ fn test_account_info_in_account() {
             // disable when needed
             if !stricter_abi_and_runtime_constraints {
                 feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+                feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
             }
 
             let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -5052,6 +5118,7 @@ fn test_account_info_rc_in_account() {
         // disable when needed
         if !stricter_abi_and_runtime_constraints {
             feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
 
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -5142,6 +5209,7 @@ fn test_clone_account_data() {
     let feature_set = Arc::make_mut(&mut bank.feature_set);
 
     feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+    feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
 
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let mut bank_client = BankClient::new_shared(bank.clone());
@@ -5491,6 +5559,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
         let mut feature_set = FeatureSet::all_enabled();
         if !stricter_abi_and_runtime_constraints {
             feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
+            feature_set.deactivate(&feature_set::account_data_direct_mapping::id());
         }
 
         let account_keypair = Keypair::new();

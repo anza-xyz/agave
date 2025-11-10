@@ -757,7 +757,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             })
             .and_then(
                 |current_nonce_versions| match current_nonce_versions.state() {
-                    NonceState::Initialized(ref current_nonce_data) => {
+                    NonceState::Initialized(current_nonce_data) => {
                         let nonce_can_be_advanced =
                             &current_nonce_data.durable_nonce != next_durable_nonce;
 

@@ -153,6 +153,7 @@ impl BytesPacket {
 pub enum PacketBatch {
     Pinned(PinnedPacketBatch),
     Bytes(BytesPacketBatch),
+    Single(BytesPacket),
 }
 
 impl PacketBatch {
@@ -161,6 +162,7 @@ impl PacketBatch {
         match self {
             Self::Pinned(batch) => batch.first().map(PacketRef::from),
             Self::Bytes(batch) => batch.first().map(PacketRef::from),
+            Self::Single(packet) => Some(PacketRef::from(packet)),
         }
     }
 
@@ -169,6 +171,7 @@ impl PacketBatch {
         match self {
             Self::Pinned(batch) => batch.first_mut().map(PacketRefMut::from),
             Self::Bytes(batch) => batch.first_mut().map(PacketRefMut::from),
+            Self::Single(packet) => Some(PacketRefMut::from(packet)),
         }
     }
 
@@ -177,6 +180,7 @@ impl PacketBatch {
         match self {
             Self::Pinned(batch) => batch.is_empty(),
             Self::Bytes(batch) => batch.is_empty(),
+            Self::Single(_) => false,
         }
     }
 
@@ -185,6 +189,7 @@ impl PacketBatch {
         match self {
             Self::Pinned(batch) => batch.get(index).map(PacketRef::from),
             Self::Bytes(batch) => batch.get(index).map(PacketRef::from),
+            Self::Single(packet) => (index == 0).then_some(PacketRef::from(packet)),
         }
     }
 
@@ -192,6 +197,7 @@ impl PacketBatch {
         match self {
             Self::Pinned(batch) => batch.get_mut(index).map(PacketRefMut::from),
             Self::Bytes(batch) => batch.get_mut(index).map(PacketRefMut::from),
+            Self::Single(packet) => (index == 0).then_some(PacketRefMut::from(packet)),
         }
     }
 
@@ -199,6 +205,7 @@ impl PacketBatch {
         match self {
             Self::Pinned(batch) => PacketBatchIter::Pinned(batch.iter()),
             Self::Bytes(batch) => PacketBatchIter::Bytes(batch.iter()),
+            Self::Single(packet) => PacketBatchIter::Bytes(core::array::from_ref(packet).iter()),
         }
     }
 
@@ -206,6 +213,9 @@ impl PacketBatch {
         match self {
             Self::Pinned(batch) => PacketBatchIterMut::Pinned(batch.iter_mut()),
             Self::Bytes(batch) => PacketBatchIterMut::Bytes(batch.iter_mut()),
+            Self::Single(packet) => {
+                PacketBatchIterMut::Bytes(core::array::from_mut(packet).iter_mut())
+            }
         }
     }
 
@@ -215,6 +225,11 @@ impl PacketBatch {
                 PacketBatchParIter::Pinned(batch.par_iter().map(PacketRef::from))
             }
             Self::Bytes(batch) => PacketBatchParIter::Bytes(batch.par_iter().map(PacketRef::from)),
+            Self::Single(packet) => PacketBatchParIter::Bytes(
+                core::array::from_ref(packet)
+                    .par_iter()
+                    .map(PacketRef::from),
+            ),
         }
     }
 
@@ -226,6 +241,11 @@ impl PacketBatch {
             Self::Bytes(batch) => {
                 PacketBatchParIterMut::Bytes(batch.par_iter_mut().map(PacketRefMut::from))
             }
+            Self::Single(packet) => PacketBatchParIterMut::Bytes(
+                core::array::from_mut(packet)
+                    .par_iter_mut()
+                    .map(PacketRefMut::from),
+            ),
         }
     }
 
@@ -233,6 +253,7 @@ impl PacketBatch {
         match self {
             Self::Pinned(batch) => batch.len(),
             Self::Bytes(batch) => batch.len(),
+            Self::Single(_) => 1,
         }
     }
 }

@@ -253,7 +253,7 @@ impl<'a, 'b> LazyAnalysis<'a, 'b> {
         }
     }
 
-    fn analyze(&mut self) -> &Analysis {
+    fn analyze(&mut self) -> &Analysis<'_> {
         if let Some(ref analysis) = self.analysis {
             return analysis;
         }

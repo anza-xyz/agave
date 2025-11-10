@@ -506,7 +506,7 @@ pub fn broadcast_shreds(
     };
     let (packets, quic_packets): (Vec<_>, Vec<_>) = shreds
         .iter()
-        .group_by(|shred| shred.slot())
+        .chunk_by(|shred| shred.slot())
         .into_iter()
         .flat_map(|(slot, shreds)| {
             let cluster_nodes =

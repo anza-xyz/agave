@@ -1179,12 +1179,12 @@ impl ClusterInfo {
     }
 
     // If the network entrypoint hasn't been discovered yet, add it to the crds table
-    fn append_entrypoint_to_pulls(
+    fn append_entrypoint_to_pulls<T: Iterator<Item = (SocketAddr, CrdsFilter)> + Clone>(
         &self,
         thread_pool: &ThreadPool,
         max_bloom_filter_bytes: usize,
-        pulls: impl Iterator<Item = (SocketAddr, CrdsFilter)> + Clone,
-    ) -> impl Iterator<Item = (SocketAddr, CrdsFilter)> {
+        pulls: T,
+    ) -> impl Iterator<Item = (SocketAddr, CrdsFilter)> + use<T> {
         const THROTTLE_DELAY: u64 = CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS / 2;
         let mut pulls = pulls.peekable();
         let entrypoint = {
@@ -1234,7 +1234,7 @@ impl ClusterInfo {
         thread_pool: &ThreadPool,
         gossip_validators: Option<&HashSet<Pubkey>>,
         stakes: &HashMap<Pubkey, u64>,
-    ) -> impl Iterator<Item = (SocketAddr, Protocol)> {
+    ) -> impl Iterator<Item = (SocketAddr, Protocol)> + use<> {
         let now = timestamp();
         let keypair = self.keypair();
         let mut contact_info = self.my_contact_info();
@@ -1285,7 +1285,7 @@ impl ClusterInfo {
     fn new_push_requests(
         &self,
         stakes: &HashMap<Pubkey, u64>,
-    ) -> impl Iterator<Item = (SocketAddr, Protocol)> {
+    ) -> impl Iterator<Item = (SocketAddr, Protocol)> + use<> {
         let self_id = self.id();
         let (entries, push_messages, num_pushes) = {
             let _st = ScopedTimer::from(&self.stats.new_push_requests);
@@ -1336,7 +1336,7 @@ impl ClusterInfo {
         gossip_validators: Option<&HashSet<Pubkey>>,
         stakes: &HashMap<Pubkey, u64>,
         generate_pull_requests: bool,
-    ) -> impl Iterator<Item = (SocketAddr, Protocol)> {
+    ) -> impl Iterator<Item = (SocketAddr, Protocol)> + use<> {
         self.trim_crds_table(CRDS_UNIQUE_PUBKEY_CAPACITY, stakes);
         // This will flush local pending push messages before generating
         // pull-request bloom filters, preventing pull responses to return the
@@ -2408,6 +2408,7 @@ pub struct NodeConfig {
     pub bind_ip_addrs: BindIpAddrs,
     pub public_tpu_addr: Option<SocketAddr>,
     pub public_tpu_forwards_addr: Option<SocketAddr>,
+    pub public_tvu_addr: Option<SocketAddr>,
     pub vortexor_receiver_addr: Option<SocketAddr>,
 
     /// The number of TVU receive sockets to create
@@ -2882,6 +2883,7 @@ mod tests {
             bind_ip_addrs: BindIpAddrs::new(vec![IpAddr::V4(ip)]).unwrap(),
             public_tpu_addr: None,
             public_tpu_forwards_addr: None,
+            public_tvu_addr: None,
             num_tvu_receive_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_tvu_retransmit_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_quic_endpoints: DEFAULT_NUM_QUIC_ENDPOINTS,
@@ -2907,6 +2909,7 @@ mod tests {
             bind_ip_addrs: BindIpAddrs::new(vec![ip]).unwrap(),
             public_tpu_addr: None,
             public_tpu_forwards_addr: None,
+            public_tvu_addr: None,
             num_tvu_receive_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_tvu_retransmit_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_quic_endpoints: DEFAULT_NUM_QUIC_ENDPOINTS,

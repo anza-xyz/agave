@@ -159,7 +159,7 @@ pub unsafe fn read_type<T>(byte_block: &[u8], offset: usize) -> Option<&T> {
         return None;
     }
     let ptr = byte_block[offset..].as_ptr().cast();
-    debug_assert!(ptr as usize % std::mem::align_of::<T>() == 0);
+    debug_assert!((ptr as usize).is_multiple_of(std::mem::align_of::<T>()));
     // SAFETY: The caller ensures it is safe to cast bytes to T,
     // we ensure the size is safe by querying T directly,
     // and we just checked above to ensure the ptr is aligned for T.

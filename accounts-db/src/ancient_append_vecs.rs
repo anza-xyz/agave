@@ -1099,7 +1099,7 @@ pub const fn get_ancient_append_vec_capacity() -> u64 {
     );
     const PAGE_SIZE: u64 = 4 * 1024;
     const _: () = assert!(
-        RESULT % PAGE_SIZE == 0,
+        RESULT.is_multiple_of(PAGE_SIZE),
         "ancient append vec size should be a multiple of PAGE_SIZE"
     );
 

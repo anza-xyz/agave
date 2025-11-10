@@ -363,7 +363,7 @@ impl Rocks {
         &self,
         cf: &ColumnFamily,
         keys: I,
-    ) -> impl Iterator<Item = Result<Option<DBPinnableSlice<'_>>>>
+    ) -> impl Iterator<Item = Result<Option<DBPinnableSlice<'_>>>> + use<'_, K, I>
     where
         K: AsRef<[u8]> + 'a + ?Sized,
         I: IntoIterator<Item = &'a K>,

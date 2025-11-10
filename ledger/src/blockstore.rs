@@ -675,7 +675,7 @@ impl Blockstore {
     pub fn iterator_cf(
         &self,
         cf_name: &str,
-    ) -> Result<impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
+    ) -> Result<impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_ + use<'_>> {
         let cf = self.db.cf_handle(cf_name);
         let iterator = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
         Ok(iterator.map(|pair| pair.unwrap()))
@@ -2200,7 +2200,7 @@ impl Blockstore {
         shred: &Shred,
         write_batch: &mut WriteBatch,
         shred_source: ShredSource,
-    ) -> Result<impl Iterator<Item = CompletedDataSetInfo> + 'a> {
+    ) -> Result<impl Iterator<Item = CompletedDataSetInfo> + 'a + use<'a>> {
         let slot = shred.slot();
         let index = u64::from(shred.index());
 
@@ -4636,7 +4636,7 @@ fn update_completed_data_indexes<'a>(
     received_data_shreds: &'a ShredIndex,
     // Shreds indices which are marked data complete.
     completed_data_indexes: &mut CompletedDataIndexes,
-) -> impl Iterator<Item = Range<u32>> + 'a {
+) -> impl Iterator<Item = Range<u32>> + 'a + use<'a> {
     // new_shred_index is data complete, so need to insert here into
     // the completed_data_indexes.
     if is_last_in_data {
@@ -4674,7 +4674,7 @@ fn update_slot_meta<'a>(
     new_consumed: u64,
     reference_tick: u8,
     received_data_shreds: &'a ShredIndex,
-) -> impl Iterator<Item = Range<u32>> + 'a {
+) -> impl Iterator<Item = Range<u32>> + 'a + use<'a> {
     let first_insert = slot_meta.received == 0;
     // Index is zero-indexed, while the "received" height starts from 1,
     // so received = index + 1 for the same shred.
@@ -5784,14 +5784,14 @@ pub mod tests {
             assert_eq!(blockstore.get_slot_entries(slot, 0).unwrap(), vec![]);
 
             let meta = blockstore.meta(slot).unwrap().unwrap();
-            if num_shreds % 2 == 0 {
+            if num_shreds.is_multiple_of(2) {
                 assert_eq!(meta.received, num_shreds);
             } else {
                 trace!("got here");
                 assert_eq!(meta.received, num_shreds - 1);
             }
             assert_eq!(meta.consumed, 0);
-            if num_shreds % 2 == 0 {
+            if num_shreds.is_multiple_of(2) {
                 assert_eq!(meta.last_index, Some(num_shreds - 1));
             } else {
                 assert_eq!(meta.last_index, None);
@@ -9357,7 +9357,7 @@ pub mod tests {
             .is_empty());
 
         // Fetch all signatures for address 0, three at a time
-        assert!(all0.len() % 3 == 0);
+        assert!(all0.len().is_multiple_of(3));
         for i in (0..all0.len()).step_by(3) {
             let results = blockstore
                 .get_confirmed_signatures_for_address2(

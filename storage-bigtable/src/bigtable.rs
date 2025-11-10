@@ -247,7 +247,7 @@ impl BigTableConnection {
     ///
     /// Clients require `&mut self`, due to `Tonic::transport::Channel` limitations, however
     /// creating new clients is cheap and thus can be used as a work around for ease of use.
-    pub fn client(&self) -> BigTable<impl FnMut(Request<()>) -> InterceptedRequestResult> {
+    pub fn client(&self) -> BigTable<impl FnMut(Request<()>) -> InterceptedRequestResult + use<>> {
         let access_token = self.access_token.clone();
         let client = bigtable_client::BigtableClient::with_interceptor(
             self.channel.clone(),

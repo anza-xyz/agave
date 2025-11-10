@@ -24,8 +24,8 @@ pub(super) fn create_test_account(seed: u64) -> (Pubkey, AccountSharedData) {
         data: std::iter::repeat_n(data_byte, seed as usize).collect(),
         // this will allow some test account sharing the same owner.
         owner: [owner_byte; 32].into(),
-        executable: seed % 2 > 0,
-        rent_epoch: if seed % 3 > 0 {
+        executable: !seed.is_multiple_of(2),
+        rent_epoch: if !seed.is_multiple_of(3) {
             seed
         } else {
             RENT_EXEMPT_RENT_EPOCH

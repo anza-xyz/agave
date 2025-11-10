@@ -239,11 +239,11 @@ impl EventHandler {
     ) -> Result<Vec<BLSOp>, EventLoopError> {
         let mut votes = vec![];
         let LocalContext {
-            ref mut my_pubkey,
-            ref mut pending_blocks,
-            ref mut finalized_blocks,
-            ref mut received_shred,
-            ref mut stats,
+            my_pubkey,
+            pending_blocks,
+            finalized_blocks,
+            received_shred,
+            stats,
         } = local_context;
         match event {
             // Block has completed replay

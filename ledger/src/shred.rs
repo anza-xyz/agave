@@ -661,10 +661,10 @@ impl TryFrom<u8> for ShredVariant {
     }
 }
 
-pub fn recover(
-    shreds: impl IntoIterator<Item = Shred>,
+pub fn recover<T: IntoIterator<Item = Shred>>(
+    shreds: T,
     reed_solomon_cache: &ReedSolomonCache,
-) -> Result<impl Iterator<Item = Result<Shred, Error>>, Error> {
+) -> Result<impl Iterator<Item = Result<Shred, Error>> + use<T>, Error> {
     let shreds = shreds
         .into_iter()
         .map(|shred| {
@@ -837,7 +837,7 @@ where
 fn check_fixed_fec_set(index: u32, fec_set_index: u32) -> bool {
     index >= fec_set_index
         && index < fec_set_index + DATA_SHREDS_PER_FEC_BLOCK as u32
-        && fec_set_index % DATA_SHREDS_PER_FEC_BLOCK as u32 == 0
+        && fec_set_index.is_multiple_of(DATA_SHREDS_PER_FEC_BLOCK as u32)
 }
 
 /// Returns true if `index` of the last data shred is valid under the assumption that
@@ -848,7 +848,7 @@ fn check_fixed_fec_set(index: u32, fec_set_index: u32) -> bool {
 /// This currently is checked post insert in `Blockstore::check_last_fec_set`, but in the
 /// future it can be solely checked during ingest
 fn check_last_data_shred_index(index: u32) -> bool {
-    (index + 1) % (DATA_SHREDS_PER_FEC_BLOCK as u32) == 0
+    (index + 1).is_multiple_of(DATA_SHREDS_PER_FEC_BLOCK as u32)
 }
 
 pub fn max_ticks_per_n_shreds(num_shreds: u64, shred_data_size: Option<usize>) -> u64 {
