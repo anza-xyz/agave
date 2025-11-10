@@ -74,21 +74,18 @@ impl<T: SVMStaticMessage> SVMStaticMessage for RuntimeTransaction<T> {
     fn num_transaction_signatures(&self) -> u64 {
         self.transaction.num_transaction_signatures()
     }
-
     // override to access from the cached meta instead of re-calculating
     fn num_ed25519_signatures(&self) -> u64 {
         self.meta
             .signature_details
             .num_ed25519_instruction_signatures()
     }
-
     // override to access from the cached meta instead of re-calculating
     fn num_secp256k1_signatures(&self) -> u64 {
         self.meta
             .signature_details
             .num_secp256k1_instruction_signatures()
     }
-
     // override to access form the cached meta instead of re-calculating
     fn num_secp256r1_signatures(&self) -> u64 {
         self.meta
