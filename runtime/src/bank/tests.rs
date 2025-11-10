@@ -4526,7 +4526,7 @@ fn test_nonce_fee_calculator_updates() {
         .and_then(|acc| {
             let nonce_versions = StateMut::<nonce::versions::Versions>::state(&acc);
             match nonce_versions.ok()?.state() {
-                nonce::state::State::Initialized(ref data) => {
+                nonce::state::State::Initialized(data) => {
                     Some((data.blockhash(), data.fee_calculator))
                 }
                 _ => None,
@@ -4558,7 +4558,7 @@ fn test_nonce_fee_calculator_updates() {
         .and_then(|acc| {
             let nonce_versions = StateMut::<nonce::versions::Versions>::state(&acc);
             match nonce_versions.ok()?.state() {
-                nonce::state::State::Initialized(ref data) => {
+                nonce::state::State::Initialized(data) => {
                     Some((data.blockhash(), data.fee_calculator))
                 }
                 _ => None,
@@ -4590,7 +4590,7 @@ fn test_nonce_fee_calculator_updates_tx_wide_cap() {
         .and_then(|acc| {
             let nonce_versions = StateMut::<nonce::versions::Versions>::state(&acc);
             match nonce_versions.ok()?.state() {
-                nonce::state::State::Initialized(ref data) => {
+                nonce::state::State::Initialized(data) => {
                     Some((data.blockhash(), data.fee_calculator))
                 }
                 _ => None,
@@ -4622,7 +4622,7 @@ fn test_nonce_fee_calculator_updates_tx_wide_cap() {
         .and_then(|acc| {
             let nonce_versions = StateMut::<nonce::versions::Versions>::state(&acc);
             match nonce_versions.ok()?.state() {
-                nonce::state::State::Initialized(ref data) => {
+                nonce::state::State::Initialized(data) => {
                     Some((data.blockhash(), data.fee_calculator))
                 }
                 _ => None,

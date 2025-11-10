@@ -340,7 +340,7 @@ pub fn fail_rpc_node(
     blacklisted_rpc_nodes: &mut HashSet<Pubkey, RandomState>,
 ) {
     warn!("{err}");
-    if let Some(ref known_validators) = known_validators {
+    if let Some(known_validators) = known_validators {
         if known_validators.contains(rpc_id) {
             return;
         }
