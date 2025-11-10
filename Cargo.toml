@@ -164,6 +164,17 @@ edition = "2021"
 [workspace.lints.rust]
 warnings = "deny"
 
+# List of rust-2024-compatibility lints that are already satisfied
+# See https://doc.rust-lang.org/rustc/lints/groups.html
+boxed_slice_into_iter = "deny"
+dependency_on_unit_never_type_fallback = "deny"
+deprecated_safe_2024 = "deny"
+missing_unsafe_on_extern = "deny"
+never_type_fallback_flowing_into_unsafe = "deny"
+rust_2024_guarded_string_incompatible_syntax = "deny"
+rust_2024_prelude_collisions = "deny"
+static_mut_refs = "deny"
+
 [workspace.lints.rust.unexpected_cfgs]
 level = "warn"
 check-cfg = [
