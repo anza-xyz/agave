@@ -2185,12 +2185,10 @@ impl Blockstore {
             return false;
         }
 
-        // TODO Shouldn't this use shred.parent() instead and update
-        // slot_meta.parent_slot accordingly?
-        slot_meta
-            .parent_slot
-            .map(|parent_slot| verify_shred_slots(slot, parent_slot, max_root))
-            .unwrap_or_default()
+        match shred.parent() {
+            Ok(parent_slot) => verify_shred_slots(slot, parent_slot, max_root),
+            Err(_) => false,
+        }
     }
 
     fn insert_data_shred<'a>(
