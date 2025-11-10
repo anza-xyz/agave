@@ -16,7 +16,7 @@ use {
     std::{env, ffi::c_int, sync::Arc},
 };
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn sol_compat_init(_log_level: i32) {
     env::set_var("SOLANA_RAYON_THREADS", "1");
     env::set_var("RAYON_NUM_THREADS", "1");
@@ -26,7 +26,7 @@ pub unsafe extern "C" fn sol_compat_init(_log_level: i32) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn sol_compat_fini() {}
 
 pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects> {
@@ -88,7 +88,7 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects
     instr_effects.map(Into::into)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn sol_compat_instr_execute_v1(
     out_ptr: *mut u8,
     out_psz: *mut u64,
