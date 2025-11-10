@@ -6323,6 +6323,7 @@ dependencies = [
 name = "solana-bucket-map"
 version = "4.0.0-alpha.0"
 dependencies = [
+ "ahash 0.8.11",
  "bv",
  "bytemuck",
  "bytemuck_derive",

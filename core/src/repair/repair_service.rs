@@ -3,7 +3,7 @@
 use {
     super::standard_repair_handler::StandardRepairHandler,
     crate::{
-        cluster_info_vote_listener::VerifiedVoteReceiver,
+        cluster_info_vote_listener::VerifiedVoterSlotsReceiver,
         cluster_slots_service::cluster_slots::ClusterSlots,
         repair::{
             ancestor_hashes_service::{
@@ -203,7 +203,7 @@ pub struct RepairTiming {
     pub set_root_elapsed: u64,
     pub dump_slots_elapsed: u64,
     pub get_votes_elapsed: u64,
-    pub add_votes_elapsed: u64,
+    pub add_voters_elapsed: u64,
     pub purge_outstanding_repairs: u64,
     pub handle_popular_pruned_forks: u64,
     pub get_best_orphans_elapsed: u64,
@@ -222,7 +222,7 @@ impl RepairTiming {
             ("set-root-elapsed", self.set_root_elapsed, i64),
             ("dump-slots-elapsed", self.dump_slots_elapsed, i64),
             ("get-votes-elapsed", self.get_votes_elapsed, i64),
-            ("add-votes-elapsed", self.add_votes_elapsed, i64),
+            ("add-voters-elapsed", self.add_voters_elapsed, i64),
             (
                 "purge-outstanding-repairs",
                 self.purge_outstanding_repairs,
@@ -384,7 +384,7 @@ impl Default for RepairSlotRange {
 
 struct RepairChannels {
     repair_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
-    verified_vote_receiver: VerifiedVoteReceiver,
+    verified_voter_slots_receiver: VerifiedVoterSlotsReceiver,
     dumped_slots_receiver: DumpedSlotsReceiver,
     popular_pruned_forks_sender: PopularPrunedForksSender,
 }
@@ -397,7 +397,7 @@ pub struct RepairServiceChannels {
 impl RepairServiceChannels {
     pub fn new(
         repair_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
-        verified_vote_receiver: VerifiedVoteReceiver,
+        verified_voter_slots_receiver: VerifiedVoterSlotsReceiver,
         dumped_slots_receiver: DumpedSlotsReceiver,
         popular_pruned_forks_sender: PopularPrunedForksSender,
         ancestor_hashes_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
@@ -407,7 +407,7 @@ impl RepairServiceChannels {
         Self {
             repair_channels: RepairChannels {
                 repair_request_quic_sender,
-                verified_vote_receiver,
+                verified_voter_slots_receiver,
                 dumped_slots_receiver,
                 popular_pruned_forks_sender,
             },
@@ -485,7 +485,7 @@ impl RepairService {
         repair_weight: &mut RepairWeight,
         popular_pruned_forks_requests: &mut HashSet<Slot>,
         dumped_slots_receiver: &DumpedSlotsReceiver,
-        verified_vote_receiver: &VerifiedVoteReceiver,
+        verified_voter_slots_receiver: &VerifiedVoterSlotsReceiver,
         repair_metrics: &mut RepairMetrics,
     ) {
         // Purge outdated slots from the weighting heuristic
@@ -526,7 +526,7 @@ impl RepairService {
         // Add new votes to the weighting heuristic
         let mut get_votes_elapsed = Measure::start("get_votes_elapsed");
         let mut slot_to_vote_pubkeys: HashMap<Slot, Vec<Pubkey>> = HashMap::new();
-        verified_vote_receiver
+        verified_voter_slots_receiver
             .try_iter()
             .for_each(|(vote_pubkey, vote_slots)| {
                 for slot in vote_slots {
@@ -538,19 +538,19 @@ impl RepairService {
             });
         get_votes_elapsed.stop();
 
-        let mut add_votes_elapsed = Measure::start("add_votes");
-        repair_weight.add_votes(
+        let mut add_voters_elapsed = Measure::start("add_voters");
+        repair_weight.add_voters(
             blockstore,
             slot_to_vote_pubkeys.into_iter(),
             root_bank.epoch_stakes_map(),
             root_bank.epoch_schedule(),
         );
-        add_votes_elapsed.stop();
+        add_voters_elapsed.stop();
 
         repair_metrics.timing.set_root_elapsed += set_root_elapsed.as_us();
         repair_metrics.timing.dump_slots_elapsed += dump_slots_elapsed.as_us();
         repair_metrics.timing.get_votes_elapsed += get_votes_elapsed.as_us();
-        repair_metrics.timing.add_votes_elapsed += add_votes_elapsed.as_us();
+        repair_metrics.timing.add_voters_elapsed += add_voters_elapsed.as_us();
     }
 
     fn identify_repairs(
@@ -690,7 +690,7 @@ impl RepairService {
     ) {
         let RepairChannels {
             repair_request_quic_sender,
-            verified_vote_receiver,
+            verified_voter_slots_receiver,
             dumped_slots_receiver,
             popular_pruned_forks_sender,
         } = repair_channels;
@@ -711,7 +711,7 @@ impl RepairService {
             repair_weight,
             popular_pruned_forks_requests,
             dumped_slots_receiver,
-            verified_vote_receiver,
+            verified_voter_slots_receiver,
             repair_metrics,
         );
 

@@ -400,7 +400,10 @@ impl Crds {
     }
 
     /// Returns all records associated with a pubkey.
-    pub(crate) fn get_records(&self, pubkey: &Pubkey) -> impl Iterator<Item = &VersionedCrdsValue> {
+    pub(crate) fn get_records(
+        &self,
+        pubkey: &Pubkey,
+    ) -> impl Iterator<Item = &VersionedCrdsValue> + use<'_> {
         self.records
             .get(pubkey)
             .into_iter()

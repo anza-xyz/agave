@@ -132,7 +132,7 @@ impl SysvarCache {
         &self,
         sysvar_id: &Pubkey,
     ) -> Result<Arc<T>, InstructionError> {
-        if let Some(ref sysvar_buf) = self.sysvar_id_to_buffer(sysvar_id) {
+        if let Some(sysvar_buf) = self.sysvar_id_to_buffer(sysvar_id) {
             bincode::deserialize(sysvar_buf)
                 .map(Arc::new)
                 .map_err(|_| InstructionError::UnsupportedSysvar)

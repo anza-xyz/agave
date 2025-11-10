@@ -18,6 +18,7 @@ agave-unstable-api = []
 dev-context-only-utils = []
 
 [dependencies]
+ahash = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
 bytemuck = { workspace = true }
 bytemuck_derive = { workspace = true }
