@@ -256,7 +256,25 @@ EOF
              ^ci/test-coverage.sh \
              ^scripts/coverage.sh \
       ; then
-    command_step coverage "ci/docker-run-default-image.sh ci/test-coverage.sh" 80
+    cat >> "$output_file" <<"EOF"
+  - group: "coverage"
+    steps:
+      - command: "ci/docker-run-default-image.sh ci/coverage/part-1.sh"
+        name: "coverage-1"
+        timeout_in_minutes: 60
+        agents:
+          queue: "solana"
+      - command: "ci/docker-run-default-image.sh ci/coverage/part-2.sh"
+        name: "coverage-2"
+        timeout_in_minutes: 60
+        agents:
+          queue: "solana"
+      - command: "ci/docker-run-default-image.sh ci/coverage/part-3.sh"
+        name: "coverage-3"
+        timeout_in_minutes: 60
+        agents:
+          queue: "solana"
+EOF
   else
     annotate --style info --context test-coverage \
       "Coverage skipped as no .rs files were modified"
