@@ -158,13 +158,12 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
 }
 
 impl<D: TransactionData> SVMStaticMessage for ResolvedTransactionView<D> {
-    // TODO: What's the difference between num_required and num_signatures?
     fn num_transaction_signatures(&self) -> u64 {
         u64::from(self.view.num_required_signatures())
     }
 
     fn num_write_locks(&self) -> u64 {
-        self.view.num_write_locks()
+        self.view.num_requested_write_locks()
     }
 
     fn program_instructions_iter(
