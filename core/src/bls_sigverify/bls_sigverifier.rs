@@ -53,17 +53,30 @@ fn get_key_to_rank_map(bank: &Bank, slot: Slot) -> Option<&Arc<BLSPubkeyToRankMa
         .map(|stake| stake.bls_pubkey_to_rank_map())
 }
 
+// TODO(wen): projecting to PubkeyProjective should be done in key_to_rank_map.
 fn aggregate_keys_from_bitmap(
     bit_vec: &BitVec<u8, Lsb0>,
     key_to_rank_map: &Arc<BLSPubkeyToRankMap>,
-) -> Option<PubkeyProjective> {
-    let pubkeys: Result<Vec<_>, _> = bit_vec
-        .iter_ones()
-        .filter_map(|rank| key_to_rank_map.get_pubkey(rank))
-        .map(|(_, bls_pubkey)| PubkeyProjective::try_from(*bls_pubkey))
-        .collect();
-    let pubkeys = pubkeys.ok()?;
-    PubkeyProjective::par_aggregate(pubkeys.par_iter()).ok()
+) -> Result<PubkeyProjective, CertVerifyError> {
+    (0..bit_vec.len())
+        .into_par_iter()
+        .filter(|&rank| // check if the bit is set
+            bit_vec.get(rank).map(|b| *b).unwrap_or(false))
+        .map(|rank| {
+            key_to_rank_map
+                .get_pubkey(rank)
+                .ok_or(CertVerifyError::PubkeyNotFoundForRank(rank))
+                .and_then(|(_, bls_pubkey)| {
+                    PubkeyProjective::try_from(*bls_pubkey)
+                        .map_err(|_| CertVerifyError::InvalidPubkeyForRank(rank))
+                })
+        })
+        .try_reduce_with(|mut a, b| {
+            a.aggregate_with(std::iter::once(&b))
+                .map_err(|_| CertVerifyError::KeyAggregationFailed)?;
+            Ok(a)
+        })
+        .ok_or(CertVerifyError::KeyAggregationFailed)?
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -85,6 +98,12 @@ enum CertVerifyError {
 
     #[error("Base 3 encoding on unexpected cert {0:?}")]
     Base3EncodingOnUnexpectedCert(CertificateType),
+
+    #[error("Pubkey not found for rank {0}")]
+    PubkeyNotFoundForRank(usize),
+
+    #[error("Invalid Pubkey for rank {0}")]
+    InvalidPubkeyForRank(usize),
 }
 
 pub struct BLSSigVerifier {
@@ -254,7 +273,7 @@ impl BLSSigVerifier {
         &mut self,
         mut batches: Vec<PacketBatch>,
         pool: Option<&ThreadPool>,
-    ) -> Result<(), BLSSigVerifyServiceError<ConsensusMessage>> {
+    ) -> Result<(), BLSSigVerifyServiceError> {
         let mut verify_time = Measure::start("sigverify_batch_time");
         let mut preprocess_time = Measure::start("preprocess");
         let mut consensus_metrics_to_send = Vec::with_capacity(AVERAGE_VOTES_OR_CERTS_PER_BATCH);
@@ -302,7 +321,7 @@ impl BLSSigVerifier {
     fn verify_and_send_votes(
         &self,
         votes_to_verify: Vec<VoteToVerify>,
-    ) -> Result<(), BLSSigVerifyServiceError<ConsensusMessage>> {
+    ) -> Result<(), BLSSigVerifyServiceError> {
         let verified_votes = self.verify_votes(votes_to_verify);
         self.stats
             .total_valid_packets
@@ -335,6 +354,7 @@ impl BLSSigVerifier {
                     self.stats.sent_failed.fetch_add(1, Ordering::Relaxed);
                 }
                 Err(e @ TrySendError::Disconnected(_)) => {
+                    error!("certificate pool receiver disconnected");
                     return Err(e.into());
                 }
             }
@@ -471,7 +491,7 @@ impl BLSSigVerifier {
         &self,
         certs_to_verify: Vec<Certificate>,
         bank: &Bank,
-    ) -> Result<(), BLSSigVerifyServiceError<ConsensusMessage>> {
+    ) -> Result<(), BLSSigVerifyServiceError> {
         let verified_certs = self.verify_certificates(certs_to_verify, bank);
         self.stats
             .total_valid_packets
@@ -490,6 +510,7 @@ impl BLSSigVerifier {
                     self.stats.sent_failed.fetch_add(1, Ordering::Relaxed);
                 }
                 Err(e @ TrySendError::Disconnected(_)) => {
+                    error!("certificate pool receiver disconnected");
                     return Err(e.into());
                 }
             }
@@ -589,10 +610,7 @@ impl BLSSigVerifier {
             return Err(CertVerifyError::SerializationFailed);
         };
 
-        let Some(aggregate_bls_pubkey) = aggregate_keys_from_bitmap(bit_vec, key_to_rank_map)
-        else {
-            return Err(CertVerifyError::KeyAggregationFailed);
-        };
+        let aggregate_bls_pubkey = aggregate_keys_from_bitmap(bit_vec, key_to_rank_map)?;
 
         if let Ok(true) =
             aggregate_bls_pubkey.verify_signature(&cert_to_verify.signature, &signed_payload)
@@ -626,12 +644,8 @@ impl BLSSigVerifier {
         let messages_to_verify: Vec<&[u8]> = vec![&signed_payload1, &signed_payload2];
 
         // Aggregate the two sets of public keys separately from the two bitmaps.
-        let Some(agg_pk1) = aggregate_keys_from_bitmap(bit_vec1, key_to_rank_map) else {
-            return Err(CertVerifyError::KeyAggregationFailed);
-        };
-        let Some(agg_pk2) = aggregate_keys_from_bitmap(bit_vec2, key_to_rank_map) else {
-            return Err(CertVerifyError::KeyAggregationFailed);
-        };
+        let agg_pk1 = aggregate_keys_from_bitmap(bit_vec1, key_to_rank_map)?;
+        let agg_pk2 = aggregate_keys_from_bitmap(bit_vec2, key_to_rank_map)?;
 
         let pubkeys_affine: Vec<BlsPubkey> = vec![agg_pk1.into(), agg_pk2.into()];
 

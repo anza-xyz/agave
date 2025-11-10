@@ -15,36 +15,30 @@ use {
 };
 
 #[derive(Error, Debug)]
-pub enum BLSSigVerifyServiceError<SendType> {
+pub enum BLSSigVerifyServiceError {
     #[error("send packets batch error")]
-    Send(Box<SendError<SendType>>),
+    SendError,
 
     #[error("try_send packet errror")]
-    TrySend(Box<TrySendError<SendType>>),
+    TrySendError,
 
     #[error("streamer error")]
-    Streamer(Box<StreamerError>),
+    Streamer(#[from] StreamerError),
 }
 
-impl<SendType> From<SendError<SendType>> for BLSSigVerifyServiceError<SendType> {
-    fn from(e: SendError<SendType>) -> Self {
-        Self::Send(Box::new(e))
+impl From<SendError<ConsensusMessage>> for BLSSigVerifyServiceError {
+    fn from(_: SendError<ConsensusMessage>) -> Self {
+        BLSSigVerifyServiceError::SendError
     }
 }
 
-impl<SendType> From<TrySendError<SendType>> for BLSSigVerifyServiceError<SendType> {
-    fn from(e: TrySendError<SendType>) -> Self {
-        Self::TrySend(Box::new(e))
+impl From<TrySendError<ConsensusMessage>> for BLSSigVerifyServiceError {
+    fn from(_: TrySendError<ConsensusMessage>) -> Self {
+        BLSSigVerifyServiceError::TrySendError
     }
 }
 
-impl<SendType> From<StreamerError> for BLSSigVerifyServiceError<SendType> {
-    fn from(e: StreamerError) -> Self {
-        Self::Streamer(Box::new(e))
-    }
-}
-
-type Result<T, SendType> = std::result::Result<T, BLSSigVerifyServiceError<SendType>>;
+type Result<T> = std::result::Result<T, BLSSigVerifyServiceError>;
 
 pub struct BLSSigverifyService {
     thread_hdl: JoinHandle<()>,
@@ -61,7 +55,7 @@ impl BLSSigverifyService {
         recvr: &Receiver<PacketBatch>,
         verifier: &mut BLSSigVerifier,
         stats: &mut BLSPreVerifyPacketStats,
-    ) -> Result<(), ConsensusMessage> {
+    ) -> Result<()> {
         let (mut batches, num_packets, recv_duration) = streamer::recv_packet_batches(recvr)?;
 
         let batches_len = batches.len();
@@ -120,8 +114,9 @@ impl BLSSigverifyService {
         const DEDUPER_FALSE_POSITIVE_RATE: f64 = 0.001;
         const DEDUPER_NUM_BITS: u64 = 63_999_979;
         Builder::new()
-            .name("solSigVerAlpenglow".to_string())
+            .name("solAlpnSigVer".to_string())
             .spawn(move || {
+                info!("Alpenglow sigverify service started");
                 let mut rng = rand::thread_rng();
                 let mut deduper = Deduper::<2, [u8]>::new(&mut rng, DEDUPER_NUM_BITS);
                 loop {
@@ -133,7 +128,7 @@ impl BLSSigverifyService {
                     {
                         match e {
                             BLSSigVerifyServiceError::Streamer(streamer_error_box) => {
-                                match *streamer_error_box {
+                                match streamer_error_box {
                                     StreamerError::RecvTimeout(RecvTimeoutError::Disconnected) => {
                                         break
                                     }
@@ -141,14 +136,17 @@ impl BLSSigverifyService {
                                     _ => error!("{streamer_error_box}"),
                                 }
                             }
-                            BLSSigVerifyServiceError::Send(_)
-                            | BLSSigVerifyServiceError::TrySend(_) => {
+                            BLSSigVerifyServiceError::SendError => {
+                                break;
+                            }
+                            BLSSigVerifyServiceError::TrySendError => {
                                 break;
                             }
                         }
                     }
                     stats.maybe_report();
                 }
+                info!("Alpenglow sigverify service stopped");
             })
             .unwrap()
     }
