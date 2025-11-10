@@ -999,7 +999,7 @@ mod tests {
             let tmp_path_buf = tmp.to_path_buf();
             let file_creator = file_creator(256, &IoSetupState::default(), move |file_info| {
                 assert_eq!(file_info.path, tmp_path_buf.join("accounts_dest/123.456"));
-                assert_eq!(data.len(), file_info.size as usize);
+                assert_eq!(data.len() as u64, file_info.size);
                 Some(file_info.file)
             })
             .expect("must make file_creator");
