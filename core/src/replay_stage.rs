@@ -2053,7 +2053,7 @@ impl ReplayStage {
         current_leader: &mut Option<Pubkey>,
         new_leader: &Pubkey,
     ) {
-        if let &mut Some(ref current_leader) = current_leader {
+        if let Some(current_leader) = current_leader.as_ref() {
             if current_leader != new_leader {
                 let msg = if current_leader == my_pubkey {
                     ". I am no longer the leader"
