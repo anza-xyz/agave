@@ -9,12 +9,6 @@ Use \`scripts/coverage.sh\` directly if you only want to obtain the coverage rep
   exit 1
 fi
 
-annotate() {
-  ${BUILDKITE:-false} && {
-    buildkite-agent annotate "$@"
-  }
-}
-
 # run coverage for all
 SHORT_CI_COMMIT=${CI_COMMIT:0:9}
 COMMIT_HASH=$SHORT_CI_COMMIT "$here/../scripts/coverage.sh" "$@"
@@ -26,6 +20,8 @@ if [[ -z "$CODECOV_TOKEN" ]]; then
 else
   codecov -t "${CODECOV_TOKEN}" --dir "$here/../target/cov/${SHORT_CI_COMMIT}"
 
-  annotate --style success --context codecov.io \
-    "CodeCov report: https://codecov.io/github/anza-xyz/agave/commit/$CI_COMMIT"
+  if [[ -n "$BUILDKITE" ]]; then
+    buildkite-agent annotate --style success --context codecov.io \
+      "CodeCov report: https://codecov.io/github/anza-xyz/agave/commit/$CI_COMMIT"
+  fi
 fi
