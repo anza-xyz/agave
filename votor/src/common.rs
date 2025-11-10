@@ -32,21 +32,32 @@ impl VoteType {
     }
 }
 
-/// Lookup from `CertificateId` to the `VoteType`s that contribute,
-/// as well as the stake fraction required for certificate completion.
+/// For a given [`CertificateType`], returns the fractional stake and the [`Vote`]s required to construct it.
 ///
-/// Must be in sync with `vote_to_certificate_ids`
-pub const fn certificate_limits_and_vote_types(
-    cert_type: &CertificateType,
-) -> (f64, &'static [VoteType]) {
+/// Must be in sync with [`vote_to_certificate_ids`].
+pub(crate) fn certificate_limits_and_votes(cert_type: &CertificateType) -> (f64, Vec<Vote>) {
     match cert_type {
-        CertificateType::Notarize(_, _) => (0.6, &[VoteType::Notarize]),
-        CertificateType::NotarizeFallback(_, _) => {
-            (0.6, &[VoteType::Notarize, VoteType::NotarizeFallback])
+        CertificateType::Notarize(slot, block_id) => {
+            (0.6, vec![Vote::new_notarization_vote(*slot, *block_id)])
         }
-        CertificateType::FinalizeFast(_, _) => (0.8, &[VoteType::Notarize]),
-        CertificateType::Finalize(_) => (0.6, &[VoteType::Finalize]),
-        CertificateType::Skip(_) => (0.6, &[VoteType::Skip, VoteType::SkipFallback]),
+        CertificateType::NotarizeFallback(slot, block_id) => (
+            0.6,
+            vec![
+                Vote::new_notarization_vote(*slot, *block_id),
+                Vote::new_notarization_fallback_vote(*slot, *block_id),
+            ],
+        ),
+        CertificateType::FinalizeFast(slot, block_id) => {
+            (0.8, vec![Vote::new_notarization_vote(*slot, *block_id)])
+        }
+        CertificateType::Finalize(slot) => (0.6, vec![Vote::new_finalization_vote(*slot)]),
+        CertificateType::Skip(slot) => (
+            0.6,
+            vec![
+                Vote::new_skip_vote(*slot),
+                Vote::new_skip_fallback_vote(*slot),
+            ],
+        ),
     }
 }
 

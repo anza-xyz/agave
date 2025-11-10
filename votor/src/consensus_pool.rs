@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        common::{certificate_limits_and_vote_types, vote_to_certificate_ids, Stake},
+        common::{certificate_limits_and_votes, vote_to_certificate_ids, Stake},
         consensus_pool::{
             certificate_builder::{BuildError as CertificateBuilderError, CertificateBuilder},
             parent_ready_tracker::ParentReadyTracker,
@@ -155,25 +155,19 @@ impl ConsensusPool {
                 continue;
             }
             // Otherwise check whether the certificate is complete
-            let (limit, vote_types) = certificate_limits_and_vote_types(&cert_type);
-            let accumulated_stake = vote_types
+            let (limit, votes) = certificate_limits_and_votes(&cert_type);
+            let accumulated_stake = votes
                 .iter()
-                .map(|vote_type| {
-                    self.vote_pools
-                        .get(&slot)
-                        .map_or(0, |p| p.get_stake(vote_type, vote.block_id()))
-                })
+                .map(|vote| self.vote_pools.get(&slot).map_or(0, |p| p.get_stake(vote)))
                 .sum::<Stake>();
 
             if accumulated_stake as f64 / (total_stake as f64) < limit {
                 continue;
             }
             let mut cert_builder = CertificateBuilder::new(cert_type);
-            for vote_type in vote_types {
+            for vote in votes {
                 if let Some(vote_pool) = self.vote_pools.get(&slot) {
-                    cert_builder
-                        .aggregate(&vote_pool.get_votes(vote_type, vote.block_id()))
-                        .unwrap();
+                    cert_builder.aggregate(&vote_pool.get_votes(&vote)).unwrap();
                 }
             }
             let new_cert = Arc::new(cert_builder.build()?);
