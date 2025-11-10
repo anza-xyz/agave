@@ -147,7 +147,7 @@ use {
     solana_turbine::{
         self,
         broadcast_stage::BroadcastStageType,
-        xdp::{XdpConfig, XdpRetransmitter},
+        xdp::{master_ip_if_bonded, XdpConfig, XdpRetransmitter},
     },
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_validator_exit::Exit,
@@ -156,7 +156,7 @@ use {
     std::{
         borrow::Cow,
         collections::{HashMap, HashSet},
-        net::SocketAddr,
+        net::{IpAddr, SocketAddr},
         num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
         str::FromStr,
@@ -1578,7 +1578,15 @@ impl Validator {
                     .local_addr()
                     .expect("failed to get local address")
                     .port();
-                let (rtx, sender) = XdpRetransmitter::new(xdp_config, src_port)
+                let src_ip = match node.bind_ip_addrs.active() {
+                    IpAddr::V4(ip) if !ip.is_unspecified() => Some(ip),
+                    IpAddr::V4(_unspecified) => xdp_config
+                        .interface
+                        .as_ref()
+                        .and_then(|iface| master_ip_if_bonded(iface)),
+                    _ => panic!("IPv6 not supported"),
+                };
+                let (rtx, sender) = XdpRetransmitter::new(xdp_config, src_port, src_ip)
                     .expect("failed to create xdp retransmitter");
                 (Some(rtx), Some(sender))
             } else {
