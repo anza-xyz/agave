@@ -13,23 +13,6 @@ pub trait StaticMessage {
     ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone;
 }
 
-/*
-impl<T> StaticMessage for T
-where
-    T: SVMMessage,
-{
-    fn static_num_write_locks(&self) -> u64 {
-        self.num_write_locks()
-    }
-
-    fn static_program_instructions_iter(
-        &self,
-    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
-        self.program_instructions_iter()
-    }
-}
-*/
-
 impl<T> StaticMessage for TransactionView<true, T>
 where
     T: TransactionData,
