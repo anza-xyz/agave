@@ -672,7 +672,7 @@ impl<'a> SenderLoopLogger<'a> {
         );
     }
 
-    fn format_as_timestamp(time: SystemTime) -> impl Display {
+    fn format_as_timestamp(time: SystemTime) -> impl Display + use<> {
         let time: chrono::DateTime<chrono::Utc> = time.into();
         time.format("%Y-%m-%d %H:%M:%S.%f")
     }

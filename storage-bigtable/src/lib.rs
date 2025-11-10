@@ -553,7 +553,7 @@ impl LedgerStorage {
     pub async fn get_confirmed_blocks_with_data<'a>(
         &self,
         slots: &'a [Slot],
-    ) -> Result<impl Iterator<Item = (Slot, ConfirmedBlock)> + 'a> {
+    ) -> Result<impl Iterator<Item = (Slot, ConfirmedBlock)> + 'a + use<'a>> {
         trace!("LedgerStorage::get_confirmed_blocks_with_data request received: {slots:?}");
         self.stats.increment_num_queries();
         let mut bigtable = self.connection.client();
@@ -613,7 +613,10 @@ impl LedgerStorage {
     }
 
     /// Fetches a vector of block entries via a multirow fetch
-    pub async fn get_entries(&self, slot: Slot) -> Result<impl Iterator<Item = EntrySummary>> {
+    pub async fn get_entries(
+        &self,
+        slot: Slot,
+    ) -> Result<impl Iterator<Item = EntrySummary> + use<>> {
         trace!("LedgerStorage::get_block_entries request received: {slot:?}");
         self.stats.increment_num_queries();
         let mut bigtable = self.connection.client();

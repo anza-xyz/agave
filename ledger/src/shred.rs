@@ -661,10 +661,10 @@ impl TryFrom<u8> for ShredVariant {
     }
 }
 
-pub fn recover(
-    shreds: impl IntoIterator<Item = Shred>,
+pub fn recover<T: IntoIterator<Item = Shred>>(
+    shreds: T,
     reed_solomon_cache: &ReedSolomonCache,
-) -> Result<impl Iterator<Item = Result<Shred, Error>>, Error> {
+) -> Result<impl Iterator<Item = Result<Shred, Error>> + use<T>, Error> {
     let shreds = shreds
         .into_iter()
         .map(|shred| {

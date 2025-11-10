@@ -49,7 +49,7 @@ impl<'a, T: SVMMessage> TransactionAccountLocksIterator<'a, T> {
 
     pub(crate) fn accounts_with_is_writable(
         &self,
-    ) -> impl Iterator<Item = (&'a Pubkey, bool)> + Clone {
+    ) -> impl Iterator<Item = (&'a Pubkey, bool)> + Clone + use<'a, T> {
         self.transaction
             .account_keys()
             .iter()
