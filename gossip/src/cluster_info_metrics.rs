@@ -4,6 +4,7 @@ use {
     solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
+    solana_runtime::stakes::StakedNodesMap,
     solana_signature::Signature,
     std::{
         cmp::Reverse,
@@ -206,7 +207,7 @@ impl GossipStats {
 pub(crate) fn submit_gossip_stats(
     stats: &GossipStats,
     gossip: &CrdsGossip,
-    stakes: &HashMap<Pubkey, u64>,
+    stakes: &StakedNodesMap,
 ) {
     let (crds_stats, table_size, num_nodes, num_pubkeys, purged_values_size, failed_inserts_size) = {
         let gossip_crds = gossip.crds.read().unwrap();

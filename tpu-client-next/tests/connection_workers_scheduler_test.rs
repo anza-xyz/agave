@@ -408,7 +408,8 @@ async fn test_connection_pruned_and_reopened() {
 #[tokio::test]
 async fn test_staked_connection() {
     let stake_identity = Keypair::new();
-    let stakes = HashMap::from([(stake_identity.pubkey(), 100_000)]);
+    let mut stakes = HashMap::default();
+    stakes.insert(stake_identity.pubkey(), 100_000);
     let staked_nodes = StakedNodes::new(Arc::new(stakes), HashMap::<Pubkey, u64>::default());
 
     let SpawnTestServerResult {
@@ -703,7 +704,8 @@ async fn test_rate_limiting_establish_connection() {
 #[tokio::test]
 async fn test_update_identity() {
     let stake_identity = Keypair::new();
-    let stakes = HashMap::from([(stake_identity.pubkey(), 100_000)]);
+    let mut stakes = HashMap::default();
+    stakes.insert(stake_identity.pubkey(), 100_000);
     let staked_nodes = StakedNodes::new(Arc::new(stakes), HashMap::<Pubkey, u64>::default());
 
     let SpawnTestServerResult {

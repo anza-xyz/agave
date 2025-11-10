@@ -103,7 +103,7 @@ impl StakedValidatorsCache {
                     "StakedValidatorsCache::get: unknown Bank::epoch_staked_nodes for epoch: \
                      {epoch}"
                 );
-                Arc::<HashMap<Pubkey, u64>>::default()
+                Arc::new(HashMap::default())
             });
 
         struct Node {

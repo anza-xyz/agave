@@ -42,7 +42,7 @@ use {
         packet::{Packet, PacketBatch, PacketBatchRecycler, PinnedPacketBatch},
     },
     solana_pubkey::{Pubkey, PUBKEY_BYTES},
-    solana_runtime::bank_forks::SharableBanks,
+    solana_runtime::{bank_forks::SharableBanks, stakes::StakedNodesMap},
     solana_signature::{Signature, SIGNATURE_BYTES},
     solana_signer::Signer,
     solana_streamer::{
@@ -53,7 +53,7 @@ use {
     solana_time_utils::timestamp,
     std::{
         cmp::Reverse,
-        collections::{HashMap, HashSet},
+        collections::HashSet,
         net::{SocketAddr, UdpSocket},
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -544,7 +544,7 @@ impl ServeRepair {
 
     fn decode_request(
         remote_request: RemoteRequest,
-        epoch_staked_nodes: &Option<Arc<HashMap<Pubkey, u64>>>,
+        epoch_staked_nodes: &Option<Arc<StakedNodesMap>>,
         whitelist: &HashSet<Pubkey>,
         my_id: &Pubkey,
         socket_addr_space: &SocketAddrSpace,
@@ -616,7 +616,7 @@ impl ServeRepair {
 
     fn decode_requests(
         requests: Vec<RemoteRequest>,
-        epoch_staked_nodes: &Option<Arc<HashMap<Pubkey, u64>>>,
+        epoch_staked_nodes: &Option<Arc<StakedNodesMap>>,
         whitelist: &HashSet<Pubkey>,
         my_id: &Pubkey,
         socket_addr_space: &SocketAddrSpace,

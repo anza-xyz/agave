@@ -58,7 +58,8 @@ async fn test_vortexor() {
     let tpu_address = tpu_sockets.tpu_quic[0].local_addr().unwrap();
     let tpu_fwd_address = tpu_sockets.tpu_quic_fwd[0].local_addr().unwrap();
 
-    let stakes = HashMap::from([(keypair.pubkey(), 10000)]);
+    let mut stakes = HashMap::default();
+    stakes.insert(keypair.pubkey(), 10000);
     let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(
         Arc::new(stakes),
         HashMap::<Pubkey, u64>::default(), // overrides

@@ -64,7 +64,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
-    solana_runtime::bank_forks::BankForks,
+    solana_runtime::{bank_forks::BankForks, stakes::StakedNodesMap},
     solana_sanitize::Sanitize,
     solana_signature::Signature,
     solana_signer::Signer,
@@ -222,7 +222,7 @@ impl ClusterInfo {
     fn refresh_push_active_set(
         &self,
         recycler: &PacketBatchRecycler,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesMap,
         gossip_validators: Option<&HashSet<Pubkey>>,
         sender: &impl ChannelSend<PacketBatch>,
     ) {
@@ -1233,7 +1233,7 @@ impl ClusterInfo {
         &self,
         thread_pool: &ThreadPool,
         gossip_validators: Option<&HashSet<Pubkey>>,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesMap,
     ) -> impl Iterator<Item = (SocketAddr, Protocol)> {
         let now = timestamp();
         let keypair = self.keypair();
@@ -1284,7 +1284,7 @@ impl ClusterInfo {
     }
     fn new_push_requests(
         &self,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesMap,
     ) -> impl Iterator<Item = (SocketAddr, Protocol)> {
         let self_id = self.id();
         let (entries, push_messages, num_pushes) = {
@@ -1334,7 +1334,7 @@ impl ClusterInfo {
         &self,
         thread_pool: &ThreadPool,
         gossip_validators: Option<&HashSet<Pubkey>>,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesMap,
         generate_pull_requests: bool,
     ) -> impl Iterator<Item = (SocketAddr, Protocol)> {
         self.trim_crds_table(CRDS_UNIQUE_PUBKEY_CAPACITY, stakes);
@@ -1357,7 +1357,7 @@ impl ClusterInfo {
         thread_pool: &ThreadPool,
         gossip_validators: Option<&HashSet<Pubkey>>,
         recycler: &PacketBatchRecycler,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesMap,
         sender: &impl ChannelSend<PacketBatch>,
         generate_pull_requests: bool,
     ) -> Result<(), GossipError> {
@@ -1412,7 +1412,7 @@ impl ClusterInfo {
         &self,
         thread_pool: &ThreadPool,
         epoch_duration: Duration,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesMap,
     ) {
         let self_pubkey = self.id();
         let timeouts = self
@@ -1428,7 +1428,7 @@ impl ClusterInfo {
 
     // Trims the CRDS table by dropping all values associated with the pubkeys
     // with the lowest stake, so that the number of unique pubkeys are bounded.
-    fn trim_crds_table(&self, cap: usize, stakes: &HashMap<Pubkey, u64>) {
+    fn trim_crds_table(&self, cap: usize, stakes: &StakedNodesMap) {
         if !self.gossip.crds.read().unwrap().should_trim(cap) {
             return;
         }
@@ -1547,7 +1547,7 @@ impl ClusterInfo {
             .unwrap()
     }
 
-    fn handle_batch_prune_messages(&self, messages: Vec<PruneData>, stakes: &HashMap<Pubkey, u64>) {
+    fn handle_batch_prune_messages(&self, messages: Vec<PruneData>, stakes: &StakedNodesMap) {
         let _st = ScopedTimer::from(&self.stats.handle_batch_prune_messages_time);
         if messages.is_empty() {
             return;
@@ -1598,7 +1598,7 @@ impl ClusterInfo {
         requests: Vec<PullRequest>,
         thread_pool: &ThreadPool,
         recycler: &PacketBatchRecycler,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesMap,
         response_sender: &impl ChannelSend<PacketBatch>,
     ) {
         let _st = ScopedTimer::from(&self.stats.handle_batch_pull_requests_time);
@@ -1677,7 +1677,7 @@ impl ClusterInfo {
         thread_pool: &ThreadPool,
         recycler: &PacketBatchRecycler,
         mut requests: Vec<PullRequest>,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesMap,
     ) -> PinnedPacketBatch {
         const DEFAULT_EPOCH_DURATION_MS: u64 = DEFAULT_SLOTS_PER_EPOCH * DEFAULT_MS_PER_SLOT;
         let output_size_limit =
@@ -1776,7 +1776,7 @@ impl ClusterInfo {
     fn handle_batch_pull_responses(
         &self,
         responses: Vec<CrdsValue>,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesMap,
         epoch_duration: Duration,
     ) {
         let _st = ScopedTimer::from(&self.stats.handle_batch_pull_responses_time);
@@ -1868,7 +1868,7 @@ impl ClusterInfo {
         messages: Vec<(Pubkey, Vec<CrdsValue>)>,
         thread_pool: &ThreadPool,
         recycler: &PacketBatchRecycler,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesMap,
         response_sender: &impl ChannelSend<PacketBatch>,
     ) {
         let _st = ScopedTimer::from(&self.stats.handle_batch_push_messages_time);
@@ -1903,7 +1903,7 @@ impl ClusterInfo {
         thread_pool: &ThreadPool,
         // Unique origin pubkeys of upserted CRDS values from push messages.
         origins: impl IntoIterator<Item = Pubkey>,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesMap,
     ) -> Vec<(SocketAddr, Protocol /*::PruneMessage*/)> {
         let _st = ScopedTimer::from(&self.stats.generate_prune_messages);
         let self_pubkey = self.id();
@@ -1968,7 +1968,7 @@ impl ClusterInfo {
         thread_pool: &ThreadPool,
         recycler: &PacketBatchRecycler,
         response_sender: &impl ChannelSend<PacketBatch>,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesMap,
         epoch_duration: Duration,
         should_check_duplicate_instance: bool,
     ) -> Result<(), GossipError> {
@@ -2131,7 +2131,7 @@ impl ClusterInfo {
             .add_relaxed(num_packets as u64);
         fn verify_packet(
             packet: PacketRef,
-            stakes: &HashMap<Pubkey, u64>,
+            stakes: &StakedNodesMap,
             stats: &GossipStats,
         ) -> Option<(SocketAddr, Protocol)> {
             let mut protocol: Protocol =
@@ -2616,7 +2616,7 @@ mod tests {
             &self,
             thread_pool: &ThreadPool,
             gossip_validators: Option<&HashSet<Pubkey>>,
-            stakes: &HashMap<Pubkey, u64>,
+            stakes: &StakedNodesMap,
         ) -> (
             Vec<(SocketAddr, Ping)>,     // Ping packets
             Vec<(SocketAddr, Protocol)>, // Pull requests
@@ -2658,7 +2658,8 @@ mod tests {
         });
         let entrypoint_pubkey = solana_pubkey::new_rand();
         let data = test_crds_values(entrypoint_pubkey);
-        let stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
+        let mut stakes = HashMap::default();
+        stakes.insert(Pubkey::new_unique(), 1u64);
         let timeouts = CrdsTimeouts::new(
             cluster_info.id(),
             CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, // default_timeout
@@ -2796,17 +2797,17 @@ mod tests {
         cluster_info.gossip.refresh_push_active_set(
             &cluster_info.keypair(),
             cluster_info.my_shred_version(),
-            &HashMap::new(), // stakes
-            None,            // gossip validators
+            &HashMap::default(), // stakes
+            None,                // gossip validators
             &cluster_info.ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
         );
         let mut reqs = cluster_info.generate_new_gossip_requests(
             &thread_pool,
-            None,            // gossip_validators
-            &HashMap::new(), // stakes
-            true,            // generate_pull_requests
+            None,                // gossip_validators
+            &HashMap::default(), // stakes
+            true,                // generate_pull_requests
         );
         //assert none of the addrs are invalid.
         assert!(reqs.all(|(addr, _)| {
@@ -2937,7 +2938,7 @@ mod tests {
             Arc::new(keypair),
             SocketAddrSpace::Unspecified,
         );
-        let stakes = HashMap::<Pubkey, u64>::default();
+        let stakes = HashMap::default();
         cluster_info.ping_cache.lock().unwrap().mock_pong(
             *peer.pubkey(),
             peer.gossip().unwrap(),
@@ -2983,7 +2984,7 @@ mod tests {
                 cluster_info.my_shred_version(),
                 timestamp(),
                 None,
-                &HashMap::new(),
+                &HashMap::default(),
                 992, // max_bloom_filter_bytes
                 &cluster_info.ping_cache,
                 &mut pings,
@@ -3312,7 +3313,8 @@ mod tests {
         let entrypoint_pubkey = solana_pubkey::new_rand();
         let entrypoint = ContactInfo::new_localhost(&entrypoint_pubkey, timestamp());
         cluster_info.set_entrypoint(entrypoint.clone());
-        let (pings, pulls) = cluster_info.old_pull_requests(&thread_pool, None, &HashMap::new());
+        let stakes = HashMap::default();
+        let (pings, pulls) = cluster_info.old_pull_requests(&thread_pool, None, &stakes);
         assert!(pings.is_empty());
         assert_eq!(pulls.len(), MIN_NUM_BLOOM_FILTERS);
         for (addr, msg) in pulls {
@@ -3328,14 +3330,16 @@ mod tests {
         // now add this message back to the table and make sure after the next pull, the entrypoint is unset
         let entrypoint_crdsvalue = CrdsValue::new_unsigned(CrdsData::from(&entrypoint));
         let cluster_info = Arc::new(cluster_info);
-        let stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
+        let mut stakes = HashMap::default();
+        stakes.insert(Pubkey::new_unique(), 1u64);
         let timeouts = cluster_info.gossip.make_timeouts(
             cluster_info.id(),
             &stakes,
             Duration::from_millis(cluster_info.gossip.pull.crds_timeout),
         );
         cluster_info.handle_pull_response(vec![entrypoint_crdsvalue], &timeouts);
-        let (pings, pulls) = cluster_info.old_pull_requests(&thread_pool, None, &HashMap::new());
+        let stakes = HashMap::default();
+        let (pings, pulls) = cluster_info.old_pull_requests(&thread_pool, None, &stakes);
         assert_eq!(pings.len(), 1);
         assert_eq!(pulls.len(), MIN_NUM_BLOOM_FILTERS);
         assert_eq!(*cluster_info.entrypoints.read().unwrap(), vec![entrypoint]);
@@ -3346,7 +3350,7 @@ mod tests {
         let keypair = Arc::new(Keypair::new());
         let d = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());
         let cluster_info = ClusterInfo::new(d.clone(), keypair, SocketAddrSpace::Unspecified);
-        let mut stakes = HashMap::new();
+        let mut stakes = StakedNodesMap::default();
 
         // no stake
         let id = Pubkey::from([1u8; 32]);
@@ -3395,7 +3399,7 @@ mod tests {
             .unwrap();
         cluster_info.set_entrypoint(entrypoint.clone());
 
-        let mut stakes = HashMap::new();
+        let mut stakes = HashMap::default();
 
         let other_node_pubkey = solana_pubkey::new_rand();
         let other_node = ContactInfo::new_localhost(&other_node_pubkey, timestamp());
@@ -3562,7 +3566,8 @@ mod tests {
         })
         .take(NO_ENTRIES)
         .collect();
-        let stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
+        let mut stakes = HashMap::default();
+        stakes.insert(Pubkey::new_unique(), 1u64);
         let timeouts = CrdsTimeouts::new(
             cluster_info.id(),
             CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS * 4, // default_timeout

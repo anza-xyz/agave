@@ -52,7 +52,7 @@ use {
             calculate_stake_weighted_timestamp, MaxAllowableDrift,
             MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST, MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2,
         },
-        stakes::{SerdeStakesToStakeFormat, Stakes, StakesCache},
+        stakes::{SerdeStakesToStakeFormat, StakedNodesMap, Stakes, StakesCache},
         status_cache::{SlotDelta, StatusCache},
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
@@ -118,7 +118,7 @@ use {
         invoke_context::BuiltinFunctionWithContext,
         loaded_programs::{ProgramCacheEntry, ProgramRuntimeEnvironments},
     },
-    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_pubkey::Pubkey,
     solana_reward_info::RewardInfo,
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
@@ -930,7 +930,7 @@ struct VoteReward {
     vote_rewards: u64,
 }
 
-type VoteRewards = HashMap<Pubkey, VoteReward, PubkeyHasherBuilder>;
+type VoteRewards = HashMap<Pubkey, VoteReward, solana_pubkey::PubkeyHasherBuilder>;
 
 #[derive(Debug, Default)]
 pub struct NewBankOptions {
@@ -5062,11 +5062,11 @@ impl Bank {
     }
 
     /// Get the staked nodes map for the current Bank::epoch
-    pub fn current_epoch_staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
+    pub fn current_epoch_staked_nodes(&self) -> Arc<StakedNodesMap> {
         self.current_epoch_stakes().stakes().staked_nodes()
     }
 
-    pub fn epoch_staked_nodes(&self, epoch: Epoch) -> Option<Arc<HashMap<Pubkey, u64>>> {
+    pub fn epoch_staked_nodes(&self, epoch: Epoch) -> Option<Arc<StakedNodesMap>> {
         Some(self.epoch_stakes.get(&epoch)?.stakes().staked_nodes())
     }
 

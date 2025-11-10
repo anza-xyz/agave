@@ -8,7 +8,7 @@ use {
     solana_clock::{Epoch, Slot},
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
     solana_pubkey::Pubkey,
-    solana_runtime::bank_forks::BankForks,
+    solana_runtime::{bank_forks::BankForks, stakes::StakedNodesMap},
     std::{
         cmp::Reverse,
         collections::HashMap,
@@ -41,7 +41,7 @@ pub struct DuplicateShredHandler {
     bank_forks: Arc<RwLock<BankForks>>,
     // Cache information from root bank so we could function correctly without reading roots.
     cached_on_epoch: Epoch,
-    cached_staked_nodes: Arc<HashMap<Pubkey, u64>>,
+    cached_staked_nodes: Arc<StakedNodesMap>,
     cached_slots_in_epoch: u64,
     // Used to notify duplicate consensus state machine
     duplicate_slots_sender: Sender<Slot>,
@@ -85,7 +85,7 @@ impl DuplicateShredHandler {
             consumed: HashMap::<Slot, bool>::default(),
             last_root: 0,
             cached_on_epoch: 0,
-            cached_staked_nodes: Arc::new(HashMap::new()),
+            cached_staked_nodes: Arc::new(HashMap::default()),
             cached_slots_in_epoch: 0,
             blockstore,
             leader_schedule_cache,

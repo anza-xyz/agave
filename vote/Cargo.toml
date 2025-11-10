@@ -40,7 +40,7 @@ solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-packet = { workspace = true }
-solana-pubkey = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 solana-sdk-ids = { workspace = true }
 solana-serialize-utils = { workspace = true }
 solana-signature = { workspace = true }
