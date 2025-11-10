@@ -22,17 +22,14 @@ const NONCED_TX_MARKER_IX_INDEX: u8 = 0;
 pub trait SVMStaticMessage {
     /// Return the number of transaction-level signatures in the message.
     fn num_transaction_signatures(&self) -> u64;
-
     /// Return the number of ed25519 precompile signatures in the message.
     fn num_ed25519_signatures(&self) -> u64 {
         default_precompile_signature_count(&ed25519_program::ID, self.program_instructions_iter())
     }
-
     /// Return the number of secp256k1 precompile signatures in the message.
     fn num_secp256k1_signatures(&self) -> u64 {
         default_precompile_signature_count(&secp256k1_program::ID, self.program_instructions_iter())
     }
-
     /// Return the number of secp256r1 precompile signatures in the message.
     fn num_secp256r1_signatures(&self) -> u64 {
         default_precompile_signature_count(&secp256r1_program::ID, self.program_instructions_iter())
