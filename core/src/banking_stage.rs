@@ -426,29 +426,21 @@ impl BankingStage {
             threads: FuturesUnordered::default(),
         };
 
-        match block_production_method {
-            BlockProductionMethod::CentralScheduler
-            | BlockProductionMethod::CentralSchedulerGreedy => {
-                // Spawn the manager thread.
-                let thread = std::thread::Builder::new()
-                    .name("BankingMgr".to_string())
-                    .spawn(move || {
-                        let rt = tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()
-                            .unwrap();
-                        rt.block_on(manager.run(BankingControlMsg::Internal {
-                            block_production_method,
-                            num_workers,
-                            config: scheduler_config,
-                        }))
-                    })
+        // Spawn the manager thread.
+        let thread = std::thread::Builder::new()
+            .name("BankingMgr".to_string())
+            .spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
                     .unwrap();
-            }
-            BlockProductionMethod::UnifiedScheduler => {
-                // no op
-            }
-        }
+                rt.block_on(manager.run(BankingControlMsg::Internal {
+                    block_production_method,
+                    num_workers,
+                    config: scheduler_config,
+                }))
+            })
+            .unwrap();
 
         BankingStageHandle {
             banking_shutdown_signal,
@@ -937,7 +929,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(false);
+        } = banking_tracer.create_channels();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
             Blockstore::open(ledger_path.path())
@@ -997,7 +989,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(false);
+        } = banking_tracer.create_channels();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
             Blockstore::open(ledger_path.path())
@@ -1073,7 +1065,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(false);
+        } = banking_tracer.create_channels();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
             Blockstore::open(ledger_path.path())
@@ -1201,7 +1193,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(false);
+        } = banking_tracer.create_channels();
 
         // Process a batch that includes a transaction that receives two lamports.
         let alice = Keypair::new();
@@ -1376,7 +1368,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(false);
+        } = banking_tracer.create_channels();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
             Blockstore::open(ledger_path.path())

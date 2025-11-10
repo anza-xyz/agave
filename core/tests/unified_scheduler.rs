@@ -245,7 +245,7 @@ fn test_scheduler_producing_blocks() {
     );
     let channels = {
         let banking_tracer = BankingTracer::new_disabled();
-        banking_tracer.create_channels_for_scheduler_pool(&pool)
+        banking_tracer.create_channels()
     };
     ensure_banking_stage_setup(
         &pool,

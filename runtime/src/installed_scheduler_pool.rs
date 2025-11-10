@@ -69,6 +69,9 @@ pub trait InstalledSchedulerPool: Send + Sync + Debug {
     fn register_timeout_listener(&self, timeout_listener: TimeoutListener);
 
     fn uninstalled_from_bank_forks(self: Arc<Self>);
+
+    #[must_use]
+    fn toggle_block_production_mode(&self, enable: bool) -> bool;
 }
 
 #[derive(Debug)]

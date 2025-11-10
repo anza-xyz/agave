@@ -1090,7 +1090,9 @@ impl Validator {
         } else {
             info!("Disabled banking trace");
         }
-        let banking_tracer_channels = match (
+        let banking_tracer_channels = banking_tracer.create_channels();
+
+        match (
             &config.block_verification_method,
             &config.block_production_method,
         ) {
@@ -1105,11 +1107,10 @@ impl Validator {
                     prioritization_fee_cache.clone(),
                 );
 
-                let channels = banking_tracer.create_channels_for_scheduler_pool(&scheduler_pool);
                 ensure_banking_stage_setup(
                     &scheduler_pool,
                     &bank_forks,
-                    &channels,
+                    &banking_tracer_channels,
                     &poh_recorder,
                     transaction_recorder.clone(),
                     config.block_production_num_workers,
@@ -1118,7 +1119,6 @@ impl Validator {
                     .write()
                     .unwrap()
                     .install_scheduler_pool(scheduler_pool);
-                channels
             }
             _ => {
                 info!("no scheduler pool is installed for block verification/production...");
@@ -1128,7 +1128,6 @@ impl Validator {
                          scheduler isn't enabled"
                     );
                 }
-                banking_tracer.create_channels(false)
             }
         };
 

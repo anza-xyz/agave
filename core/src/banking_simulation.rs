@@ -791,19 +791,16 @@ impl BankingSimulator {
         info!("Enabled banking retracer (dir_byte_limit: {BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT})",);
 
         let num_workers = BankingStage::default_num_workers();
-        let banking_tracer_channels = if let Some(pool) = unified_scheduler_pool {
-            let channels = retracer.create_channels_for_scheduler_pool(&pool);
+        let banking_tracer_channels = retracer.create_channels();
+        if let Some(pool) = unified_scheduler_pool {
             ensure_banking_stage_setup(
                 &pool,
                 &bank_forks,
-                &channels,
+                &banking_tracer_channels,
                 &poh_recorder,
                 transaction_recorder.clone(),
                 num_workers,
             );
-            channels
-        } else {
-            retracer.create_channels(false)
         };
         let Channels {
             non_vote_sender,

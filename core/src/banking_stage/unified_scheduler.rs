@@ -84,8 +84,11 @@ pub(crate) fn ensure_banking_stage_setup(
         )
     };
 
-    let banking_stage_monitor =
-        Box::new(DecisionMakerWrapper::new(is_exited, decision_maker.clone()));
+    let banking_stage_monitor = Box::new(DecisionMakerWrapper::new(
+        channels.is_unified().clone(),
+        is_exited,
+        decision_maker.clone(),
+    ));
     let banking_packet_handler = Box::new(
         move |helper: &BankingStageHelper, batches: BankingPacketBatch| {
             let decision = decision_maker.make_consume_or_forward_decision();
