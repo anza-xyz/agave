@@ -213,7 +213,8 @@ impl CrdsGossip {
         ping_cache: &Mutex<PingCache>,
         pings: &mut Vec<(SocketAddr, Ping)>,
         socket_addr_space: &SocketAddrSpace,
-    ) -> Result<impl Iterator<Item = (SocketAddr, CrdsFilter)> + Clone, CrdsGossipError> {
+    ) -> Result<impl Iterator<Item = (SocketAddr, CrdsFilter)> + Clone + use<>, CrdsGossipError>
+    {
         self.pull.new_pull_request(
             thread_pool,
             &self.crds,

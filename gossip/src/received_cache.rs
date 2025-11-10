@@ -41,7 +41,7 @@ impl ReceivedCache {
         stake_threshold: f64,
         min_ingress_nodes: usize,
         stakes: &HashMap<Pubkey, u64>,
-    ) -> impl Iterator<Item = Pubkey> {
+    ) -> impl Iterator<Item = Pubkey> + use<> {
         match self.0.peek_mut(&origin) {
             None => None,
             Some(entry) if entry.num_upserts < Self::MIN_NUM_UPSERTS => None,
@@ -97,7 +97,7 @@ impl ReceivedCacheEntry {
         stake_threshold: f64,
         min_ingress_nodes: usize,
         stakes: &HashMap<Pubkey, u64>,
-    ) -> impl Iterator<Item = Pubkey> {
+    ) -> impl Iterator<Item = Pubkey> + use<> {
         debug_assert!((0.0..=1.0).contains(&stake_threshold));
         debug_assert!(self.num_upserts >= ReceivedCache::MIN_NUM_UPSERTS);
         // Enforce a minimum aggregate ingress stake; see:
