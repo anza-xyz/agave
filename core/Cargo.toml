@@ -14,12 +14,6 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
 agave-unstable-api = []
-alpenglow-unstable = [
-    "dep:agave-votor-messages",
-    "dep:bitvec",
-    "dep:solana-bls-signatures",
-    "dep:solana-signer-store",
-]
 dev-context-only-utils = [
     "solana-perf/dev-context-only-utils",
     "solana-runtime/dev-context-only-utils",
@@ -54,8 +48,8 @@ agave-scheduling-utils = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-verified-packet-receiver = { workspace = true }
-agave-votor = { workspace = true, features = ["agave-unstable-api"] }
-agave-votor-messages = { workspace = true, optional = true, features = ["agave-unstable-api"] }
+agave-votor = { workspace = true }
+agave-votor-messages = { workspace = true }
 ahash = { workspace = true }
 anyhow = { workspace = true }
 arc-swap = { workspace = true }
@@ -64,7 +58,7 @@ assert_matches = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
-bitvec = { workspace = true, optional = true }
+bitvec = { workspace = true }
 bs58 = { workspace = true }
 bytemuck = { workspace = true }
 bytes = { workspace = true }
@@ -97,7 +91,7 @@ solana-accounts-db = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
 solana-bincode = { workspace = true }
 solana-bloom = { workspace = true }
-solana-bls-signatures = { workspace = true, optional = true, features = ["parallel"] }
+solana-bls-signatures = { workspace = true, features = ["parallel"] }
 solana-builtins-default-costs = { workspace = true }
 solana-client = { workspace = true }
 solana-clock = { workspace = true }
@@ -156,7 +150,7 @@ solana-short-vec = { workspace = true }
 solana-shred-version = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
-solana-signer-store = { workspace = true, optional = true }
+solana-signer-store = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-slot-history = { workspace = true }
 solana-streamer = { workspace = true }

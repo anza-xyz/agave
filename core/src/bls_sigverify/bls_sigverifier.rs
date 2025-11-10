@@ -15,8 +15,12 @@ use {
     ahash::{AHashMap, AHashSet},
     bitvec::prelude::{BitVec, Lsb0},
     crossbeam_channel::{Sender, TrySendError},
-    rayon::iter::{
-        IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
+    rayon::{
+        iter::{
+            IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
+            ParallelIterator,
+        },
+        ThreadPool,
     },
     solana_bls_signatures::{
         pubkey::{Pubkey as BlsPubkey, PubkeyProjective, VerifiablePubkey},
@@ -37,9 +41,9 @@ use {
     thiserror::Error,
 };
 
-// TODO(sam): This logic of extracting the message payload for signature verification
-//            is brittle, but another bincode serialization would be wasteful.
-//            Revisit this to figure out the best way to handle this.
+// We have about 1000 validators in the network, and some are further away, so
+// preallocate vec of 1024 for normal cases.
+const AVERAGE_VOTES_OR_CERTS_PER_BATCH: usize = 1024;
 
 fn get_key_to_rank_map(bank: &Bank, slot: Slot) -> Option<&Arc<BLSPubkeyToRankMap>> {
     let stakes = bank.epoch_stakes_map();
@@ -95,33 +99,96 @@ pub struct BLSSigVerifier {
 }
 
 impl BLSSigVerifier {
-    pub fn verify_and_send_batches(
-        &mut self,
-        mut batches: Vec<PacketBatch>,
-    ) -> Result<(), BLSSigVerifyServiceError<ConsensusMessage>> {
-        let mut verify_time = Measure::start("sigverify_batch_time");
-        let mut preprocess_time = Measure::start("preprocess");
-        // TODO(sam): ideally we want to avoid heap allocation, but let's use
-        //            `Vec` for now for clarity and then optimize for the final version
-        let mut votes_to_verify = Vec::new();
-        let mut certs_to_verify = Vec::new();
-        let mut consensus_metrics_to_send = Vec::new();
-        let mut last_voted_slots: HashMap<Pubkey, Slot> = HashMap::new();
+    pub fn new(
+        sharable_banks: SharableBanks,
+        verified_votes_sender: VerifiedVoteSender,
+        message_sender: Sender<ConsensusMessage>,
+        consensus_metrics_sender: ConsensusMetricsEventSender,
+    ) -> Self {
+        Self {
+            sharable_banks,
+            verified_votes_sender,
+            message_sender,
+            stats: BLSSigVerifierStats::new(),
+            verified_certs: RwLock::new(HashSet::new()),
+            vote_payload_cache: RwLock::new(HashMap::new()),
+            consensus_metrics_sender,
+            last_checked_root_slot: 0,
+        }
+    }
 
-        let root_bank = self.sharable_banks.root();
-        if self.last_checked_root_slot < root_bank.slot() {
-            self.last_checked_root_slot = root_bank.slot();
+    // We use the custom pool in tests, global pool in production.
+    fn run_batch_verify_in_pool<F, R>(pool: Option<&ThreadPool>, f: F) -> R
+    where
+        F: FnOnce() -> R + Send,
+        R: Send,
+    {
+        match pool {
+            Some(pool) => pool.install(f),
+            None => f(),
+        }
+    }
+
+    fn purge_old_votes_and_certs(&mut self, root_slot: Slot) {
+        if self.last_checked_root_slot < root_slot {
+            self.last_checked_root_slot = root_slot;
             self.verified_certs
                 .write()
                 .unwrap()
-                .retain(|cert| cert.slot() > root_bank.slot());
+                .retain(|cert| cert.slot() > root_slot);
             self.vote_payload_cache
                 .write()
                 .unwrap()
-                .retain(|vote, _| vote.slot() > root_bank.slot());
+                .retain(|vote, _| vote.slot() > root_slot);
         }
+    }
 
-        for mut packet in batches.iter_mut().flatten() {
+    fn preprocess_vote(
+        &mut self,
+        vote_message: VoteMessage,
+        root_bank: &Bank,
+        consensus_metrics_to_send: &mut Vec<ConsensusMetricsEvent>,
+    ) -> Option<(Pubkey, BlsPubkey)> {
+        // Missing epoch states
+        let Some(key_to_rank_map) = get_key_to_rank_map(root_bank, vote_message.vote.slot()) else {
+            self.stats
+                .received_no_epoch_stakes
+                .fetch_add(1, Ordering::Relaxed);
+            return None;
+        };
+
+        // Invalid rank
+        let Some((solana_pubkey, bls_pubkey)) =
+            key_to_rank_map.get_pubkey(vote_message.rank.into())
+        else {
+            self.stats.received_bad_rank.fetch_add(1, Ordering::Relaxed);
+            return None;
+        };
+
+        // Capture votes received metrics before old messages are potentially discarded below.
+        consensus_metrics_to_send.push(ConsensusMetricsEvent::Vote {
+            id: *solana_pubkey,
+            vote: vote_message.vote,
+        });
+        // Only need votes newer than root slot
+        if vote_message.vote.slot() <= root_bank.slot() {
+            self.stats.received_old.fetch_add(1, Ordering::Relaxed);
+            return None;
+        }
+        Some((*solana_pubkey, *bls_pubkey))
+    }
+
+    fn preprocess_packets(
+        &mut self,
+        packet_batches: &mut [PacketBatch],
+        root_bank: &Bank,
+        consensus_metrics_to_send: &mut Vec<ConsensusMetricsEvent>,
+    ) -> (Vec<VoteToVerify>, Vec<Certificate>) {
+        // TODO(sam): ideally we want to avoid heap allocation, but let's use
+        //            `Vec` for now for clarity and then optimize for the final version
+        let mut votes_to_verify = Vec::with_capacity(AVERAGE_VOTES_OR_CERTS_PER_BATCH);
+        let mut certs_to_verify = Vec::with_capacity(AVERAGE_VOTES_OR_CERTS_PER_BATCH);
+        for mut packet in packet_batches.iter_mut().flatten() {
             self.stats.received.fetch_add(1, Ordering::Relaxed);
             if packet.meta().discard() {
                 self.stats
@@ -143,48 +210,19 @@ impl BLSSigVerifier {
 
             match message {
                 ConsensusMessage::Vote(vote_message) => {
-                    // Missing epoch states
-                    let Some(key_to_rank_map) =
-                        get_key_to_rank_map(&root_bank, vote_message.vote.slot())
-                    else {
-                        self.stats
-                            .received_no_epoch_stakes
-                            .fetch_add(1, Ordering::Relaxed);
+                    if let Some((pubkey, bls_pubkey)) = self.preprocess_vote(
+                        vote_message.clone(),
+                        root_bank,
+                        consensus_metrics_to_send,
+                    ) {
+                        votes_to_verify.push(VoteToVerify {
+                            vote_message,
+                            bls_pubkey,
+                            pubkey,
+                        });
+                    } else {
                         packet.meta_mut().set_discard(true);
-                        continue;
-                    };
-
-                    // Invalid rank
-                    let Some((solana_pubkey, bls_pubkey)) =
-                        key_to_rank_map.get_pubkey(vote_message.rank.into())
-                    else {
-                        self.stats.received_bad_rank.fetch_add(1, Ordering::Relaxed);
-                        packet.meta_mut().set_discard(true);
-                        continue;
-                    };
-
-                    // Capture votes received metrics before old messages are potentially discarded below.
-                    let slot = vote_message.vote.slot();
-                    if vote_message.vote.is_notarization_or_finalization() {
-                        let existing_slot = last_voted_slots.entry(*solana_pubkey).or_insert(slot);
-                        *existing_slot = (*existing_slot).max(slot);
                     }
-                    consensus_metrics_to_send.push(ConsensusMetricsEvent::Vote {
-                        id: *solana_pubkey,
-                        vote: vote_message.vote,
-                    });
-                    // Only need votes newer than root slot
-                    if vote_message.vote.slot() <= root_bank.slot() {
-                        self.stats.received_old.fetch_add(1, Ordering::Relaxed);
-                        packet.meta_mut().set_discard(true);
-                        continue;
-                    }
-
-                    votes_to_verify.push(VoteToVerify {
-                        vote_message,
-                        bls_pubkey: *bls_pubkey,
-                        pubkey: *solana_pubkey,
-                    });
                 }
                 ConsensusMessage::Certificate(cert) => {
                     // Only need certs newer than root slot
@@ -209,17 +247,36 @@ impl BLSSigVerifier {
                 }
             }
         }
+        (votes_to_verify, certs_to_verify)
+    }
+
+    pub fn verify_and_send_batches(
+        &mut self,
+        mut batches: Vec<PacketBatch>,
+        pool: Option<&ThreadPool>,
+    ) -> Result<(), BLSSigVerifyServiceError<ConsensusMessage>> {
+        let mut verify_time = Measure::start("sigverify_batch_time");
+        let mut preprocess_time = Measure::start("preprocess");
+        let mut consensus_metrics_to_send = Vec::with_capacity(AVERAGE_VOTES_OR_CERTS_PER_BATCH);
+        let root_bank = self.sharable_banks.root();
+
+        self.purge_old_votes_and_certs(root_bank.slot());
+
         preprocess_time.stop();
         self.stats.preprocess_count.fetch_add(1, Ordering::Relaxed);
         self.stats
             .preprocess_elapsed_us
             .fetch_add(preprocess_time.as_us(), Ordering::Relaxed);
 
-        // This uses the global thread pool.
-        let (votes_result, certs_result) = rayon::join(
-            || self.verify_and_send_votes(votes_to_verify),
-            || self.verify_and_send_certificates(certs_to_verify, &root_bank),
-        );
+        let (votes_to_verify, certs_to_verify) =
+            self.preprocess_packets(&mut batches, &root_bank, &mut consensus_metrics_to_send);
+
+        let (votes_result, certs_result) = Self::run_batch_verify_in_pool(pool, || {
+            rayon::join(
+                || self.verify_and_send_votes(votes_to_verify),
+                || self.verify_and_send_certificates(certs_to_verify, &root_bank),
+            )
+        });
         verify_time.stop();
         self.stats
             .verify_elapsed_us
@@ -240,26 +297,6 @@ impl BLSSigVerifier {
         self.stats.maybe_report_stats();
 
         Ok(())
-    }
-}
-
-impl BLSSigVerifier {
-    pub fn new(
-        sharable_banks: SharableBanks,
-        verified_votes_sender: VerifiedVoteSender,
-        message_sender: Sender<ConsensusMessage>,
-        consensus_metrics_sender: ConsensusMetricsEventSender,
-    ) -> Self {
-        Self {
-            sharable_banks,
-            verified_votes_sender,
-            message_sender,
-            stats: BLSSigVerifierStats::new(),
-            verified_certs: RwLock::new(HashSet::new()),
-            vote_payload_cache: RwLock::new(HashMap::new()),
-            consensus_metrics_sender,
-            last_checked_root_slot: 0,
-        }
     }
 
     fn verify_and_send_votes(
@@ -329,7 +366,7 @@ impl BLSSigVerifier {
     fn verify_optimistically(
         &self,
         votes_to_verify: &Vec<VoteToVerify>,
-        payloads: &Vec<Arc<Vec<u8>>>,
+        payloads: &[Arc<Vec<u8>>],
     ) -> Result<bool, BlsError> {
         let mut grouped_pubkeys: HashMap<&Arc<Vec<u8>>, Vec<&BlsPubkey>> = HashMap::new();
         for (v, payload) in votes_to_verify.iter().zip(payloads.iter()) {
@@ -648,6 +685,7 @@ mod tests {
             },
             vote::Vote,
         },
+        rayon::ThreadPoolBuilder,
         solana_bls_signatures::{Keypair as BLSKeypair, Signature as BLSSignature},
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -744,6 +782,7 @@ mod tests {
             sender,
             consensus_metrics_sender,
         );
+        let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
         let vote_rank1 = 2;
         let cert_type = CertificateType::Finalize(4);
@@ -759,7 +798,7 @@ mod tests {
         ];
 
         assert!(verifier
-            .verify_and_send_batches(messages_to_batches(&messages1))
+            .verify_and_send_batches(messages_to_batches(&messages1), Some(&pool))
             .is_ok());
         assert_eq!(receiver.try_iter().count(), 2);
         assert_eq!(verifier.stats.sent.load(Ordering::Relaxed), 2);
@@ -781,7 +820,7 @@ mod tests {
         );
         let messages2 = vec![ConsensusMessage::Vote(vote_message2)];
         assert!(verifier
-            .verify_and_send_batches(messages_to_batches(&messages2))
+            .verify_and_send_batches(messages_to_batches(&messages2), Some(&pool))
             .is_ok());
 
         assert_eq!(receiver.try_iter().count(), 1);
@@ -805,7 +844,7 @@ mod tests {
         );
         let messages3 = vec![ConsensusMessage::Vote(vote_message3)];
         assert!(verifier
-            .verify_and_send_batches(messages_to_batches(&messages3))
+            .verify_and_send_batches(messages_to_batches(&messages3), Some(&pool))
             .is_ok());
         assert_eq!(receiver.try_iter().count(), 1);
         assert_eq!(verifier.stats.sent.load(Ordering::Relaxed), 0);
@@ -830,10 +869,13 @@ mod tests {
             sender,
             consensus_metrics_sender,
         );
+        let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
         let packets = vec![Packet::default()];
         let packet_batches = vec![PinnedPacketBatch::new(packets).into()];
-        assert!(verifier.verify_and_send_batches(packet_batches).is_ok());
+        assert!(verifier
+            .verify_and_send_batches(packet_batches, Some(&pool))
+            .is_ok());
 
         assert_eq!(verifier.stats.received.load(Ordering::Relaxed), 1);
         assert_eq!(verifier.stats.received_malformed.load(Ordering::Relaxed), 1);
@@ -850,7 +892,7 @@ mod tests {
         let messages_no_stakes = vec![ConsensusMessage::Vote(vote_message_no_stakes)];
 
         assert!(verifier
-            .verify_and_send_batches(messages_to_batches(&messages_no_stakes))
+            .verify_and_send_batches(messages_to_batches(&messages_no_stakes), Some(&pool))
             .is_ok());
 
         assert_eq!(
@@ -874,7 +916,7 @@ mod tests {
             rank: 1000, // Invalid rank
         })];
         assert!(verifier
-            .verify_and_send_batches(messages_to_batches(&messages_invalid_rank))
+            .verify_and_send_batches(messages_to_batches(&messages_invalid_rank), Some(&pool))
             .is_ok());
         assert_eq!(verifier.stats.received_bad_rank.load(Ordering::Relaxed), 1);
 
@@ -895,6 +937,7 @@ mod tests {
             sender,
             consensus_metrics_sender,
         );
+        let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
         let msg1 = ConsensusMessage::Vote(create_signed_vote_message(
             &validator_keypairs,
@@ -908,7 +951,7 @@ mod tests {
         ));
         let messages = vec![msg1.clone(), msg2];
         assert!(verifier
-            .verify_and_send_batches(messages_to_batches(&messages))
+            .verify_and_send_batches(messages_to_batches(&messages), Some(&pool))
             .is_ok());
 
         // We failed to send the second message because the channel is full.
@@ -928,6 +971,7 @@ mod tests {
             sender,
             consensus_metrics_sender,
         );
+        let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
         // Close the receiver to simulate a disconnected channel.
         drop(receiver);
@@ -938,7 +982,7 @@ mod tests {
             0,
         ));
         let messages = vec![msg];
-        let result = verifier.verify_and_send_batches(messages_to_batches(&messages));
+        let result = verifier.verify_and_send_batches(messages_to_batches(&messages), Some(&pool));
         assert!(result.is_err());
     }
 
@@ -952,6 +996,7 @@ mod tests {
             sender,
             consensus_metrics_sender,
         );
+        let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
         let message = ConsensusMessage::Vote(create_signed_vote_message(
             &validator_keypairs,
@@ -967,7 +1012,9 @@ mod tests {
         let packets = vec![packet];
         let packet_batches = vec![PinnedPacketBatch::new(packets).into()];
 
-        assert!(verifier.verify_and_send_batches(packet_batches).is_ok());
+        assert!(verifier
+            .verify_and_send_batches(packet_batches, Some(&pool))
+            .is_ok());
         assert!(receiver.is_empty(), "Discarded packet should not be sent");
         assert_eq!(verifier.stats.sent.load(Ordering::Relaxed), 0);
         assert_eq!(verifier.stats.received.load(Ordering::Relaxed), 1);
@@ -985,6 +1032,7 @@ mod tests {
             message_sender,
             consensus_metrics_sender,
         );
+        let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
         let num_votes = 5;
         let mut packets = Vec::with_capacity(num_votes);
@@ -999,7 +1047,9 @@ mod tests {
         }
 
         let packet_batches = vec![PinnedPacketBatch::new(packets).into()];
-        assert!(verifier.verify_and_send_batches(packet_batches).is_ok());
+        assert!(verifier
+            .verify_and_send_batches(packet_batches, Some(&pool))
+            .is_ok());
         assert_eq!(
             message_receiver.try_iter().count(),
             num_votes,
@@ -1017,6 +1067,7 @@ mod tests {
             message_sender,
             consensus_metrics_sender,
         );
+        let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
         let num_votes_group1 = 3;
         let num_votes_group2 = 4;
@@ -1052,7 +1103,9 @@ mod tests {
         }
 
         let packet_batches = vec![PinnedPacketBatch::new(packets).into()];
-        assert!(verifier.verify_and_send_batches(packet_batches).is_ok());
+        assert!(verifier
+            .verify_and_send_batches(packet_batches, Some(&pool))
+            .is_ok());
         assert_eq!(
             message_receiver.try_iter().count(),
             num_votes,
@@ -1077,6 +1130,7 @@ mod tests {
             message_sender,
             consensus_metrics_sender,
         );
+        let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
         let num_votes = 5;
         let invalid_rank = 3; // This voter will sign vote 2 with an invalid signature.
@@ -1117,7 +1171,9 @@ mod tests {
         }
 
         let packet_batches = vec![PinnedPacketBatch::new(packets).into()];
-        assert!(verifier.verify_and_send_batches(packet_batches).is_ok());
+        assert!(verifier
+            .verify_and_send_batches(packet_batches, Some(&pool))
+            .is_ok());
         let sent_messages: Vec<_> = message_receiver.try_iter().collect();
         assert_eq!(
             sent_messages.len(),
@@ -1150,6 +1206,7 @@ mod tests {
             message_sender,
             consensus_metrics_sender,
         );
+        let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
         let num_votes = 5;
         let invalid_rank = 2;
@@ -1185,7 +1242,9 @@ mod tests {
         }
 
         let packet_batches = vec![PinnedPacketBatch::new(packets).into()];
-        assert!(verifier.verify_and_send_batches(packet_batches).is_ok());
+        assert!(verifier
+            .verify_and_send_batches(packet_batches, Some(&pool))
+            .is_ok());
         let sent_messages: Vec<_> = message_receiver.try_iter().collect();
         assert_eq!(
             sent_messages.len(),
@@ -1222,8 +1281,12 @@ mod tests {
             consensus_metrics_sender,
         );
 
+        let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+
         let packet_batches: Vec<PacketBatch> = vec![];
-        assert!(verifier.verify_and_send_batches(packet_batches).is_ok());
+        assert!(verifier
+            .verify_and_send_batches(packet_batches, Some(&pool))
+            .is_ok());
         assert_eq!(verifier.stats.received.load(Ordering::Relaxed), 0);
     }
 
@@ -1237,6 +1300,7 @@ mod tests {
             message_sender,
             consensus_metrics_sender,
         );
+        let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
         let num_signers = 7; // > 2/3 of 10 validators
         let cert_type = CertificateType::Notarize(10, Hash::new_unique());
@@ -1248,7 +1312,9 @@ mod tests {
         let consensus_message = ConsensusMessage::Certificate(cert);
         let packet_batches = messages_to_batches(&[consensus_message]);
 
-        assert!(verifier.verify_and_send_batches(packet_batches).is_ok());
+        assert!(verifier
+            .verify_and_send_batches(packet_batches, Some(&pool))
+            .is_ok());
         assert_eq!(
             message_receiver.try_iter().count(),
             1,
@@ -1266,6 +1332,7 @@ mod tests {
             message_sender,
             consensus_metrics_sender,
         );
+        let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
         let slot = 20;
         let block_hash = Hash::new_unique();
@@ -1295,7 +1362,9 @@ mod tests {
         let consensus_message = ConsensusMessage::Certificate(cert);
         let packet_batches = messages_to_batches(&[consensus_message]);
 
-        assert!(verifier.verify_and_send_batches(packet_batches).is_ok());
+        assert!(verifier
+            .verify_and_send_batches(packet_batches, Some(&pool))
+            .is_ok());
         assert_eq!(
             message_receiver.try_iter().count(),
             1,
@@ -1313,6 +1382,7 @@ mod tests {
             message_sender,
             consensus_metrics_sender,
         );
+        let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
         let num_signers = 7;
         let slot = 10;
@@ -1333,7 +1403,9 @@ mod tests {
         let consensus_message = ConsensusMessage::Certificate(cert);
         let packet_batches = messages_to_batches(&[consensus_message]);
 
-        assert!(verifier.verify_and_send_batches(packet_batches).is_ok());
+        assert!(verifier
+            .verify_and_send_batches(packet_batches, Some(&pool))
+            .is_ok());
         assert!(
             message_receiver.is_empty(),
             "Certificate with invalid signature should be discarded"
@@ -1357,6 +1429,7 @@ mod tests {
             message_sender,
             consensus_metrics_sender,
         );
+        let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
         let mut packets = Vec::new();
         let num_votes = 2;
@@ -1392,7 +1465,9 @@ mod tests {
         packets.push(cert_packet);
 
         let packet_batches = vec![PinnedPacketBatch::new(packets).into()];
-        assert!(verifier.verify_and_send_batches(packet_batches).is_ok());
+        assert!(verifier
+            .verify_and_send_batches(packet_batches, Some(&pool))
+            .is_ok());
         assert_eq!(
             message_receiver.try_iter().count(),
             num_votes + 1,
@@ -1414,6 +1489,7 @@ mod tests {
             message_sender,
             consensus_metrics_sender,
         );
+        let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
         let invalid_rank = 999;
         let vote = Vote::new_skip_vote(42);
@@ -1428,7 +1504,9 @@ mod tests {
         });
 
         let packet_batches = messages_to_batches(&[consensus_message]);
-        assert!(verifier.verify_and_send_batches(packet_batches).is_ok());
+        assert!(verifier
+            .verify_and_send_batches(packet_batches, Some(&pool))
+            .is_ok());
         assert!(
             message_receiver.is_empty(),
             "Packet with invalid rank should be discarded"
@@ -1452,6 +1530,7 @@ mod tests {
             &validator_keypairs,
             stakes_vec,
         );
+        let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
         let bank0 = Bank::new_for_tests(&genesis.genesis_config);
         let bank5 = Bank::new_from_parent(Arc::new(bank0), &Pubkey::default(), 5);
         let bank_forks = BankForks::new_rw_arc(bank5);
@@ -1472,7 +1551,7 @@ mod tests {
         let packet_batches_vote = messages_to_batches(&[consensus_message_vote]);
 
         assert!(sig_verifier
-            .verify_and_send_batches(packet_batches_vote)
+            .verify_and_send_batches(packet_batches_vote, Some(&pool))
             .is_ok());
         assert!(
             message_receiver.is_empty(),
@@ -1489,7 +1568,7 @@ mod tests {
         let packet_batches_cert = messages_to_batches(&[consensus_message_cert]);
 
         assert!(sig_verifier
-            .verify_and_send_batches(packet_batches_cert)
+            .verify_and_send_batches(packet_batches_cert, Some(&pool))
             .is_ok());
         assert!(
             message_receiver.is_empty(),
@@ -1508,6 +1587,7 @@ mod tests {
             message_sender,
             consensus_metrics_sender,
         );
+        let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
         let num_signers = 8;
         let slot = 10;
@@ -1526,7 +1606,9 @@ mod tests {
         let consensus_message1 = ConsensusMessage::Certificate(cert1);
         let packet_batches1 = messages_to_batches(&[consensus_message1]);
 
-        assert!(verifier.verify_and_send_batches(packet_batches1).is_ok());
+        assert!(verifier
+            .verify_and_send_batches(packet_batches1, Some(&pool))
+            .is_ok());
 
         assert_eq!(
             message_receiver.try_iter().count(),
@@ -1544,7 +1626,9 @@ mod tests {
         let consensus_message2 = ConsensusMessage::Certificate(cert2);
         let packet_batches2 = messages_to_batches(&[consensus_message2]);
 
-        assert!(verifier.verify_and_send_batches(packet_batches2).is_ok());
+        assert!(verifier
+            .verify_and_send_batches(packet_batches2, Some(&pool))
+            .is_ok());
         assert!(
             message_receiver.is_empty(),
             "Second, weaker certificate should not be sent"

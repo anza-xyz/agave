@@ -77,7 +77,7 @@ impl BLSSigverifyService {
         dedup_time.stop();
 
         let mut verify_time = Measure::start("sigverify_batch_time");
-        verifier.verify_and_send_batches(batches)?;
+        verifier.verify_and_send_batches(batches, None)?;
         verify_time.stop();
 
         debug!(
