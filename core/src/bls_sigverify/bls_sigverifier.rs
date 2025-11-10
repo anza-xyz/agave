@@ -327,7 +327,8 @@ impl BLSSigVerifier {
             .total_valid_packets
             .fetch_add(verified_votes.len() as u64, Ordering::Relaxed);
 
-        let mut verified_votes_by_pubkey: AHashMap<Pubkey, AHashSet<Slot>> = AHashMap::new();
+        let mut verified_votes_by_pubkey: AHashMap<Pubkey, AHashSet<Slot>> =
+            AHashMap::with_capacity(AVERAGE_VOTES_OR_CERTS_PER_BATCH);
         self.stats
             .received_votes
             .fetch_add(verified_votes.len() as u64, Ordering::Relaxed);
