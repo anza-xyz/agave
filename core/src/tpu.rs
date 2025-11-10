@@ -204,7 +204,7 @@ impl Tpu {
 
         let staked_nodes = VersionedStakedNodes {
             staked_nodes: staked_nodes.clone(),
-            version: Arc::new(AtomicUsize::new(0)),
+            version: Arc::new(AtomicUsize::new(1)),
         };
 
         let staked_nodes_updater_service = StakedNodesUpdaterService::new(

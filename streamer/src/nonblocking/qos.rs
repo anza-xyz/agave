@@ -17,6 +17,8 @@ pub(crate) trait ConnectionContext: Clone + Send + Sync {
 /// 1) deriving the ConnectionContext for a connection
 /// 2) managing connection caching and connection limits, stream limits
 pub(crate) trait QosController<C: ConnectionContext> {
+    /// Initialize the controller's async logic
+    async fn async_init(&mut self) {}
     /// Build the ConnectionContext for a connection
     fn build_connection_context(&self, connection: &Connection) -> C;
 

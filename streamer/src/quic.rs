@@ -625,7 +625,7 @@ fn spawn_runtime_and_server<Q, C>(
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     quic_server_params: QuicStreamerConfig,
-    qos: Arc<Q>,
+    qos: Q,
     cancel: CancellationToken,
 ) -> Result<SpawnServerResult, QuicServerError>
 where
@@ -678,16 +678,7 @@ pub fn spawn_stake_wighted_qos_server(
     cancel: CancellationToken,
 ) -> Result<SpawnServerResult, QuicServerError> {
     let stats = Arc::<StreamerStats>::default();
-    let swqos = Arc::new(SwQos::new(
-        qos_config,
-        quic_server_params.max_staked_connections,
-        quic_server_params.max_unstaked_connections,
-        quic_server_params.max_connections_per_unstaked_peer,
-        quic_server_params.max_connections_per_unstaked_peer,
-        stats.clone(),
-        staked_nodes,
-        cancel.clone(),
-    ));
+    let swqos = SwQos::new(qos_config, stats.clone(), staked_nodes, cancel.clone());
     spawn_runtime_and_server(
         thread_name,
         metrics_name,
@@ -715,14 +706,14 @@ pub fn spawn_simple_qos_server(
 ) -> Result<SpawnServerResult, QuicServerError> {
     let stats = Arc::<StreamerStats>::default();
 
-    let simple_qos = Arc::new(SimpleQos::new(
+    let simple_qos = SimpleQos::new(
         qos_config,
         quic_server_params.max_connections_per_unstaked_peer,
         quic_server_params.max_staked_connections,
         stats.clone(),
         staked_nodes.staked_nodes,
         cancel.clone(),
-    ));
+    );
 
     spawn_runtime_and_server(
         thread_name,
@@ -741,12 +732,15 @@ pub fn spawn_simple_qos_server(
 mod test {
     use {
         super::*,
-        crate::nonblocking::{quic::test::*, testing_utilities::check_multiple_streams},
+        crate::{
+            nonblocking::{quic::test::*, testing_utilities::check_multiple_streams},
+            streamer::StakedNodes,
+        },
         crossbeam_channel::unbounded,
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_pubkey::Pubkey,
         solana_signer::Signer,
-        std::{collections::HashMap, net::SocketAddr},
+        std::{collections::HashMap, net::SocketAddr, sync::RwLock},
     };
 
     fn rt_for_test() -> Runtime {
@@ -795,10 +789,7 @@ mod test {
         SocketAddr,
         CancellationToken,
     ) {
-        let staked_nodes = VersionedStakedNodes {
-            staked_nodes: Arc::new(RwLock::new(StakedNodes::default())),
-            version: Arc::new(AtomicUsize::new(0)),
-        };
+        let staked_nodes = VersionedStakedNodes::new(Arc::new(RwLock::new(StakedNodes::default())));
 
         let server_params = QuicStreamerConfig::default_for_tests();
         let s = bind_to_localhost_unique().expect("should bind");

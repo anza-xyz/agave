@@ -46,7 +46,7 @@ where
 {
     let stats = Arc::<StreamerStats>::default();
 
-    let swqos = Arc::new(SwQos::new(
+    let swqos = SwQos::new(
         qos_config,
         quic_server_params.max_staked_connections,
         quic_server_params.max_unstaked_connections,
@@ -55,7 +55,7 @@ where
         stats.clone(),
         staked_nodes,
         cancel.clone(),
-    ));
+    );
 
     spawn_server(
         name,

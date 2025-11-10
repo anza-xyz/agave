@@ -86,11 +86,18 @@ pub struct StakedNodes {
 
 #[derive(Clone)]
 pub struct VersionedStakedNodes {
-    pub staked_nodes: Arc<RwLock<StakedNodes>>,
-    pub version: Arc<AtomicUsize>,
+    pub(crate) staked_nodes: Arc<RwLock<StakedNodes>>,
+    pub(crate) version: Arc<AtomicUsize>,
 }
 
 impl VersionedStakedNodes {
+    pub fn new(staked_nodes: Arc<RwLock<StakedNodes>>) -> Self {
+        Self {
+            staked_nodes: staked_nodes,
+            version: Arc::new(AtomicUsize::new(1)),
+        }
+    }
+
     pub fn update(&self, new_stakes: StakedNodes) {
         *self.staked_nodes.write().unwrap() = new_stakes;
         self.version.fetch_add(1, Ordering::Relaxed);

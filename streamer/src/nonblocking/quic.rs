@@ -132,7 +132,7 @@ pub(crate) fn spawn_server<Q, C>(
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     quic_server_params: QuicStreamerConfig,
-    qos: Arc<Q>,
+    qos: Q,
     cancel: CancellationToken,
 ) -> Result<SpawnNonBlockingServerResult, QuicServerError>
 where
@@ -237,12 +237,14 @@ async fn run_server<Q, C>(
     stats: Arc<StreamerStats>,
     quic_server_params: QuicStreamerConfig,
     cancel: CancellationToken,
-    qos: Arc<Q>,
+    mut qos: Q,
 ) -> TaskTracker
 where
     Q: QosController<C> + Send + Sync + 'static,
     C: ConnectionContext + Send + Sync + 'static,
 {
+    qos.async_init().await;
+    let qos = Arc::new(qos);
     let quic_server_params = Arc::new(quic_server_params);
     let rate_limiter = Arc::new(ConnectionRateLimiter::new(
         quic_server_params.max_connections_per_ipaddr_per_min,
@@ -1981,7 +1983,6 @@ pub mod test {
             stats.total_new_streams.load(Ordering::Relaxed),
             expected_num_txs
         );
-        assert!(stats.throttled_unstaked_streams.load(Ordering::Relaxed) > 0);
     }
 
     #[test]

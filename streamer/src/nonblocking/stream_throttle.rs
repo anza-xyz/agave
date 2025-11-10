@@ -1,3 +1,15 @@
+//! This module implements the stake-weighted read throttling logic:
+//! * Each connected client is assigned a fraction of total TPS budget R
+//! in proportion to its stake.
+//! * All unused capacity gets added to R for the next round of allocation
+//! * Unstaked nodes get granted fake stake as if they were staked
+//!
+//! To better utilize the bandwidth, the effective usage rate is
+//! estimated based on how much they have consumed last round, and refill
+//! proportion is based on the total usage rate, not true stake.
+//! This allows to efficiently reassign underutilized bandwidth to other
+//! users, as their effective stake in the overall allocation grows.
+
 use {
     crate::{
         nonblocking::{
@@ -7,6 +19,7 @@ use {
         quic::StreamerStats,
         streamer::StakedNodes,
     },
+    solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     std::{
         any::Any,
@@ -26,10 +39,10 @@ use {
 
 /// This will be added to the true stake amount in the
 /// calculations to ensure that unstaked nodes have non-zero throughput
-pub const BASE_STAKE: u64 = 1000;
+pub const BASE_STAKE_SOL: u64 = 1000;
 
 /// Interval of refills for the QoS token buckets
-pub const REFILL_INTERVAL: Duration = Duration::from_millis(10);
+pub const REFILL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// How many intervals worth of token refill rate do we accumulate
 /// for idle connections (to handle bursts of arrivals)
@@ -39,12 +52,12 @@ const MAX_BURST: u64 = 2;
 pub struct StakedStreamQuotas {
     pub entries: HashMap<Pubkey, Arc<QuotaEntry>>,
     refill_order: Vec<Arc<QuotaEntry>>,
-    pub total_stake: u64,
+    pub total_effective_stake: u64,
 }
 
 #[derive(Debug)]
 pub struct QuotaEntry {
-    pub stake: u64,
+    pub stake_sol: u64,
     pub number_of_times_throttled: AtomicU64,
     pub address: Pubkey,
     pub tokens: AtomicU64,
@@ -72,7 +85,7 @@ impl ConnectionTableSharedState for ConnectionStreamCounter {
 impl Ord for QuotaEntry {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         // high stake comes first
-        other.stake.cmp(&self.stake)
+        other.stake_sol.cmp(&self.stake_sol)
     }
 }
 impl PartialOrd for QuotaEntry {
@@ -82,15 +95,15 @@ impl PartialOrd for QuotaEntry {
 }
 impl PartialEq for QuotaEntry {
     fn eq(&self, other: &Self) -> bool {
-        self.stake == other.stake
+        self.stake_sol == other.stake_sol
     }
 }
 impl Eq for QuotaEntry {}
 
 impl QuotaEntry {
-    pub fn new(address: Pubkey, stake: u64) -> Self {
+    pub fn new(address: Pubkey, stake_lamports: u64) -> Self {
         Self {
-            stake: stake,
+            stake_sol: stake_lamports / LAMPORTS_PER_SOL,
             tokens: AtomicU64::new(128),
             address,
             number_of_times_throttled: AtomicU64::new(0),
@@ -99,7 +112,6 @@ impl QuotaEntry {
 
     /// try to consume a token from the throttler, if it can not it will block.
     pub async fn wait_for_token(&self, stats: &StreamerStats) {
-        // TODO optimize
         while self
             .tokens
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
@@ -118,7 +130,7 @@ impl QuotaEntry {
             self.number_of_times_throttled
                 .fetch_add(1, Ordering::Relaxed);
             stats.throttled_streams.fetch_add(1, Ordering::Relaxed);
-            if self.stake == 0 {
+            if self.stake_sol == 0 {
                 stats
                     .throttled_unstaked_streams
                     .fetch_add(1, Ordering::Relaxed);
@@ -133,7 +145,6 @@ impl QuotaEntry {
     }
 
     pub fn try_refill(&self, refill_amount: u64, my_max_tokens: u64) -> u64 {
-        // TODO optimize
         let current = self.tokens.load(Ordering::Relaxed);
         // this is technically a race, but since the other threads can only
         // decrement the token count, we are guaranteed to never allocate too many tokens
@@ -143,15 +154,11 @@ impl QuotaEntry {
         );
 
         let overflow = (previous + refill_amount).saturating_sub(my_max_tokens);
-        debug!(
-            "Refilled {} for {refill_amount}, overflow {overflow}",
-            self.address
-        );
         overflow
     }
 
     fn effective_stake(&self) -> u64 {
-        self.stake + BASE_STAKE
+        self.stake_sol + BASE_STAKE_SOL
     }
 }
 
@@ -177,16 +184,16 @@ impl StakedStreamQuotas {
         quotas
     }
 
-    pub fn with_capacity(capacity: usize) -> Self {
+    fn with_capacity(capacity: usize) -> Self {
         StakedStreamQuotas {
             entries: HashMap::with_capacity(capacity),
             refill_order: Vec::with_capacity(capacity),
-            total_stake: 1, //  to avoid zero division checks everywhere
+            total_effective_stake: 1, //  to avoid zero division checks everywhere
         }
     }
 
     fn insert(&mut self, address: Pubkey, entry: QuotaEntry) {
-        self.total_stake += entry.stake;
+        self.total_effective_stake += entry.effective_stake();
         self.entries.insert(address, Arc::new(entry));
     }
 }
@@ -197,52 +204,95 @@ pub async fn refill_task(
     unstaked_connection_table: Arc<Mutex<ConnectionTable>>,
     max_tps: u64,
 ) {
+    debug!("Spawning refill task");
+
     // amount of refill per interval
+    let max_tps = max_tps.min(1000);
     let token_fill_rate: u64 = max_tps * 1000 / REFILL_INTERVAL.as_millis() as u64;
-    let mut last_iter_unstaked_effective_stake = 0;
+    // initialize effective stake of unstaked connections based on their number
+    let mut last_iter_unstaked_effective_stake = {
+        let guard = unstaked_connection_table.lock().await;
+        guard.total_size as u64 * BASE_STAKE_SOL
+    };
+    // initialize effective stake of staked connections as if everyone was connected
+    let mut last_iter_staked_effective_stake = {
+        let quotas = staked_stream_quotas_receiver.borrow();
+        quotas.total_effective_stake
+    };
+
     let mut overflow = 0;
     loop {
         let total_tokens_to_refill = (overflow + token_fill_rate).min(token_fill_rate * 2);
+        debug!("Total tokens to refill: {total_tokens_to_refill}, overflow {overflow}");
         overflow = 0;
-        let total_stake;
-        // fill the staked portion
-        // overflow from higher staked nodes immediately cascades to the lower staked nodes
+        let total_effective_stake;
+        // fill the staked population's token buckets
         {
             let quotas = staked_stream_quotas_receiver.borrow();
-            total_stake = last_iter_unstaked_effective_stake + quotas.total_stake;
+            // assume at least 1/32 of the effective stake is actually connected
+            // avoid divisions by zero if no staked nodes are registered
+            total_effective_stake = (last_iter_unstaked_effective_stake
+                + last_iter_staked_effective_stake)
+                .max(quotas.total_effective_stake / 32)
+                + 1;
+            last_iter_staked_effective_stake = 0;
             for entry in quotas.refill_order.iter() {
                 // fraction of total amount to deposit in this token bucket
-                let my_fraction = total_tokens_to_refill * entry.effective_stake() / total_stake;
+                let my_fraction =
+                    total_tokens_to_refill * entry.effective_stake() / total_effective_stake;
+                debug!(
+                    "Grant {my_fraction} TXs to {} based on {}/{total_effective_stake} sol of stake.",
+                    entry.address,
+                    entry.effective_stake()
+                );
                 // maximal amount this bucket should be able to hold
                 let my_max_tokens =
-                    token_fill_rate * MAX_BURST * entry.effective_stake() / total_stake;
-
-                // fill the bucket with all available tokens (new + overflow from last iter)
+                    token_fill_rate * MAX_BURST * entry.effective_stake() / total_effective_stake;
+                // fill the bucket with all available tokens
+                let my_overflow = entry.try_refill(my_fraction, my_max_tokens);
+                // record how well did we use our allocation
+                last_iter_staked_effective_stake +=
+                    entry.effective_stake() * my_fraction.saturating_sub(my_overflow) / my_fraction;
                 // store any leftover tokens for next iteration of the fill loop
-                overflow = entry.try_refill(my_fraction + overflow, my_max_tokens)
+                overflow += my_overflow;
             }
         }
         // fill the unstaked buckets
         // overflow does not cascade, as there is no fair order of redistribution
         // so we rely on proportional redistribution here
         {
+            last_iter_unstaked_effective_stake = 0;
             let guard = unstaked_connection_table.lock().await;
-            last_iter_unstaked_effective_stake = guard.total_size as u64 * BASE_STAKE;
+
             for entry in guard.iter() {
                 if let Some(entry) = entry.first() {
                     let entry: Arc<ConnectionStreamCounter> =
                         get_shared_state(entry.stream_counter.clone())
                             .expect("Can not fail to downcast here");
                     let entry = &entry.quota;
-                    // fraction of total amount to deposit in this token bucket
+                    // max fraction of total amount to deposit in this token bucket
                     let my_fraction =
-                        total_tokens_to_refill * entry.effective_stake() / total_stake;
+                        total_tokens_to_refill * entry.effective_stake() / total_effective_stake;
+                    debug!(
+                        "Grant {my_fraction} TXs to {} based on {}/{total_effective_stake} sol of stake.",
+                        entry.address,
+                        entry.effective_stake()
+                    );
                     // maximal amount this bucket should be able to hold
-                    let my_max_tokens =
-                        token_fill_rate * MAX_BURST * entry.effective_stake() / total_stake;
+                    let my_max_tokens = token_fill_rate * MAX_BURST * entry.effective_stake()
+                        / total_effective_stake;
 
+                    // fill the bucket with all available tokens
+                    let my_overflow = entry.try_refill(my_fraction, my_max_tokens);
+                    // record how well did we use our allocation
+                    // if we used all our allocation, we add our effective stake to
+                    // the consumption estimate for next round
+                    // if everything went to overflow, we add no effective stake
+                    last_iter_unstaked_effective_stake += entry.effective_stake()
+                        * my_fraction.saturating_sub(my_overflow)
+                        / my_fraction;
                     // store any leftover tokens for next iteration of the fill loop
-                    overflow += entry.try_refill(my_fraction, my_max_tokens)
+                    overflow += my_overflow;
                 }
             }
         }

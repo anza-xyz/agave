@@ -27,7 +27,7 @@ use {
         net::SocketAddr,
         path::Path,
         str::FromStr as _,
-        sync::{atomic::AtomicUsize, Arc, RwLock},
+        sync::{Arc, RwLock},
         time::Duration,
     },
     tokio::time::sleep,
@@ -107,11 +107,7 @@ async fn main() -> anyhow::Result<()> {
         );
         Arc::new(RwLock::new(nodes))
     };
-    let staked_nodes = VersionedStakedNodes {
-        staked_nodes,
-        version: Arc::new(AtomicUsize::new(0)),
-    };
-
+    let staked_nodes = VersionedStakedNodes::new(staked_nodes);
     let cancel = CancellationToken::new();
     let SpawnNonBlockingServerResult {
         endpoints,
