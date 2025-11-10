@@ -459,10 +459,11 @@ mod tests {
     }
 
     fn setup(delta_standstill: Option<Duration>) -> ConsensusPoolServiceTestComponents {
-        let (consensus_message_sender, consensus_message_receiver) = crossbeam_channel::unbounded();
-        let (bls_sender, bls_receiver) = crossbeam_channel::unbounded();
-        let (event_sender, event_receiver) = crossbeam_channel::unbounded();
-        let (commitment_sender, commitment_receiver) = crossbeam_channel::unbounded();
+        let (consensus_message_sender, consensus_message_receiver) =
+            crossbeam_channel::bounded(100);
+        let (bls_sender, bls_receiver) = crossbeam_channel::bounded(100);
+        let (event_sender, event_receiver) = crossbeam_channel::bounded(100);
+        let (commitment_sender, commitment_receiver) = crossbeam_channel::bounded(100);
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new_rand())
@@ -524,7 +525,8 @@ mod tests {
         let start = Instant::now();
         let mut event_received = false;
         while start.elapsed() < Duration::from_secs(5) {
-            if let Ok(event) = receiver.recv_timeout(Duration::from_millis(500)) {
+            let res = receiver.recv_timeout(Duration::from_millis(500));
+            if let Ok(event) = res {
                 if condition(&event) {
                     event_received = true;
                     break;

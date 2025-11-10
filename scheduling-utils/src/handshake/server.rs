@@ -145,7 +145,9 @@ impl Server {
         Ok(logon)
     }
 
-    fn setup_session(logon: ClientLogon) -> Result<(AgaveSession, Vec<File>), AgaveHandshakeError> {
+    pub fn setup_session(
+        logon: ClientLogon,
+    ) -> Result<(AgaveSession, Vec<File>), AgaveHandshakeError> {
         // Setup the allocator in shared memory (`worker_count` & `allocator_handles` have been
         // validated so this won't panic).
         let (allocator_file, tpu_to_pack_allocator) = Self::create_allocator(&logon)?;
@@ -234,7 +236,8 @@ impl Server {
             let minimum_file_size = shaq::minimum_file_size::<T>(capacity);
             let file_size = Self::align_file_size(minimum_file_size, huge);
 
-            shaq::Producer::create(&file, file_size).map(|producer| (file, producer))
+            // SAFETY: uniqely creating as producer
+            unsafe { shaq::Producer::create(&file, file_size) }.map(|producer| (file, producer))
         };
 
         // Try to create with huge pages, fallback to regular pages.
@@ -252,7 +255,8 @@ impl Server {
             let minimum_file_size = shaq::minimum_file_size::<PackToWorkerMessage>(capacity);
             let file_size = Self::align_file_size(minimum_file_size, huge);
 
-            shaq::Consumer::create(&file, file_size).map(|producer| (file, producer))
+            // SAFETY: uniquely creating as consumer.
+            unsafe { shaq::Consumer::create(&file, file_size) }.map(|producer| (file, producer))
         };
 
         // Try to create with huge pages, fallback to regular pages.

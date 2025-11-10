@@ -45,11 +45,11 @@ pub fn update_commitment_cache(
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crossbeam_channel::unbounded};
+    use {super::*, crossbeam_channel::bounded};
 
     #[test]
     fn test_update_commitment_cache() {
-        let (commitment_sender, commitment_receiver) = unbounded();
+        let (commitment_sender, commitment_receiver) = bounded(100);
         let slot = 3;
         let commitment_type = CommitmentType::Notarize;
         update_commitment_cache(commitment_type, slot, &commitment_sender)

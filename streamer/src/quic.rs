@@ -37,7 +37,10 @@ use {
 };
 
 // allow multiple connections for NAT and any open/close overlap
-pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;
+pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER: usize = 8;
+
+// allow multiple connections per ID for geo-distributed forwarders
+pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER: usize = 8;
 
 pub const DEFAULT_MAX_STAKED_CONNECTIONS: usize = 2000;
 
@@ -71,9 +74,6 @@ pub struct SpawnServerResult {
     pub thread: thread::JoinHandle<()>,
     pub key_updater: Arc<EndpointKeyUpdater>,
 }
-
-/// Controls the the channel size for the PacketBatch coalesce
-pub(crate) const DEFAULT_ACCUMULATOR_CHANNEL_SIZE: usize = 250_000;
 
 /// Returns default server configuration along with its PEM certificate chain.
 #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
@@ -163,19 +163,12 @@ pub struct StreamerStats {
     pub(crate) active_streams: AtomicUsize,
     pub(crate) total_new_streams: AtomicUsize,
     pub(crate) invalid_stream_size: AtomicUsize,
-    pub(crate) total_packets_allocated: AtomicUsize,
-    pub(crate) total_packet_batches_allocated: AtomicUsize,
     pub(crate) total_staked_chunks_received: AtomicUsize,
     pub(crate) total_unstaked_chunks_received: AtomicUsize,
-    pub(crate) total_packet_batch_send_err: AtomicUsize,
-    pub(crate) total_handle_chunk_to_packet_batcher_send_err: AtomicUsize,
-    pub(crate) total_handle_chunk_to_packet_batcher_send_full_err: AtomicUsize,
-    pub(crate) total_handle_chunk_to_packet_batcher_send_disconnected_err: AtomicUsize,
-    pub(crate) total_packet_batches_sent: AtomicUsize,
+    pub(crate) total_handle_chunk_to_packet_send_err: AtomicUsize,
+    pub(crate) total_handle_chunk_to_packet_send_full_err: AtomicUsize,
+    pub(crate) total_handle_chunk_to_packet_send_disconnected_err: AtomicUsize,
     pub(crate) total_packet_batches_none: AtomicUsize,
-    pub(crate) total_packets_sent_for_batching: AtomicUsize,
-    pub(crate) total_bytes_sent_for_batching: AtomicUsize,
-    pub(crate) total_chunks_sent_for_batching: AtomicUsize,
     pub(crate) total_packets_sent_to_consumer: AtomicUsize,
     pub(crate) total_bytes_sent_to_consumer: AtomicUsize,
     pub(crate) total_chunks_processed_by_batcher: AtomicUsize,
@@ -216,11 +209,12 @@ pub struct StreamerStats {
     pub(crate) total_unstaked_packets_sent_for_batching: AtomicUsize,
     pub(crate) throttled_staked_streams: AtomicUsize,
     pub(crate) throttled_unstaked_streams: AtomicUsize,
-    pub(crate) connection_rate_limiter_length: AtomicUsize,
     // All connections in various states such as Incoming, Connecting, Connection
     pub(crate) open_connections: AtomicUsize,
     pub(crate) open_staked_connections: AtomicUsize,
     pub(crate) open_unstaked_connections: AtomicUsize,
+    pub(crate) peak_open_staked_connections: AtomicUsize,
+    pub(crate) peak_open_unstaked_connections: AtomicUsize,
     pub(crate) refused_connections_too_many_open_connections: AtomicUsize,
     pub(crate) outstanding_incoming_connection_attempts: AtomicUsize,
     pub(crate) total_incoming_connection_attempts: AtomicUsize,
@@ -382,23 +376,6 @@ impl StreamerStats {
                 i64
             ),
             (
-                "packets_allocated",
-                self.total_packets_allocated.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "packet_batches_allocated",
-                self.total_packet_batches_allocated
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "packets_sent_for_batching",
-                self.total_packets_sent_for_batching
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
                 "staked_packets_sent_for_batching",
                 self.total_staked_packets_sent_for_batching
                     .swap(0, Ordering::Relaxed),
@@ -407,18 +384,6 @@ impl StreamerStats {
             (
                 "unstaked_packets_sent_for_batching",
                 self.total_unstaked_packets_sent_for_batching
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "bytes_sent_for_batching",
-                self.total_bytes_sent_for_batching
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "chunks_sent_for_batching",
-                self.total_chunks_sent_for_batching
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
@@ -451,31 +416,21 @@ impl StreamerStats {
                 i64
             ),
             (
-                "packet_batch_send_error",
-                self.total_packet_batch_send_err.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "handle_chunk_to_packet_batcher_send_error",
-                self.total_handle_chunk_to_packet_batcher_send_err
+                "total_handle_chunk_to_packet_send_err",
+                self.total_handle_chunk_to_packet_send_err
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
-                "handle_chunk_to_packet_batcher_send_full_err",
-                self.total_handle_chunk_to_packet_batcher_send_full_err
+                "total_handle_chunk_to_packet_send_full_err",
+                self.total_handle_chunk_to_packet_send_full_err
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
-                "handle_chunk_to_packet_batcher_send_disconnected_err",
-                self.total_handle_chunk_to_packet_batcher_send_disconnected_err
+                "total_handle_chunk_to_packet_send_disconnected_err",
+                self.total_handle_chunk_to_packet_send_disconnected_err
                     .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "packet_batches_sent",
-                self.total_packet_batches_sent.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
@@ -556,11 +511,6 @@ impl StreamerStats {
                 i64
             ),
             (
-                "connection_rate_limiter_length",
-                self.connection_rate_limiter_length.load(Ordering::Relaxed),
-                i64
-            ),
-            (
                 "outstanding_incoming_connection_attempts",
                 self.outstanding_incoming_connection_attempts
                     .load(Ordering::Relaxed),
@@ -583,13 +533,19 @@ impl StreamerStats {
                 i64
             ),
             (
-                "open_staked_connections",
-                self.open_staked_connections.load(Ordering::Relaxed),
+                "peak_open_staked_connections",
+                self.peak_open_staked_connections.swap(
+                    self.open_staked_connections.load(Ordering::Relaxed),
+                    Ordering::Relaxed
+                ),
                 i64
             ),
             (
-                "open_unstaked_connections",
-                self.open_unstaked_connections.load(Ordering::Relaxed),
+                "peak_open_unstaked_connections",
+                self.peak_open_unstaked_connections.swap(
+                    self.open_unstaked_connections.load(Ordering::Relaxed),
+                    Ordering::Relaxed
+                ),
                 i64
             ),
             (
@@ -604,12 +560,12 @@ impl StreamerStats {
 
 #[derive(Clone)]
 pub struct QuicStreamerConfig {
-    pub max_connections_per_peer: usize,
+    pub max_connections_per_unstaked_peer: usize,
+    pub max_connections_per_staked_peer: usize,
     pub max_staked_connections: usize,
     pub max_unstaked_connections: usize,
     pub max_connections_per_ipaddr_per_min: u64,
     pub wait_for_chunk_timeout: Duration,
-    pub accumulator_channel_size: usize,
     pub num_threads: NonZeroUsize,
 }
 
@@ -628,12 +584,12 @@ pub struct SimpleQosQuicStreamerConfig {
 impl Default for QuicStreamerConfig {
     fn default() -> Self {
         Self {
-            max_connections_per_peer: 1,
+            max_connections_per_unstaked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER,
+            max_connections_per_staked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
             max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS,
             max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-            accumulator_channel_size: DEFAULT_ACCUMULATOR_CHANNEL_SIZE,
             num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
         }
     }
@@ -645,9 +601,9 @@ impl QuicStreamerConfig {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn default_for_tests() -> Self {
-        // Shrink the channel size to avoid a massive allocation for tests
         Self {
-            accumulator_channel_size: 100_000,
+            max_connections_per_unstaked_peer: 1,
+            max_connections_per_staked_peer: 1,
             num_threads: Self::DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
             ..Self::default()
         }
@@ -726,7 +682,8 @@ pub fn spawn_stake_wighted_qos_server(
         qos_config,
         quic_server_params.max_staked_connections,
         quic_server_params.max_unstaked_connections,
-        quic_server_params.max_connections_per_peer,
+        quic_server_params.max_connections_per_unstaked_peer,
+        quic_server_params.max_connections_per_unstaked_peer,
         stats.clone(),
         staked_nodes,
         cancel.clone(),
@@ -760,7 +717,7 @@ pub fn spawn_simple_qos_server(
 
     let simple_qos = Arc::new(SimpleQos::new(
         qos_config,
-        quic_server_params.max_connections_per_peer,
+        quic_server_params.max_connections_per_unstaked_peer,
         quic_server_params.max_staked_connections,
         stats.clone(),
         staked_nodes,
@@ -914,7 +871,7 @@ mod test {
             sender,
             staked_nodes,
             QuicStreamerConfig {
-                max_connections_per_peer: 2,
+                max_connections_per_unstaked_peer: 2,
                 ..QuicStreamerConfig::default_for_tests()
             },
             SwQosConfig::default(),

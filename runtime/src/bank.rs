@@ -47,7 +47,7 @@ use {
         rent_collector::RentCollector,
         runtime_config::RuntimeConfig,
         stake_account::StakeAccount,
-        stake_utils,
+        stake_history::StakeHistory as CowStakeHistory,
         stake_weighted_timestamp::{
             calculate_stake_weighted_timestamp, MaxAllowableDrift,
             MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST, MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2,
@@ -112,7 +112,6 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{measure::Measure, measure_time, measure_us},
     solana_message::{inner_instruction::InnerInstructions, AccountKeys, SanitizedMessage},
-    solana_native_token::LAMPORTS_PER_SOL,
     solana_packet::PACKET_DATA_SIZE,
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
@@ -167,7 +166,7 @@ use {
         transaction_accounts::KeyedAccountSharedData, TransactionReturnData,
     },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    solana_vote::vote_account::{VoteAccount, VoteAccountsHashMap},
+    solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
     std::{
         collections::{HashMap, HashSet},
         fmt,
@@ -1050,6 +1049,14 @@ impl AtomicBankHashStats {
     }
 }
 
+struct NewEpochBundle {
+    stake_history: CowStakeHistory,
+    vote_accounts: VoteAccounts,
+    rewards_calculation: Arc<PartitionedRewardsCalculation>,
+    calculate_activated_stake_time_us: u64,
+    update_rewards_with_thread_pool_time_us: u64,
+}
+
 impl Bank {
     fn default_with_accounts(accounts: Accounts) -> Self {
         let mut bank = Self {
@@ -1591,6 +1598,47 @@ impl Bank {
             .new_warmup_cooldown_rate_epoch(&self.epoch_schedule)
     }
 
+    /// Returns updated stake history and vote accounts that includes new
+    /// activated stake from the last epoch.
+    fn compute_new_epoch_caches_and_rewards(
+        &self,
+        thread_pool: &ThreadPool,
+        parent_epoch: Epoch,
+        reward_calc_tracer: Option<impl RewardCalcTracer>,
+        rewards_metrics: &mut RewardsMetrics,
+    ) -> NewEpochBundle {
+        // Add new entry to stakes.stake_history, set appropriate epoch and
+        // update vote accounts with warmed up stakes before saving a
+        // snapshot of stakes in epoch stakes
+        let stakes = self.stakes_cache.stakes();
+        let stake_delegations = stakes.stake_delegations_vec();
+        let ((stake_history, vote_accounts), calculate_activated_stake_time_us) =
+            measure_us!(stakes.calculate_activated_stake(
+                self.epoch(),
+                thread_pool,
+                self.new_warmup_cooldown_rate_epoch(),
+                &stake_delegations
+            ));
+        // Apply stake rewards and commission using new snapshots.
+        let (rewards_calculation, update_rewards_with_thread_pool_time_us) = measure_us!(self
+            .calculate_rewards(
+                &stake_history,
+                stake_delegations,
+                &vote_accounts,
+                parent_epoch,
+                reward_calc_tracer,
+                thread_pool,
+                rewards_metrics,
+            ));
+        NewEpochBundle {
+            stake_history,
+            vote_accounts,
+            rewards_calculation,
+            calculate_activated_stake_time_us,
+            update_rewards_with_thread_pool_time_us,
+        }
+    }
+
     /// process for the start of a new epoch
     fn process_new_epoch(
         &mut self,
@@ -1610,31 +1658,37 @@ impl Bank {
             thread_pool.install(|| { self.compute_and_apply_new_feature_activations() })
         );
 
-        // Add new entry to stakes.stake_history, set appropriate epoch and
-        // update vote accounts with warmed up stakes before saving a
-        // snapshot of stakes in epoch stakes
-        let (_, activate_epoch_time_us) = measure_us!(self.stakes_cache.activate_epoch(
-            epoch,
+        let mut rewards_metrics = RewardsMetrics::default();
+        let NewEpochBundle {
+            stake_history,
+            vote_accounts,
+            rewards_calculation,
+            calculate_activated_stake_time_us,
+            update_rewards_with_thread_pool_time_us,
+        } = self.compute_new_epoch_caches_and_rewards(
             &thread_pool,
-            self.new_warmup_cooldown_rate_epoch()
-        ));
+            parent_epoch,
+            reward_calc_tracer,
+            &mut rewards_metrics,
+        );
+
+        self.stakes_cache
+            .activate_epoch(epoch, stake_history, vote_accounts);
 
         // Save a snapshot of stakes for use in consensus and stake weighted networking
         let leader_schedule_epoch = self.epoch_schedule.get_leader_schedule_epoch(slot);
         let (_, update_epoch_stakes_time_us) =
             measure_us!(self.update_epoch_stakes(leader_schedule_epoch));
 
-        let mut rewards_metrics = RewardsMetrics::default();
-        // After saving a snapshot of stakes, apply stake rewards and commission
-        let (_, update_rewards_with_thread_pool_time_us) = measure_us!(self
-            .begin_partitioned_rewards(
-                reward_calc_tracer,
-                &thread_pool,
-                parent_epoch,
-                parent_slot,
-                parent_height,
-                &mut rewards_metrics,
-            ));
+        // Distribute rewards commission to vote accounts and cache stake rewards
+        // for partitioned distribution in the upcoming slots.
+        self.begin_partitioned_rewards(
+            parent_epoch,
+            parent_slot,
+            parent_height,
+            &rewards_calculation,
+            &rewards_metrics,
+        );
 
         report_new_epoch_metrics(
             epoch,
@@ -1643,7 +1697,7 @@ impl Bank {
             NewEpochTimings {
                 thread_pool_time_us,
                 apply_feature_activations_time_us,
-                activate_epoch_time_us,
+                calculate_activated_stake_time_us,
                 update_epoch_stakes_time_us,
                 update_rewards_with_thread_pool_time_us,
             },
@@ -2298,41 +2352,6 @@ impl Bank {
             prev_epoch_duration_in_years,
             validator_rate,
             foundation_rate,
-        }
-    }
-
-    fn filter_stake_delegations<'a>(
-        &self,
-        stakes: &'a Stakes<StakeAccount<Delegation>>,
-    ) -> Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)> {
-        if self
-            .feature_set
-            .is_active(&feature_set::stake_minimum_delegation_for_rewards::id())
-        {
-            let num_stake_delegations = stakes.stake_delegations().len();
-            let min_stake_delegation = stake_utils::get_minimum_delegation(
-                self.feature_set
-                    .is_active(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id()),
-            )
-            .max(LAMPORTS_PER_SOL);
-
-            let (stake_delegations, filter_time_us) = measure_us!(stakes
-                .stake_delegations()
-                .iter()
-                .filter(|(_stake_pubkey, cached_stake_account)| {
-                    cached_stake_account.delegation().stake >= min_stake_delegation
-                })
-                .collect::<Vec<_>>());
-
-            datapoint_info!(
-                "stake_account_filter_time",
-                ("filter_time_us", filter_time_us, i64),
-                ("num_stake_delegations_before", num_stake_delegations, i64),
-                ("num_stake_delegations_after", stake_delegations.len(), i64)
-            );
-            stake_delegations
-        } else {
-            stakes.stake_delegations().iter().collect()
         }
     }
 
@@ -3044,6 +3063,35 @@ impl Bank {
         transaction: &'a Tx,
     ) -> TransactionBatch<'a, 'a, Tx> {
         self.prepare_sanitized_batch(slice::from_ref(transaction))
+    }
+
+    pub fn resanitize_transaction_minimally(
+        &self,
+        transaction: &impl TransactionWithMeta,
+        sanitized_epoch: Epoch,
+        alt_invalidation_slot: Slot,
+    ) -> Result<()> {
+        // If the transaction was sanitized before this bank's epoch,
+        // additional checks are necessary.
+        if self.epoch() != sanitized_epoch {
+            // Reserved key set may have changed, so we must verify that
+            // no writable keys are reserved.
+            self.check_reserved_keys(transaction)?;
+        }
+
+        if self.slot() > alt_invalidation_slot {
+            // The address table lookup **may** have expired, but the
+            // expiration is not guaranteed since there may have been
+            // skipped slot.
+            // If the addresses still resolve here, then the transaction is still
+            // valid, and we can continue with processing.
+            // If they do not, then the ATL has expired and the transaction
+            // can be dropped.
+            let (_addresses, _deactivation_slot) =
+                self.load_addresses_from_ref(transaction.message_address_table_lookups())?;
+        }
+
+        Ok(())
     }
 
     /// Run transactions against a frozen bank without committing the results

@@ -49,6 +49,7 @@ pub enum AccountsFileError {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum StorageAccess {
     /// storages should be accessed by Mmap
+    #[deprecated(since = "4.0.0")]
     Mmap,
     /// storages should be accessed by File I/O
     /// ancient storages are created by 1-shot write to pack multiple accounts together more efficiently with new formats

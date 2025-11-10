@@ -209,7 +209,7 @@ impl<B: AsMut<[u8]>> BufRead for SequentialFileReader<B> {
             let num_buffers = state.buffers.len();
             let read_buf = &mut state.buffers[state.current_buf];
             match read_buf {
-                ReadBufState::Full(ref mut cursor) => {
+                ReadBufState::Full(cursor) => {
                     if !cursor.fill_buf()?.is_empty() {
                         // we have some data available
                         break true;

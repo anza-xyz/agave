@@ -208,7 +208,7 @@ mod serde_snapshot_tests {
         }
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     fn test_accounts_serialize(storage_access: StorageAccess) {
         agave_logger::setup();
         let (_accounts_dir, paths) = get_temp_accounts_paths(4).unwrap();
@@ -267,7 +267,7 @@ mod serde_snapshot_tests {
         assert_eq!(accounts_hash, daccounts_hash);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_remove_unrooted_slot_snapshot(storage_access: StorageAccess) {
         agave_logger::setup();
@@ -306,7 +306,7 @@ mod serde_snapshot_tests {
     }
 
     #[test_matrix(
-        [StorageAccess::File, StorageAccess::Mmap],
+        [StorageAccess::File, #[allow(deprecated)] StorageAccess::Mmap],
         [MarkObsoleteAccounts::Enabled, MarkObsoleteAccounts::Disabled],
         [MarkObsoleteAccounts::Enabled, MarkObsoleteAccounts::Disabled]
     )]
@@ -442,7 +442,7 @@ mod serde_snapshot_tests {
         }
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_accounts_db_serialize_zero_and_free(storage_access: StorageAccess) {
         agave_logger::setup();
@@ -556,7 +556,7 @@ mod serde_snapshot_tests {
         assert_eq!(calculated_capitalization, expected_capitalization);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_accounts_purge_chained_purge_before_snapshot_restore(storage_access: StorageAccess) {
         agave_logger::setup();
@@ -575,7 +575,7 @@ mod serde_snapshot_tests {
         });
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_accounts_purge_chained_purge_after_snapshot_restore(storage_access: StorageAccess) {
         agave_logger::setup();
@@ -598,7 +598,7 @@ mod serde_snapshot_tests {
         });
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_accounts_purge_long_chained_after_snapshot_restore(storage_access: StorageAccess) {
         agave_logger::setup();
@@ -672,7 +672,7 @@ mod serde_snapshot_tests {
         accounts.assert_load_account(current_slot, purged_pubkey2, 0);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_accounts_clean_after_snapshot_restore_then_old_revives(storage_access: StorageAccess) {
         agave_logger::setup();
@@ -804,7 +804,7 @@ mod serde_snapshot_tests {
         accounts.assert_load_account(current_slot, dummy_pubkey, dummy_lamport);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_shrink_stale_slots_processed(storage_access: StorageAccess) {
         agave_logger::setup();

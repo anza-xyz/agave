@@ -90,6 +90,16 @@ impl<'a> TransactionPtrBatch<'a> {
         }
     }
 
+    /// The number of transactions in this batch.
+    pub const fn len(&self) -> usize {
+        self.num_transactions
+    }
+
+    /// Whether the batch is empty.
+    pub const fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Iterator returning [`TransactionPtr`] for each transaction in the batch.
     pub fn iter(&'a self) -> impl Iterator<Item = TransactionPtr> + 'a {
         (0..self.num_transactions)

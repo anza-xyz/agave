@@ -1099,7 +1099,7 @@ pub const fn get_ancient_append_vec_capacity() -> u64 {
     );
     const PAGE_SIZE: u64 = 4 * 1024;
     const _: () = assert!(
-        RESULT % PAGE_SIZE == 0,
+        RESULT.is_multiple_of(PAGE_SIZE),
         "ancient append vec size should be a multiple of PAGE_SIZE"
     );
 
@@ -1535,7 +1535,11 @@ pub mod tests {
         // or all slots shrunk so no roots or storages should be removed
         for in_shrink_candidate_slots in [false, true] {
             for all_slots_shrunk in [false, true] {
-                for storage_access in [StorageAccess::Mmap, StorageAccess::File] {
+                for storage_access in [
+                    #[allow(deprecated)]
+                    StorageAccess::Mmap,
+                    StorageAccess::File,
+                ] {
                     for num_slots in 0..3 {
                         let (mut db, storages, slots, infos) = get_sample_storages(num_slots, None);
                         db.set_storage_access(storage_access);

@@ -120,7 +120,7 @@ async fn main() -> anyhow::Result<()> {
         sender,
         staked_nodes,
         QuicStreamerConfig {
-            max_connections_per_peer: cli.max_connections_per_peer,
+            max_connections_per_unstaked_peer: cli.max_connections_per_peer,
             ..QuicStreamerConfig::default()
         },
         SwQosConfig::default(),

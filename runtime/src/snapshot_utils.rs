@@ -341,49 +341,6 @@ fn is_bank_snapshot_complete(bank_snapshot_dir: impl AsRef<Path>) -> bool {
     version_path.is_file()
 }
 
-/// Writes the full snapshot slot file into the bank snapshot dir
-pub fn write_full_snapshot_slot_file(
-    bank_snapshot_dir: impl AsRef<Path>,
-    full_snapshot_slot: Slot,
-) -> io::Result<()> {
-    let full_snapshot_slot_path = bank_snapshot_dir
-        .as_ref()
-        .join(snapshot_paths::SNAPSHOT_FULL_SNAPSHOT_SLOT_FILENAME);
-    fs::write(
-        &full_snapshot_slot_path,
-        Slot::to_le_bytes(full_snapshot_slot),
-    )
-    .map_err(|err| {
-        IoError::other(format!(
-            "failed to write full snapshot slot file '{}': {err}",
-            full_snapshot_slot_path.display(),
-        ))
-    })
-}
-
-// Reads the full snapshot slot file from the bank snapshot dir
-pub fn read_full_snapshot_slot_file(bank_snapshot_dir: impl AsRef<Path>) -> io::Result<Slot> {
-    const SLOT_SIZE: usize = std::mem::size_of::<Slot>();
-    let full_snapshot_slot_path = bank_snapshot_dir
-        .as_ref()
-        .join(snapshot_paths::SNAPSHOT_FULL_SNAPSHOT_SLOT_FILENAME);
-    let full_snapshot_slot_file_metadata = fs::metadata(&full_snapshot_slot_path)?;
-    if full_snapshot_slot_file_metadata.len() != SLOT_SIZE as u64 {
-        let error_message = format!(
-            "invalid full snapshot slot file size: '{}' has {} bytes (should be {} bytes)",
-            full_snapshot_slot_path.display(),
-            full_snapshot_slot_file_metadata.len(),
-            SLOT_SIZE,
-        );
-        return Err(IoError::other(error_message));
-    }
-    let mut full_snapshot_slot_file = fs::File::open(&full_snapshot_slot_path)?;
-    let mut buffer = [0; SLOT_SIZE];
-    full_snapshot_slot_file.read_exact(&mut buffer)?;
-    let slot = Slot::from_le_bytes(buffer);
-    Ok(slot)
-}
-
 /// Writes files that indicate the bank snapshot is loadable by fastboot
 pub fn mark_bank_snapshot_as_loadable(bank_snapshot_dir: impl AsRef<Path>) -> io::Result<()> {
     let snapshot_fastboot_version_path = bank_snapshot_dir
@@ -404,18 +361,8 @@ pub fn mark_bank_snapshot_as_loadable(bank_snapshot_dir: impl AsRef<Path>) -> io
 
 /// Is this bank snapshot loadable?
 fn is_bank_snapshot_loadable(
-    bank_snapshot_dir: impl AsRef<Path>,
     fastboot_version: Option<&Version>,
 ) -> std::result::Result<bool, SnapshotFastbootError> {
-    // Legacy storages flushed file
-    // Read in v3.1 for backwards compatibility, can be removed in v3.2
-    let flushed_storages = bank_snapshot_dir
-        .as_ref()
-        .join(snapshot_paths::SNAPSHOT_STORAGES_FLUSHED_FILENAME);
-    if flushed_storages.is_file() {
-        return Ok(true);
-    }
-
     if let Some(fastboot_version) = fastboot_version {
         is_snapshot_fastboot_compatible(fastboot_version)
     } else {
@@ -443,10 +390,8 @@ pub fn get_highest_loadable_bank_snapshot(
 ) -> Option<BankSnapshotInfo> {
     let highest_bank_snapshot = get_highest_bank_snapshot(&snapshot_config.bank_snapshots_dir)?;
 
-    let is_bank_snapshot_loadable = is_bank_snapshot_loadable(
-        &highest_bank_snapshot.snapshot_dir,
-        highest_bank_snapshot.fastboot_version.as_ref(),
-    );
+    let is_bank_snapshot_loadable =
+        is_bank_snapshot_loadable(highest_bank_snapshot.fastboot_version.as_ref());
 
     match is_bank_snapshot_loadable {
         Ok(true) => Some(highest_bank_snapshot),
@@ -498,7 +443,7 @@ pub fn serialize_and_archive_snapshot_package(
     let SnapshotPackage {
         snapshot_kind,
         slot: snapshot_slot,
-        block_height,
+        block_height: _,
         hash: snapshot_hash,
         mut snapshot_storages,
         status_cache_slot_deltas,
@@ -518,19 +463,6 @@ pub fn serialize_and_archive_snapshot_package(
         write_version,
         should_flush_and_hard_link_storages,
     )?;
-
-    // now write the full snapshot slot file after serializing so this bank snapshot is loadable
-    let full_snapshot_archive_slot = match snapshot_kind {
-        SnapshotKind::FullSnapshot => snapshot_slot,
-        SnapshotKind::IncrementalSnapshot(base_slot) => base_slot,
-    };
-    write_full_snapshot_slot_file(&bank_snapshot_info.snapshot_dir, full_snapshot_archive_slot)
-        .map_err(|err| {
-            IoError::other(format!(
-                "failed to serialize snapshot slot {snapshot_slot}, block height {block_height}, \
-                 kind {snapshot_kind:?}: {err}",
-            ))
-        })?;
 
     let snapshot_archive_path = match snapshot_package.snapshot_kind {
         SnapshotKind::FullSnapshot => snapshot_paths::build_full_snapshot_archive_path(
@@ -1838,7 +1770,7 @@ pub fn should_take_full_snapshot(
     block_height: Slot,
     full_snapshot_archive_interval_slots: Slot,
 ) -> bool {
-    block_height % full_snapshot_archive_interval_slots == 0
+    block_height.is_multiple_of(full_snapshot_archive_interval_slots)
 }
 
 pub fn should_take_incremental_snapshot(
@@ -1846,7 +1778,7 @@ pub fn should_take_incremental_snapshot(
     incremental_snapshot_archive_interval_slots: Slot,
     latest_full_snapshot_slot: Option<Slot>,
 ) -> bool {
-    block_height % incremental_snapshot_archive_interval_slots == 0
+    block_height.is_multiple_of(incremental_snapshot_archive_interval_slots)
         && latest_full_snapshot_slot.is_some()
 }
 
@@ -2689,36 +2621,6 @@ mod tests {
             Some(SnapshotFileKind::Storage),
             get_snapshot_file_kind("1000.999")
         );
-    }
-
-    #[test]
-    fn test_full_snapshot_slot_file_good() {
-        let slot_written = 123_456_789;
-        let bank_snapshot_dir = TempDir::new().unwrap();
-        write_full_snapshot_slot_file(&bank_snapshot_dir, slot_written).unwrap();
-
-        let slot_read = read_full_snapshot_slot_file(&bank_snapshot_dir).unwrap();
-        assert_eq!(slot_read, slot_written);
-    }
-
-    #[test]
-    fn test_full_snapshot_slot_file_bad() {
-        const SLOT_SIZE: usize = std::mem::size_of::<Slot>();
-        let too_small = [1u8; SLOT_SIZE - 1];
-        let too_large = [1u8; SLOT_SIZE + 1];
-
-        for contents in [too_small.as_slice(), too_large.as_slice()] {
-            let bank_snapshot_dir = TempDir::new().unwrap();
-            let full_snapshot_slot_path = bank_snapshot_dir
-                .as_ref()
-                .join(snapshot_paths::SNAPSHOT_FULL_SNAPSHOT_SLOT_FILENAME);
-            fs::write(full_snapshot_slot_path, contents).unwrap();
-
-            let err = read_full_snapshot_slot_file(&bank_snapshot_dir).unwrap_err();
-            assert!(err
-                .to_string()
-                .starts_with("invalid full snapshot slot file size"));
-        }
     }
 
     #[test_case(0)]

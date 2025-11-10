@@ -142,7 +142,7 @@ impl VotingService {
         };
 
         let thread_hdl = Builder::new()
-            .name("solAlpenVoteService".to_string())
+            .name("solVotorVoteSvc".to_string())
             .spawn(move || {
                 let mut staked_validators_cache = StakedValidatorsCache::new(
                     bank_forks.clone(),
@@ -357,7 +357,7 @@ mod tests {
     }))]
     fn test_send_message(bls_op: BLSOp, expected_message: ConsensusMessage) {
         agave_logger::setup();
-        let (bls_sender, bls_receiver) = crossbeam_channel::unbounded();
+        let (bls_sender, bls_receiver) = crossbeam_channel::bounded(100);
         // Create listener thread on a random port we allocated and return SocketAddr to create VotingService
 
         // Bind to a random UDP port
@@ -370,8 +370,8 @@ mod tests {
         // Send a BLS message via the VotingService
         bls_sender.send(bls_op).unwrap();
 
-        // Start a quick streamer to handle quick control packets
-        let (sender, receiver) = crossbeam_channel::unbounded();
+        // Start a QUIC streamer to handle QUIC control packets
+        let (sender, receiver) = crossbeam_channel::bounded(100);
         let stakes = validator_keypairs
             .iter()
             .map(|x| (x.node_keypair.pubkey(), 100))

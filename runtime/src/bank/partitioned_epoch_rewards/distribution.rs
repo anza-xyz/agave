@@ -445,7 +445,7 @@ mod tests {
             0,
             42,
             num_partitions,
-            PointValue {
+            &PointValue {
                 rewards: total_rewards,
                 points: total_points,
             },

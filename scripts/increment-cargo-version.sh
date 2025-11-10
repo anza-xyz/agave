@@ -23,6 +23,7 @@ ignores=(
   .cargo
   target
   node_modules
+  ci/xtask
 )
 
 not_paths=()

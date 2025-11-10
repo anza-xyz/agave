@@ -62,21 +62,22 @@ fn message_passing_on_all_queues() {
         let mut session = server.accept().unwrap();
 
         // Send a tpu_to_pack message.
-        let mut slot = session.tpu_to_pack.producer.reserve().unwrap();
-        unsafe { *slot.as_mut() = tpu_to_pack };
+        session.tpu_to_pack.producer.try_write(tpu_to_pack).unwrap();
         session.tpu_to_pack.producer.commit();
 
         // Send a progress_tracker message.
-        let mut slot = session.progress_tracker.reserve().unwrap();
-        unsafe { *slot.as_mut() = progress_tracker };
+        session
+            .progress_tracker
+            .try_write(progress_tracker)
+            .unwrap();
         session.progress_tracker.commit();
 
         // Receive pack_to_worker messages.
         for (i, worker) in session.workers.iter_mut().enumerate() {
             let msg = loop {
                 worker.pack_to_worker.sync();
-                if let Some(slot) = worker.pack_to_worker.try_read() {
-                    break unsafe { *slot.as_ref() };
+                if let Some(msg) = worker.pack_to_worker.try_read() {
+                    break *msg;
                 }
             };
             assert_eq!(
@@ -90,16 +91,16 @@ fn message_passing_on_all_queues() {
 
         // Send worker_to_pack messages.
         for (i, worker) in session.workers.iter_mut().enumerate() {
-            let mut slot = worker.worker_to_pack.reserve().unwrap();
-            unsafe {
-                *slot.as_mut() = WorkerToPackMessage {
+            worker
+                .worker_to_pack
+                .try_write(WorkerToPackMessage {
                     batch: SharableTransactionBatchRegion {
                         num_transactions: worker_to_pack.batch.num_transactions + i as u8,
                         ..worker_to_pack.batch
                     },
                     ..worker_to_pack
-                }
-            };
+                })
+                .unwrap();
             worker.worker_to_pack.commit();
         }
     });
@@ -124,7 +125,7 @@ fn message_passing_on_all_queues() {
         let msg = loop {
             session.tpu_to_pack.sync();
             if let Some(msg) = session.tpu_to_pack.try_read() {
-                break unsafe { *msg.as_ref() };
+                break *msg;
             };
         };
         assert_eq!(msg, tpu_to_pack);
@@ -133,20 +134,20 @@ fn message_passing_on_all_queues() {
         let msg = loop {
             session.progress_tracker.sync();
             if let Some(msg) = session.progress_tracker.try_read() {
-                break unsafe { *msg.as_ref() };
+                break *msg;
             };
         };
         assert_eq!(msg, progress_tracker);
 
         // Send pack_to_worker messages.
         for (i, worker) in session.workers.iter_mut().enumerate() {
-            let mut slot = worker.pack_to_worker.reserve().unwrap();
-            unsafe {
-                *slot.as_mut() = PackToWorkerMessage {
+            worker
+                .pack_to_worker
+                .try_write(PackToWorkerMessage {
                     max_working_slot: pack_to_worker.max_working_slot + i as u64,
                     ..pack_to_worker
-                }
-            };
+                })
+                .unwrap();
             worker.pack_to_worker.commit();
         }
 
@@ -154,8 +155,8 @@ fn message_passing_on_all_queues() {
         for (i, worker) in session.workers.iter_mut().enumerate() {
             let msg = loop {
                 worker.worker_to_pack.sync();
-                if let Some(slot) = worker.worker_to_pack.try_read() {
-                    break unsafe { *slot.as_ref() };
+                if let Some(msg) = worker.worker_to_pack.try_read() {
+                    break *msg;
                 }
             };
             assert_eq!(

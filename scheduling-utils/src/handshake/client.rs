@@ -132,7 +132,7 @@ fn recv_response(stream: &mut UnixStream) -> Result<Vec<i32>, ClientHandshakeErr
     Ok(fds)
 }
 
-fn setup_session(
+pub fn setup_session(
     logon: &ClientLogon,
     fds: Vec<i32>,
 ) -> Result<ClientSession, ClientHandshakeError> {
@@ -161,7 +161,7 @@ fn setup_session(
 
     // Ensure worker_fds length matches expectations.
     if worker_fds.is_empty()
-        || worker_fds.len() % 2 != 0
+        || !worker_fds.len().is_multiple_of(2)
         || worker_fds.len() / 2 != logon.worker_count
     {
         return Err(ClientHandshakeError::ProtocolViolation);

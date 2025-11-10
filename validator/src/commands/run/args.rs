@@ -783,10 +783,30 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
         Arg::with_name("tpu_max_connections_per_peer")
             .long("tpu-max-connections-per-peer")
             .takes_value(true)
-            .default_value(&default_args.tpu_max_connections_per_peer)
             .validator(is_parsable::<u32>)
             .hidden(hidden_unless_forced())
-            .help("Controls the max concurrent connections per IpAddr."),
+            .help(
+                "Controls the max concurrent connections per IpAddr or staked identity.Overrides \
+                 tpu-max-connections-per-unstaked-peer and tpu-max-connections-per-staked-peer",
+            ),
+    )
+    .arg(
+        Arg::with_name("tpu_max_connections_per_unstaked_peer")
+            .long("tpu-max-connections-per-unstaked-peer")
+            .takes_value(true)
+            .default_value(&default_args.tpu_max_connections_per_unstaked_peer)
+            .validator(is_parsable::<u32>)
+            .hidden(hidden_unless_forced())
+            .help("Controls the max concurrent connections per IpAddr for unstaked clients."),
+    )
+    .arg(
+        Arg::with_name("tpu_max_connections_per_staked_peer")
+            .long("tpu-max-connections-per-staked-peer")
+            .takes_value(true)
+            .default_value(&default_args.tpu_max_connections_per_staked_peer)
+            .validator(is_parsable::<u32>)
+            .hidden(hidden_unless_forced())
+            .help("Controls the max concurrent connections per staked identity."),
     )
     .arg(
         Arg::with_name("tpu_max_staked_connections")
@@ -1099,12 +1119,13 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
     .arg(
         Arg::with_name("accounts_db_mark_obsolete_accounts")
             .long("accounts-db-mark-obsolete-accounts")
-            .help("Enables experimental obsolete account tracking")
+            .help("Controls obsolete account tracking")
+            .takes_value(true)
+            .possible_values(&["enabled", "disabled"])
             .long_help(
-                "Enables experimental obsolete account tracking. This feature tracks obsolete \
-                 accounts in the account storage entry allowing for earlier cleaning of obsolete \
-                 accounts in the storages and index. At this time this feature is not compatible \
-                 with booting from local snapshot state and must unpack from archives.",
+                "Controls obsolete account tracking. This feature tracks obsolete accounts in the \
+                 account storage entry allowing for earlier cleaning of obsolete accounts in the \
+                 storages and index. This value is currently enabled by default.",
             )
             .hidden(hidden_unless_forced()),
     )
@@ -1266,6 +1287,12 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                 "Pacing fill time in milliseconds for the central-scheduler block production \
                  method",
             ),
+    )
+    .arg(
+        Arg::with_name("enable_scheduler_bindings")
+            .long("enable-scheduler-bindings")
+            .takes_value(false)
+            .help("Enables external processes to connect and manage block production"),
     )
     .arg(
         Arg::with_name("unified_scheduler_handler_threads")
