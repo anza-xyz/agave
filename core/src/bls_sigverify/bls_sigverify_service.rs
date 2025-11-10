@@ -83,6 +83,27 @@ impl BLSSigverifyService {
             (num_packets as f32 / verify_time.as_s())
         );
 
+        Self::increase_stats(
+            stats,
+            &recv_duration,
+            &verify_time,
+            &dedup_time,
+            batches_len,
+            num_packets,
+            discard_or_dedup_fail,
+        );
+        Ok(())
+    }
+
+    fn increase_stats(
+        stats: &mut BLSPreVerifyPacketStats,
+        recv_duration: &Duration,
+        verify_time: &Measure,
+        dedup_time: &Measure,
+        batches_len: usize,
+        num_packets: usize,
+        discard_or_dedup_fail: usize,
+    ) {
         stats
             .recv_batches_us_hist
             .increment(recv_duration.as_micros() as u64)
@@ -101,8 +122,6 @@ impl BLSSigverifyService {
         stats.total_packets += num_packets;
         stats.total_dedup += discard_or_dedup_fail;
         stats.total_dedup_time_us += dedup_time.as_us() as usize;
-
-        Ok(())
     }
 
     fn verifier_service(
