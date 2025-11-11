@@ -25,6 +25,21 @@ pub(crate) enum AddVoteError {
     Slash,
 }
 
+/// Helper function to reduce some code duplication.
+fn insert_vote(
+    map: &mut BTreeMap<Pubkey, VoteMessage>,
+    voter: Pubkey,
+    vote: VoteMessage,
+) -> Result<(), AddVoteError> {
+    match map.entry(voter) {
+        Entry::Occupied(_) => Err(AddVoteError::Duplicate),
+        Entry::Vacant(e) => {
+            e.insert(vote);
+            Ok(())
+        }
+    }
+}
+
 /// Container to store per slot votes.
 struct InternalVotePool {
     /// The slot this instance of Votes is responsible for.
@@ -110,25 +125,13 @@ impl InternalVotePool {
                 if self.notar.contains_key(&voter) || self.finalize.contains_key(&voter) {
                     return Err(AddVoteError::Slash);
                 }
-                match self.skip.entry(voter) {
-                    Entry::Occupied(_) => Err(AddVoteError::Duplicate),
-                    Entry::Vacant(e) => {
-                        e.insert(vote);
-                        Ok(())
-                    }
-                }
+                insert_vote(&mut self.skip, voter, vote)
             }
             Vote::SkipFallback(_) => {
                 if self.finalize.contains_key(&voter) {
                     return Err(AddVoteError::Slash);
                 }
-                match self.skip_fallback.entry(voter) {
-                    Entry::Occupied(_) => Err(AddVoteError::Duplicate),
-                    Entry::Vacant(e) => {
-                        e.insert(vote);
-                        Ok(())
-                    }
-                }
+                insert_vote(&mut self.skip_fallback, voter, vote)
             }
             Vote::Finalize(_) => {
                 if self.skip.contains_key(&voter) || self.skip_fallback.contains_key(&voter) {
@@ -138,13 +141,7 @@ impl InternalVotePool {
                     debug_assert!(!map.is_empty());
                     return Err(AddVoteError::Slash);
                 }
-                match self.finalize.entry(voter) {
-                    Entry::Occupied(_) => Err(AddVoteError::Duplicate),
-                    Entry::Vacant(e) => {
-                        e.insert(vote);
-                        Ok(())
-                    }
-                }
+                insert_vote(&mut self.finalize, voter, vote)
             }
         }
     }
