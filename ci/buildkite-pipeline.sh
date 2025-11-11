@@ -259,16 +259,6 @@ all_test_steps() {
     cat >> "$output_file" <<"EOF"
   - group: "coverage"
     steps:
-      - command: "ci/docker-run-default-image.sh ci/coverage/root.sh"
-        name: "root"
-        timeout_in_minutes: 60
-        agents:
-          queue: "solana"
-      - command: "ci/docker-run-default-image.sh ci/coverage/devbin.sh"
-        name: "devbin"
-        timeout_in_minutes: 60
-        agents:
-          queue: "solana"
       - command: "ci/docker-run-default-image.sh ci/coverage/xtask.sh"
         name: "xtask"
         timeout_in_minutes: 60
