@@ -79,11 +79,7 @@ grcov_common_args=(
   --binary-path "$here/../target/cov/debug"
   --llvm
   --llvm-path "$llvm_path"
-  --ignore \*.cargo\*
-  --ignore \*build.rs
-  --ignore bench-tps\*
-  --ignore bench-streamer\*
-  --ignore local-cluster\*
+  --ignore /\*
 )
 
 grcov "${grcov_common_args[@]}" -t html -o "$here/../target/cov/${COMMIT_HASH}/coverage/html"
