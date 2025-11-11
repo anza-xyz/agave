@@ -35,6 +35,12 @@ Release channels have their own copy of this changelog:
 #### Deprecations
 * The `--monitor` flag with `agave-validator exit` is now deprecated. Operators can use the `monitor` command after `exit` instead.
 * The `--disable-accounts-disk-index` flag is now deprecated.
+* All monorepo crates falling outside the
+[backward compatibility policy](https://docs.anza.xyz/backwards-compatibility) are now
+deprecated, signaling their inclusion in the Agave Unstable API. Enable the
+`agave-unstable-api` crate feature to acknowledge use of an interface that may break
+without warning. From v4.0.0 onward, symbols in these crates will be unavailable without
+`agave-unstable-api` enabled.
 
 #### Changes
 * The accounts index is now kept entirely in memory by default.
