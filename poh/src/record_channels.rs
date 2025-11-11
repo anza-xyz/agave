@@ -29,28 +29,25 @@ use {
 /// service can always process all sent records correctly without dropping any
 /// i.e. once sent records can be guaranteed to be recorded.
 pub fn record_channels(track_transaction_indexes: bool) -> (RecordSender, RecordReceiver) {
-    const CAPACITY: usize = BankIdAllowedInsertions::MAX_ALLOWED_INSERTIONS as usize;
+    const CAPACITY: usize = RecordChannelStatus::MAX_ALLOWED_INSERTIONS as usize;
     let (sender, receiver) = bounded(CAPACITY);
 
     // Begin in a shutdown state.
-    let bank_id_allowed_insertions = BankIdAllowedInsertions::new_shutdown();
+    let status = RecordChannelStatus::new_shutdown(CAPACITY as u64);
     let transaction_indexes = if track_transaction_indexes {
         Some(Arc::new(Mutex::new(0)))
     } else {
         None
     };
 
-    let active_senders = Arc::new(AtomicU64::new(0));
     (
         RecordSender {
-            active_senders: active_senders.clone(),
-            bank_id_allowed_insertions: bank_id_allowed_insertions.clone(),
+            status: status.clone(),
             sender,
             transaction_indexes: transaction_indexes.clone(),
         },
         RecordReceiver {
-            active_senders,
-            bank_id_allowed_insertions,
+            status,
             receiver,
             capacity: CAPACITY as u64,
             transaction_indexes,
@@ -77,8 +74,7 @@ pub enum RecordSenderError {
 pub struct RecordSender {
     /// Used to track active senders for the current bank id. Used so that the receiver
     /// side can determine that no more sends are in-flight while shutting down.
-    active_senders: Arc<AtomicU64>,
-    bank_id_allowed_insertions: BankIdAllowedInsertions,
+    status: RecordChannelStatus,
     sender: Sender<Record>,
     transaction_indexes: Option<Arc<Mutex<usize>>>,
 }
@@ -104,14 +100,14 @@ impl RecordSender {
             // batches, the channel is full - just return immediately.
             // If the `record`'s bank_id is different from the current bank_id,
             // return immediately.
-            let current_bank_id_allowed_insertions =
-                self.bank_id_allowed_insertions.0.load(Ordering::Acquire);
-            let (bank_id, allowed_insertions) = (
-                BankIdAllowedInsertions::bank_id(current_bank_id_allowed_insertions),
-                BankIdAllowedInsertions::allowed_insertions(current_bank_id_allowed_insertions),
+            let current_status = self.status.0.load(Ordering::Acquire);
+            let (is_shutdown, bank_id, allowed_insertions) = (
+                RecordChannelStatus::is_shutdown(current_status),
+                RecordChannelStatus::bank_id(current_status),
+                RecordChannelStatus::allowed_insertions(current_status),
             );
 
-            if bank_id == BankIdAllowedInsertions::DISABLED_BANK_ID {
+            if is_shutdown {
                 return Err(RecordSenderError::Shutdown);
             }
             if bank_id != record.bank_id {
@@ -121,33 +117,32 @@ impl RecordSender {
                 return Err(RecordSenderError::Full);
             }
 
-            let new_bank_id_allowed_insertions = BankIdAllowedInsertions::encoded_value(
+            let new_status = RecordChannelStatus::encoded_value(
+                false,
                 bank_id,
                 allowed_insertions.wrapping_sub(record.transaction_batches.len() as u64),
             );
 
-            // Increment this before CAS so the receiver can see this send is in-flight.
-            self.active_senders.fetch_add(1, Ordering::AcqRel);
-
+            // PERF: Can just save the return value in a local to avoid needing to reload the value
+            // on loop.
             if self
-                .bank_id_allowed_insertions
+                .status
                 .0
                 .compare_exchange(
-                    current_bank_id_allowed_insertions,
-                    new_bank_id_allowed_insertions,
+                    current_status,
+                    new_status,
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 )
                 .is_err()
             {
-                // Failed to reserve space, decrement active senders and try again.
-                self.active_senders.fetch_sub(1, Ordering::AcqRel);
+                // Failed to reserve space, re-acquire the current_bank_id_allowed_insertions &
+                // retry.
                 continue;
             }
 
             match self.sender.try_send(record) {
                 Ok(_) => {
-                    self.active_senders.fetch_sub(1, Ordering::AcqRel);
                     return Ok(transaction_indexes.map(|mut transaction_indexes| {
                         let transaction_starting_index = *transaction_indexes;
                         *transaction_indexes += num_transactions;
@@ -156,7 +151,6 @@ impl RecordSender {
                 }
                 Err(err) => {
                     assert!(err.is_disconnected());
-                    self.active_senders.fetch_sub(1, Ordering::AcqRel);
                     return Err(RecordSenderError::Disconnected);
                 }
             }
@@ -169,8 +163,7 @@ impl RecordSender {
 /// and can restart the channel for a new bank id, re-enabling sends.
 pub struct RecordReceiver {
     capacity: u64,
-    active_senders: Arc<AtomicU64>,
-    bank_id_allowed_insertions: BankIdAllowedInsertions,
+    status: RecordChannelStatus,
     receiver: Receiver<Record>,
     transaction_indexes: Option<Arc<Mutex<usize>>>,
 }
@@ -187,19 +180,20 @@ impl RecordReceiver {
 
     /// Shutdown the channel immediately.
     pub fn shutdown(&mut self) {
-        self.bank_id_allowed_insertions.shutdown();
+        self.status.shutdown();
     }
 
     /// Check if the channel is shutdown.
     pub fn is_shutdown(&self) -> bool {
-        BankIdAllowedInsertions::bank_id(self.bank_id_allowed_insertions.0.load(Ordering::Acquire))
-            == BankIdAllowedInsertions::DISABLED_BANK_ID
+        RecordChannelStatus::is_shutdown(self.status.0.load(Ordering::Acquire))
     }
 
     /// Re-enable the channel after a shutdown.
     pub fn restart(&mut self, bank_id: BankId) {
-        assert!(bank_id <= BankIdAllowedInsertions::MAX_BANK_ID);
+        assert!(bank_id <= RecordChannelStatus::MAX_BANK_ID);
         assert!(self.receiver.is_empty()); // Should be empty before restarting.
+        assert!(self.is_shutdown());
+        assert_eq!(self.status.load_allowed_insertions(), self.capacity);
 
         // Reset transaction indexes if tracking them - BEFORE allowing new insertions.
         let transaction_indexes_lock =
@@ -211,10 +205,11 @@ impl RecordReceiver {
                     lock
                 });
 
-        self.bank_id_allowed_insertions.0.store(
-            BankIdAllowedInsertions::encoded_value(bank_id, self.capacity),
+        self.status.0.store(
+            RecordChannelStatus::encoded_value(false, bank_id, self.capacity),
             Ordering::Release,
         );
+        assert!(!self.is_shutdown());
 
         // Drop lock AFTER allowing new insertions. This makes any sends grabbing locks
         // wait until after the bank id has been changed. Meaning the CAS in try_send
@@ -229,21 +224,14 @@ impl RecordReceiver {
 
     /// Channel is empty and there are no active threads attempting to send.
     pub fn is_safe_to_restart(&self) -> bool {
-        // The order here is important. active_senders must be checked first.
-        // If checked after is_empty, we could have a race:
-        // 1) sender has not sent yet, active_senders = 1. is_empty = true.
-        // 2) sender sends, decrements active_senders = 0.
-        // 3) receiver checks active_senders == 0 && is_empty == true,
-        //    thinks the channel is empty with no active senders, but there is
-        //    actually a record in the channel now!
-        self.active_senders.load(Ordering::Acquire) == 0 && self.receiver.is_empty()
+        self.status.load_allowed_insertions() == self.capacity
     }
 
     /// Try to receive a record from the channel.
     pub fn try_recv(&self) -> Result<Record, TryRecvError> {
         // In order to avoid returning None when there was an active sender
         // we load `active_senders` prior to try_recv.
-        let mut sender_active = self.active_senders.load(Ordering::Acquire) > 0;
+        let mut sender_active = self.status.load_allowed_insertions() < self.capacity;
 
         loop {
             match self.receiver.try_recv() {
@@ -258,7 +246,7 @@ impl RecordReceiver {
                         //   **after** checking the channel again.
                         // Both cases here are handled if we update `sender_active` and
                         // go to the next iteration of the loop.
-                        sender_active = self.active_senders.load(Ordering::Acquire) > 0;
+                        sender_active = self.status.load_allowed_insertions() < self.capacity;
                         continue;
                     }
                     return Err(TryRecvError::Empty);
@@ -278,9 +266,7 @@ impl RecordReceiver {
     fn on_received_record(&self, num_batches: u64) {
         // The record has been received and processed, so increment the number
         // of allowed insertions, so that new records can be sent.
-        self.bank_id_allowed_insertions
-            .0
-            .fetch_add(num_batches, Ordering::AcqRel);
+        self.status.0.fetch_add(num_batches, Ordering::AcqRel);
     }
 }
 
@@ -297,42 +283,63 @@ impl RecordReceiver {
 /// sent/inserted into the channel, and incremented when something is received
 /// from the channel.
 #[derive(Clone, Debug)]
-struct BankIdAllowedInsertions(Arc<AtomicU64>);
+struct RecordChannelStatus(Arc<AtomicU64>);
 
-impl BankIdAllowedInsertions {
+impl RecordChannelStatus {
+    /// Total bits.
     const NUM_BITS: u64 = 64;
-    /// Number of bits used to track allowed insertions.
+    /// Bits used to track shutdown status.
+    const SHUTDOWN_BITS: u64 = 1;
+    /// Bits used to track allowed insertions.
     const ALLOWED_INSERTIONS_BITS: u64 = 10;
-    const BANK_ID_BITS: u64 = Self::NUM_BITS - Self::ALLOWED_INSERTIONS_BITS;
+    /// Bits used to track bank ID.
+    const BANK_ID_BITS: u64 = Self::NUM_BITS - Self::SHUTDOWN_BITS - Self::ALLOWED_INSERTIONS_BITS;
 
-    const DISABLED_BANK_ID: BankId = (1 << Self::BANK_ID_BITS) - 1;
-    const MAX_BANK_ID: BankId = Self::DISABLED_BANK_ID - 1;
+    const MAX_BANK_ID: BankId = (1 << Self::BANK_ID_BITS) - 1;
     const MAX_ALLOWED_INSERTIONS: u64 = (1 << Self::ALLOWED_INSERTIONS_BITS) - 1;
 
-    const SHUTDOWN: u64 = Self::encoded_value(Self::DISABLED_BANK_ID, 0);
+    const SHUTDOWN_MASK: u64 = 1 << 63;
 
     /// Create a new `BankIdAllowedInsertions` with state consistent with a
     /// shutdown state:
     /// - bank_id = `DISABLED_BANK_ID`
     /// - allowed_insertions = 0
-    fn new_shutdown() -> Self {
-        Self(Arc::new(AtomicU64::new(Self::SHUTDOWN)))
+    fn new_shutdown(capacity: u64) -> Self {
+        Self(Arc::new(AtomicU64::new(Self::encoded_value(
+            true, 0, capacity,
+        ))))
     }
 
     /// Shutdown the channel immediately.
     fn shutdown(&self) {
-        self.0.store(Self::SHUTDOWN, Ordering::Release);
+        self.0.fetch_or(Self::SHUTDOWN_MASK, Ordering::Release);
     }
 
-    const fn encoded_value(bank_id: BankId, allowed_insertions: u64) -> u64 {
-        assert!(bank_id <= Self::DISABLED_BANK_ID);
+    fn load_allowed_insertions(&self) -> u64 {
+        Self::allowed_insertions(self.0.load(Ordering::Acquire))
+    }
+
+    const fn encoded_value(shutdown: bool, bank_id: BankId, allowed_insertions: u64) -> u64 {
+        assert!(bank_id <= Self::MAX_BANK_ID);
         assert!(allowed_insertions <= Self::MAX_ALLOWED_INSERTIONS);
-        (bank_id << Self::ALLOWED_INSERTIONS_BITS) | allowed_insertions
+
+        let shutdown = match shutdown {
+            true => Self::SHUTDOWN_MASK,
+            false => 0,
+        };
+        let bank_id = bank_id << Self::ALLOWED_INSERTIONS_BITS;
+
+        shutdown | bank_id | allowed_insertions
+    }
+
+    /// Whether the current channel is in shutdown mode.
+    fn is_shutdown(value: u64) -> bool {
+        value & Self::SHUTDOWN_MASK != 0
     }
 
     /// The current bank_id, or [`Self::DISABLED_BANK_ID`] if shutdown.
     fn bank_id(value: u64) -> BankId {
-        (value >> Self::ALLOWED_INSERTIONS_BITS) & Self::DISABLED_BANK_ID
+        (value & !Self::SHUTDOWN_MASK) >> Self::ALLOWED_INSERTIONS_BITS
     }
 
     /// How many insertions/sends are allowed at this time.
@@ -353,6 +360,51 @@ mod tests {
                 .collect(),
             mixins: (0..num_batches).map(|_| Hash::default()).collect(),
         }
+    }
+
+    #[test]
+    fn test_encoded_value() {
+        let active = RecordChannelStatus::encoded_value(false, 100, 64);
+        let bank_id = RecordChannelStatus::bank_id(active);
+        let allowed_insertions = RecordChannelStatus::allowed_insertions(active);
+        assert_eq!(bank_id, 100);
+        assert_eq!(allowed_insertions, 64);
+    }
+
+    #[test]
+    fn test_shutdown_lifecycle() {
+        let status = RecordChannelStatus::new_shutdown(64);
+
+        // Assert - Initializes shutdown.
+        let val = status.0.load(Ordering::Relaxed);
+        assert!(RecordChannelStatus::is_shutdown(val));
+
+        // Assert - Storing a new encoded value clears shutdown.
+        status.0.store(
+            RecordChannelStatus::encoded_value(false, 100, 64),
+            Ordering::Relaxed,
+        );
+        let val = status.0.load(Ordering::Relaxed);
+        assert!(!RecordChannelStatus::is_shutdown(val));
+        assert_eq!(RecordChannelStatus::bank_id(val), 100);
+        assert_eq!(RecordChannelStatus::allowed_insertions(val), 64);
+
+        // Assert - Shutdown flag doesn't clobber bank & insertions.
+        status.shutdown();
+        let val = status.0.load(Ordering::Relaxed);
+        assert!(RecordChannelStatus::is_shutdown(val));
+        assert_eq!(RecordChannelStatus::bank_id(val), 100);
+        assert_eq!(RecordChannelStatus::allowed_insertions(val), 64);
+
+        // Assert - Can set the next bank and reset the shutdown.
+        status.0.store(
+            RecordChannelStatus::encoded_value(false, 101, 64),
+            Ordering::Relaxed,
+        );
+        let val = status.0.load(Ordering::Relaxed);
+        assert!(!RecordChannelStatus::is_shutdown(val));
+        assert_eq!(RecordChannelStatus::bank_id(val), 101);
+        assert_eq!(RecordChannelStatus::allowed_insertions(val), 64);
     }
 
     #[test]
@@ -502,18 +554,14 @@ mod shuttle_tests {
                 }
 
                 // Snapshot active_senders *before* try_recv
-                let active_at_start = sender.active_senders.load(Ordering::Acquire);
+                let safe_to_restart = receiver.is_safe_to_restart();
 
                 // Perform try_recv
                 let result = receiver.try_recv();
 
                 // Only fail if it returned None *and* we know there was an active sender at start
-                if result.is_err() && active_at_start > 0 {
-                    panic!(
-                        "try_recv returned None while a sender was active at start of call \
-                         (active_senders={})",
-                        active_at_start
-                    );
+                if result.is_err() && !safe_to_restart {
+                    panic!("try_recv returned None while a sender was active at start of call");
                 }
             },
             NUM_TEST_RUNS,
