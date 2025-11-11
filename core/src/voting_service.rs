@@ -185,7 +185,7 @@ impl VotingService {
             VoteOp::PushVote {
                 tx, tower_slots, ..
             } => {
-                cluster_info.push_vote(&tower_slots, tx, &cluster_info.keypair());
+                cluster_info.push_vote(&tower_slots, tx);
             }
             VoteOp::RefreshVote {
                 tx,
