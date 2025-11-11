@@ -831,7 +831,7 @@ mod tests {
             consensus_message::{ConsensusMessage, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
             vote::Vote,
         },
-        crossbeam_channel::{bounded, Receiver, RecvTimeoutError},
+        crossbeam_channel::{bounded, Receiver, TryRecvError},
         parking_lot::RwLock as PlRwLock,
         solana_bls_signatures::{
             keypair::Keypair as BLSKeypair, signature::Signature as BLSSignature,
@@ -859,11 +859,6 @@ mod tests {
             time::Instant,
         },
     };
-
-    // Empirically derived to be long enough to allow the event handler time to
-    // process events but also short enough to not delay test execution for too
-    // long.
-    const TEST_SHORT_TIMEOUT: Duration = Duration::from_millis(5);
 
     struct EventHandlerTestContext {
         exit: Arc<AtomicBool>,
@@ -1198,32 +1193,24 @@ mod tests {
                 "Did not find expected vote: {expected_message:?}",
             );
             // Also check own_vote_receiver
-            let own_vote = self
-                .own_vote_receiver
-                .recv_timeout(TEST_SHORT_TIMEOUT)
-                .unwrap();
+            let own_vote = self.own_vote_receiver.try_recv().unwrap();
             assert_eq!(own_vote, expected_message);
         }
 
         fn check_for_commitment(&mut self, expected_type: CommitmentType, expected_slot: Slot) {
-            let commitment = self
-                .commitment_receiver
-                .recv_timeout(TEST_SHORT_TIMEOUT)
-                .unwrap();
+            let commitment = self.commitment_receiver.try_recv().unwrap();
             assert_eq!(commitment.commitment_type, expected_type);
             assert_eq!(commitment.slot, expected_slot);
         }
 
         fn check_no_vote_or_commitment(&self) {
             assert_eq!(
-                self.bls_receiver.recv_timeout(TEST_SHORT_TIMEOUT).err(),
-                Some(RecvTimeoutError::Timeout)
+                self.bls_receiver.try_recv().err(),
+                Some(TryRecvError::Empty)
             );
             assert_eq!(
-                self.commitment_receiver
-                    .recv_timeout(TEST_SHORT_TIMEOUT)
-                    .err(),
-                Some(RecvTimeoutError::Timeout)
+                self.commitment_receiver.try_recv().err(),
+                Some(TryRecvError::Empty)
             );
         }
 
@@ -1247,7 +1234,7 @@ mod tests {
         fn check_for_metrics_event(&mut self, expected: ConsensusMetricsEvent) {
             let event = self
                 .consensus_metrics_receiver
-                .recv_timeout(TEST_SHORT_TIMEOUT)
+                .try_recv()
                 .expect("Should receive metrics event");
             assert!(event.1.contains(&expected));
         }
@@ -1516,17 +1503,11 @@ mod tests {
         test_context.send_produce_window_event(1, 3, (0, Hash::default()));
 
         // Check that leader_window_notifier is updated
-        let window_info = test_context
+        let mut guard = test_context
             .leader_window_notifier
             .window_info
             .lock()
             .unwrap();
-        let (mut guard, timeout_res) = test_context
-            .leader_window_notifier
-            .window_notification
-            .wait_timeout_while(window_info, TEST_SHORT_TIMEOUT, |wi| wi.is_none())
-            .unwrap();
-        assert!(!timeout_res.timed_out());
         let received_leader_window_info = guard.take().unwrap();
         assert_eq!(received_leader_window_info.start_slot, 1);
         assert_eq!(received_leader_window_info.end_slot, 3);
@@ -1539,17 +1520,11 @@ mod tests {
         // Suddenly I found out I produced block 1 already, send new produce window event
         let block_id_1 = Hash::new_unique();
         test_context.send_produce_window_event(2, 3, (1, block_id_1));
-        let window_info = test_context
+        let mut guard = test_context
             .leader_window_notifier
             .window_info
             .lock()
             .unwrap();
-        let (mut guard, timeout_res) = test_context
-            .leader_window_notifier
-            .window_notification
-            .wait_timeout_while(window_info, TEST_SHORT_TIMEOUT, |wi| wi.is_none())
-            .unwrap();
-        assert!(!timeout_res.timed_out());
         let received_leader_window_info = guard.take().unwrap();
         assert_eq!(received_leader_window_info.start_slot, 2);
         assert_eq!(received_leader_window_info.end_slot, 3);
@@ -1579,10 +1554,7 @@ mod tests {
         // Now we got finalized event for slot 1
         test_context.send_finalized_event((1, block_id_1), true);
         // Listen on drop bank receiver, it should get bank 0
-        let dropped_banks = test_context
-            .drop_bank_receiver
-            .recv_timeout(TEST_SHORT_TIMEOUT)
-            .unwrap();
+        let dropped_banks = test_context.drop_bank_receiver.try_recv().unwrap();
         assert_eq!(dropped_banks.len(), 1);
         assert_eq!(dropped_banks[0].slot(), 0);
         // The bank forks root should be updated to 1
@@ -1697,11 +1669,8 @@ mod tests {
         test_context.send_parent_ready_event(1, (0, Hash::default()));
         // There should be no votes but we should see commitments for hot spares
         assert_eq!(
-            test_context
-                .bls_receiver
-                .recv_timeout(TEST_SHORT_TIMEOUT)
-                .err(),
-            Some(RecvTimeoutError::Timeout)
+            test_context.bls_receiver.try_recv().err(),
+            Some(crossbeam_channel::TryRecvError::Empty)
         );
         test_context.check_for_commitment(CommitmentType::Notarize, 1);
 
