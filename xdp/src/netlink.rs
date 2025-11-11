@@ -237,26 +237,14 @@ pub(crate) fn is_supported_ipv4_route_header(msg: &NetlinkMessage) -> bool {
     is_supported_route_type(rt.rtm_type)
 }
 
-#[repr(C)]
-#[allow(non_camel_case_types)]
-struct ndmsg_hdr {
-    ndm_family: u8,
-    ndm_pad1: u8,
-    ndm_pad2: u16,
-    ndm_ifindex: i32,
-    ndm_state: u16,
-    ndm_flags: u8,
-    ndm_type: u8,
-}
-
 // Only keep neighbors that are of interest
 // This matches logic in NeighborEntry::is_valid()
 #[inline]
 pub(crate) fn is_supported_ipv4_neigh_header(msg: &NetlinkMessage) -> bool {
-    if msg.data.len() < mem::size_of::<ndmsg_hdr>() {
+    if msg.data.len() < mem::size_of::<ndmsg>() {
         return false;
     }
-    let nd = unsafe { ptr::read_unaligned(msg.data.as_ptr() as *const ndmsg_hdr) };
+    let nd = unsafe { ptr::read_unaligned(msg.data.as_ptr() as *const ndmsg) };
 
     if nd.ndm_family as i32 != AF_INET {
         return false;
@@ -450,12 +438,12 @@ impl NeighborEntry {
 #[allow(non_camel_case_types)]
 struct ndmsg {
     ndm_family: u8,
-    ndm_pad1: u8,
-    ndm_pad2: u16,
+    _ndm_pad1: u8,
+    _ndm_pad2: u16,
     ndm_ifindex: i32,
     ndm_state: u16,
-    ndm_flags: u8,
-    ndm_type: u8,
+    _ndm_flags: u8,
+    _ndm_type: u8,
 }
 
 #[repr(C)]
