@@ -86,7 +86,9 @@ impl PartitionedStakeRewards {
     }
 
     unsafe fn assume_init(&mut self, num_stake_rewards: usize) {
-        self.rewards.set_len(self.rewards.capacity());
+        unsafe {
+            self.rewards.set_len(self.rewards.capacity());
+        }
         self.num_rewards = num_stake_rewards;
     }
 }

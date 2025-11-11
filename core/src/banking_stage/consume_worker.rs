@@ -995,16 +995,18 @@ pub(crate) mod external {
         /// - destination is appropriately sized
         /// - destination does not overlap with loaded_addresses allocation
         unsafe fn copy_loaded_addresses(loaded_addresses: &LoadedAddresses, dest: NonNull<Pubkey>) {
-            core::ptr::copy_nonoverlapping(
-                loaded_addresses.writable.as_ptr(),
-                dest.as_ptr(),
-                loaded_addresses.writable.len(),
-            );
-            core::ptr::copy_nonoverlapping(
-                loaded_addresses.readonly.as_ptr(),
-                dest.add(loaded_addresses.writable.len()).as_ptr(),
-                loaded_addresses.readonly.len(),
-            );
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    loaded_addresses.writable.as_ptr(),
+                    dest.as_ptr(),
+                    loaded_addresses.writable.len(),
+                );
+                core::ptr::copy_nonoverlapping(
+                    loaded_addresses.readonly.as_ptr(),
+                    dest.add(loaded_addresses.writable.len()).as_ptr(),
+                    loaded_addresses.readonly.len(),
+                );
+            }
         }
 
         /// Returns `true` if a message is valid and can be processed.
