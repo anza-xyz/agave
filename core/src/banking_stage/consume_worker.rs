@@ -2261,8 +2261,8 @@ mod tests {
             mint_keypair,
             genesis_config,
             bank,
-            ref mut record_receiver,
-            ref mut shared_leader_state,
+            record_receiver,
+            shared_leader_state,
             consume_sender,
             consumed_receiver,
             ..
@@ -2315,8 +2315,8 @@ mod tests {
             mint_keypair,
             genesis_config,
             bank,
-            ref mut record_receiver,
-            ref mut shared_leader_state,
+            record_receiver,
+            shared_leader_state,
             consume_sender,
             consumed_receiver,
             ..
@@ -2380,8 +2380,8 @@ mod tests {
             mint_keypair,
             genesis_config,
             bank,
-            ref mut record_receiver,
-            ref mut shared_leader_state,
+            record_receiver,
+            shared_leader_state,
             consume_sender,
             consumed_receiver,
             ..
@@ -2459,8 +2459,8 @@ mod tests {
             mint_keypair,
             genesis_config,
             bank,
-            ref mut record_receiver,
-            ref mut shared_leader_state,
+            record_receiver,
+            shared_leader_state,
             consume_sender,
             consumed_receiver,
             ..

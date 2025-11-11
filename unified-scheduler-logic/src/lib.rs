@@ -785,7 +785,7 @@ impl UsageQueueInner {
         match self {
             Self::Fifo { current_usage, .. } => {
                 match current_usage {
-                    Some(FifoUsage::Readonly(ref mut count)) => match requested_usage {
+                    Some(FifoUsage::Readonly(count)) => match requested_usage {
                         RequestedUsage::Readonly => {
                             if count.is_one() {
                                 is_newly_lockable = true;

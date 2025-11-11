@@ -3,7 +3,6 @@ use {
     crate::{
         crds_data::MAX_WALLCLOCK,
         define_tlv_enum,
-        legacy_contact_info::LegacyContactInfo,
         tlv::{self, TlvDecodeError, TlvRecord},
     },
     assert_matches::{assert_matches, debug_assert_matches},
@@ -411,8 +410,14 @@ impl ContactInfo {
         }
     }
 
+    /// port must not be 0
+    /// ip must be specified and not multicast
     pub fn is_valid_address(addr: &SocketAddr, socket_addr_space: &SocketAddrSpace) -> bool {
-        LegacyContactInfo::is_valid_address(addr, socket_addr_space)
+        addr.port() != 0u16 && Self::is_valid_ip(addr.ip()) && socket_addr_space.check(addr)
+    }
+
+    fn is_valid_ip(addr: IpAddr) -> bool {
+        !(addr.is_unspecified() || addr.is_multicast())
     }
 
     /// New random ContactInfo for tests and simulations.
@@ -693,6 +698,23 @@ impl solana_frozen_abi::abi_example::AbiExample for ContactInfo {
             cache: EMPTY_SOCKET_ADDR_CACHE,
         }
     }
+}
+
+#[macro_export]
+macro_rules! socketaddr {
+    ($ip:expr, $port:expr) => {
+        std::net::SocketAddr::from((std::net::Ipv4Addr::from($ip), $port))
+    };
+    ($str:expr) => {{
+        $str.parse::<std::net::SocketAddr>().unwrap()
+    }};
+}
+
+#[macro_export]
+macro_rules! socketaddr_any {
+    () => {
+        socketaddr!(std::net::Ipv4Addr::UNSPECIFIED, 0)
+    };
 }
 
 #[cfg(test)]
@@ -976,72 +998,6 @@ mod tests {
             let other: ContactInfo = bincode::deserialize(&bytes).unwrap();
             assert_eq!(node, other);
         }
-    }
-
-    fn cross_verify_with_legacy(node: &ContactInfo) {
-        let old = LegacyContactInfo::try_from(node).unwrap();
-        assert_eq!(old.gossip().unwrap(), node.gossip().unwrap());
-        assert_eq!(old.rpc().unwrap(), node.rpc().unwrap());
-        assert_eq!(old.rpc_pubsub().unwrap(), node.rpc_pubsub().unwrap());
-        assert_eq!(
-            old.serve_repair(Protocol::QUIC).unwrap(),
-            node.serve_repair(Protocol::QUIC).unwrap()
-        );
-        assert_eq!(
-            old.serve_repair(Protocol::UDP).unwrap(),
-            node.serve_repair(Protocol::UDP).unwrap()
-        );
-        assert_eq!(old.tpu().unwrap(), node.tpu(Protocol::UDP).unwrap());
-        assert_eq!(
-            node.tpu(Protocol::QUIC).unwrap(),
-            SocketAddr::new(
-                old.tpu().unwrap().ip(),
-                old.tpu().unwrap().port() + QUIC_PORT_OFFSET
-            )
-        );
-        assert_eq!(
-            old.tpu_forwards().unwrap(),
-            node.tpu_forwards(Protocol::UDP).unwrap()
-        );
-        assert_eq!(
-            node.tpu_forwards(Protocol::QUIC).unwrap(),
-            SocketAddr::new(
-                old.tpu_forwards().unwrap().ip(),
-                old.tpu_forwards().unwrap().port() + QUIC_PORT_OFFSET
-            )
-        );
-        assert_eq!(
-            old.tpu_vote().unwrap(),
-            node.tpu_vote(Protocol::UDP).unwrap()
-        );
-        assert_eq!(
-            old.tvu(Protocol::QUIC).unwrap(),
-            node.tvu(Protocol::QUIC).unwrap()
-        );
-        assert_eq!(
-            old.tvu(Protocol::UDP).unwrap(),
-            node.tvu(Protocol::UDP).unwrap()
-        );
-    }
-
-    #[test]
-    fn test_new_localhost() {
-        let node = ContactInfo::new_localhost(
-            &Keypair::new().pubkey(),
-            solana_time_utils::timestamp(), // wallclock
-        );
-        cross_verify_with_legacy(&node);
-    }
-
-    #[test]
-    fn test_new_with_socketaddr() {
-        let mut rng = rand::thread_rng();
-        let socket = repeat_with(|| new_rand_socket(&mut rng))
-            .filter(|socket| matches!(sanitize_socket(socket), Ok(())))
-            .find(|socket| socket.port().checked_add(11).is_some())
-            .unwrap();
-        let node = ContactInfo::new_with_socketaddr(&Keypair::new().pubkey(), &socket);
-        cross_verify_with_legacy(&node);
     }
 
     #[test]

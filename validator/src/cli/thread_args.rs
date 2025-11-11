@@ -113,15 +113,12 @@ pub struct NumThreadConfig {
 }
 
 pub fn parse_num_threads_args(matches: &ArgMatches) -> NumThreadConfig {
-    let accounts_db_background_threads = {
-        if matches.is_present("accounts_db_clean_threads") {
-            value_t_or_exit!(matches, "accounts_db_clean_threads", NonZeroUsize)
-        } else {
-            value_t_or_exit!(matches, AccountsDbBackgroundThreadsArg::NAME, NonZeroUsize)
-        }
-    };
     NumThreadConfig {
-        accounts_db_background_threads,
+        accounts_db_background_threads: value_t_or_exit!(
+            matches,
+            AccountsDbBackgroundThreadsArg::NAME,
+            NonZeroUsize
+        ),
         accounts_db_foreground_threads: value_t_or_exit!(
             matches,
             AccountsDbForegroundThreadsArg::NAME,

@@ -2445,7 +2445,6 @@ pub fn push_messages_to_peer_for_tests(
 fn check_pull_request_shred_version(self_shred_version: u16, caller: &CrdsValue) -> bool {
     let shred_version = match caller.data() {
         CrdsData::ContactInfo(node) => node.shred_version(),
-        CrdsData::LegacyContactInfo(node) => node.shred_version(),
         _ => return false,
     };
     shred_version == self_shred_version
@@ -2507,7 +2506,6 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
 ) -> bool {
     let (pubkey, addr) = match value.data() {
         CrdsData::ContactInfo(node) => (node.pubkey(), node.gossip()),
-        CrdsData::LegacyContactInfo(node) => (node.pubkey(), node.gossip()),
         _ => return true, // If not a contact-info, nothing to verify.
     };
     // Invalid addresses are not verifiable.

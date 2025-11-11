@@ -1008,7 +1008,7 @@ mod tests {
         let vote_account = genesis_config
             .accounts
             .iter()
-            .find(|(&address, _)| address == vote_key)
+            .find(|(address, _)| **address == vote_key)
             .map(|(_, account)| account)
             .unwrap()
             .clone();

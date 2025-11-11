@@ -704,7 +704,7 @@ impl ClusterInfoVoteListener {
         gossip_vote_slot_confirming_time.stop();
         let gossip_vote_slot_confirming_time_us = gossip_vote_slot_confirming_time.as_us();
 
-        if let Some(ref mut vote_processing_time) = vote_processing_time {
+        if let Some(vote_processing_time) = vote_processing_time {
             vote_processing_time.update(
                 gossip_vote_txn_processing_time_us,
                 gossip_vote_slot_confirming_time_us,

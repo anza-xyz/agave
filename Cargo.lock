@@ -566,7 +566,7 @@ dependencies = [
  "tempfile",
  "test-case",
  "thiserror 2.0.17",
- "tokio-util 0.7.16",
+ "tokio-util 0.7.17",
 ]
 
 [[package]]
@@ -2684,9 +2684,9 @@ dependencies = [
 
 [[package]]
 name = "dlopen2"
-version = "0.5.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09b4f5f101177ff01b8ec4ecc81eead416a8aa42819a2869311b3420fa114ffa"
+checksum = "b54f373ccf864bf587a89e880fb7610f8d73f3045f13580948ccbcaff26febff"
 dependencies = [
  "dlopen2_derive",
  "libc",
@@ -2696,9 +2696,9 @@ dependencies = [
 
 [[package]]
 name = "dlopen2_derive"
-version = "0.3.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6cbae11b3de8fce2a456e8ea3dada226b35fe791f0dc1d360c0941f0bb681f3"
+checksum = "788160fb30de9cdd857af31c6a2675904b16ece8fc2737b2c7127ba368c9d0f4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3461,7 +3461,7 @@ dependencies = [
  "indexmap 2.11.4",
  "slab",
  "tokio",
- "tokio-util 0.7.16",
+ "tokio-util 0.7.17",
  "tracing",
 ]
 
@@ -5064,9 +5064,9 @@ checksum = "624a8340c38c1b80fd549087862da4ba43e08858af025b236e509b6649fc13d5"
 
 [[package]]
 name = "openssl"
-version = "0.10.74"
+version = "0.10.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24ad14dd45412269e1a30f52ad8f0664f0f4f4a89ee8fe28c3b3527021ebb654"
+checksum = "08838db121398ad17ab8531ce9de97b244589089e290a384c900cb9ff7434328"
 dependencies = [
  "bitflags 2.10.0",
  "cfg-if 1.0.4",
@@ -5105,9 +5105,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.110"
+version = "0.9.111"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a9f0075ba3c21b09f8e8b2026584b1d18d49388648f2fbbf3c97ea8deced8e2"
+checksum = "82cab2d520aa75e3c58898289429321eb788c3106963d0dc886ec7a5f4adc321"
 dependencies = [
  "cc",
  "libc",
@@ -5612,14 +5612,13 @@ dependencies = [
 
 [[package]]
 name = "proptest"
-version = "1.8.0"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bb0be07becd10686a0bb407298fb425360a5c44a663774406340c59a22de4ce"
+checksum = "bee689443a2bd0a16ab0348b52ee43e3b2d1b1f931c8aa5c9f8de4c86fbe8c40"
 dependencies = [
  "bit-set",
  "bit-vec",
  "bitflags 2.10.0",
- "lazy_static",
  "num-traits",
  "rand 0.9.0",
  "rand_chacha 0.9.0",
@@ -6126,7 +6125,7 @@ dependencies = [
  "tokio",
  "tokio-native-tls",
  "tokio-rustls 0.24.1",
- "tokio-util 0.7.16",
+ "tokio-util 0.7.17",
  "tower-service",
  "url 2.5.7",
  "wasm-bindgen",
@@ -6168,7 +6167,7 @@ dependencies = [
  "sync_wrapper 1.0.2",
  "tokio",
  "tokio-rustls 0.26.2",
- "tokio-util 0.7.16",
+ "tokio-util 0.7.17",
  "tower 0.5.2",
  "tower-http",
  "tower-service",
@@ -7400,7 +7399,7 @@ dependencies = [
  "solana-version",
  "solana-vote-program",
  "tikv-jemallocator",
- "tokio-util 0.7.16",
+ "tokio-util 0.7.17",
 ]
 
 [[package]]
@@ -7920,7 +7919,7 @@ dependencies = [
  "solana-udp-client",
  "thiserror 2.0.17",
  "tokio",
- "tokio-util 0.7.16",
+ "tokio-util 0.7.17",
 ]
 
 [[package]]
@@ -8286,7 +8285,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tikv-jemallocator",
  "tokio",
- "tokio-util 0.7.16",
+ "tokio-util 0.7.17",
  "trees",
 ]
 
@@ -9928,7 +9927,7 @@ dependencies = [
  "solana-transaction-error",
  "thiserror 2.0.17",
  "tokio",
- "tokio-util 0.7.16",
+ "tokio-util 0.7.17",
 ]
 
 [[package]]
@@ -10101,7 +10100,7 @@ dependencies = [
  "test-case",
  "thiserror 2.0.17",
  "tokio",
- "tokio-util 0.7.16",
+ "tokio-util 0.7.17",
 ]
 
 [[package]]
@@ -10585,7 +10584,7 @@ dependencies = [
  "solana-time-utils",
  "solana-tpu-client-next",
  "tokio",
- "tokio-util 0.7.16",
+ "tokio-util 0.7.17",
 ]
 
 [[package]]
@@ -10894,7 +10893,7 @@ dependencies = [
  "solana-transaction-metrics-tracker",
  "thiserror 2.0.17",
  "tokio",
- "tokio-util 0.7.16",
+ "tokio-util 0.7.17",
  "x509-parser",
 ]
 
@@ -11389,7 +11388,7 @@ dependencies = [
  "solana-tpu-client-next",
  "thiserror 2.0.17",
  "tokio",
- "tokio-util 0.7.16",
+ "tokio-util 0.7.17",
  "tracing",
 ]
 
@@ -11775,7 +11774,7 @@ dependencies = [
  "solana-version",
  "thiserror 2.0.17",
  "tokio",
- "tokio-util 0.7.16",
+ "tokio-util 0.7.17",
  "url 2.5.7",
  "x509-parser",
 ]
@@ -12902,9 +12901,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-util"
-version = "0.7.16"
+version = "0.7.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14307c986784f72ef81c89db7d9e28d6ac26d16213b109ea501696195e6e3ce5"
+checksum = "2efa149fe76073d6e8fd97ef4f4eca7b67f599660115591483572e406e165594"
 dependencies = [
  "bytes",
  "futures-core",
@@ -13038,7 +13037,7 @@ dependencies = [
  "rand 0.8.5",
  "slab",
  "tokio",
- "tokio-util 0.7.16",
+ "tokio-util 0.7.17",
  "tower-layer",
  "tower-service",
  "tracing",
