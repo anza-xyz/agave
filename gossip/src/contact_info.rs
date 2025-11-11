@@ -412,16 +412,12 @@ impl ContactInfo {
 
     /// port must not be 0
     /// ip must be specified and not multicast
-    /// loopback ip is only allowed in tests
-    // TODO: Replace this entirely with streamer SocketAddrSpace.
     pub fn is_valid_address(addr: &SocketAddr, socket_addr_space: &SocketAddrSpace) -> bool {
         addr.port() != 0u16 && Self::is_valid_ip(addr.ip()) && socket_addr_space.check(addr)
     }
 
     fn is_valid_ip(addr: IpAddr) -> bool {
         !(addr.is_unspecified() || addr.is_multicast())
-        // || (addr.is_loopback() && !cfg_test))
-        // TODO: boot loopback in production networks
     }
 
     /// New random ContactInfo for tests and simulations.

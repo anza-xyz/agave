@@ -1,7 +1,7 @@
 #[cfg(test)]
 use crate::{socketaddr, socketaddr_any};
 use {
-    crate::crds_data::{reject_deserialize, MAX_WALLCLOCK},
+    crate::crds_data::reject_deserialize,
     serde::Serialize,
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
@@ -42,10 +42,7 @@ reject_deserialize!(LegacyContactInfo, "LegacyContactInfo is deprecated");
 
 impl Sanitize for LegacyContactInfo {
     fn sanitize(&self) -> std::result::Result<(), SanitizeError> {
-        if self.wallclock >= MAX_WALLCLOCK {
-            return Err(SanitizeError::ValueOutOfBounds);
-        }
-        Ok(())
+        Err(SanitizeError::ValueOutOfBounds)
     }
 }
 
@@ -79,18 +76,5 @@ impl LegacyContactInfo {
     #[inline]
     pub(crate) fn wallclock(&self) -> u64 {
         self.wallclock
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_sanitize() {
-        let mut ci = LegacyContactInfo::default();
-        assert_eq!(ci.sanitize(), Ok(()));
-        ci.wallclock = MAX_WALLCLOCK;
-        assert_eq!(ci.sanitize(), Err(SanitizeError::ValueOutOfBounds));
     }
 }
