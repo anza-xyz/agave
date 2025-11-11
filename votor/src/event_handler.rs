@@ -1131,6 +1131,32 @@ mod tests {
             self.bls_ops.append(&mut new_ops);
         }
 
+        fn send_set_identity_event(&mut self) {
+            let mut new_ops = EventHandler::handle_event(
+                VotorEvent::SetIdentity,
+                &self.timer_manager,
+                &self.shared_context,
+                &mut self.voting_context,
+                &self.root_context,
+                &mut self.local_context,
+            )
+            .unwrap();
+            self.bls_ops.append(&mut new_ops);
+        }
+
+        fn send_standstill_event(&mut self, highest_finalized_slot: Slot) {
+            let mut new_ops = EventHandler::handle_event(
+                VotorEvent::Standstill(highest_finalized_slot),
+                &self.timer_manager,
+                &self.shared_context,
+                &mut self.voting_context,
+                &self.root_context,
+                &mut self.local_context,
+            )
+            .unwrap();
+            self.bls_ops.append(&mut new_ops);
+        }
+
         fn create_block_only(&mut self, slot: Slot, parent_bank: Arc<Bank>) -> Arc<Bank> {
             let bank = Bank::new_from_parent(parent_bank, &Pubkey::new_unique(), slot);
             bank.set_block_id(Some(Hash::new_unique()));
@@ -1160,14 +1186,12 @@ mod tests {
                     rank: 0,
                     signature,
                 });
+                let prev_length = self.bls_ops.len();
+                self.bls_ops.retain(|bls_op| {
+                    !matches!(bls_op, BLSOp::PushVote { message, .. } if **message == expected_message)
+                });
                 assert!(
-                    self.bls_ops.iter().any(|bls_op| {
-                        if let BLSOp::PushVote { message, .. } = bls_op {
-                            **message == expected_message
-                        } else {
-                            false
-                        }
-                    }),
+                    self.bls_ops.len() < prev_length,
                     "Did not find expected vote: {expected_message:?}",
                 );
             }
@@ -1182,14 +1206,12 @@ mod tests {
                 rank: 0,
                 signature,
             });
+            let prev_length = self.bls_ops.len();
+            self.bls_ops.retain(|bls_op| {
+                !matches!(bls_op, BLSOp::PushVote { message, .. } if **message == expected_message)
+            });
             assert!(
-                self.bls_ops
-                    .iter()
-                    .any(|bls_op| if let BLSOp::PushVote { message, .. } = bls_op {
-                        **message == expected_message
-                    } else {
-                        false
-                    }),
+                self.bls_ops.len() < prev_length,
                 "Did not find expected vote: {expected_message:?}",
             );
             // Also check own_vote_receiver
@@ -1252,16 +1274,7 @@ mod tests {
                 .is_ok());
             self.cluster_info
                 .set_keypair(Arc::new(new_identity.insecure_clone()));
-            let mut new_ops = EventHandler::handle_event(
-                VotorEvent::SetIdentity,
-                &self.timer_manager,
-                &self.shared_context,
-                &mut self.voting_context,
-                &self.root_context,
-                &mut self.local_context,
-            )
-            .unwrap();
-            self.bls_ops.append(&mut new_ops);
+            self.send_set_identity_event();
             file_vote_history_storage.filename(&new_identity.pubkey())
         }
     }
@@ -1615,16 +1628,7 @@ mod tests {
         test_context.check_for_vote(&Vote::new_skip_vote(3));
 
         // Send a standstill event with highest parent ready at 0, we should refresh all the votes
-        let mut new_ops = EventHandler::handle_event(
-            VotorEvent::Standstill(0),
-            &test_context.timer_manager,
-            &test_context.shared_context,
-            &mut test_context.voting_context,
-            &test_context.root_context,
-            &mut test_context.local_context,
-        )
-        .unwrap();
-        test_context.bls_ops.append(&mut new_ops);
+        test_context.send_standstill_event(0);
         test_context.check_for_votes(&[
             Vote::new_notarization_vote(1, block_id_1),
             Vote::new_skip_vote(2),
@@ -1633,16 +1637,7 @@ mod tests {
 
         // Send another standstill event with highest parent ready at 1, we should refresh votes for 2 and 3 only
         test_context.bls_ops.clear();
-        let mut new_ops = EventHandler::handle_event(
-            VotorEvent::Standstill(1),
-            &test_context.timer_manager,
-            &test_context.shared_context,
-            &mut test_context.voting_context,
-            &test_context.root_context,
-            &mut test_context.local_context,
-        )
-        .unwrap();
-        test_context.bls_ops.append(&mut new_ops);
+        test_context.send_standstill_event(1);
         test_context.check_for_votes(&[Vote::new_skip_vote(2), Vote::new_skip_vote(3)]);
     }
 
