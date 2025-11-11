@@ -329,7 +329,7 @@ impl<'a> AccountStoragesOrderer<'a> {
     /// Create randomizing orderer.
     pub fn with_random_order(storages: &'a [Arc<AccountStorageEntry>]) -> Self {
         let mut indices: Vec<usize> = (0..storages.len()).collect();
-        indices.shuffle(&mut rand::thread_rng());
+        indices.shuffle(&mut rand::rng());
         Self {
             storages,
             indices: indices.into_boxed_slice(),

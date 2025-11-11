@@ -1364,7 +1364,7 @@ pub mod tests {
         super::{test_utils::*, *},
         assert_matches::assert_matches,
         memoffset::offset_of,
-        rand::prelude::*,
+        rand::{prelude::*, rng},
         rand_chacha::ChaChaRng,
         solana_account::{accounts_equal, Account, AccountSharedData},
         solana_clock::Slot,
@@ -1619,13 +1619,13 @@ pub mod tests {
         Vec<(Pubkey, AccountSharedData)>,
         TempFile,
     ) {
-        let mut rng = thread_rng();
+        let mut rng = rng();
         let mut create_account = |data_len: usize| -> (Pubkey, AccountSharedData) {
-            let pubkey = Pubkey::new_from_array(rng.gen());
-            let owner = Pubkey::new_from_array(rng.gen());
-            let mut account = AccountSharedData::new(rng.gen(), data_len, &owner);
+            let pubkey = Pubkey::new_from_array(rng.random());
+            let owner = Pubkey::new_from_array(rng.random());
+            let mut account = AccountSharedData::new(rng.random(), data_len, &owner);
             // Ensure we actually have some unique data to compare against when checking correctness
-            let data = std::iter::from_fn(|| Some(rng.gen::<u8>()))
+            let data = std::iter::from_fn(|| Some(rng.random::<u8>()))
                 .take(data_len)
                 .collect::<Vec<_>>();
             account.set_data(data);
@@ -1816,7 +1816,7 @@ pub mod tests {
 
         let now = Instant::now();
         for _ in 0..size {
-            let sample = thread_rng().gen_range(0..indexes.len());
+            let sample = rng().random_range(0..indexes.len());
             let account = create_test_account(sample + 1);
             assert_eq!(av.get_account_test(indexes[sample]).unwrap(), account);
         }
@@ -2154,12 +2154,12 @@ pub mod tests {
             .take(NUM_ACCOUNTS)
             .collect();
 
-        let mut rng = thread_rng();
+        let mut rng = rng();
         let mut accounts = Vec::with_capacity(pubkeys.len());
         let mut stored_sizes = Vec::with_capacity(pubkeys.len());
         for _ in &pubkeys {
-            let lamports = rng.gen();
-            let data_len = rng.gen_range(0..MAX_PERMITTED_DATA_LENGTH) as usize;
+            let lamports = rng.random();
+            let data_len = rng.random_range(0..MAX_PERMITTED_DATA_LENGTH) as usize;
             let account = AccountSharedData::new(lamports, data_len, &Pubkey::default());
             accounts.push(account);
             stored_sizes.push(aligned_stored_size(data_len));
@@ -2214,8 +2214,8 @@ pub mod tests {
         let mut accounts = Vec::with_capacity(pubkeys.len());
         let mut total_stored_size = 0;
         for _ in &pubkeys {
-            let lamports = rng.gen();
-            let data_len = rng.gen_range(0..MAX_PERMITTED_DATA_LENGTH) as usize;
+            let lamports = rng.random();
+            let data_len = rng.random_range(0..MAX_PERMITTED_DATA_LENGTH) as usize;
             let account = AccountSharedData::new(lamports, data_len, &Pubkey::default());
             accounts.push(account);
             total_stored_size += aligned_stored_size(data_len);

@@ -122,9 +122,9 @@ fn bench_concurrent_read_write(bencher: &mut Bencher) {
         "concurrent_read_write",
         bencher,
         |accounts, pubkeys| {
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
             loop {
-                let i = rng.gen_range(0..pubkeys.len());
+                let i = rng.random_range(0..pubkeys.len());
                 test::black_box(
                     accounts
                         .load_without_fixed_root(&Ancestors::default(), &pubkeys[i])
@@ -257,9 +257,9 @@ fn bench_dashmap_iter(bencher: &mut Bencher) {
 fn bench_load_largest_accounts(b: &mut Bencher) {
     let accounts_db = new_accounts_db(Vec::new());
     let accounts = Accounts::new(Arc::new(accounts_db));
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     for _ in 0..10_000 {
-        let lamports = rng.gen();
+        let lamports = rng.random();
         let pubkey = Pubkey::new_unique();
         let account = AccountSharedData::new(lamports, 0, &Pubkey::default());
         accounts
@@ -296,7 +296,7 @@ fn bench_sort_and_remove_dups(b: &mut Bencher) {
     use rand::prelude::*;
     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1234);
     let accounts: Vec<_> =
-        std::iter::repeat_with(|| generate_sample_account_from_storage(rng.gen::<u8>()))
+        std::iter::repeat_with(|| generate_sample_account_from_storage(rng.random::<u8>()))
             .take(1000)
             .collect();
 
@@ -316,9 +316,10 @@ fn bench_sort_and_remove_dups_no_dups(b: &mut Bencher) {
     }
 
     use rand::prelude::*;
+
     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1234);
     let mut accounts: Vec<_> =
-        std::iter::repeat_with(|| generate_sample_account_from_storage(rng.gen::<u8>()))
+        std::iter::repeat_with(|| generate_sample_account_from_storage(rng.random::<u8>()))
             .take(1000)
             .collect();
 

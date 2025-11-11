@@ -8,7 +8,7 @@ use {
         DiskIndexValue, IndexValue, ReclaimsSlotList, RefCount, SlotList, UpsertReclaim,
     },
     crate::pubkey_bins::PubkeyBinCalculator24,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     solana_bucket_map::bucket_api::BucketApi,
     solana_clock::Slot,
     solana_measure::measure::Measure,
@@ -146,7 +146,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             // Spread out the scanning across all ages within the window.
             // This causes us to scan 1/N of the bins each 'Age'
             remaining_ages_to_skip_flushing: AtomicAge::new(
-                thread_rng().gen_range(0..num_ages_to_distribute_flushes),
+                rng().random_range(0..num_ages_to_distribute_flushes),
             ),
             num_ages_to_distribute_flushes,
             startup_stats: Arc::clone(&storage.startup_stats),

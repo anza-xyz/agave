@@ -3,7 +3,7 @@
 extern crate test;
 
 use {
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     solana_account::AccountSharedData,
     solana_accounts_db::{
         account_info::AccountInfo,
@@ -53,7 +53,7 @@ fn bench_accounts_index(bencher: &mut Bencher) {
     let mut root = 0;
     bencher.iter(|| {
         for _p in 0..NUM_PUBKEYS {
-            let pubkey = thread_rng().gen_range(0..NUM_PUBKEYS);
+            let pubkey = rng().random_range(0..NUM_PUBKEYS);
             index.upsert(
                 fork,
                 fork,

@@ -63,7 +63,7 @@ use {
     agave_fs::buffered_reader::RequiredLenBufFileRead,
     dashmap::{DashMap, DashSet},
     log::*,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     rayon::{prelude::*, ThreadPool},
     seqlock::SeqLock,
     smallvec::SmallVec,
@@ -4361,7 +4361,7 @@ impl AccountsDb {
         self.stats
             .create_store_count
             .fetch_add(1, Ordering::Relaxed);
-        let path_index = thread_rng().gen_range(0..paths.len());
+        let path_index = rng().random_range(0..paths.len());
         let store = Arc::new(self.new_storage_entry(slot, Path::new(&paths[path_index]), size));
 
         debug!(
@@ -7281,7 +7281,7 @@ impl AccountsDb {
     pub fn check_accounts(&self, pubkeys: &[Pubkey], slot: Slot, num: usize, count: usize) {
         let ancestors = vec![(slot, 0)].into_iter().collect();
         for _ in 0..num {
-            let idx = thread_rng().gen_range(0..num);
+            let idx = rng().random_range(0..num);
             let account = self.load_without_fixed_root(&ancestors, &pubkeys[idx]);
             let account1 = Some((
                 AccountSharedData::new(
