@@ -20,6 +20,12 @@ Release channels have their own copy of this changelog:
 * Added `--enable-scheduler-bindings` which binds an IPC server at `<ledger-path>/scheduler_bindings.ipc` for external schedulers to connect to.
 ### Validator
 #### Breaking
+* Removed deprecated arguments
+  * `--accounts-db-clean-threads`
+  * `--accounts-db-hash-threads`
+  * `--accounts-db-read-cache-limit-mb`
+  * `--accounts-hash-cache-path`
+  * `--disable-accounts-disk-index`
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
 
