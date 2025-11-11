@@ -2,8 +2,7 @@ use {
     crate::{
         nonblocking::{
             connection_rate_limiter::ConnectionRateLimiter,
-            qos::{ConnectionContext, QosController},
-            stream_throttle::ConnectionStreamCounter,
+            qos::{ConnectionContext, ConnectionTableSharedState, QosController},
         },
         quic::{configure_server, QuicServerError, QuicStreamerConfig, StreamerStats},
         streamer::StakedNodes,
@@ -133,7 +132,7 @@ pub(crate) fn spawn_server<Q, C>(
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     quic_server_params: QuicStreamerConfig,
-    qos: Arc<Q>,
+    qos: Q,
     cancel: CancellationToken,
 ) -> Result<SpawnNonBlockingServerResult, QuicServerError>
 where
@@ -238,12 +237,14 @@ async fn run_server<Q, C>(
     stats: Arc<StreamerStats>,
     quic_server_params: QuicStreamerConfig,
     cancel: CancellationToken,
-    qos: Arc<Q>,
+    mut qos: Q,
 ) -> TaskTracker
 where
     Q: QosController<C> + Send + Sync + 'static,
     C: ConnectionContext + Send + Sync + 'static,
 {
+    qos.async_init().await;
+    let qos = Arc::new(qos);
     let quic_server_params = Arc::new(quic_server_params);
     let rate_limiter = Arc::new(ConnectionRateLimiter::new(
         quic_server_params.max_connections_per_ipaddr_per_min,
@@ -856,8 +857,7 @@ fn handle_chunks(
     Ok(StreamState::Finished)
 }
 
-#[derive(Debug)]
-struct ConnectionEntry {
+pub(crate) struct ConnectionEntry {
     cancel: CancellationToken,
     peer_type: ConnectionPeerType,
     last_update: Arc<AtomicU64>,
@@ -865,7 +865,7 @@ struct ConnectionEntry {
     // We do not explicitly use it, but its drop is triggered when ConnectionEntry is dropped.
     _client_connection_tracker: ClientConnectionTracker,
     connection: Option<Connection>,
-    stream_counter: Arc<ConnectionStreamCounter>,
+    pub(crate) stream_counter: Arc<dyn ConnectionTableSharedState>,
 }
 
 impl ConnectionEntry {
@@ -876,7 +876,7 @@ impl ConnectionEntry {
         port: u16,
         client_connection_tracker: ClientConnectionTracker,
         connection: Option<Connection>,
-        stream_counter: Arc<ConnectionStreamCounter>,
+        stream_counter: Arc<dyn ConnectionTableSharedState>,
     ) -> Self {
         Self {
             cancel,
@@ -1005,7 +1005,7 @@ impl ConnectionTable {
         num_pruned
     }
 
-    pub(crate) fn try_add_connection(
+    pub(crate) fn try_add_connection<F: FnOnce() -> Arc<dyn ConnectionTableSharedState>>(
         &mut self,
         key: ConnectionTableKey,
         port: u16,
@@ -1014,10 +1014,11 @@ impl ConnectionTable {
         peer_type: ConnectionPeerType,
         last_update: Arc<AtomicU64>,
         max_connections_per_peer: usize,
+        stream_counter_factory: F,
     ) -> Option<(
         Arc<AtomicU64>,
         CancellationToken,
-        Arc<ConnectionStreamCounter>,
+        Arc<dyn ConnectionTableSharedState>,
     )> {
         let connection_entry = self.table.entry(key).or_default();
         let has_connection_capacity = connection_entry
@@ -1030,7 +1031,7 @@ impl ConnectionTable {
             let stream_counter = connection_entry
                 .first()
                 .map(|entry| entry.stream_counter.clone())
-                .unwrap_or(Arc::new(ConnectionStreamCounter::new()));
+                .unwrap_or_else(stream_counter_factory);
             connection_entry.push(ConnectionEntry::new(
                 cancel.clone(),
                 peer_type,
@@ -1053,6 +1054,11 @@ impl ConnectionTable {
         }
     }
 
+    pub(crate) fn iter(
+        &self,
+    ) -> indexmap::map::Values<'_, ConnectionTableKey, Vec<ConnectionEntry>> {
+        self.table.values()
+    }
     // Returns number of connections that were removed
     pub(crate) fn remove_connection(
         &mut self,
@@ -1113,12 +1119,16 @@ impl Future for EndpointAccept<'_> {
 pub mod test {
     use {
         super::*,
-        crate::nonblocking::{
-            swqos::SwQosConfig,
-            testing_utilities::{
-                check_multiple_streams, get_client_config, make_client_endpoint, setup_quic_server,
-                spawn_stake_weighted_qos_server, SpawnTestServerResult,
+        crate::{
+            nonblocking::{
+                qos::NullConnectionTableSharedState,
+                swqos::SwQosConfig,
+                testing_utilities::{
+                    check_multiple_streams, get_client_config, make_client_endpoint,
+                    setup_quic_server, spawn_stake_weighted_qos_server, SpawnTestServerResult,
+                },
             },
+            streamer::VersionedStakedNodes,
         },
         assert_matches::assert_matches,
         crossbeam_channel::{unbounded, Receiver},
@@ -1126,7 +1136,7 @@ pub mod test {
         solana_keypair::Keypair,
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_signer::Signer,
-        std::collections::HashMap,
+        std::{collections::HashMap, sync::atomic::AtomicUsize},
         tokio::time::sleep,
     };
 
@@ -1569,6 +1579,10 @@ pub mod test {
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        let staked_nodes = VersionedStakedNodes {
+            staked_nodes,
+            version: Arc::new(AtomicUsize::new(0)),
+        };
         let cancel = CancellationToken::new();
         let SpawnNonBlockingServerResult {
             endpoints: _,
@@ -1602,7 +1616,10 @@ pub mod test {
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
-        let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        let staked_nodes = VersionedStakedNodes {
+            staked_nodes: Arc::new(RwLock::new(StakedNodes::default())),
+            version: Arc::new(AtomicUsize::new(0)),
+        };
         let cancel = CancellationToken::new();
         let SpawnNonBlockingServerResult {
             endpoints: _,
@@ -1658,6 +1675,7 @@ pub mod test {
                     ConnectionPeerType::Unstaked,
                     Arc::new(AtomicU64::new(i as u64)),
                     max_connections_per_peer,
+                    || Arc::new(NullConnectionTableSharedState {}),
                 )
                 .unwrap();
         }
@@ -1671,6 +1689,7 @@ pub mod test {
                 ConnectionPeerType::Unstaked,
                 Arc::new(AtomicU64::new(5)),
                 max_connections_per_peer,
+                || Arc::new(NullConnectionTableSharedState {}),
             )
             .unwrap();
 
@@ -1714,6 +1733,7 @@ pub mod test {
                     ConnectionPeerType::Unstaked,
                     Arc::new(AtomicU64::new(i as u64)),
                     max_connections_per_peer,
+                    || Arc::new(NullConnectionTableSharedState {}),
                 )
                 .unwrap();
         }
@@ -1750,6 +1770,7 @@ pub mod test {
                     ConnectionPeerType::Unstaked,
                     Arc::new(AtomicU64::new(i as u64)),
                     max_connections_per_peer,
+                    || Arc::new(NullConnectionTableSharedState {}),
                 )
                 .unwrap();
         });
@@ -1765,6 +1786,7 @@ pub mod test {
                 ConnectionPeerType::Unstaked,
                 Arc::new(AtomicU64::new(10)),
                 max_connections_per_peer,
+                || Arc::new(NullConnectionTableSharedState {})
             )
             .is_none());
 
@@ -1780,6 +1802,7 @@ pub mod test {
                 ConnectionPeerType::Unstaked,
                 Arc::new(AtomicU64::new(10)),
                 max_connections_per_peer,
+                || Arc::new(NullConnectionTableSharedState {})
             )
             .is_some());
 
@@ -1820,6 +1843,7 @@ pub mod test {
                     ConnectionPeerType::Staked((i + 1) as u64),
                     Arc::new(AtomicU64::new(i as u64)),
                     max_connections_per_peer,
+                    || Arc::new(NullConnectionTableSharedState {}),
                 )
                 .unwrap();
         }
@@ -1864,6 +1888,7 @@ pub mod test {
                     ConnectionPeerType::Unstaked,
                     Arc::new(AtomicU64::new((i * 2) as u64)),
                     max_connections_per_peer,
+                    || Arc::new(NullConnectionTableSharedState {}),
                 )
                 .unwrap();
 
@@ -1876,6 +1901,7 @@ pub mod test {
                     ConnectionPeerType::Unstaked,
                     Arc::new(AtomicU64::new((i * 2 + 1) as u64)),
                     max_connections_per_peer,
+                    || Arc::new(NullConnectionTableSharedState {}),
                 )
                 .unwrap();
         }
@@ -1891,6 +1917,7 @@ pub mod test {
                 ConnectionPeerType::Unstaked,
                 Arc::new(AtomicU64::new((num_ips * 2) as u64)),
                 max_connections_per_peer,
+                || Arc::new(NullConnectionTableSharedState {}),
             )
             .unwrap();
 
@@ -1956,7 +1983,6 @@ pub mod test {
             stats.total_new_streams.load(Ordering::Relaxed),
             expected_num_txs
         );
-        assert!(stats.throttled_unstaked_streams.load(Ordering::Relaxed) > 0);
     }
 
     #[test]

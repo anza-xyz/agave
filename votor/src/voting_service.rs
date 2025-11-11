@@ -282,9 +282,12 @@ mod tests {
             nonblocking::swqos::SwQosConfig,
             quic::{spawn_stake_wighted_qos_server, QuicStreamerConfig, SpawnServerResult},
             socket::SocketAddrSpace,
-            streamer::StakedNodes,
+            streamer::{StakedNodes, VersionedStakedNodes},
         },
-        std::{net::SocketAddr, sync::Arc},
+        std::{
+            net::SocketAddr,
+            sync::{atomic::AtomicUsize, Arc},
+        },
         test_case::test_case,
         tokio_util::sync::CancellationToken,
     };
@@ -380,6 +383,10 @@ mod tests {
             Arc::new(stakes),
             HashMap::<Pubkey, u64>::default(), // overrides
         )));
+        let staked_nodes = VersionedStakedNodes {
+            staked_nodes,
+            version: Arc::new(AtomicUsize::new(0)),
+        };
         let cancel_token = CancellationToken::new();
         let SpawnServerResult {
             thread: quic_server_thread,

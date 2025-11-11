@@ -8,7 +8,7 @@ use {
     solana_net_utils::sockets::{bind_in_range_with_config, SocketConfiguration as SocketConfig},
     solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_signer::Signer,
-    solana_streamer::streamer::StakedNodes,
+    solana_streamer::streamer::{StakedNodes, VersionedStakedNodes},
     solana_vortexor::{
         cli::Cli,
         rpc_load_balancer::RpcLoadBalancer,
@@ -19,6 +19,7 @@ use {
         stake_updater::{StakeUpdater, STAKE_REFRESH_SLEEP_DURATION},
         vortexor::Vortexor,
     },
+    std::sync::atomic::AtomicUsize,
     std::{
         collections::HashMap,
         env,
@@ -148,10 +149,13 @@ pub fn main() {
     let stake_map = Arc::new(HashMap::new());
     let staked_nodes_overrides = HashMap::new();
 
-    let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(
-        stake_map,
-        staked_nodes_overrides,
-    )));
+    let staked_nodes = VersionedStakedNodes {
+        staked_nodes: Arc::new(RwLock::new(StakedNodes::new(
+            stake_map,
+            staked_nodes_overrides,
+        ))),
+        version: Arc::new(AtomicUsize::new(0)),
+    };
 
     let (rpc_load_balancer, _slot_receiver) = RpcLoadBalancer::new(&servers, &exit);
     let rpc_load_balancer = Arc::new(rpc_load_balancer);

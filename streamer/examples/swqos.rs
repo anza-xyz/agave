@@ -15,6 +15,7 @@ use {
     solana_keypair::Keypair,
     solana_net_utils::sockets::{bind_to_with_config, SocketConfiguration},
     solana_pubkey::Pubkey,
+    solana_streamer::streamer::VersionedStakedNodes,
     solana_streamer::{
         nonblocking::{quic::SpawnNonBlockingServerResult, swqos::SwQosConfig},
         quic::QuicStreamerConfig,
@@ -106,7 +107,7 @@ async fn main() -> anyhow::Result<()> {
         );
         Arc::new(RwLock::new(nodes))
     };
-
+    let staked_nodes = VersionedStakedNodes::new(staked_nodes);
     let cancel = CancellationToken::new();
     let SpawnNonBlockingServerResult {
         endpoints,

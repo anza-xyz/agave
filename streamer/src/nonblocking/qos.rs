@@ -1,7 +1,7 @@
 use {
     crate::nonblocking::quic::{ClientConnectionTracker, ConnectionPeerType},
     quinn::Connection,
-    std::future::Future,
+    std::{any::Any, future::Future, sync::Arc},
     tokio_util::sync::CancellationToken,
 };
 
@@ -17,6 +17,8 @@ pub(crate) trait ConnectionContext: Clone + Send + Sync {
 /// 1) deriving the ConnectionContext for a connection
 /// 2) managing connection caching and connection limits, stream limits
 pub(crate) trait QosController<C: ConnectionContext> {
+    /// Initialize the controller's async logic
+    async fn async_init(&mut self) {}
     /// Build the ConnectionContext for a connection
     fn build_connection_context(&self, connection: &Connection) -> C;
 
@@ -51,4 +53,26 @@ pub(crate) trait QosController<C: ConnectionContext> {
         context: &C,
         connection: Connection,
     ) -> impl Future<Output = usize> + Send;
+}
+
+/// Marker trait to indicate what is the shared state for connections
+pub trait ConnectionTableSharedState: Send + Sync {
+    fn as_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
+}
+
+pub fn get_shared_state<T: ConnectionTableSharedState + 'static>(
+    x: Arc<dyn ConnectionTableSharedState>,
+) -> Option<Arc<T>> {
+    let any_arc = x.as_any_arc();
+    Arc::downcast::<T>(any_arc).ok()
+}
+
+#[cfg(test)]
+pub struct NullConnectionTableSharedState {}
+
+#[cfg(test)]
+impl ConnectionTableSharedState for NullConnectionTableSharedState {
+    fn as_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
+        self.clone()
+    }
 }

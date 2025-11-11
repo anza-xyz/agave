@@ -7,7 +7,7 @@ use {
             swqos::{SwQos, SwQosConfig},
         },
         quic::{QuicServerError, QuicStreamerConfig, StreamerStats},
-        streamer::StakedNodes,
+        streamer::{StakedNodes, VersionedStakedNodes},
     },
     crossbeam_channel::{unbounded, Receiver, Sender},
     quinn::{
@@ -24,7 +24,7 @@ use {
     solana_tls_utils::{new_dummy_x509_certificate, tls_client_config_builder},
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
-        sync::{Arc, RwLock},
+        sync::{atomic::AtomicUsize, Arc, RwLock},
         time::{Duration, Instant},
     },
     tokio::{task::JoinHandle, time::sleep},
@@ -37,7 +37,7 @@ pub fn spawn_stake_weighted_qos_server(
     sockets: impl IntoIterator<Item = UdpSocket>,
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
-    staked_nodes: Arc<RwLock<StakedNodes>>,
+    staked_nodes: VersionedStakedNodes,
     quic_server_params: QuicStreamerConfig,
     qos_config: SwQosConfig,
     cancel: CancellationToken,
@@ -46,7 +46,7 @@ where
 {
     let stats = Arc::<StreamerStats>::default();
 
-    let swqos = Arc::new(SwQos::new(
+    let swqos = SwQos::new(
         qos_config,
         quic_server_params.max_staked_connections,
         quic_server_params.max_unstaked_connections,
@@ -55,7 +55,7 @@ where
         stats.clone(),
         staked_nodes,
         cancel.clone(),
-    ));
+    );
 
     spawn_server(
         name,
@@ -125,7 +125,10 @@ pub fn setup_quic_server(
     let (sender, receiver) = unbounded();
     let keypair = Keypair::new();
     let server_address = sockets[0].local_addr().unwrap();
-    let staked_nodes = Arc::new(RwLock::new(option_staked_nodes.unwrap_or_default()));
+    let staked_nodes = VersionedStakedNodes {
+        staked_nodes: Arc::new(RwLock::new(option_staked_nodes.unwrap_or_default())),
+        version: Arc::new(AtomicUsize::new(0)),
+    };
     let cancel = CancellationToken::new();
 
     let SpawnNonBlockingServerResult {
