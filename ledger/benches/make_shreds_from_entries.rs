@@ -13,20 +13,20 @@ use {
 };
 
 fn make_dummy_hash<R: Rng>(rng: &mut R) -> Hash {
-    Hash::from(rng.gen::<[u8; 32]>())
+    Hash::from(rng.random::<[u8; 32]>())
 }
 
 fn make_dummy_transaction<R: Rng>(rng: &mut R) -> Transaction {
     solana_system_transaction::transfer(
-        &Keypair::new(),                      // from
-        &Pubkey::from(rng.gen::<[u8; 32]>()), // to
-        rng.gen(),                            // lamports
-        make_dummy_hash(rng),                 // recent_blockhash
+        &Keypair::new(),                         // from
+        &Pubkey::from(rng.random::<[u8; 32]>()), // to
+        rng.random(),                            // lamports
+        make_dummy_hash(rng),                    // recent_blockhash
     )
 }
 
 fn make_dummy_entry<R: Rng>(rng: &mut R) -> Entry {
-    let count = rng.gen_range(1..20);
+    let count = rng.random_range(1..20);
     let transactions = repeat_with(|| make_dummy_transaction(rng))
         .take(count)
         .collect();
@@ -62,8 +62,8 @@ fn make_shreds_from_entries<R: Rng>(
         entries,
         is_last_in_slot,
         chained_merkle_root,
-        rng.gen_range(0..2_000), // next_shred_index
-        rng.gen_range(0..2_000), // next_code_index
+        rng.random_range(0..2_000), // next_shred_index
+        rng.random_range(0..2_000), // next_code_index
         reed_solomon_cache,
         stats,
     );
@@ -76,14 +76,14 @@ fn run_make_shreds_from_entries(
     num_packets: usize,
     is_last_in_slot: bool,
 ) {
-    let mut rng = rand::thread_rng();
-    let slot = 315_892_061 + rng.gen_range(0..=100_000);
-    let parent_offset = rng.gen_range(1..=u16::MAX);
+    let mut rng = rand::rng();
+    let slot = 315_892_061 + rng.random_range(0..=100_000);
+    let parent_offset = rng.random_range(1..=u16::MAX);
     let shredder = Shredder::new(
         slot,
         slot - u64::from(parent_offset), // parent_slot
-        rng.gen_range(0..64),            // reference_tick
-        rng.gen(),                       // shred_version
+        rng.random_range(0..64),         // reference_tick
+        rng.random(),                    // shred_version
     )
     .unwrap();
     let keypair = Keypair::new();
@@ -130,14 +130,14 @@ fn run_recover_shreds(
     num_code: usize,
     is_last_in_slot: bool,
 ) {
-    let mut rng = rand::thread_rng();
-    let slot = 315_892_061 + rng.gen_range(0..=100_000);
-    let parent_offset = rng.gen_range(1..=u16::MAX);
+    let mut rng = rand::rng();
+    let slot = 315_892_061 + rng.random_range(0..=100_000);
+    let parent_offset = rng.random_range(1..=u16::MAX);
     let shredder = Shredder::new(
         slot,
         slot - u64::from(parent_offset), // parent_slot
-        rng.gen_range(0..64),            // reference_tick
-        rng.gen(),                       // shred_version
+        rng.random_range(0..64),         // reference_tick
+        rng.random(),                    // shred_version
     )
     .unwrap();
     let keypair = Keypair::new();
@@ -167,11 +167,11 @@ fn run_recover_shreds(
         .collect();
     let num_code = num_code.min(code.len());
     for _ in 0..num_code.min(data.len()) {
-        let k = rng.gen_range(0..data.len());
+        let k = rng.random_range(0..data.len());
         data.remove(k);
     }
     for i in 0..num_code {
-        let j = rng.gen_range(i..code.len());
+        let j = rng.random_range(i..code.len());
         code.swap(i, j);
     }
     code.sort_unstable_by_key(|shred| shred.index());

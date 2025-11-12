@@ -129,8 +129,8 @@ mod tests {
 
     #[test]
     fn test_merkle_proof_entry_from_hash() {
-        let mut rng = rand::thread_rng();
-        let bytes: [u8; 32] = rng.gen();
+        let mut rng = rand::rng();
+        let bytes: [u8; 32] = rng.random();
         let hash = Hash::from(bytes);
         let entry = &hash.as_ref()[..SIZE_OF_MERKLE_PROOF_ENTRY];
         let entry = MerkleProofEntry::try_from(entry).unwrap();
@@ -147,8 +147,8 @@ mod tests {
 
     #[test]
     fn test_make_merkle_proof_error() {
-        let mut rng = rand::thread_rng();
-        let nodes = repeat_with(|| rng.gen::<[u8; 32]>()).map(Hash::from);
+        let mut rng = rand::rng();
+        let nodes = repeat_with(|| rng.random::<[u8; 32]>()).map(Hash::from);
         let nodes: Vec<_> = nodes.take(5).collect();
         let size = nodes.len();
         let tree = make_merkle_tree(nodes.into_iter().map(Ok)).unwrap();
@@ -161,7 +161,7 @@ mod tests {
     }
 
     fn run_merkle_tree_round_trip<R: Rng>(rng: &mut R, size: usize) {
-        let nodes = repeat_with(|| rng.gen::<[u8; 32]>()).map(Hash::from);
+        let nodes = repeat_with(|| rng.random::<[u8; 32]>()).map(Hash::from);
         let nodes: Vec<_> = nodes.take(size).collect();
         let tree = make_merkle_tree(nodes.iter().cloned().map(Ok)).unwrap();
         let root = tree.last().copied().unwrap();
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn test_merkle_tree_round_trip_small() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for size in 1..=110 {
             run_merkle_tree_round_trip(&mut rng, size);
         }
@@ -187,7 +187,7 @@ mod tests {
 
     #[test]
     fn test_merkle_tree_round_trip_big() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for size in 110..=143 {
             run_merkle_tree_round_trip(&mut rng, size);
         }
