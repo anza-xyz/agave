@@ -127,8 +127,8 @@ impl Rocks {
             AccessType::Secondary => {
                 let secondary_path = path.join("solana-secondary");
                 info!(
-                    "Opening Rocks with secondary (read only) access at: {secondary_path:?}. This \
-                     secondary access could temporarily degrade other accesses, such as by \
+                    "Opening Rocks with secondary (non-writable) access at: {secondary_path:?}. \
+                     This secondary access could temporarily degrade other accesses, such as by \
                      agave-validator"
                 );
                 DB::open_cf_descriptors_as_secondary(
@@ -136,6 +136,18 @@ impl Rocks {
                     &path,
                     &secondary_path,
                     cf_descriptors,
+                )?
+            }
+            AccessType::ReadOnly => {
+                info!(
+                    "Opening Rocks with read only access. This additional access could \
+                     temporarily degrade other accesses, such as by agave-validator"
+                );
+                DB::open_cf_descriptors_read_only(
+                    &db_options,
+                    &path,
+                    cf_descriptors,
+                    false, /* do not error if log file exists */
                 )?
             }
         };
@@ -196,13 +208,10 @@ impl Rocks {
             new_cf_descriptor::<columns::MerkleRootMeta>(options, oldest_slot),
         ];
 
-        // If the access type is Secondary, we don't need to open all of the
+        // If the access type is secondary / read-only, we don't need to open all of the
         // columns so we can just return immediately.
-        match options.access_type {
-            AccessType::Secondary => {
-                return cf_descriptors;
-            }
-            AccessType::Primary | AccessType::PrimaryForMaintenance => {}
+        if options.access_type.is_non_writable() {
+            return cf_descriptors;
         }
 
         // Attempt to detect the column families that are present. It is not a
@@ -1319,6 +1328,7 @@ pub mod tests {
             &AccessType::PrimaryForMaintenance
         ));
         assert!(should_disable_auto_compactions(&AccessType::Secondary));
+        assert!(should_disable_auto_compactions(&AccessType::ReadOnly));
     }
 
     #[test]
@@ -1355,11 +1365,18 @@ pub mod tests {
                 .unwrap();
         }
 
-        // Opening with either Secondary or Primary access should succeed,
+        // Opening with any access mode should succeed,
         // even though the Rocks code is unaware of "new_column"
         {
             let options = BlockstoreOptions {
                 access_type: AccessType::Secondary,
+                ..BlockstoreOptions::default()
+            };
+            let _ = Rocks::open(db_path.to_path_buf(), options).unwrap();
+        }
+        {
+            let options = BlockstoreOptions {
+                access_type: AccessType::ReadOnly,
                 ..BlockstoreOptions::default()
             };
             let _ = Rocks::open(db_path.to_path_buf(), options).unwrap();

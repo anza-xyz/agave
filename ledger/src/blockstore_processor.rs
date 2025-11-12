@@ -2417,8 +2417,8 @@ pub mod tests {
                 // just pass the original session if it is a Primary variant
                 test_process_blockstore(genesis_config, blockstore, opts, Arc::default())
             }
-            AccessType::Secondary => {
-                let secondary_blockstore = Blockstore::open_with_options(
+            AccessType::Secondary | AccessType::ReadOnly => {
+                let read_only_blockstore = Blockstore::open_with_options(
                     blockstore.ledger_path(),
                     BlockstoreOptions {
                         access_type,
@@ -2426,7 +2426,7 @@ pub mod tests {
                     },
                 )
                 .expect("Unable to open access to blockstore");
-                test_process_blockstore(genesis_config, &secondary_blockstore, opts, Arc::default())
+                test_process_blockstore(genesis_config, &read_only_blockstore, opts, Arc::default())
             }
         }
     }
@@ -2451,6 +2451,11 @@ pub mod tests {
     #[test]
     fn test_process_blockstore_with_missing_hashes_secondary_access() {
         do_test_process_blockstore_with_missing_hashes(AccessType::Secondary);
+    }
+
+    #[test]
+    fn test_process_blockstore_with_missing_hashes_read_only_access() {
+        do_test_process_blockstore_with_missing_hashes(AccessType::ReadOnly);
     }
 
     // Intentionally make slot 1 faulty and ensure that processing sees it as dead
@@ -2498,9 +2503,9 @@ pub mod tests {
 
         let dead_slots: Vec<Slot> = blockstore.dead_slots_iterator(0).unwrap().collect();
         match blockstore_access_type {
-            // Secondary access is immutable so even though a dead slot
+            // Secondary access is non-writable so even though a dead slot
             // will be identified, it won't actually be marked dead.
-            AccessType::Secondary => {
+            AccessType::Secondary | AccessType::ReadOnly => {
                 assert_eq!(dead_slots.len(), 0);
             }
             AccessType::Primary | AccessType::PrimaryForMaintenance => {
@@ -4825,6 +4830,11 @@ pub mod tests {
     #[test]
     fn test_process_blockstore_with_supermajority_root_without_blockstore_root_secondary_access() {
         run_test_process_blockstore_with_supermajority_root(None, AccessType::Secondary);
+    }
+
+    #[test]
+    fn test_process_blockstore_with_supermajority_root_without_blockstore_root_readonly_access() {
+        run_test_process_blockstore_with_supermajority_root(None, AccessType::ReadOnly);
     }
 
     #[test]
