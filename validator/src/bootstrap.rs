@@ -1,7 +1,6 @@
 use {
     agave_snapshots::{
-        paths as snapshot_paths, snapshot_archive_info::SnapshotArchiveInfoGetter as _,
-        SnapshotKind,
+        paths as snapshot_paths, snapshot_archive_info::SnapshotArchiveInfoGetter as _, ArchiveKind,
     },
     itertools::Itertools,
     log::*,
@@ -1153,7 +1152,7 @@ fn download_snapshots(
             download_abort_count,
             rpc_contact_info,
             full_snapshot_hash,
-            SnapshotKind::FullSnapshot,
+            ArchiveKind::FullArchive,
         )?;
     }
 
@@ -1184,7 +1183,7 @@ fn download_snapshots(
                     download_abort_count,
                     rpc_contact_info,
                     incremental_snapshot_hash,
-                    SnapshotKind::IncrementalSnapshot(full_snapshot_hash.0),
+                    ArchiveKind::IncrementalArchive(full_snapshot_hash.0),
                 )?;
             }
         }
@@ -1205,7 +1204,7 @@ fn download_snapshot(
     download_abort_count: &mut u64,
     rpc_contact_info: &ContactInfo,
     desired_snapshot_hash: (Slot, Hash),
-    snapshot_kind: SnapshotKind,
+    archive_kind: ArchiveKind,
 ) -> Result<(), String> {
     let maximum_full_snapshot_archives_to_retain = validator_config
         .snapshot_config
@@ -1235,7 +1234,7 @@ fn download_snapshot(
         full_snapshot_archives_dir,
         incremental_snapshot_archives_dir,
         desired_snapshot_hash,
-        snapshot_kind,
+        archive_kind,
         maximum_full_snapshot_archives_to_retain,
         maximum_incremental_snapshot_archives_to_retain,
         use_progress_bar,
