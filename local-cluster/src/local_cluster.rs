@@ -29,7 +29,7 @@ use {
     solana_ledger::{create_new_tmp_ledger_with_size, shred::Shred},
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_net_utils::sockets::bind_to_localhost_unique,
+    solana_net_utils::{sockets::bind_to_localhost_unique, SocketAddrSpace},
     solana_poh_config::PohConfig,
     solana_program_binaries::core_bpf_programs,
     solana_pubkey::Pubkey,
@@ -44,7 +44,6 @@ use {
         instruction as stake_instruction,
         state::{Authorized, Lockup, StakeStateV2},
     },
-    solana_net_utils::SocketAddrSpace,
     solana_streamer::streamer::StakedNodes,
     solana_system_transaction as system_transaction,
     solana_tpu_client::tpu_client::{

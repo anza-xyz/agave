@@ -27,11 +27,6 @@ pub mod token_bucket;
 #[cfg(feature = "dev-context-only-utils")]
 pub mod tooling_for_tests;
 
-pub use ip_echo_server::{
-    ip_echo_server, IpEchoServer, DEFAULT_IP_ECHO_SERVER_THREADS, MAX_PORT_COUNT_PER_MESSAGE,
-    MINIMUM_IP_ECHO_SERVER_THREADS,
-};
-pub use socket_addr_space::SocketAddrSpace;
 use {
     ip_echo_client::{ip_echo_server_request, ip_echo_server_request_with_binding},
     ip_echo_server::IpEchoServerMessage,
@@ -41,6 +36,13 @@ use {
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, ToSocketAddrs, UdpSocket},
     },
     url::Url,
+};
+pub use {
+    ip_echo_server::{
+        ip_echo_server, IpEchoServer, DEFAULT_IP_ECHO_SERVER_THREADS, MAX_PORT_COUNT_PER_MESSAGE,
+        MINIMUM_IP_ECHO_SERVER_THREADS,
+    },
+    socket_addr_space::SocketAddrSpace,
 };
 
 /// A data type representing a public Udp socket

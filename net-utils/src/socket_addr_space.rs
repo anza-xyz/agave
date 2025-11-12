@@ -76,15 +76,14 @@ impl SocketAddrSpace {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::net::{IpAddr, Ipv6Addr};
+    use {
+        super::*,
+        std::net::{IpAddr, Ipv6Addr},
+    };
 
     #[test]
     fn test_socket_addr_space_new() {
-        assert_eq!(
-            SocketAddrSpace::new(true),
-            SocketAddrSpace::Unspecified
-        );
+        assert_eq!(SocketAddrSpace::new(true), SocketAddrSpace::Unspecified);
         assert_eq!(SocketAddrSpace::new(false), SocketAddrSpace::Global);
     }
 
@@ -139,10 +138,7 @@ mod tests {
     #[test]
     fn test_ipv6_addresses() {
         let space = SocketAddrSpace::Global;
-        assert!(!space.check(&SocketAddr::new(
-            IpAddr::V6(Ipv6Addr::LOCALHOST),
-            8080
-        )));
+        assert!(!space.check(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 8080)));
         assert!(!space.check(&SocketAddr::new(
             IpAddr::V6(Ipv6Addr::new(0xff00, 0, 0, 0, 0, 0, 0, 1)),
             8080
@@ -153,4 +149,3 @@ mod tests {
         )));
     }
 }
-

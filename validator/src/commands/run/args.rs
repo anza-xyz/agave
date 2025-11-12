@@ -24,11 +24,11 @@ use {
     },
     solana_keypair::Keypair,
     solana_ledger::{blockstore_options::BlockstoreOptions, use_snapshot_archives_at_startup},
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_signer::Signer,
-    solana_net_utils::SocketAddrSpace,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{collections::HashSet, net::SocketAddr, path::PathBuf, str::FromStr},
 };
