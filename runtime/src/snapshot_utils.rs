@@ -466,7 +466,7 @@ pub fn serialize_and_archive_snapshot_package(
 
     let archive_kind = snapshot_kind
         .try_into()
-        .expect("Snapshot kind includes archive");
+        .expect("Snapshot kind includes archive when attempting to archive snapshhot");
 
     let snapshot_archive_path = match archive_kind {
         ArchiveKind::FullArchive => snapshot_paths::build_full_snapshot_archive_path(
