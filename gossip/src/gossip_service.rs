@@ -8,7 +8,7 @@ use {
         epoch_specs::EpochSpecs,
     },
     crossbeam_channel::Sender,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     solana_client::{connection_cache::ConnectionCache, tpu_client::TpuClientWrapper},
     solana_keypair::Keypair,
     solana_net_utils::{SocketAddrSpace, DEFAULT_IP_ECHO_SERVER_THREADS},
@@ -242,7 +242,7 @@ pub fn get_client(
     nodes: &[ContactInfo],
     connection_cache: Arc<ConnectionCache>,
 ) -> TpuClientWrapper {
-    let select = thread_rng().gen_range(0..nodes.len());
+    let select = rng().random_range(0..nodes.len());
 
     let rpc_pubsub_url = format!("ws://{}/", nodes[select].rpc_pubsub().unwrap());
     let rpc_url = format!("http://{}", nodes[select].rpc().unwrap());

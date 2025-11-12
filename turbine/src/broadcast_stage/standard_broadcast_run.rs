@@ -562,7 +562,7 @@ mod test {
         let next_shred_index = 10;
         let slot = 1;
         let parent = 0;
-        run.chained_merkle_root = Hash::new_from_array(rand::thread_rng().gen());
+        run.chained_merkle_root = Hash::new_from_array(rand::rng().random());
         run.next_shred_index = next_shred_index;
         run.next_code_index = 17;
         run.slot = slot;

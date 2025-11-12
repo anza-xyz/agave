@@ -80,7 +80,7 @@ pub fn random_u64_range(rng: &mut impl Rng, range: impl RangeBounds<u64>) -> u64
         Bound::Excluded(start) => start.wrapping_add(1),
     };
     let last = match range.end_bound() {
-        Bound::Unbounded | Bound::Included(&u64::MAX) if start == 0 => return rng.gen(),
+        Bound::Unbounded | Bound::Included(&u64::MAX) if start == 0 => return rng.random(),
         Bound::Unbounded => u64::MAX,
         Bound::Included(last) => *last,
         Bound::Excluded(0) => panic!("Cannot generate number in empty range (..0)"),
@@ -213,14 +213,11 @@ mod tests {
     #[test_case(4..4098, "7rKu65HwouY8sr3o7jZrdRPCtGwVXjZDTXsjcKg3VVr")]
     #[test_case(1_000..20_000_000_000, "J5vwi9DrgXrTNinMQmDw1zSq6ogeUencayoqEn4r64gH")]
     fn test_random_range_reproducibility(range: Range<u64>, expected_hash: &str) {
-        let mut rng_rand = ChaChaRng::from_seed(CHACHA_SEED);
         let mut rng_compat = ChaChaRng::from_seed(CHACHA_SEED);
 
         let mut hash = Sha256::new();
-        (0..10_000).for_each(|i| {
-            let rand = rng_rand.gen_range(range.clone());
+        (0..10_000).for_each(|_| {
             let compat = random_u64_range(&mut rng_compat, range.clone());
-            assert_eq!(rand, compat, "should be equal at {i}");
             hash.update(compat.to_le_bytes());
         });
         assert_eq!(bs58::encode(hash.finalize()).into_string(), expected_hash);
