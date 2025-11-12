@@ -96,7 +96,7 @@ fn get_key_and_stakes(
 pub(crate) struct ConsensusPool {
     cluster_info: Arc<ClusterInfo>,
     // Storage for per slot votes.
-    // Adding new votes in the vote uses the prior votes to check for slashable behavior and duplicate votes.
+    // Adding new votes in the vote uses the prior votes to check for invalid and duplicate votes.
     vote_pools: BTreeMap<Slot, VotePool>,
     /// Completed certificates
     completed_certificates: BTreeMap<CertificateType, Arc<Certificate>>,
@@ -342,8 +342,8 @@ impl ConsensusPool {
                     self.stats.exist_votes = self.stats.exist_votes.saturating_add(1);
                     return Ok(vec![]);
                 }
-                vote_pool::AddVoteError::Slash => {
-                    self.stats.slashable_behavior = self.stats.slashable_behavior.saturating_add(1);
+                vote_pool::AddVoteError::Invalid => {
+                    self.stats.invalid_votes = self.stats.invalid_votes.saturating_add(1);
                     return Err(e.into());
                 }
             },

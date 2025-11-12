@@ -1,6 +1,6 @@
 //! Container to store received votes and associated stakes.
 //!
-//! Implements various checks for slashable behavior as defined by the Alpenglow paper.
+//! Implements various checks for invalid votes as defined by the Alpenglow paper e.g. lemma 20 and 22.
 //! Further detects duplicate votes which are defined as identical vote from the same sender received multiple times.
 
 use {
@@ -14,15 +14,15 @@ use {
 };
 
 /// As per the Alpenglow paper, a validator is allowed to vote notar fallback on at most 3 different block id for a given slot.
-/// A validator that votes for more block_ids in a given slot is committing a slashable behavior.
 const MAX_NOTAR_FALLBACK_PER_VALIDATOR: usize = 3;
 
 #[derive(Debug, PartialEq, Eq, Error)]
 pub(crate) enum AddVoteError {
     #[error("duplicate vote")]
     Duplicate,
-    #[error("slashable behavior")]
-    Slash,
+    /// These are invalid votes as defined in the Alpenglow paper e.g. lemma 20 and 22.
+    #[error("invalid votes")]
+    Invalid,
 }
 
 /// Container for storing notar votes.
@@ -46,7 +46,7 @@ impl NotarVotesPool {
             match self.votes.get(&block_id) {
                 None => {
                     // voter previously voted and it was for some other block_id
-                    return Err(AddVoteError::Slash);
+                    return Err(AddVoteError::Invalid);
                 }
                 Some(map) => {
                     if map.contains_key(&voter) {
@@ -54,7 +54,7 @@ impl NotarVotesPool {
                         return Err(AddVoteError::Duplicate);
                     } else {
                         // voter voted for some other block id previously
-                        return Err(AddVoteError::Slash);
+                        return Err(AddVoteError::Invalid);
                     }
                 }
             }
@@ -122,19 +122,19 @@ impl InternalVotePool {
 
     /// Adds votes.
     ///
-    /// Checks for different types of slashable behavior and duplicate votes returning appropriate errors.
+    /// Checks for different types of invalid and duplicate votes returning appropriate errors.
     fn add_vote(&mut self, voter: Pubkey, vote: VoteMessage) -> Result<(), AddVoteError> {
         debug_assert_eq!(self.slot, vote.vote.slot());
         match vote.vote {
             Vote::Notarize(notar) => {
                 if self.skip.contains_key(&voter) {
-                    return Err(AddVoteError::Slash);
+                    return Err(AddVoteError::Invalid);
                 }
                 self.notar.add_vote(voter, vote, notar.block_id)
             }
             Vote::NotarizeFallback(notar_fallback) => {
                 if self.finalize.contains_key(&voter) {
-                    return Err(AddVoteError::Slash);
+                    return Err(AddVoteError::Invalid);
                 }
                 match self.notar_fallback.entry(voter) {
                     Entry::Vacant(e) => {
@@ -147,7 +147,7 @@ impl InternalVotePool {
                         match map.entry(notar_fallback.block_id) {
                             Entry::Vacant(map_e) => {
                                 if map_len == MAX_NOTAR_FALLBACK_PER_VALIDATOR {
-                                    Err(AddVoteError::Slash)
+                                    Err(AddVoteError::Invalid)
                                 } else {
                                     map_e.insert(vote);
                                     Ok(())
@@ -160,23 +160,23 @@ impl InternalVotePool {
             }
             Vote::Skip(_) => {
                 if self.notar.contains_voter(&voter) || self.finalize.contains_key(&voter) {
-                    return Err(AddVoteError::Slash);
+                    return Err(AddVoteError::Invalid);
                 }
                 insert_vote(&mut self.skip, voter, vote)
             }
             Vote::SkipFallback(_) => {
                 if self.finalize.contains_key(&voter) {
-                    return Err(AddVoteError::Slash);
+                    return Err(AddVoteError::Invalid);
                 }
                 insert_vote(&mut self.skip_fallback, voter, vote)
             }
             Vote::Finalize(_) => {
                 if self.skip.contains_key(&voter) || self.skip_fallback.contains_key(&voter) {
-                    return Err(AddVoteError::Slash);
+                    return Err(AddVoteError::Invalid);
                 }
                 if let Some(map) = self.notar_fallback.get(&voter) {
                     debug_assert!(!map.is_empty());
-                    return Err(AddVoteError::Slash);
+                    return Err(AddVoteError::Invalid);
                 }
                 insert_vote(&mut self.finalize, voter, vote)
             }
@@ -282,7 +282,7 @@ impl Stakes {
 
 /// Container to store per slot votes and associated stake.
 ///
-/// When adding new votes, various checks for slashable behavior and duplicate votes is performed.
+/// When adding new votes, various checks for invalid and duplicate votes is performed.
 pub(super) struct VotePool {
     /// The slot this instance of the pool is responsible for.
     slot: Slot,
@@ -360,7 +360,7 @@ mod test {
         };
         assert!(matches!(
             votes.add_vote(voter, notar),
-            Err(AddVoteError::Slash)
+            Err(AddVoteError::Invalid)
         ));
 
         let mut votes = InternalVotePool::new(slot);
@@ -377,7 +377,7 @@ mod test {
         };
         assert!(matches!(
             votes.add_vote(voter, notar),
-            Err(AddVoteError::Slash)
+            Err(AddVoteError::Invalid)
         ));
 
         let mut votes = InternalVotePool::new(slot);
@@ -414,7 +414,7 @@ mod test {
         };
         assert!(matches!(
             votes.add_vote(voter, nf),
-            Err(AddVoteError::Slash)
+            Err(AddVoteError::Invalid)
         ));
 
         let mut votes = InternalVotePool::new(slot);
@@ -433,7 +433,7 @@ mod test {
         };
         assert!(matches!(
             votes.add_vote(voter, nf),
-            Err(AddVoteError::Slash)
+            Err(AddVoteError::Invalid)
         ));
 
         let mut votes = InternalVotePool::new(slot);
@@ -470,7 +470,7 @@ mod test {
         };
         assert!(matches!(
             votes.add_vote(voter, skip),
-            Err(AddVoteError::Slash)
+            Err(AddVoteError::Invalid)
         ));
 
         let mut votes = InternalVotePool::new(slot);
@@ -487,7 +487,7 @@ mod test {
         };
         assert!(matches!(
             votes.add_vote(voter, skip),
-            Err(AddVoteError::Slash)
+            Err(AddVoteError::Invalid)
         ));
 
         let mut votes = InternalVotePool::new(slot);
@@ -524,7 +524,7 @@ mod test {
         };
         assert!(matches!(
             votes.add_vote(voter, sf),
-            Err(AddVoteError::Slash)
+            Err(AddVoteError::Invalid)
         ));
 
         let mut votes = InternalVotePool::new(slot);
@@ -561,7 +561,7 @@ mod test {
         };
         assert!(matches!(
             votes.add_vote(voter, finalize),
-            Err(AddVoteError::Slash)
+            Err(AddVoteError::Invalid)
         ));
 
         let mut votes = InternalVotePool::new(slot);
@@ -578,7 +578,7 @@ mod test {
         };
         assert!(matches!(
             votes.add_vote(voter, finalize),
-            Err(AddVoteError::Slash)
+            Err(AddVoteError::Invalid)
         ));
 
         let mut votes = InternalVotePool::new(slot);

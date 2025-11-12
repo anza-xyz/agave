@@ -83,7 +83,7 @@ impl VoteStats {
 }
 
 pub(crate) struct ConsensusPoolStats {
-    pub(crate) slashable_behavior: u32,
+    pub(crate) invalid_votes: u32,
     pub(crate) event_safe_to_notarize: u32,
     pub(crate) event_safe_to_skip: u32,
     pub(crate) exist_certs: u32,
@@ -109,7 +109,7 @@ impl Default for ConsensusPoolStats {
 impl ConsensusPoolStats {
     pub fn new() -> Self {
         Self {
-            slashable_behavior: 0,
+            invalid_votes: 0,
             event_safe_to_notarize: 0,
             event_safe_to_skip: 0,
             exist_certs: 0,
@@ -142,11 +142,7 @@ impl ConsensusPoolStats {
     fn report(&self) {
         datapoint_info!(
             "consensus_pool_stats",
-            (
-                "vote-pool-slashable_behavior",
-                self.slashable_behavior as i64,
-                i64
-            ),
+            ("vote_pool_invalid_votes", self.invalid_votes as i64, i64),
             ("event_safe_to_skip", self.event_safe_to_skip as i64, i64),
             (
                 "event_safe_to_notarize",
