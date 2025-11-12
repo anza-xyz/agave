@@ -2,7 +2,7 @@ mod snapshot_gossip_manager;
 use {
     agave_snapshots::{
         paths as snapshot_paths, snapshot_config::SnapshotConfig,
-        snapshot_hash::StartingSnapshotHashes,
+        snapshot_hash::StartingSnapshotHashes, ArchivePackage,
     },
     snapshot_gossip_manager::SnapshotGossipManager,
     solana_accounts_db::accounts_db::AccountStorageEntry,
@@ -12,7 +12,9 @@ use {
     solana_perf::thread::renice_this_thread,
     solana_runtime::{
         accounts_background_service::PendingSnapshotPackages,
-        snapshot_controller::SnapshotController, snapshot_package::SnapshotPackage, snapshot_utils,
+        snapshot_controller::SnapshotController,
+        snapshot_package::SnapshotPackage,
+        snapshot_utils::{self, BankSnapshotPackage},
     },
     std::{
         sync::{
@@ -93,17 +95,49 @@ impl SnapshotPackagerService {
                         });
                     }
 
+                    let archive_time = Instant::now();
+
+                    let bank_snapshot_package = BankSnapshotPackage {
+                        bank_fields: snapshot_package.bank_fields_to_serialize,
+                        bank_hash_stats: snapshot_package.bank_hash_stats,
+                        snapshot_storages: snapshot_package.snapshot_storages.as_slice(),
+                        slot_deltas: snapshot_package.status_cache_slot_deltas,
+                        write_version: snapshot_package.write_version,
+                    };
+
+                    let bank_snapshot_info = snapshot_utils::serialize_snapshot(
+                        &snapshot_config.bank_snapshots_dir,
+                        snapshot_config.snapshot_version,
+                        bank_snapshot_package,
+                        exit_backpressure.is_none(),
+                    );
+
+                    if let Err(err) = bank_snapshot_info {
+                        error!(
+                            "Stopping {}! Fatal error while serializing snapshot for slot {}: \
+                             {err}",
+                            Self::NAME,
+                            snapshot_slot,
+                        );
+                        exit.store(true, Ordering::Relaxed);
+                        break;
+                    }
+                    let bank_snapshot_info = bank_snapshot_info.unwrap();
+
+                    let archive_package = ArchivePackage {
+                        snapshot_kind: snapshot_package.snapshot_kind,
+                        snapshot_slot: snapshot_package.slot,
+                        snapshot_hash: snapshot_package.hash,
+                        snapshot_storages: snapshot_package.snapshot_storages,
+                        bank_snapshot_dir: bank_snapshot_info.snapshot_dir,
+                    };
+
                     // Archiving the snapshot package is not allowed to fail.
                     // AccountsBackgroundService calls `clean_accounts()` with a value for
                     // latest_full_snapshot_slot that requires this archive call to succeed.
-                    let (archive_result, archive_time_us) =
-                        measure_us!(snapshot_utils::serialize_and_archive_snapshot_package(
-                            snapshot_package,
-                            snapshot_config,
-                            // Without exit backpressure, always flush the snapshot storages,
-                            // which is required for fastboot.
-                            exit_backpressure.is_none(),
-                        ));
+                    let archive_result =
+                        snapshot_utils::archive_snapshot_package(archive_package, snapshot_config);
+
                     if let Err(err) = archive_result {
                         error!(
                             "Stopping {}! Fatal error while archiving snapshot package: {err}",
@@ -112,6 +146,8 @@ impl SnapshotPackagerService {
                         exit.store(true, Ordering::Relaxed);
                         break;
                     }
+
+                    let archive_time_us = archive_time.elapsed().as_micros();
 
                     if let Some(snapshot_gossip_manager) = snapshot_gossip_manager.as_mut() {
                         snapshot_gossip_manager
