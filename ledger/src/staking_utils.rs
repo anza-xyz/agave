@@ -126,10 +126,10 @@ pub(crate) mod tests {
                 &Clock::default(),
             ),
         ));
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let vote_accounts = stakes.into_iter().map(|(stake, vote_state)| {
             let account = AccountSharedData::new_data(
-                rng.gen(), // lamports
+                rng.random(), // lamports
                 &VoteStateVersions::new_v4(vote_state),
                 &solana_vote_program::id(), // owner
             )

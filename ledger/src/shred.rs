@@ -967,11 +967,11 @@ mod tests {
         is_last_in_slot: bool,
     ) -> Result<Vec<merkle::Shred>, Error> {
         let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
-        let chained_merkle_root = Hash::new_from_array(rng.gen());
-        let parent_offset = rng.gen_range(1..=u16::try_from(slot).unwrap_or(u16::MAX));
+        let chained_merkle_root = Hash::new_from_array(rng.random());
+        let parent_offset = rng.random_range(1..=u16::try_from(slot).unwrap_or(u16::MAX));
         let parent_slot = slot.checked_sub(u64::from(parent_offset)).unwrap();
         let mut data = vec![0u8; data_size];
-        let fec_set_index = rng.gen_range(0..21) * DATA_SHREDS_PER_FEC_BLOCK as u32;
+        let fec_set_index = rng.random_range(0..21) * DATA_SHREDS_PER_FEC_BLOCK as u32;
         rng.fill(&mut data[..]);
         merkle::make_shreds_from_data(
             &thread_pool,
@@ -980,8 +980,8 @@ mod tests {
             &data[..],
             slot,
             parent_slot,
-            rng.gen(),            // shred_version
-            rng.gen_range(1..64), // reference_tick
+            rng.random(),            // shred_version
+            rng.random_range(1..64), // reference_tick
             is_last_in_slot,
             fec_set_index, // next_shred_index
             fec_set_index, // next_code_index
@@ -1109,7 +1109,7 @@ mod tests {
     #[test_case(false ; "not_last_in_slot")]
     fn test_should_discard_shred(is_last_in_slot: bool) {
         agave_logger::setup();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let slot = 18_291;
         let shreds = make_merkle_shreds_for_tests(
             &mut rng,
@@ -1125,8 +1125,8 @@ mod tests {
         let parent_slot = shreds[0].parent().unwrap();
         let shred_version = shreds[0].common_header().version;
 
-        let root = rng.gen_range(0..parent_slot);
-        let max_slot = slot + rng.gen_range(1..65536);
+        let root = rng.random_range(0..parent_slot);
+        let max_slot = slot + rng.random_range(1..65536);
         let mut packet = Packet::default();
 
         // Data shred sanity checks!
@@ -1373,7 +1373,7 @@ mod tests {
     #[test_case(false ; "do_not_enforce_fixed_fec_set")]
     fn test_should_discard_shred_fec_set_checks(enforce_fixed_fec_set: bool) {
         agave_logger::setup();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let slot = 18_291;
         let shreds = make_merkle_shreds_for_tests(
             &mut rng,
@@ -1388,8 +1388,8 @@ mod tests {
         assert_matches!(shreds[0].shred_type(), ShredType::Data);
         let parent_slot = shreds[0].parent().unwrap();
         let shred_version = shreds[0].common_header().version;
-        let root = rng.gen_range(0..parent_slot);
-        let max_slot = slot + rng.gen_range(1..65536);
+        let root = rng.random_range(0..parent_slot);
+        let max_slot = slot + rng.random_range(1..65536);
 
         // fec_set_index not multiple of 32
         {
@@ -1495,7 +1495,7 @@ mod tests {
         let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
         let parent_slot = shreds[0].parent().unwrap();
         let shred_version = shreds[0].common_header().version;
-        let root = rng.gen_range(0..parent_slot);
+        let root = rng.random_range(0..parent_slot);
         let data_shreds: Vec<_> = shreds
             .iter()
             .filter(|s| s.shred_type() == ShredType::Data)
@@ -1664,7 +1664,7 @@ mod tests {
     #[test]
     fn test_shred_seed() {
         let mut rng = ChaChaRng::from_seed([147u8; 32]);
-        let leader = Pubkey::new_from_array(rng.gen());
+        let leader = Pubkey::new_from_array(rng.random());
         let key = ShredId(
             141939602, // slot
             28685,     // index
@@ -1674,7 +1674,7 @@ mod tests {
             bs58::encode(key.seed(&leader)).into_string(),
             "Gp4kUM4ZpWGQN5XSCyM9YHYWEBCAZLa94ZQuSgDE4r56"
         );
-        let leader = Pubkey::new_from_array(rng.gen());
+        let leader = Pubkey::new_from_array(rng.random());
         let key = ShredId(
             141945197, // slot
             23418,     // index
@@ -1913,8 +1913,8 @@ mod tests {
             Shred::new_from_serialized_shred(shred).unwrap()
         }
 
-        let mut rng = rand::thread_rng();
-        let slot = 285_376_049 + rng.gen_range(0..100_000);
+        let mut rng = rand::rng();
+        let slot = 285_376_049 + rng.random_range(0..100_000);
         let shreds: Vec<_> = make_merkle_shreds_for_tests(
             &mut rng,
             slot,
@@ -1967,7 +1967,7 @@ mod tests {
     #[test]
     fn test_data_complete_shred_index_validation() {
         agave_logger::setup();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let slot = 18_291;
         let shreds = make_merkle_shreds_for_tests(
             &mut rng,
@@ -1985,8 +1985,8 @@ mod tests {
 
         let parent_slot = data_shred.parent().unwrap();
         let shred_version = data_shred.common_header().version;
-        let root = rng.gen_range(0..parent_slot);
-        let max_slot = slot + rng.gen_range(1..65536);
+        let root = rng.random_range(0..parent_slot);
+        let max_slot = slot + rng.random_range(1..65536);
 
         // Test case where DATA_COMPLETE_SHRED flag is set but index is not at expected position
         let mut packet = Packet::default();
