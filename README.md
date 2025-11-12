@@ -1,8 +1,8 @@
 > [!IMPORTANT]
-> This is a fork of the original `agave` repository to make the code run in non-browser WASM environments, 
+> This is a fork of the original `agave` repository that was used to make the code run in non-browser WASM environments, 
 > such as a canister running on the [Internet Computer](https://internetcomputer.org) (ICP).
-> This fork will be archived once the required changes are merged upstream (see [solana-sdk#117](https://github.com/anza-xyz/solana-sdk/issues/117)).
-> The original repository can be found [here](https://github.com/anza-xyz/agave).
+> This fork is not longer required since the relase of [v3.0.0](https://github.com/anza-xyz/agave/releases/tag/v3.0.0). 
+> The [original repository]((https://github.com/anza-xyz/agave) should now be used instead of this fork.
 
 <p align="center">
   <a href="https://solana.com">
