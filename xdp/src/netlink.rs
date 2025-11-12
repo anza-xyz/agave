@@ -2,7 +2,7 @@
 
 use {
     libc::{
-        bind, getsockname, nlattr, nlmsgerr, nlmsghdr, recv, send, setsockopt, sockaddr_nl, socket,
+        getsockname, nlattr, nlmsgerr, nlmsghdr, recv, send, setsockopt, sockaddr_nl, socket,
         AF_INET, AF_INET6, AF_NETLINK, ARPHRD_ETHER, ARPHRD_IPGRE, ARPHRD_LOOPBACK, ARPHRD_NETROM,
         IFLA_IFNAME, IFNAMSIZ, NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_ROUTE, NLA_ALIGNTO,
         NLA_TYPE_MASK, NLMSG_DONE, NLMSG_ERROR, NLM_F_DUMP, NLM_F_MULTI, NLM_F_REQUEST,
@@ -64,17 +64,14 @@ pub(crate) fn is_valid_route(route: &RouteEntry) -> bool {
 
 pub struct NetlinkSocket {
     sock: OwnedFd,
-    _nl_pid: u32,
+    nl_pid: u32,
 }
 
 impl NetlinkSocket {
     fn open() -> Result<Self, io::Error> {
         let sock = Self::create_raw_socket()?;
         let nl_pid = Self::get_nl_pid(sock.as_raw_fd())?;
-        Ok(Self {
-            sock,
-            _nl_pid: nl_pid,
-        })
+        Ok(Self { sock, nl_pid })
     }
 
     fn send(&self, msg: &[u8]) -> Result<(), io::Error> {
@@ -142,15 +139,15 @@ impl NetlinkSocket {
 
     /// Opens a listener socket for netlink updates
     /// NETLINK_ROUTE socket subscribed to `groups` bitmask
-    pub fn open_multicast_listener(groups: u32) -> Result<Self, io::Error> {
-        let sock = Self::create_raw_socket()?;
+    pub fn bind(groups: u32) -> Result<Self, io::Error> {
+        let mut sock = Self::open()?;
 
         // Subscribe to multicast groups
         let mut addr: sockaddr_nl = unsafe { mem::zeroed() };
         addr.nl_family = AF_NETLINK as u16;
         addr.nl_groups = groups;
         if unsafe {
-            bind(
+            libc::bind(
                 sock.as_raw_fd(),
                 &addr as *const _ as *const _,
                 mem::size_of::<sockaddr_nl>() as u32,
@@ -172,11 +169,9 @@ impl NetlinkSocket {
             );
         }
 
-        let nl_pid = Self::get_nl_pid(sock.as_raw_fd())?;
-        Ok(Self {
-            sock,
-            _nl_pid: nl_pid,
-        })
+        sock.nl_pid = Self::get_nl_pid(sock.as_raw_fd())?;
+
+        Ok(sock)
     }
 
     #[inline]
