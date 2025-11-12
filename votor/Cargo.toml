@@ -19,6 +19,8 @@ frozen-abi = [
     "solana-bloom/frozen-abi",
     "solana-ledger/frozen-abi",
     "solana-runtime/frozen-abi",
+    "solana-signature/frozen-abi",
+    "agave-votor-messages/frozen-abi",
 ]
 
 [dependencies]
