@@ -127,7 +127,7 @@ use {
         send_transaction_service::Config as SendTransactionServiceConfig,
         send_transaction_service::SendTransactionService, test_utils::ClientWithCreator,
     },
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
 };
 
 mod transaction {

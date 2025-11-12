@@ -61,6 +61,7 @@ solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
+solana-net-utils = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rpc = { workspace = true }
 solana-runtime = { workspace = true }
@@ -76,7 +77,6 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 rand = { workspace = true }
-solana-net-utils = { workspace = true }
 solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk-ids = { workspace = true }

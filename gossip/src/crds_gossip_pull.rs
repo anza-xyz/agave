@@ -35,7 +35,7 @@ use {
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
     std::{
         collections::{HashMap, HashSet, VecDeque},
         convert::TryInto,

@@ -40,7 +40,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
     solana_turbine::broadcast_stage::BroadcastStageType,
     static_assertions,
     std::{

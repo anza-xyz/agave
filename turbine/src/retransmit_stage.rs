@@ -30,10 +30,8 @@ use {
         bank::{Bank, MAX_LEADER_SCHEDULE_STAKES},
         bank_forks::BankForks,
     },
-    solana_streamer::{
-        sendmmsg::{multi_target_send, SendPktsError},
-        socket::SocketAddrSpace,
-    },
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
+    solana_streamer::sendmmsg::{multi_target_send, SendPktsError},
     solana_time_utils::timestamp,
     std::{
         borrow::Cow,

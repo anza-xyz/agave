@@ -7,7 +7,7 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
     solana_test_validator::TestValidator,
 };
 

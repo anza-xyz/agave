@@ -470,7 +470,7 @@ mod test {
         },
         solana_runtime::bank::Bank,
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
+        solana_net_utils::socket_addr_space::SocketAddrSpace,
         solana_time_utils::timestamp,
     };
 

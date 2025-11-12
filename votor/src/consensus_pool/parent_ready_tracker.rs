@@ -238,7 +238,7 @@ mod tests {
     use {
         super::*, itertools::Itertools, solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
         solana_gossip::contact_info::ContactInfo, solana_hash::Hash, solana_keypair::Keypair,
-        solana_signer::Signer, solana_streamer::socket::SocketAddrSpace,
+        solana_signer::Signer, solana_net_utils::socket_addr_space::SocketAddrSpace,
     };
 
     fn new_cluster_info() -> Arc<ClusterInfo> {

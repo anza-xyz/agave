@@ -8,7 +8,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
     solana_pubkey::Pubkey,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
     solana_turbine::{
         cluster_nodes::{make_test_cluster, new_cluster_nodes, ClusterNodes},
         retransmit_stage::RetransmitStage,

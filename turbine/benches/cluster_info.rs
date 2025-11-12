@@ -13,7 +13,7 @@ use {
     solana_pubkey as pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
     solana_time_utils::{timestamp, AtomicInterval},
     solana_turbine::{
         broadcast_stage::{

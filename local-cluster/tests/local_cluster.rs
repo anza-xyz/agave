@@ -74,7 +74,7 @@ use {
     solana_runtime::{commitment::VOTE_THRESHOLD_SIZE, snapshot_bank_utils, snapshot_utils},
     solana_signer::Signer,
     solana_stake_interface::{self as stake, state::NEW_WARMUP_COOLDOWN_RATE},
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
     solana_system_interface::program as system_program,
     solana_system_transaction as system_transaction,
     solana_turbine::broadcast_stage::{

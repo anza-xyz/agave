@@ -45,9 +45,9 @@ use {
     solana_runtime::bank_forks::SharableBanks,
     solana_signature::{Signature, SIGNATURE_BYTES},
     solana_signer::Signer,
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
     solana_streamer::{
         sendmmsg::{batch_send, SendPktsError},
-        socket::SocketAddrSpace,
         streamer::PacketBatchSender,
     },
     solana_time_utils::timestamp,
@@ -1365,7 +1365,7 @@ mod tests {
         solana_perf::packet::{deserialize_from_with_limit, Packet, PacketFlags, PacketRef},
         solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
-        solana_streamer::socket::SocketAddrSpace,
+        solana_net_utils::socket_addr_space::SocketAddrSpace,
         solana_time_utils::timestamp,
         std::{io::Cursor, net::Ipv4Addr},
     };

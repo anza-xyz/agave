@@ -44,7 +44,8 @@ use {
         instruction as stake_instruction,
         state::{Authorized, Lockup, StakeStateV2},
     },
-    solana_streamer::{socket::SocketAddrSpace, streamer::StakedNodes},
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
+    solana_streamer::streamer::StakedNodes,
     solana_system_transaction as system_transaction,
     solana_tpu_client::tpu_client::{
         TpuClient, TpuClientConfig, DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP,

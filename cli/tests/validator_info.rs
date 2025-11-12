@@ -9,7 +9,7 @@ use {
     solana_keypair::{keypair_from_seed, Keypair},
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
     solana_test_validator::TestValidator,
     test_case::test_case,
 };

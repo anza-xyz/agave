@@ -4477,7 +4477,7 @@ pub(crate) mod tests {
             genesis_utils::{GenesisConfigInfo, ValidatorVoteKeypairs},
         },
         solana_sha256_hasher::hash,
-        solana_streamer::socket::SocketAddrSpace,
+        solana_net_utils::socket_addr_space::SocketAddrSpace,
         solana_system_transaction as system_transaction,
         solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
         solana_transaction_error::TransactionError,

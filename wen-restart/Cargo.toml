@@ -32,6 +32,7 @@ solana-genesis-utils = { workspace = true }
 solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-ledger = { workspace = true }
+solana-net-utils = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
 solana-shred-version = { workspace = true }

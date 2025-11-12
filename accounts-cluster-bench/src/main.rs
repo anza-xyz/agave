@@ -26,7 +26,7 @@ use {
     solana_rpc_client_api::request::TokenAccountsFilter,
     solana_signature::Signature,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
     solana_system_interface::{instruction as system_instruction, program as system_program},
     solana_transaction::Transaction,
     solana_transaction_status::UiTransactionEncoding,

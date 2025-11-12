@@ -10,13 +10,13 @@ use {
     solana_net_utils::VALIDATOR_PORT_RANGE,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
     solana_streamer::{
         nonblocking::testing_utilities::check_multiple_streams,
         quic::{
             DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
         },
-        socket::SocketAddrSpace,
         streamer::StakedNodes,
     },
     solana_vortexor::{

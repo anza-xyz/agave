@@ -65,7 +65,7 @@ use {
     solana_signature::Signature,
     solana_signer::Signer,
     solana_stake_interface as stake,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
     solana_system_interface::{
         instruction::{self as system_instruction, SystemInstruction},
         program as system_program,

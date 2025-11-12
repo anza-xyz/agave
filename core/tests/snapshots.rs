@@ -32,7 +32,7 @@ use {
     },
     solana_sha256_hasher::hashv,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
     std::{

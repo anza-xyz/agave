@@ -1,6 +1,6 @@
 use {
     solana_keypair::Keypair, solana_rpc_client::rpc_client::RpcClient, solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace, solana_test_validator::TestValidator,
+    solana_net_utils::socket_addr_space::SocketAddrSpace, solana_test_validator::TestValidator,
     solana_tokens::commands::test_process_distribute_tokens_with_client,
 };
 

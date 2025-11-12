@@ -12,7 +12,7 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
     solana_test_validator::TestValidator,
     std::str::FromStr,
 };

@@ -13,7 +13,7 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_nonce_utils::blockhash_query::{self, BlockhashQuery},
     solana_signer::{null_signer::NullSigner, Signer},
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
     solana_test_validator::TestValidator,
     solana_vote_program::vote_state::{VoteAuthorize, VoteStateV4},
     test_case::test_case,

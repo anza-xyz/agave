@@ -23,7 +23,7 @@ use {
     solana_rayon_threadlimit::get_thread_count,
     solana_sha256_hasher::hash,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
     solana_time_utils::timestamp,
     std::{
         collections::{HashMap, HashSet},

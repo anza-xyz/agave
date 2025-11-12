@@ -108,6 +108,7 @@ tiny-bip39 = { workspace = true }
 assert_matches = { workspace = true }
 solana-client = { workspace = true, features = ["dev-context-only-utils"] }
 solana-faucet = { workspace = true, features = ["dev-context-only-utils"] }
+solana-net-utils = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-presigner = { workspace = true }
 solana-rpc = { workspace = true }

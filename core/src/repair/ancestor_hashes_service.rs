@@ -928,7 +928,7 @@ mod test {
         solana_perf::packet::Packet,
         solana_runtime::bank_forks::BankForks,
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
+        solana_net_utils::socket_addr_space::SocketAddrSpace,
         std::collections::HashMap,
         trees::tr,
     };

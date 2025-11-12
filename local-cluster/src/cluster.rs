@@ -6,7 +6,7 @@ use {
     solana_ledger::shred::Shred,
     solana_pubkey::Pubkey,
     solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
     solana_tpu_client::tpu_client::TpuClient,
     std::{io::Result, path::PathBuf, sync::Arc},
 };

@@ -28,7 +28,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig, TpuSenderError},

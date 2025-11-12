@@ -17,10 +17,8 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::BankForks,
     solana_signer::Signer,
-    solana_streamer::{
-        sendmmsg::{multi_target_send, SendPktsError},
-        socket::SocketAddrSpace,
-    },
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
+    solana_streamer::sendmmsg::{multi_target_send, SendPktsError},
     solana_time_utils::timestamp,
     solana_transaction::Transaction,
     solana_vote_program::{vote_instruction, vote_state::Vote},

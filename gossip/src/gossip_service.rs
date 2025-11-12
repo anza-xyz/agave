@@ -17,9 +17,9 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::bank_forks::BankForks,
     solana_signer::Signer,
+    solana_net_utils::socket_addr_space::SocketAddrSpace,
     solana_streamer::{
         evicting_sender::EvictingSender,
-        socket::SocketAddrSpace,
         streamer::{self, StreamerReceiveStats},
     },
     solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig},

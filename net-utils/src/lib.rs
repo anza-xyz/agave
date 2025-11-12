@@ -20,6 +20,7 @@
 mod ip_echo_client;
 mod ip_echo_server;
 pub mod multihomed_sockets;
+pub mod socket_addr_space;
 pub mod sockets;
 pub mod token_bucket;
 

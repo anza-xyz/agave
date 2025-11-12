@@ -278,10 +278,10 @@ mod tests {
             },
         },
         solana_signer::Signer,
+        solana_net_utils::socket_addr_space::SocketAddrSpace,
         solana_streamer::{
             nonblocking::swqos::SwQosConfig,
             quic::{spawn_stake_wighted_qos_server, QuicStreamerConfig, SpawnServerResult},
-            socket::SocketAddrSpace,
             streamer::StakedNodes,
         },
         std::{net::SocketAddr, sync::Arc},
