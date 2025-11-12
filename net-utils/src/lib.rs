@@ -20,6 +20,7 @@
 mod ip_echo_client;
 mod ip_echo_server;
 pub mod multihomed_sockets;
+pub mod socket_addr_space;
 pub mod sockets;
 pub mod token_bucket;
 
@@ -30,6 +31,7 @@ pub use ip_echo_server::{
     ip_echo_server, IpEchoServer, DEFAULT_IP_ECHO_SERVER_THREADS, MAX_PORT_COUNT_PER_MESSAGE,
     MINIMUM_IP_ECHO_SERVER_THREADS,
 };
+pub use socket_addr_space::SocketAddrSpace;
 use {
     ip_echo_client::{ip_echo_server_request, ip_echo_server_request_with_binding},
     ip_echo_server::IpEchoServerMessage,

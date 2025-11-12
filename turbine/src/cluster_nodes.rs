@@ -22,7 +22,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::SocketAddrSpace,
     solana_time_utils::timestamp,
     std::{
         any::TypeId,

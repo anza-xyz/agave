@@ -104,7 +104,7 @@ mod test {
             },
         },
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
+        solana_net_utils::SocketAddrSpace,
         solana_time_utils::timestamp,
         std::{net::Ipv4Addr, sync::atomic::AtomicBool},
     };

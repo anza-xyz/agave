@@ -850,7 +850,7 @@ mod tests {
             },
             installed_scheduler_pool::BankWithScheduler,
         },
-        solana_streamer::socket::SocketAddrSpace,
+        solana_net_utils::SocketAddrSpace,
         std::{
             collections::HashMap,
             fs::remove_file,

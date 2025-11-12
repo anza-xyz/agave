@@ -10298,6 +10298,7 @@ dependencies = [
  "solana-gossip",
  "solana-hash",
  "solana-ledger",
+ "solana-net-utils",
  "solana-pubkey",
  "solana-runtime",
  "solana-shred-version",

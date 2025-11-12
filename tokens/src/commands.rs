@@ -1313,7 +1313,7 @@ mod tests {
         solana_native_token::LAMPORTS_PER_SOL,
         solana_signer::Signer,
         solana_stake_interface::instruction::StakeInstruction,
-        solana_streamer::socket::SocketAddrSpace,
+        solana_net_utils::SocketAddrSpace,
         solana_test_validator::TestValidator,
         solana_transaction_status::TransactionConfirmationStatus,
         std::slice,

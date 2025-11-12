@@ -1444,7 +1444,7 @@ mod tests {
             snapshot_bank_utils::bank_to_full_snapshot_archive,
         },
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
+        solana_net_utils::SocketAddrSpace,
         solana_time_utils::timestamp,
         solana_vote::vote_account::VoteAccount,
         solana_vote_interface::state::{TowerSync, Vote},

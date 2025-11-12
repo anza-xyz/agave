@@ -11,7 +11,7 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::SocketAddrSpace,
     solana_test_validator::TestValidator,
     std::time::Duration,
     test_case::test_case,

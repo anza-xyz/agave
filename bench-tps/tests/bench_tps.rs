@@ -24,7 +24,7 @@ use {
     solana_rpc::rpc::JsonRpcConfig,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::SocketAddrSpace,
     solana_test_validator::TestValidatorGenesis,
     solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig},
     std::{sync::Arc, time::Duration},

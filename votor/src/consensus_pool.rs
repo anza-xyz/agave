@@ -663,7 +663,7 @@ mod tests {
             },
         },
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
+        solana_net_utils::SocketAddrSpace,
         std::sync::{Arc, RwLock},
         test_case::test_case,
     };

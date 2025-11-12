@@ -13,7 +13,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::SocketAddrSpace,
     solana_system_interface::instruction as system_instruction,
     solana_test_validator::TestValidator,
     std::sync::Arc,

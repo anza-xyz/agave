@@ -11,7 +11,7 @@ use {
     solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_sanitize::{Sanitize, SanitizeError},
     solana_serde_varint as serde_varint, solana_short_vec as short_vec,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::SocketAddrSpace,
     static_assertions::const_assert_eq,
     std::{
         cmp::Ordering,

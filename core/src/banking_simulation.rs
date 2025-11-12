@@ -43,7 +43,7 @@ use {
     },
     solana_shred_version::compute_shred_version,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::SocketAddrSpace,
     solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
     std::{
         collections::BTreeMap,

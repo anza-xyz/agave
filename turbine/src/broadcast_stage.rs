@@ -27,10 +27,8 @@ use {
     solana_poh::poh_recorder::WorkingBankEntry,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::MAX_LEADER_SCHEDULE_STAKES, bank_forks::BankForks},
-    solana_streamer::{
-        sendmmsg::{batch_send, SendPktsError},
-        socket::SocketAddrSpace,
-    },
+    solana_net_utils::SocketAddrSpace,
+    solana_streamer::sendmmsg::{batch_send, SendPktsError},
     solana_time_utils::{timestamp, AtomicInterval},
     std::{
         collections::{HashMap, HashSet},

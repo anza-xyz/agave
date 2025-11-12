@@ -3,10 +3,8 @@ use {
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, Sender},
     solana_perf::{packet::PacketBatch, recycler::Recycler},
-    solana_streamer::{
-        socket::SocketAddrSpace,
-        streamer::{self, StreamerReceiveStats},
-    },
+    solana_net_utils::SocketAddrSpace,
+    solana_streamer::streamer::{self, StreamerReceiveStats},
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{atomic::AtomicBool, Arc},

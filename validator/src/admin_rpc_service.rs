@@ -1056,7 +1056,7 @@ mod tests {
             bank::{Bank, BankTestConfig},
             bank_forks::BankForks,
         },
-        solana_streamer::socket::SocketAddrSpace,
+        solana_net_utils::SocketAddrSpace,
         solana_system_interface::program as system_program,
         solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
         spl_generic_token::token,

@@ -31,7 +31,7 @@ use {
     solana_sdk_ids::{bpf_loader_upgradeable, compute_budget, loader_v4},
     solana_signature::Signature,
     solana_signer::{null_signer::NullSigner, Signer},
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::SocketAddrSpace,
     solana_system_interface::program as system_program,
     solana_test_validator::TestValidatorGenesis,
     solana_transaction::Transaction,

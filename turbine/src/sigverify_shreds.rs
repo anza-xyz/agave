@@ -573,7 +573,7 @@ mod tests {
         solana_perf::packet::{Packet, PacketFlags, PinnedPacketBatch},
         solana_runtime::bank::Bank,
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
+        solana_net_utils::SocketAddrSpace,
         solana_time_utils::timestamp,
         test_case::test_matrix,
     };

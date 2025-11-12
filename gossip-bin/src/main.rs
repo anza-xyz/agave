@@ -13,7 +13,7 @@ use {
         input_validators::{is_keypair_or_ask_keyword, is_port, is_pubkey},
     },
     solana_pubkey::Pubkey,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::SocketAddrSpace,
     std::{
         error,
         net::{IpAddr, Ipv4Addr, SocketAddr},

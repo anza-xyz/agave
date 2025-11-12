@@ -68,9 +68,9 @@ use {
     solana_sanitize::Sanitize,
     solana_signature::Signature,
     solana_signer::Signer,
+    solana_net_utils::SocketAddrSpace,
     solana_streamer::{
         packet,
-        socket::SocketAddrSpace,
         streamer::{ChannelSend, PacketBatchReceiver},
     },
     solana_time_utils::timestamp,

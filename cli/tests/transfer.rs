@@ -20,7 +20,7 @@ use {
     solana_rpc_client_nonce_utils::blockhash_query::{self, BlockhashQuery},
     solana_signer::{null_signer::NullSigner, Signer},
     solana_stake_interface as stake,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_net_utils::SocketAddrSpace,
     solana_system_interface::instruction as system_instruction,
     solana_test_validator::TestValidator,
     test_case::test_case,
