@@ -3,7 +3,7 @@
 # Easily run the ABI tests for the entire repo or a subset
 #
 
-set -e
+set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
 # shellcheck source=ci/rust-version.sh
