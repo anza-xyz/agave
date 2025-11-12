@@ -888,6 +888,8 @@ impl Validator {
         )
         .map_err(ValidatorError::Other)?;
 
+        let migration_status = bank_forks.read().unwrap().migration_status();
+
         if !config.no_poh_speed_test {
             check_poh_speed(&bank_forks.read().unwrap().root_bank(), None)?;
         }
@@ -941,6 +943,7 @@ impl Validator {
         cluster_info.set_bind_ip_addrs(node.bind_ip_addrs.clone());
         let cluster_info = Arc::new(cluster_info);
         let node_multihoming = Arc::new(NodeMultihoming::from(&node));
+        migration_status.set_pubkey(cluster_info.id());
 
         assert!(is_snapshot_config_valid(&config.snapshot_config));
 

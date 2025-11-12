@@ -332,6 +332,7 @@ impl ConsensusPool {
                     self.highest_finalized_with_notarize = Some((slot, true));
                 }
             }
+            CertificateType::Genesis(_slot, _block_id) => {}
         }
     }
 
@@ -593,7 +594,8 @@ impl ConsensusPool {
                 | CertificateType::FinalizeFast(s, _)
                 | CertificateType::Notarize(s, _)
                 | CertificateType::NotarizeFallback(s, _)
-                | CertificateType::Skip(s) => s >= &root_slot,
+                | CertificateType::Skip(s)
+                | CertificateType::Genesis(s, _) => s >= &root_slot,
             });
         self.vote_pools = self.vote_pools.split_off(&(root_slot, VoteType::Finalize));
         self.slot_stake_counters_map = self.slot_stake_counters_map.split_off(&root_slot);
@@ -756,6 +758,7 @@ mod tests {
             Vote::Skip(vote) => assert_eq!(pool.highest_skip_slot(), vote.slot),
             Vote::SkipFallback(vote) => assert_eq!(pool.highest_skip_slot(), vote.slot),
             Vote::Finalize(vote) => assert_eq!(pool.highest_finalized_slot(), vote.slot),
+            Vote::Genesis(_) => {}
         }
     }
 
@@ -1076,6 +1079,7 @@ mod tests {
             Vote::NotarizeFallback(_) => |pool: &ConsensusPool| pool.highest_notarized_slot(),
             Vote::Skip(_) => |pool: &ConsensusPool| pool.highest_skip_slot(),
             Vote::SkipFallback(_) => |pool: &ConsensusPool| pool.highest_skip_slot(),
+            Vote::Genesis(_) => |_pool: &ConsensusPool| 0,
         };
         let bank = bank_forks.read().unwrap().root_bank();
         pool.add_message(
@@ -1790,6 +1794,10 @@ mod tests {
             VoteType::Skip => Vote::new_skip_vote(slot),
             VoteType::SkipFallback => Vote::new_skip_fallback_vote(slot),
             VoteType::Finalize => Vote::new_finalization_vote(slot),
+            VoteType::Genesis => Vote::Genesis(agave_votor_messages::vote::GenesisVote {
+                slot,
+                block_id: Hash::default(),
+            }),
         }
     }
 

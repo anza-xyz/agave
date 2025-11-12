@@ -398,11 +398,17 @@ dependencies = [
 name = "agave-votor-messages"
 version = "4.0.0-alpha.0"
 dependencies = [
+ "agave-feature-set",
  "agave-logger",
+ "log",
  "serde",
  "solana-bls-signatures",
  "solana-clock",
+ "solana-epoch-schedule",
  "solana-hash",
+ "solana-program",
+ "solana-pubkey",
+ "spl-pod",
 ]
 
 [[package]]

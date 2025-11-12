@@ -17,7 +17,7 @@ pub type Block = (Slot, Hash);
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "5SPmMTisBngyvNzKsXYbo1rbhefNYeGAgVJSYF5Su6N5")
+    frozen_abi(digest = "A9wHKYuPgAR7cxidTT51ACVv5WNqHkfj2jVqJLGBC5bv")
 )]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VoteMessage {
@@ -33,7 +33,7 @@ pub struct VoteMessage {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "8RmeGAzMoXh7ENiFCG1iHDh8ejokjR1hqJ2m4Ba7Uxgo")
+    frozen_abi(digest = "CazjewshYYizgQuCgBBRv6gzasJpUvFVKoSeEirWRKgA")
 )]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub enum CertificateType {
@@ -47,6 +47,8 @@ pub enum CertificateType {
     NotarizeFallback(Slot, Hash),
     /// Skip certificate
     Skip(Slot),
+    /// Genesis certificate
+    Genesis(Slot, Hash),
 }
 
 impl CertificateType {
@@ -57,7 +59,8 @@ impl CertificateType {
             | Self::FinalizeFast(slot, _)
             | Self::Notarize(slot, _)
             | Self::NotarizeFallback(slot, _)
-            | Self::Skip(slot) => *slot,
+            | Self::Skip(slot)
+            | Self::Genesis(slot, _) => *slot,
         }
     }
 
@@ -67,7 +70,8 @@ impl CertificateType {
             Self::Finalize(_) | Self::Skip(_) => None,
             Self::Notarize(slot, block_id)
             | Self::NotarizeFallback(slot, block_id)
-            | Self::FinalizeFast(slot, block_id) => Some((slot, block_id)),
+            | Self::FinalizeFast(slot, block_id)
+            | Self::Genesis(slot, block_id) => Some((slot, block_id)),
         }
     }
 }
@@ -77,7 +81,7 @@ impl CertificateType {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "2jUyAYKXdK7gfncAx3JxhdUfA8DrkVkcbDB6J5tsiuEA")
+    frozen_abi(digest = "CLJbmbTECu2MeBmqWNDsfTgkAC2yudxHsmNU9saww8L")
 )]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Certificate {
@@ -94,7 +98,7 @@ pub struct Certificate {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "7r7dyUzmnYbxug6r7QkggXgBH5WUWvuC2Z9UcXLJfBgm")
+    frozen_abi(digest = "4YvBgNbve59tf9i4DSraiSZ3eoMF4Y1V5mDdUCoFv8S2")
 )]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[allow(clippy::large_enum_variant)]

@@ -31,7 +31,7 @@ impl VoteHistoryVersions {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "5sT71PEL9bNaZhoQGjLwiMESWDRMMVmW1wMvtQpvZs5F")
+    frozen_abi(digest = "9dp4rEVqAsT7mfiL5oEgWrxgWCUiEe4Fk8xJoTWwSN1X")
 )]
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
 pub struct VoteHistory {
@@ -193,6 +193,7 @@ impl VoteHistory {
                 self.skipped.insert(vote.slot);
                 self.voted_skip_fallback.insert(vote.slot);
             }
+            Vote::Genesis(_vote) => {}
         }
         self.votes_cast.entry(vote.slot()).or_default().push(vote);
     }
