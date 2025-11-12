@@ -756,7 +756,7 @@ pub(crate) mod external {
                 .is_active(&agave_feature_set::static_instruction_limit::ID);
             let mut parsing_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             let mut parsed_transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
-            for tx_ptr in batch.iter() {
+            for (tx_ptr, _) in batch.iter() {
                 // Parsing and basic sanitization checks
                 match SanitizedTransactionView::try_new_sanitized(
                     tx_ptr,
@@ -949,7 +949,7 @@ pub(crate) mod external {
             let mut translation_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             let mut transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             let mut max_ages = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
-            for transaction_ptr in batch.iter() {
+            for (transaction_ptr, _) in batch.iter() {
                 match Self::translate_transaction(
                     transaction_ptr,
                     bank,
