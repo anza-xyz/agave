@@ -96,7 +96,7 @@ pub fn spawn_shred_sigverify(
         .build()
         .expect("new rayon threadpool");
     let run_shred_sigverify = move || {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut deduper = Deduper::<2, [u8]>::new(&mut rng, DEDUPER_NUM_BITS);
         let mut shred_buffer = Vec::with_capacity(SIGVERIFY_SHRED_BATCH_SIZE);
         loop {
@@ -649,7 +649,7 @@ mod tests {
         [true, false]
     )]
     fn test_maybe_verify_and_resign_packet(repaired: bool, is_last_in_slot: bool) {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         let leader_keypair = Arc::new(Keypair::new());
         let leader_pubkey = leader_keypair.pubkey();
@@ -662,7 +662,7 @@ mod tests {
             let bank_forks = bank_forks.read().unwrap();
             (bank_forks.working_bank(), bank_forks.root_bank())
         };
-        let chained_merkle_root = Hash::new_from_array(rng.gen());
+        let chained_merkle_root = Hash::new_from_array(rng.random());
 
         let shredder = Shredder::new(root_bank.slot(), root_bank.parent_slot(), 0, 0).unwrap();
         let entries = vec![Entry::new(&Hash::default(), 0, vec![])];
@@ -693,7 +693,7 @@ mod tests {
 
         for shred in shreds.iter_mut() {
             let keypair = Keypair::new();
-            let nonce = repaired.then(|| rng.gen::<Nonce>());
+            let nonce = repaired.then(|| rng.random::<Nonce>());
             if is_last_in_slot {
                 let packet = &mut shred.payload().to_packet(nonce);
                 let buf_before = packet.buffer_mut().to_vec();

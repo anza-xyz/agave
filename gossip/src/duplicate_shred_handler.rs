@@ -259,7 +259,7 @@ mod tests {
             Some(Error::InvalidSignature) => Arc::new(Keypair::new()),
             _ => keypair,
         };
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let shredder = Shredder::new(slot, slot - 1, 0, shred_version).unwrap();
         let next_shred_index = 353;
         let shred1 = new_rand_shred(&mut rng, next_shred_index, &shredder, &my_keypair);

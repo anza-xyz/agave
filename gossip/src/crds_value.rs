@@ -257,7 +257,7 @@ mod test {
 
     #[test]
     fn test_keys_and_values() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let v = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::default()));
         assert_eq!(v.wallclock(), 0);
         let key = *v.contact_info().unwrap().pubkey();
@@ -286,7 +286,7 @@ mod test {
 
     #[test]
     fn test_signature() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let keypair = Keypair::new();
         let wrong_keypair = Keypair::new();
         let mut v = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(

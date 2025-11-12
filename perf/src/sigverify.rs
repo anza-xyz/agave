@@ -719,7 +719,7 @@ mod tests {
         bincode::{deserialize, serialize},
         bytes::{BufMut, Bytes, BytesMut},
         curve25519_dalek::{edwards::CompressedEdwardsY, scalar::Scalar},
-        rand::{thread_rng, Rng},
+        rand::{rng, Rng},
         solana_keypair::Keypair,
         solana_message::{compiled_instruction::CompiledInstruction, Message, MessageHeader},
         solana_signature::Signature,
@@ -742,12 +742,12 @@ mod tests {
 
     #[test]
     fn test_copy_return_values() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let sig_lens: Vec<Vec<u32>> = {
-            let size = rng.gen_range(0..64);
+            let size = rng.random_range(0..64);
             repeat_with(|| {
-                let size = rng.gen_range(0..16);
-                repeat_with(|| rng.gen_range(0..5)).take(size).collect()
+                let size = rng.random_range(0..16);
+                repeat_with(|| rng.random_range(0..5)).take(size).collect()
             })
             .take(size)
             .collect()
@@ -757,7 +757,7 @@ mod tests {
             .map(|sig_lens| {
                 sig_lens
                     .iter()
-                    .map(|&size| repeat_with(|| rng.gen()).take(size as usize).collect())
+                    .map(|&size| repeat_with(|| rng.random()).take(size as usize).collect())
                     .collect()
             })
             .collect();
@@ -1110,7 +1110,7 @@ mod tests {
         // generate packet vector
         let batches: Vec<_> = (0..num_batches)
             .map(|_| {
-                let num_elems_per_batch = thread_rng().gen_range(1..max_packets_per_batch);
+                let num_elems_per_batch = rand::rng().random_range(1..max_packets_per_batch);
                 let packet_batch = vec![data.clone(); num_elems_per_batch];
                 assert_eq!(packet_batch.len(), num_elems_per_batch);
                 packet_batch
@@ -1292,15 +1292,15 @@ mod tests {
         let recycler = Recycler::default();
         let recycler_out = Recycler::default();
         for _ in 0..50 {
-            let num_batches = thread_rng().gen_range(2..30);
+            let num_batches = rng().random_range(2..30);
             let mut batches = generate_data_batches_random_size(&packet, 128, num_batches);
 
-            let num_modifications = thread_rng().gen_range(0..5);
+            let num_modifications = rng().random_range(0..5);
             for _ in 0..num_modifications {
-                let batch = thread_rng().gen_range(0..batches.len());
-                let packet = thread_rng().gen_range(0..batches[batch].len());
-                let offset = thread_rng().gen_range(0..batches[batch][packet].len());
-                let add = thread_rng().gen_range(0..255);
+                let batch = rng().random_range(0..batches.len());
+                let packet = rng().random_range(0..batches[batch].len());
+                let offset = rng().random_range(0..batches[batch][packet].len());
+                let add = rng().random_range(0..255);
                 batches[batch][packet][offset] = batches[batch][packet][offset].wrapping_add(add);
             }
 
@@ -1316,7 +1316,7 @@ mod tests {
                 })
                 .collect();
 
-            let batch_to_disable = thread_rng().gen_range(0..batches.len());
+            let batch_to_disable = rng().random_range(0..batches.len());
             for mut p in batches[batch_to_disable].iter_mut() {
                 p.meta_mut().set_discard(true);
             }
@@ -1356,7 +1356,7 @@ mod tests {
             let mut passed = 0;
             let mut failed = 0;
             for _ in 0..1_000_000 {
-                thread_rng().fill(&mut input);
+                rng().fill(&mut input);
                 let ans = get_checked_scalar(&input);
                 let ref_ans = Scalar::from_canonical_bytes(input).into_option();
                 if let Some(ref_ans) = ref_ans {
@@ -1391,7 +1391,7 @@ mod tests {
             let mut passed = 0;
             let mut failed = 0;
             for _ in 0..1_000_000 {
-                thread_rng().fill(&mut input);
+                rng().fill(&mut input);
                 let ans = check_packed_ge_small_order(&input);
                 let ref_ge = CompressedEdwardsY::from_slice(&input).unwrap();
                 if let Some(ref_element) = ref_ge.decompress() {
@@ -1422,7 +1422,7 @@ mod tests {
     #[test]
     fn test_is_simple_vote_transaction() {
         agave_logger::setup();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         // transfer tx is not
         {
@@ -1505,7 +1505,7 @@ mod tests {
     #[test]
     fn test_is_simple_vote_transaction_with_offsets() {
         agave_logger::setup();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         // batch of legacy messages
         {
@@ -1570,11 +1570,11 @@ mod tests {
 
     #[test]
     fn test_shrink_fuzz() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for _ in 0..5 {
             let mut batches: Vec<_> = (0..3)
                 .map(|_| {
-                    if rng.gen_bool(0.5) {
+                    if rng.random_bool(0.5) {
                         let batch = (0..PACKETS_PER_BATCH)
                             .map(|_| {
                                 BytesPacket::from_data(None, test_tx()).expect("serialize request")
@@ -1591,7 +1591,7 @@ mod tests {
                 .collect();
             batches.iter_mut().for_each(|b| {
                 b.iter_mut()
-                    .for_each(|mut p| p.meta_mut().set_discard(thread_rng().gen()))
+                    .for_each(|mut p| p.meta_mut().set_discard(rand::rng().random()))
             });
             //find all the non discarded packets
             let mut start = vec![];

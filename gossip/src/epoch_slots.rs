@@ -349,8 +349,8 @@ impl EpochSlots {
         let now = crds_data::new_rand_timestamp(rng);
         let pubkey = pubkey.unwrap_or_else(solana_pubkey::new_rand);
         let mut epoch_slots = Self::new(pubkey, now);
-        let num_slots = rng.gen_range(0..20);
-        let slots: Vec<_> = std::iter::repeat_with(|| 47825632 + rng.gen_range(0..512))
+        let num_slots = rng.random_range(0..20);
+        let slots: Vec<_> = std::iter::repeat_with(|| 47825632 + rng.random_range(0..512))
             .take(num_slots)
             .collect();
         epoch_slots.add(&slots);
@@ -509,7 +509,7 @@ mod tests {
     }
 
     fn make_rand_slots<R: Rng>(rng: &mut R) -> impl Iterator<Item = Slot> + '_ {
-        repeat_with(|| rng.gen_range(1..5)).scan(0, |slot, step| {
+        repeat_with(|| rng.random_range(1..5)).scan(0, |slot, step| {
             *slot += step;
             Some(*slot)
         })
@@ -517,7 +517,7 @@ mod tests {
 
     #[test]
     fn test_epoch_slots_fill_uncompressed_random_range() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for _ in 0..10 {
             let range: Vec<Slot> = make_rand_slots(&mut rng).take(5000).collect();
             let sz = EpochSlots::default().max_compressed_slot_size();
@@ -531,7 +531,7 @@ mod tests {
 
     #[test]
     fn test_epoch_slots_fill_compressed_random_range() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for _ in 0..10 {
             let range: Vec<Slot> = make_rand_slots(&mut rng).take(5000).collect();
             let sz = EpochSlots::default().max_compressed_slot_size();
@@ -547,7 +547,7 @@ mod tests {
 
     #[test]
     fn test_epoch_slots_fill_random_range() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for _ in 0..10 {
             let range: Vec<Slot> = make_rand_slots(&mut rng).take(5000).collect();
             let mut slots = EpochSlots::default();
