@@ -335,8 +335,8 @@ impl Tower {
             solana_vote_program::vote_state::{LandedVote, VoteStateV4},
         };
 
-        let mut rng = rand::thread_rng();
-        let root_slot = rng.gen();
+        let mut rng = rand::rng();
+        let root_slot = rng.random();
         let votes = (1..32)
             .map(|x| LandedVote {
                 latency: 0,

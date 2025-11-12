@@ -486,7 +486,7 @@ mod test {
             entries,
             true, // is_last_in_slot
             // chained_merkle_root
-            Hash::new_from_array(rand::thread_rng().gen()),
+            Hash::new_from_array(rand::rng().random()),
             0, // next_shred_index
             0, // next_code_index
             &ReedSolomonCache::default(),
