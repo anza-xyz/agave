@@ -1,16 +1,15 @@
 use {
     crate::{
         netlink::{
-            is_supported_ipv4_neigh_header, is_supported_ipv4_route_header, is_valid_link_update,
-            parse_ifinfomsg, parse_rtm_newneigh, parse_rtm_newroute, NetlinkMessage, NetlinkSocket,
+            is_supported_ipv4_neigh_header, is_supported_ipv4_route_header, parse_rtm_newneigh,
+            parse_rtm_newroute, NetlinkMessage, NetlinkSocket,
         },
         route::Router,
     },
     arc_swap::ArcSwap,
     libc::{
-        poll, pollfd, POLLERR, POLLHUP, POLLIN, POLLNVAL, RTMGRP_IPV4_ROUTE, RTMGRP_LINK,
-        RTMGRP_NEIGH, RTM_DELLINK, RTM_DELNEIGH, RTM_DELROUTE, RTM_NEWLINK, RTM_NEWNEIGH,
-        RTM_NEWROUTE,
+        poll, pollfd, POLLERR, POLLHUP, POLLIN, POLLNVAL, RTMGRP_IPV4_ROUTE, RTMGRP_NEIGH,
+        RTM_DELNEIGH, RTM_DELROUTE, RTM_NEWNEIGH, RTM_NEWROUTE,
     },
     log::*,
     std::{
@@ -27,7 +26,7 @@ use {
 pub struct RouteMonitor;
 
 impl RouteMonitor {
-    /// Subscribes to RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH | RTMGRP_LINK multicast groups
+    /// Subscribes to RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH multicast groups
     /// Drains the netlink socket for `drain_window`
     /// If any relevant updates arrive, update working routing table
     /// Once drain window expires, publish the working routing table to the atomic router
@@ -37,7 +36,7 @@ impl RouteMonitor {
         drain_window: Duration,
     ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
-            let groups = (RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH | RTMGRP_LINK) as u32;
+            let groups = (RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH) as u32;
             let mut sock = match NetlinkSocket::bind(groups) {
                 Ok(s) => s,
                 Err(e) => {
@@ -195,22 +194,6 @@ impl RouteMonitor {
                         info!("greg: delete_neighbor");
                         if let Some(IpAddr::V4(ip)) = n.destination {
                             *dirty |= working.delete_neighbor(ip, n.ifindex);
-                        }
-                    }
-                }
-                RTM_NEWLINK => {
-                    if is_valid_link_update(m) {
-                        if let Some(interface_info) = parse_ifinfomsg(m) {
-                            info!("greg: upsert_interface");
-                            *dirty |= working.upsert_interface(interface_info);
-                        }
-                    }
-                }
-                RTM_DELLINK => {
-                    if is_valid_link_update(m) {
-                        if let Some(interface_info) = parse_ifinfomsg(m) {
-                            info!("greg: delete_interface");
-                            *dirty |= working.delete_interface(interface_info.if_index);
                         }
                     }
                 }

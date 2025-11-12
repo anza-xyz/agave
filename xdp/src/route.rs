@@ -1,11 +1,9 @@
 use {
     crate::netlink::{
-        netlink_get_interfaces, netlink_get_neighbors, netlink_get_routes, InterfaceInfo,
-        MacAddress, NeighborEntry, RouteEntry,
+        netlink_get_neighbors, netlink_get_routes, MacAddress, NeighborEntry, RouteEntry,
     },
     libc::{AF_INET, AF_INET6},
     std::{
-        collections::HashMap,
         io,
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
     },
@@ -120,24 +118,14 @@ fn is_ipv6_match(addr: Ipv6Addr, network: Ipv6Addr, prefix_len: u8) -> bool {
 pub struct Router {
     arp_table: ArpTable,
     routes: Vec<RouteEntry>,
-    interfaces: HashMap<u32, InterfaceInfo>, // if_index (on host) -> InterfaceInfo map
 }
 
 impl Router {
     pub fn new() -> Result<Self, io::Error> {
         let arp_table = ArpTable::new()?;
         let routes = netlink_get_routes(AF_INET as u8)?;
-        let interfaces = netlink_get_interfaces()?;
-        let interface_map: HashMap<u32, InterfaceInfo> = interfaces
-            .into_iter()
-            .map(|if_info| (if_info.if_index, if_info))
-            .collect();
 
-        Ok(Self {
-            arp_table,
-            routes,
-            interfaces: interface_map,
-        })
+        Ok(Self { arp_table, routes })
     }
 
     pub fn default(&self) -> Result<NextHop, RouteError> {
@@ -273,24 +261,14 @@ impl Router {
         }
         false
     }
-
-    pub fn upsert_interface(&mut self, new_interface: InterfaceInfo) -> bool {
-        self.interfaces
-            .insert(new_interface.if_index, new_interface);
-        true
-    }
-
-    pub fn delete_interface(&mut self, if_index: u32) -> bool {
-        self.interfaces.remove(&if_index).is_some()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use {
         super::*,
-        crate::netlink::{InterfaceInfo, MacAddress, NeighborEntry, RouteEntry},
-        libc::{AF_INET, ARPHRD_ETHER, NUD_REACHABLE},
+        crate::netlink::{MacAddress, NeighborEntry, RouteEntry},
+        libc::{AF_INET, NUD_REACHABLE},
         std::net::{IpAddr, Ipv4Addr},
     };
 
@@ -408,32 +386,5 @@ mod tests {
         assert!(router.delete_neighbor(neigh_ip, 1));
         assert!(router.arp_table.neighbors.iter().all(|n| n != &entry));
         assert_eq!(router.arp_table.neighbors.len(), before_neigh_len);
-    }
-
-    #[test]
-    fn test_working_upsert_and_delete_interface() {
-        let mut router = Router::new().unwrap();
-        let before_ifaces_len = router.interfaces.len();
-
-        // Create a new, synthetic interface
-        let if_index = 424242u32;
-        let iface = InterfaceInfo {
-            if_index,
-            if_name: "test424242".to_string(),
-            dev_type: ARPHRD_ETHER,
-        };
-
-        // Upsert interface and check that it was inserted and interfaces are dirty
-        assert!(router.upsert_interface(iface.clone()));
-        assert!(router.interfaces.contains_key(&if_index));
-        let inserted = router.interfaces.get(&if_index).unwrap();
-        assert_eq!(inserted.if_name, "test424242");
-        assert_eq!(inserted.dev_type, ARPHRD_ETHER);
-        assert!(router.interfaces.len() >= before_ifaces_len);
-
-        // Delete the interface and check that it is removed
-        assert!(router.delete_interface(if_index));
-        assert!(!router.interfaces.contains_key(&if_index));
-        assert_eq!(router.interfaces.len(), before_ifaces_len);
     }
 }
