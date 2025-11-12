@@ -194,6 +194,18 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                         .value_name("EPOCH")
                         .validator(is_epoch)
                         .help("Epoch to show leader schedule for [default: current]"),
+                )
+                .arg(
+                    Arg::with_name("show_times")
+                        .long("show-times")
+                        .takes_value(false)
+                        .help("Show approximate slot times for each entry"),
+                )
+                .arg(
+                    Arg::with_name("local_time")
+                        .long("local-time")
+                        .takes_value(false)
+                        .help("Show times in local time instead of UTC (requires --show-times)"),
                 ),
         )
         .subcommand(
@@ -972,8 +984,10 @@ pub fn process_first_available_block(rpc_client: &RpcClient) -> ProcessResult {
 
 pub fn parse_leader_schedule(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
     let epoch = value_of(matches, "epoch");
+    let show_times = matches.is_present("show_times");
+    let local_time = matches.is_present("local_time");
     Ok(CliCommandInfo::without_signers(
-        CliCommand::LeaderSchedule { epoch },
+        CliCommand::LeaderSchedule { epoch, show_times, local_time },
     ))
 }
 
@@ -981,6 +995,8 @@ pub fn process_leader_schedule(
     rpc_client: &RpcClient,
     config: &CliConfig,
     epoch: Option<Epoch>,
+    show_times: bool,
+    local_time: bool,
 ) -> ProcessResult {
     let epoch_info = rpc_client.get_epoch_info()?;
     let epoch = epoch.unwrap_or(epoch_info.epoch);
@@ -1009,17 +1025,68 @@ pub fn process_leader_schedule(
         }
     }
 
+    let (avg_slot_time_ms, epoch_start_time) = if show_times {
+        let avg_slot_time_ms = rpc_client
+            .get_recent_performance_samples(Some(60))
+            .ok()
+            .and_then(|samples| {
+                let (slots, secs) = samples.iter().fold(
+                    (0, 0u64),
+                    |(slots, secs): (u64, u64),
+                    RpcPerfSample {
+                        num_slots,
+                        sample_period_secs,
+                        ..
+                    }| {
+                        (
+                            slots.saturating_add(*num_slots),
+                            secs.saturating_add((*sample_period_secs).into()),
+                        )
+                    },
+                );
+                secs.saturating_mul(1000).checked_div(slots)
+            })
+            .unwrap_or(clock::DEFAULT_MS_PER_SLOT);
+        let epoch_start_time = rpc_client
+            .get_block_time(first_slot_in_epoch)
+            .ok()
+            .map(|time| {
+                time.saturating_sub(
+                    first_slot_in_epoch
+                        .saturating_sub(first_slot_in_epoch)
+                        .saturating_mul(avg_slot_time_ms)
+                        .saturating_div(1000) as i64,
+                )
+            });
+        (Some(avg_slot_time_ms), epoch_start_time)
+    } else {
+        (None, None)
+    };
+
     let mut leader_schedule_entries = vec![];
     for (slot_index, leader) in leader_per_slot_index.iter().enumerate() {
+        let slot = first_slot_in_epoch.saturating_add(slot_index as u64);
+        let approximate_slot_time = if show_times {
+            epoch_start_time.and_then(|start_time| {
+                let avg_slot_time_ms = avg_slot_time_ms.unwrap_or(clock::DEFAULT_MS_PER_SLOT) as f64;
+                let time_offset_secs = (slot_index as f64) * (avg_slot_time_ms / 1000.0);
+                start_time.checked_add(time_offset_secs.round() as i64)
+            })
+        } else {
+            None
+        };
         leader_schedule_entries.push(CliLeaderScheduleEntry {
-            slot: first_slot_in_epoch.saturating_add(slot_index as u64),
+            slot,
             leader: leader.to_string(),
+            approximate_slot_time,
         });
     }
 
     Ok(config.output_format.formatted_string(&CliLeaderSchedule {
         epoch,
         leader_schedule_entries,
+        show_times,
+        local_time,
     }))
 }
 
