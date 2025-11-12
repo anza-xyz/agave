@@ -3,8 +3,14 @@
 # Easily run the ABI tests for the entire repo or a subset
 #
 
-here="$(dirname "$0")"
-cargo="$(readlink -f "${here}/../cargo")"
+set -e
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
-set -x
-exec "$cargo" nightly test --features frozen-abi --lib -- test_abi_ --nocapture
+# shellcheck source=ci/rust-version.sh
+source "$here/rust-version.sh" nightly
+
+packages=$(cargo +"$rust_nightly" metadata --no-deps --format-version=1 | jq -r '.packages[] | select(.features | has("frozen-abi")) | .name')
+for package in $packages; do
+  echo "--- cargo +$rust_nightly test -p $package --features frozen-abi --lib -- test_abi_ --nocapture"
+  cargo +"$rust_nightly" test -p "$package" --features frozen-abi --lib -- test_abi_ --nocapture
+done
