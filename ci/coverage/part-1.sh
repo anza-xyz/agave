@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -e
+set -euo pipefail
 git_root=$(git rev-parse --show-toplevel)
 
 echo "--- coverage: root (part 1)"
