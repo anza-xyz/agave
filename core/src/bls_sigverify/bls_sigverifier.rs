@@ -355,7 +355,6 @@ impl BLSSigVerifier {
                     self.stats.sent_failed.fetch_add(1, Ordering::Relaxed);
                 }
                 Err(e @ TrySendError::Disconnected(_)) => {
-                    error!("certificate pool receiver disconnected");
                     return Err(e.into());
                 }
             }
@@ -511,7 +510,6 @@ impl BLSSigVerifier {
                     self.stats.sent_failed.fetch_add(1, Ordering::Relaxed);
                 }
                 Err(e @ TrySendError::Disconnected(_)) => {
-                    error!("certificate pool receiver disconnected");
                     return Err(e.into());
                 }
             }

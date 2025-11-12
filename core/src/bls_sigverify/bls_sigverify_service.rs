@@ -2,7 +2,7 @@ use {
     crate::bls_sigverify::{bls_sigverifier::BLSSigVerifier, stats::BLSPreVerifyPacketStats},
     agave_votor_messages::consensus_message::ConsensusMessage,
     core::time::Duration,
-    crossbeam_channel::{Receiver, RecvTimeoutError, SendError, TrySendError},
+    crossbeam_channel::{Receiver, RecvTimeoutError, TrySendError},
     solana_measure::measure::Measure,
     solana_perf::{
         deduper::{self, Deduper},
@@ -16,20 +16,11 @@ use {
 
 #[derive(Error, Debug)]
 pub enum BLSSigVerifyServiceError {
-    #[error("send packets batch error")]
-    SendError,
-
     #[error("try_send packet errror")]
     TrySendError,
 
     #[error("streamer error")]
     Streamer(#[from] StreamerError),
-}
-
-impl From<SendError<ConsensusMessage>> for BLSSigVerifyServiceError {
-    fn from(_: SendError<ConsensusMessage>) -> Self {
-        BLSSigVerifyServiceError::SendError
-    }
 }
 
 impl From<TrySendError<ConsensusMessage>> for BLSSigVerifyServiceError {
@@ -155,10 +146,8 @@ impl BLSSigverifyService {
                                     _ => error!("{streamer_error_box}"),
                                 }
                             }
-                            BLSSigVerifyServiceError::SendError => {
-                                break;
-                            }
                             BLSSigVerifyServiceError::TrySendError => {
+                                error!("consensus pool receiver disconnected");
                                 break;
                             }
                         }
