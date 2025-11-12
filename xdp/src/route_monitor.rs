@@ -27,9 +27,10 @@ pub struct RouteMonitor;
 
 impl RouteMonitor {
     /// Subscribes to RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH multicast groups
-    /// Drains the netlink socket for `drain_window`
-    /// If any relevant updates arrive, update working routing table
-    /// Once drain window expires, publish the working routing table to the atomic router
+    /// Waits for updates to arrive on the netlink socket
+    /// Batches updates for `drain_window`
+    /// Once drain_window expires, publishes the working routing table to the atomic router
+    /// If the netlink socket is invalid, recreates the socket and resyncs the atomic router
     pub fn start(
         atomic_router: Arc<ArcSwap<Router>>,
         exit: Arc<AtomicBool>,
@@ -58,7 +59,9 @@ impl RouteMonitor {
                     working = Some((**snapshot).clone());
                 }
 
-                // compute timeout: block forever if not in a window; otherwise wait until deadline
+                // calculate timeout.
+                // - block forever if not in window
+                // - block until deadline
                 let timeout_ms = if in_window {
                     let now = Instant::now();
                     if now >= deadline {
@@ -66,70 +69,78 @@ impl RouteMonitor {
                         in_window = false;
                         -1
                     } else {
-                        deadline
-                            .checked_duration_since(now)
-                            .unwrap_or_default()
-                            .as_millis() as i32
+                        deadline.saturating_duration_since(now).as_millis() as i32
                     }
                 } else {
                     -1
                 };
 
+                // Poll
                 let mut pfd = pollfd {
                     fd: sock.as_raw_fd(),
                     events: POLLIN,
                     revents: 0,
                 };
-                if let Err(e) = poll_nointr(&mut pfd, timeout_ms) {
-                    error!("poll error: {e}");
-                    resync_router(&atomic_router);
-                    working = None;
+                let rc = match poll_helper(&mut pfd, timeout_ms) {
+                    Ok(rc) => rc,
+                    Err(e) => {
+                        error!("poll error: {e}");
+                        if let Err(()) = recreate_listener(groups, &atomic_router).map(|s| sock = s)
+                        {
+                            return;
+                        }
+                        working = None;
+                        in_window = false;
+                        dirty = false;
+                        continue;
+                    }
+                };
+
+                // Timeout. Publish snapshot if dirty at top of loop.
+                if rc == 0 {
                     continue;
                 }
 
                 let re = pfd.revents;
-                if re == 0 {
-                    // timeout or no new data (only occurs when in_window was true)
-                    if in_window {
-                        publish_if_dirty(&atomic_router, &working, &mut dirty);
-                        in_window = false;
+
+                if (re & POLLNVAL) != 0 {
+                    error!(
+                        "netlink socket POLLNVAL; invalid fd; recreating and resyncing \
+                         (revents={re:#x})"
+                    );
+                    if let Err(()) = recreate_listener(groups, &atomic_router).map(|s| sock = s) {
+                        return;
                     }
+                    working = None;
+                    in_window = false;
+                    dirty = false;
                     continue;
                 }
 
-                if (re & POLLNVAL) != 0 {
-                    panic!(
-                        "RouteMonitor: POLLNVAL on netlink socket (invalid fd). revents={re:#x}"
+                if (re & (POLLHUP | POLLERR)) != 0 {
+                    warn!(
+                        "netlink socket {:?}; recreating and resyncing (revents={:#x})",
+                        if (re & POLLERR) != 0 {
+                            "POLLERR"
+                        } else {
+                            "POLLHUP"
+                        },
+                        re
                     );
-                }
-                if (re & POLLHUP) != 0 {
-                    warn!("netlink socket POLLHUP; recreating and resyncing");
-                    drop(sock);
-                    match recreate_listener(groups, &atomic_router) {
-                        Ok(s) => {
-                            sock = s;
-                            working = None;
-                            in_window = false;
-                            dirty = false;
-                        }
-                        Err(()) => return,
+                    if let Err(()) = recreate_listener(groups, &atomic_router).map(|s| sock = s) {
+                        return;
                     }
-                    continue;
-                }
-                if (re & POLLERR) != 0 {
-                    warn!("netlink socket POLLERR; resyncing router snapshot");
-                    resync_router(&atomic_router);
                     working = None;
                     in_window = false;
+                    dirty = false;
                     continue;
                 }
                 if (re & POLLIN) == 0 {
-                    // unexpected/unhandled events (e.g. POLLPRI) or spurious wake
+                    // Unhandled - ignore
                     debug!("poll returned without POLLIN, revents={re:#x}");
                     continue;
                 }
-
-                // read netlink messages, update working router if dirty, update read window
+                // Drain channel
                 match sock.recv() {
                     Ok(msgs) => {
                         if !msgs.is_empty() {
@@ -149,16 +160,13 @@ impl RouteMonitor {
                     }
                     Err(e) => {
                         warn!("recv failed: {e}");
-                        drop(sock);
-                        match recreate_listener(groups, &atomic_router) {
-                            Ok(s) => {
-                                sock = s;
-                                working = None;
-                                in_window = false;
-                                dirty = false;
-                            }
-                            Err(()) => return,
+                        if let Err(()) = recreate_listener(groups, &atomic_router).map(|s| sock = s)
+                        {
+                            return;
                         }
+                        working = None;
+                        in_window = false;
+                        dirty = false;
                         continue;
                     }
                 }
@@ -199,7 +207,7 @@ impl RouteMonitor {
 }
 
 #[inline]
-fn poll_nointr(pfd: &mut pollfd, timeout_ms: i32) -> Result<(), Error> {
+fn poll_helper(pfd: &mut pollfd, timeout_ms: i32) -> Result<i32, Error> {
     let rc = loop {
         let rc = unsafe { poll(pfd as *mut pollfd, 1, timeout_ms) };
         if rc < 0 && Error::last_os_error().kind() == ErrorKind::Interrupted {
@@ -210,14 +218,7 @@ fn poll_nointr(pfd: &mut pollfd, timeout_ms: i32) -> Result<(), Error> {
     if rc < 0 {
         return Err(Error::last_os_error());
     }
-    Ok(())
-}
-
-#[inline]
-fn resync_router(atomic_router: &Arc<ArcSwap<Router>>) {
-    if let Ok(r) = Router::new() {
-        atomic_router.store(Arc::new(r));
-    }
+    Ok(rc)
 }
 
 #[inline]
@@ -241,7 +242,9 @@ fn recreate_listener(
 ) -> Result<NetlinkSocket, ()> {
     match NetlinkSocket::bind(groups) {
         Ok(s) => {
-            resync_router(atomic_router);
+            if let Ok(r) = Router::new() {
+                atomic_router.store(Arc::new(r));
+            }
             Ok(s)
         }
         Err(e) => {
