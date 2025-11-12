@@ -442,7 +442,7 @@ pub(crate) mod tests {
             let tx = transfer(
                 &Keypair::new(),       // from
                 &Pubkey::new_unique(), // to
-                rng.gen(),             // lamports
+                rng.random(),          // lamports
                 Hash::new_unique(),    // recent blockhash
             );
             Entry::new(
@@ -458,7 +458,7 @@ pub(crate) mod tests {
             &entries,
             is_last_in_slot,
             // chained_merkle_root
-            Hash::new_from_array(rng.gen()),
+            Hash::new_from_array(rng.random()),
             next_shred_index,
             next_code_index, // next_code_index
             &ReedSolomonCache::default(),
@@ -500,11 +500,11 @@ pub(crate) mod tests {
 
     #[test]
     fn test_duplicate_shred_round_trip() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.gen_range(0..32_000);
+        let next_shred_index = rng.random_range(0..32_000);
         let shred1 = new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true);
         let shred2 = new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true);
         let leader_schedule = |s| {
@@ -519,8 +519,8 @@ pub(crate) mod tests {
             Pubkey::new_unique(), // self_pubkey
             shred2.payload().clone(),
             Some(leader_schedule),
-            rng.gen(), // wallclock
-            512,       // max_size
+            rng.random(), // wallclock
+            512,          // max_size
             version,
         )
         .unwrap()
@@ -533,11 +533,11 @@ pub(crate) mod tests {
 
     #[test]
     fn test_duplicate_shred_invalid() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.gen_range(0..32_000);
+        let next_shred_index = rng.random_range(0..32_000);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -561,8 +561,8 @@ pub(crate) mod tests {
                     Pubkey::new_unique(), // self_pubkey
                     shred2.payload().clone(),
                     Some(leader_schedule),
-                    rng.gen(), // wallclock
-                    512,       // max_size
+                    rng.random(), // wallclock
+                    512,          // max_size
                     version,
                 )
                 .err()
@@ -574,8 +574,8 @@ pub(crate) mod tests {
                 shred1.clone(),
                 Pubkey::new_unique(), // self_pubkey
                 shred2.clone(),
-                rng.gen(), // wallclock
-                512,       // max_size
+                rng.random(), // wallclock
+                512,          // max_size
             )
             .unwrap()
             .collect();
@@ -592,11 +592,11 @@ pub(crate) mod tests {
 
     #[test]
     fn test_latest_index_conflict_round_trip() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.gen_range(0..31_000);
+        let next_shred_index = rng.random_range(0..31_000);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -628,8 +628,8 @@ pub(crate) mod tests {
                 Pubkey::new_unique(), // self_pubkey
                 shred2.payload().clone(),
                 Some(leader_schedule),
-                rng.gen(), // wallclock
-                512,       // max_size
+                rng.random(), // wallclock
+                512,          // max_size
                 version,
             )
             .unwrap()
@@ -643,11 +643,11 @@ pub(crate) mod tests {
 
     #[test]
     fn test_latest_index_conflict_invalid() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.gen_range(0..31_000);
+        let next_shred_index = rng.random_range(0..31_000);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -680,8 +680,8 @@ pub(crate) mod tests {
                     Pubkey::new_unique(), // self_pubkey
                     shred2.payload().clone(),
                     Some(leader_schedule),
-                    rng.gen(), // wallclock
-                    512,       // max_size
+                    rng.random(), // wallclock
+                    512,          // max_size
                     version,
                 )
                 .err()
@@ -693,8 +693,8 @@ pub(crate) mod tests {
                 shred1.clone(),
                 Pubkey::new_unique(), // self_pubkey
                 shred2.clone(),
-                rng.gen(), // wallclock
-                512,       // max_size
+                rng.random(), // wallclock
+                512,          // max_size
             )
             .unwrap()
             .collect();
@@ -711,11 +711,11 @@ pub(crate) mod tests {
 
     #[test]
     fn test_erasure_meta_conflict_round_trip() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.gen_range(0..31_000);
+        let next_shred_index = rng.random_range(0..31_000);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -741,8 +741,8 @@ pub(crate) mod tests {
                 Pubkey::new_unique(), // self_pubkey
                 shred2.payload().clone(),
                 Some(leader_schedule),
-                rng.gen(), // wallclock
-                512,       // max_size
+                rng.random(), // wallclock
+                512,          // max_size
                 version,
             )
             .unwrap()
@@ -756,11 +756,11 @@ pub(crate) mod tests {
 
     #[test]
     fn test_erasure_meta_conflict_invalid() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.gen_range(0..31_000);
+        let next_shred_index = rng.random_range(0..31_000);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -804,8 +804,8 @@ pub(crate) mod tests {
                     Pubkey::new_unique(), // self_pubkey
                     shred2.payload().clone(),
                     Some(leader_schedule),
-                    rng.gen(), // wallclock
-                    512,       // max_size
+                    rng.random(), // wallclock
+                    512,          // max_size
                     version,
                 )
                 .err()
@@ -817,8 +817,8 @@ pub(crate) mod tests {
                 shred1.clone(),
                 Pubkey::new_unique(), // self_pubkey
                 shred2.clone(),
-                rng.gen(), // wallclock
-                512,       // max_size
+                rng.random(), // wallclock
+                512,          // max_size
             )
             .unwrap()
             .collect();
@@ -835,11 +835,11 @@ pub(crate) mod tests {
 
     #[test]
     fn test_merkle_root_conflict_round_trip() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.gen_range(0..31_000);
+        let next_shred_index = rng.random_range(0..31_000);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -880,8 +880,8 @@ pub(crate) mod tests {
                 Pubkey::new_unique(), // self_pubkey
                 shred2.payload().clone(),
                 Some(leader_schedule),
-                rng.gen(), // wallclock
-                512,       // max_size
+                rng.random(), // wallclock
+                512,          // max_size
                 version,
             )
             .unwrap()
@@ -895,11 +895,11 @@ pub(crate) mod tests {
 
     #[test]
     fn test_merkle_root_conflict_invalid() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.gen_range(0..31_000);
+        let next_shred_index = rng.random_range(0..31_000);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -945,8 +945,8 @@ pub(crate) mod tests {
                     Pubkey::new_unique(), // self_pubkey
                     shred2.payload().clone(),
                     Some(leader_schedule),
-                    rng.gen(), // wallclock
-                    512,       // max_size
+                    rng.random(), // wallclock
+                    512,          // max_size
                     version,
                 )
                 .err()
@@ -958,8 +958,8 @@ pub(crate) mod tests {
                 shred1.clone(),
                 Pubkey::new_unique(), // self_pubkey
                 shred2.clone(),
-                rng.gen(), // wallclock
-                512,       // max_size
+                rng.random(), // wallclock
+                512,          // max_size
             )
             .unwrap()
             .collect();
@@ -976,11 +976,11 @@ pub(crate) mod tests {
 
     #[test]
     fn test_shred_version() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.gen_range(0..31_000);
+        let next_shred_index = rng.random_range(0..31_000);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -1055,8 +1055,8 @@ pub(crate) mod tests {
                     Pubkey::new_unique(), // self_pubkey
                     shred2.payload().clone(),
                     Some(leader_schedule),
-                    rng.gen(), // wallclock
-                    512,       // max_size
+                    rng.random(), // wallclock
+                    512,          // max_size
                     version,
                 )
                 .err()
@@ -1068,8 +1068,8 @@ pub(crate) mod tests {
                 shred1.clone(),
                 Pubkey::new_unique(), // self_pubkey
                 shred2.clone(),
-                rng.gen(), // wallclock
-                512,       // max_size
+                rng.random(), // wallclock
+                512,          // max_size
             )
             .unwrap()
             .collect();
@@ -1086,11 +1086,11 @@ pub(crate) mod tests {
 
     #[test]
     fn test_retransmitter_signature_invalid() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = rng.gen_range(0..32_000);
+        let next_shred_index = rng.random_range(0..32_000);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -1130,8 +1130,8 @@ pub(crate) mod tests {
                     Pubkey::new_unique(), // self_pubkey
                     shred2.payload().clone(),
                     Some(leader_schedule),
-                    rng.gen(), // wallclock
-                    512,       // max_size
+                    rng.random(), // wallclock
+                    512,          // max_size
                     version,
                 )
                 .err()
@@ -1143,8 +1143,8 @@ pub(crate) mod tests {
                 shred1.clone(),
                 Pubkey::new_unique(), // self_pubkey
                 shred2.clone(),
-                rng.gen(), // wallclock
-                512,       // max_size
+                rng.random(), // wallclock
+                512,          // max_size
             )
             .unwrap()
             .collect();
