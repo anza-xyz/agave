@@ -38,7 +38,7 @@ impl RouteMonitor {
     ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
             let groups = (RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH | RTMGRP_LINK) as u32;
-            let mut sock = match NetlinkSocket::open_multicast_listener(groups) {
+            let mut sock = match NetlinkSocket::bind(groups) {
                 Ok(s) => s,
                 Err(e) => {
                     error!("greg: netlink bind failed: {e}");
@@ -76,7 +76,11 @@ impl RouteMonitor {
                     -1
                 };
 
-                let mut pfd = pollfd { fd: sock.as_raw_fd(), events: POLLIN, revents: 0 };
+                let mut pfd = pollfd {
+                    fd: sock.as_raw_fd(),
+                    events: POLLIN,
+                    revents: 0,
+                };
                 if let Err(e) = poll_nointr(&mut pfd, timeout_ms) {
                     error!("greg: poll error: {e}");
                     resync_router(&atomic_router);
@@ -95,7 +99,10 @@ impl RouteMonitor {
                 }
 
                 if (re & POLLNVAL) != 0 {
-                    panic!("greg: RouteMonitor: POLLNVAL on netlink socket (invalid fd). revents={re:#x}");
+                    panic!(
+                        "greg: RouteMonitor: POLLNVAL on netlink socket (invalid fd). \
+                         revents={re:#x}"
+                    );
                 }
                 if (re & POLLHUP) != 0 {
                     warn!("greg: netlink socket POLLHUP; recreating and resyncing");
@@ -129,7 +136,9 @@ impl RouteMonitor {
                     Ok(msgs) => {
                         if !msgs.is_empty() {
                             Self::process_netlink_updates(
-                                working.as_mut().expect("working router should be initialized"),
+                                working
+                                    .as_mut()
+                                    .expect("working router should be initialized"),
                                 &mut dirty,
                                 &msgs,
                             );
@@ -234,7 +243,11 @@ fn resync_router(atomic_router: &Arc<ArcSwap<Router>>) {
 }
 
 #[inline]
-fn publish_if_dirty(atomic_router: &Arc<ArcSwap<Router>>, working: &Option<Router>, dirty: &mut bool) {
+fn publish_if_dirty(
+    atomic_router: &Arc<ArcSwap<Router>>,
+    working: &Option<Router>,
+    dirty: &mut bool,
+) {
     info!("greg: publish_if_dirty: dirty={dirty}");
     if *dirty {
         if let Some(w) = working.as_ref() {
@@ -246,8 +259,11 @@ fn publish_if_dirty(atomic_router: &Arc<ArcSwap<Router>>, working: &Option<Route
 }
 
 #[inline]
-fn recreate_listener(groups: u32, atomic_router: &Arc<ArcSwap<Router>>) -> Result<NetlinkSocket, ()> {
-    match NetlinkSocket::open_multicast_listener(groups) {
+fn recreate_listener(
+    groups: u32,
+    atomic_router: &Arc<ArcSwap<Router>>,
+) -> Result<NetlinkSocket, ()> {
+    match NetlinkSocket::bind(groups) {
         Ok(s) => {
             resync_router(atomic_router);
             Ok(s)
