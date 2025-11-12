@@ -1,5 +1,5 @@
 use {
-    crate::LEDGER_TOOL_DIRECTORY,
+    crate::{blockstore::NON_WRITABLE_BLOCKSTORE_ACCESS, LEDGER_TOOL_DIRECTORY},
     agave_snapshots::{
         paths::{self as snapshot_paths, BANK_SNAPSHOTS_DIR},
         snapshot_config::{SnapshotConfig, SnapshotUsage},
@@ -80,7 +80,7 @@ pub(crate) enum LoadAndProcessLedgerError {
     #[error("failed to create all run and snapshot directories: {0}")]
     CreateAllAccountsRunAndSnapshotDirectories(#[source] std::io::Error),
 
-    #[error("custom accounts path is not supported with secondary blockstore access")]
+    #[error("custom accounts path is not supported with non-writable blockstore access")]
     CustomAccountsPathUnsupported(#[source] BlockstoreError),
 
     #[error(
@@ -238,7 +238,7 @@ pub fn load_and_process_ledger(
             .join(LEDGER_TOOL_DIRECTORY)
             .join("accounts");
         info!(
-            "Default accounts path is switched aligning with Blockstore's secondary access: \
+            "Default accounts path is switched aligning with Blockstore's non-writable access: \
              {non_primary_accounts_path:?}"
         );
         vec![non_primary_accounts_path]
@@ -460,15 +460,13 @@ pub fn open_blockstore(
                 .starts_with("Invalid argument: Column family not found:");
             // The blockstore settings with Primary access can resolve the
             // above issues automatically, so only emit the help messages
-            // if access type is Secondary
-            let is_secondary = access_type == AccessType::Secondary;
-
-            if missing_blockstore && is_secondary {
+            // if access type is Secondary / ReadOnly
+            if missing_blockstore && access_type.is_non_writable() {
                 eprintln!(
                     "Failed to open blockstore at {ledger_path:?}, it is missing at least one \
                      critical file: {err:?}"
                 );
-            } else if missing_column && is_secondary {
+            } else if missing_column && access_type.is_non_writable() {
                 eprintln!(
                     "Failed to open blockstore at {ledger_path:?}, it does not have all necessary \
                      columns: {err:?}"
@@ -559,7 +557,7 @@ pub fn get_program_ids(tx: &VersionedTransaction) -> impl Iterator<Item = &Pubke
 /// Get the AccessType required, based on `process_options`
 pub(crate) fn get_access_type(process_options: &ProcessOptions) -> AccessType {
     match process_options.use_snapshot_archives_at_startup {
-        UseSnapshotArchivesAtStartup::Always => AccessType::Secondary,
+        UseSnapshotArchivesAtStartup::Always => NON_WRITABLE_BLOCKSTORE_ACCESS,
         UseSnapshotArchivesAtStartup::Never => AccessType::PrimaryForMaintenance,
         UseSnapshotArchivesAtStartup::WhenNewest => AccessType::PrimaryForMaintenance,
     }
