@@ -1911,7 +1911,8 @@ impl ClusterInfo {
         stakes: &HashMap<Pubkey, u64>,
     ) -> Vec<(SocketAddr, Protocol /*::PruneMessage*/)> {
         let _st = ScopedTimer::from(&self.stats.generate_prune_messages);
-        let self_pubkey = self.id();
+        let self_keypair = self.keypair();
+        let self_pubkey = self_keypair.pubkey();
         // Obtain redundant gossip links which can be pruned.
         let prunes: HashMap</*gossip peer:*/ Pubkey, /*origins:*/ Vec<Pubkey>> = {
             let _st = ScopedTimer::from(&self.stats.prune_received_cache);
@@ -1943,7 +1944,6 @@ impl ClusterInfo {
         // Create and sign Protocol::PruneMessages.
         thread_pool.install(|| {
             let wallclock = timestamp();
-            let keypair = self.keypair();
             prunes
                 .into_par_iter()
                 .flat_map(|(destination, addr, prunes)| {
@@ -1959,7 +1959,7 @@ impl ClusterInfo {
                         destination,
                         wallclock,
                     };
-                    prune_data.sign(&keypair);
+                    prune_data.sign(&self_keypair);
                     let prune_message = Protocol::PruneMessage(self_pubkey, prune_data);
                     (addr, prune_message)
                 })
@@ -1978,7 +1978,8 @@ impl ClusterInfo {
         should_check_duplicate_instance: bool,
     ) -> Result<(), GossipError> {
         let _st = ScopedTimer::from(&self.stats.process_gossip_packets_time);
-        let self_pubkey = self.id();
+        let self_keypair = self.keypair();
+        let self_pubkey = self_keypair.pubkey();
         // Filter out values if the shred-versions are different.
         let self_shred_version = self.my_shred_version();
         {
@@ -2014,11 +2015,10 @@ impl ClusterInfo {
         };
         let mut pings = Vec::new();
         let mut rng = rand::thread_rng();
-        let keypair = self.keypair();
         let mut verify_gossip_addr = |value: &CrdsValue| {
             if verify_gossip_addr(
                 &mut rng,
-                &keypair,
+                &self_keypair,
                 value,
                 &self.socket_addr_space,
                 &self.ping_cache,
