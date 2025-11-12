@@ -150,9 +150,6 @@ impl Router {
         let if_index = default_route
             .out_if_index
             .ok_or(RouteError::MissingOutputInterface)?;
-        if !self.interfaces.contains_key(&(if_index as u32)) {
-            return Err(RouteError::UnknownInterfaceIndex(if_index as u32));
-        }
 
         let next_hop_ip = match default_route.gateway {
             Some(gateway) => gateway,
@@ -174,9 +171,6 @@ impl Router {
         let if_index = route
             .out_if_index
             .ok_or(RouteError::MissingOutputInterface)?;
-        if !self.interfaces.contains_key(&(if_index as u32)) {
-            return Err(RouteError::UnknownInterfaceIndex(if_index as u32));
-        }
 
         let next_hop_ip = match route.gateway {
             Some(gateway) => gateway,
