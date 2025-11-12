@@ -21,7 +21,7 @@ use {
     bytes::Bytes,
     crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender},
     lru::LruCache,
-    rand::seq::SliceRandom,
+    rand::prelude::IndexedRandom as _,
     solana_client::connection_cache::Protocol,
     solana_clock::{Slot, DEFAULT_TICKS_PER_SECOND, MS_PER_TICK},
     solana_epoch_schedule::EpochSchedule,
@@ -974,7 +974,7 @@ impl RepairService {
             .collect();
 
         // Sample a subset of the repair peers weighted by stake.
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let Ok(weighted_sample_repair_peers) = repair_peers.choose_multiple_weighted(
             &mut rng,
             NUM_PEERS_TO_SAMPLE_FOR_REPAIRS,
