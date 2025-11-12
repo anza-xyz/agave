@@ -231,7 +231,7 @@ mod test {
         solana_message::Message,
         solana_pubkey::Pubkey,
         solana_signer::Signer,
-        solana_svm_transaction::svm_message::SVMMessage,
+        solana_svm_transaction::svm_message::SVMStaticMessage,
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},
     };
 
@@ -258,7 +258,9 @@ mod test {
             ..ComputeBudgetInstructionDetails::default()
         });
         assert_eq!(
-            ComputeBudgetInstructionDetails::try_from(SVMMessage::program_instructions_iter(&tx),),
+            ComputeBudgetInstructionDetails::try_from(SVMStaticMessage::program_instructions_iter(
+                &tx
+            ),),
             expected_details
         );
 
@@ -268,7 +270,9 @@ mod test {
             ComputeBudgetInstruction::request_heap_frame(41 * 1024),
         ]);
         assert_eq!(
-            ComputeBudgetInstructionDetails::try_from(SVMMessage::program_instructions_iter(&tx),),
+            ComputeBudgetInstructionDetails::try_from(SVMStaticMessage::program_instructions_iter(
+                &tx
+            ),),
             Err(TransactionError::DuplicateInstruction(2))
         );
     }
@@ -286,7 +290,9 @@ mod test {
             ..ComputeBudgetInstructionDetails::default()
         });
         assert_eq!(
-            ComputeBudgetInstructionDetails::try_from(SVMMessage::program_instructions_iter(&tx),),
+            ComputeBudgetInstructionDetails::try_from(SVMStaticMessage::program_instructions_iter(
+                &tx
+            ),),
             expected_details
         );
 
@@ -296,7 +302,9 @@ mod test {
             ComputeBudgetInstruction::set_compute_unit_limit(u32::MAX),
         ]);
         assert_eq!(
-            ComputeBudgetInstructionDetails::try_from(SVMMessage::program_instructions_iter(&tx),),
+            ComputeBudgetInstructionDetails::try_from(SVMStaticMessage::program_instructions_iter(
+                &tx
+            ),),
             Err(TransactionError::DuplicateInstruction(2))
         );
     }
@@ -316,7 +324,9 @@ mod test {
             ..ComputeBudgetInstructionDetails::default()
         });
         assert_eq!(
-            ComputeBudgetInstructionDetails::try_from(SVMMessage::program_instructions_iter(&tx),),
+            ComputeBudgetInstructionDetails::try_from(SVMStaticMessage::program_instructions_iter(
+                &tx
+            ),),
             expected_details
         );
 
@@ -326,7 +336,9 @@ mod test {
             ComputeBudgetInstruction::set_compute_unit_price(u64::MAX),
         ]);
         assert_eq!(
-            ComputeBudgetInstructionDetails::try_from(SVMMessage::program_instructions_iter(&tx),),
+            ComputeBudgetInstructionDetails::try_from(SVMStaticMessage::program_instructions_iter(
+                &tx
+            ),),
             Err(TransactionError::DuplicateInstruction(2))
         );
     }
@@ -346,7 +358,9 @@ mod test {
             ..ComputeBudgetInstructionDetails::default()
         });
         assert_eq!(
-            ComputeBudgetInstructionDetails::try_from(SVMMessage::program_instructions_iter(&tx),),
+            ComputeBudgetInstructionDetails::try_from(SVMStaticMessage::program_instructions_iter(
+                &tx
+            ),),
             expected_details
         );
 
@@ -356,7 +370,9 @@ mod test {
             ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(u32::MAX),
         ]);
         assert_eq!(
-            ComputeBudgetInstructionDetails::try_from(SVMMessage::program_instructions_iter(&tx),),
+            ComputeBudgetInstructionDetails::try_from(SVMStaticMessage::program_instructions_iter(
+                &tx
+            ),),
             Err(TransactionError::DuplicateInstruction(2))
         );
     }
@@ -543,7 +559,7 @@ mod test {
                 .migrating_builtin[*position] = Saturating(1);
             let expected_details = Ok(expected_details);
             let details = ComputeBudgetInstructionDetails::try_from(
-                SVMMessage::program_instructions_iter(&tx),
+                SVMStaticMessage::program_instructions_iter(&tx),
             );
             assert_eq!(details, expected_details);
             let details = details.unwrap();

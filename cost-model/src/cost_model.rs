@@ -310,7 +310,7 @@ mod tests {
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk_ids::{compute_budget, system_program},
         solana_signer::Signer,
-        solana_svm_transaction::svm_message::SVMMessage,
+        solana_svm_transaction::svm_message::SVMStaticMessage,
         solana_system_interface::instruction::{self as system_instruction},
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
