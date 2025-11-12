@@ -307,7 +307,7 @@ pub fn bind_two_in_range_with_offset_and_config(
         }
     }
     Err(io::Error::other(format!(
-        "couldn't find two unused ports with the correct offset in range {range:?}"
+        "couldn't find two unused ports with offset {offset} in range {range:?}"
     )))
 }
 
