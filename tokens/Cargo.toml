@@ -59,6 +59,5 @@ thiserror = { workspace = true }
 agave-logger = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
-solana-streamer = { workspace = true }
 solana-test-validator = { workspace = true }
 solana-transaction-error = { workspace = true }
