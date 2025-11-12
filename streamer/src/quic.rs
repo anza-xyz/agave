@@ -40,7 +40,7 @@ use {
 pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER: usize = 8;
 
 // allow multiple connections per ID for geo-distributed forwarders
-pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER: usize = 8;
+pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER: usize = 16;
 
 pub const DEFAULT_MAX_STAKED_CONNECTIONS: usize = 2000;
 

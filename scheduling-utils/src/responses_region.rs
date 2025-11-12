@@ -86,7 +86,7 @@ unsafe fn from_iterator<T: Sized>(
 ) -> Option<TransactionResponseRegion> {
     let num_transaction_responses = iter.len();
     let (response_ptr, region) =
-        allocate_response_region(allocator, tag, num_transaction_responses)?;
+        unsafe { allocate_response_region(allocator, tag, num_transaction_responses)? };
     for (index, response) in iter.enumerate() {
         // SAFETY: `response_ptr` is sufficiently sized to fit the response vector.
         unsafe { response_ptr.add(index).write(response) };

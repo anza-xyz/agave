@@ -34,6 +34,7 @@ rust_2024_incompatible_pat = "deny"
 rust_2024_prelude_collisions = "deny"
 static_mut_refs = "deny"
 unsafe_attr_outside_unsafe = "deny"
+unsafe_op_in_unsafe_fn = "deny"
 
 [workspace.lints.rust.unexpected_cfgs]
 level = "warn"
