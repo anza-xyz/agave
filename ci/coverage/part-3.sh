@@ -3,20 +3,25 @@
 set -euo pipefail
 git_root=$(git rev-parse --show-toplevel)
 
+# shellcheck source=ci/coverage/common.sh
+source "$git_root"/ci/coverage/common.sh
+
+exclude_packages=()
+for package in "${PART_1_PACKAGES[@]}"; do
+  exclude_packages+=(--exclude "$package")
+done
+for package in "${PART_2_PACKAGES[@]}"; do
+  exclude_packages+=(--exclude "$package")
+done
+exclude_packages+=(--exclude solana-local-cluster)
+
 echo "--- coverage: coverage (part 3)"
 "$git_root"/ci/test-coverage.sh \
   --features frozen-abi \
   --features dev-context-only-utils \
   --workspace \
   --lib \
-  --exclude solana-ledger \
-  --exclude solana-accounts-db \
-  --exclude solana-runtime \
-  --exclude solana-perf \
-  --exclude solana-core \
-  --exclude solana-wen-restart \
-  --exclude solana-local-cluster \
-  --exclude solana-gossip
+  "${exclude_packages[@]}"
 
 # Clean up
 cargo clean
