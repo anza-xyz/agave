@@ -96,14 +96,14 @@ enum CertVerifyError {
     #[error("The signature doesn't match")]
     SignatureVerificationFailed,
 
-    #[error("Base 3 encoding on unexpected cert {0:?}")]
-    Base3EncodingOnUnexpectedCert(CertificateType),
-
     #[error("Pubkey not found for rank {0}")]
     PubkeyNotFoundForRank(usize),
 
     #[error("Invalid Pubkey for rank {0}")]
     InvalidPubkeyForRank(usize),
+
+    #[error("No source vote found for cert {0:?} return_primary {1}")]
+    NoSourceVoteFound(CertificateType, bool),
 }
 
 pub struct BLSSigVerifier {
@@ -605,7 +605,9 @@ impl BLSSigVerifier {
         bit_vec: &BitVec<u8, Lsb0>,
         key_to_rank_map: &Arc<BLSPubkeyToRankMap>,
     ) -> Result<(), CertVerifyError> {
-        let original_vote = cert_to_verify.cert_type.to_source_vote();
+        let original_vote = cert_to_verify.cert_type.to_source_vote(true).ok_or(
+            CertVerifyError::NoSourceVoteFound(cert_to_verify.cert_type, true),
+        )?;
 
         let Ok(signed_payload) = bincode::serialize(&original_vote) else {
             return Err(CertVerifyError::SerializationFailed);
@@ -629,11 +631,12 @@ impl BLSSigVerifier {
         bit_vec2: &BitVec<u8, Lsb0>,
         key_to_rank_map: &Arc<BLSPubkeyToRankMap>,
     ) -> Result<(), CertVerifyError> {
-        let Some((vote1, vote2)) = cert_to_verify.cert_type.to_source_votes() else {
-            return Err(CertVerifyError::Base3EncodingOnUnexpectedCert(
-                cert_to_verify.cert_type,
-            ));
-        };
+        let vote1 = cert_to_verify.cert_type.to_source_vote(true).ok_or(
+            CertVerifyError::NoSourceVoteFound(cert_to_verify.cert_type, true),
+        )?;
+        let vote2 = cert_to_verify.cert_type.to_source_vote(false).ok_or(
+            CertVerifyError::NoSourceVoteFound(cert_to_verify.cert_type, false),
+        )?;
 
         let Ok(signed_payload1) = bincode::serialize(&vote1) else {
             return Err(CertVerifyError::SerializationFailed);
@@ -774,7 +777,7 @@ mod tests {
     ) -> Certificate {
         let mut builder = CertificateBuilder::new(cert_type);
         // Assumes Base2 encoding (single vote type) for simplicity in this helper.
-        let vote = cert_type.to_source_vote();
+        let vote = cert_type.to_source_vote(true).unwrap();
         let vote_messages: Vec<VoteMessage> = ranks
             .iter()
             .map(|&rank| create_signed_vote_message(validator_keypairs, vote, rank))

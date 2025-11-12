@@ -88,43 +88,31 @@ impl CertificateType {
     /// (e.g., a `Notarize` certificate from `Notarize` votes), this function
     /// reconstructs the canonical message payload that was signed by validators.
     ///
-    /// For `NotarizeFallback` and `Skip` certificates, this function returns the
-    /// appropriate payload *only* if the certificate was formed from a single
-    /// vote type (e.g., exclusively from `Notarize` or `Skip` votes). For
-    /// certificates formed from a mix of two vote types, use the `to_source_votes`
-    /// function.
-    pub fn to_source_vote(self) -> Vote {
-        match self {
-            Self::Notarize(slot, block_id)
-            | Self::FinalizeFast(slot, block_id)
-            | Self::NotarizeFallback(slot, block_id) => Vote::new_notarization_vote(slot, block_id),
-            Self::Finalize(slot) => Vote::new_finalization_vote(slot),
-            Self::Skip(slot) => Vote::new_skip_vote(slot),
-        }
-    }
-
-    /// Reconstructs the two distinct source `Vote` payloads for this certificate.
+    /// For `NotarizeFallback` and `Skip` certificates where there are fallback
+    /// vote types, this method returns the appropriate vote type based on
+    /// `return_primary` argument. For all other certificate types, None should
+    /// be returned if `return_primary` is false.
     ///
-    /// This method is primarily used by the signature verifier for certificates that
-    /// can be formed by aggregating two different types of votes. For example, a
-    /// `NotarizeFallback` certificate accepts both `Notarize` and `NotarizeFallback`.
-    ///
-    /// It reconstructs both potential message payloads that were signed by validators, which
-    /// the verifier uses to check the single aggregate signature.
-    pub fn to_source_votes(self) -> Option<(Vote, Vote)> {
-        match self {
-            Self::NotarizeFallback(slot, block_id) => {
-                let vote1 = Vote::new_notarization_vote(slot, block_id);
-                let vote2 = Vote::new_notarization_fallback_vote(slot, block_id);
-                Some((vote1, vote2))
+    /// All certificate types return Some when `return_primary` is true.
+    pub fn to_source_vote(self, return_primary: bool) -> Option<Vote> {
+        if return_primary {
+            match self {
+                Self::Notarize(slot, block_id)
+                | Self::FinalizeFast(slot, block_id)
+                | Self::NotarizeFallback(slot, block_id) => {
+                    Some(Vote::new_notarization_vote(slot, block_id))
+                }
+                Self::Finalize(slot) => Some(Vote::new_finalization_vote(slot)),
+                Self::Skip(slot) => Some(Vote::new_skip_vote(slot)),
             }
-            Self::Skip(slot) => {
-                let vote1 = Vote::new_skip_vote(slot);
-                let vote2 = Vote::new_skip_fallback_vote(slot);
-                Some((vote1, vote2))
+        } else {
+            match self {
+                Self::NotarizeFallback(slot, block_id) => {
+                    Some(Vote::new_notarization_fallback_vote(slot, block_id))
+                }
+                Self::Skip(slot) => Some(Vote::new_skip_fallback_vote(slot)),
+                _ => None,
             }
-            // Other certificate types do not use Base3 encoding.
-            _ => None,
         }
     }
 }
