@@ -56,6 +56,7 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .help("Number of bins to divide the accounts index into"),
         Arg::with_name("accounts_index_initial_accounts_count")
             .long("accounts-index-initial-accounts-count")
+            .conflicts_with("enable_accounts_disk_index")
             .value_name("NUMBER")
             .validator(is_parsable::<usize>)
             .takes_value(true)

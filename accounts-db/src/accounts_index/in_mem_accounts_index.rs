@@ -180,6 +180,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn map_internal_capacity(&self) -> usize {
+        self.map_internal.read().unwrap().capacity()
+    }
+
     /// return all keys in this bin
     pub fn keys(&self) -> Vec<Pubkey> {
         Self::update_stat(&self.stats().keys, 1);

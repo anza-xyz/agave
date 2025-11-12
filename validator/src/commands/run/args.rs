@@ -1163,6 +1163,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
     .arg(
         Arg::with_name("accounts_index_initial_accounts_count")
             .long("accounts-index-initial-accounts-count")
+            .conflicts_with("enable_accounts_disk_index")
             .value_name("NUMBER")
             .validator(is_parsable::<usize>)
             .takes_value(true)

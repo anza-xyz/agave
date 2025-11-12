@@ -1,7 +1,7 @@
 use {
     super::{
         bucket_map_holder::BucketMapHolder, in_mem_accounts_index::InMemAccountsIndex,
-        AccountsIndexConfig, DiskIndexValue, IndexValue, Startup,
+        AccountsIndexConfig, DiskIndexValue, IndexLimitMb, IndexValue, Startup,
     },
     crate::{accounts_index, waitable_condvar::WaitableCondvar},
     std::{
@@ -134,7 +134,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexStorage<
 
         let storage = Arc::new(BucketMapHolder::new(bins, config, num_flush_threads.get()));
 
-        let num_initial_accounts = config.num_initial_accounts;
+        let num_initial_accounts = match config.index_limit_mb {
+            IndexLimitMb::InMemOnly => config.num_initial_accounts,
+            _ => None,
+        };
         let in_mem: Box<_> = (0..bins)
             .map(|bin| Arc::new(InMemAccountsIndex::new(&storage, bin, num_initial_accounts)))
             .collect();
@@ -144,5 +147,69 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexStorage<
             storage,
             in_mem,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, crate::accounts_index::BINS_FOR_TESTING};
+
+    /// Test when index_limit_mb is InMemOnly, num_initial_accounts should be passed through
+    #[test]
+    fn test_num_initial_accounts_in_mem_only() {
+        let config = AccountsIndexConfig {
+            index_limit_mb: IndexLimitMb::InMemOnly,
+            num_initial_accounts: Some(1000),
+            ..AccountsIndexConfig::default()
+        };
+
+        let exit = Arc::new(AtomicBool::default());
+        let storage = AccountsIndexStorage::<u64, u64>::new(BINS_FOR_TESTING, &config, exit);
+
+        let map_capacity = storage.in_mem[0].map_internal_capacity();
+        assert!(
+            map_capacity > 0,
+            "Expected non-zero capacity with InMemOnly and num_initial_accounts set, got \
+             {map_capacity}"
+        );
+    }
+
+    /// Test when index_limit_mb is not InMemOnly (e.g., Minimal), num_initial_accounts should be None
+    #[test]
+    fn test_num_initial_accounts_minimal() {
+        let config = AccountsIndexConfig {
+            index_limit_mb: IndexLimitMb::Minimal,
+            num_initial_accounts: Some(1000),
+            ..AccountsIndexConfig::default()
+        };
+
+        let exit = Arc::new(AtomicBool::default());
+        let storage = AccountsIndexStorage::<u64, u64>::new(BINS_FOR_TESTING, &config, exit);
+
+        let map_capacity = storage.in_mem[0].map_internal_capacity();
+        assert_eq!(
+            map_capacity, 0,
+            "Expected zero capacity with Minimal index_limit_mb even with num_initial_accounts \
+             set, got {map_capacity}"
+        );
+    }
+
+    /// Test when num_initial_accounts is None, even with InMemOnly, capacity should be 0
+    #[test]
+    fn test_num_initial_accounts_none_in_mem_only() {
+        let config = AccountsIndexConfig {
+            index_limit_mb: IndexLimitMb::InMemOnly,
+            num_initial_accounts: None,
+            ..AccountsIndexConfig::default()
+        };
+
+        let exit = Arc::new(AtomicBool::default());
+        let storage = AccountsIndexStorage::<u64, u64>::new(BINS_FOR_TESTING, &config, exit);
+
+        let map_capacity = storage.in_mem[0].map_internal_capacity();
+        assert_eq!(
+            map_capacity, 0,
+            "Expected zero capacity with None num_initial_accounts, got {map_capacity}"
+        );
     }
 }
