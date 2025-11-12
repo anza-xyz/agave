@@ -40,7 +40,7 @@ impl RouteMonitor {
             let mut sock = match NetlinkSocket::bind(groups) {
                 Ok(s) => s,
                 Err(e) => {
-                    error!("greg: netlink bind failed: {e}");
+                    error!("netlink bind failed: {e}");
                     return;
                 }
             };
@@ -81,7 +81,7 @@ impl RouteMonitor {
                     revents: 0,
                 };
                 if let Err(e) = poll_nointr(&mut pfd, timeout_ms) {
-                    error!("greg: poll error: {e}");
+                    error!("poll error: {e}");
                     resync_router(&atomic_router);
                     working = None;
                     continue;
@@ -99,12 +99,11 @@ impl RouteMonitor {
 
                 if (re & POLLNVAL) != 0 {
                     panic!(
-                        "greg: RouteMonitor: POLLNVAL on netlink socket (invalid fd). \
-                         revents={re:#x}"
+                        "RouteMonitor: POLLNVAL on netlink socket (invalid fd). revents={re:#x}"
                     );
                 }
                 if (re & POLLHUP) != 0 {
-                    warn!("greg: netlink socket POLLHUP; recreating and resyncing");
+                    warn!("netlink socket POLLHUP; recreating and resyncing");
                     drop(sock);
                     match recreate_listener(groups, &atomic_router) {
                         Ok(s) => {
@@ -118,7 +117,7 @@ impl RouteMonitor {
                     continue;
                 }
                 if (re & POLLERR) != 0 {
-                    warn!("greg: netlink socket POLLERR; resyncing router snapshot");
+                    warn!("netlink socket POLLERR; resyncing router snapshot");
                     resync_router(&atomic_router);
                     working = None;
                     in_window = false;
@@ -126,7 +125,7 @@ impl RouteMonitor {
                 }
                 if (re & POLLIN) == 0 {
                     // unexpected/unhandled events (e.g. POLLPRI) or spurious wake
-                    info!("greg: poll returned without POLLIN, revents={re:#x}"); //greg: convert to debug
+                    debug!("poll returned without POLLIN, revents={re:#x}");
                     continue;
                 }
 
@@ -149,7 +148,7 @@ impl RouteMonitor {
                         }
                     }
                     Err(e) => {
-                        warn!("greg: recv failed: {e}");
+                        warn!("recv failed: {e}");
                         drop(sock);
                         match recreate_listener(groups, &atomic_router) {
                             Ok(s) => {
@@ -173,25 +172,21 @@ impl RouteMonitor {
             match m.header.nlmsg_type {
                 RTM_NEWROUTE if is_supported_ipv4_route_header(m) => {
                     if let Some(r) = parse_rtm_newroute(m) {
-                        info!("greg: upsert_route");
                         *dirty |= working.upsert_route(r);
                     }
                 }
                 RTM_DELROUTE if is_supported_ipv4_route_header(m) => {
                     if let Some(r) = parse_rtm_newroute(m) {
-                        info!("greg: delete_route");
                         *dirty |= working.delete_route(r);
                     }
                 }
                 RTM_NEWNEIGH if is_supported_ipv4_neigh_header(m) => {
                     if let Some(n) = parse_rtm_newneigh(m, None) {
-                        info!("greg: upsert_neighbor");
                         *dirty |= working.upsert_neighbor(n);
                     }
                 }
                 RTM_DELNEIGH if is_supported_ipv4_neigh_header(m) => {
                     if let Some(n) = parse_rtm_newneigh(m, None) {
-                        info!("greg: delete_neighbor");
                         if let Some(IpAddr::V4(ip)) = n.destination {
                             *dirty |= working.delete_neighbor(ip, n.ifindex);
                         }
@@ -231,10 +226,8 @@ fn publish_if_dirty(
     working: &Option<Router>,
     dirty: &mut bool,
 ) {
-    info!("greg: publish_if_dirty: dirty={dirty}");
     if *dirty {
         if let Some(w) = working.as_ref() {
-            info!("greg: publish_if_dirty: storing router");
             atomic_router.store(Arc::new(w.clone()));
         }
         *dirty = false;
