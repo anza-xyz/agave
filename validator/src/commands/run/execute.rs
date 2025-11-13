@@ -19,7 +19,7 @@ use {
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig, MarkObsoleteAccounts},
         accounts_file::StorageAccess,
-        accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig, IndexLimitMb, ScanFilter},
+        accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig, IndexLimit, ScanFilter},
         utils::{
             create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
             create_and_canonicalize_directory,
@@ -325,10 +325,12 @@ pub fn execute(
         accounts_index_config.num_initial_accounts = Some(num_initial_accounts);
     }
 
-    accounts_index_config.index_limit_mb = if !matches.is_present("enable_accounts_disk_index") {
-        IndexLimitMb::InMemOnly
+    accounts_index_config.index_limit = if matches.is_present("enable_accounts_disk_index") {
+        IndexLimit::Minimal
+    } else if let Ok(limit_bytes) = value_t!(matches, "accounts_index_limit_bytes", u64) {
+        IndexLimit::Threshold(limit_bytes)
     } else {
-        IndexLimitMb::Minimal
+        IndexLimit::InMemOnly
     };
 
     {
