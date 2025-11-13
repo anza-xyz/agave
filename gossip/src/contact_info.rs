@@ -978,24 +978,6 @@ mod tests {
     }
 
     #[test]
-    fn test_new_localhost() {
-        let _node = ContactInfo::new_localhost(
-            &Keypair::new().pubkey(),
-            solana_time_utils::timestamp(), // wallclock
-        );
-    }
-
-    #[test]
-    fn test_new_with_socketaddr() {
-        let mut rng = rand::thread_rng();
-        let socket = repeat_with(|| new_rand_socket(&mut rng))
-            .filter(|socket| matches!(sanitize_socket(socket), Ok(())))
-            .find(|socket| socket.port().checked_add(11).is_some())
-            .unwrap();
-        let _node = ContactInfo::new_with_socketaddr(&Keypair::new().pubkey(), &socket);
-    }
-
-    #[test]
     fn test_set_and_remove_alpenglow() {
         let mut rng = rand::thread_rng();
         let mut node = ContactInfo::new(
