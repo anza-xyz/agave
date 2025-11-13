@@ -146,8 +146,13 @@ impl<T: AsRef<[u8]>> BloomHashIndex for T {
 }
 
 /// Bloom filter that can be used concurrently.
-/// Concurrent reads/writes are safe, but are not atomic at the struct level,
-/// this means that reads may see partial writes.
+///
+/// All operations are thread-safe. Uses `Ordering::Relaxed` for performance, which provides
+/// atomicity for each bit but no ordering guarantees between operations. This is safe for
+/// bloom filters since operations are idempotent and false positives are acceptable.
+///
+/// **Note**: Concurrent `clear()` with `add()`/`contains()` may observe partially cleared
+/// states. For coordinated clearing, use [`ConcurrentBloomInterval`] or external synchronization.
 pub struct ConcurrentBloom<T> {
     num_bits: u64,
     keys: Vec<u64>,
@@ -188,6 +193,8 @@ impl<T: BloomHashIndex> ConcurrentBloom<T> {
 
     /// Adds an item to the bloom filter and returns true if the item
     /// was not in the filter before.
+    ///
+    /// Thread-safe. The operation is idempotent.
     pub fn add(&self, key: &T) -> bool {
         let mut added = false;
         for k in &self.keys {
@@ -198,6 +205,10 @@ impl<T: BloomHashIndex> ConcurrentBloom<T> {
         added
     }
 
+    /// Checks if an item might be in the bloom filter.
+    ///
+    /// Returns `true` if the item might be present (with possibility of false positives),
+    /// or `false` if the item is definitely not present. Thread-safe.
     pub fn contains(&self, key: &T) -> bool {
         self.keys.iter().all(|k| {
             let (index, mask) = self.pos(key, *k);
@@ -206,6 +217,10 @@ impl<T: BloomHashIndex> ConcurrentBloom<T> {
         })
     }
 
+    /// Clears all bits in the bloom filter, resetting it to an empty state.
+    ///
+    /// Thread-safe, but no ordering guarantees with concurrent `add()`/`contains()`.
+    /// For coordinated clearing, use [`ConcurrentBloomInterval`] or external synchronization.
     pub fn clear(&self) {
         self.bits.iter().for_each(|bit| {
             bit.store(0u64, Ordering::Relaxed);
