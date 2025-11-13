@@ -236,3 +236,23 @@ pub(crate) fn report_loaded_programs_stats(stats: &ProgramCacheStats, slot: Slot
     );
     stats.log();
 }
+
+/// Metrics for the dynamic rent controller (SIMD-0389)
+pub(crate) fn report_rent_controller_metrics(
+    bank: &Bank,
+    parent_net_state_growth: i64,
+    lamports_per_byte_year: u64,
+    exemption_threshold: f64,
+    accumulator: i64,
+) {
+    datapoint_info!(
+        "bank-rent-controller",
+        ("slot", bank.slot(), i64),
+        ("epoch", bank.epoch(), i64),
+        ("parent_slot", bank.parent_slot(), i64),
+        ("parent_net_state_growth", parent_net_state_growth, i64),
+        ("accumulator", accumulator, i64),
+        ("lamports_per_byte_year", lamports_per_byte_year, i64),
+        ("exemption_threshold", exemption_threshold, f64),
+    );
+}
