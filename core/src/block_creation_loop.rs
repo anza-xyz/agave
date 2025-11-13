@@ -438,7 +438,10 @@ fn start_leader_wait_for_parent_replay(
                     .slot_delay_hist
                     .increment(slot_delay_start.as_us())
                     .inspect_err(|e| {
-                        error!("{}: unable to increment slot delay histogram {e:?}", ctx.my_pubkey);
+                        error!(
+                            "{}: unable to increment slot delay histogram {e:?}",
+                            ctx.my_pubkey
+                        );
                     });
 
                 ctx.slot_metrics.report();
