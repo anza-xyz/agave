@@ -314,7 +314,13 @@ fn produce_window(
         let _ = ctx
             .metrics
             .bank_timeout_completion_elapsed_hist
-            .increment(bank_completion_measure.as_us());
+            .increment(bank_completion_measure.as_us())
+            .inspect_err(|e| {
+                error!(
+                    "{}: unable to increment bank completion histogram {e:?}",
+                    ctx.my_pubkey
+                );
+            });
 
         // Produce our next slot
         parent_slot = slot;
@@ -430,7 +436,10 @@ fn start_leader_wait_for_parent_replay(
                 let _ = ctx
                     .slot_metrics
                     .slot_delay_hist
-                    .increment(slot_delay_start.as_us());
+                    .increment(slot_delay_start.as_us())
+                    .inspect_err(|e| {
+                        error!("{}: unable to increment slot delay histogram {e:?}", ctx.my_pubkey);
+                    });
 
                 ctx.slot_metrics.report();
 
@@ -464,7 +473,13 @@ fn start_leader_wait_for_parent_replay(
                 let _ = ctx
                     .slot_metrics
                     .replay_is_behind_wait_elapsed_hist
-                    .increment(wait_start.as_us());
+                    .increment(wait_start.as_us())
+                    .inspect_err(|e| {
+                        error!(
+                            "{}: unable to increment replay is behind histogram {e:?}",
+                            ctx.my_pubkey
+                        );
+                    });
             }
             Err(e) => return Err(e),
         }
