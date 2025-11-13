@@ -30,7 +30,7 @@ use {
         bank::{Bank, NewBankOptions},
         bank_forks::BankForks,
     },
-    stats::{BlockCreationLoopMetrics, SlotMetrics},
+    stats::{LoopMetrics, SlotMetrics},
     std::{
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -108,7 +108,7 @@ struct LeaderContext {
     replay_highest_frozen: Arc<ReplayHighestFrozen>,
 
     // Metrics
-    metrics: BlockCreationLoopMetrics,
+    metrics: LoopMetrics,
     slot_metrics: SlotMetrics,
 }
 
@@ -189,7 +189,7 @@ fn start_loop(config: BlockCreationLoopConfig) {
         slot_status_notifier,
         banking_tracer,
         replay_highest_frozen,
-        metrics: BlockCreationLoopMetrics::default(),
+        metrics: LoopMetrics::default(),
         slot_metrics: SlotMetrics::default(),
     };
 

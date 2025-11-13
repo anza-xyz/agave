@@ -2,7 +2,7 @@
 use {solana_clock::Slot, solana_metrics::datapoint_info, solana_time_utils::timestamp};
 
 #[derive(Default)]
-pub(crate) struct BlockCreationLoopMetrics {
+pub(crate) struct LoopMetrics {
     pub(crate) last_report: u64,
     pub(crate) loop_count: u64,
     pub(crate) bank_timeout_completion_count: u64,
@@ -12,7 +12,7 @@ pub(crate) struct BlockCreationLoopMetrics {
     pub(crate) bank_timeout_completion_elapsed_hist: histogram::Histogram,
 }
 
-impl BlockCreationLoopMetrics {
+impl LoopMetrics {
     fn is_empty(&self) -> bool {
         0 == self.loop_count
             + self.bank_timeout_completion_count
