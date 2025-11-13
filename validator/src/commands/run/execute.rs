@@ -646,10 +646,7 @@ pub fn execute(
         .cloned()
         .collect::<HashSet<_>>();
     if !reserved.is_empty() {
-        let available = core_affinity::get_core_ids()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|core_id| core_id.id)
+        let available = (0..agave_cpu_utils::cpu_count().unwrap_or(0))
             .collect::<HashSet<_>>();
         let available = available.difference(&reserved);
         set_cpu_affinity(available.into_iter().copied()).unwrap();
