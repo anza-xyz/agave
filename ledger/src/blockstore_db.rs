@@ -124,20 +124,6 @@ impl Rocks {
             AccessType::Primary | AccessType::PrimaryForMaintenance => {
                 DB::open_cf_descriptors(&db_options, &path, cf_descriptors)?
             }
-            AccessType::Secondary => {
-                let secondary_path = path.join("solana-secondary");
-                info!(
-                    "Opening Rocks with secondary (non-writable) access at: {secondary_path:?}. \
-                     This secondary access could temporarily degrade other accesses, such as by \
-                     agave-validator"
-                );
-                DB::open_cf_descriptors_as_secondary(
-                    &db_options,
-                    &path,
-                    &secondary_path,
-                    cf_descriptors,
-                )?
-            }
             AccessType::ReadOnly => {
                 info!(
                     "Opening Rocks with read only access. This additional access could \
@@ -208,7 +194,7 @@ impl Rocks {
             new_cf_descriptor::<columns::MerkleRootMeta>(options, oldest_slot),
         ];
 
-        // If the access type is secondary / read-only, we don't need to open all of the
+        // If the access type is read-only, we don't need to open all of the
         // columns so we can just return immediately.
         if options.access_type.is_non_writable() {
             return cf_descriptors;
@@ -1194,9 +1180,11 @@ fn get_db_options(blockstore_options: &BlockstoreOptions) -> Options {
     options.set_keep_log_file_num(10);
 
     // Allow Rocks to open/keep open as many files as it needs for performance;
-    // however, this is also explicitly required for a secondary instance.
-    // See https://github.com/facebook/rocksdb/wiki/Secondary-instance
-    options.set_max_open_files(-1);
+    // It is not required for read-only access
+    // https://github.com/facebook/rocksdb/wiki/Read-only-and-Secondary-instances#feature-comparison
+    if !blockstore_options.access_type.is_non_writable() {
+        options.set_max_open_files(-1);
+    }
 
     options
 }
@@ -1327,7 +1315,6 @@ pub mod tests {
         assert!(should_disable_auto_compactions(
             &AccessType::PrimaryForMaintenance
         ));
-        assert!(should_disable_auto_compactions(&AccessType::Secondary));
         assert!(should_disable_auto_compactions(&AccessType::ReadOnly));
     }
 
@@ -1367,13 +1354,6 @@ pub mod tests {
 
         // Opening with any access mode should succeed,
         // even though the Rocks code is unaware of "new_column"
-        {
-            let options = BlockstoreOptions {
-                access_type: AccessType::Secondary,
-                ..BlockstoreOptions::default()
-            };
-            let _ = Rocks::open(db_path.to_path_buf(), options).unwrap();
-        }
         {
             let options = BlockstoreOptions {
                 access_type: AccessType::ReadOnly,

@@ -45,10 +45,6 @@ pub enum AccessType {
     Primary,
     /// Primary (read/write) access with RocksDB automatic compaction disabled.
     PrimaryForMaintenance,
-    /// Secondary (read) access; multiple processes can have Secondary access,
-    /// which supports ability to dynamically catch-up with the Primary instance
-    /// that might be updating store from another process.
-    Secondary,
     /// Read-only access. When the Read-only instance is created, it gets a static
     /// read-only view of the Primary Instance’s database contents.
     ReadOnly,
@@ -56,7 +52,7 @@ pub enum AccessType {
 
 impl AccessType {
     pub fn is_non_writable(&self) -> bool {
-        matches!(self, AccessType::ReadOnly | AccessType::Secondary)
+        matches!(self, AccessType::ReadOnly)
     }
 }
 

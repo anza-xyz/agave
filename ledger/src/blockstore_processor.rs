@@ -980,7 +980,7 @@ pub fn process_blockstore_from_root(
             .expect("Couldn't mark start_slot as connected during startup")
     } else {
         info!(
-            "Start slot {start_slot} isn't a root, and won't be updated due to secondary \
+            "Start slot {start_slot} isn't a root, and won't be updated due to read-only \
              blockstore access"
         );
     }
@@ -2208,7 +2208,7 @@ pub fn process_single_slot(
                 .expect("Failed to mark slot as dead in blockstore");
         } else {
             info!(
-                "Failed slot {slot} won't be marked dead due to being secondary blockstore access"
+                "Failed slot {slot} won't be marked dead due to being read-only blockstore access"
             );
         }
         err
@@ -2229,7 +2229,7 @@ pub fn process_single_slot(
             } else {
                 info!(
                     "Failed last fec set checks slot {slot} won't be marked dead due to being \
-                     secondary blockstore access"
+                     read-only blockstore access"
                 );
             }
         })?;
@@ -2399,12 +2399,12 @@ pub mod tests {
         trees::tr,
     };
 
-    // Convenience wrapper to optionally process blockstore with Secondary access.
+    // Convenience wrapper to optionally process blockstore with ReadOnly access.
     //
     // Setting up the ledger for a test requires Primary access as items will need to be inserted.
-    // However, once a Secondary access has been opened, it won't automatically see updates made by
-    // the Primary access. So, open (and close) the Secondary access within this function to ensure
-    // that "stale" Secondary accesses don't propagate.
+    // However, once a ReaDOnly access has been opened, it won't automatically see updates made by
+    // the Primary access. So, open (and close) the ReadOnly access within this function to ensure
+    // that "stale" ReadOnly accesses don't propagate.
     fn test_process_blockstore_with_custom_options(
         genesis_config: &GenesisConfig,
         blockstore: &Blockstore,
@@ -2417,7 +2417,7 @@ pub mod tests {
                 // just pass the original session if it is a Primary variant
                 test_process_blockstore(genesis_config, blockstore, opts, Arc::default())
             }
-            AccessType::Secondary | AccessType::ReadOnly => {
+            AccessType::ReadOnly => {
                 let read_only_blockstore = Blockstore::open_with_options(
                     blockstore.ledger_path(),
                     BlockstoreOptions {
@@ -2446,11 +2446,6 @@ pub mod tests {
     #[test]
     fn test_process_blockstore_with_missing_hashes() {
         do_test_process_blockstore_with_missing_hashes(AccessType::Primary);
-    }
-
-    #[test]
-    fn test_process_blockstore_with_missing_hashes_secondary_access() {
-        do_test_process_blockstore_with_missing_hashes(AccessType::Secondary);
     }
 
     #[test]
@@ -2503,9 +2498,9 @@ pub mod tests {
 
         let dead_slots: Vec<Slot> = blockstore.dead_slots_iterator(0).unwrap().collect();
         match blockstore_access_type {
-            // Secondary access is non-writable so even though a dead slot
+            // In ReadOnly access even though a dead slot
             // will be identified, it won't actually be marked dead.
-            AccessType::Secondary | AccessType::ReadOnly => {
+            AccessType::ReadOnly => {
                 assert_eq!(dead_slots.len(), 0);
             }
             AccessType::Primary | AccessType::PrimaryForMaintenance => {
@@ -4825,11 +4820,6 @@ pub mod tests {
     #[test]
     fn test_process_blockstore_with_supermajority_root_without_blockstore_root() {
         run_test_process_blockstore_with_supermajority_root(None, AccessType::Primary);
-    }
-
-    #[test]
-    fn test_process_blockstore_with_supermajority_root_without_blockstore_root_secondary_access() {
-        run_test_process_blockstore_with_supermajority_root(None, AccessType::Secondary);
     }
 
     #[test]
