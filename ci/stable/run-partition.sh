@@ -25,6 +25,7 @@ source "$here"/common.sh
 
 ARGS=(
   --profile ci
+  --cargo-profile ci
   --workspace
   --tests
   --jobs "$JOBS"
