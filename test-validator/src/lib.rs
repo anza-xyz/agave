@@ -299,11 +299,6 @@ impl TestValidatorGenesis {
         self
     }
 
-    pub fn gossip_host(&mut self, gossip_host: IpAddr) -> &mut Self {
-        self.node_config.gossip_addr.set_ip(gossip_host);
-        self
-    }
-
     pub fn gossip_port(&mut self, gossip_port: u16) -> &mut Self {
         self.node_config.gossip_addr.set_port(gossip_port);
         self
