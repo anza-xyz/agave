@@ -408,7 +408,7 @@ fn start_leader_wait_for_parent_replay(
 
     let mut slot_delay_start = Measure::start("slot_delay");
     while !timeout.saturating_sub(skip_timer.elapsed()).is_zero() {
-        ctx.slot_metrics.attempt_count += 1;
+        ctx.slot_metrics.attempt_start_leader_count += 1;
 
         // Check if the entire window is skipped.
         let highest_parent_ready_slot = ctx.highest_parent_ready.read().unwrap().0;

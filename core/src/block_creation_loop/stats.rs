@@ -93,7 +93,7 @@ impl LoopMetrics {
 #[derive(Default)]
 pub(crate) struct SlotMetrics {
     pub(crate) slot: Slot,
-    pub(crate) attempt_count: u64,
+    pub(crate) attempt_start_leader_count: u64,
     pub(crate) replay_is_behind_count: u64,
     pub(crate) already_have_bank_count: u64,
 
@@ -107,7 +107,7 @@ impl SlotMetrics {
         datapoint_info!(
             "slot-metrics",
             ("slot", self.slot, i64),
-            ("attempt_count", self.attempt_count, i64),
+            ("attempt_count", self.attempt_start_leader_count, i64),
             ("replay_is_behind_count", self.replay_is_behind_count, i64),
             ("already_have_bank_count", self.already_have_bank_count, i64),
             (
@@ -164,7 +164,7 @@ impl SlotMetrics {
         );
 
         // reset metrics
-        self.attempt_count = 0;
+        self.attempt_start_leader_count = 0;
         self.replay_is_behind_count = 0;
         self.already_have_bank_count = 0;
         self.slot_delay_hist.clear();
