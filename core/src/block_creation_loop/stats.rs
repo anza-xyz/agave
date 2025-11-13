@@ -176,12 +176,10 @@ impl SlotMetrics {
                 i64
             ),
         );
-
-        // reset metrics
-        self.reset();
     }
 
-    fn reset(&mut self) {
+    pub(crate) fn reset(&mut self, slot: Slot) {
         *self = Self::default();
+        self.slot = slot;
     }
 }

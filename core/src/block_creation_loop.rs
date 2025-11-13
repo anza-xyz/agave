@@ -252,6 +252,9 @@ fn start_loop(config: BlockCreationLoopConfig) {
                  {e:?}"
             );
         }
+
+        ctx.metrics.loop_count += 1;
+        ctx.metrics.report(Duration::from_secs(1));
     }
 }
 
@@ -309,6 +312,7 @@ fn produce_window(
         }
         assert!(!ctx.poh_recorder.read().unwrap().has_bank());
         bank_completion_measure.stop();
+        ctx.slot_metrics.report();
 
         ctx.metrics.bank_timeout_completion_count += 1;
         let _ = ctx
@@ -444,8 +448,6 @@ fn start_leader_wait_for_parent_replay(
                         );
                     });
 
-                ctx.slot_metrics.report();
-
                 return Ok(());
             }
             Err(StartLeaderError::ReplayIsBehind(_, _)) => {
@@ -574,6 +576,7 @@ fn create_and_insert_leader_bank(slot: Slot, parent_bank: Arc<Bank>, ctx: &mut L
     let tpu_bank = ctx.bank_forks.write().unwrap().insert(tpu_bank);
     ctx.poh_recorder.write().unwrap().set_bank(tpu_bank);
     ctx.record_receiver.restart(slot);
+    ctx.slot_metrics.reset(slot);
 
     info!(
         "{}: new fork:{} parent:{} (leader) root:{}",
