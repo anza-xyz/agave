@@ -18,16 +18,6 @@ impl SVMStaticMessage for SanitizedMessage {
         SanitizedMessage::num_write_locks(self)
     }
 
-    fn program_instructions_iter(
-        &self,
-    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
-        SanitizedMessage::program_instructions_iter(self)
-            .map(|(pubkey, ix)| (pubkey, SVMInstruction::from(ix)))
-    }
-}
-
-// Implement for the "reference" `SanitizedMessage` type.
-impl SVMMessage for SanitizedMessage {
     fn recent_blockhash(&self) -> &Hash {
         SanitizedMessage::recent_blockhash(self)
     }
@@ -42,28 +32,19 @@ impl SVMMessage for SanitizedMessage {
             .map(SVMInstruction::from)
     }
 
+    fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
+        SanitizedMessage::program_instructions_iter(self)
+            .map(|(pubkey, ix)| (pubkey, SVMInstruction::from(ix)))
+    }
+
     fn static_account_keys(&self) -> &[Pubkey] {
         SanitizedMessage::static_account_keys(self)
     }
 
-    fn account_keys(&self) -> AccountKeys<'_> {
-        SanitizedMessage::account_keys(self)
-    }
-
     fn fee_payer(&self) -> &Pubkey {
         SanitizedMessage::fee_payer(self)
-    }
-
-    fn is_writable(&self, index: usize) -> bool {
-        SanitizedMessage::is_writable(self, index)
-    }
-
-    fn is_signer(&self, index: usize) -> bool {
-        SanitizedMessage::is_signer(self, index)
-    }
-
-    fn is_invoked(&self, key_index: usize) -> bool {
-        SanitizedMessage::is_invoked(self, key_index)
     }
 
     fn num_lookup_tables(&self) -> usize {
@@ -76,5 +57,24 @@ impl SVMMessage for SanitizedMessage {
         SanitizedMessage::message_address_table_lookups(self)
             .iter()
             .map(SVMMessageAddressTableLookup::from)
+    }
+}
+
+// Implement for the "reference" `SanitizedMessage` type.
+impl SVMMessage for SanitizedMessage {
+    fn account_keys(&self) -> AccountKeys<'_> {
+        SanitizedMessage::account_keys(self)
+    }
+
+    fn is_writable(&self, index: usize) -> bool {
+        SanitizedMessage::is_writable(self, index)
+    }
+
+    fn is_signer(&self, index: usize) -> bool {
+        SanitizedMessage::is_signer(self, index)
+    }
+
+    fn is_invoked(&self, key_index: usize) -> bool {
+        SanitizedMessage::is_invoked(self, key_index)
     }
 }

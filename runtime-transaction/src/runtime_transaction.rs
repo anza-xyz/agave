@@ -97,14 +97,6 @@ impl<T: SVMStaticMessage> SVMStaticMessage for RuntimeTransaction<T> {
         self.transaction.num_write_locks()
     }
 
-    fn program_instructions_iter(
-        &self,
-    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
-        self.transaction.program_instructions_iter()
-    }
-}
-
-impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
     fn recent_blockhash(&self) -> &Hash {
         self.transaction.recent_blockhash()
     }
@@ -117,16 +109,34 @@ impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
         self.transaction.instructions_iter()
     }
 
+    fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
+        self.transaction.program_instructions_iter()
+    }
+
     fn static_account_keys(&self) -> &[Pubkey] {
         self.transaction.static_account_keys()
     }
 
-    fn account_keys(&self) -> AccountKeys<'_> {
-        self.transaction.account_keys()
-    }
-
     fn fee_payer(&self) -> &Pubkey {
         self.transaction.fee_payer()
+    }
+
+    fn num_lookup_tables(&self) -> usize {
+        self.transaction.num_lookup_tables()
+    }
+
+    fn message_address_table_lookups(
+        &self,
+    ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>> {
+        self.transaction.message_address_table_lookups()
+    }
+}
+
+impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
+    fn account_keys(&self) -> AccountKeys<'_> {
+        self.transaction.account_keys()
     }
 
     fn is_writable(&self, index: usize) -> bool {
@@ -139,16 +149,6 @@ impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
 
     fn is_invoked(&self, key_index: usize) -> bool {
         self.transaction.is_invoked(key_index)
-    }
-
-    fn num_lookup_tables(&self) -> usize {
-        self.transaction.num_lookup_tables()
-    }
-
-    fn message_address_table_lookups(
-        &self,
-    ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>> {
-        self.transaction.message_address_table_lookups()
     }
 }
 

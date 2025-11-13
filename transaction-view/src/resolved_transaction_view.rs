@@ -166,19 +166,6 @@ impl<D: TransactionData> SVMStaticMessage for ResolvedTransactionView<D> {
         self.view.num_requested_write_locks()
     }
 
-    fn program_instructions_iter(
-        &self,
-    ) -> impl Iterator<
-        Item = (
-            &solana_pubkey::Pubkey,
-            solana_svm_transaction::instruction::SVMInstruction<'_>,
-        ),
-    > + Clone {
-        self.view.program_instructions_iter()
-    }
-}
-
-impl<D: TransactionData> SVMMessage for ResolvedTransactionView<D> {
     fn recent_blockhash(&self) -> &Hash {
         self.view.recent_blockhash()
     }
@@ -191,19 +178,42 @@ impl<D: TransactionData> SVMMessage for ResolvedTransactionView<D> {
         self.view.instructions_iter()
     }
 
+    fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            &solana_pubkey::Pubkey,
+            solana_svm_transaction::instruction::SVMInstruction<'_>,
+        ),
+    > + Clone {
+        self.view.program_instructions_iter()
+    }
+
     fn static_account_keys(&self) -> &[Pubkey] {
         self.view.static_account_keys()
     }
 
+    fn fee_payer(&self) -> &Pubkey {
+        &self.view.static_account_keys()[0]
+    }
+
+    fn num_lookup_tables(&self) -> usize {
+        usize::from(self.view.num_address_table_lookups())
+    }
+
+    fn message_address_table_lookups(
+        &self,
+    ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>> {
+        self.view.address_table_lookup_iter()
+    }
+}
+
+impl<D: TransactionData> SVMMessage for ResolvedTransactionView<D> {
     fn account_keys(&self) -> AccountKeys<'_> {
         AccountKeys::new(
             self.view.static_account_keys(),
             self.resolved_addresses.as_ref(),
         )
-    }
-
-    fn fee_payer(&self) -> &Pubkey {
-        &self.view.static_account_keys()[0]
     }
 
     fn is_writable(&self, index: usize) -> bool {
@@ -221,16 +231,6 @@ impl<D: TransactionData> SVMMessage for ResolvedTransactionView<D> {
         self.view
             .instructions_iter()
             .any(|ix| ix.program_id_index == index)
-    }
-
-    fn num_lookup_tables(&self) -> usize {
-        usize::from(self.view.num_address_table_lookups())
-    }
-
-    fn message_address_table_lookups(
-        &self,
-    ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>> {
-        self.view.address_table_lookup_iter()
     }
 }
 

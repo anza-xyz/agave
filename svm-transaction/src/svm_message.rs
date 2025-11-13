@@ -39,15 +39,6 @@ pub trait SVMStaticMessage {
     /// This does not consider if write-locks are demoted.
     fn num_write_locks(&self) -> u64;
 
-    /// Return an iterator over the instructions in the message, paired with
-    /// the pubkey of the program.
-    fn program_instructions_iter(
-        &self,
-    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone;
-}
-
-// - Debug to support legacy logging
-pub trait SVMMessage: Debug + SVMStaticMessage {
     /// Return the recent blockhash.
     fn recent_blockhash(&self) -> &Hash;
 
@@ -57,14 +48,31 @@ pub trait SVMMessage: Debug + SVMStaticMessage {
     /// Return an iterator over the instructions in the message.
     fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction<'_>>;
 
+    /// Return an iterator over the instructions in the message, paired with
+    /// the pubkey of the program.
+    fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone;
+
     /// Return the list of static account keys.
     fn static_account_keys(&self) -> &[Pubkey];
 
-    /// Return the account keys.
-    fn account_keys(&self) -> AccountKeys<'_>;
-
     /// Return the fee-payer
     fn fee_payer(&self) -> &Pubkey;
+
+    /// Get the number of lookup tables.
+    fn num_lookup_tables(&self) -> usize;
+
+    /// Get message address table lookups used in the message
+    fn message_address_table_lookups(
+        &self,
+    ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>>;
+}
+
+// - Debug to support legacy logging
+pub trait SVMMessage: Debug + SVMStaticMessage {
+    /// Return the account keys.
+    fn account_keys(&self) -> AccountKeys<'_>;
 
     /// Returns `true` if the account at `index` is writable.
     fn is_writable(&self, index: usize) -> bool;
@@ -137,14 +145,6 @@ pub trait SVMMessage: Debug + SVMStaticMessage {
                     .filter_map(|signer_index| self.account_keys().get(signer_index))
             })
     }
-
-    /// Get the number of lookup tables.
-    fn num_lookup_tables(&self) -> usize;
-
-    /// Get message address table lookups used in the message
-    fn message_address_table_lookups(
-        &self,
-    ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>>;
 }
 
 fn default_precompile_signature_count<'a>(

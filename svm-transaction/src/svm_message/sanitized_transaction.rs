@@ -19,36 +19,46 @@ impl SVMStaticMessage for SanitizedTransaction {
         SVMStaticMessage::num_write_locks(SanitizedTransaction::message(self))
     }
 
+    fn recent_blockhash(&self) -> &Hash {
+        SVMStaticMessage::recent_blockhash(SanitizedTransaction::message(self))
+    }
+
+    fn num_instructions(&self) -> usize {
+        SVMStaticMessage::num_instructions(SanitizedTransaction::message(self))
+    }
+
+    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction<'_>> {
+        SVMStaticMessage::instructions_iter(SanitizedTransaction::message(self))
+    }
+
     fn program_instructions_iter(
         &self,
     ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
         SVMStaticMessage::program_instructions_iter(SanitizedTransaction::message(self))
     }
-}
-
-impl SVMMessage for SanitizedTransaction {
-    fn recent_blockhash(&self) -> &Hash {
-        SVMMessage::recent_blockhash(SanitizedTransaction::message(self))
-    }
-
-    fn num_instructions(&self) -> usize {
-        SVMMessage::num_instructions(SanitizedTransaction::message(self))
-    }
-
-    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction<'_>> {
-        SVMMessage::instructions_iter(SanitizedTransaction::message(self))
-    }
 
     fn static_account_keys(&self) -> &[Pubkey] {
-        SVMMessage::static_account_keys(SanitizedTransaction::message(self))
-    }
-
-    fn account_keys(&self) -> AccountKeys<'_> {
-        SVMMessage::account_keys(SanitizedTransaction::message(self))
+        SVMStaticMessage::static_account_keys(SanitizedTransaction::message(self))
     }
 
     fn fee_payer(&self) -> &Pubkey {
-        SVMMessage::fee_payer(SanitizedTransaction::message(self))
+        SVMStaticMessage::fee_payer(SanitizedTransaction::message(self))
+    }
+
+    fn num_lookup_tables(&self) -> usize {
+        SVMStaticMessage::num_lookup_tables(SanitizedTransaction::message(self))
+    }
+
+    fn message_address_table_lookups(
+        &self,
+    ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>> {
+        SVMStaticMessage::message_address_table_lookups(SanitizedTransaction::message(self))
+    }
+}
+
+impl SVMMessage for SanitizedTransaction {
+    fn account_keys(&self) -> AccountKeys<'_> {
+        SVMMessage::account_keys(SanitizedTransaction::message(self))
     }
 
     fn is_writable(&self, index: usize) -> bool {
@@ -61,15 +71,5 @@ impl SVMMessage for SanitizedTransaction {
 
     fn is_invoked(&self, key_index: usize) -> bool {
         SVMMessage::is_invoked(SanitizedTransaction::message(self), key_index)
-    }
-
-    fn num_lookup_tables(&self) -> usize {
-        SVMMessage::num_lookup_tables(SanitizedTransaction::message(self))
-    }
-
-    fn message_address_table_lookups(
-        &self,
-    ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>> {
-        SVMMessage::message_address_table_lookups(SanitizedTransaction::message(self))
     }
 }
