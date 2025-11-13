@@ -81,7 +81,7 @@ impl NetlinkSocket {
     pub(crate) fn recv(&self) -> Result<Vec<NetlinkMessage>, io::Error> {
         // create large buffer for when we poll the socket
         // this helps us avoid any truncated messages when a single datagram contains many messages
-        let mut buf = [0u8; 64 * 1024];
+        let mut buf = [0u8; 8 * 1024];
         let mut messages = Vec::new();
         let mut multipart = true;
         'out: while multipart {
