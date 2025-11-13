@@ -205,27 +205,6 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                 } else {
                     let next_hop = router.route(addr.ip()).unwrap();
 
-<<<<<<< HEAD
-                    let mut skip = false;
-
-                    // sanity check that the address is routable through our NIC
-                    if next_hop.if_index != dev.if_index() {
-                        log::warn!(
-                            "dropping packet: turbine peer {addr} must be routed through if_index: {} our if_index: {}",
-                            next_hop.if_index,
-                            dev.if_index()
-                        );
-                        skip = true;
-                    }
-
-                    // we need the MAC address to send the packet
-                    if next_hop.mac_addr.is_none() {
-                        log::warn!("dropping packet: turbine peer {addr} must be routed through {} which has no known MAC address", next_hop.ip_addr);
-                        skip = true;
-                    };
-
-                    if skip {
-=======
                     // we need the MAC address to send the packet
                     let Some(dest_mac) = next_hop.mac_addr else {
                         log::warn!(
@@ -233,7 +212,6 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                              has no known MAC address",
                             next_hop.ip_addr
                         );
->>>>>>> 07345d33d (XDP: add bond interface support for zero copy (#9004))
                         batched_packets -= 1;
                         umem.release(frame.offset());
                         continue;

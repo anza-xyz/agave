@@ -138,13 +138,8 @@ use {
     std::{
         borrow::Cow,
         collections::{HashMap, HashSet},
-<<<<<<< HEAD
-        net::SocketAddr,
-        num::NonZeroUsize,
-=======
         net::{IpAddr, SocketAddr},
-        num::{NonZeroU64, NonZeroUsize},
->>>>>>> 07345d33d (XDP: add bond interface support for zero copy (#9004))
+        num::NonZeroUsize,
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
