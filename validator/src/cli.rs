@@ -130,6 +130,14 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
     }
 
     add_arg!(
+        // deprecated in v3.1.1
+        Arg::with_name("cuda")
+            .long("cuda")
+            .takes_value(false)
+            .help("Use CUDA"),
+        usage_warning: "CUDA support will be dropped"
+    );
+    add_arg!(
         // deprecated in v3.0.0
         Arg::with_name("gossip_host")
             .long("gossip-host")

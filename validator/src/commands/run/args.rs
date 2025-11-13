@@ -628,12 +628,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Skip ledger verification at validator bootup."),
     )
     .arg(
-        Arg::with_name("cuda")
-            .long("cuda")
-            .takes_value(false)
-            .help("Use CUDA"),
-    )
-    .arg(
         clap::Arg::with_name("require_tower")
             .long("require-tower")
             .takes_value(false)
