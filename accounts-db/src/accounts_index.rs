@@ -227,7 +227,7 @@ enum ScanTypes<R: RangeBounds<Pubkey>> {
     Indexed(IndexKey),
 }
 
-/// specification of how many entries the in-mem portion of account index can hold
+/// specification of how much memory the in-mem portion of account index can use
 #[derive(Debug, Copy, Clone)]
 pub enum IndexLimit {
     /// use disk index while keeping a minimal amount in-mem
@@ -2246,7 +2246,7 @@ pub mod tests {
         config.index_limit = if use_disk {
             IndexLimit::Minimal
         } else {
-            IndexLimit::InMemOnly // in-mem only
+            IndexLimit::InMemOnly
         };
         let index = AccountsIndex::<T, T>::new(&config, Arc::default());
         let mut gc = ReclaimsSlotList::new();
