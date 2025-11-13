@@ -252,12 +252,10 @@ pub fn get_accounts_db_config(
     let accounts_index_bins = value_t!(arg_matches, "accounts_index_bins", usize).ok();
     let num_initial_accounts =
         value_t!(arg_matches, "accounts_index_initial_accounts_count", usize).ok();
-    let accounts_index_index_limit = if arg_matches.is_present("enable_accounts_disk_index") {
-        IndexLimit::Minimal
-    } else if let Ok(limit_bytes) = value_t!(arg_matches, "accounts_index_limit_bytes", u64) {
-        IndexLimit::Threshold(limit_bytes)
-    } else {
+    let accounts_index_index_limit = if !arg_matches.is_present("enable_accounts_disk_index") {
         IndexLimit::InMemOnly
+    } else {
+        IndexLimit::Minimal
     };
     let accounts_index_drives = values_t!(arg_matches, "accounts_index_path", String)
         .ok()
