@@ -188,20 +188,6 @@ impl solana_svm_transaction::svm_message::SVMStaticMessage for WritableKeysTrans
         unimplemented!("WritableKeysTransaction::num_write_locks")
     }
 
-    fn program_instructions_iter(
-        &self,
-    ) -> impl Iterator<
-        Item = (
-            &Pubkey,
-            solana_svm_transaction::instruction::SVMInstruction<'_>,
-        ),
-    > + Clone {
-        core::iter::empty()
-    }
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction {
     fn recent_blockhash(&self) -> &solana_hash::Hash {
         unimplemented!("WritableKeysTransaction::recent_blockhash")
     }
@@ -216,28 +202,23 @@ impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction
         core::iter::empty()
     }
 
+    fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            &Pubkey,
+            solana_svm_transaction::instruction::SVMInstruction<'_>,
+        ),
+    > + Clone {
+        core::iter::empty()
+    }
+
     fn static_account_keys(&self) -> &[Pubkey] {
         &self.0
     }
 
-    fn account_keys(&self) -> solana_message::AccountKeys<'_> {
-        solana_message::AccountKeys::new(&self.0, None)
-    }
-
     fn fee_payer(&self) -> &Pubkey {
         unimplemented!("WritableKeysTransaction::fee_payer")
-    }
-
-    fn is_writable(&self, _index: usize) -> bool {
-        true
-    }
-
-    fn is_signer(&self, _index: usize) -> bool {
-        unimplemented!("WritableKeysTransaction::is_signer")
-    }
-
-    fn is_invoked(&self, _key_index: usize) -> bool {
-        unimplemented!("WritableKeysTransaction::is_invoked")
     }
 
     fn num_lookup_tables(&self) -> usize {
@@ -252,6 +233,25 @@ impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction
         >,
     > {
         core::iter::empty()
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction {
+    fn account_keys(&self) -> solana_message::AccountKeys<'_> {
+        solana_message::AccountKeys::new(&self.0, None)
+    }
+
+    fn is_writable(&self, _index: usize) -> bool {
+        true
+    }
+
+    fn is_signer(&self, _index: usize) -> bool {
+        unimplemented!("WritableKeysTransaction::is_signer")
+    }
+
+    fn is_invoked(&self, _key_index: usize) -> bool {
+        unimplemented!("WritableKeysTransaction::is_invoked")
     }
 }
 
