@@ -52,6 +52,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
         dev.mac_addr()
             .expect("no src_mac provided, device must have a MAC address")
     });
+
     let src_ip = src_ip.unwrap_or_else(|| {
         // if no source IP is provided, use the device's IPv4 address
         dev.ipv4_addr()
@@ -204,6 +205,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                 } else {
                     let next_hop = router.route(addr.ip()).unwrap();
 
+<<<<<<< HEAD
                     let mut skip = false;
 
                     // sanity check that the address is routable through our NIC
@@ -223,12 +225,21 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                     };
 
                     if skip {
+=======
+                    // we need the MAC address to send the packet
+                    let Some(dest_mac) = next_hop.mac_addr else {
+                        log::warn!(
+                            "dropping packet: turbine peer {addr} must be routed through {} which \
+                             has no known MAC address",
+                            next_hop.ip_addr
+                        );
+>>>>>>> 07345d33d (XDP: add bond interface support for zero copy (#9004))
                         batched_packets -= 1;
                         umem.release(frame.offset());
                         continue;
-                    }
+                    };
 
-                    next_hop.mac_addr.unwrap()
+                    dest_mac
                 };
 
                 const PACKET_HEADER_SIZE: usize =
