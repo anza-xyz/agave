@@ -9,6 +9,7 @@ jobs:
   trigger-buildkite-pipeline:
     if: github.repository == 'anza-xyz/agave'
     runs-on: ubuntu-latest
+    environment: protected
     steps:
       - name: Trigger a Buildkite Build
         uses: "buildkite/trigger-pipeline-action@v2.4.1"
@@ -42,6 +43,7 @@ jobs:
   version-bump:
     if: github.repository == 'anza-xyz/agave'
     runs-on: ubuntu-latest
+    environment: protected
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
