@@ -81,14 +81,6 @@ To run a multinode testnet, after starting a leader node, spin up some additiona
 ./multinode-demo/validator-x.sh
 ```
 
-To run a performance-enhanced validator on Linux, [CUDA 10.0](https://developer.nvidia.com/cuda-downloads) must be installed on your system:
-
-```bash
-./fetch-perf-libs.sh
-SOLANA_CUDA=1 ./multinode-demo/bootstrap-validator.sh
-SOLANA_CUDA=1 ./multinode-demo/validator.sh
-```
-
 
 ### Testnet Client Demo
 

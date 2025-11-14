@@ -29,14 +29,6 @@ solana transaction-count
 View the [metrics dashboard](https://metrics.solana.com:3000/d/monitor-edge/cluster-telemetry) for more
 detail on cluster activity.
 
-## Enabling CUDA
-
-If your machine has a GPU with CUDA installed \(Linux-only currently\), include
-the `--cuda` argument to `agave-validator`.
-
-When your validator is started look for the following log message to indicate
-that CUDA is enabled: `"[<timestamp> solana::validator] CUDA is enabled"`
-
 ## System Tuning
 
 ### Linux

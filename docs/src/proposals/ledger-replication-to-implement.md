@@ -18,7 +18,7 @@ The basic idea to Proof of Replication is encrypting a dataset with a public sym
 
 ## Optimization with PoH
 
-Our improvement on this approach is to randomly sample the encrypted segments faster than it takes to encrypt, and record the hash of those samples into the PoH ledger. Thus the segments stay in the exact same order for every PoRep and verification can stream the data and verify all the proofs in a single batch. This way we can verify multiple proofs concurrently, each one on its own CUDA core. The total space required for verification is `1_ledger_segment + 2_cbc_blocks * number_of_identities` with core count equal to `number_of_identities`. We use a 64-byte chacha CBC block size.
+Our improvement on this approach is to randomly sample the encrypted segments faster than it takes to encrypt, and record the hash of those samples into the PoH ledger. Thus the segments stay in the exact same order for every PoRep and verification can stream the data and verify all the proofs in a single batch. This way we can verify multiple proofs concurrently. The total space required for verification is `1_ledger_segment + 2_cbc_blocks * number_of_identities` with core count equal to `number_of_identities`. We use a 64-byte chacha CBC block size.
 
 ## Network
 
@@ -32,11 +32,9 @@ We have the following constraints:
 
 - Verification requires generating the CBC blocks. That requires space of 2
 
-  blocks per identity, and 1 CUDA core per identity for the same dataset. So as
+  blocks per identity. So as many identities at once should be batched with as
 
-  many identities at once should be batched with as many proofs for those
-
-  identities verified concurrently for the same dataset.
+  many proofs for those identities verified concurrently for the same dataset.
 
 - Validators will randomly sample the set of storage proofs to the set that
 
