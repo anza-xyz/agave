@@ -17,3 +17,11 @@ Each node's bank runtime maintains a count of transactions that it has processed
 Each validator node maintains a list of active ledger forks that are visible to the node. A fork is considered to be frozen when the node has received and processed all entries corresponding to the fork. A fork is considered to be confirmed when it receives cumulative super majority vote, and when one of its children forks is frozen.
 
 The node assigns a timestamp to every new fork, and computes the time it took to confirm the fork. This time is reflected as validator confirmation time in performance metrics. The performance dashboard displays the average of each validator node's confirmation time as a time series graph.
+
+## Hardware setup
+
+The validator software is deployed to GCP n1-standard-16 instances with 1TB pd-ssd disk, and 2x Nvidia V100 GPUs. These are deployed in the us-west-1 region.
+
+solana-bench-tps is started after the network converges from a client machine with n1-standard-16 CPU-only instance with the following arguments: `--tx\_count=50000 --thread-batch-sleep 1000`
+
+TPS and confirmation metrics are captured from the dashboard numbers over a 5-minute average of when the bench-tps transfer stage begins.
