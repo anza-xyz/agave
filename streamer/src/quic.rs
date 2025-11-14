@@ -717,7 +717,7 @@ pub fn spawn_simple_qos_server(
 
     let simple_qos = Arc::new(SimpleQos::new(
         qos_config,
-        quic_server_params.max_connections_per_unstaked_peer,
+        quic_server_params.max_connections_per_staked_peer,
         quic_server_params.max_staked_connections,
         stats.clone(),
         staked_nodes,
@@ -916,6 +916,8 @@ mod test {
 
         let server_params = QuicStreamerConfig {
             max_unstaked_connections: 0,
+            max_connections_per_staked_peer: 1,
+            max_connections_per_unstaked_peer: 0,
             ..QuicStreamerConfig::default_for_tests()
         };
         let qos_config = SimpleQosConfig {
