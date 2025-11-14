@@ -77,13 +77,35 @@ pub fn setup_file_with_default(logfile: &Path, filter: &str) {
 }
 
 #[cfg(unix)]
-fn redirect_stderr(filename: &Path) {
+pub fn redirect_stderr(filename: &Path) {
     use std::{fs::OpenOptions, os::unix::io::AsRawFd};
     match OpenOptions::new().create(true).append(true).open(filename) {
         Ok(file) => unsafe {
             libc::dup2(file.as_raw_fd(), libc::STDERR_FILENO);
         },
         Err(err) => eprintln!("Unable to open {}: {err}", filename.display()),
+    }
+}
+
+pub fn initialize_logging(logfile: Option<PathBuf>) {
+    // Debugging panics is easier with a backtrace
+    if env::var_os("RUST_BACKTRACE").is_none() {
+        env::set_var("RUST_BACKTRACE", "1")
+    }
+
+    let Some(logfile) = logfile else {
+        setup_with_default_filter();
+        return;
+    };
+
+    #[cfg(unix)]
+    {
+        setup_with_default_filter();
+        redirect_stderr(&logfile);
+    }
+    #[cfg(not(unix))]
+    {
+        setup_file_with_default(&logfile, DEFAULT_FILTER);
     }
 }
 

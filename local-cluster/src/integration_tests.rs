@@ -108,13 +108,13 @@ pub fn open_blockstore(ledger_path: &Path) -> Blockstore {
             ..BlockstoreOptions::default()
         },
     )
-    // Fall back on Secondary if Primary fails; Primary will fail if
+    // Fall back on ReadOnly if Primary fails; Primary will fail if
     // a handle to Blockstore is being held somewhere else
     .unwrap_or_else(|_| {
         Blockstore::open_with_options(
             ledger_path,
             BlockstoreOptions {
-                access_type: AccessType::Secondary,
+                access_type: AccessType::ReadOnly,
                 recovery_mode: None,
                 ..BlockstoreOptions::default()
             },

@@ -58,6 +58,7 @@ pub fn record_channels(track_transaction_indexes: bool) -> (RecordSender, Record
     )
 }
 
+#[derive(Debug)]
 pub enum RecordSenderError {
     /// The channel is full, the record was not sent.
     Full,
@@ -84,6 +85,11 @@ pub struct RecordSender {
 }
 
 impl RecordSender {
+    #[cfg(test)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.sender.is_empty()
+    }
+
     pub fn try_send(&self, record: Record) -> Result<Option<usize>, RecordSenderError> {
         let num_transactions: usize = record
             .transaction_batches

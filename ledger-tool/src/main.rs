@@ -2571,8 +2571,8 @@ fn main() {
                     };
                     process_options.halt_at_slot = Some(parent_slot);
 
-                    // PrimaryForMaintenance needed over Secondary to purge any
-                    // existing simulated shreds from previous runs
+                    // PrimaryForMaintenance needed to purge (write) any existing simulated shreds
+                    // from previous runs
                     let blockstore = Arc::new(open_blockstore(
                         &ledger_path,
                         arg_matches,
@@ -3165,7 +3165,7 @@ fn main() {
                 }
                 ("compute-slot-cost", Some(arg_matches)) => {
                     let blockstore =
-                        open_blockstore(&ledger_path, arg_matches, AccessType::Secondary);
+                        open_blockstore(&ledger_path, arg_matches, AccessType::ReadOnly);
 
                     let mut slots: Vec<u64> = vec![];
                     if !arg_matches.is_present("slots") {

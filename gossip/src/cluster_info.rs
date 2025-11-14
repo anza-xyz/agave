@@ -413,17 +413,23 @@ impl ClusterInfo {
         Ok(())
     }
 
-    pub fn set_tpu(&self, tpu_addr: SocketAddr) -> Result<(), ContactInfoError> {
-        self.my_contact_info.write().unwrap().set_tpu(tpu_addr)?;
+    pub fn set_tpu_quic(&self, tpu_addr: SocketAddr) -> Result<(), ContactInfoError> {
+        self.my_contact_info
+            .write()
+            .unwrap()
+            .set_tpu(contact_info::Protocol::QUIC, tpu_addr)?;
         self.refresh_my_gossip_contact_info();
         Ok(())
     }
 
-    pub fn set_tpu_forwards(&self, tpu_forwards_addr: SocketAddr) -> Result<(), ContactInfoError> {
+    pub fn set_tpu_forwards_quic(
+        &self,
+        tpu_forwards_addr: SocketAddr,
+    ) -> Result<(), ContactInfoError> {
         self.my_contact_info
             .write()
             .unwrap()
-            .set_tpu_forwards(tpu_forwards_addr)?;
+            .set_tpu_forwards(contact_info::Protocol::QUIC, tpu_forwards_addr)?;
         self.refresh_my_gossip_contact_info();
         Ok(())
     }
