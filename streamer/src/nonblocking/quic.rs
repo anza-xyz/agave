@@ -1054,9 +1054,8 @@ impl ConnectionTable {
         } else {
             if let Some(connection) = connection {
                 debug!(
-                    "Too many connections from peer {:?}, max connection: \
-                     {max_connections_per_peer} rejecting connection",
-                    key
+                    "Too many connections from peer {key:?}, max connection: \
+                     {max_connections_per_peer} rejecting connection"
                 );
                 connection.close(
                     CONNECTION_CLOSE_CODE_TOO_MANY.into(),
