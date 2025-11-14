@@ -339,7 +339,7 @@ pub(crate) fn get_gossip_nodes<R: Rng>(
                 // In order to mitigate eclipse attack, for staked nodes
                 // continue retrying periodically.
                 let stake = stakes.get(node.pubkey()).copied().unwrap_or_default();
-                if stake == 0u64 || !rng.gen_ratio(1, 16) {
+                if stake == 0u64 || !rng.random_ratio(1, 16) {
                     return None;
                 }
             }
@@ -431,7 +431,7 @@ mod test {
             )
             .unwrap();
         let ping_cache = PingCache::new(
-            &mut rand::thread_rng(),
+            &mut rand::rng(),
             Instant::now(),
             Duration::from_secs(20 * 60),      // ttl
             Duration::from_secs(20 * 60) / 64, // rate_limit_delay

@@ -1,5 +1,5 @@
 use {
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     std::sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex, Weak,
@@ -46,7 +46,7 @@ pub struct RecyclerX<T> {
 
 impl<T: Default> Default for RecyclerX<T> {
     fn default() -> RecyclerX<T> {
-        let id = thread_rng().gen_range(0..1000);
+        let id = rng().random_range(0..1000);
         trace!("new recycler..{id}");
         RecyclerX {
             gc: Mutex::default(),
@@ -223,7 +223,7 @@ mod tests {
 
     #[test]
     fn test_recycler_shrink() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let recycler = PacketBatchRecycler::default();
         // Allocate a burst of packets.
         const NUM_PACKETS: usize = RECYCLER_SHRINK_SIZE * 2;
@@ -235,7 +235,7 @@ mod tests {
         assert_eq!(recycler.recycler.gc.lock().unwrap().len(), NUM_PACKETS);
         // Process a normal load of packets for a while.
         for _ in 0..RECYCLER_SHRINK_WINDOW / 16 {
-            let count = rng.gen_range(1..128);
+            let count = rng.random_range(1..128);
             let _packets: Vec<_> = repeat_with(|| recycler.allocate("")).take(count).collect();
         }
         // Assert that the gc size has shrunk.

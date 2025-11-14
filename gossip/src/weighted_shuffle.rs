@@ -3,7 +3,7 @@
 use {
     num_traits::{CheckedAdd, ConstZero},
     rand::{
-        distributions::uniform::{SampleUniform, UniformSampler},
+        distr::uniform::{SampleUniform, UniformSampler},
         Rng,
     },
     std::{
@@ -202,14 +202,16 @@ where
     // Equivalent to weighted_shuffle.shuffle(&mut rng).next()
     pub fn first<R: Rng>(&self, rng: &mut R) -> Option<usize> {
         if self.weight > Self::ZERO {
-            let sample = <T as SampleUniform>::Sampler::sample_single(Self::ZERO, self.weight, rng);
+            let sample = <T as SampleUniform>::Sampler::sample_single(Self::ZERO, self.weight, rng)
+                .expect("ok since self.weight > Self::ZERO and weight is always finite");
             let (index, _) = self.search(sample);
             return Some(index);
         }
         if self.zeros.is_empty() {
             return None;
         }
-        let index = <usize as SampleUniform>::Sampler::sample_single(0usize, self.zeros.len(), rng);
+        let index = <usize as SampleUniform>::Sampler::sample_single(0usize, self.zeros.len(), rng)
+            .expect("ok since 0..self.zeros.len() is non-empty and finite");
         self.zeros.get(index).copied()
     }
 }
@@ -222,7 +224,8 @@ where
         std::iter::from_fn(move || {
             if self.weight > Self::ZERO {
                 let sample =
-                    <T as SampleUniform>::Sampler::sample_single(Self::ZERO, self.weight, rng);
+                    <T as SampleUniform>::Sampler::sample_single(Self::ZERO, self.weight, rng)
+                        .expect("ok since self.weight > Self::ZERO and weight is always finite");
                 let (index, weight) = self.search(sample);
                 self.remove(index, weight);
                 return Some(index);
@@ -231,7 +234,8 @@ where
                 return None;
             }
             let index =
-                <usize as SampleUniform>::Sampler::sample_single(0usize, self.zeros.len(), rng);
+                <usize as SampleUniform>::Sampler::sample_single(0usize, self.zeros.len(), rng)
+                    .expect("ok since 0..self.zeros.len() is non-empty and finite");
             Some(self.zeros.swap_remove(index))
         })
     }
@@ -330,7 +334,7 @@ mod tests {
             .map(|(i, _)| i)
             .collect();
         while high != 0 {
-            let sample = rng.gen_range(0..high);
+            let sample = rng.random_range(0..high);
             let index = weights
                 .iter()
                 .scan(0, |acc, &w| {
@@ -344,7 +348,8 @@ mod tests {
             weights[index] = 0;
         }
         while !zeros.is_empty() {
-            let index = <usize as SampleUniform>::Sampler::sample_single(0usize, zeros.len(), rng);
+            let index = <usize as SampleUniform>::Sampler::sample_single(0usize, zeros.len(), rng)
+                .expect("ok since 0..zeros.len() is finite and non-empty");
             shuffle.push(zeros.swap_remove(index));
         }
         shuffle
@@ -377,7 +382,7 @@ mod tests {
     #[test]
     fn test_weighted_shuffle_empty_weights() {
         let weights = Vec::<u64>::new();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let shuffle = WeightedShuffle::new("", weights);
         assert!(shuffle.clone().shuffle(&mut rng).next().is_none());
         assert!(shuffle.first(&mut rng).is_none());
@@ -395,19 +400,19 @@ mod tests {
                 let mut rng = ChaCha8Rng::from_seed(seed);
                 assert_eq!(
                     shuffle.clone().shuffle(&mut rng).collect::<Vec<_>>(),
-                    [4, 3, 1, 2, 0],
+                    [0, 3, 1, 2, 4],
                 );
                 let mut rng = ChaCha8Rng::from_seed(seed);
-                assert_eq!(shuffle.first(&mut rng), Some(4));
+                assert_eq!(shuffle.first(&mut rng), Some(0));
             }
             20 => {
                 let mut rng = ChaChaRng::from_seed(seed);
                 assert_eq!(
                     shuffle.clone().shuffle(&mut rng).collect::<Vec<_>>(),
-                    [1, 4, 2, 3, 0],
+                    [4, 0, 1, 2, 3],
                 );
                 let mut rng = ChaChaRng::from_seed(seed);
-                assert_eq!(shuffle.first(&mut rng), Some(1));
+                assert_eq!(shuffle.first(&mut rng), Some(4));
             }
             _ => unreachable!(),
         };
@@ -421,14 +426,14 @@ mod tests {
         let mut rng = ChaChaRng::from_seed(seed);
         test_weighted_shuffle_sanity_impl(
             &mut rng,
-            &[95, 0, 90069, 0, 0, 908, 8928, 0],
-            &[97, 0, 90862, 0, 0, 0, 9041, 0],
+            &[90, 0, 89996, 0, 0, 860, 9054, 0],
+            &[64, 0, 90845, 0, 0, 0, 9091, 0],
         );
         let mut rng = ChaCha8Rng::from_seed(seed);
         test_weighted_shuffle_sanity_impl(
             &mut rng,
-            &[93, 0, 90185, 0, 0, 892, 8830, 0],
-            &[89, 0, 90741, 0, 0, 0, 9170, 0],
+            &[101, 0, 89940, 0, 0, 915, 9044, 0],
+            &[100, 0, 90614, 0, 0, 0, 9286, 0],
         );
         fn test_weighted_shuffle_sanity_impl<R: Rng>(
             rng: &mut R,
@@ -461,10 +466,10 @@ mod tests {
     #[test]
     fn test_weighted_shuffle_negative_overflow() {
         test_weighted_shuffle_negative_overflow_impl::<ChaChaRng>(&[
-            8, 1, 5, 10, 11, 0, 2, 6, 9, 4, 3, 7,
+            8, 1, 5, 10, 11, 0, 2, 6, 4, 9, 7, 3,
         ]);
         test_weighted_shuffle_negative_overflow_impl::<ChaCha8Rng>(&[
-            5, 11, 2, 0, 10, 1, 6, 8, 7, 3, 9, 4,
+            10, 5, 1, 11, 0, 2, 8, 6, 3, 4, 7, 9,
         ]);
 
         fn test_weighted_shuffle_negative_overflow_impl<
@@ -495,7 +500,7 @@ mod tests {
         let mut shuffle = WeightedShuffle::new("", weights);
         assert_eq!(
             shuffle.clone().shuffle(&mut rng).collect::<Vec<_>>(),
-            [2, 12, 18, 0, 14, 15, 17, 10, 1, 9, 7, 6, 13, 20, 4, 19, 3, 8, 11, 16, 5]
+            [2, 12, 18, 6, 0, 10, 17, 14, 15, 20, 9, 1, 4, 7, 8, 3, 19, 13, 11, 16, 5]
         );
         let mut rng = ChaChaRng::from_seed(seed);
         assert_eq!(shuffle.first(&mut rng), Some(2));
@@ -506,7 +511,7 @@ mod tests {
         shuffle.remove_index(0);
         assert_eq!(
             shuffle.clone().shuffle(&mut rng).collect::<Vec<_>>(),
-            [4, 6, 1, 12, 19, 14, 17, 20, 2, 9, 10, 8, 7, 18, 13, 5, 16]
+            [4, 10, 20, 6, 1, 12, 17, 9, 14, 18, 8, 2, 7, 19, 13, 5, 16]
         );
         let mut rng = ChaChaRng::from_seed(seed);
         assert_eq!(shuffle.first(&mut rng), Some(4));
@@ -515,7 +520,7 @@ mod tests {
         let mut shuffle = WeightedShuffle::new("", weights);
         assert_eq!(
             shuffle.clone().shuffle(&mut rng).collect::<Vec<_>>(),
-            [19, 3, 15, 14, 6, 10, 17, 18, 9, 2, 4, 1, 0, 7, 8, 20, 12, 13, 16, 5, 11]
+            [19, 3, 10, 15, 6, 14, 4, 13, 12, 2, 20, 17, 0, 9, 18, 7, 1, 8, 16, 11, 5]
         );
         let mut rng = ChaChaRng::from_seed(seed);
         assert_eq!(shuffle.first(&mut rng), Some(19));
@@ -528,7 +533,7 @@ mod tests {
         let mut rng = ChaChaRng::from_seed(seed);
         assert_eq!(
             shuffle.clone().shuffle(&mut rng).collect::<Vec<_>>(),
-            [17, 2, 9, 14, 6, 10, 12, 1, 15, 13, 7, 0, 18, 3, 11]
+            [17, 2, 9, 14, 6, 12, 3, 10, 15, 0, 18, 7, 1, 13, 11]
         );
         let mut rng = ChaChaRng::from_seed(seed);
         assert_eq!(shuffle.first(&mut rng), Some(17));
@@ -536,14 +541,14 @@ mod tests {
 
     // Verifies that changes to the code or dependencies (e.g. rand or
     // rand_chacha::ChaChaRng) do not change the deterministic shuffle.
-    #[test_case(0x587c27258191c66d, "84jN8bvnp6mvtngzt42SW8AtRf5fcv3VBerKkUsYrCVG")]
-    #[test_case(0x7dad2afc68808779, "25oFhs9sR3WYfB6ohy752JrbLqpBjw6X4Eszbcsoxon4")]
-    #[test_case(0xfdd71c99c936736c, "7H9H8V7ccmpBhC3i5vEeFfiUwvRSAvRWadZhFH5ecSD7")]
-    #[test_case(0xe2a4d9fdd186636c, "Nxe6X7f74kEPrJFycKFcxByDRWKJtx1J3vsdbum9VPv")]
-    #[test_case(0x19a0a360e9f3094d, "Ec6wiaqDuVc5AzZpq4GAZ6GLsRJvw9mAVWVrCpDoGaRm")]
-    #[test_case(0xc5e0204894ca50dc, "BqxDzSFw8rJRHnTZmsPRzF77G3xgfK4hD8JyYeAFfxuZ")]
-    #[test_case(0xf1336cf933eeda07, "3Ux2vciDFdgNqULpsQpXfpaxZykWmBFCseqX9dwpGnyH")]
-    #[test_case(0xe666e7514f37c7a1, "Fc3gAUgh2mD1se3kkhPnLMKpQCiARd2PSdGf7b2fDS2n")]
+    #[test_case(0x587c27258191c66d, "5HGcBgvJLc75igH2UdqzLsJVPxjwk1tgioKc6dq7og3y")]
+    #[test_case(0x7dad2afc68808779, "52cAW7whsvL7SPFJSkPcRvWFVoXQpkbCtmKiE7EkHtdy")]
+    #[test_case(0xfdd71c99c936736c, "J1UPb1LKRNNmiVEkeKx7gGfPn9YfjPLBH6q7R5hmBAsx")]
+    #[test_case(0xe2a4d9fdd186636c, "wjkBXgqWcduQonjxnQdf4AZHJeYpahUPWf7zDd2shb6")]
+    #[test_case(0x19a0a360e9f3094d, "DynL66rHyukG6wBx4puZv9GQyctW2BsszAXKJZQ8CEx3")]
+    #[test_case(0xc5e0204894ca50dc, "7EAQA8SWQVYpuHhQiH3dqY27GXQX5Ww2jxt5APHjLRcj")]
+    #[test_case(0xf1336cf933eeda07, "6nhqrPQCnWE4qZXdyNM5y6BCSkXGyz3votudnbpay6qm")]
+    #[test_case(0xe666e7514f37c7a1, "CG2Va4Cz9gjupE774v7FsdNkr2zEgzxxoXYpnurj3UU2")]
     fn test_weighted_shuffle_hard_coded_paranoid(seed: u64, expected_hash: &str) {
         let expected_hash = Hash::from_str(expected_hash).unwrap();
         let mut rng = <[u8; 32]>::try_from(
@@ -555,19 +560,19 @@ mod tests {
         )
         .map(ChaChaRng::from_seed)
         .unwrap();
-        let num_weights = rng.gen_range(1..=100_000);
-        assert!((8143..=85348).contains(&num_weights), "{num_weights}");
+        let num_weights = rng.random_range(1..=100_000);
+        assert!((8143..=97204).contains(&num_weights), "{num_weights}");
         let weights: Vec<u64> = repeat_with(|| {
-            if rng.gen_ratio(1, 100) {
+            if rng.random_ratio(1, 100) {
                 0u64 // 1% zero weights.
             } else {
-                rng.gen_range(0..=(u64::MAX / num_weights as u64))
+                rng.random_range(0..=(u64::MAX / num_weights as u64))
             }
         })
         .take(num_weights)
         .collect();
         let num_zeros = weights.iter().filter(|&&w| w == 0).count();
-        assert!((72..=846).contains(&num_zeros), "{num_zeros}");
+        assert!((72..=992).contains(&num_zeros), "{num_zeros}");
         // Assert that the sum of weights does not overflow.
         assert_eq!(
             weights.iter().fold(0u64, |a, &b| a.checked_add(b).unwrap()),
@@ -579,10 +584,10 @@ mod tests {
         assert_eq!(shuffle1.len(), num_weights);
         verify_shuffle(&shuffle1, &weights, vec![false; num_weights]);
         // Drop some of the weights and re-shuffle.
-        let num_drops = rng.gen_range(1..1_000);
-        assert!((253..=981).contains(&num_drops), "{num_drops}");
+        let num_drops = rng.random_range(1..1_000);
+        assert!((218..=981).contains(&num_drops), "{num_drops}");
         let mut mask = vec![false; num_weights];
-        repeat_with(|| rng.gen_range(0..num_weights))
+        repeat_with(|| rng.random_range(0..num_weights))
             .filter(|&index| {
                 if mask[index] {
                     false
@@ -612,8 +617,10 @@ mod tests {
         test_weighted_shuffle_match_slow_impl::<ChaCha8Rng>();
 
         fn test_weighted_shuffle_match_slow_impl<R: Rng + rand::SeedableRng<Seed = [u8; 32]>>() {
-            let mut rng = rand::thread_rng();
-            let weights: Vec<u64> = repeat_with(|| rng.gen_range(0..1000)).take(997).collect();
+            let mut rng = rand::rng();
+            let weights: Vec<u64> = repeat_with(|| rng.random_range(0..1000))
+                .take(997)
+                .collect();
             for _ in 0..10 {
                 let mut seed = [0u8; 32];
                 rng.fill(&mut seed[..]);
@@ -632,8 +639,8 @@ mod tests {
 
     #[test]
     fn test_weighted_shuffle_paranoid() {
-        let mut rng = rand::thread_rng();
-        let seed = rng.gen::<[u8; 32]>();
+        let mut rng = rand::rng();
+        let seed = rng.random::<[u8; 32]>();
         let rng = ChaCha8Rng::from_seed(seed);
         test_weighted_shuffle_paranoid_impl(rng);
         let rng = ChaChaRng::from_seed(seed);
@@ -641,7 +648,9 @@ mod tests {
 
         fn test_weighted_shuffle_paranoid_impl<R: Rng + Clone>(mut rng: R) {
             for size in 0..1351 {
-                let weights: Vec<_> = repeat_with(|| rng.gen_range(0..1000)).take(size).collect();
+                let weights: Vec<_> = repeat_with(|| rng.random_range(0..1000))
+                    .take(size)
+                    .collect();
                 let shuffle_slow = weighted_shuffle_slow(&mut rng.clone(), weights.clone());
                 let mut shuffle = WeightedShuffle::new("", weights);
                 if size > 0 {

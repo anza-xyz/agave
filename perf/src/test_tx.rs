@@ -59,10 +59,10 @@ pub fn new_test_vote_tx<R>(rng: &mut R) -> Transaction
 where
     R: CryptoRng + RngCore,
 {
-    let mut slots: Vec<Slot> = std::iter::repeat_with(|| rng.gen()).take(5).collect();
+    let mut slots: Vec<Slot> = std::iter::repeat_with(|| rng.random()).take(5).collect();
     slots.sort_unstable();
     slots.dedup();
-    let switch_proof_hash = rng.gen_bool(0.5).then(Hash::new_unique);
+    let switch_proof_hash = rng.random_bool(0.5).then(Hash::new_unique);
     let tower_sync = TowerSync::new_from_slots(slots, Hash::default(), None);
     vote_transaction::new_tower_sync_transaction(
         tower_sync,
