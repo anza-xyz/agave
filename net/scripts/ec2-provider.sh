@@ -172,7 +172,7 @@ cloud_CreateInstances() {
   declare zone="$5"
   declare optionalBootDiskSize="$6"
   declare optionalStartupScript="$7"
-  declare optionalAddress="$9"
+  declare optionalAddress="$8"
 
   declare region=
   region=$(__cloud_GetRegion "$zone")
