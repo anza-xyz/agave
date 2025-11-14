@@ -129,14 +129,6 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
     }
 
     add_arg!(
-        // deprecated in v3.1.1
-        Arg::with_name("cuda")
-            .long("cuda")
-            .takes_value(false)
-            .help("Use CUDA"),
-        usage_warning: "CUDA support will be dropped"
-    );
-    add_arg!(
         // deprecated in v3.0.0
         Arg::with_name("accounts_db_clean_threads")
             .long("accounts-db-clean-threads")
@@ -186,6 +178,14 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
                  [default: <LEDGER>/accounts_hash_cache]",
             ),
             usage_warning: "The accounts hash cache is obsolete",
+    );
+    add_arg!(
+        // deprecated in v3.1.1
+        Arg::with_name("cuda")
+            .long("cuda")
+            .takes_value(false)
+            .help("Use CUDA"),
+        usage_warning: "CUDA support will be dropped"
     );
     add_arg!(Arg::with_name("disable_accounts_disk_index")
         // (actually) deprecated in v3.1.0
