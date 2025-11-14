@@ -2,7 +2,7 @@ use {
     rand::distributions::{Distribution, WeightedIndex},
     rand_chacha::{rand_core::SeedableRng, ChaChaRng},
     solana_clock::Epoch,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     std::{collections::HashMap, convert::identity, ops::Index, sync::Arc},
 };
 
@@ -26,7 +26,7 @@ pub trait LeaderScheduleVariant:
     std::fmt::Debug + Send + Sync + Index<u64, Output = Pubkey>
 {
     fn get_slot_leaders(&self) -> &[Pubkey];
-    fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Vec<usize>>;
+    fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Vec<usize>, PubkeyHasherBuilder>;
 
     /// Get the vote account address for the given epoch slot index. This is
     /// guaranteed to be Some if the leader schedule is keyed by vote account
