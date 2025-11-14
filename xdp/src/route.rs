@@ -112,22 +112,63 @@ fn is_ipv6_match(addr: Ipv6Addr, network: Ipv6Addr, prefix_len: u8) -> bool {
 }
 
 #[derive(Clone)]
+struct RouteTable {
+    routes: Vec<RouteEntry>,
+}
+
+impl RouteTable {
+    pub fn new() -> Result<Self, io::Error> {
+        let routes = netlink_get_routes(AF_INET as u8)?;
+        Ok(Self { routes })
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &RouteEntry> {
+        self.routes.iter()
+    }
+
+    pub fn as_slice(&self) -> &[RouteEntry] {
+        &self.routes
+    }
+
+    pub fn upsert(&mut self, new_route: RouteEntry) -> bool {
+        if let Some(existing) = self.routes.iter_mut().find(|old| old.same_key(&new_route)) {
+            if existing != &new_route {
+                *existing = new_route;
+                return true;
+            }
+            false
+        } else {
+            self.routes.push(new_route);
+            true
+        }
+    }
+
+    pub fn remove(&mut self, new_route: RouteEntry) -> bool {
+        if let Some(i) = self.routes.iter().position(|old| old.same_key(&new_route)) {
+            self.routes.swap_remove(i);
+            return true;
+        }
+        false
+    }
+}
+
+#[derive(Clone)]
 pub struct Router {
     arp_table: ArpTable,
-    routes: Vec<RouteEntry>,
+    route_table: RouteTable,
 }
 
 impl Router {
     pub fn new() -> Result<Self, io::Error> {
         Ok(Self {
             arp_table: ArpTable::new()?,
-            routes: netlink_get_routes(AF_INET as u8)?,
+            route_table: RouteTable::new()?,
         })
     }
 
     pub fn default(&self) -> Result<NextHop, RouteError> {
         let default_route = self
-            .routes
+            .route_table
             .iter()
             .find(|r| r.destination.is_none())
             .ok_or(RouteError::NoRouteFound(IpAddr::V4(Ipv4Addr::UNSPECIFIED)))?;
@@ -151,7 +192,8 @@ impl Router {
     }
 
     pub fn route(&self, dest_ip: IpAddr) -> Result<NextHop, RouteError> {
-        let route = lookup_route(&self.routes, dest_ip).ok_or(RouteError::NoRouteFound(dest_ip))?;
+        let route = lookup_route(self.route_table.as_slice(), dest_ip)
+            .ok_or(RouteError::NoRouteFound(dest_ip))?;
 
         let if_index = route
             .out_if_index
@@ -172,37 +214,24 @@ impl Router {
     }
 
     pub fn upsert_route(&mut self, new_route: RouteEntry) -> bool {
-        if let Some(i) = self.routes.iter().position(|old| old.same_key(&new_route)) {
-            if self.routes[i] != new_route {
-                self.routes[i] = new_route;
-                return true;
-            }
-            false
-        } else {
-            self.routes.push(new_route);
-            true
-        }
+        self.route_table.upsert(new_route)
     }
 
-    pub fn delete_route(&mut self, new_route: RouteEntry) -> bool {
-        if let Some(i) = self.routes.iter().position(|old| old.same_key(&new_route)) {
-            self.routes.swap_remove(i);
-            return true;
-        }
-        false
+    pub fn remove_route(&mut self, new_route: RouteEntry) -> bool {
+        self.route_table.remove(new_route)
     }
 
     pub fn upsert_neighbor(&mut self, new_neighbor: NeighborEntry) -> bool {
         self.arp_table.upsert(new_neighbor)
     }
 
-    pub fn delete_neighbor(&mut self, ip: Ipv4Addr, if_index: i32) -> bool {
+    pub fn remove_neighbor(&mut self, ip: Ipv4Addr, if_index: i32) -> bool {
         self.arp_table.remove(ip, if_index)
     }
 }
 
 #[derive(Clone)]
-pub(crate) struct ArpTable {
+struct ArpTable {
     neighbors: Vec<NeighborEntry>,
 }
 
@@ -321,7 +350,7 @@ mod tests {
         let next_hop = router.route("1.1.1.1".parse().unwrap()).unwrap();
         eprintln!("{next_hop:?}");
 
-        let before_routes_len = router.routes.len();
+        let before_routes_len = router.route_table.as_slice().len();
 
         // Create a unique, private IPv4 /32 route to avoid collisions
         let test_dst = Ipv4Addr::new(10, 255, 255, 123);
@@ -343,13 +372,13 @@ mod tests {
 
         // Upsert new route and check that it was inserted and routes are dirty
         assert!(router.upsert_route(route.clone()));
-        assert!(router.routes.iter().any(|r| r == &route));
-        assert!(router.routes.len() >= before_routes_len);
+        assert!(router.route_table.iter().any(|r| r == &route));
+        assert!(router.route_table.as_slice().len() >= before_routes_len);
 
         // Delete using same key should remove the route
-        assert!(router.delete_route(route.clone()));
-        assert!(router.routes.iter().all(|r| r != &route));
-        assert_eq!(router.routes.len(), before_routes_len);
+        assert!(router.remove_route(route.clone()));
+        assert!(router.route_table.iter().all(|r| r != &route));
+        assert_eq!(router.route_table.as_slice().len(), before_routes_len);
     }
 
     #[test]
@@ -372,7 +401,7 @@ mod tests {
         assert!(router.arp_table.neighbors.len() >= before_neigh_len);
 
         // Delete neighbor and check that it was deleted
-        assert!(router.delete_neighbor(neigh_ip, 1));
+        assert!(router.remove_neighbor(neigh_ip, 1));
         assert!(router.arp_table.neighbors.iter().all(|n| n != &entry));
         assert_eq!(router.arp_table.neighbors.len(), before_neigh_len);
     }
