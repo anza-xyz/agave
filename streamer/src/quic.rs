@@ -988,7 +988,7 @@ mod test {
     #[test]
     fn test_quic_server_multiple_packets_with_client_id() {
         // Send multiple writes from a staked node with SimpleStreamsPerSecond QoS mode
-        // with client ID enabled to verify PacketBatch::WithClientId variant is used
+        // with client ID enabled to verify pubkey is sent along with packets.
         agave_logger::setup();
         let client_keypair = Keypair::new();
         let rich_node_keypair = Keypair::new();
@@ -1085,14 +1085,14 @@ mod test {
                 Ok(packet_batch) => {
                     debug!("Received packet batch (iteration {iterations})");
 
-                    // Verify this is the WithClientId variant
+                    // Verify we get the client pubkey
                     match &packet_batch {
-                        PacketBatch::WithClientId(batch_with_client_id) => {
+                        PacketBatch::Bytes(batch_with_client_id) => {
                             let batch_len = packet_batch.len();
                             debug!("Received WithClientId batch with {batch_len} packets");
 
                             for packet in batch_with_client_id {
-                                assert_eq!(packet.remote_pubkey(), expected_client_pubkey.as_ref());
+                                assert_eq!(packet.meta().remote_pubkey(), expected_client_pubkey);
                             }
 
                             total_packets += batch_len;
@@ -1102,13 +1102,9 @@ mod test {
                                 "Expected PacketBatch::WithClientId but got PacketBatch::Pinned"
                             );
                         }
-                        PacketBatch::Bytes(_) => {
-                            panic!("Expected PacketBatch::WithClientId but got PacketBatch::Bytes");
-                        }
-                        PacketBatch::Single(_) => {
-                            panic!(
-                                "Expected PacketBatch::WithClientId but got PacketBatch::Single"
-                            );
+                        PacketBatch::Single(packet) => {
+                            assert_eq!(packet.meta().remote_pubkey(), expected_client_pubkey);
+                            total_packets += 1;
                         }
                     }
                 }

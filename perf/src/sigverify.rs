@@ -477,7 +477,6 @@ fn split_batches(batches: Vec<PacketBatch>) -> (Vec<BytesPacketBatch>, Vec<Pinne
                 batch.push(packet);
                 bytes_batches.push(batch);
             }
-            PacketBatch::WithClientId(batch) => bytes_batches.push(batch.into()),
         }
     }
     (bytes_batches, pinned_batches)
@@ -662,7 +661,6 @@ pub fn ed25519_verify(
                 batch.push(packet.clone());
                 Cow::Owned(batch.to_pinned_packet_batch())
             }
-            PacketBatch::WithClientId(batch) => Cow::Owned(batch.to_pinned_packet_batch()),
         })
         .collect::<Vec<_>>();
     for batch in pinned_batches.iter() {

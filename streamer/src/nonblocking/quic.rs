@@ -19,9 +19,7 @@ use {
     solana_measure::measure::Measure,
     solana_net_utils::token_bucket::TokenBucket,
     solana_packet::{Meta, PACKET_DATA_SIZE},
-    solana_perf::packet::{
-        BytesPacket, BytesPacketBatchWithClientId, BytesPacketWithClientId, PacketBatch,
-    },
+    solana_perf::packet::{BytesPacket, PacketBatch},
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_tls_utils::get_pubkey_from_tls_certificate,
@@ -96,7 +94,6 @@ struct PacketAccumulator {
     pub meta: Meta,
     pub chunks: SmallVec<[Bytes; 2]>,
     pub start_time: Instant,
-    pub remote_pubkey: Option<Pubkey>,
 }
 
 impl PacketAccumulator {
@@ -105,16 +102,6 @@ impl PacketAccumulator {
             meta,
             chunks: SmallVec::default(),
             start_time: Instant::now(),
-            remote_pubkey: None,
-        }
-    }
-
-    fn with_remote_pubkey(meta: Meta, remote_pubkey: Option<Pubkey>) -> Self {
-        Self {
-            meta,
-            chunks: SmallVec::default(),
-            start_time: Instant::now(),
-            remote_pubkey,
         }
     }
 }
@@ -648,12 +635,13 @@ async fn handle_connection<Q, C>(
         let mut meta = Meta::default();
         meta.set_socket_addr(&remote_addr);
         meta.set_from_staked_node(matches!(peer_type, ConnectionPeerType::Staked(_)));
-        let mut accum = if send_client_id {
-            PacketAccumulator::with_remote_pubkey(meta, context.remote_pubkey())
-        } else {
-            PacketAccumulator::new(meta)
-        };
+        if send_client_id {
+            if let Some(pubkey) = context.remote_pubkey() {
+                meta.set_remote_pubkey(pubkey);
+            }
+        }
 
+        let mut accum = PacketAccumulator::new(meta);
         // Virtually all small transactions will fit in 1 chunk. Larger transactions will fit in 1
         // or 2 chunks if the first chunk starts towards the end of a datagram. A small number of
         // transaction will have other protocol frames inserted in the middle. Empirically it's been
@@ -1065,6 +1053,11 @@ impl ConnectionTable {
             Some((last_update, cancel, stream_counter))
         } else {
             if let Some(connection) = connection {
+                error!(
+                    "Too many connections from peer {:?}, max connection: \
+                     {max_connections_per_peer} rejecting connection",
+                    key
+                );
                 connection.close(
                     CONNECTION_CLOSE_CODE_TOO_MANY.into(),
                     CONNECTION_CLOSE_REASON_TOO_MANY,
