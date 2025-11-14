@@ -26,19 +26,94 @@ use {
     },
 };
 
+pub struct TxLoopConfigBuilder {
+    zero_copy: bool,
+    maybe_src_mac: Option<MacAddress>,
+    maybe_src_ip: Option<Ipv4Addr>,
+    src_port: u16,
+}
+
+impl TxLoopConfigBuilder {
+    pub fn new(src_port: u16) -> Self {
+        Self {
+            zero_copy: false,
+            maybe_src_mac: None,
+            maybe_src_ip: None,
+            src_port,
+        }
+    }
+
+    pub fn zero_copy(&mut self, enable: bool) -> &mut Self {
+        self.zero_copy = enable;
+        self
+    }
+
+    pub fn override_src_mac(&mut self, mac: MacAddress) -> &mut Self {
+        self.maybe_src_mac = Some(mac);
+        self
+    }
+
+    pub fn override_src_ip(&mut self, ip: Ipv4Addr) -> &mut Self {
+        self.maybe_src_ip = Some(ip);
+        self
+    }
+
+    pub fn build_with_src_device(self, src_device: &NetworkDevice) -> TxLoopConfig {
+        let Self {
+            zero_copy,
+            maybe_src_mac,
+            maybe_src_ip,
+            src_port,
+        } = self;
+
+        let src_mac = maybe_src_mac.unwrap_or_else(|| {
+            // if no source MAC is provided, use the device's MAC address
+            src_device
+                .mac_addr()
+                .expect("no src_mac provided, device must have a MAC address")
+        });
+
+        let src_ip = maybe_src_ip.unwrap_or_else(|| {
+            // if no source IP is provided, use the device's IPv4 address
+            src_device
+                .ipv4_addr()
+                .expect("no src_ip provided, device must have an IPv4 address")
+        });
+
+        TxLoopConfig {
+            zero_copy,
+            src_mac,
+            src_ip,
+            src_port,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TxLoopConfig {
+    zero_copy: bool,
+    src_mac: MacAddress,
+    src_ip: Ipv4Addr,
+    src_port: u16,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<NextHop>>(
     cpu_id: usize,
     dev: &NetworkDevice,
     queue_id: QueueId,
-    zero_copy: bool,
-    src_mac: Option<MacAddress>,
-    src_ip: Option<Ipv4Addr>,
-    src_port: u16,
+    config: TxLoopConfig,
     receiver: Receiver<(A, T)>,
     drop_sender: Sender<(A, T)>,
     route_fn: R,
 ) {
+    let TxLoopConfig {
+        zero_copy,
+        src_mac,
+        src_ip,
+        src_port,
+    } = config;
+
     log::info!(
         "starting xdp loop on {} queue {queue_id:?} cpu {cpu_id}",
         dev.name()
@@ -46,18 +121,6 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<
 
     // each queue is bound to its own CPU core
     set_cpu_affinity([cpu_id]).unwrap();
-
-    let src_mac = src_mac.unwrap_or_else(|| {
-        // if no source MAC is provided, use the device's MAC address
-        dev.mac_addr()
-            .expect("no src_mac provided, device must have a MAC address")
-    });
-
-    let src_ip = src_ip.unwrap_or_else(|| {
-        // if no source IP is provided, use the device's IPv4 address
-        dev.ipv4_addr()
-            .expect("no src_ip provided, device must have an IPv4 address")
-    });
 
     // some drivers require frame_size=page_size
     let frame_size = unsafe { sysconf(_SC_PAGESIZE) } as usize;
