@@ -8,16 +8,7 @@ here=$(dirname "$0")
 # shellcheck source=multinode-demo/common.sh
 source "$here"/common.sh
 
-if [[ "$SOLANA_GPU_MISSING" -eq 1 ]]; then
-  echo "Testnet requires GPUs, but none were found!  Aborting..."
-  exit 1
-fi
-
-if [[ -n $SOLANA_CUDA ]]; then
-  program=$agave_validator_cuda
-else
-  program=$agave_validator
-fi
+program=$agave_validator
 
 no_restart=0
 maybeRequireTower=true

@@ -60,13 +60,6 @@ Operate a configured testnet
                                       - Number of seconds to wait after validators have finished starting before starting client programs
                                         (default: $clientDelayStart)
    -n NUM_VALIDATORS                  - Number of validators to apply command to.
-   --gpu-mode GPU_MODE                - Specify GPU mode to launch validators with (default: $gpuMode).
-                                        MODE must be one of
-                                          on - GPU *required*, any vendor *
-                                          off - No GPU, CPU-only
-                                          auto - Use GPU if available, any vendor *
-                                          cuda - GPU *required*, Nvidia CUDA only
-                                          *  Currently, Nvidia CUDA is the only supported GPU vendor
    --hashes-per-tick NUM_HASHES|sleep|auto
                                       - Override the default --hashes-per-tick for the cluster
    --no-airdrop
@@ -924,17 +917,6 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --profile ]]; then
       profileBuild=true
       shift 1
-    elif [[ $1 = --gpu-mode ]]; then
-      gpuMode=$2
-      case "$gpuMode" in
-        on|off|auto|cuda)
-          ;;
-        *)
-          echo "Unexpected GPU mode: \"$gpuMode\""
-          exit 1
-          ;;
-      esac
-      shift 2
     elif [[ $1 == --client-delay-start ]]; then
       clientDelayStart=$2
       shift 2
