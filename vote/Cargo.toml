@@ -25,7 +25,7 @@ frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 bincode = { workspace = true, optional = true }
 itertools = { workspace = true }
 log = { workspace = true }
-rand = { workspace = true, optional = true }
+rand = { version = "0.9.2", optional = true }
 serde = { workspace = true, features = ["rc"] }
 solana-account = { workspace = true, features = ["bincode"] }
 solana-bincode = { workspace = true }
@@ -55,7 +55,7 @@ agave-logger = { workspace = true }
 arbitrary = { workspace = true }
 bencher = { workspace = true }
 bincode = { workspace = true }
-rand = { workspace = true }
+rand = "0.9.2"
 solana-keypair = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-signer = { workspace = true }

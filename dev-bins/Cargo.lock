@@ -9686,7 +9686,7 @@ dependencies = [
  "bincode",
  "itertools 0.13.0",
  "log",
- "rand 0.8.5",
+ "rand 0.9.2",
  "serde",
  "solana-account",
  "solana-bincode",
