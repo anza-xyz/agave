@@ -5,7 +5,7 @@ use {
     agave_xdp::{
         device::{NetworkDevice, QueueId},
         load_xdp_program,
-        tx_loop::tx_loop,
+        tx_loop::{tx_loop, TxLoopConfigBuilder},
     },
     crossbeam_channel::TryRecvError,
     std::{sync::Arc, thread::Builder, time::Duration},
@@ -182,6 +182,13 @@ impl XdpRetransmitter {
                 .unwrap(),
         );
 
+        let mut tx_loop_config_builder = TxLoopConfigBuilder::new(src_port);
+        tx_loop_config_builder.zero_copy(config.zero_copy);
+        if let Some(src_ip) = src_ip {
+            tx_loop_config_builder.override_src_ip(src_ip);
+        }
+        let tx_loop_config = tx_loop_config_builder.build_with_src_device(&dev);
+
         for (i, (receiver, cpu_id)) in receivers
             .into_iter()
             .zip(config.cpus.into_iter())
@@ -189,6 +196,7 @@ impl XdpRetransmitter {
         {
             let dev = Arc::clone(&dev);
             let drop_sender = drop_sender.clone();
+            let config = tx_loop_config.clone();
             threads.push(
                 Builder::new()
                     .name(format!("solRetransmIO{i:02}"))
@@ -197,11 +205,7 @@ impl XdpRetransmitter {
                             cpu_id,
                             &dev,
                             QueueId(i as u64),
-                            config.zero_copy,
-                            None,
-                            src_ip,
-                            src_port,
-                            None,
+                            config,
                             receiver,
                             drop_sender,
                         )
