@@ -200,7 +200,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<
                 let dest_mac = {
                     let ip = addr.ip();
                     let Some(next_hop) = route_fn(&ip) else {
-                        log::warn!("dropping packet: no route for turbine peer {addr}");
+                        log::warn!("dropping packet: no route for peer {addr}");
                         batched_packets -= 1;
                         umem.release(frame.offset());
                         continue;
@@ -209,8 +209,8 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<
                     // we need the MAC address to send the packet
                     let Some(dest_mac) = next_hop.mac_addr else {
                         log::warn!(
-                            "dropping packet: turbine peer {addr} must be routed through {} which \
-                             has no known MAC address",
+                            "dropping packet: peer {addr} must be routed through {} which has no \
+                             known MAC address",
                             next_hop.ip_addr
                         );
                         batched_packets -= 1;
