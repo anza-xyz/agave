@@ -159,15 +159,14 @@ cloud_CreateInstances() {
   declare networkName="$1"
   declare namePrefix="$2"
   declare numNodes="$3"
-  declare machineType="$5"
-  declare zone="$6"
-  declare optionalBootDiskSize="$7"
-  declare optionalStartupScript="$8"
-  declare optionalAddress="$9"
-  declare optionalBootDiskType="${10:-pd-ssd}"
-  declare optionalAdditionalDiskSize="${11}"
-  declare optionalPreemptible="${12}"
-
+  declare machineType="$4"
+  declare zone="$5"
+  declare optionalBootDiskSize="$6"
+  declare optionalStartupScript="$7"
+  declare optionalAddress="$8"
+  declare optionalBootDiskType="${9:-pd-ssd}"
+  declare optionalAdditionalDiskSize="${10}"
+  declare optionalPreemptible="${11}"
 
   imageName="ubuntu-2404-noble-amd64-v20250709 --image-project ubuntu-os-cloud"
 

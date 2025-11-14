@@ -334,7 +334,6 @@ startBootstrapLeader() {
          ${#clientIpList[@]} \"$benchTpsExtraArgs\" \
          \"$genesisOptions\" \
          \"$maybeNoSnapshot $maybeSkipLedgerVerify $maybeLimitLedgerSize $maybeWaitForSupermajority $maybeAccountsDbSkipShrink $maybeSkipRequireTower\" \
-         \"$gpuMode\" \
          \"$maybeWarpSlot\" \
          \"$maybeFullRpc\" \
          \"$waitForNodeInit\" \
@@ -409,7 +408,6 @@ startNode() {
          ${#clientIpList[@]} \"$benchTpsExtraArgs\" \
          \"$genesisOptions\" \
          \"$maybeNoSnapshot $maybeSkipLedgerVerify $maybeLimitLedgerSize $maybeWaitForSupermajority $maybeAccountsDbSkipShrink $maybeSkipRequireTower\" \
-         \"$gpuMode\" \
          \"$maybeWarpSlot\" \
          \"$maybeFullRpc\" \
          \"$waitForNodeInit\" \
@@ -824,7 +822,6 @@ maybeSkipRequireTower=""
 debugBuild=false
 profileBuild=false
 doBuild=true
-gpuMode=auto
 clientDelayStart=0
 netLogDir=
 maybeWarpSlot=
