@@ -9,7 +9,7 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    std::collections::{btree_map::Entry, BTreeMap, BTreeSet},
+    std::collections::{btree_map::Entry, BTreeMap},
     thiserror::Error,
 };
 
@@ -23,57 +23,6 @@ pub(crate) enum AddVoteError {
     /// These are invalid votes as defined in the Alpenglow paper e.g. lemma 20 and 22.
     #[error("invalid votes")]
     Invalid,
-}
-
-/// Container for storing notar votes.
-#[derive(Default)]
-struct NotarVotesPool {
-    /// notar votes are indexed first by the block_id the vote was for and then the voter.
-    votes: BTreeMap<Hash, BTreeMap<Pubkey, VoteMessage>>,
-    /// also maintain a separate set of which voters have already voted.
-    already_voted: BTreeSet<Pubkey>,
-}
-
-impl NotarVotesPool {
-    fn add_vote(
-        &mut self,
-        voter: Pubkey,
-        vote: VoteMessage,
-        block_id: Hash,
-    ) -> Result<(), AddVoteError> {
-        // if voter has already voted, then this is either a duplicate vote or a dishonest voter
-        if self.already_voted.contains(&voter) {
-            match self.votes.get(&block_id) {
-                None => {
-                    // voter previously voted and it was for some other block_id
-                    return Err(AddVoteError::Invalid);
-                }
-                Some(map) => {
-                    if map.contains_key(&voter) {
-                        // voter voted for the same block id again
-                        return Err(AddVoteError::Duplicate);
-                    } else {
-                        // voter voted for some other block id previously
-                        return Err(AddVoteError::Invalid);
-                    }
-                }
-            }
-        }
-        self.already_voted.insert(voter);
-        self.votes.entry(block_id).or_default().insert(voter, vote);
-        Ok(())
-    }
-
-    fn contains_voter(&self, voter: &Pubkey) -> bool {
-        self.already_voted.contains(voter)
-    }
-
-    fn get_votes(&self, block_id: &Hash) -> Vec<VoteMessage> {
-        self.votes
-            .get(block_id)
-            .map(|map| map.values().cloned().collect())
-            .unwrap_or_default()
-    }
 }
 
 /// Helper function to reduce some code duplication.
@@ -101,7 +50,8 @@ struct InternalVotePool {
     skip_fallback: BTreeMap<Pubkey, VoteMessage>,
     /// Finalize votes are stored in map indexed by validator.
     finalize: BTreeMap<Pubkey, VoteMessage>,
-    notar: NotarVotesPool,
+    /// Notar votes are stored in map indexed by validator.
+    notar: BTreeMap<Pubkey, VoteMessage>,
     /// A validator can vote notar fallback on upto 3 blocks.
     ///
     /// Per validator, we store a map of which block ids the validator has voted notar fallback on.
@@ -115,7 +65,7 @@ impl InternalVotePool {
             skip: BTreeMap::default(),
             skip_fallback: BTreeMap::default(),
             finalize: BTreeMap::default(),
-            notar: NotarVotesPool::default(),
+            notar: BTreeMap::default(),
             notar_fallback: BTreeMap::default(),
         }
     }
@@ -130,7 +80,20 @@ impl InternalVotePool {
                 if self.skip.contains_key(&voter) {
                     return Err(AddVoteError::Invalid);
                 }
-                self.notar.add_vote(voter, vote, notar.block_id)
+                match self.notar.entry(voter) {
+                    Entry::Occupied(e) => {
+                        // unwrap should be safe as we should only store notar type votes here
+                        if e.get().vote.block_id().unwrap() == &notar.block_id {
+                            Err(AddVoteError::Duplicate)
+                        } else {
+                            Err(AddVoteError::Invalid)
+                        }
+                    }
+                    Entry::Vacant(e) => {
+                        e.insert(vote);
+                        Ok(())
+                    }
+                }
             }
             Vote::NotarizeFallback(notar_fallback) => {
                 if self.finalize.contains_key(&voter) {
@@ -159,7 +122,7 @@ impl InternalVotePool {
                 }
             }
             Vote::Skip(_) => {
-                if self.notar.contains_voter(&voter) || self.finalize.contains_key(&voter) {
+                if self.notar.contains_key(&voter) || self.finalize.contains_key(&voter) {
                     return Err(AddVoteError::Invalid);
                 }
                 insert_vote(&mut self.skip, voter, vote)
@@ -190,7 +153,16 @@ impl InternalVotePool {
     fn get_votes(&self, vote_type: &VoteType, block_id: Option<&Hash>) -> Vec<VoteMessage> {
         match vote_type {
             VoteType::Finalize => self.finalize.values().cloned().collect(),
-            VoteType::Notarize => self.notar.get_votes(block_id.unwrap()),
+            VoteType::Notarize => {
+                self.notar
+                    .values()
+                    .filter(|vote| {
+                        // unwrap on the stored vote should be safe as we should only store notar type votes here
+                        vote.vote.block_id().unwrap() == block_id.unwrap()
+                    })
+                    .cloned()
+                    .collect()
+            }
             VoteType::NotarizeFallback => self
                 .notar_fallback
                 .values()
