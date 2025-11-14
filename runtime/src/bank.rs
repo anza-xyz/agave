@@ -1065,8 +1065,8 @@ struct NewEpochBundle {
 }
 
 // Dynamic rent controller parameters (SIMD-0389)
-const RENT_CTRL_MIN: u64 = 1; // TODO
-const RENT_CTRL_MAX: u64 = 1; // TODO
+const RENT_CTRL_MAX: u64 = solana_rent::DEFAULT_LAMPORTS_PER_BYTE_YEAR * 2;
+const RENT_CTRL_MIN: u64 = RENT_CTRL_MAX / 10;
 
 // Supervisory controller: integral bounds (bytes)
 const RENT_CTRL_I_MIN: i64 = -4_000_000_000;
@@ -2322,8 +2322,7 @@ impl Bank {
         self.update_rent_controller_integral();
 
         // Compute the effective Rent using the dynamic controller and expose it via the sysvar
-        let effective_rent = self.compute_dynamic_rent();
-        self.rent_collector.rent = effective_rent;
+        self.rent_collector.rent = self.compute_dynamic_rent();
         self.update_sysvar_account(&sysvar::rent::id(), |account| {
             create_account(
                 &self.rent_collector.rent,
