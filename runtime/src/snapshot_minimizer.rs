@@ -12,9 +12,9 @@ use {
     },
     solana_account::{state_traits::StateMut, ReadableAccount},
     solana_accounts_db::{
+        account_storage_entry::AccountStorageEntry,
         accounts_db::{
-            stats::PurgeStats, AccountStorageEntry, AccountsDb, GetUniqueAccountsResult,
-            UpdateIndexThreadSelection,
+            stats::PurgeStats, AccountsDb, GetUniqueAccountsResult, UpdateIndexThreadSelection,
         },
         storable_accounts::StorableAccountsBySlot,
     },
