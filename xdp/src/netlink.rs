@@ -59,8 +59,7 @@ pub struct NetlinkSocket {
 impl NetlinkSocket {
     fn open() -> Result<Self, io::Error> {
         let sock = Self::create_raw_socket()?;
-        let nl_pid = Self::get_nl_pid(sock.as_raw_fd())?;
-        Ok(Self { sock, nl_pid })
+        Ok(Self { sock, nl_pid: 0 })
     }
 
     fn send(&self, msg: &[u8]) -> Result<(), io::Error> {
@@ -159,6 +158,7 @@ impl NetlinkSocket {
         }
 
         sock.nl_pid = Self::get_nl_pid(sock.as_raw_fd())?;
+        log::info!("greg: nl_pid in bind: {}", sock.nl_pid);
 
         Ok(sock)
     }
@@ -415,6 +415,14 @@ impl NeighborEntry {
     /// Returns true if this neighbor entry is valid and usable
     pub fn is_valid(&self) -> bool {
         self.lladdr.is_some() && (self.state & (NUD_REACHABLE | NUD_PERMANENT | NUD_STALE)) != 0
+    }
+
+    #[inline]
+    pub fn key(&self) -> Option<(i32, Ipv4Addr)> {
+        match self.destination {
+            Some(IpAddr::V4(ip)) => Some((self.ifindex, ip)),
+            _ => None,
+        }
     }
 }
 

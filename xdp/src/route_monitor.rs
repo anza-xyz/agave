@@ -43,16 +43,15 @@ impl RouteMonitor {
                     RouteMonitorState::new(Router::new().expect("error creating Router"));
 
                 let timeout = Duration::from_millis(10);
-                let mut pfd = pollfd {
-                    fd: state.sock.as_raw_fd(),
-                    events: POLLIN,
-                    revents: 0,
-                };
-
-                while exit.load(Ordering::Relaxed) == false {
+                while !exit.load(Ordering::Relaxed) {
                     state.publish_if_needed(&atomic_router, update_interval);
 
-                    pfd.revents = 0;
+                    let mut pfd = pollfd {
+                        fd: state.sock.as_raw_fd(),
+                        events: POLLIN,
+                        revents: 0,
+                    };
+
                     let ev = match poll(&mut pfd, timeout) {
                         // timeout
                         Ok(0) => continue,

@@ -20,9 +20,6 @@ pub enum RouteError {
 
     #[error("could not resolve MAC address")]
     MacResolutionError,
-
-    #[error("unknown interface index {0}")]
-    UnknownInterfaceIndex(u32),
 }
 
 #[derive(Debug)]
@@ -122,10 +119,10 @@ pub struct Router {
 
 impl Router {
     pub fn new() -> Result<Self, io::Error> {
-        let arp_table = ArpTable::new()?;
-        let routes = netlink_get_routes(AF_INET as u8)?;
-
-        Ok(Self { arp_table, routes })
+        Ok(Self {
+            arp_table: ArpTable::new()?,
+            routes: netlink_get_routes(AF_INET as u8)?,
+        })
     }
 
     pub fn default(&self) -> Result<NextHop, RouteError> {
@@ -173,35 +170,6 @@ impl Router {
             if_index: if_index as u32,
         })
     }
-}
-
-#[derive(Clone)]
-pub(crate) struct ArpTable {
-    pub(crate) neighbors: Vec<NeighborEntry>,
-}
-
-impl ArpTable {
-    pub fn new() -> Result<Self, io::Error> {
-        let neighbors = netlink_get_neighbors(None, AF_INET as u8)?;
-        Ok(Self { neighbors })
-    }
-
-    pub fn lookup(&self, ip: IpAddr, if_index: i32) -> Option<&MacAddress> {
-        self.neighbors
-            .iter()
-            .find(|n| n.ifindex == if_index && n.destination == Some(ip))
-            .and_then(|n| n.lladdr.as_ref())
-    }
-}
-
-impl Router {
-    #[inline]
-    fn neighbor_key(n: &NeighborEntry) -> Option<(i32, Ipv4Addr)> {
-        match n.destination {
-            Some(IpAddr::V4(ip)) => Some((n.ifindex, ip)),
-            _ => None,
-        }
-    }
 
     pub fn upsert_route(&mut self, new_route: RouteEntry) -> bool {
         if let Some(i) = self.routes.iter().position(|old| old.same_key(&new_route)) {
@@ -225,38 +193,63 @@ impl Router {
     }
 
     pub fn upsert_neighbor(&mut self, new_neighbor: NeighborEntry) -> bool {
+        self.arp_table.upsert(new_neighbor)
+    }
+
+    pub fn delete_neighbor(&mut self, ip: Ipv4Addr, if_index: i32) -> bool {
+        self.arp_table.remove(ip, if_index)
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct ArpTable {
+    neighbors: Vec<NeighborEntry>,
+}
+
+impl ArpTable {
+    pub fn new() -> Result<Self, io::Error> {
+        let neighbors = netlink_get_neighbors(None, AF_INET as u8)?;
+        Ok(Self { neighbors })
+    }
+
+    pub fn lookup(&self, ip: IpAddr, if_index: i32) -> Option<&MacAddress> {
+        self.neighbors
+            .iter()
+            .find(|n| n.ifindex == if_index && n.destination == Some(ip))
+            .and_then(|n| n.lladdr.as_ref())
+    }
+
+    pub fn upsert(&mut self, new_neighbor: NeighborEntry) -> bool {
         if !new_neighbor.is_valid() {
             return false;
         }
-        let Some((ifidx, ip)) = Self::neighbor_key(&new_neighbor) else {
+        let Some((ifidx, ip)) = new_neighbor.key() else {
             return false;
         };
 
         if let Some(i) = self
-            .arp_table
             .neighbors
             .iter()
             .position(|old| old.ifindex == ifidx && old.destination == Some(IpAddr::V4(ip)))
         {
-            if self.arp_table.neighbors[i] != new_neighbor {
-                self.arp_table.neighbors[i] = new_neighbor;
+            if self.neighbors[i] != new_neighbor {
+                self.neighbors[i] = new_neighbor;
                 return true;
             }
             false
         } else {
-            self.arp_table.neighbors.push(new_neighbor);
+            self.neighbors.push(new_neighbor);
             true
         }
     }
 
-    pub fn delete_neighbor(&mut self, ip: Ipv4Addr, if_index: i32) -> bool {
+    pub fn remove(&mut self, ip: Ipv4Addr, if_index: i32) -> bool {
         if let Some(i) = self
-            .arp_table
             .neighbors
             .iter()
             .position(|old| old.ifindex == if_index && old.destination == Some(IpAddr::V4(ip)))
         {
-            self.arp_table.neighbors.swap_remove(i);
+            self.neighbors.swap_remove(i);
             return true;
         }
         false
@@ -324,14 +317,10 @@ mod tests {
 
     #[test]
     fn test_router() {
-        let router = Router::new().unwrap();
+        let mut router = Router::new().unwrap();
         let next_hop = router.route("1.1.1.1".parse().unwrap()).unwrap();
         eprintln!("{next_hop:?}");
-    }
 
-    #[test]
-    fn test_working_upsert_and_delete_route() {
-        let mut router = Router::new().unwrap();
         let before_routes_len = router.routes.len();
 
         // Create a unique, private IPv4 /32 route to avoid collisions
@@ -364,7 +353,7 @@ mod tests {
     }
 
     #[test]
-    fn test_working_upsert_and_delete_neighbor() {
+    fn test_arp_table() {
         let mut router = Router::new().unwrap();
         let before_neigh_len = router.arp_table.neighbors.len();
 
