@@ -24,7 +24,7 @@ impl TargetBpfV2 {
     pub(crate) fn new_checked(
         bank: &Bank,
         program_address: &Pubkey,
-    ) -> Result<Self, CoreBpfMigrationError> {
+    ) -> Result<(Self, Option<u64>), CoreBpfMigrationError> {
         // The program account should exist.
         let program_account = bank
             .get_account_with_fixed_root(program_address)
@@ -45,26 +45,28 @@ impl TargetBpfV2 {
         let program_data_address = get_program_data_address(program_address);
 
         // The program data account is expected not to exist.
-        if let Some(account) = bank.get_account_with_fixed_root(&program_data_address) {
-            // It is possible that the program data account had lamports sent to it,
-            // which would make the account to be found. If the owner is the loader v3,
-            // then it is a genuine program data account and the migration must already
-            // been performed. In this case, we fail; otherwise, we burn and purge the
-            // account before migration.
-            if account.owner() == &bpf_loader_upgradeable::id() {
-                return Err(CoreBpfMigrationError::ProgramHasDataAccount(
-                    *program_address,
-                ));
+        let current_lamports =
+            if let Some(account) = bank.get_account_with_fixed_root(&program_data_address) {
+                // The program data account should not exist, but a system account with funded
+                // lamports is acceptable.
+                if account.owner() == &bpf_loader_upgradeable::id() {
+                    return Err(CoreBpfMigrationError::ProgramHasDataAccount(
+                        *program_address,
+                    ));
+                }
+                Some(account.lamports())
             } else {
-                bank.burn_and_purge_account(&program_data_address, account);
-            }
-        }
+                None
+            };
 
-        Ok(Self {
-            program_address: *program_address,
-            program_account,
-            program_data_address,
-        })
+        Ok((
+            Self {
+                program_address: *program_address,
+                program_account,
+                program_data_address,
+            },
+            current_lamports,
+        ))
     }
 }
 
@@ -126,7 +128,7 @@ mod tests {
         // Success
         store_account(&bank, &program_address, &elf, &bpf_loader::id(), true);
 
-        let target_bpf_v2 = TargetBpfV2::new_checked(&bank, &program_address).unwrap();
+        let (target_bpf_v2, _) = TargetBpfV2::new_checked(&bank, &program_address).unwrap();
 
         assert_eq!(target_bpf_v2.program_address, program_address);
         assert_eq!(target_bpf_v2.program_account.data(), elf.as_slice());
