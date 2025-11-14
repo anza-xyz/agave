@@ -158,7 +158,6 @@ impl NetlinkSocket {
         }
 
         sock.nl_pid = Self::get_nl_pid(sock.as_raw_fd())?;
-        log::info!("greg: nl_pid in bind: {}", sock.nl_pid);
 
         Ok(sock)
     }

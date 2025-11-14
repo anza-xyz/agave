@@ -108,7 +108,7 @@ impl RouteMonitor {
                 }
                 RTM_DELROUTE if is_supported_ipv4_route_header(m) => {
                     if let Some(r) = parse_rtm_newroute(m) {
-                        dirty |= router.delete_route(r);
+                        dirty |= router.remove_route(r);
                     }
                 }
                 RTM_NEWNEIGH if is_supported_ipv4_neigh_header(m) => {
@@ -119,7 +119,7 @@ impl RouteMonitor {
                 RTM_DELNEIGH if is_supported_ipv4_neigh_header(m) => {
                     if let Some(n) = parse_rtm_newneigh(m, None) {
                         if let Some(IpAddr::V4(ip)) = n.destination {
-                            dirty |= router.delete_neighbor(ip, n.ifindex);
+                            dirty |= router.remove_neighbor(ip, n.ifindex);
                         }
                     }
                 }
