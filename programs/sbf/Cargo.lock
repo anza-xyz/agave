@@ -6319,7 +6319,7 @@ dependencies = [
  "memmap2 0.9.8",
  "modular-bitfield",
  "num_enum",
- "rand 0.8.5",
+ "rand 0.9.2",
  "solana-clock",
  "solana-measure",
  "solana-pubkey",
