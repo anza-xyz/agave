@@ -152,7 +152,7 @@ impl<T: AsRef<[u8]>> BloomHashIndex for T {
 /// bloom filters since operations are idempotent and false positives are acceptable.
 ///
 /// **Note**: Concurrent `clear()` with `add()`/`contains()` may observe partially cleared
-/// states. For coordinated clearing, use [`ConcurrentBloomInterval`] or external synchronization.
+/// states. For coordinated clearing, use external synchronization.
 pub struct ConcurrentBloom<T> {
     num_bits: u64,
     keys: Vec<u64>,
@@ -220,7 +220,7 @@ impl<T: BloomHashIndex> ConcurrentBloom<T> {
     /// Clears all bits in the bloom filter, resetting it to an empty state.
     ///
     /// Thread-safe, but no ordering guarantees with concurrent `add()`/`contains()`.
-    /// For coordinated clearing, use [`ConcurrentBloomInterval`] or external synchronization.
+    /// For coordinated clearing, use external synchronization.
     pub fn clear(&self) {
         self.bits.iter().for_each(|bit| {
             bit.store(0u64, Ordering::Relaxed);
