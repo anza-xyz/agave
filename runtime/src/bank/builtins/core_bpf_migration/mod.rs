@@ -219,7 +219,7 @@ impl Bank {
     ) -> Result<(), CoreBpfMigrationError> {
         datapoint_info!(config.datapoint_name, ("slot", self.slot, i64));
 
-        let target =
+        let (target, target_program_data_account_lamports) =
             TargetBuiltin::new_checked(self, builtin_program_id, &config.migration_target)?;
         let source = if let Some(expected_hash) = config.verified_build_hash {
             SourceBuffer::new_checked_with_verified_build_hash(
@@ -261,12 +261,15 @@ impl Bank {
 
         // Calculate the lamports to burn.
         // The target program account will be replaced, so burn its lamports.
+        // The target program data account might have lamports if it existed,
+        // so burn its lamports if any.
         // The source buffer account will be cleared, so burn its lamports.
         // The two new program accounts will need to be funded.
         let lamports_to_burn = checked_add(
             target.program_account.lamports(),
             source.buffer_account.lamports(),
-        )?;
+        )
+        .and_then(|v| checked_add(v, target_program_data_account_lamports.unwrap_or(0)))?;
         let lamports_to_fund = checked_add(
             new_target_program_account.lamports(),
             new_target_program_data_account.lamports(),
@@ -393,7 +396,8 @@ impl Bank {
     ) -> Result<(), CoreBpfMigrationError> {
         datapoint_info!(datapoint_name, ("slot", self.slot, i64));
 
-        let target = TargetBpfV2::new_checked(self, loader_v2_bpf_program_address)?;
+        let (target, target_program_data_account_lamports) =
+            TargetBpfV2::new_checked(self, loader_v2_bpf_program_address)?;
         let source = SourceBuffer::new_checked(self, source_buffer_address)?;
 
         // Attempt serialization first before modifying the bank.
@@ -428,12 +432,15 @@ impl Bank {
 
         // Calculate the lamports to burn.
         // The target program account will be replaced, so burn its lamports.
+        // The target program data account might have lamports if it existed,
+        // so burn its lamports if any.
         // The source buffer account will be cleared, so burn its lamports.
         // The two new program accounts will need to be funded.
         let lamports_to_burn = checked_add(
             target.program_account.lamports(),
             source.buffer_account.lamports(),
-        )?;
+        )
+        .and_then(|v| checked_add(v, target_program_data_account_lamports.unwrap_or(0)))?;
         let lamports_to_fund = checked_add(
             new_target_program_account.lamports(),
             new_target_program_data_account.lamports(),

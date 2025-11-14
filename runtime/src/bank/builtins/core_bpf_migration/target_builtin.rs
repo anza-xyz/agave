@@ -26,7 +26,7 @@ impl TargetBuiltin {
         bank: &Bank,
         program_address: &Pubkey,
         migration_target: &CoreBpfMigrationTargetType,
-    ) -> Result<Self, CoreBpfMigrationError> {
+    ) -> Result<(Self, Option<u64>), CoreBpfMigrationError> {
         let program_account = match migration_target {
             CoreBpfMigrationTargetType::Builtin => {
                 // The program account should exist.
@@ -54,26 +54,28 @@ impl TargetBuiltin {
         let program_data_address = get_program_data_address(program_address);
 
         // The program data account is expected not to exist.
-        if let Some(account) = bank.get_account_with_fixed_root(&program_data_address) {
-            // It is possible that the program data account had lamports sent to it,
-            // which would make the account to be found. If the owner is the loader v3,
-            // then it is a genuine program data account and the migration must already
-            // been performed. In this case, we fail; otherwise, we burn and purge the
-            // account before migration.
-            if account.owner() == &BPF_LOADER_UPGRADEABLE_ID {
-                return Err(CoreBpfMigrationError::ProgramHasDataAccount(
-                    *program_address,
-                ));
+        let current_lamports =
+            if let Some(account) = bank.get_account_with_fixed_root(&program_data_address) {
+                // The program data account should not exist, but a system account with funded
+                // lamports is acceptable.
+                if account.owner() == &BPF_LOADER_UPGRADEABLE_ID {
+                    return Err(CoreBpfMigrationError::ProgramHasDataAccount(
+                        *program_address,
+                    ));
+                }
+                Some(account.lamports())
             } else {
-                bank.burn_and_purge_account(&program_data_address, account);
-            }
-        }
+                None
+            };
 
-        Ok(Self {
-            program_address: *program_address,
-            program_account,
-            program_data_address,
-        })
+        Ok((
+            Self {
+                program_address: *program_address,
+                program_account,
+                program_data_address,
+            },
+            current_lamports,
+        ))
     }
 }
 
@@ -83,9 +85,7 @@ mod tests {
         super::*, crate::bank::tests::create_simple_test_bank, agave_feature_set as feature_set,
         assert_matches::assert_matches, solana_account::Account,
         solana_feature_gate_interface as feature,
-        solana_loader_v3_interface::state::UpgradeableLoaderState,
-        solana_sdk_ids::bpf_loader_upgradeable::ID as BPF_LOADER_UPGRADEABLE_ID,
-        test_case::test_case,
+        solana_loader_v3_interface::state::UpgradeableLoaderState, test_case::test_case,
     };
 
     fn store_account<T: serde::Serialize>(
@@ -146,7 +146,7 @@ mod tests {
         let program_data_address = get_program_data_address(&program_address);
 
         // Success
-        let target_builtin =
+        let (target_builtin, _) =
             TargetBuiltin::new_checked(&bank, &program_address, &migration_target).unwrap();
         assert_eq!(target_builtin.program_address, program_address);
         assert_eq!(target_builtin.program_account, program_account);
@@ -209,7 +209,7 @@ mod tests {
         let program_data_address = get_program_data_address(&program_address);
 
         // Success
-        let target_builtin =
+        let (target_builtin, _) =
             TargetBuiltin::new_checked(&bank, &program_address, &migration_target).unwrap();
         assert_eq!(target_builtin.program_address, program_address);
         assert_eq!(target_builtin.program_account, program_account);
