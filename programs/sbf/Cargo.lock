@@ -8162,7 +8162,6 @@ dependencies = [
  "solana-signer",
  "solana-slot-history",
  "solana-storage-bigtable",
- "solana-streamer",
  "solana-svm",
  "solana-system-interface",
  "solana-system-transaction",
