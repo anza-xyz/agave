@@ -39,15 +39,16 @@ impl BlockstoreOptions {
     }
 }
 
+/// The mode to open a Blockstore with. For more details, see:
+/// https://github.com/facebook/rocksdb/wiki/Read-only-and-Secondary-instances
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AccessType {
     /// Primary (read/write) access; only one process can have Primary access.
     Primary,
     /// Primary (read/write) access with RocksDB automatic compaction disabled.
     PrimaryForMaintenance,
-    /// Read-only access. When the Read-only instance is created, it gets a static
-    /// read-only view of the Primary Instance’s database contents
-    /// (https://github.com/facebook/rocksdb/wiki/Read-only-and-Secondary-instances).
+    /// Read only access; multiple processes can obtain ReadOnly access.
+    /// ReadOnly instance gets a static view of the database at creation time.
     ReadOnly,
 }
 
