@@ -51,6 +51,7 @@ without warning. From v4.0.0 onward, symbols in these crates will be unavailable
 
 #### Changes
 * The accounts index is now kept entirely in memory by default.
+* The votes are now transported over QUIC and not UDP. The old mode can be manually enabled with `--vote-use-quic false`.
 
 ## 3.0.0
 
