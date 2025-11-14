@@ -2352,10 +2352,9 @@ impl Bank {
             return rent;
         };
 
-        rent.lamports_per_byte_year = (rent.lamports_per_byte_year * factor) / 100;
-        rent.lamports_per_byte_year = rent
-            .lamports_per_byte_year
-            .clamp(RENT_CTRL_MIN, RENT_CTRL_MAX);
+        let prev_rent = (rent.lamports_per_byte_year as f64 * rent.exemption_threshold) as u64;
+        let new_rent = (prev_rent * factor) / 100;
+        rent.lamports_per_byte_year = new_rent.clamp(RENT_CTRL_MIN, RENT_CTRL_MAX);
         rent.exemption_threshold = 1.0;
         rent
     }

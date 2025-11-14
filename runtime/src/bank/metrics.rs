@@ -245,14 +245,12 @@ pub(crate) fn report_rent_controller_metrics(
     exemption_threshold: f64,
     accumulator: i64,
 ) {
+    let rent_per_byte = (lamports_per_byte_year as f64 * exemption_threshold) as u64;
     datapoint_info!(
         "bank-rent-controller",
         ("slot", bank.slot(), i64),
-        ("epoch", bank.epoch(), i64),
-        ("parent_slot", bank.parent_slot(), i64),
         ("parent_net_state_growth", parent_net_state_growth, i64),
         ("accumulator", accumulator, i64),
-        ("lamports_per_byte_year", lamports_per_byte_year, i64),
-        ("exemption_threshold", exemption_threshold, f64),
+        ("rent_per_byte", rent_per_byte, i64),
     );
 }
