@@ -13,7 +13,7 @@ pub fn process_instruction(
 ) -> ProgramResult {
     let mut i = 0u32;
     for _ in 0..100_000 {
-        if i % 500 == 0 {
+        if i.is_multiple_of(500) {
             let remaining = sol_remaining_compute_units();
             msg!("remaining compute units: {:?}", remaining);
             if remaining < 25_000 {
