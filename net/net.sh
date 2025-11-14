@@ -60,6 +60,7 @@ Operate a configured testnet
                                       - Number of seconds to wait after validators have finished starting before starting client programs
                                         (default: $clientDelayStart)
    -n NUM_VALIDATORS                  - Number of validators to apply command to.
+   --gpu-mode GPU_MODE                - Deprecated, this argument is ignored
    --hashes-per-tick NUM_HASHES|sleep|auto
                                       - Override the default --hashes-per-tick for the cluster
    --no-airdrop
@@ -914,6 +915,9 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --profile ]]; then
       profileBuild=true
       shift 1
+    elif [[ $1 = --gpu-mode ]]; then
+      echo "'--gpu-mode' is deprecated, GPU support was removed from agave"
+      shift 2
     elif [[ $1 == --client-delay-start ]]; then
       clientDelayStart=$2
       shift 2
