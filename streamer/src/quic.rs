@@ -1087,20 +1087,11 @@ mod test {
 
                     // Verify we get the client pubkey
                     match &packet_batch {
-                        PacketBatch::Bytes(batch_with_client_id) => {
-                            let batch_len = packet_batch.len();
-                            debug!("Received WithClientId batch with {batch_len} packets");
-
-                            for packet in batch_with_client_id {
-                                assert_eq!(packet.meta().remote_pubkey(), expected_client_pubkey);
-                            }
-
-                            total_packets += batch_len;
+                        PacketBatch::Bytes(_) => {
+                            panic!("Expected PacketBatch::Simple but got PacketBatch::Bytes");
                         }
                         PacketBatch::Pinned(_) => {
-                            panic!(
-                                "Expected PacketBatch::WithClientId but got PacketBatch::Pinned"
-                            );
+                            panic!("Expected PacketBatch::Simple but got PacketBatch::Pinned");
                         }
                         PacketBatch::Single(packet) => {
                             assert_eq!(packet.meta().remote_pubkey(), expected_client_pubkey);
