@@ -1,8 +1,5 @@
 use {
-    crate::{
-        args::*, blockstore::NON_WRITABLE_BLOCKSTORE_ACCESS, canonicalize_ledger_path,
-        ledger_utils::*,
-    },
+    crate::{args::*, canonicalize_ledger_path, ledger_utils::*},
     agave_syscalls::create_program_runtime_environment_v1,
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
@@ -14,6 +11,7 @@ use {
     solana_bpf_loader_program::{create_vm, load_program_from_bytes},
     solana_cli_output::{OutputFormat, QuietDisplay, VerboseDisplay},
     solana_clock::Slot,
+    solana_ledger::blockstore_options::AccessType,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
         invoke_context::InvokeContext,
@@ -81,7 +79,7 @@ fn load_blockstore(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -> Arc<Bank
 
     let genesis_config = open_genesis_config_by(ledger_path, arg_matches);
     info!("genesis hash: {}", genesis_config.hash());
-    let blockstore = open_blockstore(ledger_path, arg_matches, NON_WRITABLE_BLOCKSTORE_ACCESS);
+    let blockstore = open_blockstore(ledger_path, arg_matches, AccessType::ReadOnly);
     let LoadAndProcessLedgerOutput { bank_forks, .. } = load_and_process_ledger_or_exit(
         arg_matches,
         &genesis_config,

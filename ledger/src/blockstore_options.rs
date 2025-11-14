@@ -46,14 +46,9 @@ pub enum AccessType {
     /// Primary (read/write) access with RocksDB automatic compaction disabled.
     PrimaryForMaintenance,
     /// Read-only access. When the Read-only instance is created, it gets a static
-    /// read-only view of the Primary Instance’s database contents.
+    /// read-only view of the Primary Instance’s database contents
+    /// (https://github.com/facebook/rocksdb/wiki/Read-only-and-Secondary-instances).
     ReadOnly,
-}
-
-impl AccessType {
-    pub fn is_non_writable(&self) -> bool {
-        matches!(self, AccessType::ReadOnly)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -2402,7 +2402,7 @@ pub mod tests {
     // Convenience wrapper to optionally process blockstore with ReadOnly access.
     //
     // Setting up the ledger for a test requires Primary access as items will need to be inserted.
-    // However, once a ReaDOnly access has been opened, it won't automatically see updates made by
+    // However, once a ReadOnly access has been opened, it won't automatically see updates made by
     // the Primary access. So, open (and close) the ReadOnly access within this function to ensure
     // that "stale" ReadOnly accesses don't propagate.
     fn test_process_blockstore_with_custom_options(

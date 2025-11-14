@@ -129,11 +129,12 @@ impl Rocks {
                     "Opening Rocks with read only access. This additional access could \
                      temporarily degrade other accesses, such as by agave-validator"
                 );
+                let error_if_log_file_exists = false;
                 DB::open_cf_descriptors_read_only(
                     &db_options,
                     &path,
                     cf_descriptors,
-                    false, /* do not error if log file exists */
+                    error_if_log_file_exists,
                 )?
             }
         };
@@ -194,9 +195,8 @@ impl Rocks {
             new_cf_descriptor::<columns::MerkleRootMeta>(options, oldest_slot),
         ];
 
-        // If the access type is read-only, we don't need to open all of the
-        // columns so we can just return immediately.
-        if options.access_type.is_non_writable() {
+        // When remaining columns are optional we can just return immediately here.
+        if !must_open_all_column_families(&options.access_type) {
             return cf_descriptors;
         }
 
@@ -1180,11 +1180,8 @@ fn get_db_options(blockstore_options: &BlockstoreOptions) -> Options {
     options.set_keep_log_file_num(10);
 
     // Allow Rocks to open/keep open as many files as it needs for performance;
-    // It is not required for read-only access
-    // https://github.com/facebook/rocksdb/wiki/Read-only-and-Secondary-instances#feature-comparison
-    if !blockstore_options.access_type.is_non_writable() {
-        options.set_max_open_files(-1);
-    }
+    // it is not required for read-only access, but should be fine with our high ulimit.
+    options.set_max_open_files(-1);
 
     options
 }
@@ -1238,6 +1235,11 @@ fn should_enable_cf_compaction(cf_name: &str) -> bool {
 // Returns true if the column family enables compression.
 fn should_enable_compression<C: 'static + Column + ColumnName>() -> bool {
     C::NAME == columns::TransactionStatus::NAME
+}
+
+// If the access type is read-only, we don't need to open all of the columns
+fn must_open_all_column_families(access_type: &AccessType) -> bool {
+    !matches!(access_type, AccessType::ReadOnly)
 }
 
 #[cfg(test)]
