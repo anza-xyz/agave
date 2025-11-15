@@ -11,7 +11,7 @@ use {
         route::NextHop,
         set_cpu_affinity,
         socket::{Socket, Tx, TxRing},
-        umem::{Frame, PageAlignedMemory, SliceUmem, Umem as _},
+        umem::{Frame, OwnedUmem, PageAlignedMemory, Umem as _},
     },
     caps::{
         CapSet,
@@ -143,14 +143,13 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<
 
     // try to allocate huge pages first, then fall back to regular pages
     const HUGE_2MB: usize = 2 * 1024 * 1024;
-    let mut memory =
-        PageAlignedMemory::alloc_with_page_size(frame_size, frame_count, HUGE_2MB, true)
-            .or_else(|_| {
-                log::warn!("huge page alloc failed, falling back to regular page size");
-                PageAlignedMemory::alloc(frame_size, frame_count)
-            })
-            .unwrap();
-    let umem = SliceUmem::new(&mut memory, frame_size as u32).unwrap();
+    let memory = PageAlignedMemory::alloc_with_page_size(frame_size, frame_count, HUGE_2MB, true)
+        .or_else(|_| {
+            log::warn!("huge page alloc failed, falling back to regular page size");
+            PageAlignedMemory::alloc(frame_size, frame_count)
+        })
+        .unwrap();
+    let umem = OwnedUmem::new(memory, frame_size as u32).unwrap();
 
     // we need NET_ADMIN and NET_RAW for the socket
     for cap in [CAP_NET_ADMIN, CAP_NET_RAW] {
