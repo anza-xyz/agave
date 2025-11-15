@@ -19,7 +19,11 @@ name = "solana_vote"
 [features]
 agave-unstable-api = []
 dev-context-only-utils = ["dep:rand", "dep:bincode"]
-frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
+frozen-abi = [
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "solana-vote-interface/frozen-abi",
+]
 
 [dependencies]
 bincode = { workspace = true, optional = true }
