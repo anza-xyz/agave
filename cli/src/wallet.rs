@@ -33,9 +33,9 @@ use {
     solana_offchain_message::OffchainMessage,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
-    solana_rpc_client::rpc_client::RpcClient,
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcTransactionConfig,
-    solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
+    solana_rpc_client_nonce_utils::nonblocking::blockhash_query::BlockhashQuery,
     solana_sdk_ids::{stake, system_program},
     solana_signature::Signature,
     solana_system_interface::{error::SystemError, instruction as system_instruction},
@@ -647,14 +647,14 @@ pub fn parse_verify_offchain_signature(
     })
 }
 
-pub fn process_show_account(
+pub async fn process_show_account(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     account_pubkey: &Pubkey,
     output_file: &Option<String>,
     use_lamports_unit: bool,
 ) -> ProcessResult {
-    let account = rpc_client.get_account(account_pubkey)?;
+    let account = rpc_client.get_account(account_pubkey).await?;
     let data = &account.data;
     let cli_account = CliAccount::new(account_pubkey, &account, use_lamports_unit);
 
@@ -686,9 +686,9 @@ pub fn process_show_account(
     Ok(account_string)
 }
 
-pub fn process_airdrop(
+pub async fn process_airdrop(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     pubkey: &Option<Pubkey>,
     lamports: u64,
 ) -> ProcessResult {
@@ -702,14 +702,14 @@ pub fn process_airdrop(
         build_balance_message(lamports, false, true),
     );
 
-    let pre_balance = rpc_client.get_balance(&pubkey)?;
+    let pre_balance = rpc_client.get_balance(&pubkey).await?;
 
-    let result = request_and_confirm_airdrop(rpc_client, config, &pubkey, lamports);
+    let result = request_and_confirm_airdrop(rpc_client, config, &pubkey, lamports).await;
     if let Ok(signature) = result {
         let signature_cli_message = log_instruction_custom_error::<SystemError>(result, config)?;
         println!("{signature_cli_message}");
 
-        let current_balance = rpc_client.get_balance(&pubkey)?;
+        let current_balance = rpc_client.get_balance(&pubkey).await?;
 
         if current_balance < pre_balance.saturating_add(lamports) {
             println!("Balance unchanged");
@@ -723,9 +723,9 @@ pub fn process_airdrop(
     }
 }
 
-pub fn process_balance(
+pub async fn process_balance(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     pubkey: &Option<Pubkey>,
     use_lamports_unit: bool,
 ) -> ProcessResult {
@@ -734,7 +734,7 @@ pub fn process_balance(
     } else {
         config.pubkey()?
     };
-    let balance = rpc_client.get_balance(&pubkey)?;
+    let balance = rpc_client.get_balance(&pubkey).await?;
     let balance_output = CliBalance {
         lamports: balance,
         config: BuildBalanceMessageConfig {
@@ -747,25 +747,31 @@ pub fn process_balance(
     Ok(config.output_format.formatted_string(&balance_output))
 }
 
-pub fn process_confirm(
+pub async fn process_confirm(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     signature: &Signature,
 ) -> ProcessResult {
-    match rpc_client.get_signature_statuses_with_history(&[*signature]) {
+    match rpc_client
+        .get_signature_statuses_with_history(&[*signature])
+        .await
+    {
         Ok(status) => {
             let cli_transaction = if let Some(transaction_status) = &status.value[0] {
                 let mut transaction = None;
                 let mut get_transaction_error = None;
                 if config.verbose {
-                    match rpc_client.get_transaction_with_config(
-                        signature,
-                        RpcTransactionConfig {
-                            encoding: Some(UiTransactionEncoding::Base64),
-                            commitment: Some(CommitmentConfig::confirmed()),
-                            max_supported_transaction_version: Some(0),
-                        },
-                    ) {
+                    match rpc_client
+                        .get_transaction_with_config(
+                            signature,
+                            RpcTransactionConfig {
+                                encoding: Some(UiTransactionEncoding::Base64),
+                                commitment: Some(CommitmentConfig::confirmed()),
+                                max_supported_transaction_version: Some(0),
+                            },
+                        )
+                        .await
+                    {
                         Ok(confirmed_transaction) => {
                             let EncodedConfirmedTransactionWithStatusMeta {
                                 block_time,
@@ -813,7 +819,7 @@ pub fn process_confirm(
 }
 
 pub fn process_decode_transaction(
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     transaction: &VersionedTransaction,
 ) -> ProcessResult {
     let sigverify_status = CliSignatureVerificationStatus::verify_transaction(transaction);
@@ -830,7 +836,7 @@ pub fn process_decode_transaction(
 }
 
 pub fn process_create_address_with_seed(
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     from_pubkey: Option<&Pubkey>,
     seed: &str,
     program_id: &Pubkey,
@@ -845,7 +851,7 @@ pub fn process_create_address_with_seed(
 }
 
 pub fn process_find_program_derived_address(
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     seeds: &Vec<Vec<u8>>,
     program_id: &Pubkey,
 ) -> ProcessResult {
@@ -862,9 +868,9 @@ pub fn process_find_program_derived_address(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn process_transfer(
+pub async fn process_transfer(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     amount: SpendAmount,
     to: &Pubkey,
     from: SignerIndex,
@@ -884,11 +890,14 @@ pub fn process_transfer(
     let from = config.signers[from];
     let mut from_pubkey = from.pubkey();
 
-    let recent_blockhash = blockhash_query.get_blockhash(rpc_client, config.commitment)?;
+    let recent_blockhash = blockhash_query
+        .get_blockhash(rpc_client, config.commitment)
+        .await?;
 
     if !sign_only && !allow_unfunded_recipient {
         let recipient_balance = rpc_client
-            .get_balance_with_commitment(to, config.commitment)?
+            .get_balance_with_commitment(to, config.commitment)
+            .await?
             .value;
         if recipient_balance == 0 {
             return Err(format!(
@@ -962,7 +971,8 @@ pub fn process_transfer(
         compute_unit_limit,
         build_message,
         config.commitment,
-    )?;
+    )
+    .await?;
     let mut tx = Transaction::new_unsigned(message);
 
     if sign_only {
@@ -976,37 +986,43 @@ pub fn process_transfer(
         )
     } else {
         if let Some(nonce_account) = &nonce_account {
-            let nonce_account = solana_rpc_client_nonce_utils::get_account_with_commitment(
-                rpc_client,
-                nonce_account,
-                config.commitment,
-            )?;
+            let nonce_account =
+                solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
+                    rpc_client,
+                    nonce_account,
+                    config.commitment,
+                )
+                .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
 
         tx.try_sign(&config.signers, recent_blockhash)?;
         let result = if no_wait {
-            rpc_client.send_transaction_with_config(&tx, config.send_transaction_config)
+            rpc_client
+                .send_transaction_with_config(&tx, config.send_transaction_config)
+                .await
         } else {
-            rpc_client.send_and_confirm_transaction_with_spinner_and_config(
-                &tx,
-                config.commitment,
-                config.send_transaction_config,
-            )
+            rpc_client
+                .send_and_confirm_transaction_with_spinner_and_config(
+                    &tx,
+                    config.commitment,
+                    config.send_transaction_config,
+                )
+                .await
         };
         log_instruction_custom_error::<SystemError>(result, config)
     }
 }
 
 pub fn process_sign_offchain_message(
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     message: &OffchainMessage,
 ) -> ProcessResult {
     Ok(message.sign(config.signers[0])?.to_string())
 }
 
 pub fn process_verify_offchain_signature(
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     signer_pubkey: &Option<Pubkey>,
     signature: &Signature,
     message: &OffchainMessage,

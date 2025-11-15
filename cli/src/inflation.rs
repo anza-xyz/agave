@@ -12,7 +12,7 @@ use {
     solana_clock::{Epoch, Slot, UnixTimestamp},
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
-    solana_rpc_client::rpc_client::RpcClient,
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
     std::{collections::HashMap, rc::Rc},
 };
 
@@ -72,22 +72,22 @@ pub fn parse_inflation_subcommand(
     )))
 }
 
-pub fn process_inflation_subcommand(
+pub async fn process_inflation_subcommand(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     inflation_subcommand: &InflationCliCommand,
 ) -> ProcessResult {
     match inflation_subcommand {
-        InflationCliCommand::Show => process_show(rpc_client, config),
+        InflationCliCommand::Show => process_show(rpc_client, config).await,
         InflationCliCommand::Rewards(addresses, rewards_epoch) => {
-            process_rewards(rpc_client, config, addresses, *rewards_epoch)
+            process_rewards(rpc_client, config, addresses, *rewards_epoch).await
         }
     }
 }
 
-fn process_show(rpc_client: &RpcClient, config: &CliConfig) -> ProcessResult {
-    let governor = rpc_client.get_inflation_governor()?;
-    let current_rate = rpc_client.get_inflation_rate()?;
+async fn process_show(rpc_client: &RpcClient, config: &CliConfig<'_>) -> ProcessResult {
+    let governor = rpc_client.get_inflation_governor().await?;
+    let current_rate = rpc_client.get_inflation_rate().await?;
 
     let inflation = CliInflation {
         governor,
@@ -97,14 +97,15 @@ fn process_show(rpc_client: &RpcClient, config: &CliConfig) -> ProcessResult {
     Ok(config.output_format.formatted_string(&inflation))
 }
 
-fn process_rewards(
+async fn process_rewards(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     addresses: &[Pubkey],
     rewards_epoch: Option<Epoch>,
 ) -> ProcessResult {
     let rewards = rpc_client
         .get_inflation_reward(addresses, rewards_epoch)
+        .await
         .map_err(|err| {
             if let Some(epoch) = rewards_epoch {
                 format!("Rewards not available for epoch {epoch}")
@@ -112,19 +113,20 @@ fn process_rewards(
                 format!("Rewards not available {err}")
             }
         })?;
-    let epoch_schedule = rpc_client.get_epoch_schedule()?;
+    let epoch_schedule = rpc_client.get_epoch_schedule().await?;
 
     let mut epoch_rewards: Vec<CliKeyedEpochReward> = vec![];
     let mut block_times: HashMap<Slot, UnixTimestamp> = HashMap::new();
     let epoch_metadata = if let Some(Some(first_reward)) = rewards.iter().find(|&v| v.is_some()) {
         let (epoch_start_time, epoch_end_time) =
-            crate::stake::get_epoch_boundary_timestamps(rpc_client, first_reward, &epoch_schedule)?;
+            crate::stake::get_epoch_boundary_timestamps(rpc_client, first_reward, &epoch_schedule)
+                .await?;
         for (reward, address) in rewards.iter().zip(addresses) {
             let cli_reward = if let Some(reward) = reward {
                 let block_time = if let Some(block_time) = block_times.get(&reward.effective_slot) {
                     *block_time
                 } else {
-                    let block_time = rpc_client.get_block_time(reward.effective_slot)?;
+                    let block_time = rpc_client.get_block_time(reward.effective_slot).await?;
                     block_times.insert(reward.effective_slot, block_time);
                     block_time
                 };
