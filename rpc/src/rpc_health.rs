@@ -3,7 +3,7 @@ use {
     solana_clock::Slot,
     solana_ledger::blockstore::Blockstore,
     std::sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, RwLock,
     },
 };
@@ -12,6 +12,7 @@ use {
 pub enum RpcHealthStatus {
     Ok,
     Behind { num_slots: Slot }, // Validator is behind its known validators
+    TransactionStatusBehind { num_slots: Slot },
     Unknown,
 }
 
@@ -22,6 +23,7 @@ pub struct RpcHealth {
     override_health_check: Arc<AtomicBool>,
     #[cfg(test)]
     stub_health_status: std::sync::RwLock<Option<RpcHealthStatus>>,
+    max_complete_transaction_status_slot: Arc<AtomicU64>,
 }
 
 impl RpcHealth {
@@ -30,6 +32,7 @@ impl RpcHealth {
         blockstore: Arc<Blockstore>,
         health_check_slot_distance: u64,
         override_health_check: Arc<AtomicBool>,
+        max_complete_transaction_status_slot: Arc<AtomicU64>,
     ) -> Self {
         Self {
             optimistically_confirmed_bank,
@@ -38,6 +41,7 @@ impl RpcHealth {
             override_health_check,
             #[cfg(test)]
             stub_health_status: std::sync::RwLock::new(None),
+            max_complete_transaction_status_slot,
         }
     }
 
@@ -74,6 +78,21 @@ impl RpcHealth {
             .unwrap()
             .bank
             .slot();
+
+        let max_complete_transaction_status_slot = self
+            .max_complete_transaction_status_slot
+            .load(Ordering::SeqCst);
+        // max_complete_transaction_status_slot will be zero if we don't have rpc transaction history enabled
+        if max_complete_transaction_status_slot != 0
+            && my_latest_optimistically_confirmed_slot
+                .saturating_sub(self.health_check_slot_distance)
+                > max_complete_transaction_status_slot
+        {
+            return RpcHealthStatus::TransactionStatusBehind {
+                num_slots: my_latest_optimistically_confirmed_slot
+                    .saturating_sub(max_complete_transaction_status_slot),
+            };
+        }
 
         let mut optimistic_slot_infos = match self.blockstore.get_latest_optimistic_slots(1) {
             Ok(infos) => infos,
@@ -116,6 +135,7 @@ impl RpcHealth {
             blockstore,
             42,
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::new(0)),
         ))
     }
 
@@ -143,6 +163,7 @@ pub mod tests {
     fn test_get_health() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(0));
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -158,6 +179,7 @@ pub mod tests {
             blockstore.clone(),
             health_check_slot_distance,
             override_health_check.clone(),
+            max_complete_transaction_status_slot.clone(),
         );
 
         // Override health check set to true - status is ok
@@ -198,6 +220,17 @@ pub mod tests {
         // OptimisticallyConfirmedBank. Either way, not a problem and status is ok.
         let bank16 = Arc::new(Bank::new_from_parent(bank15, &Pubkey::default(), 16));
         optimistically_confirmed_bank.write().unwrap().bank = bank16.clone();
+        assert_eq!(health.check(), RpcHealthStatus::Ok);
+
+        // Simulate we record transaction status to slot 5
+        max_complete_transaction_status_slot.store(5, Ordering::SeqCst);
+        assert_eq!(
+            health.check(),
+            RpcHealthStatus::TransactionStatusBehind { num_slots: 11 }
+        );
+
+        // Simulate we record transaction status to slot 16
+        max_complete_transaction_status_slot.store(16, Ordering::SeqCst);
         assert_eq!(health.check(), RpcHealthStatus::Ok);
     }
 }
