@@ -560,10 +560,6 @@ impl StreamerStats {
 
 #[derive(Clone)]
 pub struct QuicStreamerConfig {
-    pub max_connections_per_unstaked_peer: usize,
-    pub max_connections_per_staked_peer: usize,
-    pub max_staked_connections: usize,
-    pub max_unstaked_connections: usize,
     pub max_connections_per_ipaddr_per_min: u64,
     pub wait_for_chunk_timeout: Duration,
     pub num_threads: NonZeroUsize,
@@ -584,10 +580,6 @@ pub struct SimpleQosQuicStreamerConfig {
 impl Default for QuicStreamerConfig {
     fn default() -> Self {
         Self {
-            max_connections_per_unstaked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER,
-            max_connections_per_staked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
-            max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS,
-            max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
@@ -602,16 +594,9 @@ impl QuicStreamerConfig {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn default_for_tests() -> Self {
         Self {
-            max_connections_per_unstaked_peer: 1,
-            max_connections_per_staked_peer: 1,
             num_threads: Self::DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
             ..Self::default()
         }
-    }
-
-    pub(crate) fn max_concurrent_connections(&self) -> usize {
-        let conns = self.max_staked_connections + self.max_unstaked_connections;
-        conns + conns / 4
     }
 }
 
@@ -680,10 +665,6 @@ pub fn spawn_stake_wighted_qos_server(
     let stats = Arc::<StreamerStats>::default();
     let swqos = Arc::new(SwQos::new(
         qos_config,
-        quic_server_params.max_staked_connections,
-        quic_server_params.max_unstaked_connections,
-        quic_server_params.max_connections_per_unstaked_peer,
-        quic_server_params.max_connections_per_unstaked_peer,
         stats.clone(),
         staked_nodes,
         cancel.clone(),
@@ -714,11 +695,8 @@ pub fn spawn_simple_qos_server(
     cancel: CancellationToken,
 ) -> Result<SpawnServerResult, QuicServerError> {
     let stats = Arc::<StreamerStats>::default();
-
     let simple_qos = Arc::new(SimpleQos::new(
         qos_config,
-        quic_server_params.max_connections_per_staked_peer,
-        quic_server_params.max_staked_connections,
         stats.clone(),
         staked_nodes,
         cancel.clone(),
@@ -815,7 +793,7 @@ mod test {
             sender,
             staked_nodes,
             server_params,
-            SwQosConfig::default(),
+            SwQosConfig::default_for_tests(),
             cancel.clone(),
         )
         .unwrap();
@@ -871,10 +849,12 @@ mod test {
             sender,
             staked_nodes,
             QuicStreamerConfig {
-                max_connections_per_unstaked_peer: 2,
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig::default(),
+            SwQosConfig {
+                max_connections_per_unstaked_peer: 2,
+                ..Default::default()
+            },
             cancel.clone(),
         )
         .unwrap();
@@ -915,13 +895,12 @@ mod test {
         );
 
         let server_params = QuicStreamerConfig {
-            max_unstaked_connections: 0,
-            max_connections_per_staked_peer: 1,
-            max_connections_per_unstaked_peer: 0,
             ..QuicStreamerConfig::default_for_tests()
         };
         let qos_config = SimpleQosConfig {
+            max_connections_per_peer: 1,
             max_streams_per_second: 20, // low limit to ensure staked node can send all packets
+            ..Default::default()
         };
         let server_params = SimpleQosQuicStreamerConfig {
             quic_streamer_config: server_params,
@@ -964,10 +943,12 @@ mod test {
             sender,
             staked_nodes,
             QuicStreamerConfig {
-                max_unstaked_connections: 0,
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig::default(),
+            SwQosConfig {
+                max_unstaked_connections: 0,
+                ..Default::default()
+            },
             cancel.clone(),
         )
         .unwrap();

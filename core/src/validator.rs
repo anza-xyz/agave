@@ -589,17 +589,18 @@ impl ValidatorTpuConfig {
         let tpu_fwd_quic_server_config = SwQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
                 max_connections_per_ipaddr_per_min: 32,
+                ..Default::default()
+            },
+            qos_config: SwQosConfig {
                 max_unstaked_connections: 0,
                 ..Default::default()
             },
-            qos_config: SwQosConfig::default(),
         };
 
         // vote and tpu_fwd share the same characteristics -- disallow non-staked connections:
         let vote_quic_server_config = SimpleQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
                 max_connections_per_ipaddr_per_min: 32,
-                max_unstaked_connections: 0,
                 ..Default::default()
             },
             qos_config: SimpleQosConfig::default(),

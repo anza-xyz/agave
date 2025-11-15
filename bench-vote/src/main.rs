@@ -267,12 +267,14 @@ fn main() -> Result<()> {
                 max_connections_per_ipaddr_per_min: max_connections_per_ipaddr_per_min
                     .try_into()
                     .unwrap(),
+                ..Default::default()
+            };
+            let qos_config = SwQosConfig {
                 max_connections_per_unstaked_peer: max_connections_per_peer,
                 max_staked_connections: max_connections,
                 max_unstaked_connections: 0,
                 ..Default::default()
             };
-            let qos_config = SwQosConfig::default();
             let (s_reader, r_reader) = unbounded();
             read_channels.push(r_reader);
 
