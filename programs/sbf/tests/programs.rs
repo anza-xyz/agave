@@ -1768,11 +1768,11 @@ fn test_program_sbf_instruction_introspection() {
     // No accounts, should error
     let instruction = Instruction::new_with_bytes(program_id, &[0], vec![]);
     let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
+    #[allow(deprecated)]
+    let expected_error =
+        TransactionError::InstructionError(0, InstructionError::NotEnoughAccountKeys);
     assert!(result.is_err());
-    assert_eq!(
-        result.unwrap_err().unwrap(),
-        TransactionError::InstructionError(0, InstructionError::NotEnoughAccountKeys)
-    );
+    assert_eq!(result.unwrap_err().unwrap(), expected_error,);
     assert!(bank.get_account(&sysvar::instructions::id()).is_none());
 }
 
