@@ -12,7 +12,7 @@ use {
     derive(AbiExample, AbiEnumVisitor),
     frozen_abi(digest = "6NFC2nmHc5VdjYKn6cbiskj9cLyk7jsWErJinojzYQhX")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum Vote {
     /// A notarization vote
     Notarize(NotarizationVote),
@@ -139,7 +139,7 @@ impl From<SkipFallbackVote> for Vote {
     derive(AbiExample),
     frozen_abi(digest = "5AdwChAjsj5QUXLdpDnGGK2L2nA8y8EajVXi6jsmTv1m")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Default, Serialize, Deserialize)]
 pub struct NotarizationVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
@@ -153,7 +153,7 @@ pub struct NotarizationVote {
     derive(AbiExample),
     frozen_abi(digest = "2XQ5N6YLJjF28w7cMFFUQ9SDgKuf9JpJNtAiXSPA8vR2")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Default, Serialize, Deserialize)]
 pub struct FinalizationVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
@@ -167,7 +167,7 @@ pub struct FinalizationVote {
     derive(AbiExample),
     frozen_abi(digest = "G8Nrx3sMYdnLpHsCNark3BGA58BmW2sqNnqjkYhQHtN")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Default, Serialize, Deserialize)]
 pub struct SkipVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
@@ -179,7 +179,7 @@ pub struct SkipVote {
     derive(AbiExample),
     frozen_abi(digest = "7j5ZPwwyz1FaG3fpyQv5PVnQXicdSmqSk8NvqzkG1Eqz")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Default, Serialize, Deserialize)]
 pub struct NotarizationFallbackVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
@@ -193,7 +193,7 @@ pub struct NotarizationFallbackVote {
     derive(AbiExample),
     frozen_abi(digest = "WsUNum8V62gjRU1yAnPuBMAQui4YvMwD1RwrzHeYkeF")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Default, Serialize, Deserialize)]
 pub struct SkipFallbackVote {
     /// The slot this vote is cast for.
     pub slot: Slot,

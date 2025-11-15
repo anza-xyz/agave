@@ -18,7 +18,7 @@ const MAXIMUM_VALIDATORS: usize = 4096;
 
 /// Different types of errors that can be returned from the [`CertificateBuilder::aggregate()`] function.
 #[derive(Debug, PartialEq, Eq, Error)]
-pub(super) enum AggregateError {
+pub enum AggregateError {
     #[error("BLS error: {0}")]
     Bls(#[from] BlsError),
     #[error("Invalid rank: {0}")]
@@ -31,7 +31,7 @@ pub(super) enum AggregateError {
 
 /// Different types of errors that can be returned from the [`CertificateBuilder::build()`] function.
 #[derive(Debug, PartialEq, Eq, Error)]
-pub(crate) enum BuildError {
+pub enum BuildError {
     #[error("BLS error: {0}")]
     Bls(#[from] BlsError),
     #[error("Encoding failed: {0:?}")]
@@ -104,7 +104,7 @@ fn try_set_bitmap(bitmap: &mut BitVec<u8, Lsb0>, rank: u16) -> Result<(), Aggreg
 
 /// Internal builder for creating [`Certificate`] by using BLS signature aggregation.
 #[allow(clippy::large_enum_variant)]
-enum BuilderType {
+pub enum BuilderType {
     /// The produced [`Certificate`] will require only one type of [`VoteMessage`].
     SingleVote {
         signature: SignatureProjective,
@@ -216,14 +216,14 @@ impl BuilderType {
 }
 
 /// Builder for creating [`Certificate`] by using BLS signature aggregation.
-pub(super) struct CertificateBuilder {
+pub struct CertificateBuilder {
     builder_type: BuilderType,
     cert_type: CertificateType,
 }
 
 impl CertificateBuilder {
     /// Creates a new instance of the builder.
-    pub(super) fn new(cert_type: CertificateType) -> Self {
+    pub fn new(cert_type: CertificateType) -> Self {
         let builder_type = BuilderType::new(&cert_type);
         Self {
             builder_type,
@@ -232,12 +232,12 @@ impl CertificateBuilder {
     }
 
     /// Aggregates new [`VoteMessage`]s into the builder.
-    pub(super) fn aggregate(&mut self, msgs: &[VoteMessage]) -> Result<(), AggregateError> {
+    pub fn aggregate(&mut self, msgs: &[VoteMessage]) -> Result<(), AggregateError> {
         self.builder_type.aggregate(&self.cert_type, msgs)
     }
 
     /// Builds a [`Certificate`] from the builder.
-    pub(super) fn build(self) -> Result<Certificate, BuildError> {
+    pub fn build(self) -> Result<Certificate, BuildError> {
         self.builder_type.build(self.cert_type)
     }
 }
