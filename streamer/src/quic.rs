@@ -567,8 +567,6 @@ pub struct QuicStreamerConfig {
     pub max_connections_per_ipaddr_per_min: u64,
     pub wait_for_chunk_timeout: Duration,
     pub num_threads: NonZeroUsize,
-    /// Controls if to send the client Id (client's public key) along with packet batches.
-    pub send_client_id: bool,
 }
 
 #[derive(Clone)]
@@ -593,7 +591,6 @@ impl Default for QuicStreamerConfig {
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
-            send_client_id: false,
         }
     }
 }
@@ -905,9 +902,8 @@ mod test {
 
     #[test]
     fn test_quic_server_multiple_packets_with_simple_qos() {
-        // Send multiple writes from a staked node with SimpleStreamsPerSecond QoS mode
-        // with a super low staked client stake to ensure it can send all packets
-        // within the rate limit.
+        // Send multiple writes from a staked node with simple QoS mode
+        // and verify pubkey is sent along with packets.
         agave_logger::setup();
         let client_keypair = Keypair::new();
         let rich_node_keypair = Keypair::new();
@@ -923,12 +919,12 @@ mod test {
 
         let server_params = QuicStreamerConfig {
             max_unstaked_connections: 0,
-            max_connections_per_staked_peer: 1,
+            max_connections_per_staked_peer: 2,
             max_connections_per_unstaked_peer: 0,
             ..QuicStreamerConfig::default_for_tests()
         };
         let qos_config = SimpleQosConfig {
-            max_streams_per_second: 20, // low limit to ensure staked node can send all packets
+            max_streams_per_second: 20,
         };
         let server_params = SimpleQosQuicStreamerConfig {
             quic_streamer_config: server_params,
@@ -940,7 +936,7 @@ mod test {
         let runtime = rt_for_test();
         let num_expected_packets = 20;
 
-        runtime.block_on(check_multiple_packets(
+        runtime.block_on(check_multiple_packets_with_client_id(
             receiver,
             server_address,
             Some(&client_keypair),
@@ -981,52 +977,6 @@ mod test {
 
         let runtime = rt_for_test();
         runtime.block_on(check_unstaked_node_connect_failure(server_address));
-        cancel.cancel();
-        t.join().unwrap();
-    }
-
-    #[test]
-    fn test_quic_server_multiple_packets_with_client_id() {
-        // Send multiple writes from a staked node with SimpleStreamsPerSecond QoS mode
-        // with client ID enabled to verify pubkey is sent along with packets.
-        agave_logger::setup();
-        let client_keypair = Keypair::new();
-        let rich_node_keypair = Keypair::new();
-
-        let stakes = HashMap::from([
-            (client_keypair.pubkey(), 1_000), // very small staked node
-            (rich_node_keypair.pubkey(), 1_000_000_000),
-        ]);
-        let staked_nodes = StakedNodes::new(
-            Arc::new(stakes),
-            HashMap::<Pubkey, u64>::default(), // overrides
-        );
-
-        let server_params = QuicStreamerConfig {
-            max_unstaked_connections: 0,
-            max_connections_per_staked_peer: 10,
-            send_client_id: true, // Enable sending client ID
-            ..QuicStreamerConfig::default_for_tests()
-        };
-        let qos_config = SimpleQosConfig {
-            max_streams_per_second: 20,
-        };
-        let server_params = SimpleQosQuicStreamerConfig {
-            quic_streamer_config: server_params,
-            qos_config,
-        };
-        let (t, receiver, server_address, cancel) =
-            setup_simple_qos_quic_server(server_params, Arc::new(RwLock::new(staked_nodes)));
-
-        let runtime = rt_for_test();
-        let num_expected_packets = 20;
-
-        runtime.block_on(check_multiple_packets_with_client_id(
-            receiver,
-            server_address,
-            Some(&client_keypair),
-            num_expected_packets,
-        ));
         cancel.cancel();
         t.join().unwrap();
     }

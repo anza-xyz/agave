@@ -363,7 +363,6 @@ where
                         quic_server_params.clone(),
                         qos.clone(),
                         tasks.clone(),
-                        quic_server_params.send_client_id,
                     ));
                 }
                 Err(err) => {
@@ -445,7 +444,6 @@ async fn setup_connection<Q, C>(
     server_params: Arc<QuicStreamerConfig>,
     qos: Arc<Q>,
     tasks: TaskTracker,
-    send_client_id: bool,
 ) where
     Q: QosController<C> + Send + Sync + 'static,
     C: ConnectionContext + Send + Sync + 'static,
@@ -508,7 +506,6 @@ async fn setup_connection<Q, C>(
                         conn_context.clone(),
                         qos,
                         cancel_connection,
-                        send_client_id,
                     ));
                 }
             }
@@ -598,7 +595,6 @@ async fn handle_connection<Q, C>(
     context: C,
     qos: Arc<Q>,
     cancel: CancellationToken,
-    send_client_id: bool,
 ) where
     Q: QosController<C> + Send + Sync + 'static,
     C: ConnectionContext + Send + Sync + 'static,
@@ -635,10 +631,8 @@ async fn handle_connection<Q, C>(
         let mut meta = Meta::default();
         meta.set_socket_addr(&remote_addr);
         meta.set_from_staked_node(matches!(peer_type, ConnectionPeerType::Staked(_)));
-        if send_client_id {
-            if let Some(pubkey) = context.remote_pubkey() {
-                meta.set_remote_pubkey(pubkey);
-            }
+        if let Some(pubkey) = context.remote_pubkey() {
+            meta.set_remote_pubkey(pubkey);
         }
 
         let mut accum = PacketAccumulator::new(meta);
