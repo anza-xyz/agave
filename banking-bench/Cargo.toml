@@ -47,5 +47,6 @@ solana-system-transaction = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-tpu-client = { workspace = true }
 solana-transaction = { workspace = true }
+solana-unified-scheduler-pool = { workspace = true, features = ["dev-context-only-utils"] }
 solana-version = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
