@@ -1,3 +1,4 @@
+#![cfg(unix)]
 #![allow(clippy::arithmetic_side_effects)]
 use {
     solana_account::ReadableAccount,

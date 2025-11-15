@@ -1,3 +1,4 @@
+#![cfg(unix)]
 use {
     serde_json::json,
     solana_cli::{

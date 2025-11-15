@@ -1,3 +1,4 @@
+#![cfg(unix)]
 use {
     solana_cli::{
         check_balance,

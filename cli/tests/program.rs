@@ -1,3 +1,4 @@
+#![cfg(unix)]
 #![allow(clippy::arithmetic_side_effects)]
 // REMOVE once https://github.com/rust-lang/rust-clippy/issues/11153 is fixed
 #![allow(clippy::items_after_test_module)]
