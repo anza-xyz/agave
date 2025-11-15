@@ -48,10 +48,6 @@ where
 
     let swqos = Arc::new(SwQos::new(
         qos_config,
-        quic_server_params.max_staked_connections,
-        quic_server_params.max_unstaked_connections,
-        quic_server_params.max_connections_per_staked_peer,
-        quic_server_params.max_connections_per_unstaked_peer,
         stats.clone(),
         staked_nodes,
         cancel.clone(),
