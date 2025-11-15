@@ -55,7 +55,6 @@ use {
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
     solana_net_utils::multihomed_sockets::BindIpAddrs,
-    solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
     solana_pubkey::Pubkey,
     solana_runtime::{runtime_config::RuntimeConfig, snapshot_utils},
@@ -123,12 +122,6 @@ pub fn execute(
 
     info!("{} {}", crate_name!(), solana_version);
     info!("Starting validator with: {:#?}", std::env::args_os());
-
-    let cuda = matches.is_present("cuda");
-    if cuda {
-        solana_perf::perf_libs::init_cuda();
-        enable_recycler_warming();
-    }
 
     solana_core::validator::report_target_features();
 

@@ -16,7 +16,7 @@ use {
         blockstore::Blockstore,
         shred::Nonce,
     },
-    solana_perf::packet::{Packet, PacketBatch, PacketBatchRecycler, PinnedPacketBatch},
+    solana_perf::packet::{Packet, PacketBatch, PacketBatchRecycler, RecycledPacketBatch},
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::SharableBanks,
     std::{
@@ -48,7 +48,7 @@ pub trait RepairHandler {
         // Try to find the requested index in one of the slots
         let packet = self.repair_response_packet(slot, shred_index, from_addr, nonce)?;
         Some(
-            PinnedPacketBatch::new_unpinned_with_recycler_data(
+            RecycledPacketBatch::new_with_recycler_data(
                 recycler,
                 "run_window_request",
                 vec![packet],
@@ -71,7 +71,7 @@ pub trait RepairHandler {
             // meta.received must be at least 1 by this point
             let packet = self.repair_response_packet(slot, meta.received - 1, from_addr, nonce)?;
             return Some(
-                PinnedPacketBatch::new_unpinned_with_recycler_data(
+                RecycledPacketBatch::new_with_recycler_data(
                     recycler,
                     "run_highest_window_request",
                     vec![packet],
@@ -119,7 +119,7 @@ pub trait RepairHandler {
             nonce,
         )?;
         Some(
-            PinnedPacketBatch::new_unpinned_with_recycler_data(
+            RecycledPacketBatch::new_with_recycler_data(
                 recycler,
                 "run_ancestor_hashes",
                 vec![packet],
