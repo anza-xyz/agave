@@ -131,12 +131,12 @@ impl<'a, M> TransactionPtrBatch<'a, M> {
         })
     }
 
-    /// Free all transactions in the batch, then free the batch itself.
+    /// Free the transaction batch.
+    ///
+    /// # Note
+    ///
+    /// This will not free the underlying transactions which will remain valid after this call.
     pub fn free(self) {
-        for (transaction_ptr, _) in self.iter() {
-            unsafe { transaction_ptr.free(self.allocator) }
-        }
-
         unsafe { self.allocator.free(self.tx_ptr.cast()) }
     }
 }
