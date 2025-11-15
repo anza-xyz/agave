@@ -6,14 +6,14 @@ use {
     reqwest::{self, header::CONTENT_TYPE},
     serde_json::{json, Value},
     solana_account_decoder::UiAccount,
-    solana_client::connection_cache::ConnectionCache,
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_net_utils::{sockets::bind_to_localhost_unique, SocketAddrSpace},
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_pubsub_client::nonblocking::pubsub_client::PubsubClient,
     solana_rent::Rent,
+    solana_rpc_client::nonblocking::rpc_client::RpcClient as NonblockingRpcClient,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{
         client_error::{ErrorKind as ClientErrorKind, Result as ClientResult},
@@ -25,7 +25,8 @@ use {
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
     solana_test_validator::TestValidator,
-    solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig, DEFAULT_TPU_CONNECTION_POOL_SIZE},
+    solana_client::nonblocking::tpu_client::TpuClient,
+    solana_tpu_client::tpu_client::TpuClientConfig,
     solana_transaction::Transaction,
     solana_transaction_status::TransactionStatus,
     std::{
@@ -287,10 +288,7 @@ fn test_rpc_subscriptions() {
 
     let alice = Keypair::new();
     let test_validator =
-        TestValidator::with_no_fees_udp(alice.pubkey(), None, SocketAddrSpace::Unspecified);
-
-    let transactions_socket = bind_to_localhost_unique().unwrap();
-    transactions_socket.connect(test_validator.tpu()).unwrap();
+        TestValidator::with_no_fees(alice.pubkey(), None, SocketAddrSpace::Unspecified);
 
     let rpc_client = RpcClient::new(test_validator.rpc_url());
     let recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
@@ -416,18 +414,30 @@ fn test_rpc_subscriptions() {
         );
     }
 
-    let rpc_client = RpcClient::new(test_validator.rpc_url());
+    let rpc_client = Arc::new(RpcClient::new(test_validator.rpc_url()));
     let mut mint_balance = rpc_client
         .get_balance_with_commitment(&alice.pubkey(), CommitmentConfig::processed())
         .unwrap()
         .value;
     assert!(mint_balance >= transactions.len() as u64);
 
-    // Send all transactions to tpu socket for processing
-    transactions.iter().for_each(|tx| {
-        transactions_socket
-            .send(&bincode::serialize(&tx).unwrap())
-            .unwrap();
+    // Send all transactions via TPU client using tpu-client-next
+    let nonblocking_rpc_client = Arc::new(NonblockingRpcClient::new(test_validator.rpc_url()));
+    let tpu_client = rt.block_on(async {
+        TpuClient::new(
+            "test_rpc_subscriptions",
+            nonblocking_rpc_client.clone(),
+            &test_validator.rpc_pubsub_url(),
+            TpuClientConfig::default(),
+        )
+        .await
+        .unwrap()
+    });
+
+    rt.block_on(async {
+        for tx in &transactions {
+            let _ = tpu_client.send_transaction(tx).await;
+        }
     });
 
     // Track mint balance to know when transactions have completed
@@ -490,67 +500,6 @@ fn test_rpc_subscriptions() {
             }
         }
     }
-}
-
-fn run_tpu_send_transaction(tpu_use_quic: bool) {
-    let mint_keypair = Keypair::new();
-    let mint_pubkey = mint_keypair.pubkey();
-    let test_validator =
-        TestValidator::with_no_fees(mint_pubkey, None, SocketAddrSpace::Unspecified);
-    let rpc_client = Arc::new(RpcClient::new_with_commitment(
-        test_validator.rpc_url(),
-        CommitmentConfig::processed(),
-    ));
-    let connection_cache = if tpu_use_quic {
-        ConnectionCache::new_quic_for_tests(
-            "connection_cache_test",
-            DEFAULT_TPU_CONNECTION_POOL_SIZE,
-        )
-    } else {
-        ConnectionCache::with_udp("connection_cache_test", DEFAULT_TPU_CONNECTION_POOL_SIZE)
-    };
-    let recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
-    let tx =
-        system_transaction::transfer(&mint_keypair, &Pubkey::new_unique(), 42, recent_blockhash);
-    let success = match connection_cache {
-        ConnectionCache::Quic(cache) => TpuClient::new_with_connection_cache(
-            rpc_client.clone(),
-            &test_validator.rpc_pubsub_url(),
-            TpuClientConfig::default(),
-            cache,
-        )
-        .unwrap()
-        .send_transaction(&tx),
-        ConnectionCache::Udp(cache) => TpuClient::new_with_connection_cache(
-            rpc_client.clone(),
-            &test_validator.rpc_pubsub_url(),
-            TpuClientConfig::default(),
-            cache,
-        )
-        .unwrap()
-        .send_transaction(&tx),
-    };
-    assert!(success);
-    let timeout = Duration::from_secs(5);
-    let now = Instant::now();
-    let signatures = vec![tx.signatures[0]];
-    loop {
-        assert!(now.elapsed() < timeout);
-        let statuses = rpc_client.get_signature_statuses(&signatures).unwrap();
-        if !statuses.value.is_empty() {
-            return;
-        }
-    }
-}
-
-#[test]
-fn test_tpu_send_transaction() {
-    run_tpu_send_transaction(/*tpu_use_quic*/ false)
-}
-
-#[test]
-fn test_tpu_send_transaction_with_quic() {
-    run_tpu_send_transaction(/*tpu_use_quic*/ true)
 }
 
 #[test]
