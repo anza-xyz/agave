@@ -1903,7 +1903,7 @@ fn main() {
 
                     if let Some(mut slot_recorder_config) = slot_recorder_config {
                         // Drop transaction_status_sender to break transaction_recorder
-                        // out of its' recieve loop
+                        // out of its' receive loop
                         let transaction_status_sender =
                             slot_recorder_config.transaction_status_sender.take();
                         drop(transaction_status_sender);

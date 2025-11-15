@@ -639,7 +639,7 @@ impl EventHandler {
     }
 
     /// Checks the pending blocks that have completed replay to see if they
-    /// are eligble to be voted on now
+    /// are eligible to be voted on now
     fn check_pending_blocks(
         my_pubkey: &Pubkey,
         pending_blocks: &mut PendingBlocks,

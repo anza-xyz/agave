@@ -933,7 +933,7 @@ mod tests {
         );
 
         let test_update_cost_tracker =
-            |execution_cost_adjust: i64, loaded_acounts_data_size_cost_adjust: i64| {
+            |execution_cost_adjust: i64, loaded_accounts_data_size_cost_adjust: i64| {
                 let mut cost_tracker = CostTracker::default();
                 assert!(cost_tracker.try_add(&tx_cost).is_ok());
 
@@ -941,10 +941,10 @@ mod tests {
                     (estimated_programs_execution_cost as i64 + execution_cost_adjust) as u64;
                 let actual_loaded_accounts_data_size_cost =
                     (estimated_loaded_accounts_data_size_cost as i64
-                        + loaded_acounts_data_size_cost_adjust) as u64;
+                        + loaded_accounts_data_size_cost_adjust) as u64;
                 let expected_cost = (estimated_tx_cost as i64
                     + execution_cost_adjust
-                    + loaded_acounts_data_size_cost_adjust)
+                    + loaded_accounts_data_size_cost_adjust)
                     as u64;
 
                 cost_tracker.update_execution_cost(

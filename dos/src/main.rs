@@ -250,7 +250,7 @@ struct TransactionBatchMsg {
 
 /// Creates thread which receives batches of transactions from tx_receiver
 /// and sends them to the target.
-/// If `iterations` is 0, it works indefenetely.
+/// If `iterations` is 0, it works indefinitely.
 /// Otherwise, it sends at least `iterations` number of transactions
 fn create_sender_thread(
     tx_receiver: Receiver<TransactionBatchMsg>,

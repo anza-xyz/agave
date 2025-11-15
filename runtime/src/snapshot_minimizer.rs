@@ -498,12 +498,12 @@ mod tests {
             programdata_address,
         };
 
-        let non_program_acount = AccountSharedData::new(1, 0, &non_program_id);
+        let non_program_account = AccountSharedData::new(1, 0, &non_program_id);
         let mut program_account =
             AccountSharedData::new_data(40, &program, &bpf_loader_upgradeable::id()).unwrap();
         program_account.set_executable(true);
 
-        bank.store_account(&non_program_id, &non_program_acount);
+        bank.store_account(&non_program_id, &non_program_account);
         bank.store_account(&program_id, &program_account);
 
         // Non-program account does not add any additional keys

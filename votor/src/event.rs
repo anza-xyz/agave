@@ -58,7 +58,7 @@ pub enum VotorEvent {
     /// Produce the window
     ProduceWindow(LeaderWindowInfo),
 
-    /// The block has received a slow or fast finalization certificate and is eligble for rooting
+    /// The block has received a slow or fast finalization certificate and is eligible for rooting
     /// The second bool indicates whether the block is a fast finalization
     Finalized(Block, bool),
 

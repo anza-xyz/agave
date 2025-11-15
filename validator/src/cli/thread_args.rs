@@ -312,7 +312,7 @@ impl ThreadArg for TpuTransactionForwardReceiveThreadArgs {
     const NAME: &'static str = "tpu_transaction_forward_receive_threads";
     const LONG_NAME: &'static str = "tpu-transaction-forward-receive-threads";
     const HELP: &'static str =
-        "Number of threads to use for receiving transactions on the TPU fowards port";
+        "Number of threads to use for receiving transactions on the TPU forwards port";
 
     fn default() -> usize {
         solana_streamer::quic::default_num_tpu_transaction_forward_receive_threads()

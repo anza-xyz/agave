@@ -615,7 +615,7 @@ fn _verify_epoch_stakes(
 ) -> std::result::Result<(), VerifyEpochStakesError> {
     // Ensure epoch stakes from the snapshot does not contain entries for invalid epochs.
     // Since epoch stakes are computed for the leader schedule epoch (usually `epoch + 1`),
-    // the snapshot's epoch stakes therefor can have entries for epochs at-or-below the
+    // the snapshot's epoch stakes therefore can have entries for epochs at-or-below the
     // leader schedule epoch.
     let max_epoch = *required_epochs.end();
     if let Some(invalid_epoch) = epoch_stakes_map.keys().find(|epoch| **epoch > max_epoch) {

@@ -55,7 +55,7 @@ impl BankHashCache {
     /// Should only be used after `slots_dumped` is acquired from `dumped_slot_subscription` to
     /// guarantee synchronicity with `self.bank_forks`. Multiple calls to `hash` will only be
     /// consistent with each other if `slots_dumped` was not released in between, as otherwise a dump
-    /// could have occurred inbetween.
+    /// could have occurred in between.
     pub fn hash(&mut self, slot: Slot, slots_dumped: &mut MutexGuard<bool>) -> Option<Hash> {
         if **slots_dumped {
             // We could be smarter and keep a fork cache to only clear affected slots from the cache,

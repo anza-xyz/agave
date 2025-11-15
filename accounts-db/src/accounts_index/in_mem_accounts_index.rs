@@ -1436,7 +1436,7 @@ mod tests {
             .try_write(&pubkey, disk_entry)
             .unwrap();
 
-        // Ensure the entry is not found in meory
+        // Ensure the entry is not found in memory
         let mut found = false;
         accounts_index.get_only_in_mem(&pubkey, false, |entry| {
             found = entry.is_some();

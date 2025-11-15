@@ -2989,7 +2989,7 @@ mod tests {
             &expected_hit_account.data_clone()
         ));
 
-        // reload doesnt affect this
+        // reload doesn't affect this
         account_loader.load_account(&hit_address);
         let actual_hit_account = account_loader.loaded_accounts.get(&hit_address);
 

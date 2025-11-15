@@ -1225,7 +1225,7 @@ impl TestValidator {
     }
 
     /// programs added to genesis ain't immediately usable. Actively check "Program
-    /// is not deployed" error for their availibility.
+    /// is not deployed" error for their availability.
     async fn wait_for_upgradeable_programs_deployed(
         &self,
         upgradeable_programs: &[&Pubkey],
@@ -1502,10 +1502,10 @@ mod test {
 
         // The first one, where we provided `--deactivate-feature`, should be
         // the account we provided.
-        let overriden_account = our_accounts[0].as_ref().unwrap();
-        assert_eq!(overriden_account.lamports, 100_000);
-        assert_eq!(overriden_account.data.len(), 0);
-        assert_eq!(overriden_account.owner, owner);
+        let overridden_account = our_accounts[0].as_ref().unwrap();
+        assert_eq!(overridden_account.lamports, 100_000);
+        assert_eq!(overridden_account.data.len(), 0);
+        assert_eq!(overridden_account.owner, owner);
 
         // The second one should be a feature account.
         let feature_account = our_accounts[1].as_ref().unwrap();

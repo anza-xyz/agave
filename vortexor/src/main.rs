@@ -96,7 +96,7 @@ pub fn main() {
     );
 
     let (banking_tracer, _) = BankingTracer::new(
-        None, // Not interesed in banking tracing
+        None, // Not interested in banking tracing
     )
     .unwrap();
 

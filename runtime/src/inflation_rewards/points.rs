@@ -55,7 +55,7 @@ pub enum SkippedReason {
     ZeroReward,
     ZeroCreditsAndReturnZero,
     ZeroCreditsAndReturnCurrent,
-    ZeroCreditsAndReturnRewinded,
+    ZeroCreditsAndReturnRewound,
 }
 
 impl From<SkippedReason> for InflationPointCalculationEvent {
@@ -116,7 +116,7 @@ pub(crate) fn calculate_stake_points_and_credits(
     match credits_in_vote.cmp(&credits_in_stake) {
         Ordering::Less => {
             if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
-                inflation_point_calc_tracer(&SkippedReason::ZeroCreditsAndReturnRewinded.into());
+                inflation_point_calc_tracer(&SkippedReason::ZeroCreditsAndReturnRewound.into());
             }
             // Don't adjust stake.activation_epoch for simplicity:
             //  - generally fast-forwarding stake.activation_epoch forcibly (for

@@ -2183,7 +2183,7 @@ pub struct FullInflationFeaturePair {
     pub enable_id: Pubkey, // Feature to enable full inflation by the candidate
 }
 
-/// Set of feature pairs that once enabled will trigger full inflationi
+/// Set of feature pairs that once enabled will trigger full inflation
 pub static FULL_INFLATION_FEATURE_PAIRS: LazyLock<AHashSet<FullInflationFeaturePair>> =
     LazyLock::new(|| {
         [FullInflationFeaturePair {

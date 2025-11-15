@@ -202,7 +202,7 @@ impl<K> KeyedRateLimiter<K>
 where
     K: Hash + Eq,
 {
-    /// Creates a new KeyedRateLimiter with a specified taget capacity and shard amount for the
+    /// Creates a new KeyedRateLimiter with a specified target capacity and shard amount for the
     /// underlying DashMap. This uses a LazyLRU style eviction policy, so actual memory consumption
     /// will be 2 * target_capacity.
     ///
