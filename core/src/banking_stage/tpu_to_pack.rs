@@ -199,12 +199,11 @@ mod tests {
     fn test_copy_packet_and_populate_message() {
         let packet_bytes = vec![1, 2, 3, 4, 5];
         let src_ip = Ipv4Addr::new(192, 168, 1, 1);
-        let packet_meta = solana_packet::Meta {
-            size: packet_bytes.len(),
-            addr: IpAddr::V4(src_ip),
-            port: 1,
-            flags: PacketFlags::all(),
-        };
+        let mut packet_meta = solana_packet::Meta::default();
+        packet_meta.size = packet_bytes.len();
+        packet_meta.addr = IpAddr::V4(src_ip);
+        packet_meta.port = 1;
+        packet_meta.flags = PacketFlags::all();
 
         // Buffer to simulate allocated memory
         let mut buffer = [0u8; 256];

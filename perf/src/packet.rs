@@ -52,10 +52,8 @@ impl BytesPacket {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn from_bytes(dest: Option<&SocketAddr>, buffer: impl Into<Bytes>) -> Self {
         let buffer = buffer.into();
-        let mut meta = Meta {
-            size: buffer.len(),
-            ..Default::default()
-        };
+        let mut meta = Meta::default();
+        meta.size = buffer.len();
         if let Some(dest) = dest {
             meta.set_socket_addr(dest);
         }
@@ -74,10 +72,8 @@ impl BytesPacket {
         let buffer = writer.into_inner();
         let buffer = buffer.freeze();
 
-        let mut meta = Meta {
-            size: buffer.len(),
-            ..Default::default()
-        };
+        let mut meta = Meta::default();
+        meta.size = buffer.len();
         if let Some(dest) = dest {
             meta.set_socket_addr(dest);
         }
