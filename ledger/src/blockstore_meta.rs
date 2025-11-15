@@ -889,7 +889,7 @@ mod test {
         super::*,
         bincode::Options,
         proptest::prelude::*,
-        rand::{seq::SliceRandom, thread_rng},
+        rand::{prelude::IndexedRandom as _, rng},
     };
 
     #[test]
@@ -912,7 +912,7 @@ mod test {
             config: erasure_config,
             first_received_coding_index: 0,
         };
-        let mut rng = thread_rng();
+        let mut rng = rng();
         let mut index = Index::new(0);
 
         let data_indexes = 0..erasure_config.num_data as u64;

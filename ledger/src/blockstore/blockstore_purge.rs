@@ -998,7 +998,7 @@ pub mod tests {
             use rand::Rng;
 
             let mut key = [0u8; 64];
-            rand::thread_rng().fill(&mut key[..]);
+            rand::rng().fill(&mut key[..]);
             Signature::from(key)
         }
 

@@ -2365,7 +2365,7 @@ impl Blockstore {
         let mut all_shreds = vec![];
         let mut slot_entries = vec![];
         let reed_solomon_cache = ReedSolomonCache::default();
-        let mut chained_merkle_root = Hash::new_from_array(rand::thread_rng().gen());
+        let mut chained_merkle_root = Hash::new_from_array(rand::rng().random());
         // Find all the entries for start_slot
         for entry in entries.into_iter() {
             if remaining_ticks_in_slot == 0 {
@@ -4827,7 +4827,7 @@ pub fn create_new_ledger(
         &entries,
         true, // is_last_in_slot
         // chained_merkle_root
-        Hash::new_from_array(rand::thread_rng().gen()),
+        Hash::new_from_array(rand::rng().random()),
         0, // next_shred_index
         0, // next_code_index
         &ReedSolomonCache::default(),
@@ -5059,9 +5059,9 @@ pub fn entries_to_test_shreds(
             &Keypair::new(),
             entries,
             is_full_slot,
-            Hash::new_from_array(rand::thread_rng().gen()), // chained_merkle_root
-            0,                                              // next_shred_index,
-            0,                                              // next_code_index
+            Hash::new_from_array(rand::rng().random()), // chained_merkle_root
+            0,                                          // next_shred_index,
+            0,                                          // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
@@ -5225,7 +5225,7 @@ pub mod tests {
         assert_matches::assert_matches,
         bincode::{serialize, Options},
         crossbeam_channel::unbounded,
-        rand::{seq::SliceRandom, thread_rng},
+        rand::{rng, seq::SliceRandom},
         solana_account_decoder::parse_token::UiTokenAmount,
         solana_clock::{DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT},
         solana_entry::entry::{next_entry, next_entry_mut},
@@ -5687,14 +5687,14 @@ pub mod tests {
     fn test_index_fallback_deserialize() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-        let mut rng = rand::thread_rng();
-        let slot = rng.gen_range(0..100);
+        let mut rng = rand::rng();
+        let slot = rng.random_range(0..100);
         let bincode = bincode::DefaultOptions::new()
             .reject_trailing_bytes()
             .with_fixint_encoding();
 
-        let data = 0..rng.gen_range(100..MAX_DATA_SHREDS_PER_SLOT as u64);
-        let coding = 0..rng.gen_range(100..MAX_DATA_SHREDS_PER_SLOT as u64);
+        let data = 0..rng.random_range(100..MAX_DATA_SHREDS_PER_SLOT as u64);
+        let coding = 0..rng.random_range(100..MAX_DATA_SHREDS_PER_SLOT as u64);
         let mut fallback = IndexFallback::new(slot);
         for (d, c) in data.clone().zip(coding.clone()) {
             fallback.data_mut().insert(d);
@@ -6025,7 +6025,7 @@ pub mod tests {
             .flatten()
             .collect();
 
-        all_shreds.shuffle(&mut thread_rng());
+        all_shreds.shuffle(&mut rng());
         blockstore.insert_shreds(all_shreds, None, false).unwrap();
         let mut result = recvr.try_recv().unwrap();
         result.sort_unstable();
@@ -10075,7 +10075,7 @@ pub mod tests {
             parent_slot,
             num_entries,
             fec_set_index,
-            Hash::new_from_array(rand::thread_rng().gen()),
+            Hash::new_from_array(rand::rng().random()),
         )
     }
 
@@ -10171,7 +10171,7 @@ pub mod tests {
         let leader_keypair = Arc::new(Keypair::new());
         let reed_solomon_cache = ReedSolomonCache::default();
         let shredder = Shredder::new(slot, 0, 0, 0).unwrap();
-        let merkle_root = Hash::new_from_array(rand::thread_rng().gen());
+        let merkle_root = Hash::new_from_array(rand::rng().random());
         let (shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
             &leader_keypair,
             &entries1,
@@ -10531,7 +10531,7 @@ pub mod tests {
         let version = version_from_hash(&entries[0].hash);
         let shredder = Shredder::new(slot, 0, 0, version).unwrap();
         let reed_solomon_cache = ReedSolomonCache::default();
-        let merkle_root = Hash::new_from_array(rand::thread_rng().gen());
+        let merkle_root = Hash::new_from_array(rand::rng().random());
         let kp = Keypair::new();
         // produce normal shreds
         let (data1, coding1) = shredder.entries_to_merkle_shreds_for_tests(
