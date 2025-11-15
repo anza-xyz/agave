@@ -67,7 +67,7 @@ the next layer instead of to every TVU peer in the cluster.
 The following diagram shows how shreds propagate through a cluster with 15 nodes
 and a fanout of 3.
 
-![Shred propagation through 15 node cluster with fanout of 3](/img/data-plane-propagation.png)
+![Shred propagation through 15 node cluster with fanout of 3](../../static/img/data-plane-propagation.png)
 
 ## Calculating the required FEC rate
 

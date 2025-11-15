@@ -99,7 +99,7 @@ every slot, based on the fee-rate governor.
 The Instructions sysvar contains the serialized instructions in a Message while
 that Message is being processed. This allows program instructions to reference
 other instructions in the same transaction. Read more information on
-[instruction introspection](implemented-proposals/instruction_introspection.md).
+[instruction introspection](../implemented-proposals/instruction_introspection.md).
 
 - Address: `Sysvar1nstructions1111111111111111111111111`
 - Layout:
