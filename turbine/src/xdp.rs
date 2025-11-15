@@ -7,7 +7,7 @@ use {
         load_xdp_program,
         route::Router,
         route_monitor::RouteMonitor,
-        tx_loop::{TxLoopConfigBuilder, tx_loop},
+        tx_loop::{TxLoopBuilder, TxLoopConfigBuilder},
     },
     arc_swap::ArcSwap,
     crossbeam_channel::TryRecvError,
@@ -220,18 +220,16 @@ impl XdpRetransmitter {
                 Builder::new()
                     .name(format!("solRetransmIO{i:02}"))
                     .spawn(move || {
-                        tx_loop(
-                            cpu_id,
-                            &dev,
-                            QueueId(i as u64),
-                            config,
-                            receiver,
-                            drop_sender,
-                            move |ip| {
-                                let r = atomic_router.load();
-                                r.route(*ip).ok()
-                            },
-                        )
+                        // each queue is bound to its own CPU core
+                        set_cpu_affinity([cpu_id]).unwrap();
+
+                        let tx_loop_builder =
+                            TxLoopBuilder::new(cpu_id, QueueId(i as u64), config, &dev);
+                        let tx_loop = tx_loop_builder.build();
+                        tx_loop.run(receiver, drop_sender, move |ip| {
+                            let r = atomic_router.load();
+                            r.route(*ip).ok()
+                        })
                     })
                     .unwrap(),
             );
