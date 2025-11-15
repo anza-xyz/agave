@@ -205,8 +205,8 @@ mod test {
         super::*,
         solana_gossip::{crds_data::LowestSlot, node::Node},
         solana_keypair::Keypair,
+        solana_net_utils::SocketAddrSpace,
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
     };
 
     #[test]

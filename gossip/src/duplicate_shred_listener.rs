@@ -74,8 +74,8 @@ mod tests {
         },
         solana_keypair::Keypair,
         solana_ledger::shred::Shredder,
+        solana_net_utils::SocketAddrSpace,
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
         std::sync::{
             atomic::{AtomicU32, Ordering},
             Arc,

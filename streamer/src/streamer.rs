@@ -7,13 +7,16 @@ use {
             self, PacketBatch, PacketBatchRecycler, PacketRef, PinnedPacketBatch, PACKETS_PER_BATCH,
         },
         sendmmsg::{batch_send, SendPktsError},
-        socket::SocketAddrSpace,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
     histogram::Histogram,
     itertools::Itertools,
-    solana_net_utils::multihomed_sockets::{
-        BindIpAddrs, CurrentSocket, FixedSocketProvider, MultihomedSocketProvider, SocketProvider,
+    solana_net_utils::{
+        multihomed_sockets::{
+            BindIpAddrs, CurrentSocket, FixedSocketProvider, MultihomedSocketProvider,
+            SocketProvider,
+        },
+        SocketAddrSpace,
     },
     solana_packet::Packet,
     solana_pubkey::Pubkey,

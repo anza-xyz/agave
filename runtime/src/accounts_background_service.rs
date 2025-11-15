@@ -188,13 +188,7 @@ impl SnapshotRequestHandler {
                 Some((snapshot_request, 1, 0))
             }
             _ => {
-                // Get the two highest priority requests, `y` and `z`.
-                // By asking for the second-to-last element to be in its final sorted position, we
-                // also ensure that the last element is also sorted.
-                // Note, we no longer need the second-to-last element; this code can be refactored.
-                let (_, _y, z) =
-                    requests.select_nth_unstable_by(requests_len - 2, cmp_requests_by_priority);
-                assert_eq!(z.len(), 1);
+                requests.select_nth_unstable_by(requests_len - 1, cmp_requests_by_priority);
 
                 // SAFETY: We know the len is > 1, so `pop` will return `Some`
                 let snapshot_request = requests.pop().unwrap();

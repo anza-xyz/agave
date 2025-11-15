@@ -26,7 +26,10 @@ use {
         blockstore::{Blockstore, PurgeType},
         leader_schedule_cache::LeaderScheduleCache,
     },
-    solana_net_utils::sockets::{bind_in_range_with_config, SocketConfiguration},
+    solana_net_utils::{
+        sockets::{bind_in_range_with_config, SocketConfiguration},
+        SocketAddrSpace,
+    },
     solana_poh::{
         poh_controller::PohController,
         poh_recorder::{PohRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
@@ -43,7 +46,6 @@ use {
     },
     solana_shred_version::compute_shred_version,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
     std::{
         collections::BTreeMap,

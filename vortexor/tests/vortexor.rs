@@ -7,7 +7,7 @@ use {
         local_cluster::{ClusterConfig, LocalCluster},
     },
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_net_utils::VALIDATOR_PORT_RANGE,
+    solana_net_utils::{SocketAddrSpace, VALIDATOR_PORT_RANGE},
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_streamer::{
@@ -16,7 +16,6 @@ use {
             DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
         },
-        socket::SocketAddrSpace,
         streamer::StakedNodes,
     },
     solana_vortexor::{

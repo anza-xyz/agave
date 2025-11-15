@@ -9,7 +9,8 @@ use nix::poll::{poll, PollFd, PollTimeout};
 ))]
 use nix::{poll::ppoll, sys::time::TimeSpec};
 use {
-    crate::{recvmmsg::recv_mmsg, socket::SocketAddrSpace},
+    crate::recvmmsg::recv_mmsg,
+    solana_net_utils::SocketAddrSpace,
     std::{
         io::{ErrorKind, Result},
         net::UdpSocket,

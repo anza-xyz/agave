@@ -56,7 +56,7 @@ use {
         bind_in_range,
         multihomed_sockets::BindIpAddrs,
         sockets::{bind_gossip_port_in_range, bind_to_localhost_unique},
-        PortRange, VALIDATOR_PORT_RANGE,
+        PortRange, SocketAddrSpace, VALIDATOR_PORT_RANGE,
     },
     solana_perf::{
         data_budget::DataBudget,
@@ -70,7 +70,6 @@ use {
     solana_signer::Signer,
     solana_streamer::{
         packet,
-        socket::SocketAddrSpace,
         streamer::{ChannelSend, PacketBatchReceiver},
     },
     solana_time_utils::timestamp,

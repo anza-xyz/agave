@@ -15,7 +15,7 @@ use {
         restart::RestartableBucket,
         MaxSearch, RefCount,
     },
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     std::{
@@ -156,7 +156,7 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
                     Arc::clone(&stats.index),
                     count,
                 );
-                let random = thread_rng().gen();
+                let random = rng().random();
                 restartable_bucket.set_file(file_name, random);
                 (index, random, false /* true = reused file */)
             });
@@ -593,7 +593,7 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
         let best_bucket = &mut self.data[best_fit_bucket as usize];
         let cap_power = best_bucket.contents.capacity_pow2();
         let cap = best_bucket.capacity();
-        let pos = thread_rng().gen_range(0..cap);
+        let pos = rng().random_range(0..cap);
         let mut success = false;
         // max search is increased here by a lot for this search. The idea is that we just have to find an empty bucket somewhere.
         // We don't mind waiting on a new write (by searching longer). Writing is done in the background only.

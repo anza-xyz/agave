@@ -1,7 +1,7 @@
 use {
     crate::{bucket_stats::BucketStats, MaxSearch},
     memmap2::MmapMut,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     solana_measure::measure::Measure,
     std::{
         fs::{remove_file, OpenOptions},
@@ -454,9 +454,9 @@ impl<O: BucketOccupied> BucketStorage<O> {
 
     /// allocate a new memory mapped file of size `bytes` on one of `drives`
     fn new_map(drives: &[PathBuf], bytes: u64, stats: &BucketStats) -> (MmapMut, PathBuf, u128) {
-        let r = thread_rng().gen_range(0..drives.len());
+        let r = rng().random_range(0..drives.len());
         let drive = &drives[r];
-        let file_random = thread_rng().gen_range(0..u128::MAX);
+        let file_random = rng().random_range(0..u128::MAX);
         let pos = format!("{file_random}");
         let file = drive.join(pos);
         let res = Self::map_open_file(file.clone(), true, bytes, stats).unwrap();

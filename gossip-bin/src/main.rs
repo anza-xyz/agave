@@ -12,8 +12,8 @@ use {
         input_parsers::{keypair_of, pubkeys_of},
         input_validators::{is_keypair_or_ask_keyword, is_port, is_pubkey},
     },
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
-    solana_streamer::socket::SocketAddrSpace,
     std::{
         error,
         net::{IpAddr, Ipv4Addr, SocketAddr},

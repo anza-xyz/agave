@@ -38,7 +38,6 @@ solana-pubkey = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-runtime = { workspace = true }
 solana-signer = { workspace = true }
-solana-streamer = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }

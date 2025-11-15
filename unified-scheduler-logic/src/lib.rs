@@ -1460,7 +1460,7 @@ impl SchedulingStateMachine {
 
     #[cfg(test)]
     unsafe fn exclusively_initialize_current_thread_for_scheduling_for_test() -> Self {
-        Self::exclusively_initialize_current_thread_for_scheduling(None)
+        unsafe { Self::exclusively_initialize_current_thread_for_scheduling(None) }
     }
 }
 

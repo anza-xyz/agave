@@ -95,6 +95,7 @@ mod test {
             blockstore::Blockstore, get_tmp_ledger_path_auto_delete,
             leader_schedule_cache::LeaderScheduleCache,
         },
+        solana_net_utils::SocketAddrSpace,
         solana_poh_config::PohConfig,
         solana_runtime::{
             bank::Bank,
@@ -103,7 +104,6 @@ mod test {
             },
         },
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
         solana_time_utils::timestamp,
         std::{net::Ipv4Addr, sync::atomic::AtomicBool},
     };

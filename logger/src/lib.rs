@@ -62,17 +62,19 @@ pub fn setup() {
 }
 
 // Configures file logging with a default filter if RUST_LOG is not set
-pub fn setup_file_with_default(logfile: &Path, filter: &str) {
-    use std::fs::OpenOptions;
-    let file = OpenOptions::new()
+#[cfg(not(unix))]
+fn setup_file_with_default_filter(logfile: &Path) {
+    let file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(logfile)
         .unwrap();
-    let logger = env_logger::Builder::from_env(env_logger::Env::new().default_filter_or(filter))
-        .format_timestamp_nanos()
-        .target(env_logger::Target::Pipe(Box::new(file)))
-        .build();
+
+    let logger =
+        env_logger::Builder::from_env(env_logger::Env::new().default_filter_or(DEFAULT_FILTER))
+            .format_timestamp_nanos()
+            .target(env_logger::Target::Pipe(Box::new(file)))
+            .build();
     replace_logger(logger);
 }
 
@@ -105,7 +107,7 @@ pub fn initialize_logging(logfile: Option<PathBuf>) {
     }
     #[cfg(not(unix))]
     {
-        setup_file_with_default(&logfile, DEFAULT_FILTER);
+        setup_file_with_default_filter(&logfile);
     }
 }
 
@@ -153,7 +155,7 @@ pub fn redirect_stderr_to_file(logfile: Option<PathBuf>) -> Option<JoinHandle<()
             #[cfg(not(unix))]
             {
                 println!("logrotate is not supported on this platform");
-                setup_file_with_default(&logfile, DEFAULT_FILTER);
+                setup_file_with_default_filter(&logfile);
                 None
             }
         }

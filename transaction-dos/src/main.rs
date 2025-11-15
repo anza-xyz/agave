@@ -17,11 +17,11 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::{read_keypair_file, Keypair},
     solana_message::Message,
+    solana_net_utils::SocketAddrSpace,
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_system_interface::instruction as system_instruction,
     solana_transaction::Transaction,
     std::{

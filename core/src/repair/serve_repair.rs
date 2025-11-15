@@ -36,6 +36,7 @@ use {
     solana_hash::{Hash, HASH_BYTES},
     solana_keypair::{signable::Signable, Keypair},
     solana_ledger::shred::{self, Nonce, ShredFetchStats, SIZE_OF_NONCE},
+    solana_net_utils::SocketAddrSpace,
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::{
         data_budget::DataBudget,
@@ -47,7 +48,6 @@ use {
     solana_signer::Signer,
     solana_streamer::{
         sendmmsg::{batch_send, SendPktsError},
-        socket::SocketAddrSpace,
         streamer::PacketBatchSender,
     },
     solana_time_utils::timestamp,
@@ -1362,10 +1362,10 @@ mod tests {
                 max_ticks_per_n_shreds, ProcessShredsStats, ReedSolomonCache, Shred, Shredder,
             },
         },
+        solana_net_utils::SocketAddrSpace,
         solana_perf::packet::{deserialize_from_with_limit, Packet, PacketFlags, PacketRef},
         solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
-        solana_streamer::socket::SocketAddrSpace,
         solana_time_utils::timestamp,
         std::{io::Cursor, net::Ipv4Addr},
     };
