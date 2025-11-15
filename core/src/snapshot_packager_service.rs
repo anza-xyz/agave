@@ -105,12 +105,8 @@ impl SnapshotPackagerService {
                             exit_backpressure.is_none(),
                         ));
                     if let Err(err) = archive_result {
-                        error!(
-                            "Stopping {}! Fatal error while archiving snapshot package: {err}",
-                            Self::NAME,
-                        );
-                        exit.store(true, Ordering::Relaxed);
-                        break;
+                        error!("Failed to archive snapshot package: {err}");
+                        continue;
                     }
 
                     if let Some(snapshot_gossip_manager) = snapshot_gossip_manager.as_mut() {
