@@ -62,10 +62,6 @@ const CONNECTION_CLOSE_REASON_DROPPED_ENTRY: &[u8] = b"dropped";
 pub(crate) const CONNECTION_CLOSE_CODE_DISALLOWED: u32 = 2;
 pub(crate) const CONNECTION_CLOSE_REASON_DISALLOWED: &[u8] = b"disallowed";
 
-pub(crate) const CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT: u32 = 3;
-pub(crate) const CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT: &[u8] =
-    b"exceed_max_stream_count";
-
 const CONNECTION_CLOSE_CODE_TOO_MANY: u32 = 4;
 const CONNECTION_CLOSE_REASON_TOO_MANY: &[u8] = b"too_many";
 
@@ -409,7 +405,6 @@ pub fn get_connection_stake(
 #[derive(Debug)]
 pub(crate) enum ConnectionHandlerError {
     ConnectionAddError,
-    MaxStreamError,
 }
 
 pub(crate) fn update_open_connections_stat(
@@ -609,7 +604,7 @@ async fn handle_connection<Q, C>(
     );
     stats.total_connections.fetch_add(1, Ordering::Relaxed);
 
-    'conn: loop {
+    'conn: for stream_index in 0.. {
         // Wait for new streams. If the peer is disconnected we get a cancellation signal and stop
         // the connection task.
         let mut stream = select! {
@@ -704,7 +699,7 @@ async fn handle_connection<Q, C>(
         }
 
         stats.active_streams.fetch_sub(1, Ordering::Relaxed);
-        qos.on_stream_closed(&context);
+        qos.on_stream_closed(&connection, &context, stream_index);
     }
 
     let removed_connection_count = qos.remove_connection(&context, connection).await;
