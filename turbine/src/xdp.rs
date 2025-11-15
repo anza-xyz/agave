@@ -5,7 +5,7 @@ use {
     agave_xdp::{
         device::{NetworkDevice, QueueId},
         load_xdp_program,
-        tx_loop::{tx_loop, TxLoopConfigBuilder},
+        tx_loop::{PartialTxLoop, TxLoopConfigBuilder},
     },
     crossbeam_channel::TryRecvError,
     std::{sync::Arc, thread::Builder, time::Duration},
@@ -201,14 +201,10 @@ impl XdpRetransmitter {
                 Builder::new()
                     .name(format!("solRetransmIO{i:02}"))
                     .spawn(move || {
-                        tx_loop(
-                            cpu_id,
-                            &dev,
-                            QueueId(i as u64),
-                            config,
-                            receiver,
-                            drop_sender,
-                        )
+                        let partial_tx_loop =
+                            PartialTxLoop::new(cpu_id, QueueId(i as u64), config, &dev);
+                        let tx_loop = partial_tx_loop.finish();
+                        tx_loop.run(receiver, drop_sender)
                     })
                     .unwrap(),
             );

@@ -17,6 +17,7 @@ pub struct FrameOffset(pub(crate) usize);
 pub trait Frame {
     fn offset(&self) -> FrameOffset;
     fn len(&self) -> usize;
+    fn set_len(&mut self, len: usize);
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -33,6 +34,8 @@ pub trait Umem {
     fn reserve(&mut self) -> Option<Self::Frame>;
     fn release(&mut self, frame: FrameOffset);
     fn frame_size(&self) -> usize;
+    fn capacity(&self) -> usize;
+    fn available(&self) -> usize;
     fn map_frame(&self, frame: &Self::Frame) -> &[u8] {
         unsafe { slice::from_raw_parts(self.as_ptr().add(frame.offset().0), frame.len()) }
     }
@@ -47,12 +50,6 @@ pub struct SliceUmemFrame<'a> {
     _buf: PhantomData<&'a mut [u8]>,
 }
 
-impl SliceUmemFrame<'_> {
-    pub fn set_len(&mut self, len: usize) {
-        self.len = len;
-    }
-}
-
 impl Frame for SliceUmemFrame<'_> {
     fn offset(&self) -> FrameOffset {
         FrameOffset(self.offset)
@@ -60,6 +57,10 @@ impl Frame for SliceUmemFrame<'_> {
 
     fn len(&self) -> usize {
         self.len
+    }
+
+    fn set_len(&mut self, len: usize) {
+        self.len = len;
     }
 }
 
@@ -80,14 +81,6 @@ impl<'a> SliceUmem<'a> {
             frame_size,
             buffer,
         })
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.capacity
-    }
-
-    pub fn available(&self) -> usize {
-        self.available_frames.len()
     }
 }
 
@@ -124,17 +117,19 @@ impl<'a> Umem for SliceUmem<'a> {
         let index = frame.0 / self.frame_size as usize;
         self.available_frames.push(index as u64);
     }
+
+    fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    fn available(&self) -> usize {
+        self.available_frames.len()
+    }
 }
 
 pub struct OwnedUmemFrame {
     offset: usize,
     len: usize,
-}
-
-impl OwnedUmemFrame {
-    pub fn set_len(&mut self, len: usize) {
-        self.len = len;
-    }
 }
 
 impl Frame for OwnedUmemFrame {
@@ -144,6 +139,10 @@ impl Frame for OwnedUmemFrame {
 
     fn len(&self) -> usize {
         self.len
+    }
+
+    fn set_len(&mut self, len: usize) {
+        self.len = len;
     }
 }
 
@@ -164,14 +163,6 @@ impl<T: DerefMut<Target = [u8]>> OwnedUmem<T> {
             available_frames: Vec::from_iter(0..capacity as u64),
             capacity,
         })
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.capacity
-    }
-
-    pub fn available(&self) -> usize {
-        self.available_frames.len()
     }
 }
 
@@ -206,6 +197,14 @@ impl<T: DerefMut<Target = [u8]>> Umem for OwnedUmem<T> {
     fn release(&mut self, frame: FrameOffset) {
         let index = frame.0 / self.frame_size as usize;
         self.available_frames.push(index as u64);
+    }
+
+    fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    fn available(&self) -> usize {
+        self.available_frames.len()
     }
 }
 
