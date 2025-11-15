@@ -121,14 +121,17 @@ impl Vortexor {
     ) -> Self {
         let quic_server_params = SwQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
-                max_connections_per_unstaked_peer: max_connections_per_peer,
-                max_staked_connections: max_tpu_staked_connections,
-                max_unstaked_connections: max_tpu_unstaked_connections,
                 max_connections_per_ipaddr_per_min,
                 wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
                 ..Default::default()
             },
-            qos_config: SwQosConfig { max_streams_per_ms },
+            qos_config: SwQosConfig {
+                max_connections_per_unstaked_peer: max_connections_per_peer,
+                max_connections_per_staked_peer: max_connections_per_peer,
+                max_staked_connections: max_tpu_staked_connections,
+                max_unstaked_connections: max_tpu_unstaked_connections,
+                max_streams_per_ms,
+            },
         };
 
         let mut quic_fwd_server_params = quic_server_params.clone();
@@ -153,12 +156,8 @@ impl Vortexor {
 
         // Fot TPU forward -- we disallow unstaked connections. Allocate all connection resources
         // for staked connections:
-        quic_fwd_server_params
-            .quic_streamer_config
-            .max_staked_connections = max_fwd_staked_connections;
-        quic_fwd_server_params
-            .quic_streamer_config
-            .max_unstaked_connections = max_fwd_unstaked_connections;
+        quic_fwd_server_params.qos_config.max_staked_connections = max_fwd_staked_connections;
+        quic_fwd_server_params.qos_config.max_unstaked_connections = max_fwd_unstaked_connections;
         let tpu_fwd_result = spawn_stake_wighted_qos_server(
             "solVtxTpuFwd",
             "quic_vortexor_tpu_forwards",

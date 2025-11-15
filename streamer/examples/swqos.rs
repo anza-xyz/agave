@@ -68,8 +68,10 @@ pub fn load_staked_nodes_overrides(path: &String) -> anyhow::Result<HashMap<Pubk
 
 #[derive(Debug, Parser)]
 struct Cli {
-    #[arg(short, long, default_value_t = 1)]
-    max_connections_per_peer: usize,
+    #[arg(short, long, default_value_t = 10)]
+    max_connections_per_staked_peer: usize,
+    #[arg(short, long, default_value_t = 10)]
+    max_connections_per_unstaked_peer: usize,
 
     #[arg(short, long, default_value = "0.0.0.0:8008")]
     bind_to: SocketAddr,
@@ -120,10 +122,13 @@ async fn main() -> anyhow::Result<()> {
         sender,
         staked_nodes,
         QuicStreamerConfig {
-            max_connections_per_unstaked_peer: cli.max_connections_per_peer,
             ..QuicStreamerConfig::default()
         },
-        SwQosConfig::default(),
+        SwQosConfig {
+            max_connections_per_staked_peer: cli.max_connections_per_staked_peer,
+            max_connections_per_unstaked_peer: cli.max_connections_per_unstaked_peer,
+            ..Default::default()
+        },
         cancel.clone(),
     )?;
     info!("Server listening on {}", socket.local_addr()?);
