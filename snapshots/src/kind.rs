@@ -1,19 +1,21 @@
 use solana_clock::Slot;
 
-/// Snapshots come in two kinds, Full and Incremental.  The IncrementalSnapshot has a Slot field,
-/// which is the incremental snapshot base slot.
+/// All snapshots also write archives at this time, but it is possible that
+/// in the future there could be other kinds of snapshots that do not write archives.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SnapshotKind {
-    FullSnapshot,
-    IncrementalSnapshot(Slot),
+    Archive(SnapshotArchiveKind),
 }
 
 impl SnapshotKind {
     pub fn is_full_snapshot(&self) -> bool {
-        matches!(self, SnapshotKind::FullSnapshot)
+        matches!(self, SnapshotKind::Archive(SnapshotArchiveKind::Full))
     }
     pub fn is_incremental_snapshot(&self) -> bool {
-        matches!(self, SnapshotKind::IncrementalSnapshot(_))
+        matches!(
+            self,
+            SnapshotKind::Archive(SnapshotArchiveKind::Incremental(_))
+        )
     }
 }
 
@@ -23,15 +25,4 @@ impl SnapshotKind {
 pub enum SnapshotArchiveKind {
     Full,
     Incremental(Slot),
-}
-
-impl TryFrom<SnapshotKind> for SnapshotArchiveKind {
-    type Error = ();
-
-    fn try_from(snapshot_kind: SnapshotKind) -> Result<Self, Self::Error> {
-        match snapshot_kind {
-            SnapshotKind::FullSnapshot => Ok(SnapshotArchiveKind::Full),
-            SnapshotKind::IncrementalSnapshot(slot) => Ok(SnapshotArchiveKind::Incremental(slot)),
-        }
-    }
 }
