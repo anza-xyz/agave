@@ -11,7 +11,7 @@ use {
         route::NextHop,
         set_cpu_affinity,
         socket::{Socket, Tx, TxRing},
-        umem::{Frame as _, PageAlignedMemory, SliceUmem, SliceUmemFrame, Umem as _},
+        umem::{Frame, PageAlignedMemory, SliceUmem, Umem as _},
     },
     caps::{
         CapSet,
@@ -360,7 +360,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<
 // With some drivers, or always when we work in SKB mode, we need to explicitly kick the driver once
 // we want the NIC to do something.
 #[inline(always)]
-fn kick(ring: &TxRing<SliceUmemFrame<'_>>) {
+fn kick<F: Frame>(ring: &TxRing<F>) {
     if !ring.needs_wakeup() {
         return;
     }
