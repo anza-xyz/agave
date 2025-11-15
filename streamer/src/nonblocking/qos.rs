@@ -36,9 +36,6 @@ pub(crate) trait QosController<C: ConnectionContext> {
     /// Called when a stream is accepted on a connection
     fn on_stream_accepted(&self, context: &C);
 
-    /// Called when a stream is finished successfully
-    fn on_stream_finished(&self, context: &C);
-
     /// Called when a stream has an error
     fn on_stream_error(&self, context: &C);
 
