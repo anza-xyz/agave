@@ -8,7 +8,7 @@ use {
     solana_message::Message,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_system_interface::instruction::transfer,
     solana_transaction::{sanitized::SanitizedTransaction, Transaction},
 };
@@ -35,7 +35,7 @@ fn bench_process_compute_budget_instructions_empty(c: &mut Criterion) {
                 bencher.iter(|| {
                     (0..NUM_TRANSACTIONS_PER_ITER).for_each(|_| {
                         assert!(process_compute_budget_instructions(
-                            black_box(SVMMessage::program_instructions_iter(&tx)),
+                            black_box(SVMStaticMessage::program_instructions_iter(&tx)),
                             black_box(&feature_set),
                         )
                         .is_ok())
@@ -66,7 +66,7 @@ fn bench_process_compute_budget_instructions_no_builtins(c: &mut Criterion) {
                     bencher.iter(|| {
                         (0..NUM_TRANSACTIONS_PER_ITER).for_each(|_| {
                             assert!(process_compute_budget_instructions(
-                                black_box(SVMMessage::program_instructions_iter(&tx)),
+                                black_box(SVMStaticMessage::program_instructions_iter(&tx)),
                                 black_box(&feature_set),
                             )
                             .is_ok())
@@ -92,7 +92,7 @@ fn bench_process_compute_budget_instructions_compute_budgets(c: &mut Criterion) 
                 bencher.iter(|| {
                     (0..NUM_TRANSACTIONS_PER_ITER).for_each(|_| {
                         assert!(process_compute_budget_instructions(
-                            black_box(SVMMessage::program_instructions_iter(&tx)),
+                            black_box(SVMStaticMessage::program_instructions_iter(&tx)),
                             black_box(&feature_set),
                         )
                         .is_ok())
@@ -125,7 +125,7 @@ fn bench_process_compute_budget_instructions_builtins(c: &mut Criterion) {
                 bencher.iter(|| {
                     (0..NUM_TRANSACTIONS_PER_ITER).for_each(|_| {
                         assert!(process_compute_budget_instructions(
-                            black_box(SVMMessage::program_instructions_iter(&tx)),
+                            black_box(SVMStaticMessage::program_instructions_iter(&tx)),
                             black_box(&feature_set),
                         )
                         .is_ok())
@@ -165,7 +165,7 @@ fn bench_process_compute_budget_instructions_mixed(c: &mut Criterion) {
                     bencher.iter(|| {
                         (0..NUM_TRANSACTIONS_PER_ITER).for_each(|_| {
                             assert!(process_compute_budget_instructions(
-                                black_box(SVMMessage::program_instructions_iter(&tx)),
+                                black_box(SVMStaticMessage::program_instructions_iter(&tx)),
                                 black_box(&feature_set),
                             )
                             .is_ok())

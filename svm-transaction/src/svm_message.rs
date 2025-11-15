@@ -19,8 +19,7 @@ static_assertions::const_assert_eq!(
 );
 const NONCED_TX_MARKER_IX_INDEX: u8 = 0;
 
-// - Debug to support legacy logging
-pub trait SVMMessage: Debug {
+pub trait SVMStaticMessage {
     /// Return the number of transaction-level signatures in the message.
     fn num_transaction_signatures(&self) -> u64;
     /// Return the number of ed25519 precompile signatures in the message.
@@ -58,11 +57,22 @@ pub trait SVMMessage: Debug {
     /// Return the list of static account keys.
     fn static_account_keys(&self) -> &[Pubkey];
 
-    /// Return the account keys.
-    fn account_keys(&self) -> AccountKeys<'_>;
-
     /// Return the fee-payer
     fn fee_payer(&self) -> &Pubkey;
+
+    /// Get the number of lookup tables.
+    fn num_lookup_tables(&self) -> usize;
+
+    /// Get message address table lookups used in the message
+    fn message_address_table_lookups(
+        &self,
+    ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>>;
+}
+
+// - Debug to support legacy logging
+pub trait SVMMessage: Debug + SVMStaticMessage {
+    /// Return the account keys.
+    fn account_keys(&self) -> AccountKeys<'_>;
 
     /// Returns `true` if the account at `index` is writable.
     fn is_writable(&self, index: usize) -> bool;
@@ -135,14 +145,6 @@ pub trait SVMMessage: Debug {
                     .filter_map(|signer_index| self.account_keys().get(signer_index))
             })
     }
-
-    /// Get the number of lookup tables.
-    fn num_lookup_tables(&self) -> usize;
-
-    /// Get message address table lookups used in the message
-    fn message_address_table_lookups(
-        &self,
-    ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>>;
 }
 
 fn default_precompile_signature_count<'a>(

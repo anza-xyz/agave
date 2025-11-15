@@ -43,7 +43,10 @@ use {
         },
     },
     solana_svm_feature_set::SVMFeatureSet,
-    solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
+    solana_svm_transaction::{
+        instruction::SVMInstruction,
+        svm_message::{SVMMessage, SVMStaticMessage},
+    },
     solana_svm_type_overrides::sync::{Arc, RwLock},
     solana_system_interface::{instruction as system_instruction, program as system_program},
     solana_system_transaction as system_transaction,
@@ -515,7 +518,7 @@ impl SvmTestEntry {
                 let message = SanitizedTransaction::from_transaction_for_tests(item.transaction);
                 let check_result = item.check_result.map(|tx_details| {
                     let compute_budget_limits = process_test_compute_budget_instructions(
-                        SVMMessage::program_instructions_iter(&message),
+                        SVMStaticMessage::program_instructions_iter(&message),
                     );
                     let signature_count = message
                         .num_transaction_signatures()
