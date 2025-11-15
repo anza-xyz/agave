@@ -561,7 +561,7 @@ solana-svm-type-overrides = { path = "svm-type-overrides", version = "=4.0.0-alp
 solana-system-interface = "2.0"
 solana-system-program = { path = "programs/system", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-system-transaction = "3.0.0"
-solana-sysvar = "3.0.0"
+solana-sysvar = "3.1.0"
 solana-sysvar-id = "3.0.0"
 solana-test-validator = { path = "test-validator", version = "=4.0.0-alpha.0" }
 solana-time-utils = "3.0.0"
