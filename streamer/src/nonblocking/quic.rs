@@ -1047,10 +1047,6 @@ impl ConnectionTable {
             Some((last_update, cancel, stream_counter))
         } else {
             if let Some(connection) = connection {
-                debug!(
-                    "Too many connections from peer {key:?}, max connection: \
-                     {max_connections_per_peer} rejecting connection"
-                );
                 connection.close(
                     CONNECTION_CLOSE_CODE_TOO_MANY.into(),
                     CONNECTION_CLOSE_REASON_TOO_MANY,
