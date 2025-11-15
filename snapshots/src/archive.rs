@@ -1,7 +1,7 @@
 use {
     crate::{
         error::ArchiveSnapshotPackageError, paths, snapshot_archive_info::SnapshotArchiveInfo,
-        snapshot_hash::SnapshotHash, ArchiveFormat, Result, SnapshotKind,
+        snapshot_hash::SnapshotHash, ArchiveFormat, Result, SnapshotArchiveKind,
     },
     log::info,
     solana_accounts_db::{
@@ -21,7 +21,7 @@ const INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO: (usize, usize) = (4, 1);
 
 /// Archives a snapshot into `archive_path`
 pub fn archive_snapshot(
-    snapshot_kind: SnapshotKind,
+    snapshot_archive_kind: SnapshotArchiveKind,
     snapshot_slot: Slot,
     snapshot_hash: SnapshotHash,
     snapshot_storages: &[Arc<AccountStorageEntry>],
@@ -31,7 +31,7 @@ pub fn archive_snapshot(
 ) -> Result<SnapshotArchiveInfo> {
     use ArchiveSnapshotPackageError as E;
     const ACCOUNTS_DIR: &str = "accounts";
-    info!("Generating snapshot archive for slot {snapshot_slot}, kind: {snapshot_kind:?}");
+    info!("Generating snapshot archive for slot {snapshot_slot}, kind: {snapshot_archive_kind:?}");
 
     let mut timer = Measure::start("snapshot_package-package_snapshots");
     let tar_dir = archive_path
@@ -179,7 +179,7 @@ pub fn archive_snapshot(
         ("archive_format", archive_format.to_string(), String),
         ("duration_ms", timer.as_ms(), i64),
         (
-            if snapshot_kind.is_full_snapshot() {
+            if snapshot_archive_kind == SnapshotArchiveKind::Full {
                 "full-snapshot-archive-size"
             } else {
                 "incremental-snapshot-archive-size"

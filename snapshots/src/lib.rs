@@ -33,7 +33,7 @@ pub type Result<T> = std::result::Result<T, error::SnapshotError>;
 pub use {
     archive::archive_snapshot,
     archive_format::*,
-    kind::SnapshotKind,
+    kind::{SnapshotArchiveKind, SnapshotKind},
     snapshot_interval::SnapshotInterval,
     snapshot_version::SnapshotVersion,
     unarchive::{streaming_unarchive_snapshot, unpack_genesis_archive},

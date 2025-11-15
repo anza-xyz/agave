@@ -14,7 +14,7 @@ use {
         snapshot_controller::SnapshotController,
         snapshot_package::SnapshotPackage,
     },
-    agave_snapshots::{error::SnapshotError, SnapshotKind},
+    agave_snapshots::{error::SnapshotError, SnapshotArchiveKind, SnapshotKind},
     crossbeam_channel::{Receiver, SendError, Sender},
     log::*,
     rayon::iter::{IntoParallelIterator, ParallelIterator},
@@ -645,7 +645,7 @@ impl AbsStatus {
 #[must_use]
 fn new_snapshot_kind(snapshot_request: &SnapshotRequest) -> Option<SnapshotKind> {
     match snapshot_request.request_kind {
-        SnapshotRequestKind::FullSnapshot => Some(SnapshotKind::FullSnapshot),
+        SnapshotRequestKind::FullSnapshot => Some(SnapshotKind::Archive(SnapshotArchiveKind::Full)),
         SnapshotRequestKind::IncrementalSnapshot => {
             if let Some(latest_full_snapshot_slot) = snapshot_request
                 .snapshot_root_bank
@@ -654,7 +654,9 @@ fn new_snapshot_kind(snapshot_request: &SnapshotRequest) -> Option<SnapshotKind>
                 .accounts_db
                 .latest_full_snapshot_slot()
             {
-                Some(SnapshotKind::IncrementalSnapshot(latest_full_snapshot_slot))
+                Some(SnapshotKind::Archive(SnapshotArchiveKind::Incremental(
+                    latest_full_snapshot_slot,
+                )))
             } else {
                 warn!(
                     "Ignoring IncrementalSnapshot request for slot {} because there is no latest \

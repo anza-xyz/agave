@@ -2,7 +2,7 @@
 use {
     agave_snapshots::{
         paths as snapshot_paths, snapshot_archive_info::SnapshotArchiveInfoGetter,
-        snapshot_config::SnapshotConfig, SnapshotInterval, SnapshotKind,
+        snapshot_config::SnapshotConfig, SnapshotArchiveKind, SnapshotInterval,
     },
     assert_matches::assert_matches,
     crossbeam_channel::{unbounded, Receiver},
@@ -526,7 +526,7 @@ fn test_snapshot_download() {
             full_snapshot_archive_info.slot(),
             *full_snapshot_archive_info.hash(),
         ),
-        SnapshotKind::FullSnapshot,
+        SnapshotArchiveKind::Full,
         validator_snapshot_test_config
             .validator_config
             .snapshot_config
@@ -655,7 +655,7 @@ fn test_incremental_snapshot_download() {
             full_snapshot_archive_info.slot(),
             *full_snapshot_archive_info.hash(),
         ),
-        SnapshotKind::FullSnapshot,
+        SnapshotArchiveKind::Full,
         validator_snapshot_test_config
             .validator_config
             .snapshot_config
@@ -683,7 +683,7 @@ fn test_incremental_snapshot_download() {
             incremental_snapshot_archive_info.slot(),
             *incremental_snapshot_archive_info.hash(),
         ),
-        SnapshotKind::IncrementalSnapshot(incremental_snapshot_archive_info.base_slot()),
+        SnapshotArchiveKind::Incremental(incremental_snapshot_archive_info.base_slot()),
         validator_snapshot_test_config
             .validator_config
             .snapshot_config
@@ -828,7 +828,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
             .incremental_snapshot_archives_dir
             .path(),
         (full_snapshot_archive.slot(), *full_snapshot_archive.hash()),
-        SnapshotKind::FullSnapshot,
+        SnapshotArchiveKind::Full,
         validator_snapshot_test_config
             .validator_config
             .snapshot_config
@@ -865,7 +865,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
             incremental_snapshot_archive.slot(),
             *incremental_snapshot_archive.hash(),
         ),
-        SnapshotKind::IncrementalSnapshot(incremental_snapshot_archive.base_slot()),
+        SnapshotArchiveKind::Incremental(incremental_snapshot_archive.base_slot()),
         validator_snapshot_test_config
             .validator_config
             .snapshot_config

@@ -3,7 +3,7 @@ use {
         snapshot_hash::{
             FullSnapshotHash, IncrementalSnapshotHash, SnapshotHash, StartingSnapshotHashes,
         },
-        SnapshotKind,
+        SnapshotArchiveKind, SnapshotKind,
     },
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -54,10 +54,10 @@ impl SnapshotGossipManager {
         snapshot_hash: (Slot, SnapshotHash),
     ) {
         match snapshot_kind {
-            SnapshotKind::FullSnapshot => {
+            SnapshotKind::Archive(SnapshotArchiveKind::Full) => {
                 self.push_full_snapshot_hash(FullSnapshotHash(snapshot_hash));
             }
-            SnapshotKind::IncrementalSnapshot(base_slot) => {
+            SnapshotKind::Archive(SnapshotArchiveKind::Incremental(base_slot)) => {
                 self.push_incremental_snapshot_hash(
                     IncrementalSnapshotHash(snapshot_hash),
                     base_slot,
