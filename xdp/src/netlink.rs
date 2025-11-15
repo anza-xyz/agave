@@ -6,8 +6,10 @@ use {
         AF_INET, AF_INET6, AF_NETLINK, NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_ROUTE,
         NLA_ALIGNTO, NLA_TYPE_MASK, NLMSG_DONE, NLMSG_ERROR, NLM_F_DUMP, NLM_F_MULTI,
         NLM_F_REQUEST, NUD_PERMANENT, NUD_REACHABLE, NUD_STALE, RTA_DST, RTA_GATEWAY, RTA_IIF,
-        RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_GETNEIGH, RTM_GETROUTE, RTM_NEWNEIGH,
-        RTM_NEWROUTE, RT_TABLE_MAIN, SOCK_RAW, SOL_NETLINK,
+        RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_F_CLONED, RTM_GETNEIGH, RTM_GETROUTE,
+        RTM_NEWNEIGH, RTM_NEWROUTE, RTN_BLACKHOLE, RTN_BROADCAST, RTN_LOCAL, RTN_MULTICAST,
+        RTN_THROW, RTN_UNICAST, RT_TABLE_LOCAL, RT_TABLE_MAIN, RT_TABLE_UNSPEC, SOCK_RAW,
+        SOL_NETLINK, SOL_SOCKET, SO_RCVBUF,
     },
     std::{
         collections::HashMap,
@@ -21,56 +23,43 @@ use {
 
 const NLA_HDR_LEN: usize = align_to(mem::size_of::<nlattr>(), NLA_ALIGNTO as usize);
 
+#[inline]
+fn is_supported_route_type(ty: u8) -> bool {
+    matches!(
+        ty,
+        RTN_UNICAST | RTN_LOCAL | RTN_BROADCAST | RTN_MULTICAST | RTN_BLACKHOLE | RTN_THROW
+    )
+}
+
+#[inline]
+fn is_supported_route_table_id(table: u8) -> bool {
+    table == RT_TABLE_UNSPEC || table == RT_TABLE_MAIN || table == RT_TABLE_LOCAL
+}
+
+// Removes cloned routes, non-main/local table routes, and invalid route types
+// Many invisible routes may be inserted, we need to remove them.
+pub(crate) fn is_valid_route(route: &RouteEntry) -> bool {
+    if route.flags & RTM_F_CLONED != 0 {
+        return false;
+    }
+    if !match route.table {
+        None => true,
+        Some(t) => is_supported_route_table_id(t as u8),
+    } {
+        return false;
+    }
+    is_supported_route_type(route.type_)
+}
+
 pub struct NetlinkSocket {
     sock: OwnedFd,
-    _nl_pid: u32,
+    nl_pid: u32,
 }
 
 impl NetlinkSocket {
     fn open() -> Result<Self, io::Error> {
-        // Safety: libc wrapper
-        let sock = unsafe { socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE) };
-        if sock < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: `socket` returns a file descriptor.
-        let sock = unsafe { OwnedFd::from_raw_fd(sock) };
-
-        let enable = 1i32;
-        // Safety: libc wrapper
-        if unsafe {
-            setsockopt(
-                sock.as_raw_fd(),
-                SOL_NETLINK,
-                NETLINK_EXT_ACK,
-                &enable as *const _ as *const _,
-                mem::size_of::<i32>() as u32,
-            )
-        } < 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-
-        // Safety: sockaddr_nl is POD so this is safe
-        let mut addr = unsafe { mem::zeroed::<sockaddr_nl>() };
-        addr.nl_family = AF_NETLINK as u16;
-        let mut addr_len = mem::size_of::<sockaddr_nl>() as u32;
-        // Safety: libc wrapper
-        if unsafe {
-            getsockname(
-                sock.as_raw_fd(),
-                &mut addr as *mut _ as *mut _,
-                &mut addr_len as *mut _,
-            )
-        } < 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-
-        Ok(Self {
-            sock,
-            _nl_pid: addr.nl_pid,
-        })
+        let sock = Self::create_raw_socket()?;
+        Ok(Self { sock, nl_pid: 0 })
     }
 
     fn send(&self, msg: &[u8]) -> Result<(), io::Error> {
@@ -88,8 +77,10 @@ impl NetlinkSocket {
         Ok(())
     }
 
-    fn recv(&self) -> Result<Vec<NetlinkMessage>, io::Error> {
-        let mut buf = [0u8; 4096];
+    pub(crate) fn recv(&self) -> Result<Vec<NetlinkMessage>, io::Error> {
+        // create large buffer for when we poll the socket
+        // this helps us avoid any truncated messages when a single datagram contains many messages
+        let mut buf = [0u8; 8 * 1024];
         let mut messages = Vec::new();
         let mut multipart = true;
         'out: while multipart {
@@ -133,10 +124,120 @@ impl NetlinkSocket {
 
         Ok(messages)
     }
+
+    /// Opens a listener socket for netlink updates
+    /// NETLINK_ROUTE socket subscribed to `groups` bitmask
+    pub fn bind(groups: u32) -> Result<Self, io::Error> {
+        let mut sock = Self::open()?;
+
+        // Subscribe to multicast groups
+        let mut addr: sockaddr_nl = unsafe { mem::zeroed() };
+        addr.nl_family = AF_NETLINK as u16;
+        addr.nl_groups = groups;
+        if unsafe {
+            libc::bind(
+                sock.as_raw_fd(),
+                &addr as *const _ as *const _,
+                mem::size_of::<sockaddr_nl>() as u32,
+            )
+        } < 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+
+        // Larger rcvbuf to survive bursts of updates
+        let rcvbuf: i32 = 1 << 16;
+        unsafe {
+            setsockopt(
+                sock.as_raw_fd(),
+                SOL_SOCKET,
+                SO_RCVBUF,
+                &rcvbuf as *const _ as *const _,
+                mem::size_of::<i32>() as u32,
+            );
+        }
+
+        sock.nl_pid = Self::get_nl_pid(sock.as_raw_fd())?;
+
+        Ok(sock)
+    }
+
+    #[inline]
+    fn create_raw_socket() -> Result<OwnedFd, io::Error> {
+        let raw = unsafe { socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE) };
+        if raw < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let sock = unsafe { OwnedFd::from_raw_fd(raw) };
+
+        let enable = 1i32;
+        if unsafe {
+            setsockopt(
+                sock.as_raw_fd(),
+                SOL_NETLINK,
+                NETLINK_EXT_ACK,
+                &enable as *const _ as *const _,
+                mem::size_of::<i32>() as u32,
+            )
+        } < 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(sock)
+    }
+
+    #[inline]
+    fn get_nl_pid(fd: std::os::fd::RawFd) -> Result<u32, io::Error> {
+        let mut name: sockaddr_nl = unsafe { mem::zeroed() };
+        let mut len = mem::size_of::<sockaddr_nl>() as u32;
+        if unsafe { getsockname(fd, &mut name as *mut _ as *mut _, &mut len as *mut _) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(name.nl_pid)
+    }
+
+    #[inline]
+    pub fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        self.sock.as_raw_fd()
+    }
 }
 
+#[inline]
+pub(crate) fn is_supported_ipv4_route_header(msg: &NetlinkMessage) -> bool {
+    if msg.data.len() < mem::size_of::<rtmsg>() {
+        return false;
+    }
+    let rt = unsafe { ptr::read_unaligned(msg.data.as_ptr() as *const rtmsg) };
+    if rt.rtm_family as i32 != AF_INET {
+        return false;
+    }
+    if rt.rtm_flags & RTM_F_CLONED != 0 {
+        return false;
+    }
+    if !is_supported_route_table_id(rt.rtm_table) {
+        return false;
+    }
+    is_supported_route_type(rt.rtm_type)
+}
+
+// Only keep neighbors that are of interest
+// This matches logic in NeighborEntry::is_valid()
+#[inline]
+pub(crate) fn is_supported_ipv4_neigh_header(msg: &NetlinkMessage) -> bool {
+    if msg.data.len() < mem::size_of::<ndmsg>() {
+        return false;
+    }
+    let nd = unsafe { ptr::read_unaligned(msg.data.as_ptr() as *const ndmsg) };
+
+    if nd.ndm_family as i32 != AF_INET {
+        return false;
+    }
+    nd.ndm_state & (NUD_REACHABLE | NUD_PERMANENT | NUD_STALE) != 0
+}
+
+#[derive(Debug, Clone)]
 pub struct NetlinkMessage {
-    header: nlmsghdr,
+    pub(crate) header: nlmsghdr,
     data: Vec<u8>,
     error: Option<nlmsgerr>,
 }
@@ -297,7 +398,7 @@ impl std::fmt::Display for MacAddress {
 }
 
 /// Represents an entry in the neighbor table (ARP/NDP cache)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct NeighborEntry {
     // IPv4 or IPv6 address
     pub destination: Option<IpAddr>,
@@ -314,18 +415,26 @@ impl NeighborEntry {
     pub fn is_valid(&self) -> bool {
         self.lladdr.is_some() && (self.state & (NUD_REACHABLE | NUD_PERMANENT | NUD_STALE)) != 0
     }
+
+    #[inline]
+    pub fn key(&self) -> Option<(i32, Ipv4Addr)> {
+        match self.destination {
+            Some(IpAddr::V4(ip)) => Some((self.ifindex, ip)),
+            _ => None,
+        }
+    }
 }
 
 #[repr(C)]
 #[allow(non_camel_case_types)]
 struct ndmsg {
     ndm_family: u8,
-    ndm_pad1: u8,
-    ndm_pad2: u16,
+    _ndm_pad1: u8,
+    _ndm_pad2: u16,
     ndm_ifindex: i32,
     ndm_state: u16,
-    ndm_flags: u8,
-    ndm_type: u8,
+    _ndm_flags: u8,
+    _ndm_type: u8,
 }
 
 #[repr(C)]
@@ -336,7 +445,7 @@ struct NeighRequest {
 
 /// fetch the kernel's neighbor table (ARP/NDP cache)
 pub fn netlink_get_neighbors(
-    if_index: Option<i32>,
+    if_index: Option<u32>,
     family: u8,
 ) -> Result<Vec<NeighborEntry>, io::Error> {
     let sock = NetlinkSocket::open()?;
@@ -355,7 +464,7 @@ pub fn netlink_get_neighbors(
 
     req.ndm.ndm_family = family;
     if let Some(idx) = if_index {
-        req.ndm.ndm_ifindex = idx;
+        req.ndm.ndm_ifindex = idx as i32;
     }
 
     sock.send(&bytes_of(&req)[..req.header.nlmsg_len as usize])?;
@@ -371,20 +480,22 @@ pub fn netlink_get_neighbors(
             continue;
         }
 
-        let Some(neighbor) = parse_rtm_newneigh(msg, if_index) else {
+        let Some(neighbor) = parse_rtm_newneigh(&msg, if_index) else {
             continue;
         };
 
-        neighbors.push(neighbor);
+        if neighbor.is_valid() {
+            neighbors.push(neighbor);
+        }
     }
 
     Ok(neighbors)
 }
 
-pub fn parse_rtm_newneigh(msg: NetlinkMessage, if_index: Option<i32>) -> Option<NeighborEntry> {
+pub fn parse_rtm_newneigh(msg: &NetlinkMessage, if_index: Option<u32>) -> Option<NeighborEntry> {
     let nd_msg = unsafe { ptr::read_unaligned(msg.data.as_ptr() as *const ndmsg) };
     if let Some(idx) = if_index {
-        if nd_msg.ndm_ifindex != idx {
+        if nd_msg.ndm_ifindex != idx as i32 {
             return None;
         }
     }
@@ -410,7 +521,7 @@ pub fn parse_rtm_newneigh(msg: NetlinkMessage, if_index: Option<i32>) -> Option<
     Some(neighbor)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteEntry {
     pub destination: Option<IpAddr>,
     pub gateway: Option<IpAddr>,
@@ -424,6 +535,18 @@ pub struct RouteEntry {
     pub type_: u8,
     pub family: u8,
     pub dst_len: u8,
+    pub flags: u32,
+}
+
+impl RouteEntry {
+    #[inline]
+    pub fn same_key(&self, other: &Self) -> bool {
+        self.family == other.family
+            && self.dst_len == other.dst_len
+            && self.destination == other.destination
+            && self.table == other.table
+            && self.type_ == other.type_
+    }
 }
 
 #[repr(C)]
@@ -493,17 +616,19 @@ pub fn netlink_get_routes(family: u8) -> Result<Vec<RouteEntry>, io::Error> {
             continue;
         }
 
-        let Some(route) = parse_rtm_newroute(msg) else {
+        let Some(route) = parse_rtm_newroute(&msg) else {
             continue;
         };
 
-        routes.push(route);
+        if is_valid_route(&route) {
+            routes.push(route);
+        }
     }
 
     Ok(routes)
 }
 
-pub fn parse_rtm_newroute(msg: NetlinkMessage) -> Option<RouteEntry> {
+pub fn parse_rtm_newroute(msg: &NetlinkMessage) -> Option<RouteEntry> {
     let rt_msg = unsafe { ptr::read_unaligned(msg.data.as_ptr() as *const rtmsg) };
     let Ok(attrs) = parse_attrs(&msg.data[mem::size_of::<rtmsg>()..]) else {
         return None;
@@ -521,6 +646,7 @@ pub fn parse_rtm_newroute(msg: NetlinkMessage) -> Option<RouteEntry> {
         type_: rt_msg.rtm_type,
         family: rt_msg.rtm_family,
         dst_len: rt_msg.rtm_dst_len,
+        flags: rt_msg.rtm_flags,
     };
     if let Some(dst_attr) = attrs.get(&RTA_DST) {
         route.destination = parse_ip_address(dst_attr.data, rt_msg.rtm_family);
