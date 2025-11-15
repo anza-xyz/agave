@@ -6,7 +6,9 @@
 version: 2
 updates:
   - package-ecosystem: cargo
-    directory: "/"
+    directories:
+      - "/"
+      - "/programs/sbf"
     schedule:
       interval: daily
       time: "01:00"
