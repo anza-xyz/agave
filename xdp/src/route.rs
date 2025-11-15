@@ -175,7 +175,7 @@ impl Router {
 
         let if_index = default_route
             .out_if_index
-            .ok_or(RouteError::MissingOutputInterface)?;
+            .ok_or(RouteError::MissingOutputInterface)? as u32;
 
         let next_hop_ip = match default_route.gateway {
             Some(gateway) => gateway,
@@ -187,7 +187,7 @@ impl Router {
         Ok(NextHop {
             ip_addr: next_hop_ip,
             mac_addr,
-            if_index: if_index as u32,
+            if_index,
         })
     }
 
@@ -197,7 +197,7 @@ impl Router {
 
         let if_index = route
             .out_if_index
-            .ok_or(RouteError::MissingOutputInterface)?;
+            .ok_or(RouteError::MissingOutputInterface)? as u32;
 
         let next_hop_ip = match route.gateway {
             Some(gateway) => gateway,
@@ -209,7 +209,7 @@ impl Router {
         Ok(NextHop {
             ip_addr: next_hop_ip,
             mac_addr,
-            if_index: if_index as u32,
+            if_index,
         })
     }
 
@@ -225,7 +225,7 @@ impl Router {
         self.arp_table.upsert(new_neighbor)
     }
 
-    pub fn remove_neighbor(&mut self, ip: Ipv4Addr, if_index: i32) -> bool {
+    pub fn remove_neighbor(&mut self, ip: Ipv4Addr, if_index: u32) -> bool {
         self.arp_table.remove(ip, if_index)
     }
 }
@@ -241,10 +241,10 @@ impl ArpTable {
         Ok(Self { neighbors })
     }
 
-    pub fn lookup(&self, ip: IpAddr, if_index: i32) -> Option<&MacAddress> {
+    pub fn lookup(&self, ip: IpAddr, if_index: u32) -> Option<&MacAddress> {
         self.neighbors
             .iter()
-            .find(|n| n.ifindex == if_index && n.destination == Some(ip))
+            .find(|n| n.ifindex == if_index as i32 && n.destination == Some(ip))
             .and_then(|n| n.lladdr.as_ref())
     }
 
@@ -272,12 +272,10 @@ impl ArpTable {
         }
     }
 
-    pub fn remove(&mut self, ip: Ipv4Addr, if_index: i32) -> bool {
-        if let Some(i) = self
-            .neighbors
-            .iter()
-            .position(|old| old.ifindex == if_index && old.destination == Some(IpAddr::V4(ip)))
-        {
+    pub fn remove(&mut self, ip: Ipv4Addr, if_index: u32) -> bool {
+        if let Some(i) = self.neighbors.iter().position(|old| {
+            old.ifindex == if_index as i32 && old.destination == Some(IpAddr::V4(ip))
+        }) {
             self.neighbors.swap_remove(i);
             return true;
         }

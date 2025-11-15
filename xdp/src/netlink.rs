@@ -445,7 +445,7 @@ struct NeighRequest {
 
 /// fetch the kernel's neighbor table (ARP/NDP cache)
 pub fn netlink_get_neighbors(
-    if_index: Option<i32>,
+    if_index: Option<u32>,
     family: u8,
 ) -> Result<Vec<NeighborEntry>, io::Error> {
     let sock = NetlinkSocket::open()?;
@@ -464,7 +464,7 @@ pub fn netlink_get_neighbors(
 
     req.ndm.ndm_family = family;
     if let Some(idx) = if_index {
-        req.ndm.ndm_ifindex = idx;
+        req.ndm.ndm_ifindex = idx as i32;
     }
 
     sock.send(&bytes_of(&req)[..req.header.nlmsg_len as usize])?;
@@ -492,10 +492,10 @@ pub fn netlink_get_neighbors(
     Ok(neighbors)
 }
 
-pub fn parse_rtm_newneigh(msg: &NetlinkMessage, if_index: Option<i32>) -> Option<NeighborEntry> {
+pub fn parse_rtm_newneigh(msg: &NetlinkMessage, if_index: Option<u32>) -> Option<NeighborEntry> {
     let nd_msg = unsafe { ptr::read_unaligned(msg.data.as_ptr() as *const ndmsg) };
     if let Some(idx) = if_index {
-        if nd_msg.ndm_ifindex != idx {
+        if nd_msg.ndm_ifindex != idx as i32 {
             return None;
         }
     }

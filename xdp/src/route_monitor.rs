@@ -119,7 +119,7 @@ impl RouteMonitor {
                 RTM_DELNEIGH if is_supported_ipv4_neigh_header(m) => {
                     if let Some(n) = parse_rtm_newneigh(m, None) {
                         if let Some(IpAddr::V4(ip)) = n.destination {
-                            dirty |= router.remove_neighbor(ip, n.ifindex);
+                            dirty |= router.remove_neighbor(ip, n.ifindex as u32);
                         }
                     }
                 }
