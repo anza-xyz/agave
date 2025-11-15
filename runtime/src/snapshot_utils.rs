@@ -26,7 +26,7 @@ use {
             SnapshotArchiveInfoGetter,
         },
         snapshot_config::SnapshotConfig,
-        streaming_unarchive_snapshot, ArchiveFormat, ArchiveKind, Result, SnapshotVersion,
+        streaming_unarchive_snapshot, ArchiveFormat, Result, SnapshotArchiveKind, SnapshotVersion,
     },
     crossbeam_channel::{Receiver, Sender},
     log::*,
@@ -464,18 +464,18 @@ pub fn serialize_and_archive_snapshot_package(
         should_flush_and_hard_link_storages,
     )?;
 
-    let archive_kind = snapshot_kind
+    let snapshot_archive_kind = snapshot_kind
         .try_into()
         .expect("Snapshot kind includes archive when attempting to archive snapshhot");
 
-    let snapshot_archive_path = match archive_kind {
-        ArchiveKind::FullArchive => snapshot_paths::build_full_snapshot_archive_path(
+    let snapshot_archive_path = match snapshot_archive_kind {
+        SnapshotArchiveKind::Full => snapshot_paths::build_full_snapshot_archive_path(
             &snapshot_config.full_snapshot_archives_dir,
             snapshot_package.slot,
             &snapshot_package.hash,
             snapshot_config.archive_format,
         ),
-        ArchiveKind::IncrementalArchive(incremental_snapshot_base_slot) => {
+        SnapshotArchiveKind::Incremental(incremental_snapshot_base_slot) => {
             // After the snapshot has been serialized, it is now safe (and required) to prune all
             // the storages that are *not* to be archived for this incremental snapshot.
             snapshot_storages.retain(|storage| storage.slot() > incremental_snapshot_base_slot);
@@ -490,7 +490,7 @@ pub fn serialize_and_archive_snapshot_package(
     };
 
     let snapshot_archive_info = archive_snapshot(
-        archive_kind,
+        snapshot_archive_kind,
         snapshot_slot,
         snapshot_hash,
         snapshot_storages.as_slice(),

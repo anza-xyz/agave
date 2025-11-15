@@ -10,7 +10,7 @@
 pub use solana_file_download::DownloadProgressRecord;
 use {
     agave_snapshots::{
-        paths as snapshot_paths, snapshot_hash::SnapshotHash, ArchiveFormat, ArchiveKind,
+        paths as snapshot_paths, snapshot_hash::SnapshotHash, ArchiveFormat, SnapshotArchiveKind,
         ZstdConfig,
     },
     log::*,
@@ -56,7 +56,7 @@ pub fn download_snapshot_archive(
     full_snapshot_archives_dir: &Path,
     incremental_snapshot_archives_dir: &Path,
     desired_snapshot_hash: (Slot, SnapshotHash),
-    archive_kind: ArchiveKind,
+    snapshot_kind: SnapshotArchiveKind,
     maximum_full_snapshot_archives_to_retain: NonZeroUsize,
     maximum_incremental_snapshot_archives_to_retain: NonZeroUsize,
     use_progress_bar: bool,
@@ -70,9 +70,9 @@ pub fn download_snapshot_archive(
     );
 
     let snapshot_archives_remote_dir =
-        snapshot_paths::build_snapshot_archives_remote_dir(match archive_kind {
-            ArchiveKind::FullArchive => full_snapshot_archives_dir,
-            ArchiveKind::IncrementalArchive(_) => incremental_snapshot_archives_dir,
+        snapshot_paths::build_snapshot_archives_remote_dir(match snapshot_kind {
+            SnapshotArchiveKind::Full => full_snapshot_archives_dir,
+            SnapshotArchiveKind::Incremental(_) => incremental_snapshot_archives_dir,
         });
     fs::create_dir_all(&snapshot_archives_remote_dir).unwrap();
 
@@ -82,14 +82,14 @@ pub fn download_snapshot_archive(
         },
         ArchiveFormat::TarLz4,
     ] {
-        let destination_path = match archive_kind {
-            ArchiveKind::FullArchive => snapshot_paths::build_full_snapshot_archive_path(
+        let destination_path = match snapshot_kind {
+            SnapshotArchiveKind::Full => snapshot_paths::build_full_snapshot_archive_path(
                 &snapshot_archives_remote_dir,
                 desired_snapshot_hash.0,
                 &desired_snapshot_hash.1,
                 archive_format,
             ),
-            ArchiveKind::IncrementalArchive(base_slot) => {
+            SnapshotArchiveKind::Incremental(base_slot) => {
                 snapshot_paths::build_incremental_snapshot_archive_path(
                     &snapshot_archives_remote_dir,
                     base_slot,
