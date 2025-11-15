@@ -157,22 +157,6 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             usage_warning:"tpu_coalesce will be dropped (currently ignored)",
     );
     add_arg!(
-        // deprecated in v3.0.0
-        Arg::with_name("tpu_disable_quic")
-            .long("tpu-disable-quic")
-            .takes_value(false)
-            .help("Do not use QUIC to send transactions."),
-        usage_warning: "UDP support will be dropped"
-    );
-    add_arg!(
-        // deprecated in v3.0.0
-        Arg::with_name("tpu_enable_udp")
-            .long("tpu-enable-udp")
-            .takes_value(false)
-            .help("Enable UDP for receiving/sending transactions."),
-        usage_warning: "UDP support will be dropped"
-    );
-    add_arg!(
         // deprecated in v3.1.0
         Arg::with_name("transaction_struct")
             .long("transaction-structure")
