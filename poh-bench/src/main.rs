@@ -78,7 +78,7 @@ fn main() {
         for _ in 0..iterations {
             assert!(ticks[..num_entries]
                 .verify_cpu_generic(&start_hash, &thread_pool)
-                .finish_verify(&thread_pool));
+                .status());
         }
         time.stop();
         println!(
@@ -97,7 +97,7 @@ fn main() {
                 for _ in 0..iterations {
                     assert!(ticks[..num_entries]
                         .verify_cpu_x86_simd(&start_hash, 8, &thread_pool)
-                        .finish_verify(&thread_pool));
+                        .status());
                 }
                 time.stop();
                 println!(
@@ -112,7 +112,7 @@ fn main() {
                 for _ in 0..iterations {
                     assert!(ticks[..num_entries]
                         .verify_cpu_x86_simd(&start_hash, 16, &thread_pool)
-                        .finish_verify(&thread_pool));
+                        .status())
                 }
                 time.stop();
                 println!(

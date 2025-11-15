@@ -238,18 +238,13 @@ pub fn next_hash(
     }
 }
 
-pub enum DeviceVerificationData {
-    Cpu(),
-}
-
 pub struct EntryVerificationState {
-    verification_status: EntryVerificationStatus,
+    verification_status: bool,
     poh_duration_us: u64,
-    device_verification_data: DeviceVerificationData,
 }
 
 pub struct EntrySigVerificationState<Tx: TransactionWithMeta> {
-    verification_status: EntryVerificationStatus,
+    verification_status: bool,
     entries: Option<Vec<EntryType<Tx>>>,
 }
 
@@ -257,36 +252,18 @@ impl<Tx: TransactionWithMeta> EntrySigVerificationState<Tx> {
     pub fn entries(&mut self) -> Option<Vec<EntryType<Tx>>> {
         self.entries.take()
     }
-    pub fn finish_verify(&mut self) -> bool {
-        self.verification_status == EntryVerificationStatus::Success
-    }
-    pub fn status(&self) -> EntryVerificationStatus {
+    pub fn status(&self) -> bool {
         self.verification_status
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
-pub enum EntryVerificationStatus {
-    Failure,
-    Success,
-    Pending,
-}
-
 impl EntryVerificationState {
-    pub fn status(&self) -> EntryVerificationStatus {
+    pub fn status(&self) -> bool {
         self.verification_status
     }
 
     pub fn poh_duration_us(&self) -> u64 {
         self.poh_duration_us
-    }
-
-    pub fn finish_verify(&mut self, _thread_pool: &ThreadPool) -> bool {
-        match &mut self.device_verification_data {
-            DeviceVerificationData::Cpu() => {
-                self.verification_status == EntryVerificationStatus::Success
-            }
-        }
     }
 }
 
@@ -347,7 +324,7 @@ fn start_verify_transactions_cpu<Tx: TransactionWithMeta + Send + Sync + 'static
     let entries = verify_transactions(entries, thread_pool, Arc::new(verify_func))?;
 
     Ok(EntrySigVerificationState {
-        verification_status: EntryVerificationStatus::Success,
+        verification_status: true,
         entries: Some(entries),
     })
 }
@@ -381,8 +358,7 @@ pub trait EntrySlice {
         simd_len: usize,
         thread_pool: &ThreadPool,
     ) -> EntryVerificationState;
-    fn start_verify(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> EntryVerificationState;
-    fn verify(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> bool;
+    fn verify(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> EntryVerificationState;
     /// Checks that each entry tick has the correct number of hashes. Entry slices do not
     /// necessarily end in a tick, so `tick_hash_count` is used to carry over the hash count
     /// for the next entry slice.
@@ -392,9 +368,8 @@ pub trait EntrySlice {
 }
 
 impl EntrySlice for [Entry] {
-    fn verify(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> bool {
-        self.start_verify(start_hash, thread_pool)
-            .finish_verify(thread_pool)
+    fn verify(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> EntryVerificationState {
+        self.verify_cpu(start_hash, thread_pool)
     }
 
     fn verify_cpu_generic(
@@ -425,13 +400,8 @@ impl EntrySlice for [Entry] {
         });
         let poh_duration_us = now.elapsed().as_micros() as u64;
         EntryVerificationState {
-            verification_status: if res {
-                EntryVerificationStatus::Success
-            } else {
-                EntryVerificationStatus::Failure
-            },
+            verification_status: res,
             poh_duration_us,
-            device_verification_data: DeviceVerificationData::Cpu(),
         }
     }
 
@@ -513,13 +483,8 @@ impl EntrySlice for [Entry] {
         });
         let poh_duration_us = now.elapsed().as_micros() as u64;
         EntryVerificationState {
-            verification_status: if res {
-                EntryVerificationStatus::Success
-            } else {
-                EntryVerificationStatus::Failure
-            },
+            verification_status: res,
             poh_duration_us,
-            device_verification_data: DeviceVerificationData::Cpu(),
         }
     }
 
@@ -543,10 +508,6 @@ impl EntrySlice for [Entry] {
         } else {
             self.verify_cpu_generic(start_hash, thread_pool)
         }
-    }
-
-    fn start_verify(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> EntryVerificationState {
-        self.verify_cpu(start_hash, thread_pool)
     }
 
     fn verify_tick_hash_count(&self, tick_hash_count: &mut u64, hashes_per_tick: u64) -> bool {
@@ -776,27 +737,27 @@ mod tests {
 
         // Verify entry with 2 transactions
         let mut e0 = [Entry::new(&zero, 0, vec![tx0, tx1])];
-        assert!(e0.verify(&zero, &thread_pool));
+        assert!(e0.verify(&zero, &thread_pool).status());
 
         // Clear signature of the first transaction, see that it does not verify
         let orig_sig = e0[0].transactions[0].signatures[0];
         e0[0].transactions[0].signatures[0] = Signature::default();
-        assert!(!e0.verify(&zero, &thread_pool));
+        assert!(!e0.verify(&zero, &thread_pool).status());
 
         // restore original signature
         e0[0].transactions[0].signatures[0] = orig_sig;
-        assert!(e0.verify(&zero, &thread_pool));
+        assert!(e0.verify(&zero, &thread_pool).status());
 
         // Resize signatures and see verification fails.
         let len = e0[0].transactions[0].signatures.len();
         e0[0].transactions[0]
             .signatures
             .resize(len - 1, Signature::default());
-        assert!(!e0.verify(&zero, &thread_pool));
+        assert!(!e0.verify(&zero, &thread_pool).status());
 
         // Pass an entry with no transactions
         let e0 = [Entry::new(&zero, 0, vec![])];
-        assert!(e0.verify(&zero, &thread_pool));
+        assert!(e0.verify(&zero, &thread_pool).status());
     }
 
     #[test]
@@ -834,18 +795,24 @@ mod tests {
         let zero = Hash::default();
         let one = hash(zero.as_ref());
         // base case
-        assert!(vec![][..].verify(&zero, &thread_pool));
+        assert!(vec![][..].verify(&zero, &thread_pool).status());
         // singleton case 1
-        assert!(vec![Entry::new_tick(0, &zero)][..].verify(&zero, &thread_pool));
+        assert!(vec![Entry::new_tick(0, &zero)][..]
+            .verify(&zero, &thread_pool)
+            .status());
         // singleton case 2, bad
-        assert!(!vec![Entry::new_tick(0, &zero)][..].verify(&one, &thread_pool));
+        assert!(!vec![Entry::new_tick(0, &zero)][..]
+            .verify(&one, &thread_pool)
+            .status());
         // inductive step
-        assert!(vec![next_entry(&zero, 0, vec![]); 2][..].verify(&zero, &thread_pool));
+        assert!(vec![next_entry(&zero, 0, vec![]); 2][..]
+            .verify(&zero, &thread_pool)
+            .status());
 
         let mut bad_ticks = vec![next_entry(&zero, 0, vec![]); 2];
         bad_ticks[1].hash = one;
         // inductive step, bad
-        assert!(!bad_ticks.verify(&zero, &thread_pool));
+        assert!(!bad_ticks.verify(&zero, &thread_pool).status());
     }
 
     #[test]
@@ -857,22 +824,26 @@ mod tests {
         let one = hash(zero.as_ref());
         let two = hash(one.as_ref());
         // base case
-        assert!(vec![][..].verify(&one, &thread_pool));
+        assert!(vec![][..].verify(&one, &thread_pool).status());
         // singleton case 1
-        assert!(vec![Entry::new_tick(1, &two)][..].verify(&one, &thread_pool));
+        assert!(vec![Entry::new_tick(1, &two)][..]
+            .verify(&one, &thread_pool)
+            .status());
         // singleton case 2, bad
-        assert!(!vec![Entry::new_tick(1, &two)][..].verify(&two, &thread_pool));
+        assert!(!vec![Entry::new_tick(1, &two)][..]
+            .verify(&two, &thread_pool)
+            .status());
 
         let mut ticks = vec![next_entry(&one, 1, vec![])];
         ticks.push(next_entry(&ticks.last().unwrap().hash, 1, vec![]));
         // inductive step
-        assert!(ticks.verify(&one, &thread_pool));
+        assert!(ticks.verify(&one, &thread_pool).status());
 
         let mut bad_ticks = vec![next_entry(&one, 1, vec![])];
         bad_ticks.push(next_entry(&bad_ticks.last().unwrap().hash, 1, vec![]));
         bad_ticks[1].hash = one;
         // inductive step, bad
-        assert!(!bad_ticks.verify(&one, &thread_pool));
+        assert!(!bad_ticks.verify(&one, &thread_pool).status());
     }
 
     #[test]
@@ -888,11 +859,15 @@ mod tests {
         let tx0 = system_transaction::transfer(&alice_keypair, &bob_keypair.pubkey(), 1, one);
         let tx1 = system_transaction::transfer(&bob_keypair, &alice_keypair.pubkey(), 1, one);
         // base case
-        assert!(vec![][..].verify(&one, &thread_pool));
+        assert!(vec![][..].verify(&one, &thread_pool).status());
         // singleton case 1
-        assert!(vec![next_entry(&one, 1, vec![tx0.clone()])][..].verify(&one, &thread_pool));
+        assert!(vec![next_entry(&one, 1, vec![tx0.clone()])][..]
+            .verify(&one, &thread_pool)
+            .status());
         // singleton case 2, bad
-        assert!(!vec![next_entry(&one, 1, vec![tx0.clone()])][..].verify(&two, &thread_pool));
+        assert!(!vec![next_entry(&one, 1, vec![tx0.clone()])][..]
+            .verify(&two, &thread_pool)
+            .status());
 
         let mut ticks = vec![next_entry(&one, 1, vec![tx0.clone()])];
         ticks.push(next_entry(
@@ -902,13 +877,13 @@ mod tests {
         ));
 
         // inductive step
-        assert!(ticks.verify(&one, &thread_pool));
+        assert!(ticks.verify(&one, &thread_pool).status());
 
         let mut bad_ticks = vec![next_entry(&one, 1, vec![tx0])];
         bad_ticks.push(next_entry(&bad_ticks.last().unwrap().hash, 1, vec![tx1]));
         bad_ticks[1].hash = one;
         // inductive step, bad
-        assert!(!bad_ticks.verify(&one, &thread_pool));
+        assert!(!bad_ticks.verify(&one, &thread_pool).status());
     }
 
     #[test]
@@ -1047,7 +1022,9 @@ mod tests {
 
             info!("done.. {time}");
             let mut time = Measure::start("poh");
-            let res = entries.verify(&Hash::default(), &thread_pool_for_tests());
+            let res = entries
+                .verify(&Hash::default(), &thread_pool_for_tests())
+                .status();
             assert_eq!(res, !modified);
             time.stop();
             info!("{time} {res}");
