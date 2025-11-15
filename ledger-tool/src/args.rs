@@ -6,7 +6,7 @@ use {
     solana_accounts_db::{
         accounts_db::{AccountsDbConfig, DEFAULT_MEMLOCK_BUDGET_SIZE},
         accounts_file::StorageAccess,
-        accounts_index::{AccountsIndexConfig, IndexLimitMb, ScanFilter},
+        accounts_index::{AccountsIndexConfig, IndexLimit, ScanFilter},
     },
     solana_clap_utils::{
         hidden_unless_forced,
@@ -67,6 +67,18 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .long_help(
                 "Enables the disk-based accounts index. Reduce the memory footprint of the \
                  accounts index at the cost of index performance.",
+            ),
+        Arg::with_name("accounts_index_limit_bytes")
+            .long("accounts-index-limit-bytes")
+            .value_name("BYTES")
+            .takes_value(true)
+            .requires("enable_accounts_disk_index")
+            .help("Flush accounts index to disk when memory usage exceeds this limit in bytes")
+            .long_help(
+                "Sets a memory size threshold for the in-memory accounts index. When the memory \
+                 usage of the index exceeds this limit (in bytes), it will flush to disk. This \
+                 provides a middle ground between pure in-memory (default) and always-on-disk \
+                 (--enable-accounts-disk-index) modes. Requires --enable-accounts-disk-index.",
             ),
         Arg::with_name("accounts_db_skip_shrink")
             .long("accounts-db-skip-shrink")
@@ -252,10 +264,14 @@ pub fn get_accounts_db_config(
     let accounts_index_bins = value_t!(arg_matches, "accounts_index_bins", usize).ok();
     let num_initial_accounts =
         value_t!(arg_matches, "accounts_index_initial_accounts_count", usize).ok();
-    let accounts_index_index_limit_mb = if !arg_matches.is_present("enable_accounts_disk_index") {
-        IndexLimitMb::InMemOnly
+    let accounts_index_index_limit = if arg_matches.is_present("enable_accounts_disk_index") {
+        if let Ok(limit_bytes) = value_t!(arg_matches, "accounts_index_limit_bytes", u64) {
+            IndexLimit::Threshold(limit_bytes)
+        } else {
+            IndexLimit::Minimal
+        }
     } else {
-        IndexLimitMb::Minimal
+        IndexLimit::InMemOnly
     };
     let accounts_index_drives = values_t!(arg_matches, "accounts_index_path", String)
         .ok()
@@ -264,7 +280,7 @@ pub fn get_accounts_db_config(
     let accounts_index_config = AccountsIndexConfig {
         bins: accounts_index_bins,
         num_initial_accounts,
-        index_limit_mb: accounts_index_index_limit_mb,
+        index_limit: accounts_index_index_limit,
         drives: Some(accounts_index_drives),
         ..AccountsIndexConfig::default()
     };
