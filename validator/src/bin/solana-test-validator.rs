@@ -154,13 +154,6 @@ fn main() {
     let ticks_per_slot = value_t!(matches, "ticks_per_slot", u64).ok();
     let slots_per_epoch = value_t!(matches, "slots_per_epoch", Slot).ok();
     let inflation_fixed = value_t!(matches, "inflation_fixed", f64).ok();
-    let gossip_host = matches.value_of("gossip_host").map(|gossip_host| {
-        warn!("--gossip-host is deprecated. Use --bind-address instead.");
-        solana_net_utils::parse_host(gossip_host).unwrap_or_else(|err| {
-            eprintln!("Failed to parse --gossip-host: {err}");
-            exit(1);
-        })
-    });
     let gossip_port = value_t!(matches, "gossip_port", u16).ok();
     let dynamic_port_range = matches.value_of("dynamic_port_range").map(|port_range| {
         solana_net_utils::parse_port_range(port_range).unwrap_or_else(|| {
@@ -178,9 +171,7 @@ fn main() {
         exit(1);
     });
 
-    let advertised_ip = if let Some(ip) = gossip_host {
-        ip
-    } else if !bind_address.is_unspecified() && !bind_address.is_loopback() {
+    let advertised_ip = if !bind_address.is_unspecified() && !bind_address.is_loopback() {
         bind_address
     } else {
         IpAddr::V4(Ipv4Addr::LOCALHOST)

@@ -137,16 +137,6 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         usage_warning: "CUDA support will be dropped"
     );
     add_arg!(
-        // deprecated in v3.0.0
-        Arg::with_name("gossip_host")
-            .long("gossip-host")
-            .value_name("HOST")
-            .takes_value(true)
-            .validator(solana_net_utils::is_host),
-            replaced_by : "bind-address",
-            usage_warning:"Use --bind-address instead",
-    );
-    add_arg!(
         // deprecated in v3.1.0
         Arg::with_name("tpu_coalesce_ms")
             .long("tpu-coalesce-ms")
