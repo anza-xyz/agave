@@ -63,7 +63,7 @@ impl RouteMonitor {
                         }
                     };
 
-                    debug_assert!(ev & POLLNVAL == 0);
+                    assert!(ev & POLLNVAL == 0);
 
                     if (ev & (POLLHUP | POLLERR)) != 0 {
                         error!(
