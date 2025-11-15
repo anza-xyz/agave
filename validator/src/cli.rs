@@ -129,6 +129,14 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
     }
 
     add_arg!(
+        // deprecated in v3.1.1
+        Arg::with_name("cuda")
+            .long("cuda")
+            .takes_value(false)
+            .help("Use CUDA"),
+        usage_warning: "CUDA support will be dropped"
+    );
+    add_arg!(
         // deprecated in v3.1.0
         Arg::with_name("tpu_coalesce_ms")
             .long("tpu-coalesce-ms")
