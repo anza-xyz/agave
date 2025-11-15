@@ -127,6 +127,87 @@ impl<'a> Umem for SliceUmem<'a> {
     }
 }
 
+pub struct OwnedUmemFrame {
+    offset: usize,
+    len: usize,
+}
+
+impl Frame for OwnedUmemFrame {
+    fn offset(&self) -> FrameOffset {
+        FrameOffset(self.offset)
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn set_len(&mut self, len: usize) {
+        self.len = len;
+    }
+}
+
+pub struct OwnedUmem<T: DerefMut<Target = [u8]>> {
+    owned: T,
+    frame_size: u32,
+    available_frames: Vec<u64>,
+    capacity: usize,
+}
+
+impl<T: DerefMut<Target = [u8]>> OwnedUmem<T> {
+    pub fn new(owned: T, frame_size: u32) -> Result<Self, io::Error> {
+        debug_assert!(frame_size.is_power_of_two());
+        let capacity = owned.len() / frame_size as usize;
+        Ok(Self {
+            owned,
+            frame_size,
+            available_frames: Vec::from_iter(0..capacity as u64),
+            capacity,
+        })
+    }
+}
+
+impl<T: DerefMut<Target = [u8]>> Umem for OwnedUmem<T> {
+    type Frame = OwnedUmemFrame;
+
+    fn as_ptr(&self) -> *const u8 {
+        self.owned.as_ptr()
+    }
+
+    fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.owned.as_mut_ptr()
+    }
+
+    fn len(&self) -> usize {
+        self.owned.len()
+    }
+
+    fn frame_size(&self) -> usize {
+        self.frame_size as usize
+    }
+
+    fn reserve(&mut self) -> Option<OwnedUmemFrame> {
+        let index = self.available_frames.pop()?;
+
+        Some(OwnedUmemFrame {
+            offset: index as usize * self.frame_size as usize,
+            len: 0,
+        })
+    }
+
+    fn release(&mut self, frame: FrameOffset) {
+        let index = frame.0 / self.frame_size as usize;
+        self.available_frames.push(index as u64);
+    }
+
+    fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    fn available(&self) -> usize {
+        self.available_frames.len()
+    }
+}
+
 #[derive(Debug)]
 pub struct AllocError;
 
