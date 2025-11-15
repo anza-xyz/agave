@@ -88,19 +88,19 @@ fn verify_reachable_ports(
         udp_sockets.push(&node.sockets.serve_repair);
     }
     if verify_address(&node.info.tpu(Protocol::UDP)) {
-        udp_sockets.extend(node.sockets.tpu.iter());
-        udp_sockets.extend(&node.sockets.tpu_quic);
+        udp_sockets.extend(node.sockets.tpu.transactions.iter());
+        udp_sockets.extend(&node.sockets.tpu.transactions_quic);
     }
     if verify_address(&node.info.tpu_forwards(Protocol::UDP)) {
-        udp_sockets.extend(node.sockets.tpu_forwards.iter());
-        udp_sockets.extend(&node.sockets.tpu_forwards_quic);
+        udp_sockets.extend(node.sockets.tpu.transaction_forwards.iter());
+        udp_sockets.extend(&node.sockets.tpu.transactions_forwards_quic);
     }
     if verify_address(&node.info.tpu_vote(Protocol::UDP)) {
-        udp_sockets.extend(node.sockets.tpu_vote.iter());
+        udp_sockets.extend(node.sockets.tpu.vote.iter());
     }
     if verify_address(&node.info.tvu(Protocol::UDP)) {
         udp_sockets.extend(node.sockets.tvu.iter());
-        udp_sockets.extend(node.sockets.broadcast.iter());
+        udp_sockets.extend(node.sockets.tpu.broadcast.iter());
         udp_sockets.extend(node.sockets.retransmit_sockets.iter());
     }
     if !solana_net_utils::verify_all_reachable_udp(
