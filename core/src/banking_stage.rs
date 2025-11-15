@@ -1,6 +1,5 @@
 //! The `banking_stage` processes Transaction messages. It is intended to be used
-//! to construct a software pipeline. The stage uses all available CPU cores and
-//! can do its processing in parallel with signature verification on the GPU.
+//! to construct a software pipeline.
 
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;

@@ -281,7 +281,7 @@ impl ClusterInfoVoteListener {
         let mut packet_batches = packet::to_packet_batches(&votes, 1);
 
         // Votes should already be filtered by this point.
-        sigverify::ed25519_verify_cpu(
+        sigverify::ed25519_verify(
             &mut packet_batches,
             /*reject_non_vote=*/ false,
             votes.len(),
