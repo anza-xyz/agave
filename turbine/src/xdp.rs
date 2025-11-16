@@ -8,6 +8,7 @@ use {
         tx_loop::tx_loop,
     },
     crossbeam_channel::TryRecvError,
+    log::warn,
     std::{sync::Arc, thread::Builder, time::Duration},
 };
 use {
@@ -136,11 +137,7 @@ impl XdpRetransmitter {
                 .map_err(|e| format!("failed to raise {cap:?} capability: {e}"))?;
         }
 
-        let dev = Arc::new(if let Some(interface) = config.interface {
-            NetworkDevice::new(interface).unwrap()
-        } else {
-            NetworkDevice::new_from_default_route().unwrap()
-        });
+        let dev = create_network_device(&config)?;
 
         let ebpf = if config.zero_copy {
             Some(load_xdp_program(&dev).map_err(|e| format!("failed to attach xdp program: {e}"))?)
@@ -239,6 +236,26 @@ pub fn master_ip_if_bonded(interface: &str) -> Option<Ipv4Addr> {
         );
     }
     None
+}
+
+#[cfg(target_os = "linux")]
+fn create_network_device(config: &XdpConfig) -> Result<Arc<NetworkDevice>, Box<dyn Error>> {
+    let dev = if let Some(ref interface) = config.interface {
+        let device = NetworkDevice::new(interface).map_err(|e| {
+            format!("failed to create network device for interface '{interface}': {e}")
+        })?;
+
+        if config.zero_copy && master_ip_if_bonded(interface).is_some() {
+            warn!("using zero-copy retransmission on a bonded network interface '{interface}'");
+        }
+
+        device
+    } else {
+        NetworkDevice::new_from_default_route()
+            .map_err(|e| format!("failed to create network device from default route: {e}"))?
+    };
+
+    Ok(Arc::new(dev))
 }
 
 #[cfg(not(target_os = "linux"))]
