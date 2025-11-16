@@ -25,9 +25,7 @@ serde = { workspace = true }
 solana-account = { workspace = true }
 solana-account-info = { workspace = true }
 solana-accounts-db = { workspace = true }
-solana-banks-client = { workspace = true }
 solana-banks-interface = { workspace = true }
-solana-banks-server = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
 solana-commitment-config = { workspace = true }
