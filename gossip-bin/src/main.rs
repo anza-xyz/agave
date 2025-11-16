@@ -42,7 +42,7 @@ fn parse_matches() -> ArgMatches<'static> {
         .value_name("HOST")
         .takes_value(true)
         .validator(solana_net_utils::is_host)
-        .help("IP address to bind the node to for gossip (replaces --gossip-host)");
+        .help("IP address to bind the node to for gossip");
 
     App::new(crate_name!())
         .about(crate_description!())
