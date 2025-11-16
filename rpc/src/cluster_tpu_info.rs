@@ -16,7 +16,7 @@ use {
 pub struct ClusterTpuInfo {
     cluster_info: Arc<ClusterInfo>,
     poh_recorder: Arc<RwLock<PohRecorder>>,
-    recent_peers: HashMap<Pubkey, (SocketAddr, SocketAddr)>, // values are socket address for UDP and QUIC protocols
+    recent_peers: HashMap<Pubkey, SocketAddr>, // values are socket address for QUIC protocol
 }
 
 impl ClusterTpuInfo {
@@ -36,16 +36,11 @@ impl TpuInfo for ClusterTpuInfo {
             .tpu_peers()
             .into_iter()
             .chain(once(self.cluster_info.my_contact_info()))
-            .filter_map(|node| {
-                Some((
-                    *node.pubkey(),
-                    (node.tpu(Protocol::UDP)?, node.tpu(Protocol::QUIC)?),
-                ))
-            })
+            .filter_map(|node| Some((*node.pubkey(), node.tpu(Protocol::QUIC)?)))
             .collect();
     }
 
-    fn get_leader_tpus(&self, max_count: u64, protocol: Protocol) -> Vec<&SocketAddr> {
+    fn get_leader_tpus(&self, max_count: u64) -> Vec<&SocketAddr> {
         let recorder = self.poh_recorder.read().unwrap();
         let leaders: Vec<_> = (0..max_count)
             .filter_map(|i| recorder.leader_after_n_slots(i * NUM_CONSECUTIVE_LEADER_SLOTS))
@@ -53,10 +48,7 @@ impl TpuInfo for ClusterTpuInfo {
         drop(recorder);
         let mut unique_leaders = vec![];
         for leader in leaders.iter() {
-            if let Some(addr) = self.recent_peers.get(leader).map(|addr| match protocol {
-                Protocol::UDP => &addr.0,
-                Protocol::QUIC => &addr.1,
-            }) {
+            if let Some(addr) = self.recent_peers.get(leader) {
                 if !unique_leaders.contains(&addr) {
                     unique_leaders.push(addr);
                 }
@@ -65,7 +57,7 @@ impl TpuInfo for ClusterTpuInfo {
         unique_leaders
     }
 
-    fn get_not_unique_leader_tpus(&self, max_count: u64, protocol: Protocol) -> Vec<&SocketAddr> {
+    fn get_not_unique_leader_tpus(&self, max_count: u64) -> Vec<&SocketAddr> {
         let recorder = self.poh_recorder.read().unwrap();
         let leader_pubkeys: Vec<_> = (0..max_count)
             .filter_map(|i| recorder.leader_after_n_slots(i * NUM_CONSECUTIVE_LEADER_SLOTS))
@@ -73,14 +65,7 @@ impl TpuInfo for ClusterTpuInfo {
         drop(recorder);
         leader_pubkeys
             .iter()
-            .filter_map(|leader_pubkey| {
-                self.recent_peers
-                    .get(leader_pubkey)
-                    .map(|addr| match protocol {
-                        Protocol::UDP => &addr.0,
-                        Protocol::QUIC => &addr.1,
-                    })
-            })
+            .filter_map(|leader_pubkey| self.recent_peers.get(leader_pubkey))
             .collect()
     }
 }
@@ -215,18 +200,9 @@ mod test {
             SocketAddrSpace::Unspecified,
         ));
 
-        let validator0_socket = (
-            SocketAddr::from((Ipv4Addr::LOCALHOST, 1111)),
-            SocketAddr::from((Ipv4Addr::LOCALHOST, 1112)),
-        );
-        let validator1_socket = (
-            SocketAddr::from((Ipv4Addr::LOCALHOST, 2222)),
-            SocketAddr::from((Ipv4Addr::LOCALHOST, 2223)),
-        );
-        let validator2_socket = (
-            SocketAddr::from((Ipv4Addr::LOCALHOST, 3333)),
-            SocketAddr::from((Ipv4Addr::LOCALHOST, 3334)),
-        );
+        let validator0_socket = SocketAddr::from((Ipv4Addr::LOCALHOST, 1112));
+        let validator1_socket = SocketAddr::from((Ipv4Addr::LOCALHOST, 2223));
+        let validator2_socket = SocketAddr::from((Ipv4Addr::LOCALHOST, 3334));
         let recent_peers: HashMap<_, _> = [
             (
                 validator_vote_keypairs0.node_keypair.pubkey(),
@@ -254,12 +230,12 @@ mod test {
         let first_leader =
             solana_ledger::leader_schedule_utils::slot_leader_at(slot, &bank).unwrap();
         assert_eq!(
-            leader_info.get_leader_tpus(1, Protocol::UDP),
-            vec![&recent_peers.get(&first_leader).unwrap().0]
+            leader_info.get_leader_tpus(1),
+            vec![recent_peers.get(&first_leader).unwrap()]
         );
         assert_eq!(
-            leader_info.get_not_unique_leader_tpus(1, Protocol::UDP),
-            vec![&recent_peers.get(&first_leader).unwrap().0]
+            leader_info.get_not_unique_leader_tpus(1),
+            vec![recent_peers.get(&first_leader).unwrap()]
         );
 
         let second_leader = solana_ledger::leader_schedule_utils::slot_leader_at(
@@ -268,16 +244,13 @@ mod test {
         )
         .unwrap();
         let mut expected_leader_sockets = vec![
-            &recent_peers.get(&first_leader).unwrap().0,
-            &recent_peers.get(&second_leader).unwrap().0,
+            recent_peers.get(&first_leader).unwrap(),
+            recent_peers.get(&second_leader).unwrap(),
         ];
         expected_leader_sockets.dedup();
+        assert_eq!(leader_info.get_leader_tpus(2), expected_leader_sockets);
         assert_eq!(
-            leader_info.get_leader_tpus(2, Protocol::UDP),
-            expected_leader_sockets
-        );
-        assert_eq!(
-            leader_info.get_not_unique_leader_tpus(2, Protocol::UDP),
+            leader_info.get_not_unique_leader_tpus(2),
             expected_leader_sockets
         );
 
@@ -287,29 +260,24 @@ mod test {
         )
         .unwrap();
         let expected_leader_sockets = vec![
-            &recent_peers.get(&first_leader).unwrap().0,
-            &recent_peers.get(&second_leader).unwrap().0,
-            &recent_peers.get(&third_leader).unwrap().0,
+            recent_peers.get(&first_leader).unwrap(),
+            recent_peers.get(&second_leader).unwrap(),
+            recent_peers.get(&third_leader).unwrap(),
         ];
         let mut unique_expected_leader_sockets = expected_leader_sockets.clone();
         unique_expected_leader_sockets.dedup();
         assert_eq!(
-            leader_info.get_leader_tpus(3, Protocol::UDP),
+            leader_info.get_leader_tpus(3),
             unique_expected_leader_sockets
         );
         assert_eq!(
-            leader_info.get_not_unique_leader_tpus(3, Protocol::UDP),
+            leader_info.get_not_unique_leader_tpus(3),
             expected_leader_sockets
         );
 
         for x in 4..8 {
-            assert!(leader_info.get_leader_tpus(x, Protocol::UDP).len() <= recent_peers.len());
-            assert_eq!(
-                leader_info
-                    .get_not_unique_leader_tpus(x, Protocol::UDP)
-                    .len(),
-                x as usize
-            );
+            assert!(leader_info.get_leader_tpus(x).len() <= recent_peers.len());
+            assert_eq!(leader_info.get_not_unique_leader_tpus(x).len(), x as usize);
         }
     }
 }

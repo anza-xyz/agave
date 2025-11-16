@@ -157,7 +157,7 @@ impl Default for Config {
 pub const MAX_RETRY_SLEEP_MS: u64 = 1000;
 
 impl SendTransactionService {
-    pub fn new_with_client<Client: TransactionClient + Clone + std::marker::Send + 'static>(
+    pub fn new<Client: TransactionClient + Clone + std::marker::Send + 'static>(
         bank_forks: &Arc<RwLock<BankForks>>,
         receiver: Receiver<TransactionInfo>,
         client: Client,
@@ -532,9 +532,8 @@ mod test {
     use {
         super::*,
         crate::{
-            test_utils::ClientWithCreator,
-            tpu_info::NullTpuInfo,
-            transaction_client::{ConnectionCacheClient, TpuClientNextClient},
+            test_utils::{CreateClient, Stoppable},
+            transaction_client::TpuClientNextClient,
         },
         crossbeam_channel::{bounded, unbounded},
         solana_account::AccountSharedData,
@@ -548,14 +547,20 @@ mod test {
         tokio::runtime::Handle,
     };
 
-    fn service_exit<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn service_exit() {
         let bank = Bank::default_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
         let (sender, receiver) = unbounded();
 
-        let client = C::create_client(maybe_runtime, "127.0.0.1:0".parse().unwrap(), None, 1);
+        let client = TpuClientNextClient::create_client(
+            Some(Handle::current()),
+            "127.0.0.1:0".parse().unwrap(),
+            None,
+            1,
+        );
 
-        let send_transaction_service = SendTransactionService::new_with_client(
+        let send_transaction_service = SendTransactionService::new(
             &bank_forks,
             receiver,
             client.clone(),
@@ -571,17 +576,8 @@ mod test {
         client.stop();
     }
 
-    #[test]
-    fn service_exit_with_connection_cache() {
-        service_exit::<ConnectionCacheClient<NullTpuInfo>>(None);
-    }
-
     #[tokio::test(flavor = "multi_thread")]
-    async fn service_exit_with_tpu_client_next() {
-        service_exit::<TpuClientNextClient>(Some(Handle::current()));
-    }
-
-    fn validator_exit<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
+    async fn validator_exit() {
         let bank = Bank::default_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
         let (sender, receiver) = bounded(0);
@@ -599,8 +595,13 @@ mod test {
         };
 
         let exit = Arc::new(AtomicBool::new(false));
-        let client = C::create_client(maybe_runtime, "127.0.0.1:0".parse().unwrap(), None, 1);
-        let _send_transaction_service = SendTransactionService::new_with_client(
+        let client = TpuClientNextClient::create_client(
+            Some(Handle::current()),
+            "127.0.0.1:0".parse().unwrap(),
+            None,
+            1,
+        );
+        let _send_transaction_service = SendTransactionService::new(
             &bank_forks,
             receiver,
             client.clone(),
@@ -624,17 +625,8 @@ mod test {
         }
     }
 
-    #[test]
-    fn validator_exit_with_connection_cache() {
-        validator_exit::<ConnectionCacheClient<NullTpuInfo>>(None);
-    }
-
     #[tokio::test(flavor = "multi_thread")]
-    async fn validator_exit_with_tpu_client_next() {
-        validator_exit::<TpuClientNextClient>(Some(Handle::current()));
-    }
-
-    fn process_transactions<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
+    async fn process_transactions() {
         agave_logger::setup();
 
         let (mut genesis_config, mint_keypair) = create_genesis_config(4);
@@ -719,8 +711,8 @@ mod test {
             ),
         );
 
-        let client = C::create_client(
-            maybe_runtime,
+        let client = TpuClientNextClient::create_client(
+            Some(Handle::current()),
             "127.0.0.1:0".parse().unwrap(),
             config.tpu_peers.clone(),
             leader_forward_count,
@@ -916,17 +908,8 @@ mod test {
         client.stop();
     }
 
-    #[test]
-    fn process_transactions_with_connection_cache() {
-        process_transactions::<ConnectionCacheClient<NullTpuInfo>>(None);
-    }
-
     #[tokio::test(flavor = "multi_thread")]
-    async fn process_transactions_with_tpu_client_next() {
-        process_transactions::<TpuClientNextClient>(Some(Handle::current()));
-    }
-
-    fn retry_durable_nonce_transactions<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
+    async fn retry_durable_nonce_transactions() {
         agave_logger::setup();
 
         let (mut genesis_config, mint_keypair) = create_genesis_config(4);
@@ -1017,8 +1000,8 @@ mod test {
             ),
         );
         let stats = SendTransactionServiceStats::default();
-        let client = C::create_client(
-            maybe_runtime,
+        let client = TpuClientNextClient::create_client(
+            Some(Handle::current()),
             "127.0.0.1:0".parse().unwrap(),
             config.tpu_peers.clone(),
             leader_forward_count,
@@ -1255,15 +1238,5 @@ mod test {
             }
         );
         client.stop();
-    }
-
-    #[test]
-    fn retry_durable_nonce_transactions_with_connection_cache() {
-        retry_durable_nonce_transactions::<ConnectionCacheClient<NullTpuInfo>>(None);
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn retry_durable_nonce_transactions_with_tpu_client_next() {
-        retry_durable_nonce_transactions::<TpuClientNextClient>(Some(Handle::current()));
     }
 }
