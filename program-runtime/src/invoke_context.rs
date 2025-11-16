@@ -190,7 +190,7 @@ pub struct InvokeContext<'a, 'ix_data> {
     /// Runtime configurations used to provision the invocation environment.
     pub environment_config: EnvironmentConfig<'a>,
     /// The compute budget for the current invocation.
-    compute_budget: SVMTransactionExecutionBudget,
+    pub compute_budget: SVMTransactionExecutionBudget,
     /// The compute cost for the current invocation.
     execution_cost: SVMTransactionExecutionCost,
     /// Instruction compute meter, for tracking compute units consumed against

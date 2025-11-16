@@ -14,6 +14,7 @@ use {
     solana_ledger::blockstore_options::AccessType,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
+        execution_budget::MAX_HEAP_FRAME_BYTES,
         invoke_context::InvokeContext,
         loaded_programs::{
             LoadProgramMetrics, ProgramCacheEntryType, DELAY_VISIBILITY_SLOT_OFFSET,
@@ -484,6 +485,26 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     ));
     let interpreted = matches.value_of("mode").unwrap() != "jit";
     with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
+
+    match matches.value_of("memory").unwrap().parse::<u32>() {
+        Ok(0) => (),
+        Ok(heap_size) => {
+            if heap_size > MAX_HEAP_FRAME_BYTES {
+                // create_vm! will fail with "invalid heap size" if the value exceeds max.
+                // This can be confusing because users might think being multiple of page size is
+                // sufficient. So warn here
+                eprintln!(
+                    "warning: --memory value over MAX_HEAP_FRAME_BYTES(={MAX_HEAP_FRAME_BYTES}), \
+                     this will likely fail"
+                );
+            }
+            invoke_context.compute_budget.heap_size = heap_size;
+        }
+        Err(e) => {
+            eprintln!("Invalid --memory value: {e}");
+            exit(1);
+        }
+    }
 
     let provide_instruction_data_offset_in_vm_r2 = invoke_context
         .get_feature_set()
