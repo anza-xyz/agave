@@ -11,7 +11,7 @@ use {
         program_loader::{get_program_deployment_slot, load_program_with_pubkey},
         rollback_accounts::RollbackAccounts,
         transaction_account_state_info::{
-            TransactionAccountStateInfo, get_uninitialized_accounts_size,
+            TransactionAccountStateInfo, get_uninitialized_accounts_size, verify_changes,
         },
         transaction_balances::{BalanceCollectionRoutines, BalanceCollector},
         transaction_error_metrics::TransactionErrorMetrics,
@@ -963,8 +963,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             tx.num_instructions(),
         );
 
-        let pre_account_state_info =
-            TransactionAccountStateInfo::new(&transaction_context, tx, &environment.rent);
+        let relax_post_exec_min_balance_check =
+            environment.feature_set.relax_post_exec_min_balance_check;
+        let pre_account_state_info = TransactionAccountStateInfo::new_pre_exec(
+            &transaction_context,
+            tx,
+            &environment.rent,
+            relax_post_exec_min_balance_check,
+        );
 
         let log_collector = if config.recording_config.enable_log_recording {
             match config.log_messages_bytes_limit {
@@ -1011,10 +1017,15 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         execute_timings.execute_accessories.process_message_us += process_message_time.as_us();
 
         let mut post_account_state_info_result = process_result
-            .and_then(|_| {
-                let post_account_state_info =
-                    TransactionAccountStateInfo::new(&transaction_context, tx, &environment.rent);
-                TransactionAccountStateInfo::verify_changes(
+            .and_then(|_info| {
+                let post_account_state_info = TransactionAccountStateInfo::new_post_exec(
+                    &transaction_context,
+                    tx,
+                    &pre_account_state_info,
+                    &environment.rent,
+                    relax_post_exec_min_balance_check,
+                );
+                verify_changes(
                     &pre_account_state_info,
                     &post_account_state_info,
                     &transaction_context,
