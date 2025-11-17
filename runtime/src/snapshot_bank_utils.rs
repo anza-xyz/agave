@@ -39,7 +39,7 @@ use {
         },
         snapshot_config::SnapshotConfig,
         snapshot_hash::SnapshotHash,
-        ArchiveFormat, SnapshotKind, SnapshotVersion,
+        ArchiveFormat, SnapshotArchiveKind, SnapshotKind, SnapshotVersion,
     },
     log::*,
     solana_accounts_db::{
@@ -692,7 +692,7 @@ fn bank_to_full_snapshot_archive_with(
     bank.clean_accounts();
 
     let snapshot_package = SnapshotPackage::new(
-        SnapshotKind::FullSnapshot,
+        SnapshotKind::Archive(SnapshotArchiveKind::Full),
         bank,
         bank.get_snapshot_storages(None),
         bank.status_cache.read().unwrap().root_slot_deltas(),
@@ -747,7 +747,7 @@ pub fn bank_to_incremental_snapshot_archive(
     bank.clean_accounts();
 
     let snapshot_package = SnapshotPackage::new(
-        SnapshotKind::IncrementalSnapshot(full_snapshot_slot),
+        SnapshotKind::Archive(SnapshotArchiveKind::Incremental(full_snapshot_slot)),
         bank,
         bank.get_snapshot_storages(Some(full_snapshot_slot)),
         bank.status_cache.read().unwrap().root_slot_deltas(),
