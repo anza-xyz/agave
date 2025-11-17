@@ -1,9 +1,9 @@
-use crate::{cuda_runtime::PinnedVec, recycler::Recycler, sigverify::TxOffset};
+use crate::{recycled_vec::RecycledVec, recycler::Recycler, sigverify::TxOffset};
 
 #[derive(Default, Clone)]
 pub struct RecyclerCache {
     recycler_offsets: Recycler<TxOffset>,
-    recycler_buffer: Recycler<PinnedVec<u8>>,
+    recycler_buffer: Recycler<RecycledVec<u8>>,
 }
 
 impl RecyclerCache {
@@ -16,7 +16,7 @@ impl RecyclerCache {
     pub fn offsets(&self) -> &Recycler<TxOffset> {
         &self.recycler_offsets
     }
-    pub fn buffer(&self) -> &Recycler<PinnedVec<u8>> {
+    pub fn buffer(&self) -> &Recycler<RecycledVec<u8>> {
         &self.recycler_buffer
     }
 }

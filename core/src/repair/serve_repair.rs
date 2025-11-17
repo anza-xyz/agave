@@ -40,7 +40,7 @@ use {
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::{
         data_budget::DataBudget,
-        packet::{Packet, PacketBatch, PacketBatchRecycler, PinnedPacketBatch},
+        packet::{Packet, PacketBatch, PacketBatchRecycler, RecycledPacketBatch},
     },
     solana_pubkey::{Pubkey, PUBKEY_BYTES},
     solana_runtime::bank_forks::SharableBanks,
@@ -1052,7 +1052,7 @@ impl ServeRepair {
 
         if !pending_pings.is_empty() {
             stats.pings_sent += pending_pings.len();
-            let batch = PinnedPacketBatch::new(pending_pings);
+            let batch = RecycledPacketBatch::new(pending_pings);
             let _ = packet_batch_sender.send(batch.into());
         }
     }
@@ -2039,7 +2039,7 @@ mod tests {
                 )
             })
             .collect();
-        let expected = PacketBatch::Pinned(PinnedPacketBatch::new(expected));
+        let expected = PacketBatch::Pinned(RecycledPacketBatch::new(expected));
         assert_eq!(rv, expected);
     }
 
@@ -2081,7 +2081,7 @@ mod tests {
             .expect("run_orphan packets");
 
         // Verify responses
-        let expected = PinnedPacketBatch::new(vec![repair_response::repair_response_packet(
+        let expected = RecycledPacketBatch::new(vec![repair_response::repair_response_packet(
             &blockstore,
             2,
             31, // shred_index
