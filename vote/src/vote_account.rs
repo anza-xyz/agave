@@ -624,7 +624,7 @@ mod tests {
             let is_alpenglow = index < num_alpenglow_nodes;
             let pubkey = Pubkey::new_unique();
             let stake = stake_per_node.unwrap_or_else(|| {
-                rng.gen_range(MIN_STAKE_FOR_STAKED_ACCOUNT..MAX_STAKE_FOR_STAKED_ACCOUNT)
+                rng.random_range(MIN_STAKE_FOR_STAKED_ACCOUNT..MAX_STAKE_FOR_STAKED_ACCOUNT)
             });
             let node_pubkey = Pubkey::new_unique();
             let account = new_rand_vote_account_internal(rng, Some(node_pubkey), is_alpenglow);
@@ -962,7 +962,7 @@ mod tests {
 
     #[test]
     fn test_clone_and_filter_for_alpenglow_truncates() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let current_limit = 3000;
         let (vote_accounts, identity_balances) =
             new_staked_vote_accounts(&mut rng, current_limit, current_limit, None);
@@ -1002,7 +1002,7 @@ mod tests {
 
     #[test]
     fn test_clone_and_filter_for_alpenglow_filters_non_alpenglow() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let num_alpenglow_nodes = 2000;
         // Check that non-alpenglow accounts are kicked out, 2000 accounts with bls pubkey, 1000 accounts without.
         let num_nodes = num_alpenglow_nodes + 1000;
@@ -1040,7 +1040,7 @@ mod tests {
 
     #[test]
     fn test_clone_and_filter_for_alpenglow_same_stake_at_border() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let num_alpenglow_nodes = 2000;
         // Create exactly num_alpenglow_nodes + 2 accounts with the same stake
         let num_accounts = num_alpenglow_nodes + 2;
@@ -1076,7 +1076,7 @@ mod tests {
 
     #[test]
     fn test_clone_and_filter_for_alpenglow_not_enough_lamports_in_identity() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let num_alpenglow_nodes = 2000;
         let minimum_identity_balance = 1_600_000_000;
         let (vote_accounts, mut identity_balances) =
@@ -1101,7 +1101,7 @@ mod tests {
 
     #[test]
     fn test_clone_and_filter_for_alpenglow_empty_accounts() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let current_limit = 3000;
         let (vote_accounts, identity_balances) = new_staked_vote_accounts(
             &mut rng,
@@ -1122,7 +1122,7 @@ mod tests {
 
     #[test]
     fn test_identity_accounts_for_staked_nodes() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let num_alpenglow_nodes = 2000;
         let (vote_accounts, identity_balances) =
             new_staked_vote_accounts(&mut rng, num_alpenglow_nodes, num_alpenglow_nodes, None);
@@ -1136,14 +1136,14 @@ mod tests {
 
     #[test]
     fn test_identity_accounts_for_staked_nodes_remove_zero_stake() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let num_nodes = 10;
         // Make sure our vote account to identity mapping is 1:1.
         let vote_accounts = (0..num_nodes)
             .map(|_| {
                 let account = new_rand_vote_account(&mut rng, None);
                 let vote_account = VoteAccount::try_from(account).unwrap();
-                let stake = rng.gen_range(0..MAX_STAKE_FOR_STAKED_ACCOUNT);
+                let stake = rng.random_range(0..MAX_STAKE_FOR_STAKED_ACCOUNT);
                 (Pubkey::new_unique(), (stake, vote_account))
             })
             .collect::<VoteAccounts>();
