@@ -179,7 +179,7 @@ impl<Tx> UsageCostDetails<'_, Tx> {
 pub struct WritableKeysTransaction(pub Vec<Pubkey>);
 
 #[cfg(feature = "dev-context-only-utils")]
-impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction {
+impl solana_svm_transaction::svm_message::SVMStaticMessage for WritableKeysTransaction {
     fn num_transaction_signatures(&self) -> u64 {
         unimplemented!("WritableKeysTransaction::num_transaction_signatures")
     }
@@ -217,24 +217,8 @@ impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction
         &self.0
     }
 
-    fn account_keys(&self) -> solana_message::AccountKeys<'_> {
-        solana_message::AccountKeys::new(&self.0, None)
-    }
-
     fn fee_payer(&self) -> &Pubkey {
         unimplemented!("WritableKeysTransaction::fee_payer")
-    }
-
-    fn is_writable(&self, _index: usize) -> bool {
-        true
-    }
-
-    fn is_signer(&self, _index: usize) -> bool {
-        unimplemented!("WritableKeysTransaction::is_signer")
-    }
-
-    fn is_invoked(&self, _key_index: usize) -> bool {
-        unimplemented!("WritableKeysTransaction::is_invoked")
     }
 
     fn num_lookup_tables(&self) -> usize {
@@ -249,6 +233,25 @@ impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction
         >,
     > {
         core::iter::empty()
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction {
+    fn account_keys(&self) -> solana_message::AccountKeys<'_> {
+        solana_message::AccountKeys::new(&self.0, None)
+    }
+
+    fn is_writable(&self, _index: usize) -> bool {
+        true
+    }
+
+    fn is_signer(&self, _index: usize) -> bool {
+        unimplemented!("WritableKeysTransaction::is_signer")
+    }
+
+    fn is_invoked(&self, _key_index: usize) -> bool {
+        unimplemented!("WritableKeysTransaction::is_invoked")
     }
 }
 

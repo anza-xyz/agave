@@ -1,15 +1,15 @@
 use {
     crate::{
-        instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
-        svm_message::SVMMessage,
+        instruction::SVMInstruction,
+        message_address_table_lookup::SVMMessageAddressTableLookup,
+        svm_message::{SVMMessage, SVMStaticMessage},
     },
     solana_hash::Hash,
     solana_message::{AccountKeys, SanitizedMessage},
     solana_pubkey::Pubkey,
 };
 
-// Implement for the "reference" `SanitizedMessage` type.
-impl SVMMessage for SanitizedMessage {
+impl SVMStaticMessage for SanitizedMessage {
     fn num_transaction_signatures(&self) -> u64 {
         u64::from(self.header().num_required_signatures)
     }
@@ -43,24 +43,8 @@ impl SVMMessage for SanitizedMessage {
         SanitizedMessage::static_account_keys(self)
     }
 
-    fn account_keys(&self) -> AccountKeys<'_> {
-        SanitizedMessage::account_keys(self)
-    }
-
     fn fee_payer(&self) -> &Pubkey {
         SanitizedMessage::fee_payer(self)
-    }
-
-    fn is_writable(&self, index: usize) -> bool {
-        SanitizedMessage::is_writable(self, index)
-    }
-
-    fn is_signer(&self, index: usize) -> bool {
-        SanitizedMessage::is_signer(self, index)
-    }
-
-    fn is_invoked(&self, key_index: usize) -> bool {
-        SanitizedMessage::is_invoked(self, key_index)
     }
 
     fn num_lookup_tables(&self) -> usize {
@@ -73,5 +57,24 @@ impl SVMMessage for SanitizedMessage {
         SanitizedMessage::message_address_table_lookups(self)
             .iter()
             .map(SVMMessageAddressTableLookup::from)
+    }
+}
+
+// Implement for the "reference" `SanitizedMessage` type.
+impl SVMMessage for SanitizedMessage {
+    fn account_keys(&self) -> AccountKeys<'_> {
+        SanitizedMessage::account_keys(self)
+    }
+
+    fn is_writable(&self, index: usize) -> bool {
+        SanitizedMessage::is_writable(self, index)
+    }
+
+    fn is_signer(&self, index: usize) -> bool {
+        SanitizedMessage::is_signer(self, index)
+    }
+
+    fn is_invoked(&self, key_index: usize) -> bool {
+        SanitizedMessage::is_invoked(self, key_index)
     }
 }

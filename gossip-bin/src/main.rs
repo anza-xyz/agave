@@ -6,7 +6,7 @@ use {
         crate_description, crate_name, value_t, value_t_or_exit, App, AppSettings, Arg, ArgMatches,
         SubCommand,
     },
-    log::{error, info, warn},
+    log::{error, info},
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::{keypair_of, pubkeys_of},
@@ -37,19 +37,12 @@ fn parse_matches() -> ArgMatches<'static> {
         .validator(is_port)
         .help("Gossip port number for the node");
 
-    let gossip_host_arg = clap::Arg::with_name("gossip_host")
-        .long("gossip-host")
-        .value_name("HOST")
-        .takes_value(true)
-        .validator(solana_net_utils::is_host)
-        .help("DEPRECATED: --gossip-host is no longer supported. Use --bind-address instead.");
-
     let bind_address_arg = clap::Arg::with_name("bind_address")
         .long("bind-address")
         .value_name("HOST")
         .takes_value(true)
         .validator(solana_net_utils::is_host)
-        .help("IP address to bind the node to for gossip (replaces --gossip-host)");
+        .help("IP address to bind the node to for gossip");
 
     App::new(crate_name!())
         .about(crate_description!())
@@ -98,7 +91,6 @@ fn parse_matches() -> ArgMatches<'static> {
                 )
                 .arg(&shred_version_arg)
                 .arg(&gossip_port_arg)
-                .arg(&gossip_host_arg)
                 .arg(&bind_address_arg)
                 .setting(AppSettings::DisableVersion),
         )
@@ -153,7 +145,6 @@ fn parse_matches() -> ArgMatches<'static> {
                 )
                 .arg(&shred_version_arg)
                 .arg(&gossip_port_arg)
-                .arg(&gossip_host_arg)
                 .arg(&bind_address_arg)
                 .arg(
                     Arg::with_name("timeout")
@@ -170,12 +161,6 @@ fn parse_bind_address(matches: &ArgMatches, entrypoint_addr: Option<SocketAddr>)
     if let Some(bind_address) = matches.value_of("bind_address") {
         solana_net_utils::parse_host(bind_address).unwrap_or_else(|e| {
             eprintln!("failed to parse bind-address: {e}");
-            exit(1);
-        })
-    } else if let Some(gossip_host) = matches.value_of("gossip_host") {
-        warn!("--gossip-host is deprecated. Use --bind-address instead.");
-        solana_net_utils::parse_host(gossip_host).unwrap_or_else(|e| {
-            eprintln!("failed to parse gossip-host: {e}");
             exit(1);
         })
     } else if let Some(entrypoint_addr) = entrypoint_addr {

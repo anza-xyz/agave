@@ -724,18 +724,6 @@ pub fn execute(
         },
     );
 
-    let gossip_host = matches
-        .value_of("gossip_host")
-        .map(|gossip_host| {
-            warn!(
-                "--gossip-host is deprecated. Use --bind-address or rely on automatic public IP \
-                 discovery instead."
-            );
-            solana_net_utils::parse_host(gossip_host)
-                .map_err(|err| format!("failed to parse --gossip-host: {err}"))
-        })
-        .transpose()?;
-
     let advertised_ip = matches
         .value_of("advertised_ip")
         .map(|advertised_ip| {
@@ -744,9 +732,7 @@ pub fn execute(
         })
         .transpose()?;
 
-    let advertised_ip = if let Some(ip) = gossip_host {
-        ip
-    } else if let Some(cli_ip) = advertised_ip {
+    let advertised_ip = if let Some(cli_ip) = advertised_ip {
         cli_ip
     } else if !bind_addresses.active().is_unspecified() && !bind_addresses.active().is_loopback() {
         bind_addresses.active()
