@@ -37,15 +37,30 @@ impl InstructionFrame {
             ..(first_account_index.saturating_add(self.instruction_accounts.len()) as usize)
     }
 
-    /// This function correctly creates the instruction accounts slice to be shared with programs.
-    /// Since the logic is similar to `instruction_accounts_range`, keep this function close to the
-    /// latter.
-    fn set_instruction_slice(
+    /// This function retrieves the range to index transaction_context.deduplication_maps
+    pub fn deduplication_map_range(instruction_index: usize) -> Range<usize> {
+        instruction_index.saturating_mul(MAX_ACCOUNTS_PER_TRANSACTION)
+            ..instruction_index
+                .saturating_add(1)
+                .saturating_mul(MAX_ACCOUNTS_PER_TRANSACTION)
+    }
+
+    pub fn configure_vm_slices(
         &mut self,
+        instruction_index: u64,
         trace_len: u64,
         penultimate_slice: Option<VmSlice<InstructionAccount>>,
         instruction_accounts_len: usize,
+        instruction_data_len: u64,
     ) {
+        // Instruction data slice
+        self.instruction_data = VmSlice::new(
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(instruction_index)),
+            instruction_data_len,
+        );
+
+        // Instruction accounts slice
         let instruction_accounts_start_address = if trace_len < 2 {
             GUEST_INSTRUCTION_ACCOUNTS_ADDRESS
         } else {
@@ -61,35 +76,6 @@ impl InstructionFrame {
             instruction_accounts_start_address,
             instruction_accounts_len as u64,
         );
-    }
-
-    /// This function retrieves the range to index transaction_context.deduplication_maps
-    pub fn deduplication_map_range(instruction_index: usize) -> Range<usize> {
-        instruction_index.saturating_mul(MAX_ACCOUNTS_PER_TRANSACTION)
-            ..instruction_index
-                .saturating_add(1)
-                .saturating_mul(MAX_ACCOUNTS_PER_TRANSACTION)
-    }
-
-    /// This function correctly creates the instruction data slice to be shared with programs.
-    fn set_instruction_data_slice(&mut self, instruction_index: u64, instruction_data_len: u64) {
-        self.instruction_data = VmSlice::new(
-            GUEST_INSTRUCTION_DATA_BASE_ADDRESS
-                .saturating_add(GUEST_REGION_SIZE.saturating_mul(instruction_index)),
-            instruction_data_len,
-        );
-    }
-
-    pub fn configure_vm_slices(
-        &mut self,
-        instruction_index: u64,
-        trace_len: u64,
-        penultimate_slice: Option<VmSlice<InstructionAccount>>,
-        instruction_accounts_len: usize,
-        instruction_data_len: u64,
-    ) {
-        self.set_instruction_slice(trace_len, penultimate_slice, instruction_accounts_len);
-        self.set_instruction_data_slice(instruction_index, instruction_data_len);
     }
 }
 
