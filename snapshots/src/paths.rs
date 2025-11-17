@@ -113,7 +113,8 @@ pub fn parse_full_snapshot_archive_filename(
     })
 }
 
-/// Parse an incremental snapshot archive filename into its base Slot, actual Slot, Hash, and Archive Format
+/// Parse an incremental snapshot archive filename into its base Slot, actual Slot, Hash, and
+/// Archive Format
 pub fn parse_incremental_snapshot_archive_filename(
     archive_filename: &str,
 ) -> Result<(Slot, Slot, SnapshotHash, ArchiveFormat)> {
