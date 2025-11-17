@@ -60,8 +60,8 @@ pub struct VoteAccounts {
 impl VoteAccounts {
     // This implements the filtering logic described in SIMD-357.
     // 1. Filter out any vote accounts without BLS pubkey
-    // 2. Given minimum_identity_account_balance and identity_account_balances,
-    //    filter out any vote account without required balance
+    // 2. Given minimum_vote_account_balance, filter out any vote account
+    // without required balance
     // 3. If we have more than max_vote_accounts vote accounts after above
     //    filtering, sort by stake and truncate
     // 4. If any vote account in the resulting list has the same stake as any
@@ -74,10 +74,7 @@ impl VoteAccounts {
     pub fn clone_and_filter_for_alpenglow(
         &self,
         max_vote_accounts: usize,
-        minimum_identity_account_balance: u64,
-        // The identity_account_balance is indexed with identity pubkey.
-        // The value is the lamport balance of the identity account.
-        identity_account_balances: &HashMap<Pubkey, u64>,
+        minimum_vote_account_balance: u64,
     ) -> VoteAccounts {
         if max_vote_accounts == 0 {
             panic!("max_vote_accounts must be > 0");
@@ -86,13 +83,12 @@ impl VoteAccounts {
             .vote_accounts
             .iter()
             .filter_map(|(pubkey, (stake, vote_account))| {
-                let identity_pubkey = vote_account.node_pubkey();
                 if vote_account
                     .vote_state_view()
                     .bls_pubkey_compressed()
                     .is_none()  // invalid account, no bls key
                     || *stake == 0u64 // zero stake, no need to consider
-                    || identity_account_balances.get(identity_pubkey)? < &minimum_identity_account_balance // not enough balance
+                    || vote_account.lamports() < minimum_vote_account_balance
                 {
                     return None;
                 }
@@ -126,20 +122,6 @@ impl VoteAccounts {
             vote_accounts: Arc::new(valid_entries),
             staked_nodes: OnceLock::new(),
         }
-    }
-
-    // Get the identity pubkeys for all vote accounts with non-zero stake.
-    pub fn identity_accounts_for_staked_nodes(&self) -> Vec<&Pubkey> {
-        self.vote_accounts
-            .iter()
-            .filter_map(|(_, (stake, vote_account))| {
-                if *stake != 0u64 {
-                    Some(vote_account.node_pubkey())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
     }
 }
 
@@ -550,7 +532,7 @@ mod tests {
         solana_vote_interface::state::{
             VoteInit, VoteStateV4, VoteStateVersions, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
         },
-        std::{collections::HashSet, iter::repeat_with},
+        std::iter::repeat_with,
     };
 
     const MIN_STAKE_FOR_STAKED_ACCOUNT: u64 = 1;
@@ -560,6 +542,7 @@ mod tests {
         rng: &mut R,
         node_pubkey: Option<Pubkey>,
         fill_bls_pubkey: bool,
+        vote_account_balance: Option<u64>,
     ) -> AccountSharedData {
         let vote_pubkey = Pubkey::new_unique();
         let vote_init = VoteInit {
@@ -580,7 +563,7 @@ mod tests {
             vote_state.bls_pubkey_compressed = Some([42; BLS_PUBLIC_KEY_COMPRESSED_SIZE]);
         }
         AccountSharedData::new_data(
-            rng.random(), // lamports
+            vote_account_balance.unwrap_or_else(|| rng.random()), // lamports
             &VoteStateVersions::new_v4(vote_state.clone()),
             &solana_sdk_ids::vote::id(), // owner
         )
@@ -591,7 +574,7 @@ mod tests {
         rng: &mut R,
         node_pubkey: Option<Pubkey>,
     ) -> AccountSharedData {
-        new_rand_vote_account_internal(rng, node_pubkey, true)
+        new_rand_vote_account_internal(rng, node_pubkey, true, None)
     }
 
     fn new_rand_vote_accounts<R: Rng>(
@@ -611,15 +594,14 @@ mod tests {
     // The difference between this and `new_rand_vote_accounts` is that this
     // generates fixed number of alpenglow nodes, and all vote accounts
     // generated have non-zero stake.
-    // Also we return a default HashMap of identity account balances.
     fn new_staked_vote_accounts<R: Rng>(
         rng: &mut R,
         num_nodes: usize,
         num_alpenglow_nodes: usize,
         stake_per_node: Option<u64>,
-    ) -> (VoteAccounts, HashMap<Pubkey, u64>) {
+        lamport_per_node: Option<u64>,
+    ) -> VoteAccounts {
         let mut vote_accounts = VoteAccounts::default();
-        let mut identity_balances = HashMap::with_capacity(num_nodes);
         for index in 0..num_nodes {
             let is_alpenglow = index < num_alpenglow_nodes;
             let pubkey = Pubkey::new_unique();
@@ -627,12 +609,16 @@ mod tests {
                 rng.random_range(MIN_STAKE_FOR_STAKED_ACCOUNT..MAX_STAKE_FOR_STAKED_ACCOUNT)
             });
             let node_pubkey = Pubkey::new_unique();
-            let account = new_rand_vote_account_internal(rng, Some(node_pubkey), is_alpenglow);
-            // Give each identity account a large enough balance so they all pass the minimum vat check.
-            identity_balances.insert(node_pubkey, 10_000_000_000);
+            // Give each account a large enough balance so they all pass the minimum vat check.
+            let account = new_rand_vote_account_internal(
+                rng,
+                Some(node_pubkey),
+                is_alpenglow,
+                Some(lamport_per_node.unwrap_or(1_600_000_000)),
+            );
             vote_accounts.insert(pubkey, VoteAccount::try_from(account).unwrap(), || stake);
         }
-        (vote_accounts, identity_balances)
+        vote_accounts
     }
 
     fn staked_nodes<'a, I>(vote_accounts: I) -> HashMap<Pubkey, u64>
@@ -964,23 +950,17 @@ mod tests {
     fn test_clone_and_filter_for_alpenglow_truncates() {
         let mut rng = rand::rng();
         let current_limit = 3000;
-        let (vote_accounts, identity_balances) =
-            new_staked_vote_accounts(&mut rng, current_limit, current_limit, None);
+        let vote_accounts =
+            new_staked_vote_accounts(&mut rng, current_limit, current_limit, None, None);
         // All vote accounts should be returned if the limit is high enough.
-        let filtered = vote_accounts.clone_and_filter_for_alpenglow(
-            current_limit + 500,
-            MIN_STAKE_FOR_STAKED_ACCOUNT,
-            &identity_balances,
-        );
+        let filtered = vote_accounts
+            .clone_and_filter_for_alpenglow(current_limit + 500, MIN_STAKE_FOR_STAKED_ACCOUNT);
         assert_eq!(filtered.len(), vote_accounts.len());
 
         // If the limit is smaller than number of accounts, truncate it.
         let lower_limit = current_limit - 1000;
-        let filtered = vote_accounts.clone_and_filter_for_alpenglow(
-            lower_limit,
-            MIN_STAKE_FOR_STAKED_ACCOUNT,
-            &identity_balances,
-        );
+        let filtered =
+            vote_accounts.clone_and_filter_for_alpenglow(lower_limit, MIN_STAKE_FOR_STAKED_ACCOUNT);
         assert!(filtered.len() <= lower_limit);
         // Check that the filtered accounts are the same as the original accounts.
         for (pubkey, (_, vote_account)) in filtered.vote_accounts.iter() {
@@ -1006,14 +986,11 @@ mod tests {
         let num_alpenglow_nodes = 2000;
         // Check that non-alpenglow accounts are kicked out, 2000 accounts with bls pubkey, 1000 accounts without.
         let num_nodes = num_alpenglow_nodes + 1000;
-        let (vote_accounts, identity_balances) =
-            new_staked_vote_accounts(&mut rng, num_nodes, num_alpenglow_nodes, None);
+        let vote_accounts =
+            new_staked_vote_accounts(&mut rng, num_nodes, num_alpenglow_nodes, None, None);
         let new_limit = num_alpenglow_nodes + 500;
-        let filtered = vote_accounts.clone_and_filter_for_alpenglow(
-            new_limit,
-            MIN_STAKE_FOR_STAKED_ACCOUNT,
-            &identity_balances,
-        );
+        let filtered =
+            vote_accounts.clone_and_filter_for_alpenglow(new_limit, MIN_STAKE_FOR_STAKED_ACCOUNT);
         assert_eq!(filtered.len(), num_alpenglow_nodes);
         // Check that all filtered accounts have bls pubkey
         for (_pubkey, (_stake, vote_account)) in filtered.vote_accounts.iter() {
@@ -1024,11 +1001,8 @@ mod tests {
         }
         // Now get only 1500 accounts, even some alpenglow accounts are kicked out
         let new_limit = num_alpenglow_nodes - 500;
-        let filtered = vote_accounts.clone_and_filter_for_alpenglow(
-            new_limit,
-            MIN_STAKE_FOR_STAKED_ACCOUNT,
-            &identity_balances,
-        );
+        let filtered =
+            vote_accounts.clone_and_filter_for_alpenglow(new_limit, MIN_STAKE_FOR_STAKED_ACCOUNT);
         assert!(filtered.len() <= new_limit);
         for (_pubkey, (_stake, vote_account)) in filtered.vote_accounts.iter() {
             assert!(vote_account
@@ -1044,11 +1018,10 @@ mod tests {
         let num_alpenglow_nodes = 2000;
         // Create exactly num_alpenglow_nodes + 2 accounts with the same stake
         let num_accounts = num_alpenglow_nodes + 2;
-        let mut identity_balances = HashMap::with_capacity(num_accounts);
         let accounts = (0..num_accounts).map(|index| {
-            let account = new_rand_vote_account(&mut rng, None);
+            let account =
+                new_rand_vote_account_internal(&mut rng, None, true, Some(10_000_000_000));
             let vote_account = VoteAccount::try_from(account).unwrap();
-            identity_balances.insert(*vote_account.node_pubkey(), 10_000_000_000);
             let stake = if index < num_alpenglow_nodes - 10 {
                 100 + index as u64
             } else {
@@ -1060,95 +1033,61 @@ mod tests {
         for (pubkey, (stake, vote_account)) in accounts {
             vote_accounts.insert(pubkey, vote_account, || stake);
         }
-        let filtered = vote_accounts.clone_and_filter_for_alpenglow(
-            num_accounts,
-            MIN_STAKE_FOR_STAKED_ACCOUNT,
-            &identity_balances,
-        );
+        let filtered = vote_accounts
+            .clone_and_filter_for_alpenglow(num_accounts, MIN_STAKE_FOR_STAKED_ACCOUNT);
         assert_eq!(filtered.len(), num_accounts);
-        let filtered = vote_accounts.clone_and_filter_for_alpenglow(
-            num_alpenglow_nodes,
-            MIN_STAKE_FOR_STAKED_ACCOUNT,
-            &identity_balances,
-        );
+        let filtered = vote_accounts
+            .clone_and_filter_for_alpenglow(num_alpenglow_nodes, MIN_STAKE_FOR_STAKED_ACCOUNT);
         assert_eq!(filtered.len(), num_alpenglow_nodes - 10);
     }
 
     #[test]
-    fn test_clone_and_filter_for_alpenglow_not_enough_lamports_in_identity() {
+    fn test_clone_and_filter_for_alpenglow_not_enough_lamports() {
         let mut rng = rand::rng();
-        let num_alpenglow_nodes = 2000;
-        let minimum_identity_balance = 1_600_000_000;
-        let (vote_accounts, mut identity_balances) =
-            new_staked_vote_accounts(&mut rng, num_alpenglow_nodes, num_alpenglow_nodes, None);
-        // for 10% in identity_balances, set the balance below the minimum
-        let entries_to_modify = num_alpenglow_nodes / 10;
-        let pubkeys_to_modify = identity_balances
-            .keys()
-            .take(entries_to_modify)
-            .copied()
-            .collect::<Vec<Pubkey>>();
-        for pubkey in pubkeys_to_modify {
-            identity_balances.insert(pubkey, minimum_identity_balance - 1);
+        let below_limit_entries = 200;
+        let normal_entries = 1800;
+        let minimum_account_balance = 1_600_000_000;
+        let mut vote_accounts = new_staked_vote_accounts(
+            &mut rng,
+            below_limit_entries,
+            below_limit_entries,
+            Some(100),
+            Some(minimum_account_balance - 1),
+        );
+        // Add rest of the vote accounts with random stake and insert into vote_accounts_below_minimum
+        let additional_vote_accounts = new_staked_vote_accounts(
+            &mut rng,
+            normal_entries,
+            normal_entries,
+            Some(100),
+            Some(minimum_account_balance + 1),
+        );
+        for (pubkey, (stake, vote_account)) in additional_vote_accounts.vote_accounts.iter() {
+            vote_accounts.insert(*pubkey, vote_account.clone(), || *stake);
         }
         let filtered = vote_accounts.clone_and_filter_for_alpenglow(
-            num_alpenglow_nodes,
-            minimum_identity_balance,
-            &identity_balances,
+            below_limit_entries + normal_entries,
+            minimum_account_balance,
         );
-        assert_eq!(filtered.len(), num_alpenglow_nodes - entries_to_modify);
+        assert_eq!(filtered.len(), normal_entries);
     }
 
     #[test]
     fn test_clone_and_filter_for_alpenglow_empty_accounts() {
         let mut rng = rand::rng();
         let current_limit = 3000;
-        let (vote_accounts, identity_balances) = new_staked_vote_accounts(
+        let vote_accounts = new_staked_vote_accounts(
             &mut rng,
             current_limit,
             current_limit,
             Some(100), // Set all vote accounts to equal stake of 100
+            Some(current_limit as u64 + 1),
         );
         // Since everyone has same stake, and we set the limit to 500 less than the number of accounts,
         // we will end up with no accounts after filtering, because all accounts with the same stake
         // at the border will be removed. This should cause a warning and empty result returned.
-        let filtered = vote_accounts.clone_and_filter_for_alpenglow(
-            current_limit - 500,
-            MIN_STAKE_FOR_STAKED_ACCOUNT,
-            &identity_balances,
-        );
+        let filtered = vote_accounts
+            .clone_and_filter_for_alpenglow(current_limit - 500, MIN_STAKE_FOR_STAKED_ACCOUNT);
         assert!(filtered.is_empty());
-    }
-
-    #[test]
-    fn test_identity_accounts_for_staked_nodes() {
-        let mut rng = rand::rng();
-        let num_alpenglow_nodes = 2000;
-        let (vote_accounts, identity_balances) =
-            new_staked_vote_accounts(&mut rng, num_alpenglow_nodes, num_alpenglow_nodes, None);
-        let identity_accounts = vote_accounts.identity_accounts_for_staked_nodes();
-        // Assert that keys of identity_balances is equal to identity_accounts
-        assert_eq!(
-            identity_balances.keys().collect::<HashSet<&Pubkey>>(),
-            identity_accounts.into_iter().collect::<HashSet<&Pubkey>>()
-        );
-    }
-
-    #[test]
-    fn test_identity_accounts_for_staked_nodes_remove_zero_stake() {
-        let mut rng = rand::rng();
-        let num_nodes = 10;
-        // Make sure our vote account to identity mapping is 1:1.
-        let vote_accounts = (0..num_nodes)
-            .map(|_| {
-                let account = new_rand_vote_account(&mut rng, None);
-                let vote_account = VoteAccount::try_from(account).unwrap();
-                let stake = rng.random_range(0..MAX_STAKE_FOR_STAKED_ACCOUNT);
-                (Pubkey::new_unique(), (stake, vote_account))
-            })
-            .collect::<VoteAccounts>();
-        let num_staked_accounts = vote_accounts.staked_nodes().len();
-        let identity_accounts = vote_accounts.identity_accounts_for_staked_nodes();
-        assert_eq!(identity_accounts.len(), num_staked_accounts);
     }
 }
