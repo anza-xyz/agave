@@ -36,6 +36,7 @@ use {
     solana_hash::{Hash, HASH_BYTES},
     solana_keypair::{signable::Signable, Keypair},
     solana_ledger::shred::{self, Nonce, ShredFetchStats, SIZE_OF_NONCE},
+    solana_net_utils::SocketAddrSpace,
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::{
         data_budget::DataBudget,
@@ -47,7 +48,6 @@ use {
     solana_signer::Signer,
     solana_streamer::{
         sendmmsg::{batch_send, SendPktsError},
-        socket::SocketAddrSpace,
         streamer::PacketBatchSender,
     },
     solana_time_utils::timestamp,
@@ -1362,10 +1362,10 @@ mod tests {
                 max_ticks_per_n_shreds, ProcessShredsStats, ReedSolomonCache, Shred, Shredder,
             },
         },
+        solana_net_utils::SocketAddrSpace,
         solana_perf::packet::{deserialize_from_with_limit, Packet, PacketFlags, PacketRef},
         solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
-        solana_streamer::socket::SocketAddrSpace,
         solana_time_utils::timestamp,
         std::{io::Cursor, net::Ipv4Addr},
     };
@@ -1919,9 +1919,6 @@ mod tests {
         nxt.set_gossip((Ipv4Addr::LOCALHOST, 1234)).unwrap();
         nxt.set_tvu(UDP, (Ipv4Addr::LOCALHOST, 1235)).unwrap();
         nxt.set_tvu(QUIC, (Ipv4Addr::LOCALHOST, 1236)).unwrap();
-        nxt.set_tpu((Ipv4Addr::LOCALHOST, 1238)).unwrap();
-        nxt.set_tpu_forwards((Ipv4Addr::LOCALHOST, 1239)).unwrap();
-        nxt.set_tpu_vote(UDP, (Ipv4Addr::LOCALHOST, 1240)).unwrap();
         nxt.set_rpc((Ipv4Addr::LOCALHOST, 1241)).unwrap();
         nxt.set_rpc_pubsub((Ipv4Addr::LOCALHOST, 1242)).unwrap();
         nxt.set_serve_repair(UDP, serve_repair_addr).unwrap();
@@ -1954,9 +1951,6 @@ mod tests {
         nxt.set_gossip((Ipv4Addr::LOCALHOST, 1234)).unwrap();
         nxt.set_tvu(UDP, (Ipv4Addr::LOCALHOST, 1235)).unwrap();
         nxt.set_tvu(QUIC, (Ipv4Addr::LOCALHOST, 1236)).unwrap();
-        nxt.set_tpu((Ipv4Addr::LOCALHOST, 1238)).unwrap();
-        nxt.set_tpu_forwards((Ipv4Addr::LOCALHOST, 1239)).unwrap();
-        nxt.set_tpu_vote(UDP, (Ipv4Addr::LOCALHOST, 1240)).unwrap();
         nxt.set_rpc((Ipv4Addr::LOCALHOST, 1241)).unwrap();
         nxt.set_rpc_pubsub((Ipv4Addr::LOCALHOST, 1242)).unwrap();
         nxt.set_serve_repair(UDP, serve_repair_addr2).unwrap();

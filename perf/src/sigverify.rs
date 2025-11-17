@@ -1667,9 +1667,9 @@ mod tests {
             |_, p| p < (PACKETS_PER_BATCH / 2),
             // uniform sparse
             // discard even packets
-            |b, p| ((b * PACKETS_PER_BATCH) + p) % 2 == 0,
+            |b: usize, p: usize| ((b * PACKETS_PER_BATCH) + p).is_multiple_of(2),
             // discard odd packets
-            |b, p| ((b * PACKETS_PER_BATCH) + p) % 2 == 1,
+            |b: usize, p: usize| !((b * PACKETS_PER_BATCH) + p).is_multiple_of(2),
             // discard even batches
             |b, _| b % 2 == 0,
             // discard odd batches

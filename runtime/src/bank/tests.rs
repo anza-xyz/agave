@@ -143,12 +143,12 @@ use {
 
 impl VoteReward {
     pub fn new_random() -> Self {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         let validator_pubkey = solana_pubkey::new_rand();
-        let validator_stake_lamports = rng.gen_range(1..200);
+        let validator_stake_lamports = rng.random_range(1..200);
         let validator_voting_keypair = Keypair::new();
-        let commission: u8 = rng.gen_range(1..20);
+        let commission: u8 = rng.random_range(1..20);
         let commission_bps = u16::from(commission) * 100;
 
         let validator_vote_account = vote_state::create_v4_account_with_authorized(
@@ -163,7 +163,7 @@ impl VoteReward {
         Self {
             vote_account: validator_vote_account,
             commission,
-            vote_rewards: rng.gen_range(1..200),
+            vote_rewards: rng.random_range(1..200),
         }
     }
 }
@@ -5136,7 +5136,7 @@ fn test_ref_account_key_after_program_id() {
 #[test]
 fn test_fuzz_instructions() {
     agave_logger::setup();
-    use rand::{thread_rng, Rng};
+    use rand::{rng, Rng};
     let bank = create_simple_test_bank(1_000_000_000);
 
     let max_programs = 5;
@@ -5159,13 +5159,13 @@ fn test_fuzz_instructions() {
         .enumerate()
         .map(|_| {
             let key = solana_pubkey::new_rand();
-            let balance = if thread_rng().gen_ratio(9, 10) {
-                let lamports = if thread_rng().gen_ratio(1, 5) {
-                    thread_rng().gen_range(0..10)
+            let balance = if rng().random_ratio(9, 10) {
+                let lamports = if rng().random_ratio(1, 5) {
+                    rng().random_range(0..10)
                 } else {
-                    thread_rng().gen_range(20..100)
+                    rng().random_range(20..100)
                 };
-                let space = thread_rng().gen_range(0..10);
+                let space = rng().random_range(0..10);
                 let owner = Pubkey::default();
                 let account = AccountSharedData::new(lamports, space, &owner);
                 bank.store_account(&key, &account);
@@ -5178,17 +5178,17 @@ fn test_fuzz_instructions() {
         .collect();
     let mut results = HashMap::new();
     for _ in 0..2_000 {
-        let num_keys = if thread_rng().gen_ratio(1, 5) {
-            thread_rng().gen_range(0..max_keys)
+        let num_keys = if rng().random_ratio(1, 5) {
+            rng().random_range(0..max_keys)
         } else {
-            thread_rng().gen_range(1..4)
+            rng().random_range(1..4)
         };
-        let num_instructions = thread_rng().gen_range(0..max_keys - num_keys);
+        let num_instructions = rng().random_range(0..max_keys - num_keys);
 
-        let mut account_keys: Vec<_> = if thread_rng().gen_ratio(1, 5) {
+        let mut account_keys: Vec<_> = if rng().random_ratio(1, 5) {
             (0..num_keys)
                 .map(|_| {
-                    let idx = thread_rng().gen_range(0..keys.len());
+                    let idx = rng().random_range(0..keys.len());
                     keys[idx].0
                 })
                 .collect()
@@ -5198,7 +5198,7 @@ fn test_fuzz_instructions() {
                 .map(|_| {
                     let mut idx;
                     loop {
-                        idx = thread_rng().gen_range(0..keys.len());
+                        idx = rng().random_range(0..keys.len());
                         if !inserted.contains(&idx) {
                             break;
                         }
@@ -5212,13 +5212,13 @@ fn test_fuzz_instructions() {
         let instructions: Vec<_> = if num_keys > 0 {
             (0..num_instructions)
                 .map(|_| {
-                    let num_accounts_to_pass = thread_rng().gen_range(0..num_keys);
+                    let num_accounts_to_pass = rng().random_range(0..num_keys);
                     let account_indexes = (0..num_accounts_to_pass)
-                        .map(|_| thread_rng().gen_range(0..num_keys))
+                        .map(|_| rng().random_range(0..num_keys))
                         .collect();
-                    let program_index: u8 = thread_rng().gen_range(0..num_keys);
-                    if thread_rng().gen_ratio(4, 5) {
-                        let programs_index = thread_rng().gen_range(0..program_keys.len());
+                    let program_index: u8 = rng().random_range(0..num_keys);
+                    if rng().random_ratio(4, 5) {
+                        let programs_index = rng().random_range(0..program_keys.len());
                         account_keys[program_index as usize] = program_keys[programs_index].0;
                     }
                     CompiledInstruction::new(program_index, &10, account_indexes)
@@ -5229,35 +5229,34 @@ fn test_fuzz_instructions() {
         };
 
         let account_keys_len = std::cmp::max(account_keys.len(), 2);
-        let num_signatures = if thread_rng().gen_ratio(1, 5) {
-            thread_rng().gen_range(0..account_keys_len + 10)
+        let num_signatures = if rng().random_ratio(1, 5) {
+            rng().random_range(0..account_keys_len + 10)
         } else {
-            thread_rng().gen_range(1..account_keys_len)
+            rng().random_range(1..account_keys_len)
         };
 
-        let num_required_signatures = if thread_rng().gen_ratio(1, 5) {
-            thread_rng().gen_range(0..account_keys_len + 10) as u8
+        let num_required_signatures = if rng().random_ratio(1, 5) {
+            rng().random_range(0..account_keys_len + 10) as u8
         } else {
-            thread_rng().gen_range(1..std::cmp::max(2, num_signatures)) as u8
+            rng().random_range(1..std::cmp::max(2, num_signatures)) as u8
         };
-        let num_readonly_signed_accounts = if thread_rng().gen_ratio(1, 5) {
-            thread_rng().gen_range(0..account_keys_len) as u8
+        let num_readonly_signed_accounts = if rng().random_ratio(1, 5) {
+            rng().random_range(0..account_keys_len) as u8
         } else {
             let max = if num_required_signatures > 1 {
                 num_required_signatures - 1
             } else {
                 1
             };
-            thread_rng().gen_range(0..max)
+            rng().random_range(0..max)
         };
 
-        let num_readonly_unsigned_accounts = if thread_rng().gen_ratio(1, 5)
-            || (num_required_signatures as usize) >= account_keys_len
-        {
-            thread_rng().gen_range(0..account_keys_len) as u8
-        } else {
-            thread_rng().gen_range(0..account_keys_len - num_required_signatures as usize) as u8
-        };
+        let num_readonly_unsigned_accounts =
+            if rng().random_ratio(1, 5) || (num_required_signatures as usize) >= account_keys_len {
+                rng().random_range(0..account_keys_len) as u8
+            } else {
+                rng().random_range(0..account_keys_len - num_required_signatures as usize) as u8
+            };
 
         let header = MessageHeader {
             num_required_signatures,
@@ -9202,7 +9201,7 @@ fn test_call_precomiled_program() {
     // https://docs.rs/libsecp256k1/latest/src/libsecp256k1/lib.rs.html#430
     let secp_privkey = {
         use rand::RngCore;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         loop {
             let mut ret = [0u8; libsecp256k1::util::SECRET_KEY_SIZE];
             rng.fill_bytes(&mut ret);
@@ -9242,7 +9241,7 @@ fn test_call_precomiled_program() {
     // https://docs.rs/ed25519-dalek/1.0.1/src/ed25519_dalek/secret.rs.html#167
     let privkey = {
         use rand::RngCore;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut seed = [0u8; ed25519_dalek::SECRET_KEY_LENGTH];
         rng.fill_bytes(&mut seed);
         let secret =
@@ -10251,12 +10250,12 @@ fn test_update_accounts_data_size() {
         // updates, checking the results after each one.
         let mut bank = create_simple_test_bank(100);
         bank.accounts_data_size_initial = u32::MAX as u64;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for _ in 0..100 {
             let initial = bank.load_accounts_data_size() as i64;
-            let delta1 = rng.gen_range(-500..500);
+            let delta1 = rng.random_range(-500..500);
             bank.update_accounts_data_size_delta_on_chain(delta1);
-            let delta2 = rng.gen_range(-500..500);
+            let delta2 = rng.random_range(-500..500);
             bank.update_accounts_data_size_delta_off_chain(delta2);
             assert_eq!(
                 bank.load_accounts_data_size() as i64,
@@ -10638,19 +10637,19 @@ fn test_accounts_data_size_and_resize_transactions() {
         &AccountSharedData::new(10 * LAMPORTS_PER_SOL, 0, &mock_program_id),
     );
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     // Test case: Grow account
     {
         let account_pubkey = Pubkey::new_unique();
         let account_balance = LAMPORTS_PER_SOL;
         let account_size =
-            rng.gen_range(1..MAX_PERMITTED_DATA_LENGTH as usize - MAX_PERMITTED_DATA_INCREASE);
+            rng.random_range(1..MAX_PERMITTED_DATA_LENGTH as usize - MAX_PERMITTED_DATA_INCREASE);
         let account_data = AccountSharedData::new(account_balance, account_size, &mock_program_id);
         bank.store_account(&account_pubkey, &account_data);
 
         let accounts_data_size_before = bank.load_accounts_data_size();
-        let account_grow_size = rng.gen_range(1..MAX_PERMITTED_DATA_INCREASE);
+        let account_grow_size = rng.random_range(1..MAX_PERMITTED_DATA_INCREASE);
         let transaction = create_mock_realloc_tx(
             &mint_keypair,
             &funding_keypair,
@@ -10674,12 +10673,12 @@ fn test_accounts_data_size_and_resize_transactions() {
         let account_pubkey = Pubkey::new_unique();
         let account_balance = LAMPORTS_PER_SOL;
         let account_size =
-            rng.gen_range(MAX_PERMITTED_DATA_LENGTH / 2..MAX_PERMITTED_DATA_LENGTH) as usize;
+            rng.random_range(MAX_PERMITTED_DATA_LENGTH / 2..MAX_PERMITTED_DATA_LENGTH) as usize;
         let account_data = AccountSharedData::new(account_balance, account_size, &mock_program_id);
         bank.store_account(&account_pubkey, &account_data);
 
         let accounts_data_size_before = bank.load_accounts_data_size();
-        let account_shrink_size = rng.gen_range(1..account_size);
+        let account_shrink_size = rng.random_range(1..account_size);
         let transaction = create_mock_realloc_tx(
             &mint_keypair,
             &funding_keypair,
@@ -10739,7 +10738,7 @@ fn test_accounts_data_size_from_genesis() {
         );
 
         // Store an account into the bank that is rent-exempt and has data
-        let data_size = rand::thread_rng().gen_range(3333..4444);
+        let data_size = rand::rng().random_range(3333..4444);
         let transaction = system_transaction::create_account(
             &mint_keypair,
             &Keypair::new(),

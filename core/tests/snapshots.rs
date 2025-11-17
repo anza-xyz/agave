@@ -15,6 +15,7 @@ use {
     solana_genesis_config::GenesisConfig,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_keypair::Keypair,
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_runtime::{
         accounts_background_service::{
@@ -32,7 +33,6 @@ use {
     },
     solana_sha256_hasher::hashv,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
     std::{

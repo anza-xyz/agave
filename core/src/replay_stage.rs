@@ -4465,6 +4465,7 @@ pub(crate) mod tests {
             get_tmp_ledger_path, get_tmp_ledger_path_auto_delete,
             shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         },
+        solana_net_utils::SocketAddrSpace,
         solana_poh::poh_recorder::create_test_recorder,
         solana_poh_config::PohConfig,
         solana_rpc::{
@@ -4477,7 +4478,6 @@ pub(crate) mod tests {
             genesis_utils::{GenesisConfigInfo, ValidatorVoteKeypairs},
         },
         solana_sha256_hasher::hash,
-        solana_streamer::socket::SocketAddrSpace,
         solana_system_transaction as system_transaction,
         solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
         solana_transaction_error::TransactionError,

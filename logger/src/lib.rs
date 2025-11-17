@@ -62,28 +62,52 @@ pub fn setup() {
 }
 
 // Configures file logging with a default filter if RUST_LOG is not set
-pub fn setup_file_with_default(logfile: &Path, filter: &str) {
-    use std::fs::OpenOptions;
-    let file = OpenOptions::new()
+#[cfg(not(unix))]
+fn setup_file_with_default_filter(logfile: &Path) {
+    let file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(logfile)
         .unwrap();
-    let logger = env_logger::Builder::from_env(env_logger::Env::new().default_filter_or(filter))
-        .format_timestamp_nanos()
-        .target(env_logger::Target::Pipe(Box::new(file)))
-        .build();
+
+    let logger =
+        env_logger::Builder::from_env(env_logger::Env::new().default_filter_or(DEFAULT_FILTER))
+            .format_timestamp_nanos()
+            .target(env_logger::Target::Pipe(Box::new(file)))
+            .build();
     replace_logger(logger);
 }
 
 #[cfg(unix)]
-fn redirect_stderr(filename: &Path) {
+pub fn redirect_stderr(filename: &Path) {
     use std::{fs::OpenOptions, os::unix::io::AsRawFd};
     match OpenOptions::new().create(true).append(true).open(filename) {
         Ok(file) => unsafe {
             libc::dup2(file.as_raw_fd(), libc::STDERR_FILENO);
         },
         Err(err) => eprintln!("Unable to open {}: {err}", filename.display()),
+    }
+}
+
+pub fn initialize_logging(logfile: Option<PathBuf>) {
+    // Debugging panics is easier with a backtrace
+    if env::var_os("RUST_BACKTRACE").is_none() {
+        env::set_var("RUST_BACKTRACE", "1")
+    }
+
+    let Some(logfile) = logfile else {
+        setup_with_default_filter();
+        return;
+    };
+
+    #[cfg(unix)]
+    {
+        setup_with_default_filter();
+        redirect_stderr(&logfile);
+    }
+    #[cfg(not(unix))]
+    {
+        setup_file_with_default_filter(&logfile);
     }
 }
 
@@ -131,7 +155,7 @@ pub fn redirect_stderr_to_file(logfile: Option<PathBuf>) -> Option<JoinHandle<()
             #[cfg(not(unix))]
             {
                 println!("logrotate is not supported on this platform");
-                setup_file_with_default(&logfile, DEFAULT_FILTER);
+                setup_file_with_default_filter(&logfile);
                 None
             }
         }

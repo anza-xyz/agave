@@ -191,8 +191,8 @@ impl BroadcastRun for BroadcastFakeShredsRun {
 mod tests {
     use {
         super::*,
+        solana_net_utils::SocketAddrSpace,
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
         std::net::{IpAddr, Ipv4Addr, SocketAddr},
     };
 

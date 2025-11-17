@@ -599,14 +599,14 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
         ("analyze-storage", Some(arg_matches)) => analyze_storage(&crate::open_blockstore(
             &ledger_path,
             arg_matches,
-            AccessType::Secondary,
+            AccessType::ReadOnly,
         ))?,
         ("bounds", Some(arg_matches)) => {
             let output_format = OutputFormat::from_matches(arg_matches, "output_format", false);
             let all = arg_matches.is_present("all");
 
             let blockstore =
-                crate::open_blockstore(&ledger_path, arg_matches, AccessType::Secondary);
+                crate::open_blockstore(&ledger_path, arg_matches, AccessType::ReadOnly);
             let slot_meta_iterator = blockstore.slot_meta_iterator(0)?;
             let slots: Vec<_> = slot_meta_iterator.map(|(slot, _)| slot).collect();
 
@@ -665,7 +665,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             let target_ledger =
                 PathBuf::from(value_t_or_exit!(arg_matches, "target_ledger", String));
 
-            let source = crate::open_blockstore(&ledger_path, arg_matches, AccessType::Secondary);
+            let source = crate::open_blockstore(&ledger_path, arg_matches, AccessType::ReadOnly);
             let target = crate::open_blockstore(
                 &target_ledger,
                 arg_matches,
@@ -685,7 +685,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
         }
         ("dead-slots", Some(arg_matches)) => {
             let blockstore =
-                crate::open_blockstore(&ledger_path, arg_matches, AccessType::Secondary);
+                crate::open_blockstore(&ledger_path, arg_matches, AccessType::ReadOnly);
             let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);
             for slot in blockstore.dead_slots_iterator(starting_slot)? {
                 println!("{slot}");
@@ -693,7 +693,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
         }
         ("duplicate-slots", Some(arg_matches)) => {
             let blockstore =
-                crate::open_blockstore(&ledger_path, arg_matches, AccessType::Secondary);
+                crate::open_blockstore(&ledger_path, arg_matches, AccessType::ReadOnly);
             let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);
             let output_format =
                 OutputFormat::from_matches(arg_matches, "output_format", verbose_level > 1);
@@ -708,7 +708,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
         }
         ("latest-optimistic-slots", Some(arg_matches)) => {
             let blockstore =
-                crate::open_blockstore(&ledger_path, arg_matches, AccessType::Secondary);
+                crate::open_blockstore(&ledger_path, arg_matches, AccessType::ReadOnly);
             let num_slots = value_t_or_exit!(arg_matches, "num_slots", usize);
             let exclude_vote_only_slots = arg_matches.is_present("exclude_vote_only_slots");
             let slots =
@@ -738,7 +738,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
         }
         ("list-roots", Some(arg_matches)) => {
             let blockstore =
-                crate::open_blockstore(&ledger_path, arg_matches, AccessType::Secondary);
+                crate::open_blockstore(&ledger_path, arg_matches, AccessType::ReadOnly);
 
             let max_height = value_t!(arg_matches, "max_height", usize).unwrap_or(usize::MAX);
             let start_root = value_t!(arg_matches, "start_root", Slot).unwrap_or(0);
@@ -770,7 +770,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);
             let ending_slot = value_t_or_exit!(arg_matches, "ending_slot", Slot);
             let blockstore =
-                crate::open_blockstore(&ledger_path, arg_matches, AccessType::Secondary);
+                crate::open_blockstore(&ledger_path, arg_matches, AccessType::ReadOnly);
             let mut ancestors = BTreeSet::new();
             assert!(
                 blockstore.meta(ending_slot)?.is_some(),
@@ -835,7 +835,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             let output_format = OutputFormat::from_matches(arg_matches, "output_format", false);
 
             output_ledger(
-                crate::open_blockstore(&ledger_path, arg_matches, AccessType::Secondary),
+                crate::open_blockstore(&ledger_path, arg_matches, AccessType::ReadOnly),
                 starting_slot,
                 ending_slot,
                 allow_dead_slots,
@@ -847,7 +847,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
         }
         ("print-file-metadata", Some(arg_matches)) => {
             let blockstore =
-                crate::open_blockstore(&ledger_path, arg_matches, AccessType::Secondary);
+                crate::open_blockstore(&ledger_path, arg_matches, AccessType::ReadOnly);
             let sst_file_name = arg_matches.value_of("file_name");
             print_blockstore_file_metadata(&blockstore, &sst_file_name)?;
         }
@@ -998,7 +998,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             }
             let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);
             let ending_slot = value_t!(arg_matches, "ending_slot", Slot).unwrap_or(Slot::MAX);
-            let ledger = crate::open_blockstore(&ledger_path, arg_matches, AccessType::Secondary);
+            let ledger = crate::open_blockstore(&ledger_path, arg_matches, AccessType::ReadOnly);
             for (slot, _meta) in ledger
                 .slot_meta_iterator(starting_slot)?
                 .take_while(|(slot, _)| *slot <= ending_slot)
@@ -1029,7 +1029,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             let output_format = OutputFormat::from_matches(arg_matches, "output_format", false);
 
             let blockstore =
-                crate::open_blockstore(&ledger_path, arg_matches, AccessType::Secondary);
+                crate::open_blockstore(&ledger_path, arg_matches, AccessType::ReadOnly);
             for slot in slots {
                 output_slot(
                     &blockstore,

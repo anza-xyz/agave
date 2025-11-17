@@ -1,15 +1,46 @@
 use {
     crate::{
-        cli::thread_args::{RocksdbCompactionThreadsArg, RocksdbFlushThreadsArg, ThreadArg},
+        cli::thread_args::{new_thread_arg, ThreadArg},
         commands::{FromClapArgMatches, Result},
     },
-    clap::{value_t, ArgMatches},
+    clap::{value_t, Arg, ArgMatches},
+    solana_clap_utils::{hidden_unless_forced, input_validators::is_parsable},
     solana_ledger::blockstore_options::{
         AccessType, BlockstoreCompressionType, BlockstoreOptions, BlockstoreRecoveryMode,
         LedgerColumnOptions,
     },
-    std::num::NonZeroUsize,
+    std::{num::NonZeroUsize, sync::LazyLock},
 };
+
+struct RocksdbCompactionThreadsArg;
+impl ThreadArg for RocksdbCompactionThreadsArg {
+    const NAME: &'static str = "rocksdb_compaction_threads";
+    const LONG_NAME: &'static str = "rocksdb-compaction-threads";
+    const HELP: &'static str = "Number of threads to use for rocksdb (Blockstore) compactions";
+
+    fn default() -> usize {
+        solana_ledger::blockstore::default_num_compaction_threads().get()
+    }
+}
+
+struct RocksdbFlushThreadsArg;
+impl ThreadArg for RocksdbFlushThreadsArg {
+    const NAME: &'static str = "rocksdb_flush_threads";
+    const LONG_NAME: &'static str = "rocksdb-flush-threads";
+    const HELP: &'static str = "Number of threads to use for rocksdb (Blockstore) memtable flushes";
+
+    fn default() -> usize {
+        solana_ledger::blockstore::default_num_flush_threads().get()
+    }
+}
+
+const DEFAULT_ROCKSDB_LEDGER_COMPRESSION: &str = "none";
+const DEFAULT_ROCKSDB_PERF_SAMPLE_INTERVAL: &str = "0";
+static DEFAULT_ROCKSDB_COMPACTION_THREADS: LazyLock<String> =
+    LazyLock::new(|| RocksdbCompactionThreadsArg::default().to_string());
+static DEFAULT_ROCKSDB_FLUSH_THREADS: LazyLock<String> =
+    LazyLock::new(|| RocksdbFlushThreadsArg::default().to_string());
+const DEFAULT_ROCKSDB_SHRED_COMPACTION: &str = "level";
 
 impl FromClapArgMatches for BlockstoreOptions {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
@@ -53,6 +84,64 @@ impl FromClapArgMatches for BlockstoreOptions {
     }
 }
 
+pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
+    vec![
+        Arg::with_name("wal_recovery_mode")
+            .long("wal-recovery-mode")
+            .value_name("MODE")
+            .takes_value(true)
+            .possible_values(&[
+                "tolerate_corrupted_tail_records",
+                "absolute_consistency",
+                "point_in_time",
+                "skip_any_corrupted_record",
+            ])
+            .help("Mode to recovery the ledger db write ahead log."),
+        Arg::with_name("rocksdb_ledger_compression")
+            .hidden(hidden_unless_forced())
+            .long("rocksdb-ledger-compression")
+            .value_name("COMPRESSION_TYPE")
+            .takes_value(true)
+            .possible_values(&["none", "lz4", "snappy", "zlib"])
+            .default_value(DEFAULT_ROCKSDB_LEDGER_COMPRESSION)
+            .help(
+                "The compression algorithm that is used to compress transaction status data. \
+                 Turning on compression can save ~10% of the ledger size.",
+            ),
+        Arg::with_name("rocksdb_perf_sample_interval")
+            .hidden(hidden_unless_forced())
+            .long("rocksdb-perf-sample-interval")
+            .value_name("ROCKS_PERF_SAMPLE_INTERVAL")
+            .takes_value(true)
+            .validator(is_parsable::<usize>)
+            .default_value(DEFAULT_ROCKSDB_PERF_SAMPLE_INTERVAL)
+            .help(
+                "Controls how often RocksDB read/write performance samples are collected. Perf \
+                 samples are collected in 1 / ROCKS_PERF_SAMPLE_INTERVAL sampling rate.",
+            ),
+        new_thread_arg::<RocksdbCompactionThreadsArg>(&DEFAULT_ROCKSDB_COMPACTION_THREADS),
+        new_thread_arg::<RocksdbFlushThreadsArg>(&DEFAULT_ROCKSDB_FLUSH_THREADS),
+        Arg::with_name("rocksdb_shred_compaction")
+            .long("rocksdb-shred-compaction")
+            .value_name("ROCKSDB_COMPACTION_STYLE")
+            .takes_value(true)
+            .possible_values(&["level"])
+            .default_value(DEFAULT_ROCKSDB_SHRED_COMPACTION)
+            .help(
+                "Controls how RocksDB compacts shreds. *WARNING*: You will lose your Blockstore \
+                 data when you switch between options.",
+            ),
+        Arg::with_name("limit_ledger_size")
+            .long("limit-ledger-size")
+            .value_name("SHRED_COUNT")
+            .takes_value(true)
+            .min_values(0)
+            .max_values(1)
+            /* .default_value() intentionally not used here! */
+            .help("Keep this amount of shreds in root slots."),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -64,6 +153,7 @@ mod tests {
             },
             RunArgs,
         },
+        std::ops::RangeInclusive,
         test_case::test_case,
     };
 
@@ -198,5 +288,52 @@ mod tests {
                 expected_args,
             );
         }
+    }
+
+    #[test]
+    fn test_default_rocksdb_ledger_compression_unchanged() {
+        assert_eq!(DEFAULT_ROCKSDB_LEDGER_COMPRESSION, "none");
+    }
+
+    #[test]
+    fn test_default_rocksdb_perf_sample_interval_unchanged() {
+        assert_eq!(DEFAULT_ROCKSDB_PERF_SAMPLE_INTERVAL, "0");
+    }
+
+    #[test]
+    fn test_default_rocksdb_compaction_threads_unchanged() {
+        assert_eq!(
+            *DEFAULT_ROCKSDB_COMPACTION_THREADS,
+            num_cpus::get().to_string(),
+        );
+    }
+
+    #[test]
+    fn test_valid_range_rocksdb_compaction_threads_unchanged() {
+        assert_eq!(
+            RocksdbCompactionThreadsArg::range(),
+            RangeInclusive::new(1, num_cpus::get()),
+        );
+    }
+
+    #[test]
+    fn test_default_rocksdb_flush_threads_unchanged() {
+        assert_eq!(
+            *DEFAULT_ROCKSDB_FLUSH_THREADS,
+            (num_cpus::get() / 4).max(1).to_string()
+        );
+    }
+
+    #[test]
+    fn test_valid_range_rocksdb_flush_threads_unchanged() {
+        assert_eq!(
+            RocksdbFlushThreadsArg::range(),
+            RangeInclusive::new(1, num_cpus::get()),
+        );
+    }
+
+    #[test]
+    fn test_default_rocksdb_shred_compaction_unchanged() {
+        assert_eq!(DEFAULT_ROCKSDB_SHRED_COMPACTION, "level");
     }
 }

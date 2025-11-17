@@ -1,5 +1,4 @@
 use {
-    agave_logger::redirect_stderr_to_file,
     agave_validator::{
         admin_rpc_service, cli, commands::FromClapArgMatches, dashboard::Dashboard,
         ledger_lockfile, lock_ledger, println_name_value,
@@ -21,6 +20,7 @@ use {
     solana_inflation::Inflation,
     solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
     solana_native_token::sol_str_to_lamports,
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc::{
@@ -29,7 +29,6 @@ use {
     },
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_system_interface::program as system_program,
     solana_test_validator::*,
     std::{
@@ -122,7 +121,7 @@ fn main() {
     } else {
         None
     };
-    let _logger_thread = redirect_stderr_to_file(logfile);
+    agave_logger::initialize_logging(logfile);
 
     info!("{} {}", crate_name!(), solana_version::version!());
     info!("Starting validator with: {:#?}", std::env::args_os());

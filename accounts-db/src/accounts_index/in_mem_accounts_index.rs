@@ -170,16 +170,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         self.last_age_flushed.load(Ordering::Acquire)
     }
 
-    /// Release entire in-mem hashmap to free all memory associated with it.
-    /// Idea is that during startup we needed a larger map than we need during runtime.
-    /// When using disk-buckets, in-mem index grows over time with dynamic use and then shrinks, in theory back to 0.
-    pub fn shrink_to_fit(&self) {
-        // shrink_to_fit could be quite expensive on large map sizes, which 'no disk buckets' could produce, so avoid shrinking in case we end up here
-        if self.storage.is_disk_index_enabled() {
-            self.map_internal.write().unwrap().shrink_to_fit();
-        }
-    }
-
     /// return all keys in this bin
     pub fn keys(&self) -> Vec<Pubkey> {
         Self::update_stat(&self.stats().keys, 1);

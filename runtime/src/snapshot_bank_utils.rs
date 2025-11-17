@@ -20,9 +20,8 @@ use {
         },
         snapshot_package::SnapshotPackage,
         snapshot_utils::{
-            self, get_highest_bank_snapshot, rebuild_storages_from_snapshot_dir,
-            verify_and_unarchive_snapshots, BankSnapshotInfo, StorageAndNextAccountsFileId,
-            UnarchivedSnapshots,
+            self, rebuild_storages_from_snapshot_dir, verify_and_unarchive_snapshots,
+            BankSnapshotInfo, StorageAndNextAccountsFileId, UnarchivedSnapshots,
         },
         status_cache,
     },
@@ -425,39 +424,6 @@ pub fn bank_from_snapshot_dir(
         ("rebuild_storages_us", measure_rebuild_storages.as_us(), i64),
         ("rebuild_bank_us", measure_rebuild_bank.as_us(), i64),
     );
-    Ok(bank)
-}
-
-/// follow the prototype of fn bank_from_latest_snapshot_archives, implement the from_dir case
-#[allow(clippy::too_many_arguments)]
-pub fn bank_from_latest_snapshot_dir(
-    bank_snapshots_dir: impl AsRef<Path>,
-    genesis_config: &GenesisConfig,
-    runtime_config: &RuntimeConfig,
-    account_paths: &[PathBuf],
-    debug_keys: Option<Arc<HashSet<Pubkey>>>,
-    limit_load_slot_count_from_snapshot: Option<usize>,
-    verify_index: bool,
-    accounts_db_config: AccountsDbConfig,
-    accounts_update_notifier: Option<AccountsUpdateNotifier>,
-    exit: Arc<AtomicBool>,
-) -> agave_snapshots::Result<Bank> {
-    let bank_snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).ok_or_else(|| {
-        SnapshotError::NoSnapshotSlotDir(bank_snapshots_dir.as_ref().to_path_buf())
-    })?;
-    let bank = bank_from_snapshot_dir(
-        account_paths,
-        &bank_snapshot,
-        genesis_config,
-        runtime_config,
-        debug_keys,
-        limit_load_slot_count_from_snapshot,
-        verify_index,
-        accounts_db_config,
-        accounts_update_notifier,
-        exit,
-    )?;
-
     Ok(bank)
 }
 
@@ -2123,34 +2089,6 @@ mod tests {
         }
         let next_id = bank.accounts().accounts_db.next_id.load(Ordering::Relaxed) as usize;
         assert_eq!(max_id, next_id - 1);
-    }
-
-    #[test]
-    fn test_bank_from_latest_snapshot_dir() {
-        let genesis_config = GenesisConfig::default();
-        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
-        let bank = create_snapshot_dirs_for_tests(&genesis_config, &bank_snapshots_dir, 3, true);
-
-        let account_paths = &bank.rc.accounts.accounts_db.paths;
-
-        let deserialized_bank = bank_from_latest_snapshot_dir(
-            &bank_snapshots_dir,
-            &genesis_config,
-            &RuntimeConfig::default(),
-            account_paths,
-            None,
-            None,
-            false,
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
-            None,
-            Arc::default(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            deserialized_bank, bank,
-            "Ensure rebuilding bank from the highest snapshot dir results in the highest bank",
-        );
     }
 
     #[test_case(false)]

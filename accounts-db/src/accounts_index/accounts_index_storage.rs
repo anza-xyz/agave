@@ -106,11 +106,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexStorage<
     pub(crate) fn set_startup(&self, startup: Startup) {
         let is_startup = startup != Startup::Normal;
         self.storage.set_startup(is_startup);
-        if !is_startup {
-            // transitioning from startup to !startup (ie. steady state)
-            // maybe shrink hashmaps
-            self.shrink_to_fit();
-        }
     }
 
     /// estimate how many items are still needing to be flushed to the disk cache.
@@ -120,10 +115,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexStorage<
             .as_ref()
             .map(|_| self.storage.stats.get_remaining_items_to_flush_estimate())
             .unwrap_or_default()
-    }
-
-    fn shrink_to_fit(&self) {
-        self.in_mem.iter().for_each(|mem| mem.shrink_to_fit())
     }
 
     /// allocate BucketMapHolder and InMemAccountsIndex[]

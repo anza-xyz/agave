@@ -6,7 +6,6 @@ use {
         commands::{run::args::RunArgs, FromClapArgMatches},
         ledger_lockfile, lock_ledger,
     },
-    agave_logger::redirect_stderr_to_file,
     agave_snapshots::{
         paths::BANK_SNAPSHOTS_DIR,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
@@ -120,7 +119,7 @@ pub fn execute(
         println!("log file: {}", logfile.display());
     }
     let use_progress_bar = logfile.is_none();
-    let _logger_thread = redirect_stderr_to_file(logfile);
+    agave_logger::initialize_logging(logfile.clone());
 
     info!("{} {}", crate_name!(), solana_version);
     info!("Starting validator with: {:#?}", std::env::args_os());
@@ -261,13 +260,6 @@ pub fn execute(
     let restricted_repair_only_mode = matches.is_present("restricted_repair_only_mode");
     let accounts_shrink_optimize_total_space =
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
-    let tpu_use_quic = !matches.is_present("tpu_disable_quic");
-    if !tpu_use_quic {
-        warn!(
-            "TPU QUIC was disabled via --tpu_disable_quic, this will prevent validator from \
-             receiving transactions!"
-        );
-    }
     let vote_use_quic = value_t_or_exit!(matches, "vote_use_quic", bool);
 
     let tpu_enable_udp = if matches.is_present("tpu_enable_udp") {
@@ -520,6 +512,7 @@ pub fn execute(
     );
 
     let mut validator_config = ValidatorConfig {
+        logfile,
         require_tower: matches.is_present("require_tower"),
         tower_storage,
         halt_at_slot: value_t!(matches, "dev_halt_at_slot", Slot).ok(),
@@ -1023,7 +1016,7 @@ pub fn execute(
         start_progress,
         run_args.socket_addr_space,
         ValidatorTpuConfig {
-            use_quic: tpu_use_quic,
+            use_quic: true,
             vote_use_quic,
             tpu_connection_pool_size,
             tpu_enable_udp,
@@ -1055,6 +1048,7 @@ pub fn execute(
         File::create(filename).map_err(|err| format!("unable to create {filename}: {err}"))?;
     }
     info!("Validator initialized");
+    validator.listen_for_signals()?;
     validator.join();
     info!("Validator exiting..");
 
