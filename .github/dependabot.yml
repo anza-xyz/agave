@@ -8,6 +8,8 @@ updates:
   - package-ecosystem: cargo
     directories:
       - "/"
+      - "/dev-bins"
+      - "/ci/xtask"
       - "/programs/sbf"
     schedule:
       interval: daily
