@@ -16,7 +16,7 @@ pub struct WritableTransactionAccountStateInfo {
     data_size: usize,
 }
 
-pub(crate) type TransactionAccountStateInfo = Option<WritableTransactionAccountStateInfo>; // None: readonly account
+pub type TransactionAccountStateInfo = Option<WritableTransactionAccountStateInfo>; // None: readonly account
 
 pub(crate) fn new_pre_exec(
     transaction_context: &TransactionContext,
@@ -125,6 +125,28 @@ pub(crate) fn verify_changes(
         }
     }
     Ok(())
+}
+
+pub(crate) fn get_account_state_growth_delta(
+    pre: &[TransactionAccountStateInfo],
+    post: &[TransactionAccountStateInfo],
+) -> i64 {
+    pre.iter().zip(post).fold(0i64, |sum, (pre_opt, post_opt)| {
+        match (pre_opt.as_ref(), post_opt.as_ref()) {
+            (Some(pre), Some(post)) => {
+                sum + match (&pre.rent_state, &post.rent_state) {
+                    (RentState::Uninitialized, RentState::RentExempt) => {
+                        post.data_size as i64 + solana_rent::ACCOUNT_STORAGE_OVERHEAD as i64
+                    } // created
+                    (RentState::RentExempt, RentState::Uninitialized) => {
+                        -(pre.data_size as i64 + solana_rent::ACCOUNT_STORAGE_OVERHEAD as i64)
+                    } // deleted
+                    _ => post.data_size as i64 - pre.data_size as i64,
+                }
+            }
+            _ => sum, // skip if either side is None
+        }
+    })
 }
 
 #[cfg(test)]

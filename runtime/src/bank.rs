@@ -562,6 +562,8 @@ impl PartialEq for Bank {
             accounts_data_size_initial: _,
             accounts_data_size_delta_on_chain: _,
             accounts_data_size_delta_off_chain: _,
+            accounts_net_state_growth: _,
+            rent_controller_integral: _,
             epoch_reward_status: _,
             transaction_processor: _,
             check_program_modification_slot: _,
@@ -868,6 +870,11 @@ pub struct Bank {
     accounts_data_size_delta_on_chain: AtomicI64,
     /// The change to accounts data size in this Bank, due to off-chain events (i.e. rent collection)
     accounts_data_size_delta_off_chain: AtomicI64,
+    /// The change to accounts state growth in this Bank, due on-chain events (i.e. transactions)
+    accounts_net_state_growth: AtomicI64,
+
+    /// Integral accumulator for dynamic rent controller (SIMD-0389)
+    rent_controller_integral: AtomicI64,
 
     epoch_reward_status: EpochRewardStatus,
 
@@ -1057,6 +1064,25 @@ struct NewEpochBundle {
     update_rewards_with_thread_pool_time_us: u64,
 }
 
+// Dynamic rent controller parameters (SIMD-0389)
+const RENT_CTRL_MAX: u64 = solana_rent::DEFAULT_LAMPORTS_PER_BYTE_YEAR * 2;
+const RENT_CTRL_MIN: u64 = RENT_CTRL_MAX / 10;
+
+// Supervisory controller: integral bounds (bytes)
+const RENT_CTRL_I_MIN: i64 = -4_000_000_000;
+const RENT_CTRL_I_MAX: i64 = 2_000_000_000;
+
+// Discrete step factors
+const RENT_CTRL_STEP_UP_FACTOR_PERCENT: u64 = 110; // +10%
+const RENT_CTRL_STEP_DOWN_FACTOR_PERCENT: u64 = 95; // -5%
+
+// Deadband parameter
+const RENT_CTRL_H: i64 = 100_000_000;
+
+// Target state growth
+const RENT_CTRL_G_TARGET_BYTES_PER_EPOCH: i64 = 2 << 31; // 2 GiB
+const RENT_CTRL_G_TARGET_SLOTS_PER_EPOCH: i64 = RENT_CTRL_G_TARGET_BYTES_PER_EPOCH;
+
 impl Bank {
     fn default_with_accounts(accounts: Accounts) -> Self {
         let mut bank = Self {
@@ -1110,6 +1136,8 @@ impl Bank {
             accounts_data_size_initial: 0,
             accounts_data_size_delta_on_chain: AtomicI64::new(0),
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
+            accounts_net_state_growth: AtomicI64::new(0),
+            rent_controller_integral: AtomicI64::new(0),
             epoch_reward_status: EpochRewardStatus::default(),
             transaction_processor: TransactionBatchProcessor::default(),
             check_program_modification_slot: false,
@@ -1357,6 +1385,8 @@ impl Bank {
             accounts_data_size_initial,
             accounts_data_size_delta_on_chain: AtomicI64::new(0),
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
+            accounts_net_state_growth: AtomicI64::new(0),
+            rent_controller_integral: AtomicI64::new(0),
             epoch_reward_status: parent.epoch_reward_status.clone(),
             transaction_processor,
             check_program_modification_slot: false,
@@ -1408,6 +1438,7 @@ impl Bank {
             new.update_slot_hashes();
             new.update_stake_history(Some(parent.epoch()));
             new.update_clock(Some(parent.epoch()));
+            new.update_rent();
             new.update_last_restart_slot()
         });
 
@@ -1849,6 +1880,8 @@ impl Bank {
             accounts_data_size_initial,
             accounts_data_size_delta_on_chain: AtomicI64::new(0),
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
+            accounts_net_state_growth: AtomicI64::new(0),
+            rent_controller_integral: AtomicI64::new(0),
             epoch_reward_status: EpochRewardStatus::default(),
             transaction_processor: TransactionBatchProcessor::default(),
             check_program_modification_slot: false,
@@ -2252,13 +2285,65 @@ impl Bank {
         self.epoch_stakes.insert(epoch, stakes);
     }
 
-    fn update_rent(&self) {
+    fn update_rent_controller_integral(&mut self) {
+        let Some(parent) = self.parent() else {
+            return;
+        };
+
+        let parent_i = parent.rent_controller_integral.load(Acquire);
+        let parent_net_growth = parent.load_accounts_net_state_growth();
+        let target_per_slot =
+            RENT_CTRL_G_TARGET_SLOTS_PER_EPOCH / parent.epoch_schedule().slots_per_epoch as i64;
+        let e = parent_net_growth.saturating_sub(target_per_slot);
+        let new_i = parent_i
+            .saturating_add(e)
+            .clamp(RENT_CTRL_I_MIN, RENT_CTRL_I_MAX);
+
+        self.rent_controller_integral
+            .fetch_update(AcqRel, Acquire, |_| Some(new_i))
+            // SAFETY: unwrap() is safe since our update fn always returns `Some`
+            .unwrap();
+    }
+
+    fn update_rent(&mut self) {
+        self.update_rent_controller_integral();
+
+        // Compute the effective Rent using the dynamic controller and expose it via the sysvar
+        self.rent_collector.rent = self.compute_dynamic_rent();
         self.update_sysvar_account(&sysvar::rent::id(), |account| {
             create_account(
                 &self.rent_collector.rent,
                 self.inherit_specially_retained_account_fields(account),
             )
-        });
+        })
+    }
+
+    /// Compute the effective Rent using the supervisory controller (SIMD-0389).
+    ///
+    /// Let G_target = 2 GiB / slots_per_epoch. e = G_slot - G_target.
+    /// I_next = clamp(I + e, [RENT_CTRL_I_MIN, RENT_CTRL_I_MAX]) is applied at bank creation.
+    /// Deadband/steps:
+    ///   if I_next >= H:   min_deposit_next = min_deposit_current * 1.10
+    ///   elif I_next <= -H:min_deposit_next = min_deposit_current * 0.95
+    ///   else:             hold
+    /// We implement this by scaling lamports_per_byte_year and setting exemption_threshold = 1.0.
+    fn compute_dynamic_rent(&self) -> solana_rent::Rent {
+        let mut rent = self.rent_collector.rent.clone();
+
+        let i = self.rent_controller_integral.load(Acquire);
+        let factor = if i >= RENT_CTRL_H {
+            RENT_CTRL_STEP_UP_FACTOR_PERCENT
+        } else if i <= -RENT_CTRL_H {
+            RENT_CTRL_STEP_DOWN_FACTOR_PERCENT
+        } else {
+            return rent;
+        };
+
+        let prev_rent = (rent.lamports_per_byte_year as f64 * rent.exemption_threshold) as u64;
+        let new_rent = (prev_rent * factor) / 100;
+        rent.lamports_per_byte_year = new_rent.clamp(RENT_CTRL_MIN, RENT_CTRL_MAX);
+        rent.exemption_threshold = 1.0;
+        rent
     }
 
     fn update_epoch_schedule(&self) {
@@ -3519,6 +3604,11 @@ impl Bank {
         self.accounts_data_size_delta_off_chain.load(Acquire)
     }
 
+    /// Load the net state growth observed in this bank for the current slot, in bytes.
+    fn load_accounts_net_state_growth(&self) -> i64 {
+        self.accounts_net_state_growth.load(Acquire)
+    }
+
     /// Update the accounts data size delta from on-chain events by adding `amount`.
     /// The arithmetic saturates.
     fn update_accounts_data_size_delta_on_chain(&self, amount: i64) {
@@ -3529,6 +3619,21 @@ impl Bank {
         self.accounts_data_size_delta_on_chain
             .fetch_update(AcqRel, Acquire, |accounts_data_size_delta_on_chain| {
                 Some(accounts_data_size_delta_on_chain.saturating_add(amount))
+            })
+            // SAFETY: unwrap() is safe since our update fn always returns `Some`
+            .unwrap();
+    }
+
+    /// Update the accounts net state growth from on-chain events by adding `amount`.
+    /// The arithmetic saturates.
+    fn update_accounts_net_state_growth(&self, amount: i64) {
+        if amount == 0 {
+            return;
+        }
+
+        self.accounts_net_state_growth
+            .fetch_update(AcqRel, Acquire, |accounts_net_state_growth| {
+                Some(accounts_net_state_growth.saturating_add(amount))
             })
             // SAFETY: unwrap() is safe since our update fn always returns `Some`
             .unwrap();
@@ -3684,18 +3789,20 @@ impl Bank {
             }
         });
 
-        let accounts_data_len_delta = processing_results
+        let (accounts_data_len_delta, accounts_net_state_growth) = processing_results
             .iter()
             .filter_map(|processing_result| processing_result.processed_transaction())
             .filter_map(|processed_tx| processed_tx.execution_details())
             .filter_map(|details| {
-                details
-                    .status
-                    .is_ok()
-                    .then_some(details.accounts_data_len_delta)
+                if details.status.is_ok() {
+                    Some((details.accounts_data_len_delta, details.state_growth_delta))
+                } else {
+                    None
+                }
             })
-            .sum();
+            .fold((0, 0), |(acc1, acc2), (v1, v2)| (acc1 + v1, acc2 + v2));
         self.update_accounts_data_size_delta_on_chain(accounts_data_len_delta);
+        self.update_accounts_net_state_growth(accounts_net_state_growth);
 
         let ((), update_transaction_statuses_us) =
             measure_us!(self.update_transaction_statuses(sanitized_txs, &processing_results));

@@ -1069,6 +1069,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             None
         };
 
+        let state_growth_delta: i64 = if let Ok(post_state_info) = post_account_state_info {
+            get_account_state_growth_delta(&pre_account_state_info, &post_state_info)
+        } else {
+            0
+        };
+
         ExecutedTransaction {
             execution_details: TransactionExecutionDetails {
                 status,
@@ -1077,6 +1083,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 return_data,
                 executed_units,
                 accounts_data_len_delta,
+                state_growth_delta,
             },
             loaded_transaction,
             programs_modified_by_tx: program_cache_for_tx_batch.drain_modified_entries(),
