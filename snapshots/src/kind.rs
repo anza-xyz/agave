@@ -1,7 +1,7 @@
 use solana_clock::Slot;
 
-/// All snapshots also write archives at this time, but it is possible that
-/// in the future there could be other kinds of snapshots that do not write archives.
+/// All snapshots are archived at this time, but it is possible that
+/// in the future there could be other kinds of snapshots that are not archived.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SnapshotKind {
     Archive(SnapshotArchiveKind),
