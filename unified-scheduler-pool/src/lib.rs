@@ -2869,7 +2869,6 @@ mod tests {
     }
 
     const SHORTENED_POOL_CLEANER_INTERVAL: Duration = Duration::from_millis(1);
-    const SHORTENED_MAX_POOLING_DURATION: Duration = Duration::from_millis(100);
 
     #[test]
     fn test_scheduler_drop_idle() {
@@ -2882,10 +2881,15 @@ mod tests {
             &TestCheckPoint::AfterIdleSchedulerCleaned,
         ]);
 
+        // Use 300ms pooling duration as a balance between:
+        // - Keeping the test fast (as small as possible)
+        // - Providing a large enough window to avoid the race condition where the second
+        //   scheduler could also be freed before we can assert only one remains
+        const TEST_MAX_POOLING_DURATION: Duration = Duration::from_millis(300);
+        // Add a generous safety margin to avoid flakiness in CI. We need old_scheduler to be
+        // reliably older than TEST_MAX_POOLING_DURATION when the cleaner runs.
+        const TEST_WAIT_FOR_IDLE: Duration = Duration::from_millis(500);
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        // Use a longer pooling duration for this test to avoid race conditions.
-        // old_scheduler and new_scheduler need to have a clear age difference.
-        let test_max_pooling_duration = Duration::from_millis(300);
         let pool_raw = DefaultSchedulerPool::do_new(
             None,
             None,
@@ -2893,7 +2897,7 @@ mod tests {
             None,
             ignored_prioritization_fee_cache,
             SHORTENED_POOL_CLEANER_INTERVAL,
-            test_max_pooling_duration,
+            TEST_MAX_POOLING_DURATION,
             DEFAULT_MAX_USAGE_QUEUE_COUNT,
             DEFAULT_TIMEOUT_DURATION,
         );
@@ -2907,9 +2911,8 @@ mod tests {
         let new_scheduler_id = new_scheduler.id();
         Box::new(old_scheduler.into_inner().1).return_to_pool();
 
-        // Wait for old_scheduler to be considered idle by the cleaner (> 300ms old).
-        // This ensures when the cleaner runs, old_scheduler will definitely be idle.
-        sleep(Duration::from_millis(350));
+        // Wait for old_scheduler to be considered idle by the cleaner.
+        sleep(TEST_WAIT_FOR_IDLE);
 
         Box::new(new_scheduler.into_inner().1).return_to_pool();
 
@@ -2920,9 +2923,8 @@ mod tests {
         // See the old (= idle) scheduler gone only after solScCleaner did its job...
         sleepless_testing::at(&TestCheckPoint::AfterIdleSchedulerCleaned);
 
-        // After the cleaner finishes, only the new_scheduler should remain.
-        // The old_scheduler is idle (pooled > 100ms ago) so it gets removed.
-        // The new_scheduler was just pooled so it's not idle yet.
+        // Only new_scheduler should remain. old_scheduler (~500ms old) exceeds the
+        // 300ms idle threshold, while new_scheduler (~50ms old) does not.
         assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 1);
         assert_eq!(
             pool_raw
@@ -3013,6 +3015,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_drop_stale() {
+        const SHORTENED_MAX_POOLING_DURATION: Duration = Duration::from_millis(100);
         agave_logger::setup();
 
         let _progress = sleepless_testing::setup(&[
