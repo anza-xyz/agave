@@ -263,7 +263,6 @@ pub struct DefaultArgs {
 
 impl DefaultArgs {
     pub fn new() -> Self {
-        let default_send_transaction_service_config = send_transaction_service::Config::default();
         let config_path = ConfigFile::default_path().and_then(|path| {
             if std::fs::exists(&path).ok()? {
                 Some(path.to_str().map(|s| s.to_string())?)

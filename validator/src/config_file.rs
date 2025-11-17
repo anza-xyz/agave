@@ -1,13 +1,25 @@
-use {
-    serde::{de::Deserializer, Deserialize},
-    solana_clap_utils::input_parsers::parse_cpu_ranges,
-    std::path::PathBuf,
-};
+use {serde::Deserialize, std::path::PathBuf};
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ConfigFile {
     #[serde(default)]
     pub net: Net,
+
+    #[serde(rename = "cpu-reservations", default)]
+    pub cpu_reservations: Vec<CpuReservation>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CpuReservation {
+    pub cores: Option<Vec<usize>>,
+    pub scope: CpuScope,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CpuScope {
+    Xdp,
+    Poh,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -16,32 +28,10 @@ pub struct Net {
     pub xdp: Xdp,
 }
 
-#[derive(Debug)]
-pub struct XdpCpuRanges(pub Vec<usize>);
-
-impl<'de> serde::de::Deserialize<'de> for XdpCpuRanges {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        parse_cpu_ranges(&s)
-            .map(XdpCpuRanges)
-            .map_err(serde::de::Error::custom)
-    }
-}
-
 #[derive(Debug, Deserialize, Default)]
 pub struct Xdp {
-    pub interface: Option<Vec<XdpInterface>>,
-    pub cpus: Option<XdpCpuRanges>,
+    pub interface: Option<String>,
     pub zero_copy: Option<bool>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct XdpInterface {
-    pub interface: String,
-    pub queue: u64,
 }
 
 impl ConfigFile {
@@ -50,5 +40,44 @@ impl ConfigFile {
             path.extend(["agave", "agave.toml"]);
             path
         })
+    }
+
+    pub fn cpus_for_scope(&self, scope: CpuScope) -> Option<Vec<usize>> {
+        let matching: Vec<_> = self
+            .cpu_reservations
+            .iter()
+            .filter(|r| r.scope == scope)
+            .collect();
+
+        if matching.is_empty() {
+            return None;
+        }
+
+        Some(
+            matching
+                .into_iter()
+                .filter_map(|r| r.cores.as_ref())
+                .flat_map(|ranges| ranges.iter().copied())
+                .collect(),
+        )
+    }
+
+    pub fn xdp_cpus(&self) -> Option<Vec<usize>> {
+        self.cpus_for_scope(CpuScope::Xdp)
+    }
+
+    pub fn poh_cpu(&self) -> Option<usize> {
+        if let Some(cpus) = self.cpus_for_scope(CpuScope::Poh) {
+            if cpus.len() > 1 {
+                panic!(
+                    "Cannot have more than 1 poh cpu, found {} cpus: {:?}",
+                    cpus.len(),
+                    cpus
+                );
+            }
+            cpus.first().copied()
+        } else {
+            None
+        }
     }
 }
