@@ -146,23 +146,23 @@ impl BuilderType {
         cert_type: &CertificateType,
         msgs: &[VoteMessage],
     ) -> Result<(), AggregateError> {
-        let votes = certificate_limits_and_votes(cert_type).1;
+        let (_, vote, fallback_vote) = certificate_limits_and_votes(cert_type);
         match self {
             Self::DoubleVote {
                 signature,
                 bitmap0,
                 bitmap1,
             } => {
-                debug_assert_eq!(votes.len(), 2);
-                if votes.len() != 2 {
+                debug_assert!(fallback_vote.is_some());
+                let Some(fallback_vote) = fallback_vote else {
                     return Err(AggregateError::InvalidVoteTypes);
-                }
+                };
                 for msg in msgs {
-                    if msg.vote == votes[0] {
+                    if msg.vote == vote {
                         try_set_bitmap(bitmap0, msg.rank)?;
                     } else {
-                        debug_assert_eq!(msg.vote, votes[1]);
-                        if msg.vote != votes[1] {
+                        debug_assert_eq!(msg.vote, fallback_vote);
+                        if msg.vote != fallback_vote {
                             return Err(AggregateError::InvalidVoteTypes);
                         }
                         match bitmap1 {
@@ -179,13 +179,13 @@ impl BuilderType {
             }
 
             Self::SingleVote { signature, bitmap } => {
-                debug_assert_eq!(votes.len(), 1);
-                if votes.len() != 1 {
+                debug_assert!(fallback_vote.is_none());
+                if fallback_vote.is_some() {
                     return Err(AggregateError::InvalidVoteTypes);
                 }
                 for msg in msgs {
-                    debug_assert_eq!(msg.vote, votes[0]);
-                    if msg.vote != votes[0] {
+                    debug_assert_eq!(msg.vote, vote);
+                    if msg.vote != vote {
                         return Err(AggregateError::InvalidVoteTypes);
                     }
                     try_set_bitmap(bitmap, msg.rank)?;
