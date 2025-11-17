@@ -287,8 +287,21 @@ impl TransactionAccounts {
     }
 
     pub(crate) fn len(&self) -> usize {
+        // RUST UPGRADE NOTE
+        //
+        // Rust 1.87.0 reports a `needless_borrow` warning
+        // Rust 1.88.0 reports a `dangerous_implicit_autorefs` warning if the
+        // recommendation given from Rust 1.87.0 is applied
+        //
+        // In order to facilitate upgrading to Rust >= 1.88.0, use the 1.88.0
+        // suggestion and ignore the warning given by 1.87.0. This comment and
+        // the `#[allow(clippy::needless_borrow)]` will be removed after the
+        // Rust version has advanced
+        #[allow(clippy::needless_borrow)]
         // SAFETY: The borrow is local to this function and is only reading length.
-        unsafe { (*self.shared_account_fields.get()).len() }
+        unsafe {
+            (&(*self.shared_account_fields.get())).len()
+        }
     }
 
     #[cfg(not(target_os = "solana"))]
@@ -335,23 +348,27 @@ impl TransactionAccounts {
     pub(crate) fn try_borrow_mut(
         &self,
         index: IndexOfAccount,
-    ) -> Result<AccountRefMut, InstructionError> {
+    ) -> Result<AccountRefMut<'_>, InstructionError> {
         let borrow_counter = self
             .borrow_counters
             .get(index as usize)
             .ok_or(InstructionError::MissingAccount)?;
         borrow_counter.try_borrow_mut()?;
 
+        // See previous RUST UPGRADE NOTE in this file
+        #[allow(clippy::needless_borrow)]
         // SAFETY: The borrow counter guarantees this is the only mutable borrow of this account.
         // The unwrap is safe because accounts.len() == borrow_counters.len(), so the missing
         // account error should have been returned above.
         let svm_account = unsafe {
-            (*self.shared_account_fields.get())
+            (&mut (*self.shared_account_fields.get()))
                 .get_mut(index as usize)
                 .unwrap()
         };
+        // See previous RUST UPGRADE NOTE in this file
+        #[allow(clippy::needless_borrow)]
         let private_fields = unsafe {
-            (*self.private_account_fields.get())
+            (&mut (*self.private_account_fields.get()))
                 .get_mut(index as usize)
                 .unwrap()
         };
@@ -367,23 +384,27 @@ impl TransactionAccounts {
         })
     }
 
-    pub fn try_borrow(&self, index: IndexOfAccount) -> Result<AccountRef, InstructionError> {
+    pub fn try_borrow(&self, index: IndexOfAccount) -> Result<AccountRef<'_>, InstructionError> {
         let borrow_counter = self
             .borrow_counters
             .get(index as usize)
             .ok_or(InstructionError::MissingAccount)?;
         borrow_counter.try_borrow()?;
 
+        // See previous RUST UPGRADE NOTE in this file
+        #[allow(clippy::needless_borrow)]
         // SAFETY: The borrow counter guarantees there are no mutable borrow of this account.
         // The unwrap is safe because accounts.len() == borrow_counters.len(), so the missing
         // account error should have been returned above.
         let svm_account = unsafe {
-            (*self.shared_account_fields.get())
+            (&(*self.shared_account_fields.get()))
                 .get(index as usize)
                 .unwrap()
         };
+        // See previous RUST UPGRADE NOTE in this file
+        #[allow(clippy::needless_borrow)]
         let private_fields = unsafe {
-            (*self.private_account_fields.get())
+            (&(*self.private_account_fields.get()))
                 .get(index as usize)
                 .unwrap()
         };
@@ -460,9 +481,11 @@ impl TransactionAccounts {
     }
 
     pub(crate) fn account_key(&self, index: IndexOfAccount) -> Option<&Pubkey> {
+        // See previous RUST UPGRADE NOTE in this file
+        #[allow(clippy::needless_borrow)]
         // SAFETY: We never modify an account key, so returning a reference to it is safe.
         unsafe {
-            (*self.shared_account_fields.get())
+            (&(*self.shared_account_fields.get()))
                 .get(index as usize)
                 .map(|acc| &acc.key)
         }

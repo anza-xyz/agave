@@ -1,6 +1,7 @@
 use {
     agave_snapshots::{
         paths as snapshot_paths, snapshot_archive_info::SnapshotArchiveInfoGetter as _,
+        SnapshotKind,
     },
     itertools::Itertools,
     log::*,
@@ -22,11 +23,10 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_metrics::datapoint_info,
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_runtime::snapshot_package::SnapshotKind,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_vote_program::vote_state::VoteStateV4,
     std::{
         collections::{hash_map::RandomState, HashMap, HashSet},
@@ -340,7 +340,7 @@ pub fn fail_rpc_node(
     blacklisted_rpc_nodes: &mut HashSet<Pubkey, RandomState>,
 ) {
     warn!("{err}");
-    if let Some(ref known_validators) = known_validators {
+    if let Some(known_validators) = known_validators {
         if known_validators.contains(rpc_id) {
             return;
         }

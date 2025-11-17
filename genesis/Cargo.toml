@@ -34,7 +34,8 @@ itertools = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-solana-account = "=3.1.0"
+solana-account = "=3.2.0"
+solana-bls-signatures = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-clock = "=3.0.0"
@@ -60,7 +61,6 @@ solana-runtime = { workspace = true }
 solana-sdk-ids = "=3.0.0"
 solana-signer = "=3.0.0"
 solana-stake-interface = { version = "=2.0.1", features = ["borsh"] }
-solana-stake-program = { workspace = true }
 solana-time-utils = "3.0.0"
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
@@ -71,3 +71,5 @@ solana-borsh = { workspace = true }
 solana-genesis = { path = ".", features = ["agave-unstable-api"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-vote = { workspace = true }
+test-case = { workspace = true }

@@ -57,7 +57,6 @@ solana-shred-version = { workspace = true }
 solana-signer = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-stake-interface = { workspace = true }
-solana-stake-program = { workspace = true }
 solana-streamer = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-system-transaction = { workspace = true }

@@ -27,7 +27,6 @@ crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }
-governor = { workspace = true }
 histogram = { workspace = true }
 indexmap = { workspace = true }
 itertools = { workspace = true }
@@ -66,6 +65,7 @@ x509-parser = { workspace = true }
 agave-logger = { workspace = true }
 anyhow = { workspace = true }
 assert_matches = { workspace = true }
+chrono = { workspace = true, features = ["now"] }
 clap = { version = "4.5.31", features = ["cargo", "derive", "error-context"] }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 solana-streamer = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }

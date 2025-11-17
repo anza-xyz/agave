@@ -17,7 +17,7 @@ use {
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
         u64_align,
     },
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     rayon::prelude::{IntoParallelRefIterator, ParallelIterator},
     solana_clock::Slot,
     solana_measure::measure_us,
@@ -106,7 +106,7 @@ impl AncientSlotInfos {
             let should_shrink = if capacity > 0 {
                 if is_candidate_for_shrink {
                     true
-                } else if can_randomly_shrink && thread_rng().gen_range(0..10000) == 0 {
+                } else if can_randomly_shrink && rng().random_range(0..10000) == 0 {
                     was_randomly_shrunk = true;
                     true
                 } else {
@@ -1099,7 +1099,7 @@ pub const fn get_ancient_append_vec_capacity() -> u64 {
     );
     const PAGE_SIZE: u64 = 4 * 1024;
     const _: () = assert!(
-        RESULT % PAGE_SIZE == 0,
+        RESULT.is_multiple_of(PAGE_SIZE),
         "ancient append vec size should be a multiple of PAGE_SIZE"
     );
 
@@ -1416,8 +1416,7 @@ pub mod tests {
                 // add some accounts to each storage so we can make partial progress
                 let mut data_size = 450;
                 // random # of extra accounts here
-                let total_accounts_per_storage =
-                    thread_rng().gen_range(0..total_accounts_per_storage);
+                let total_accounts_per_storage = rng().random_range(0..total_accounts_per_storage);
                 let _pubkeys_and_accounts = storages
                     .iter()
                     .map(|storage| {
@@ -1535,7 +1534,11 @@ pub mod tests {
         // or all slots shrunk so no roots or storages should be removed
         for in_shrink_candidate_slots in [false, true] {
             for all_slots_shrunk in [false, true] {
-                for storage_access in [StorageAccess::Mmap, StorageAccess::File] {
+                for storage_access in [
+                    #[allow(deprecated)]
+                    StorageAccess::Mmap,
+                    StorageAccess::File,
+                ] {
                     for num_slots in 0..3 {
                         let (mut db, storages, slots, infos) = get_sample_storages(num_slots, None);
                         db.set_storage_access(storage_access);
@@ -2798,7 +2801,7 @@ pub mod tests {
             .collect();
 
         // shuffle the infos so they actually need to be sorted
-        infos.all_infos.shuffle(&mut thread_rng());
+        infos.all_infos.shuffle(&mut rng());
         infos.filter_by_smallest_capacity(&tuning, &ShrinkAncientStats::default());
 
         infos
@@ -2843,7 +2846,7 @@ pub mod tests {
             .collect();
 
         // shuffle the infos so they actually need to be sorted
-        infos.all_infos.shuffle(&mut thread_rng());
+        infos.all_infos.shuffle(&mut rng());
         infos.filter_by_smallest_capacity(&tuning, &ShrinkAncientStats::default());
 
         infos

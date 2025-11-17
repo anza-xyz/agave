@@ -255,7 +255,7 @@ impl<const NUM_BITS: usize> BitVec<NUM_BITS> {
     /// assert_eq!(bit_vec.range(..2).iter_ones().collect::<Vec<_>>(), [0, 1]);
     /// assert_eq!(bit_vec.range(1..).count_ones(), 1);
     /// ```
-    pub fn range(&self, bounds: impl RangeBounds<usize>) -> BitVecSlice<NUM_BITS> {
+    pub fn range(&self, bounds: impl RangeBounds<usize>) -> BitVecSlice<'_, NUM_BITS> {
         BitVecSlice::from_range_bounds(self, bounds)
     }
 

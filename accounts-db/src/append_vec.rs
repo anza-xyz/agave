@@ -159,7 +159,7 @@ impl ReadWriteState {
         }
     }
 
-    fn append_guard(&self) -> MutexGuard<()> {
+    fn append_guard(&self) -> MutexGuard<'_, ()> {
         match self {
             Self::ReadOnly => panic!("append not allowed in read-only state"),
             Self::Writable { append_lock } => append_lock.lock().unwrap(),
@@ -290,6 +290,7 @@ impl AppendVec {
         data.flush().unwrap();
 
         let backing = match storage_access {
+            #[allow(deprecated)]
             StorageAccess::Mmap => {
                 //UNSAFE: Required to create a Mmap
                 let mmap = unsafe { MmapMut::map_mut(&data) };
@@ -483,9 +484,11 @@ impl AppendVec {
         Self::sanitize_len_and_size(current_len, file_size as usize)?;
 
         // AppendVec is in read-only mode, but mmap access requires file to be writable
+        #[allow(deprecated)]
+        let is_writable = storage_access == StorageAccess::Mmap;
         let data = OpenOptions::new()
             .read(true)
-            .write(storage_access == StorageAccess::Mmap)
+            .write(is_writable)
             .create(false)
             .open(&path)?;
 
@@ -573,7 +576,7 @@ impl AppendVec {
     /// doesn't overrun the internal buffer. Otherwise return None.
     /// Also return the offset of the first byte after the requested data that
     /// falls on a 64-byte boundary.
-    fn get_slice(slice: ValidSlice, offset: usize, size: usize) -> Option<(&[u8], usize)> {
+    fn get_slice(slice: ValidSlice<'_>, offset: usize, size: usize) -> Option<(&[u8], usize)> {
         // SAFETY: Wrapping math is safe here because if `end` does wrap, the Range
         // parameter to `.get()` will be invalid, and `.get()` will correctly return None.
         let end = offset.wrapping_add(size);
@@ -638,7 +641,7 @@ impl AppendVec {
     /// Return a reference to the type at `offset` if its data doesn't overrun the internal buffer.
     /// Otherwise return None. Also return the offset of the first byte after the requested data
     /// that falls on a 64-byte boundary.
-    fn get_type<T>(slice: ValidSlice, offset: usize) -> Option<(&T, usize)> {
+    fn get_type<T>(slice: ValidSlice<'_>, offset: usize) -> Option<(&T, usize)> {
         let (data, next) = Self::get_slice(slice, offset, mem::size_of::<T>())?;
         let ptr = data.as_ptr().cast();
         //UNSAFE: The cast is safe because the slice is aligned and fits into the memory
@@ -1321,7 +1324,7 @@ impl AppendVec {
     }
 
     /// Returns the way to access this accounts file when archiving
-    pub(crate) fn internals_for_archive(&self) -> InternalsForArchive {
+    pub(crate) fn internals_for_archive(&self) -> InternalsForArchive<'_> {
         match &self.backing {
             AppendVecFileBacking::File(_file) => InternalsForArchive::FileIo(self.path()),
             // note this returns the entire mmap slice, even bytes that we consider invalid
@@ -1361,7 +1364,7 @@ pub mod tests {
         super::{test_utils::*, *},
         assert_matches::assert_matches,
         memoffset::offset_of,
-        rand::prelude::*,
+        rand::{prelude::*, rng},
         rand_chacha::ChaChaRng,
         solana_account::{accounts_equal, Account, AccountSharedData},
         solana_clock::Slot,
@@ -1424,7 +1427,7 @@ pub mod tests {
         assert_eq!(&def1, &def2);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     #[should_panic(expected = "FileSizeTooSmall(0)")]
     fn test_append_vec_new_bad_size(storage_access: StorageAccess) {
@@ -1432,7 +1435,7 @@ pub mod tests {
         let _av = AppendVec::new(&path.path, true, 0, storage_access);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_append_vec_new_from_file_bad_size(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_append_vec_new_from_file_bad_size");
@@ -1489,7 +1492,7 @@ pub mod tests {
         assert_matches!(result, Err(ref message) if message.to_string().contains("is larger than file size (1048576)"));
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_append_vec_one(storage_access: StorageAccess) {
         let path = get_append_vec_path("test_append");
@@ -1514,7 +1517,7 @@ pub mod tests {
         assert_eq!(av.get_account_test(index), None);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_append_vec_one_with_data(storage_access: StorageAccess) {
         let path = get_append_vec_path("test_append");
@@ -1531,7 +1534,7 @@ pub mod tests {
         truncate_and_test(av, index);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_remaining_bytes(storage_access: StorageAccess) {
         let path = get_append_vec_path("test_append");
@@ -1572,7 +1575,7 @@ pub mod tests {
         assert_eq!(av.remaining_bytes(), sz64 - u64_align!(av_len) as u64);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_append_vec_data(storage_access: StorageAccess) {
         let path = get_append_vec_path("test_append_data");
@@ -1616,13 +1619,13 @@ pub mod tests {
         Vec<(Pubkey, AccountSharedData)>,
         TempFile,
     ) {
-        let mut rng = thread_rng();
+        let mut rng = rng();
         let mut create_account = |data_len: usize| -> (Pubkey, AccountSharedData) {
-            let pubkey = Pubkey::new_from_array(rng.gen());
-            let owner = Pubkey::new_from_array(rng.gen());
-            let mut account = AccountSharedData::new(rng.gen(), data_len, &owner);
+            let pubkey = Pubkey::new_from_array(rng.random());
+            let owner = Pubkey::new_from_array(rng.random());
+            let mut account = AccountSharedData::new(rng.random(), data_len, &owner);
             // Ensure we actually have some unique data to compare against when checking correctness
-            let data = std::iter::from_fn(|| Some(rng.gen::<u8>()))
+            let data = std::iter::from_fn(|| Some(rng.random::<u8>()))
                 .take(data_len)
                 .collect::<Vec<_>>();
             account.set_data(data);
@@ -1656,6 +1659,7 @@ pub mod tests {
             &path.path,
             true,
             file_size,
+            #[allow(deprecated)]
             StorageAccess::Mmap,
         ));
         let slot = 42;
@@ -1784,7 +1788,7 @@ pub mod tests {
         }
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_append_vec_append_many(storage_access: StorageAccess) {
         let path = get_append_vec_path("test_append_many");
@@ -1812,7 +1816,7 @@ pub mod tests {
 
         let now = Instant::now();
         for _ in 0..size {
-            let sample = thread_rng().gen_range(0..indexes.len());
+            let sample = rng().random_range(0..indexes.len());
             let account = create_test_account(sample + 1);
             assert_eq!(av.get_account_test(indexes[sample]).unwrap(), account);
         }
@@ -1835,7 +1839,7 @@ pub mod tests {
         trace!("sequential read time: {} ms", now.elapsed().as_millis());
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_new_from_file_crafted_zero_lamport_account(storage_access: StorageAccess) {
         // This test verifies that when we sanitize on load, that we fail sanitizing if we load an account with zero lamports that does not have all default value fields.
@@ -1908,7 +1912,7 @@ pub mod tests {
         assert_matches!(result, Err(ref message) if message.to_string().contains("incorrect layout/length/data"));
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_new_from_file_crafted_data_len(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_new_from_file_crafted_data_len");
@@ -1944,7 +1948,7 @@ pub mod tests {
         assert_matches!(result, Err(ref message) if message.to_string().contains("incorrect layout/length/data"));
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_append_vec_reset(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_append_vec_reset");
@@ -1957,7 +1961,7 @@ pub mod tests {
         assert_eq!(av.len(), 0);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_append_vec_flush(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_append_vec_flush");
@@ -1975,7 +1979,7 @@ pub mod tests {
         assert_eq!(num_account, 1);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_append_vec_reopen_as_readonly(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_append_vec_flush");
@@ -2001,7 +2005,7 @@ pub mod tests {
         }
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_new_from_file_too_large_data_len(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_new_from_file_too_large_data_len");
@@ -2038,7 +2042,7 @@ pub mod tests {
         assert_matches!(result, Err(ref message) if message.to_string().contains("incorrect layout/length/data"));
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_new_from_file_crafted_executable(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_new_from_crafted_executable");
@@ -2109,7 +2113,7 @@ pub mod tests {
         assert_eq!(mem::size_of::<AccountMeta>(), 0x38);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_get_account_shared_data_from_truncated_file(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_get_account_shared_data_from_truncated_file");
@@ -2142,7 +2146,7 @@ pub mod tests {
         assert!(result.is_none()); // Expect None to be returned.
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_get_account_sizes(storage_access: StorageAccess) {
         const NUM_ACCOUNTS: usize = 37;
@@ -2150,12 +2154,12 @@ pub mod tests {
             .take(NUM_ACCOUNTS)
             .collect();
 
-        let mut rng = thread_rng();
+        let mut rng = rng();
         let mut accounts = Vec::with_capacity(pubkeys.len());
         let mut stored_sizes = Vec::with_capacity(pubkeys.len());
         for _ in &pubkeys {
-            let lamports = rng.gen();
-            let data_len = rng.gen_range(0..MAX_PERMITTED_DATA_LENGTH) as usize;
+            let lamports = rng.random();
+            let data_len = rng.random_range(0..MAX_PERMITTED_DATA_LENGTH) as usize;
             let account = AccountSharedData::new(lamports, data_len, &Pubkey::default());
             accounts.push(account);
             stored_sizes.push(aligned_stored_size(data_len));
@@ -2210,8 +2214,8 @@ pub mod tests {
         let mut accounts = Vec::with_capacity(pubkeys.len());
         let mut total_stored_size = 0;
         for _ in &pubkeys {
-            let lamports = rng.gen();
-            let data_len = rng.gen_range(0..MAX_PERMITTED_DATA_LENGTH) as usize;
+            let lamports = rng.random();
+            let data_len = rng.random_range(0..MAX_PERMITTED_DATA_LENGTH) as usize;
             let account = AccountSharedData::new(lamports, data_len, &Pubkey::default());
             accounts.push(account);
             total_stored_size += aligned_stored_size(data_len);
@@ -2270,14 +2274,14 @@ pub mod tests {
     }
 
     /// Test `scan_pubkey` for a valid account storage.
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_scan_pubkeys(storage_access: StorageAccess) {
         test_scan_pubkeys_helper(storage_access, |_, size| size);
     }
 
     /// Test `scan_pubkey` for storage with incomplete account meta data.
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_scan_pubkeys_incomplete_data(storage_access: StorageAccess) {
         test_scan_pubkeys_helper(storage_access, |path, size| {
@@ -2294,7 +2298,7 @@ pub mod tests {
     }
 
     /// Test `scan_pubkey` for storage which is missing the last account data
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_scan_pubkeys_missing_account_data(storage_access: StorageAccess) {
         test_scan_pubkeys_helper(storage_access, |path, size| {
@@ -2369,14 +2373,14 @@ pub mod tests {
         )
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_scan_stored_accounts_no_data(storage_access: StorageAccess) {
         test_scan_stored_accounts_no_data_helper(storage_access, |_, size| size);
     }
 
     /// Test `scan_stored_accounts_no_data` for storage with incomplete account meta data.
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_scan_stored_accounts_no_data_incomplete_data(storage_access: StorageAccess) {
         test_scan_stored_accounts_no_data_helper(storage_access, |path, size| {
@@ -2393,7 +2397,7 @@ pub mod tests {
     }
 
     /// Test `scan_stored_accounts_no_data` for storage which is missing the last account data
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_scan_stored_accounts_no_data_missing_account_data(storage_access: StorageAccess) {
         test_scan_stored_accounts_no_data_helper(storage_access, |path, size| {
@@ -2467,14 +2471,14 @@ pub mod tests {
     }
 
     /// Test `scan_accounts_stored_meta` for a normal/good storage.
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_scan_accounts_stored_meta(storage_access: StorageAccess) {
         test_scan_accounts_stored_meta_helper(storage_access, |_, size| size);
     }
 
     /// Test `scan_accounts_stored_meta` for a storage with incomplete account meta data.
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_scan_accounts_stored_meta_incomplete_meta_data(storage_access: StorageAccess) {
         test_scan_accounts_stored_meta_helper(storage_access, |path, size| {
@@ -2491,7 +2495,7 @@ pub mod tests {
     }
 
     /// Test `scan_accounts_stored_meta` for a storage that is missing the last account data.
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_scan_accounts_stored_meta_missing_account_data(storage_access: StorageAccess) {
         test_scan_accounts_stored_meta_helper(storage_access, |path, size| {
@@ -2536,7 +2540,7 @@ pub mod tests {
     // Test to make sure that `is_dirty` is tracked properly
     // * `reopen_as_readonly()` moves `is_dirty`
     // * `flush()` clears `is_dirty`
-    #[test_matrix([false, true], [StorageAccess::Mmap, StorageAccess::File])]
+    #[test_matrix([false, true], [#[allow(deprecated)] StorageAccess::Mmap, StorageAccess::File])]
     fn test_is_dirty(begins_dirty: bool, storage_access: StorageAccess) {
         let file = get_append_vec_path("test_is_dirty");
 

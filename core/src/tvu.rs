@@ -5,8 +5,8 @@ use {
     crate::{
         banking_trace::BankingTracer,
         cluster_info_vote_listener::{
-            DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VerifiedVoteReceiver,
-            VoteTracker,
+            DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver,
+            VerifiedVoterSlotsReceiver, VoteTracker,
         },
         cluster_slots_service::{cluster_slots::ClusterSlots, ClusterSlotsService},
         completed_data_sets_service::CompletedDataSetsSender,
@@ -149,7 +149,7 @@ impl Tvu {
         vote_tracker: Arc<VoteTracker>,
         retransmit_slots_sender: Sender<Slot>,
         gossip_verified_vote_hash_receiver: GossipVerifiedVoteHashReceiver,
-        verified_vote_receiver: VerifiedVoteReceiver,
+        verified_voter_slots_receiver: VerifiedVoterSlotsReceiver,
         replay_vote_sender: ReplayVoteSender,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
         bank_notification_sender: Option<BankNotificationSenderConfig>,
@@ -259,7 +259,7 @@ impl Tvu {
             };
             let repair_service_channels = RepairServiceChannels::new(
                 repair_request_quic_sender,
-                verified_vote_receiver,
+                verified_voter_slots_receiver,
                 dumped_slots_receiver,
                 popular_pruned_forks_sender,
                 ancestor_hashes_request_quic_sender,
@@ -475,11 +475,11 @@ pub mod tests {
             create_new_tmp_ledger,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
         },
+        solana_net_utils::SocketAddrSpace,
         solana_poh::poh_recorder::create_test_recorder,
         solana_rpc::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         solana_runtime::bank::Bank,
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
         solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
         std::sync::atomic::{AtomicU64, Ordering},
     };

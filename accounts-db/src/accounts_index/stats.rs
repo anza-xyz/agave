@@ -1,7 +1,8 @@
 use {
-    crate::{
-        accounts_index::{in_mem_accounts_index::InMemAccountsIndex, DiskIndexValue, IndexValue},
+    super::{
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
+        in_mem_accounts_index::InMemAccountsIndex,
+        DiskIndexValue, IndexValue,
     },
     solana_clock::Slot,
     solana_time_utils::AtomicInterval,
@@ -15,15 +16,15 @@ use {
 const STATS_INTERVAL_MS: u64 = 10_000;
 
 #[derive(Debug, Default)]
-pub struct BucketMapHeldInMemStats {
+pub struct HeldInMemStats {
     pub ref_count: AtomicU64,
     pub slot_list_len: AtomicU64,
     pub slot_list_cached: AtomicU64,
 }
 
 #[derive(Debug, Default)]
-pub struct BucketMapHolderStats {
-    pub held_in_mem: BucketMapHeldInMemStats,
+pub struct Stats {
+    pub held_in_mem: HeldInMemStats,
     pub get_mem_us: AtomicU64,
     pub gets_from_mem: AtomicU64,
     pub get_missing_us: AtomicU64,
@@ -63,11 +64,11 @@ pub struct BucketMapHolderStats {
     pub flush_read_lock_us: AtomicU64,
 }
 
-impl BucketMapHolderStats {
-    pub fn new(bins: usize) -> BucketMapHolderStats {
-        BucketMapHolderStats {
+impl Stats {
+    pub fn new(bins: usize) -> Stats {
+        Stats {
             bins: bins as u64,
-            ..BucketMapHolderStats::default()
+            ..Stats::default()
         }
     }
 
@@ -268,8 +269,14 @@ impl BucketMapHolderStats {
             // (aka ref count == 1 and slot list len == 1), and the single slot list entry is
             // stored inline in the slot list itself, then when we have larger slot lists,
             // account for them here.
-            let estimate_mem_bytes = count_in_mem
-                * InMemAccountsIndex::<T, U>::approx_size_of_one_entry()
+            let estimate_mem_bytes =
+                // hash map mem usage is based on capacity, and the footprint of a KV-pair
+                // (we ignore other hash map details, such as load factor)
+                capacity_in_mem * InMemAccountsIndex::<T, U>::size_of_uninitialized()
+                // each value in use we assume has a single entry in the slot list
+                + count_in_mem * InMemAccountsIndex::<T, U>::size_of_single_entry()
+                // and for entries held in mem due to ref count or slot list length, assume
+                // conservatively a slot list with two entries
                 + (held_in_mem_ref_count + held_in_mem_slot_list_len) as usize
                     * size_of::<(Slot, T)>() // <-- size of one slot list entry
                     * 2; // <-- and assume there are two entries
@@ -554,7 +561,13 @@ impl BucketMapHolderStats {
                 datapoint_name,
                 (
                     "estimate_mem_bytes",
-                    count_in_mem * InMemAccountsIndex::<T, U>::approx_size_of_one_entry(),
+                    (
+                        // hash map mem usage is based on capacity, and the footprint of a KV-pair
+                        // (we ignore other hash map details, such as load factor)
+                        capacity_in_mem * InMemAccountsIndex::<T, U>::size_of_uninitialized()
+                        // each value in use we assume has a single entry in the slot list
+                        + count_in_mem * InMemAccountsIndex::<T, U>::size_of_single_entry()
+                    ),
                     i64
                 ),
                 ("count_in_mem", count_in_mem, i64),

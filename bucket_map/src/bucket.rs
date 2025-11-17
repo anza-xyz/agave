@@ -15,13 +15,11 @@ use {
         restart::RestartableBucket,
         MaxSearch, RefCount,
     },
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     std::{
-        collections::hash_map::DefaultHasher,
         fs,
-        hash::{Hash, Hasher},
         num::NonZeroU64,
         path::PathBuf,
         sync::{
@@ -158,7 +156,7 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
                     Arc::clone(&stats.index),
                     count,
                 );
-                let random = thread_rng().gen();
+                let random = rng().random();
                 restartable_bucket.set_file(file_name, random);
                 (index, random, false /* true = reused file */)
             });
@@ -595,7 +593,7 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
         let best_bucket = &mut self.data[best_fit_bucket as usize];
         let cap_power = best_bucket.contents.capacity_pow2();
         let cap = best_bucket.capacity();
-        let pos = thread_rng().gen_range(0..cap);
+        let pos = rng().random_range(0..cap);
         let mut success = false;
         // max search is increased here by a lot for this search. The idea is that we just have to find an empty bucket somewhere.
         // We don't mind waiting on a new write (by searching longer). Writing is done in the background only.
@@ -822,14 +820,11 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
     }
 
     fn bucket_index_ix(key: &Pubkey, random: u64) -> u64 {
-        let mut s = DefaultHasher::new();
-        key.hash(&mut s);
-        //the locally generated random will make it hard for an attacker
-        //to deterministically cause all the pubkeys to land in the same
-        //location in any bucket on all validators
-        random.hash(&mut s);
-        s.finish()
-        //debug!(            "INDEX_IX: {:?} uid:{} loc: {} cap:{}",            key,            uid,            location,            index.capacity()        );
+        // the locally generated random will make it hard for an attacker
+        // to deterministically cause all the pubkeys to land in the same
+        // location in any bucket on all validators
+        let hasher_builder = ahash::RandomState::with_seeds(random, random, random, random);
+        hasher_builder.hash_one(key)
     }
 
     /// grow the appropriate piece. Note this takes an immutable ref.
@@ -899,8 +894,8 @@ mod tests {
         for reuse_type in 0..3 {
             let data_buckets = Vec::default();
             let v = 12u64;
-            let random = 1;
-            // with random=1, 6 entries is the most that don't collide on a single hash % cap value.
+            let random = 2;
+            // with random=2, 6 entries is the most that don't collide on a single hash % cap value.
             for len in 0..7 {
                 // cannot use pubkey [0,0,...] because that matches a zeroed out default file contents.
                 let raw = (0..len)
@@ -1586,5 +1581,19 @@ mod tests {
         bucket.delete_key(&key);
 
         bucket.batch_insert_non_duplicates(&[]);
+    }
+
+    /// Ensure bucket_index_ix() produces stable results
+    #[test]
+    fn test_bucket_index_ix_is_stable() {
+        const PUBKEY: Pubkey = Pubkey::new_from_array([0xC3; 32]);
+        const RANDOM1: u64 = 0x18E7_9D0B_94D8_E428;
+        const RANDOM2: u64 = 0x60AE_DA87_48E9_A887;
+
+        let ix1 = Bucket::<()>::bucket_index_ix(&PUBKEY, RANDOM1);
+        assert_eq!(ix1, 0x0CAD_75DB_E472_9589);
+
+        let ix2 = Bucket::<()>::bucket_index_ix(&PUBKEY, RANDOM2);
+        assert_ne!(ix2, ix1);
     }
 }

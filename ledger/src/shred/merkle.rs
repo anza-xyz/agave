@@ -77,7 +77,7 @@ pub(crate) enum Shred {
 
 impl Shred {
     dispatch!(fn erasure_shard_index(&self) -> Result<usize, Error>);
-    dispatch!(fn erasure_shard_mut(&mut self) -> Result<PayloadMutGuard<Range<usize>>, Error>);
+    dispatch!(fn erasure_shard_mut(&mut self) -> Result<PayloadMutGuard<'_, Range<usize>>, Error>);
     dispatch!(fn merkle_node(&self) -> Result<Hash, Error>);
     dispatch!(fn sanitize(&self) -> Result<(), Error>);
     dispatch!(fn set_chained_merkle_root(&mut self, chained_merkle_root: &Hash) -> Result<(), Error>);
@@ -444,7 +444,7 @@ macro_rules! impl_merkle_shred {
         }
 
         // Returns the erasure coded slice as a mutable reference.
-        fn erasure_shard_mut(&mut self) -> Result<PayloadMutGuard<Range<usize>>, Error> {
+        fn erasure_shard_mut(&mut self) -> Result<PayloadMutGuard<'_, Range<usize>>, Error> {
             let offsets = self.erasure_shard_offsets()?;
             let payload_size = self.payload.len();
             self.payload
@@ -626,7 +626,7 @@ fn get_merkle_node(shred: &[u8], offsets: Range<usize>) -> Result<Hash, Error> {
 pub(super) fn recover(
     mut shreds: Vec<Shred>,
     reed_solomon_cache: &ReedSolomonCache,
-) -> Result<impl Iterator<Item = Result<Shred, Error>>, Error> {
+) -> Result<impl Iterator<Item = Result<Shred, Error>> + use<>, Error> {
     // Sort shreds by their erasure shard index.
     // In particular this places all data shreds before coding shreds.
     let is_sorted = |(a, b)| cmp_shred_erasure_shard_index(a, b).is_le();
@@ -1830,7 +1830,7 @@ mod test {
                 Shred::ShredCode(_) => Some(shred.clone()),
                 Shred::ShredData(_) => None,
             })
-            .group_by(|shred| shred.common_header().fec_set_index)
+            .chunk_by(|shred| shred.common_header().fec_set_index)
             .into_iter()
             .flat_map(|(_, shreds)| {
                 recover(shreds.collect(), reed_solomon_cache)

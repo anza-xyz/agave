@@ -241,6 +241,7 @@ mod tests {
             crds_data::CrdsData, crds_value::CrdsValue, node::Node,
         },
         solana_keypair::Keypair,
+        solana_net_utils::SocketAddrSpace,
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::Bank,
@@ -250,7 +251,6 @@ mod tests {
             },
         },
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
         solana_time_utils::timestamp,
         std::{
             collections::HashMap,
@@ -273,12 +273,12 @@ mod tests {
                 .map(|(node_ix, pubkey)| {
                     let mut contact_info = ContactInfo::new(*pubkey, 0_u64, 0_u16);
 
-                    assert!(contact_info
+                    contact_info
                         .set_alpenglow((
                             Ipv4Addr::LOCALHOST,
-                            8080_u16.saturating_add(node_ix as u16)
+                            8080_u16.saturating_add(node_ix as u16),
                         ))
-                        .is_ok());
+                        .unwrap();
 
                     contact_info
                 });

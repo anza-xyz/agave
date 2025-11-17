@@ -13,7 +13,7 @@ use {
     solana_streamer::{
         nonblocking::{quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT, swqos::SwQosConfig},
         quic::{
-            spawn_server_with_cancel, EndpointKeyUpdater, QuicStreamerConfig,
+            spawn_stake_wighted_qos_server, EndpointKeyUpdater, QuicStreamerConfig,
             SwQosQuicStreamerConfig,
         },
         streamer::StakedNodes,
@@ -121,7 +121,7 @@ impl Vortexor {
     ) -> Self {
         let quic_server_params = SwQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
-                max_connections_per_peer,
+                max_connections_per_unstaked_peer: max_connections_per_peer,
                 max_staked_connections: max_tpu_staked_connections,
                 max_unstaked_connections: max_tpu_unstaked_connections,
                 max_connections_per_ipaddr_per_min,
@@ -138,7 +138,7 @@ impl Vortexor {
             tpu_quic_fwd,
         } = tpu_sockets;
 
-        let tpu_result = spawn_server_with_cancel(
+        let tpu_result = spawn_stake_wighted_qos_server(
             "solVtxTpu",
             "quic_vortexor_tpu",
             tpu_quic,
@@ -159,7 +159,7 @@ impl Vortexor {
         quic_fwd_server_params
             .quic_streamer_config
             .max_unstaked_connections = max_fwd_unstaked_connections;
-        let tpu_fwd_result = spawn_server_with_cancel(
+        let tpu_fwd_result = spawn_stake_wighted_qos_server(
             "solVtxTpuFwd",
             "quic_vortexor_tpu_forwards",
             tpu_quic_fwd,

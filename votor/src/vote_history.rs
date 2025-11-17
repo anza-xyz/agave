@@ -128,7 +128,7 @@ impl VoteHistory {
     pub fn votes_cast_since(&self, slot: Slot) -> Vec<Vote> {
         self.votes_cast
             .iter()
-            .filter(|(&s, _)| s > slot)
+            .filter(|(s, _)| s > &&slot)
             .flat_map(|(_, votes)| votes.iter())
             .cloned()
             .collect()
@@ -167,34 +167,31 @@ impl VoteHistory {
         // in final version
         match vote {
             Vote::Notarize(vote) => {
-                assert!(self.voted.insert(vote.slot()));
-                assert!(self
-                    .voted_notar
-                    .insert(vote.slot(), *vote.block_id())
-                    .is_none());
+                assert!(self.voted.insert(vote.slot));
+                assert!(self.voted_notar.insert(vote.slot, vote.block_id).is_none());
             }
             Vote::Finalize(vote) => {
-                assert!(!self.skipped(vote.slot()));
-                self.its_over.insert(vote.slot());
+                assert!(!self.skipped(vote.slot));
+                self.its_over.insert(vote.slot);
             }
             Vote::Skip(vote) => {
-                self.voted.insert(vote.slot());
-                self.skipped.insert(vote.slot());
+                self.voted.insert(vote.slot);
+                self.skipped.insert(vote.slot);
             }
             Vote::NotarizeFallback(vote) => {
-                assert!(self.voted(vote.slot()));
-                assert!(!self.its_over(vote.slot()));
-                self.skipped.insert(vote.slot());
+                assert!(self.voted(vote.slot));
+                assert!(!self.its_over(vote.slot));
+                self.skipped.insert(vote.slot);
                 self.voted_notar_fallback
-                    .entry(vote.slot())
+                    .entry(vote.slot)
                     .or_default()
-                    .insert(*vote.block_id());
+                    .insert(vote.block_id);
             }
             Vote::SkipFallback(vote) => {
-                assert!(self.voted(vote.slot()));
-                assert!(!self.its_over(vote.slot()));
-                self.skipped.insert(vote.slot());
-                self.voted_skip_fallback.insert(vote.slot());
+                assert!(self.voted(vote.slot));
+                assert!(!self.its_over(vote.slot));
+                self.skipped.insert(vote.slot);
+                self.voted_skip_fallback.insert(vote.slot);
             }
         }
         self.votes_cast.entry(vote.slot()).or_default().push(vote);
@@ -511,9 +508,9 @@ mod test {
         vote_history.add_vote(vote_2);
 
         // Save to storage
-        assert!(vote_history
+        vote_history
             .save(&vote_history_storage, &node_keypair)
-            .is_ok());
+            .unwrap();
         // Restore from storage
         let restored_vote_history =
             VoteHistory::restore(&vote_history_storage, &node_keypair.pubkey())

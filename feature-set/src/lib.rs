@@ -170,6 +170,10 @@ impl FeatureSet {
                 .is_active(&provide_instruction_data_offset_in_vm_r2::id()),
             increase_cpi_account_info_limit: self.is_active(&increase_cpi_account_info_limit::id()),
             vote_state_v4: self.is_active(&vote_state_v4::id()),
+            poseidon_enforce_padding: self.is_active(&poseidon_enforce_padding::id()),
+            fix_alt_bn128_pairing_length_check: self
+                .is_active(&fix_alt_bn128_pairing_length_check::id()),
+            alt_bn128_little_endian: self.is_active(&alt_bn128_little_endian::id()),
         }
     }
 }
@@ -1176,6 +1180,30 @@ pub mod deprecate_rent_exemption_threshold {
     solana_pubkey::declare_id!("rent6iVy6PDoViPBeJ6k5EJQrkj62h7DPyLbWGHwjrC");
 }
 
+pub mod poseidon_enforce_padding {
+    solana_pubkey::declare_id!("poUdAqRXXsNmfqAZ6UqpjbeYgwBygbfQLEvWSqVhSnb");
+}
+
+pub mod fix_alt_bn128_pairing_length_check {
+    solana_pubkey::declare_id!("bnYzodLwmybj7e1HAe98yZrdJTd7we69eMMLgCXqKZm");
+}
+
+pub mod replace_spl_token_with_p_token {
+    use super::Pubkey;
+
+    solana_pubkey::declare_id!("ptokSWRqZz5u2xdqMdstkMKpFurauUpVen7TZXgDpkQ");
+
+    pub const SPL_TOKEN_PROGRAM_ID: Pubkey =
+        Pubkey::from_str_const("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+
+    pub const PTOKEN_PROGRAM_BUFFER: Pubkey =
+        Pubkey::from_str_const("ptokNfvuU7terQ2r2452RzVXB3o4GT33yPWo1fUkkZ2");
+}
+
+pub mod alt_bn128_little_endian {
+    solana_pubkey::declare_id!("bnS3pWfLrxHRJvMyLm6EaYQkP7A2Fe9DxoKv4aGA8YM");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2114,6 +2142,22 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             deprecate_rent_exemption_threshold::id(),
             "SIMD-0194: Deprecate rent exemption threshold",
+        ),
+        (
+            poseidon_enforce_padding::id(),
+            "SIMD-0359: Enforce padding in Poseidon hash inputs",
+        ),
+        (
+            fix_alt_bn128_pairing_length_check::id(),
+            "SIMD-0334: Fix alt_bn128_pairing length check",
+        ),
+        (
+            replace_spl_token_with_p_token::id(),
+            "SIMD-0266: Efficient Token program",
+        ),
+        (
+            alt_bn128_little_endian::id(),
+            "SIMD-0284: Add little-endian compatibility for alt_bn128",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]

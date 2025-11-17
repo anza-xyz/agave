@@ -1,19 +1,19 @@
 //! A command-line executable for monitoring a cluster's gossip plane.
-
+#[allow(deprecated)]
+use solana_gossip::{contact_info::ContactInfo, gossip_service::discover};
 use {
     clap::{
         crate_description, crate_name, value_t, value_t_or_exit, App, AppSettings, Arg, ArgMatches,
         SubCommand,
     },
-    log::{error, info, warn},
+    log::{error, info},
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::{keypair_of, pubkeys_of},
         input_validators::{is_keypair_or_ask_keyword, is_port, is_pubkey},
     },
-    solana_gossip::{contact_info::ContactInfo, gossip_service::discover},
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
-    solana_streamer::socket::SocketAddrSpace,
     std::{
         error,
         net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -37,19 +37,12 @@ fn parse_matches() -> ArgMatches<'static> {
         .validator(is_port)
         .help("Gossip port number for the node");
 
-    let gossip_host_arg = clap::Arg::with_name("gossip_host")
-        .long("gossip-host")
-        .value_name("HOST")
-        .takes_value(true)
-        .validator(solana_net_utils::is_host)
-        .help("DEPRECATED: --gossip-host is no longer supported. Use --bind-address instead.");
-
     let bind_address_arg = clap::Arg::with_name("bind_address")
         .long("bind-address")
         .value_name("HOST")
         .takes_value(true)
         .validator(solana_net_utils::is_host)
-        .help("IP address to bind the node to for gossip (replaces --gossip-host)");
+        .help("IP address to bind the node to for gossip");
 
     App::new(crate_name!())
         .about(crate_description!())
@@ -98,7 +91,6 @@ fn parse_matches() -> ArgMatches<'static> {
                 )
                 .arg(&shred_version_arg)
                 .arg(&gossip_port_arg)
-                .arg(&gossip_host_arg)
                 .arg(&bind_address_arg)
                 .setting(AppSettings::DisableVersion),
         )
@@ -153,7 +145,6 @@ fn parse_matches() -> ArgMatches<'static> {
                 )
                 .arg(&shred_version_arg)
                 .arg(&gossip_port_arg)
-                .arg(&gossip_host_arg)
                 .arg(&bind_address_arg)
                 .arg(
                     Arg::with_name("timeout")
@@ -172,12 +163,6 @@ fn parse_bind_address(matches: &ArgMatches, entrypoint_addr: Option<SocketAddr>)
             eprintln!("failed to parse bind-address: {e}");
             exit(1);
         })
-    } else if let Some(gossip_host) = matches.value_of("gossip_host") {
-        warn!("--gossip-host is deprecated. Use --bind-address instead.");
-        solana_net_utils::parse_host(gossip_host).unwrap_or_else(|e| {
-            eprintln!("failed to parse gossip-host: {e}");
-            exit(1);
-        })
     } else if let Some(entrypoint_addr) = entrypoint_addr {
         solana_net_utils::get_public_ip_addr_with_binding(
             &entrypoint_addr,
@@ -192,6 +177,16 @@ fn parse_bind_address(matches: &ArgMatches, entrypoint_addr: Option<SocketAddr>)
     }
 }
 
+// allow deprecations here to workaround limitations with dependency specification in
+// multi-target crates and agave-unstable-api. `ContactInfo` is deprecated here, but we
+// cannot specify deprecation allowances on function arguments. since this function is
+// private, we apply the allowance to the entire body as a refactor that would limit it
+// to a wrapper is going to be too invasive
+//
+// this mitigation can be removed once the solana-gossip binary target is moved to its
+// own crate and we can correctly depend on the solana-gossip lib crate with
+// `agave-unstable-api` enabled
+#[allow(deprecated)]
 fn process_spy_results(
     timeout: Option<u64>,
     validators: Vec<ContactInfo>,
@@ -213,7 +208,11 @@ fn process_spy_results(
         }
         if let Some(nodes) = pubkeys {
             for node in nodes {
-                if !validators.iter().any(|x| x.pubkey() == node) {
+                if !validators.iter().any(|x| {
+                    #[allow(deprecated)]
+                    let pubkey = x.pubkey();
+                    pubkey == node
+                }) {
                     eprintln!("Error: Could not find node {node:?}");
                     exit(1);
                 }
@@ -272,6 +271,7 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
     }
 
     let discover_timeout = Duration::from_secs(timeout.unwrap_or(u64::MAX));
+    #[allow(deprecated)]
     let (_all_peers, validators) = discover(
         identity_keypair,
         entrypoint_addr.as_ref(),
@@ -320,6 +320,7 @@ fn process_rpc_url(
             .expect("need non-zero shred-version to join the cluster");
     }
 
+    #[allow(deprecated)]
     let (_all_peers, validators) = discover(
         None, // keypair
         entrypoint_addr.as_ref(),
@@ -335,13 +336,18 @@ fn process_rpc_url(
     let rpc_addrs: Vec<_> = validators
         .iter()
         .filter(|node| {
-            any || all
-                || node
-                    .gossip()
+            any || all || {
+                #[allow(deprecated)]
+                let addrs = node.gossip();
+                addrs
                     .map(|addr| Some(addr) == entrypoint_addr)
                     .unwrap_or_default()
+            }
         })
-        .filter_map(ContactInfo::rpc)
+        .filter_map(
+            #[allow(deprecated)]
+            ContactInfo::rpc,
+        )
         .filter(|addr| socket_addr_space.check(addr))
         .collect();
 

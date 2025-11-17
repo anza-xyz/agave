@@ -21,6 +21,8 @@ pub mod admin_rpc_post_init;
 pub mod banking_simulation;
 pub mod banking_stage;
 pub mod banking_trace;
+#[allow(dead_code)]
+mod block_creation_loop;
 pub mod cluster_info_vote_listener;
 pub mod cluster_slots_service;
 pub mod commitment_service;
@@ -39,6 +41,8 @@ pub mod replay_stage;
 pub mod resource_limits;
 mod result;
 pub mod sample_performance_service;
+#[cfg(unix)]
+mod scheduler_bindings_server;
 mod shred_fetch_stage;
 pub mod sigverify;
 pub mod sigverify_stage;

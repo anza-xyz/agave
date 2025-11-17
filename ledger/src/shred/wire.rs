@@ -47,7 +47,7 @@ pub fn get_shred_mut(buffer: &mut [u8]) -> Option<&mut [u8]> {
 }
 
 #[inline]
-pub fn get_shred_and_repair_nonce(packet: PacketRef) -> Option<(&[u8], Option<Nonce>)> {
+pub fn get_shred_and_repair_nonce(packet: PacketRef<'_>) -> Option<(&[u8], Option<Nonce>)> {
     let data = packet.data(..)?;
     let shred = data.get(..get_shred_size(data)?)?;
     if !packet.meta().repair() {

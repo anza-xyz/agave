@@ -472,6 +472,11 @@ fn split_batches(batches: Vec<PacketBatch>) -> (Vec<BytesPacketBatch>, Vec<Pinne
         match batch {
             PacketBatch::Bytes(batch) => bytes_batches.push(batch),
             PacketBatch::Pinned(batch) => pinned_batches.push(batch),
+            PacketBatch::Single(packet) => {
+                let mut batch = BytesPacketBatch::with_capacity(1);
+                batch.push(packet);
+                bytes_batches.push(batch);
+            }
         }
     }
     (bytes_batches, pinned_batches)
@@ -650,6 +655,12 @@ pub fn ed25519_verify(
         .map(|batch| match batch {
             PacketBatch::Pinned(batch) => Cow::Borrowed(batch),
             PacketBatch::Bytes(batch) => Cow::Owned(batch.to_pinned_packet_batch()),
+            PacketBatch::Single(packet) => {
+                // this is ugly, but unused (gpu code) and will be removed shortly in follow up PR
+                let mut batch = BytesPacketBatch::with_capacity(1);
+                batch.push(packet.clone());
+                Cow::Owned(batch.to_pinned_packet_batch())
+            }
         })
         .collect::<Vec<_>>();
     for batch in pinned_batches.iter() {
@@ -1656,9 +1667,9 @@ mod tests {
             |_, p| p < (PACKETS_PER_BATCH / 2),
             // uniform sparse
             // discard even packets
-            |b, p| ((b * PACKETS_PER_BATCH) + p) % 2 == 0,
+            |b: usize, p: usize| ((b * PACKETS_PER_BATCH) + p).is_multiple_of(2),
             // discard odd packets
-            |b, p| ((b * PACKETS_PER_BATCH) + p) % 2 == 1,
+            |b: usize, p: usize| !((b * PACKETS_PER_BATCH) + p).is_multiple_of(2),
             // discard even batches
             |b, _| b % 2 == 0,
             // discard odd batches

@@ -27,7 +27,7 @@ pub(super) trait ListFrame {
     /// - The passed `item_data` slice is large enough for the type `Self::Item`
     /// - `Self::Item` is valid for any sequence of bytes
     unsafe fn read_item<'a>(&self, item_data: &'a [u8]) -> &'a Self::Item {
-        &*(item_data.as_ptr() as *const Self::Item)
+        unsafe { &*(item_data.as_ptr() as *const Self::Item) }
     }
 
     fn total_size(&self) -> usize {
@@ -67,9 +67,11 @@ impl ListFrame for VotesFrame {
     }
 
     unsafe fn read_item<'a>(&self, item_data: &'a [u8]) -> &'a Self::Item {
-        match self {
-            Self::Lockout(frame) => frame.read_item(item_data),
-            Self::Landed(frame) => frame.read_item(item_data),
+        unsafe {
+            match self {
+                Self::Lockout(frame) => frame.read_item(item_data),
+                Self::Landed(frame) => frame.read_item(item_data),
+            }
         }
     }
 }
@@ -221,7 +223,7 @@ impl ListFrame for LandedVotesListFrame {
     }
 
     unsafe fn read_item<'a>(&self, item_data: &'a [u8]) -> &'a Self::Item {
-        &*(item_data[1..].as_ptr() as *const LockoutItem)
+        unsafe { &*(item_data[1..].as_ptr() as *const LockoutItem) }
     }
 }
 

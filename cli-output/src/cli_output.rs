@@ -1524,18 +1524,13 @@ impl fmt::Display for CliStakeState {
     }
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum CliStakeType {
     Stake,
     RewardsPool,
+    #[default]
     Uninitialized,
     Initialized,
-}
-
-impl Default for CliStakeType {
-    fn default() -> Self {
-        Self::Uninitialized
-    }
 }
 
 #[derive(Serialize, Deserialize)]

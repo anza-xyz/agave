@@ -23,8 +23,8 @@ const fn feature_u64(feature: &Pubkey) -> u64 {
 
 static INDEXED_FEATURES: LazyLock<HashMap<u64, Pubkey>> = LazyLock::new(|| {
     FEATURE_NAMES
-        .iter()
-        .map(|(pubkey, _)| (feature_u64(pubkey), *pubkey))
+        .keys()
+        .map(|pubkey| (feature_u64(pubkey), *pubkey))
         .collect()
 });
 

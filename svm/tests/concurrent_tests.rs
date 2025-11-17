@@ -263,7 +263,12 @@ fn svm_concurrent() {
                     &*local_bank,
                     &th_txs,
                     check_results,
-                    &TransactionProcessingEnvironment::default(),
+                    &TransactionProcessingEnvironment {
+                        program_runtime_environments_for_execution: local_batch
+                            .environments
+                            .clone(),
+                        ..TransactionProcessingEnvironment::default()
+                    },
                     &processing_config,
                 );
 

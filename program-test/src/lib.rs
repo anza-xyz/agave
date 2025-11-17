@@ -72,6 +72,7 @@ use {
         mem::transmute,
         panic::AssertUnwindSafe,
         path::{Path, PathBuf},
+        ptr,
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc, RwLock,
@@ -109,12 +110,12 @@ fn set_invoke_context(new: &mut InvokeContext) {
         invoke_context.replace(Some(transmute::<&mut InvokeContext, usize>(new)))
     });
 }
-fn get_invoke_context<'a, 'b>() -> &'a mut InvokeContext<'b> {
+fn get_invoke_context<'a, 'b>() -> &'a mut InvokeContext<'b, 'b> {
     let ptr = INVOKE_CONTEXT.with(|invoke_context| match *invoke_context.borrow() {
         Some(val) => val,
         None => panic!("Invoke context not set!"),
     });
-    unsafe { transmute::<usize, &mut InvokeContext>(ptr) }
+    unsafe { &mut *ptr::with_exposed_provenance_mut(ptr) }
 }
 
 pub fn invoke_builtin_function(

@@ -34,6 +34,32 @@ use {
 /// Consumer will create chunks of transactions from buffer with up to this size.
 pub const TARGET_NUM_TRANSACTIONS_PER_BATCH: usize = 64;
 
+#[derive(Debug)]
+pub struct ExecutionFlags {
+    /// Should failing transactions within the batch be dropped (no fee charged
+    /// & not committed).
+    pub drop_on_failure: bool,
+    /// If any transaction in the batch is not committed then the entire batch
+    /// should not be committed.
+    ///
+    /// # Note
+    ///
+    /// Without `drop_on_failure` this flag will still allow processed but
+    /// failing transactions to be committed. If both flags are set then any
+    /// failing transaction will cause all transactions to be aborted.
+    pub all_or_nothing: bool,
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for ExecutionFlags {
+    fn default() -> Self {
+        Self {
+            drop_on_failure: false,
+            all_or_nothing: false,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RetryableIndex {
     pub index: usize,
@@ -127,6 +153,7 @@ impl Consumer {
             bank,
             txs,
             check_results.into_iter(),
+            ExecutionFlags::default(),
         );
 
         // Accumulate error counters from the initial checks into final results
@@ -142,34 +169,19 @@ impl Consumer {
         bank: &Bank,
         txs: &[impl TransactionWithMeta],
         max_ages: &[MaxAge],
+        flags: ExecutionFlags,
     ) -> ProcessTransactionBatchOutput {
         // Need to filter out transactions since they were sanitized earlier.
         // This means that the transaction may cross and epoch boundary (not allowed),
         //  or account lookup tables may have been closed.
         let pre_results = txs.iter().zip(max_ages).map(|(tx, max_age)| {
-            // If the transaction was sanitized before this bank's epoch,
-            // additional checks are necessary.
-            if bank.epoch() != max_age.sanitized_epoch {
-                // Reserved key set may have changed, so we must verify that
-                // no writable keys are reserved.
-                bank.check_reserved_keys(tx)?;
-            }
-
-            if bank.slot() > max_age.alt_invalidation_slot {
-                // The address table lookup **may** have expired, but the
-                // expiration is not guaranteed since there may have been
-                // skipped slot.
-                // If the addresses still resolve here, then the transaction is still
-                // valid, and we can continue with processing.
-                // If they do not, then the ATL has expired and the transaction
-                // can be dropped.
-                let (_addresses, _deactivation_slot) =
-                    bank.load_addresses_from_ref(tx.message_address_table_lookups())?;
-            }
-
-            Ok(())
+            bank.resanitize_transaction_minimally(
+                tx,
+                max_age.sanitized_epoch,
+                max_age.alt_invalidation_slot,
+            )
         });
-        self.process_and_record_transactions_with_pre_results(bank, txs, pre_results)
+        self.process_and_record_transactions_with_pre_results(bank, txs, pre_results, flags)
     }
 
     fn process_and_record_transactions_with_pre_results(
@@ -177,6 +189,7 @@ impl Consumer {
         bank: &Bank,
         txs: &[impl TransactionWithMeta],
         pre_results: impl Iterator<Item = Result<(), TransactionError>>,
+        flags: ExecutionFlags,
     ) -> ProcessTransactionBatchOutput {
         let (
             (transaction_qos_cost_results, cost_model_throttled_transactions_count),
@@ -202,7 +215,7 @@ impl Consumer {
         // WouldExceedMaxAccountCostLimit, WouldExceedMaxVoteCostLimit
         // and WouldExceedMaxAccountDataCostLimit
         let execute_and_commit_transactions_output =
-            self.execute_and_commit_transactions_locked(bank, &batch);
+            self.execute_and_commit_transactions_locked(bank, &batch, flags);
 
         // Once the accounts are new transactions can enter the pipeline to process them
         let (_, unlock_us) = measure_us!(drop(batch));
@@ -244,6 +257,7 @@ impl Consumer {
         &self,
         bank: &Bank,
         batch: &TransactionBatch<impl TransactionWithMeta>,
+        flags: ExecutionFlags,
     ) -> ExecuteAndCommitTransactionsOutput {
         let transaction_status_sender_enabled = self.committer.transaction_status_sender_enabled();
         let mut execute_and_commit_timings = LeaderExecuteAndCommitTimings::default();
@@ -329,6 +343,8 @@ impl Consumer {
                     recording_config: ExecutionRecordingConfig::new_single_setting(
                         transaction_status_sender_enabled
                     ),
+                    drop_on_failure: flags.drop_on_failure,
+                    all_or_nothing: flags.all_or_nothing,
                 }
             ));
         execute_and_commit_timings.load_execute_us = load_execute_us;
@@ -528,19 +544,16 @@ mod tests {
             state::{AddressLookupTable, LookupTableMeta},
         },
         solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
-        solana_entry::entry::{next_entry, next_versioned_entry},
         solana_fee_calculator::FeeCalculator,
         solana_hash::Hash,
         solana_instruction::error::InstructionError,
         solana_keypair::Keypair,
         solana_ledger::{
-            blockstore::{entries_to_test_shreds, Blockstore},
-            blockstore_processor::TransactionStatusSender,
+            blockstore_processor::{TransactionStatusMessage, TransactionStatusSender},
             genesis_utils::{
                 bootstrap_validator_stake_lamports, create_genesis_config_with_leader,
                 GenesisConfigInfo,
             },
-            get_tmp_ledger_path_auto_delete,
         },
         solana_message::{
             v0::{self, MessageAddressTableLookup},
@@ -548,10 +561,9 @@ mod tests {
         },
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_nonce_account::verify_nonce_account,
-        solana_poh::record_channels::record_channels,
+        solana_poh::record_channels::{record_channels, RecordReceiver},
         solana_pubkey::Pubkey,
-        solana_rpc::transaction_status_service::TransactionStatusService,
-        solana_runtime::prioritization_fee_cache::PrioritizationFeeCache,
+        solana_runtime::{bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_system_interface::program as system_program,
@@ -559,17 +571,62 @@ mod tests {
         solana_transaction::{
             sanitized::MessageHash, versioned::VersionedTransaction, Transaction,
         },
-        solana_transaction_status::{TransactionStatusMeta, VersionedTransactionWithStatusMeta},
         std::{
             borrow::Cow,
             slice,
-            sync::{
-                atomic::{AtomicBool, AtomicU64},
-                Arc,
-            },
+            sync::{Arc, RwLock},
         },
         test_case::test_case,
     };
+
+    struct TestFrame {
+        mint_keypair: Keypair,
+        bank: Arc<Bank>,
+        bank_forks: Arc<RwLock<BankForks>>,
+        record_receiver: RecordReceiver,
+        consumer: Consumer,
+    }
+
+    fn setup_test(
+        relax_intrabatch_account_locks: bool,
+        transaction_status_sender: Option<TransactionStatusSender>,
+    ) -> TestFrame {
+        agave_logger::setup();
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config_with_leader(
+            10_000,
+            &Pubkey::new_unique(),
+            bootstrap_validator_stake_lamports(),
+        );
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        if !relax_intrabatch_account_locks {
+            bank.deactivate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
+        }
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+
+        let (record_sender, mut record_receiver) = record_channels(false);
+        let recorder = TransactionRecorder::new(record_sender);
+        record_receiver.restart(bank.bank_id());
+
+        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+        let committer = Committer::new(
+            transaction_status_sender,
+            replay_vote_sender,
+            Arc::new(PrioritizationFeeCache::new(0u64)),
+        );
+        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+
+        TestFrame {
+            mint_keypair,
+            bank,
+            bank_forks,
+            record_receiver,
+            consumer,
+        }
+    }
 
     fn execute_transactions_for_test(
         bank: Arc<Bank>,
@@ -637,37 +694,21 @@ mod tests {
 
     #[test]
     fn test_bank_process_and_record_transactions() {
-        agave_logger::setup();
-        let GenesisConfigInfo {
-            genesis_config,
+        let TestFrame {
             mint_keypair,
-            ..
-        } = create_genesis_config_with_leader(
-            10_000,
-            &Pubkey::new_unique(),
-            bootstrap_validator_stake_lamports(),
-        );
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
-        let pubkey = solana_pubkey::new_rand();
+            bank,
+            bank_forks: _bank_forks,
+            mut record_receiver,
+            consumer,
+        } = setup_test(true, None);
 
+        let pubkey = solana_pubkey::new_rand();
         let transactions = sanitize_transactions(vec![system_transaction::transfer(
             &mint_keypair,
             &pubkey,
             1,
-            genesis_config.hash(),
+            bank.confirmed_last_blockhash(),
         )]);
-
-        let (record_sender, mut record_receiver) = record_channels(false);
-        let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let committer = Committer::new(
-            None,
-            replay_vote_sender,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
-        );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         let process_transactions_batch_output =
             consumer.process_and_record_transactions(&bank, &transactions);
@@ -701,7 +742,7 @@ mod tests {
             &mint_keypair,
             &pubkey,
             2,
-            genesis_config.hash(),
+            bank.confirmed_last_blockhash(),
         )]);
 
         let process_transactions_batch_output =
@@ -739,17 +780,13 @@ mod tests {
 
     #[test]
     fn test_bank_nonce_update_blockhash_queried_before_transaction_record() {
-        agave_logger::setup();
-        let GenesisConfigInfo {
-            genesis_config,
+        let TestFrame {
             mint_keypair,
-            ..
-        } = create_genesis_config_with_leader(
-            10_000,
-            &Pubkey::new_unique(),
-            bootstrap_validator_stake_lamports(),
-        );
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+            bank,
+            bank_forks: _bank_forks,
+            record_receiver: _record_receiver,
+            consumer,
+        } = setup_test(true, None);
         let pubkey = Pubkey::new_unique();
 
         // setup nonce account with a durable nonce different from the current
@@ -774,23 +811,12 @@ mod tests {
             &mint_keypair,
             nonce_hash,
         )]);
-
-        let (record_sender, mut record_receiver) = record_channels(false);
-        let recorder = TransactionRecorder::new(record_sender);
-
-        record_receiver.restart(bank.bank_id());
+        // get original backhash before we tick to the end.
+        let bank_hash = bank.last_blockhash();
 
         while bank.tick_height() != bank.max_tick_height() - 1 {
             bank.register_default_tick_for_test();
         }
-
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let committer = Committer::new(
-            None,
-            replay_vote_sender,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
-        );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         let process_transactions_batch_output =
             consumer.process_and_record_transactions(&bank, &transactions);
@@ -814,7 +840,7 @@ mod tests {
         // check that the nonce was advanced to the current bank's last blockhash
         // rather than the current bank's blockhash as would occur had the update
         // blockhash been queried _after_ transaction recording
-        let expected_nonce = DurableNonce::from_blockhash(&genesis_config.hash());
+        let expected_nonce = DurableNonce::from_blockhash(&bank_hash);
         let expected_nonce_hash = expected_nonce.as_hash();
         let nonce_account = bank.get_account(&nonce_pubkey).unwrap();
         assert!(verify_nonce_account(&nonce_account, expected_nonce_hash).is_some());
@@ -822,34 +848,22 @@ mod tests {
 
     #[test]
     fn test_bank_process_and_record_transactions_all_unexecuted() {
-        agave_logger::setup();
-        let GenesisConfigInfo {
-            genesis_config,
+        let TestFrame {
             mint_keypair,
-            ..
-        } = create_slow_genesis_config(10_000);
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
-        let pubkey = solana_pubkey::new_rand();
+            bank,
+            bank_forks: _bank_forks,
+            record_receiver: _record_receiver,
+            consumer,
+        } = setup_test(true, None);
 
+        let pubkey = solana_pubkey::new_rand();
         let transactions = {
             let mut tx =
-                system_transaction::transfer(&mint_keypair, &pubkey, 1, genesis_config.hash());
+                system_transaction::transfer(&mint_keypair, &pubkey, 1, bank.last_blockhash());
             // Add duplicate account key
             tx.message.account_keys.push(pubkey);
             sanitize_transactions(vec![tx])
         };
-
-        let (record_sender, mut record_receiver) = record_channels(false);
-        let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let committer = Committer::new(
-            None,
-            replay_vote_sender,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
-        );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         let process_transactions_batch_output =
             consumer.process_and_record_transactions(&bank, &transactions);
@@ -886,31 +900,15 @@ mod tests {
     fn test_bank_process_and_record_transactions_cost_tracker(
         relax_intrabatch_account_locks: bool,
     ) {
-        agave_logger::setup();
-        let GenesisConfigInfo {
-            genesis_config,
+        let TestFrame {
             mint_keypair,
-            ..
-        } = create_slow_genesis_config(10_000);
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        if !relax_intrabatch_account_locks {
-            bank.deactivate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
-        }
-        bank.ns_per_slot = u128::MAX;
-        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+            bank,
+            bank_forks: _bank_forks,
+            record_receiver: _record_receiver,
+            consumer,
+        } = setup_test(relax_intrabatch_account_locks, None);
+
         let pubkey = solana_pubkey::new_rand();
-
-        let (record_sender, mut record_receiver) = record_channels(false);
-        let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let committer = Committer::new(
-            None,
-            replay_vote_sender,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
-        );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         let get_block_cost = || bank.read_cost_tracker().unwrap().block_cost();
         let get_tx_count = || bank.read_cost_tracker().unwrap().transaction_count();
@@ -925,7 +923,7 @@ mod tests {
             &mint_keypair,
             &pubkey,
             1,
-            genesis_config.hash(),
+            bank.last_blockhash(),
         )]);
 
         let process_transactions_batch_output =
@@ -951,18 +949,18 @@ mod tests {
             system_transaction::allocate(
                 &mint_keypair,
                 &allocate_keypair,
-                genesis_config.hash(),
+                bank.last_blockhash(),
                 100,
             ),
             // this one won't execute in process_and_record_transactions from shared account lock overlap
-            system_transaction::transfer(&mint_keypair, &pubkey, 2, genesis_config.hash()),
+            system_transaction::transfer(&mint_keypair, &pubkey, 2, bank.last_blockhash()),
         ]);
 
         let conflicting_transaction = sanitize_transactions(vec![system_transaction::transfer(
             &Keypair::new(),
             &pubkey,
             1,
-            genesis_config.hash(),
+            bank.last_blockhash(),
         )]);
         bank.try_lock_accounts(&conflicting_transaction);
 
@@ -1036,23 +1034,19 @@ mod tests {
         relax_intrabatch_account_locks: bool,
         use_duplicate_transaction: bool,
     ) {
-        agave_logger::setup();
-        let GenesisConfigInfo {
-            genesis_config,
+        let TestFrame {
             mint_keypair,
-            ..
-        } = create_slow_genesis_config(10_000);
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        if !relax_intrabatch_account_locks {
-            bank.deactivate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
-        }
-        bank.ns_per_slot = u128::MAX;
-        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+            bank,
+            bank_forks: _bank_forks,
+            record_receiver: _record_receiver,
+            consumer,
+        } = setup_test(relax_intrabatch_account_locks, None);
+
         let pubkey = solana_pubkey::new_rand();
         let pubkey1 = solana_pubkey::new_rand();
 
         let transactions = sanitize_transactions(vec![
-            system_transaction::transfer(&mint_keypair, &pubkey, 1, genesis_config.hash()),
+            system_transaction::transfer(&mint_keypair, &pubkey, 1, bank.last_blockhash()),
             system_transaction::transfer(
                 &mint_keypair,
                 if use_duplicate_transaction {
@@ -1061,25 +1055,13 @@ mod tests {
                     &pubkey1
                 },
                 1,
-                genesis_config.hash(),
+                bank.last_blockhash(),
             ),
         ]);
         assert_eq!(
             transactions[0].message_hash() == transactions[1].message_hash(),
             use_duplicate_transaction
         );
-
-        let (record_sender, mut record_receiver) = record_channels(false);
-        let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let committer = Committer::new(
-            None,
-            replay_vote_sender,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
-        );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         // with simd83 and no duplicate, we take a cross-batch lock on an account to create a conflict
         // with a duplicate transaction and simd83 it comes from message hash equality in the batch
@@ -1090,7 +1072,7 @@ mod tests {
                     &Keypair::new(),
                     &pubkey1,
                     1,
-                    genesis_config.hash(),
+                    bank.last_blockhash(),
                 )]);
             bank.try_lock_accounts(&conflicting_transaction);
         }
@@ -1280,13 +1262,13 @@ mod tests {
 
     #[test]
     fn test_process_transactions_returns_unprocessed_txs() {
-        agave_logger::setup();
-        let GenesisConfigInfo {
-            genesis_config,
+        let TestFrame {
             mint_keypair,
-            ..
-        } = create_slow_genesis_config(10_000);
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+            bank,
+            bank_forks: _bank_forks,
+            mut record_receiver,
+            consumer,
+        } = setup_test(true, None);
 
         let pubkey = solana_pubkey::new_rand();
 
@@ -1294,21 +1276,11 @@ mod tests {
             &mint_keypair,
             &pubkey,
             1,
-            genesis_config.hash(),
+            bank.last_blockhash(),
         )]);
 
-        // Poh Recorder has no working bank, so should throw MaxHeightReached error on
-        // record
-        let (record_sender, _record_receiver) = record_channels(false);
-        let recorder = TransactionRecorder::new(record_sender);
-
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let committer = Committer::new(
-            None,
-            replay_vote_sender,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
-        );
-        let consumer = Consumer::new(committer, recorder.clone(), QosService::new(1), None);
+        // Channel shutdown should result in error returned on record.
+        record_receiver.shutdown();
 
         let process_transactions_summary =
             consumer.process_and_record_transactions(&bank, &transactions);
@@ -1355,123 +1327,91 @@ mod tests {
 
     #[test]
     fn test_write_persist_transaction_status() {
-        agave_logger::setup();
-        let GenesisConfigInfo {
-            mut genesis_config,
+        let (transaction_status_sender, transaction_status_receiver) = unbounded();
+        let tss = Some(TransactionStatusSender {
+            sender: transaction_status_sender,
+            dependency_tracker: None,
+        });
+        let TestFrame {
             mint_keypair,
-            ..
-        } = create_slow_genesis_config(solana_native_token::LAMPORTS_PER_SOL * 1000);
-        genesis_config.rent.lamports_per_byte_year = 50;
-        genesis_config.rent.exemption_threshold = 2.0;
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+            bank,
+            bank_forks: _bank_forks,
+            record_receiver: _record_receiver,
+            consumer,
+        } = setup_test(true, tss);
+
         let pubkey = solana_pubkey::new_rand();
         let pubkey1 = solana_pubkey::new_rand();
         let keypair1 = Keypair::new();
 
         let rent_exempt_amount = bank.get_minimum_balance_for_rent_exemption(0);
+        assert!(rent_exempt_amount > 0);
 
         let success_tx = system_transaction::transfer(
             &mint_keypair,
             &pubkey,
             rent_exempt_amount,
-            genesis_config.hash(),
+            bank.last_blockhash(),
         );
-        let success_signature = success_tx.signatures[0];
-        let entry_1 = next_entry(&genesis_config.hash(), 1, vec![success_tx.clone()]);
         let ix_error_tx = system_transaction::transfer(
             &keypair1,
             &pubkey1,
             2 * rent_exempt_amount,
-            genesis_config.hash(),
+            bank.last_blockhash(),
         );
-        let ix_error_signature = ix_error_tx.signatures[0];
-        let entry_2 = next_entry(&entry_1.hash, 1, vec![ix_error_tx.clone()]);
-        let entries = vec![entry_1, entry_2];
 
         let transactions = sanitize_transactions(vec![success_tx, ix_error_tx]);
+        let batch_transactions_inner = transactions
+            .iter()
+            .map(|tx| tx.clone().into_inner_transaction())
+            .collect::<Vec<_>>();
         bank.transfer(rent_exempt_amount, &mint_keypair, &keypair1.pubkey())
             .unwrap();
 
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path())
-            .expect("Expected to be able to open database ledger");
-        let blockstore = Arc::new(blockstore);
-        let (record_sender, mut record_receiver) = record_channels(false);
-        let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        let shreds = entries_to_test_shreds(
-            &entries,
-            bank.slot(),
-            0,    // parent_slot
-            true, // is_full_slot
-            0,    // version
-        );
-        blockstore.insert_shreds(shreds, None, false).unwrap();
-        blockstore.set_roots(std::iter::once(&bank.slot())).unwrap();
-
-        let (transaction_status_sender, transaction_status_receiver) = unbounded();
-        let tss_exit = Arc::new(AtomicBool::new(false));
-        let transaction_status_service = TransactionStatusService::new(
-            transaction_status_receiver,
-            Arc::new(AtomicU64::default()),
-            true,
-            None,
-            blockstore.clone(),
-            false,
-            None, // no work dependency tracker
-            tss_exit.clone(),
-        );
-
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let committer = Committer::new(
-            Some(TransactionStatusSender {
-                sender: transaction_status_sender,
-                dependency_tracker: None,
-            }),
-            replay_vote_sender,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
-        );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
-
         let _ = consumer.process_and_record_transactions(&bank, &transactions);
-
         drop(consumer); // drop/disconnect transaction_status_sender
 
-        transaction_status_service.quiesce_and_join_for_tests(tss_exit);
-
-        let confirmed_block = blockstore.get_rooted_block(bank.slot(), false).unwrap();
-        let actual_tx_results: Vec<_> = confirmed_block
-            .transactions
+        let status_messages = transaction_status_receiver.into_iter().collect::<Vec<_>>();
+        assert_eq!(status_messages.len(), 1);
+        let TransactionStatusMessage::Batch((status_batch, _)) =
+            status_messages.into_iter().next().unwrap()
+        else {
+            panic!("not a batch");
+        };
+        assert_eq!(status_batch.transactions, batch_transactions_inner);
+        let commit_results = status_batch
+            .commit_results
             .into_iter()
-            .map(|VersionedTransactionWithStatusMeta { transaction, meta }| {
-                (transaction.signatures[0], meta.status)
-            })
-            .collect();
-        let expected_tx_results = vec![
-            (success_signature, Ok(())),
-            (
-                ix_error_signature,
+            .map(|r| r.unwrap().status.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            commit_results,
+            vec![
+                Ok(()),
                 Err(TransactionError::InstructionError(
                     0,
-                    InstructionError::Custom(1),
-                )),
-            ),
-        ];
-        assert_eq!(actual_tx_results, expected_tx_results);
+                    InstructionError::Custom(1)
+                ))
+            ]
+        );
     }
 
     #[test]
     fn test_write_persist_loaded_addresses() {
-        agave_logger::setup();
-        let GenesisConfigInfo {
-            genesis_config,
+        let (transaction_status_sender, transaction_status_receiver) = unbounded();
+        let tss = Some(TransactionStatusSender {
+            sender: transaction_status_sender,
+            dependency_tracker: None,
+        });
+        let TestFrame {
             mint_keypair,
-            ..
-        } = create_slow_genesis_config(10_000);
-        let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
-        let keypair = Keypair::new();
+            bank,
+            bank_forks,
+            mut record_receiver,
+            consumer,
+        } = setup_test(true, tss);
 
+        let keypair = Keypair::new();
         let address_table_key = Pubkey::new_unique();
         let address_table_state = generate_new_address_lookup_table(None, 2);
         store_address_lookup_table(&bank, address_table_key, address_table_state);
@@ -1482,13 +1422,17 @@ mod tests {
             .unwrap()
             .insert(new_bank)
             .clone_without_scheduler();
+
+        record_receiver.shutdown();
+        record_receiver.restart(bank.bank_id());
+
         let message = VersionedMessage::V0(v0::Message {
             header: MessageHeader {
                 num_required_signatures: 1,
                 num_readonly_signed_accounts: 0,
                 num_readonly_unsigned_accounts: 0,
             },
-            recent_blockhash: genesis_config.hash(),
+            recent_blockhash: bank.last_blockhash(),
             account_keys: vec![keypair.pubkey()],
             address_table_lookups: vec![MessageAddressTableLookup {
                 account_key: address_table_key,
@@ -1509,100 +1453,31 @@ mod tests {
                 .is_active(&agave_feature_set::static_instruction_limit::id()),
         )
         .unwrap();
-
-        let entry = next_versioned_entry(&genesis_config.hash(), 1, vec![tx]);
-        let entries = vec![entry];
+        let batch_transactions_inner = [&sanitized_tx]
+            .into_iter()
+            .map(|tx| tx.clone().into_inner_transaction())
+            .collect::<Vec<_>>();
 
         bank.transfer(1, &mint_keypair, &keypair.pubkey()).unwrap();
 
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path())
-            .expect("Expected to be able to open database ledger");
-        let blockstore = Arc::new(blockstore);
-
-        let (record_sender, mut record_receiver) = record_channels(false);
-        let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.bank_id());
-
-        let shreds = entries_to_test_shreds(
-            &entries,
-            bank.slot(),
-            0,    // parent_slot
-            true, // is_full_slot
-            0,    // version
-        );
-        blockstore.insert_shreds(shreds, None, false).unwrap();
-        blockstore.set_roots(std::iter::once(&bank.slot())).unwrap();
-
-        let (transaction_status_sender, transaction_status_receiver) = unbounded();
-        let tss_exit = Arc::new(AtomicBool::new(false));
-        let transaction_status_service = TransactionStatusService::new(
-            transaction_status_receiver,
-            Arc::new(AtomicU64::default()),
-            true,
-            None,
-            blockstore.clone(),
-            false,
-            None, // no work dependency tracker
-            tss_exit.clone(),
-        );
-
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let committer = Committer::new(
-            Some(TransactionStatusSender {
-                sender: transaction_status_sender,
-                dependency_tracker: None,
-            }),
-            replay_vote_sender,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
-        );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
-
-        let consumer_output =
-            consumer.process_and_record_transactions(&bank, slice::from_ref(&sanitized_tx));
-        let CommitTransactionDetails::Committed {
-            compute_units,
-            loaded_accounts_data_size,
-            result: _,
-            fee_payer_post_balance: _,
-        } = consumer_output
-            .execute_and_commit_transactions_output
-            .commit_transactions_result
-            .unwrap()
-            .pop()
-            .unwrap()
-        else {
-            panic!("The transaction was not commited");
-        };
-        let tx_cost = CostModel::calculate_cost_for_executed_transaction(
-            &sanitized_tx,
-            compute_units,
-            loaded_accounts_data_size,
-            &bank.feature_set,
-        );
-
+        let _ = consumer.process_and_record_transactions(&bank, slice::from_ref(&sanitized_tx));
         drop(consumer); // drop/disconnect transaction_status_sender
 
-        transaction_status_service.quiesce_and_join_for_tests(tss_exit);
-
-        let mut confirmed_block = blockstore.get_rooted_block(bank.slot(), false).unwrap();
-        assert_eq!(confirmed_block.transactions.len(), 1);
-
-        let recorded_meta = confirmed_block.transactions.pop().unwrap().meta;
-        assert_eq!(
-            recorded_meta,
-            TransactionStatusMeta {
-                status: Ok(()),
-                pre_balances: vec![1, 0, 0],
-                post_balances: vec![1, 0, 0],
-                pre_token_balances: Some(vec![]),
-                post_token_balances: Some(vec![]),
-                rewards: Some(vec![]),
-                loaded_addresses: sanitized_tx.get_loaded_addresses(),
-                compute_units_consumed: Some(0),
-                cost_units: Some(tx_cost.sum()),
-                ..TransactionStatusMeta::default()
-            }
-        );
+        let status_messages = transaction_status_receiver.into_iter().collect::<Vec<_>>();
+        assert_eq!(status_messages.len(), 1);
+        let TransactionStatusMessage::Batch((status_batch, _)) =
+            status_messages.into_iter().next().unwrap()
+        else {
+            panic!("not a batch");
+        };
+        assert_eq!(status_batch.transactions, batch_transactions_inner);
+        assert_eq!(status_batch.commit_results.len(), 1);
+        let committed_transaction = status_batch
+            .commit_results
+            .into_iter()
+            .next()
+            .unwrap()
+            .unwrap();
+        assert!(committed_transaction.status.is_ok());
     }
 }

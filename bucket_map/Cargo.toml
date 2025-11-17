@@ -18,13 +18,14 @@ agave-unstable-api = []
 dev-context-only-utils = []
 
 [dependencies]
+ahash = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
 bytemuck = { workspace = true }
 bytemuck_derive = { workspace = true }
 memmap2 = { workspace = true }
 modular-bitfield = { workspace = true }
 num_enum = { workspace = true }
-rand = { workspace = true }
+rand = "0.9.2"
 solana-clock = { workspace = true }
 solana-measure = { workspace = true }
 solana-pubkey = { workspace = true }
@@ -36,6 +37,3 @@ fs_extra = { workspace = true }
 rayon = { workspace = true }
 solana-bucket-map = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
-
-[[bench]]
-name = "bucket_map"

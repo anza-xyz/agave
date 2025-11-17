@@ -133,6 +133,11 @@ impl VoteStateView {
         })
     }
 
+    #[inline]
+    pub fn votes_len(&self) -> usize {
+        self.votes_view().len()
+    }
+
     pub fn last_lockout(&self) -> Option<Lockout> {
         self.votes_view().last().map(|item| {
             Lockout::new_with_confirmation_count(item.slot(), item.confirmation_count())
@@ -177,13 +182,13 @@ impl VoteStateView {
         }
     }
 
-    fn inflation_rewards_commission_view(&self) -> CommissionView {
+    fn inflation_rewards_commission_view(&self) -> CommissionView<'_> {
         let offset = self.frame.offset(Field::Commission);
         // SAFETY: `frame` was created from `data`.
         CommissionView::new(self.frame.commission_frame(), &self.data[offset..])
     }
 
-    fn block_revenue_commission_view(&self) -> Option<CommissionView> {
+    fn block_revenue_commission_view(&self) -> Option<CommissionView<'_>> {
         let offset = self
             .frame
             .simd185_field_offset(Simd185Field::BlockRevenueCommission)?;
@@ -194,7 +199,7 @@ impl VoteStateView {
         ))
     }
 
-    fn pending_delegator_rewards_view(&self) -> Option<PendingDelegatorRewardsView> {
+    fn pending_delegator_rewards_view(&self) -> Option<PendingDelegatorRewardsView<'_>> {
         let offset = self
             .frame
             .simd185_field_offset(Simd185Field::PendingDelegatorRewards)?;
@@ -202,7 +207,7 @@ impl VoteStateView {
         Some(PendingDelegatorRewardsView::new(&self.data[offset..]))
     }
 
-    fn bls_pubkey_compressed_view(&self) -> Option<BlsPubkeyCompressedView> {
+    fn bls_pubkey_compressed_view(&self) -> Option<BlsPubkeyCompressedView<'_>> {
         let offset = self
             .frame
             .simd185_field_offset(Simd185Field::BlsPubkeyCompressed)?;
@@ -211,25 +216,25 @@ impl VoteStateView {
         Some(BlsPubkeyCompressedView::new(frame, &self.data[offset..]))
     }
 
-    fn votes_view(&self) -> ListView<VotesFrame> {
+    fn votes_view(&self) -> ListView<'_, VotesFrame> {
         let offset = self.frame.offset(Field::Votes);
         // SAFETY: `frame` was created from `data`.
         ListView::new(self.frame.votes_frame(), &self.data[offset..])
     }
 
-    fn root_slot_view(&self) -> RootSlotView {
+    fn root_slot_view(&self) -> RootSlotView<'_> {
         let offset = self.frame.offset(Field::RootSlot);
         // SAFETY: `frame` was created from `data`.
         RootSlotView::new(self.frame.root_slot_frame(), &self.data[offset..])
     }
 
-    fn authorized_voters_view(&self) -> ListView<AuthorizedVotersListFrame> {
+    fn authorized_voters_view(&self) -> ListView<'_, AuthorizedVotersListFrame> {
         let offset = self.frame.offset(Field::AuthorizedVoters);
         // SAFETY: `frame` was created from `data`.
         ListView::new(self.frame.authorized_voters_frame(), &self.data[offset..])
     }
 
-    fn epoch_credits_view(&self) -> ListView<EpochCreditsListFrame> {
+    fn epoch_credits_view(&self) -> ListView<'_, EpochCreditsListFrame> {
         let offset = self.frame.offset(Field::EpochCredits);
         // SAFETY: `frame` was created from `data`.
         ListView::new(self.frame.epoch_credits_frame(), &self.data[offset..])

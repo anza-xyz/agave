@@ -1,7 +1,7 @@
 use {
     crate::{bucket_stats::BucketStats, MaxSearch},
     memmap2::MmapMut,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     solana_measure::measure::Measure,
     std::{
         fs::{remove_file, OpenOptions},
@@ -357,7 +357,7 @@ impl<O: BucketOccupied> BucketStorage<O> {
         };
         let ptr = {
             let ptr = slice.as_ptr().cast();
-            debug_assert!(ptr as usize % std::mem::align_of::<T>() == 0);
+            debug_assert!((ptr as usize).is_multiple_of(std::mem::align_of::<T>()));
             ptr
         };
         unsafe { std::slice::from_raw_parts(ptr, len as usize) }
@@ -382,7 +382,7 @@ impl<O: BucketOccupied> BucketStorage<O> {
         };
         let ptr = {
             let ptr = slice.as_mut_ptr().cast();
-            debug_assert!(ptr as usize % std::mem::align_of::<T>() == 0);
+            debug_assert!((ptr as usize).is_multiple_of(std::mem::align_of::<T>()));
             ptr
         };
         unsafe { std::slice::from_raw_parts_mut(ptr, len as usize) }
@@ -454,9 +454,9 @@ impl<O: BucketOccupied> BucketStorage<O> {
 
     /// allocate a new memory mapped file of size `bytes` on one of `drives`
     fn new_map(drives: &[PathBuf], bytes: u64, stats: &BucketStats) -> (MmapMut, PathBuf, u128) {
-        let r = thread_rng().gen_range(0..drives.len());
+        let r = rng().random_range(0..drives.len());
         let drive = &drives[r];
-        let file_random = thread_rng().gen_range(0..u128::MAX);
+        let file_random = rng().random_range(0..u128::MAX);
         let pos = format!("{file_random}");
         let file = drive.join(pos);
         let res = Self::map_open_file(file.clone(), true, bytes, stats).unwrap();

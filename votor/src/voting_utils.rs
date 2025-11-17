@@ -3,7 +3,7 @@
 use {
     crate::{
         commitment::{CommitmentAggregationData, CommitmentError},
-        consensus_metrics::ConsensusMetrics,
+        consensus_metrics::ConsensusMetricsEventSender,
         vote_history::{VoteHistory, VoteHistoryError},
         vote_history_storage::{SavedVoteHistory, SavedVoteHistoryVersions},
         voting_service::BLSOp,
@@ -13,7 +13,6 @@ use {
         vote::Vote,
     },
     crossbeam_channel::{SendError, Sender},
-    parking_lot::RwLock as PlRwLock,
     solana_bls_signatures::{
         keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed, BlsError,
         Pubkey as BLSPubkey,
@@ -126,7 +125,7 @@ pub struct VotingContext {
     pub commitment_sender: Sender<CommitmentAggregationData>,
     pub wait_to_vote_slot: Option<u64>,
     pub sharable_banks: SharableBanks,
-    pub consensus_metrics: Arc<PlRwLock<ConsensusMetrics>>,
+    pub consensus_metrics_sender: ConsensusMetricsEventSender,
 }
 
 fn get_bls_keypair(
@@ -283,18 +282,6 @@ fn insert_vote_and_create_bls_message(
     let saved_vote_history =
         SavedVoteHistory::new(&context.vote_history, &context.identity_keypair)?;
 
-    match context
-        .consensus_metrics
-        .write()
-        .record_vote(context.vote_account_pubkey, &vote)
-    {
-        Ok(()) => (),
-        Err(err) => {
-            let slot = vote.slot();
-            error!("recording vote on slot {slot} failed with {err:?}");
-        }
-    }
-
     // Return vote for sending
     Ok(BLSOp::PushVote {
         message: Arc::new(message),
@@ -373,6 +360,9 @@ mod tests {
 
         let my_keys = &validator_keypairs[my_index];
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
+        let (bls_sender, _bls_receiver) = unbounded();
+        let (commitment_sender, _commitment_receiver) = unbounded();
+        let (consensus_metrics_sender, _consensus_metrics_receiver) = unbounded();
         VotingContext {
             vote_history: VoteHistory::new(my_keys.node_keypair.pubkey(), 0),
             vote_account_pubkey: my_keys.vote_keypair.pubkey(),
@@ -383,11 +373,11 @@ mod tests {
             derived_bls_keypairs: HashMap::new(),
             has_new_vote_been_rooted: false,
             own_vote_sender,
-            bls_sender: unbounded().0,
-            commitment_sender: unbounded().0,
+            bls_sender,
+            commitment_sender,
             wait_to_vote_slot: None,
             sharable_banks,
-            consensus_metrics: Arc::new(PlRwLock::new(ConsensusMetrics::new(0))),
+            consensus_metrics_sender,
         }
     }
 

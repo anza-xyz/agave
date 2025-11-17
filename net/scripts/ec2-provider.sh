@@ -140,7 +140,7 @@ cloud_Initialize() {
 
 #
 # cloud_CreateInstances [networkName] [namePrefix] [numNodes]
-#                       [enableGpu] [machineType] [zone]
+#                       [machineType] [zone]
 #                       [bootDiskSize] [startupScript] [address]
 #                       [bootDiskType] [additionalDiskSize] [preemptible]
 #
@@ -149,8 +149,6 @@ cloud_Initialize() {
 # networkName   - unique name of this testnet
 # namePrefix    - unique string to prefix all the instance names with
 # numNodes      - number of instances to create
-# enableGpu     - Optionally enable GPU, use the value "true" to enable
-#                 eg, request 4 K80 GPUs with "count=4,type=nvidia-tesla-k80"
 # machineType   - GCE machine type.  Note that this may also include an
 #                 `--accelerator=` or other |gcloud compute instances create|
 #                 options
@@ -170,88 +168,63 @@ cloud_CreateInstances() {
   declare networkName="$1"
   declare namePrefix="$2"
   declare numNodes="$3"
-  declare enableGpu="$4"
-  declare machineType="$5"
-  declare zone="$6"
-  declare optionalBootDiskSize="$7"
-  declare optionalStartupScript="$8"
-  declare optionalAddress="$9"
+  declare machineType="$4"
+  declare zone="$5"
+  declare optionalBootDiskSize="$6"
+  declare optionalStartupScript="$7"
+  declare optionalAddress="$8"
 
   declare region=
   region=$(__cloud_GetRegion "$zone")
 
-  if $enableGpu; then
-    #
-    # Custom Ubuntu 18.04 LTS image with CUDA 9.2 and CUDA 10.0 installed
-    #
-    # Unfortunately these AMIs are not public.  When this becomes an issue, use
-    # the stock Ubuntu 18.04 image and programmatically install CUDA after the
-    # instance boots
-    #
-    case $region in
-    us-east-1)
-      imageName="ami-0a8bd6fb204473f78"
-      ;;
-    us-west-1)
-      imageName="ami-07011f0795513c59d"
-      ;;
-    us-west-2)
-      imageName="ami-0a11ef42b62b82b68"
-      ;;
-    *)
-      usage "Unsupported region: $region"
-      ;;
-    esac
-  else
-    # Select an upstream Ubuntu 18.04 AMI from https://cloud-images.ubuntu.com/locator/ec2/
-    case $region in
-    us-east-1)
-      imageName="ami-0fba9b33b5304d8b4"
-      ;;
-    us-east-2)
-      imageName="ami-0e04554247365d806"
-      ;;
-    us-west-1)
-      imageName="ami-07390b6ff5934a238"
-      ;;
-    us-west-2)
-      imageName="ami-03804ed633fe58109"
-      ;;
-    sa-east-1)
-      imageName="ami-0f1678b6f63a0f923"
-      ;;
-    ap-northeast-2)
-      imageName="ami-0695e34e31339c3ff"
-      ;;
-    ap-northeast-1)
-      imageName="ami-003371bfa26192744"
-      ;;
-    ap-southeast-2)
-      imageName="ami-0401c9e2f645b5557"
-      ;;
-    ap-southeast-1)
-      imageName="ami-08050c889a630f1bd"
-      ;;
-    ap-south-1)
-      imageName="ami-04184c12996409633"
-      ;;
-    eu-central-1)
-      imageName="ami-054e21e355db24124"
-      ;;
-    eu-west-1)
-      imageName="ami-0727f3c2d4b0226d5"
-      ;;
-    eu-west-2)
-      imageName="ami-068f09e337d7da0c4"
-      ;;
-    ca-central-1)
-      imageName="ami-06ed08059bdc08fc9"
-      ;;
-    *)
-      usage "Unsupported region: $region"
-      ;;
-    esac
-  fi
+  # Select an upstream Ubuntu 18.04 AMI from https://cloud-images.ubuntu.com/locator/ec2/
+  case $region in
+  us-east-1)
+    imageName="ami-0fba9b33b5304d8b4"
+    ;;
+  us-east-2)
+    imageName="ami-0e04554247365d806"
+    ;;
+  us-west-1)
+    imageName="ami-07390b6ff5934a238"
+    ;;
+  us-west-2)
+    imageName="ami-03804ed633fe58109"
+    ;;
+  sa-east-1)
+    imageName="ami-0f1678b6f63a0f923"
+    ;;
+  ap-northeast-2)
+    imageName="ami-0695e34e31339c3ff"
+    ;;
+  ap-northeast-1)
+    imageName="ami-003371bfa26192744"
+    ;;
+  ap-southeast-2)
+    imageName="ami-0401c9e2f645b5557"
+    ;;
+  ap-southeast-1)
+    imageName="ami-08050c889a630f1bd"
+    ;;
+  ap-south-1)
+    imageName="ami-04184c12996409633"
+    ;;
+  eu-central-1)
+    imageName="ami-054e21e355db24124"
+    ;;
+  eu-west-1)
+    imageName="ami-0727f3c2d4b0226d5"
+    ;;
+  eu-west-2)
+    imageName="ami-068f09e337d7da0c4"
+    ;;
+  ca-central-1)
+    imageName="ami-06ed08059bdc08fc9"
+    ;;
+  *)
+    usage "Unsupported region: $region"
+    ;;
+  esac
 
   declare -a args
   args=(

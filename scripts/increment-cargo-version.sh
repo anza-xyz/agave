@@ -23,6 +23,7 @@ ignores=(
   .cargo
   target
   node_modules
+  ci/xtask
 )
 
 not_paths=()
@@ -93,7 +94,7 @@ check)
   exit 0
   ;;
 -*)
-  if [[ $1 =~ ^-[A-Za-z0-9]*$ ]]; then
+  if [[ $1 =~ ^-[\.A-Za-z0-9]*$ ]]; then
     SPECIAL="$1"
   else
     echo "Error: Unsupported characters found in $1"

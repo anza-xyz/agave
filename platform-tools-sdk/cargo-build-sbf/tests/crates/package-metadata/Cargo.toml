@@ -1,6 +1,6 @@
 [package]
 name = "package-metadata"
-version = "3.1.0"
+version = "4.0.0-alpha.0"
 description = "Solana SBF test program with tools version in package metadata"
 authors = ["Anza Maintainers <maintainers@anza.xyz>"]
 repository = "https://github.com/anza-xyz/agave"
@@ -10,7 +10,7 @@ edition = "2021"
 publish = false
 
 [package.metadata.solana]
-tools-version = "v1.51"
+tools-version = "v1.52"
 program-id = "MyProgram1111111111111111111111111111111111"
 
 [dependencies]

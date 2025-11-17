@@ -39,16 +39,17 @@ impl BlockstoreOptions {
     }
 }
 
+/// The mode to open a Blockstore with. For more details, see:
+/// https://github.com/facebook/rocksdb/wiki/Read-only-and-Secondary-instances
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AccessType {
     /// Primary (read/write) access; only one process can have Primary access.
     Primary,
     /// Primary (read/write) access with RocksDB automatic compaction disabled.
     PrimaryForMaintenance,
-    /// Secondary (read) access; multiple processes can have Secondary access.
-    /// Additionally, Secondary access can be obtained while another process
-    /// already has Primary access.
-    Secondary,
+    /// Read only access; multiple processes can obtain ReadOnly access.
+    /// ReadOnly instance gets a static view of the database at creation time.
+    ReadOnly,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -114,18 +115,13 @@ impl LedgerColumnOptions {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum BlockstoreCompressionType {
+    #[default]
     None,
     Snappy,
     Lz4,
     Zlib,
-}
-
-impl Default for BlockstoreCompressionType {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl BlockstoreCompressionType {

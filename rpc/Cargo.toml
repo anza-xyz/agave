@@ -79,9 +79,7 @@ solana-send-transaction-service = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-slot-history = { workspace = true }
-solana-stake-program = { workspace = true }
 solana-storage-bigtable = { workspace = true }
-solana-streamer = { workspace = true }
 solana-svm = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-system-transaction = { workspace = true }
@@ -128,7 +126,6 @@ solana-sdk-ids = { workspace = true }
 solana-send-transaction-service = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sha256-hasher = { workspace = true }
 solana-stake-interface = { workspace = true }
-solana-stake-program = { workspace = true }
 solana-svm-log-collector = { workspace = true }
 solana-vote-interface = { workspace = true }
 spl-pod = { workspace = true }

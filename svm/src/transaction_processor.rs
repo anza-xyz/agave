@@ -35,8 +35,7 @@ use {
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
             EpochBoundaryPreparation, ForkGraph, ProgramCache, ProgramCacheEntry,
-            ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
-            ProgramRuntimeEnvironments,
+            ProgramCacheForTxBatch, ProgramCacheMatchCriteria, ProgramRuntimeEnvironments,
         },
         sysvar_cache::SysvarCache,
     },
@@ -61,7 +60,10 @@ use {
 #[cfg(feature = "dev-context-only-utils")]
 use {
     qualifier_attr::{field_qualifiers, qualifiers},
-    solana_program_runtime::solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
+    solana_program_runtime::{
+        loaded_programs::ProgramRuntimeEnvironment,
+        solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
+    },
     std::sync::Weak,
 };
 
@@ -120,6 +122,18 @@ pub struct TransactionProcessingConfig<'a> {
     pub limit_to_load_programs: bool,
     /// Recording capabilities for transaction execution.
     pub recording_config: ExecutionRecordingConfig,
+    /// Should failing transactions within the batch be dropped (no fee charged
+    /// & not committed).
+    pub drop_on_failure: bool,
+    /// If any transaction in the batch is not committed then the entire batch
+    /// should not be committed.
+    ///
+    /// # Note
+    ///
+    /// Without `drop_on_failure` this flag will still allow processed but
+    /// failing transactions to be committed. If both flags are set then any
+    /// failing transaction will cause all transactions to be aborted.
+    pub all_or_nothing: bool,
 }
 
 /// Runtime environment for transaction batch processing.
@@ -250,10 +264,20 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .unwrap()
             .set_fork_graph(fork_graph);
         let empty_loader = || Arc::new(BuiltinProgram::new_loader(VmConfig::default()));
-        processor.configure_program_runtime_environments(
-            program_runtime_environment_v1.unwrap_or(empty_loader()),
-            program_runtime_environment_v2.unwrap_or(empty_loader()),
-        );
+        processor
+            .global_program_cache
+            .write()
+            .unwrap()
+            .latest_root_slot = processor.slot;
+        processor
+            .epoch_boundary_preparation
+            .write()
+            .unwrap()
+            .upcoming_epoch = processor.epoch;
+        processor.environments.program_runtime_v1 =
+            program_runtime_environment_v1.unwrap_or(empty_loader());
+        processor.environments.program_runtime_v2 =
+            program_runtime_environment_v2.unwrap_or(empty_loader());
         processor
     }
 
@@ -282,19 +306,41 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.execution_cost = cost;
     }
 
-    /// Configures the program runtime environments (loaders).
-    pub fn configure_program_runtime_environments(
-        &mut self,
-        program_runtime_environment_v1: ProgramRuntimeEnvironment,
-        program_runtime_environment_v2: ProgramRuntimeEnvironment,
-    ) {
-        self.global_program_cache.write().unwrap().latest_root_slot = self.slot;
-        self.epoch_boundary_preparation
-            .write()
+    /// Updates the environments when entering a new Epoch.
+    pub fn set_environments(&mut self, new_environments: ProgramRuntimeEnvironments) {
+        // First update the parts of the environments which changed
+        if self.environments.program_runtime_v1 != new_environments.program_runtime_v1 {
+            self.environments.program_runtime_v1 = new_environments.program_runtime_v1;
+        }
+        if self.environments.program_runtime_v2 != new_environments.program_runtime_v2 {
+            self.environments.program_runtime_v2 = new_environments.program_runtime_v2;
+        }
+        // Then try to consolidate with the upcoming environments (to reuse their address)
+        if let Some(upcoming_environments) = &self
+            .epoch_boundary_preparation
+            .read()
             .unwrap()
-            .latest_root_epoch = self.epoch;
-        self.environments.program_runtime_v1 = program_runtime_environment_v1;
-        self.environments.program_runtime_v2 = program_runtime_environment_v2;
+            .upcoming_environments
+        {
+            if self.environments.program_runtime_v1 == upcoming_environments.program_runtime_v1
+                && !Arc::ptr_eq(
+                    &self.environments.program_runtime_v1,
+                    &upcoming_environments.program_runtime_v1,
+                )
+            {
+                self.environments.program_runtime_v1 =
+                    upcoming_environments.program_runtime_v1.clone();
+            }
+            if self.environments.program_runtime_v2 == upcoming_environments.program_runtime_v2
+                && !Arc::ptr_eq(
+                    &self.environments.program_runtime_v2,
+                    &upcoming_environments.program_runtime_v2,
+                )
+            {
+                self.environments.program_runtime_v2 =
+                    upcoming_environments.program_runtime_v2.clone();
+            }
+        }
     }
 
     /// Returns the current environments depending on the given epoch
@@ -307,7 +353,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .unwrap_or_else(|| self.environments.clone())
     }
 
-    pub fn sysvar_cache(&self) -> RwLockReadGuard<SysvarCache> {
+    pub fn sysvar_cache(&self) -> RwLockReadGuard<'_, SysvarCache> {
         self.sysvar_cache.read().unwrap()
     }
 
@@ -355,15 +401,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .then(|| BalanceCollector::new_with_transaction_count(sanitized_txs.len()));
 
         // Create the batch-local program cache.
-        let program_runtime_environments_for_execution =
-            self.get_environments_for_epoch(self.epoch);
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
         let builtins = self.builtin_program_ids.read().unwrap().clone();
         let ((), program_cache_us) = measure_us!({
             self.replenish_program_cache(
                 &account_loader,
                 &builtins,
-                &program_runtime_environments_for_execution,
+                &environment.program_runtime_environments_for_execution,
                 &mut program_cache_for_tx_batch,
                 &mut execute_timings,
                 config.check_program_modification_slot,
@@ -424,12 +468,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
             let (processing_result, single_execution_us) = measure_us!(match load_result {
                 TransactionLoadResult::NotLoaded(err) => Err(err),
-                TransactionLoadResult::FeesOnly(fees_only_tx) => {
-                    // Update loaded accounts cache with nonce and fee-payer
-                    account_loader.update_accounts_for_failed_tx(&fees_only_tx.rollback_accounts);
+                TransactionLoadResult::FeesOnly(fees_only_tx) => match config.drop_on_failure {
+                    true => Err(fees_only_tx.load_error),
+                    false => {
+                        // Update loaded accounts cache with nonce and fee-payer
+                        account_loader
+                            .update_accounts_for_failed_tx(&fees_only_tx.rollback_accounts);
 
-                    Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
-                }
+                        Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
+                    }
+                },
                 TransactionLoadResult::Loaded(loaded_transaction) => {
                     let (program_accounts_set, filter_executable_us) = measure_us!(self
                         .filter_executable_program_accounts(
@@ -446,7 +494,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         self.replenish_program_cache(
                             &account_loader,
                             &program_accounts_set,
-                            &program_runtime_environments_for_execution,
+                            &environment.program_runtime_environments_for_execution,
                             &mut program_cache_for_tx_batch,
                             &mut execute_timings,
                             config.check_program_modification_slot,
@@ -483,16 +531,36 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         config,
                     );
 
-                    // Update loaded accounts cache with account states which might have changed.
-                    // Also update local program cache with modifications made by the transaction,
-                    // if it executed successfully.
-                    account_loader.update_accounts_for_executed_tx(tx, &executed_tx);
+                    match (
+                        &executed_tx.execution_details.status,
+                        config.drop_on_failure,
+                    ) {
+                        // Successful transactions need to update the account loader cache as future
+                        // transactions in the batch may depend on them.
+                        (Ok(_), _) => {
+                            account_loader.update_accounts_for_successful_tx(
+                                tx,
+                                &executed_tx.loaded_transaction.accounts,
+                            );
+                            // Also update local program cache with modifications made by the
+                            // transaction, if it executed successfully.
+                            program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
 
-                    if executed_tx.was_successful() {
-                        program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
+                            Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
+                        }
+                        // If the transaction failed & drop on failure is set then we don't want to
+                        // update the accounts as this transaction will be dropped from the batch.
+                        (Err(err), true) => Err(err.clone()),
+                        // Unsuccessful transactions will still update rollback accounts (fee payer,
+                        // nonce, etc).
+                        (Err(_), false) => {
+                            account_loader.update_accounts_for_failed_tx(
+                                &executed_tx.loaded_transaction.rollback_accounts,
+                            );
+
+                            Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
+                        }
                     }
-
-                    Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
                 }
             });
             execution_us = execution_us.saturating_add(single_execution_us);
@@ -501,6 +569,33 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 measure_us!(balance_collector.collect_post_balances(&mut account_loader, tx));
             execute_timings
                 .saturating_add_in_place(ExecuteTimingType::CollectBalancesUs, collect_balances_us);
+
+            // If this is an all or nothing batch and we failed to process this transaction then we
+            // must abort all prior/remaining transactions.
+            if config.all_or_nothing && processing_result.is_err() {
+                // Abort prior transactions.
+                for res in processing_results.iter_mut() {
+                    *res = Err(TransactionError::CommitCancelled);
+                }
+
+                // Preserve the failure that triggered the batch to abort.
+                processing_results.push(processing_result);
+
+                // Abort remaining transactions.
+                processing_results.extend(
+                    (0..sanitized_txs.len() - processing_results.len())
+                        .map(|_| Err(TransactionError::CommitCancelled)),
+                );
+
+                return LoadAndExecuteSanitizedTransactionsOutput {
+                    error_metrics,
+                    execute_timings,
+                    processing_results,
+                    // If we abort the batch and balance recording is enabled, no balances should be
+                    // collected. If this is a leader thread, no batch will be committed.
+                    balance_collector: None,
+                };
+            }
 
             processing_results.push(processing_result);
         }
@@ -662,7 +757,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             })
             .and_then(
                 |current_nonce_versions| match current_nonce_versions.state() {
-                    NonceState::Initialized(ref current_nonce_data) => {
+                    NonceState::Initialized(current_nonce_data) => {
                         let nonce_can_be_advanced =
                             &current_nonce_data.durable_nonce != next_durable_nonce;
 
@@ -747,7 +842,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             })
             .collect();
 
-        let program_runtime_environments = self.get_environments_for_epoch(self.epoch);
         let mut count_hits_and_misses = true;
         loop {
             let (program_to_store, task_cookie, task_waiter) = {
@@ -787,7 +881,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 let mut global_program_cache = self.global_program_cache.write().unwrap();
                 // Submit our last completed loading task.
                 if global_program_cache.finish_cooperative_loading_task(
-                    &program_runtime_environments,
+                    program_runtime_environments_for_execution,
                     self.slot,
                     key,
                     program,
@@ -1004,7 +1098,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     inner_instructions.push(InnerInstruction {
                         instruction: CompiledInstruction::new_from_raw_parts(
                             ix_in_trace.program_account_index_in_tx as u8,
-                            ix_in_trace.instruction_data,
+                            ix_in_trace.instruction_data.into_owned(),
                             ix_in_trace
                                 .instruction_accounts
                                 .iter()

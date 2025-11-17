@@ -13,6 +13,9 @@
 
 use thiserror::Error;
 
+#[doc(hidden)]
+pub mod legacy;
+
 /// Length of Poseidon hash result.
 pub const HASH_BYTES: usize = 32;
 
@@ -459,6 +462,19 @@ mod tests {
             let inputs = vec![&input[..]; i + 1];
             let hash = hashv(Parameters::Bn254X5, Endianness::BigEndian, &inputs).unwrap();
             assert_eq!(hash.to_bytes(), expected_hash);
+        }
+    }
+
+    #[test]
+    fn test_poseidon_input_without_padding() {
+        let input = [1];
+
+        for i in 1..12 {
+            let inputs = vec![&input[..]; i + 1];
+            let res = hashv(Parameters::Bn254X5, Endianness::BigEndian, &inputs);
+            assert!(res.is_err());
+            let res = hashv(Parameters::Bn254X5, Endianness::LittleEndian, &inputs);
+            assert!(res.is_err());
         }
     }
 }

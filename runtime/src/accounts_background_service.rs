@@ -12,9 +12,9 @@ use {
         bank::{Bank, BankSlotDelta, DropCallback},
         bank_forks::BankForks,
         snapshot_controller::SnapshotController,
-        snapshot_package::{SnapshotKind, SnapshotPackage},
+        snapshot_package::SnapshotPackage,
     },
-    agave_snapshots::error::SnapshotError,
+    agave_snapshots::{error::SnapshotError, SnapshotKind},
     crossbeam_channel::{Receiver, SendError, Sender},
     log::*,
     rayon::iter::{IntoParallelIterator, ParallelIterator},
@@ -188,13 +188,7 @@ impl SnapshotRequestHandler {
                 Some((snapshot_request, 1, 0))
             }
             _ => {
-                // Get the two highest priority requests, `y` and `z`.
-                // By asking for the second-to-last element to be in its final sorted position, we
-                // also ensure that the last element is also sorted.
-                // Note, we no longer need the second-to-last element; this code can be refactored.
-                let (_, _y, z) =
-                    requests.select_nth_unstable_by(requests_len - 2, cmp_requests_by_priority);
-                assert_eq!(z.len(), 1);
+                requests.select_nth_unstable_by(requests_len - 1, cmp_requests_by_priority);
 
                 // SAFETY: We know the len is > 1, so `pop` will return `Some`
                 let snapshot_request = requests.pop().unwrap();
@@ -840,9 +834,12 @@ mod test {
 
                 // Since we're not using `BankForks::set_root()`, we have to handle sending the
                 // correct snapshot requests ourself.
-                if bank.block_height() % FULL_SNAPSHOT_INTERVAL == 0 {
+                if bank.block_height().is_multiple_of(FULL_SNAPSHOT_INTERVAL) {
                     send_snapshot_request(Arc::clone(&bank), SnapshotRequestKind::FullSnapshot);
-                } else if bank.block_height() % INCREMENTAL_SNAPSHOT_INTERVAL == 0 {
+                } else if bank
+                    .block_height()
+                    .is_multiple_of(INCREMENTAL_SNAPSHOT_INTERVAL)
+                {
                     send_snapshot_request(
                         Arc::clone(&bank),
                         SnapshotRequestKind::IncrementalSnapshot,

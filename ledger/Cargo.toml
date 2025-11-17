@@ -98,7 +98,6 @@ solana-shred-version = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-stake-interface = { workspace = true }
-solana-stake-program = { workspace = true }
 solana-storage-bigtable = { workspace = true }
 solana-storage-proto = { workspace = true }
 solana-streamer = { workspace = true }
@@ -128,7 +127,7 @@ wincode = { workspace = true }
 [dependencies.rocksdb]
 # Avoid the vendored bzip2 within rocksdb-sys that can cause linker conflicts
 # when also using the bzip2 crate
-version = "0.23.0"
+version = "0.24.0"
 default-features = false
 features = ["lz4"]
 

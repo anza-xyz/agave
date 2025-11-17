@@ -11,7 +11,12 @@ edition = { workspace = true }
 
 [features]
 agave-unstable-api = []
-frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
+frozen-abi = [
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "solana-hash/frozen-abi",
+    "solana-bls-signatures/frozen-abi",
+]
 
 [dependencies]
 agave-logger = { workspace = true }

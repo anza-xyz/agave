@@ -22,6 +22,7 @@ agave-unstable-api = []
 chrono = { workspace = true, features = ["default"] }
 clap = "2.33.0"
 rpassword = { workspace = true }
+solana-bls-signatures = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
 solana-commitment-config = { workspace = true }

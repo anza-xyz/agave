@@ -15,8 +15,8 @@ use {
     tar::Archive,
 };
 
-pub(crate) const DEFAULT_PLATFORM_TOOLS_VERSION: &str = "v1.51";
-pub(crate) const DEFAULT_RUST_VERSION: &str = "1.84.1";
+pub(crate) const DEFAULT_PLATFORM_TOOLS_VERSION: &str = "v1.52";
+pub(crate) const DEFAULT_RUST_VERSION: &str = "1.89.0";
 
 // Common headers used for Github API.
 const USER_AGENT_HEADER: (&str, &str) = ("User-Agent", "cargo-build-sbf");

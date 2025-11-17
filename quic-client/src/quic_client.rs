@@ -47,7 +47,7 @@ impl AsyncTaskSemaphore {
     /// When returned, the lock has been locked and usage count has been
     /// incremented. When the returned MutexGuard is dropped the lock is dropped
     /// without decrementing the usage count.
-    pub fn acquire(&self) -> MutexGuard<u64> {
+    pub fn acquire(&self) -> MutexGuard<'_, u64> {
         let mut count = self.counter.lock().unwrap();
         *count += 1;
         while *count > self.permits {

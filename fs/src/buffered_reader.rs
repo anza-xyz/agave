@@ -47,12 +47,12 @@ impl<const N: usize> Stack<N> {
 
     #[inline(always)]
     unsafe fn as_slice(&self) -> &[u8] {
-        slice::from_raw_parts(self.0.as_ptr() as *const u8, N)
+        unsafe { slice::from_raw_parts(self.0.as_ptr() as *const u8, N) }
     }
 
     #[inline(always)]
     unsafe fn as_mut_slice(&mut self) -> &mut [u8] {
-        slice::from_raw_parts_mut(self.0.as_mut_ptr() as *mut u8, N)
+        unsafe { slice::from_raw_parts_mut(self.0.as_mut_ptr() as *mut u8, N) }
     }
 }
 
@@ -386,7 +386,7 @@ impl<R: BufRead> RequiredLenBufRead for BufReaderWithOverflow<R> {
 
 /// Open file at `path` with buffering reader using `buf_size` memory and doing
 /// read-ahead IO reads (if `io_uring` is supported by the platform)
-pub fn large_file_buf_reader(path: &Path, buf_size: usize) -> io::Result<impl BufRead> {
+pub fn large_file_buf_reader(path: &Path, buf_size: usize) -> io::Result<impl BufRead + use<>> {
     #[cfg(target_os = "linux")]
     {
         assert!(agave_io_uring::io_uring_supported());
@@ -415,7 +415,7 @@ mod tests {
     fn rand_bytes<const N: usize>() -> [u8; N] {
         use rand::Rng;
         let mut rng = rand::thread_rng();
-        std::array::from_fn(|_| rng.gen::<u8>())
+        std::array::from_fn(|_| rng.r#gen::<u8>())
     }
 
     #[test]

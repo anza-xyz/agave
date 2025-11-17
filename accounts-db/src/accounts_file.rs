@@ -49,6 +49,7 @@ pub enum AccountsFileError {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum StorageAccess {
     /// storages should be accessed by Mmap
+    #[deprecated(since = "4.0.0")]
     Mmap,
     /// storages should be accessed by File I/O
     /// ancient storages are created by 1-shot write to pack multiple accounts together more efficiently with new formats
@@ -339,7 +340,7 @@ impl AccountsFile {
     }
 
     /// Returns the way to access this accounts file when archiving
-    pub fn internals_for_archive(&self) -> InternalsForArchive {
+    pub fn internals_for_archive(&self) -> InternalsForArchive<'_> {
         match self {
             Self::AppendVec(av) => av.internals_for_archive(),
             Self::TieredStorage(ts) => InternalsForArchive::Mmap(

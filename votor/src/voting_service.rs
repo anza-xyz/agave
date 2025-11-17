@@ -142,7 +142,7 @@ impl VotingService {
         };
 
         let thread_hdl = Builder::new()
-            .name("solVoteService".to_string())
+            .name("solVotorVoteSvc".to_string())
             .spawn(move || {
                 let mut staked_validators_cache = StakedValidatorsCache::new(
                     bank_forks.clone(),
@@ -152,6 +152,7 @@ impl VotingService {
                     alpenglow_port_override,
                 );
 
+                info!("AlpenglowVotingService has started");
                 loop {
                     let Ok(bls_op) = bls_receiver.recv() else {
                         break;
@@ -165,6 +166,7 @@ impl VotingService {
                         &mut staked_validators_cache,
                     );
                 }
+                info!("AlpenglowVotingService has stopped");
             })
             .unwrap();
         Self { thread_hdl }
@@ -267,7 +269,7 @@ mod tests {
         solana_bls_signatures::Signature as BLSSignature,
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_keypair::Keypair,
-        solana_net_utils::sockets::bind_to_localhost_unique,
+        solana_net_utils::{sockets::bind_to_localhost_unique, SocketAddrSpace},
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
@@ -278,8 +280,7 @@ mod tests {
         solana_signer::Signer,
         solana_streamer::{
             nonblocking::swqos::SwQosConfig,
-            quic::{spawn_server_with_cancel, QuicStreamerConfig, SpawnServerResult},
-            socket::SocketAddrSpace,
+            quic::{spawn_stake_wighted_qos_server, QuicStreamerConfig, SpawnServerResult},
             streamer::StakedNodes,
         },
         std::{net::SocketAddr, sync::Arc},
@@ -366,7 +367,7 @@ mod tests {
         let (_, validator_keypairs) = create_voting_service(bls_receiver, listener_addr);
 
         // Send a BLS message via the VotingService
-        assert!(bls_sender.send(bls_op).is_ok());
+        bls_sender.send(bls_op).unwrap();
 
         // Start a quick streamer to handle quick control packets
         let (sender, receiver) = crossbeam_channel::unbounded();
@@ -382,7 +383,7 @@ mod tests {
         let SpawnServerResult {
             thread: quic_server_thread,
             ..
-        } = spawn_server_with_cancel(
+        } = spawn_stake_wighted_qos_server(
             "AlpenglowLocalClusterTest",
             "quic_streamer_test",
             [socket],

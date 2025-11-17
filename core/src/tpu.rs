@@ -6,12 +6,13 @@ use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
         banking_stage::{
-            transaction_scheduler::scheduler_controller::SchedulerConfig, BankingStage,
+            transaction_scheduler::scheduler_controller::SchedulerConfig, BankingControlMsg,
+            BankingStage, BankingStageHandle,
         },
         banking_trace::{Channels, TracerThread},
         cluster_info_vote_listener::{
             ClusterInfoVoteListener, DuplicateConfirmedSlotsSender, GossipVerifiedVoteHashSender,
-            VerifiedVoteSender, VoteTracker,
+            VerifiedVoterSlotsSender, VoteTracker,
         },
         fetch_stage::FetchStage,
         forwarding_stage::{
@@ -50,8 +51,8 @@ use {
     },
     solana_streamer::{
         quic::{
-            spawn_server_with_cancel, spawn_simple_qos_server_with_cancel,
-            SimpleQosQuicStreamerConfig, SpawnServerResult, SwQosQuicStreamerConfig,
+            spawn_simple_qos_server, spawn_stake_wighted_qos_server, SimpleQosQuicStreamerConfig,
+            SpawnServerResult, SwQosQuicStreamerConfig,
         },
         streamer::StakedNodes,
     },
@@ -63,11 +64,12 @@ use {
         collections::HashMap,
         net::{SocketAddr, UdpSocket},
         num::NonZeroUsize,
+        path::PathBuf,
         sync::{atomic::AtomicBool, Arc, RwLock},
         thread::{self, JoinHandle},
         time::Duration,
     },
-    tokio::sync::mpsc::Sender as AsyncSender,
+    tokio::sync::{mpsc, mpsc::Sender as AsyncSender},
     tokio_util::sync::CancellationToken,
 };
 
@@ -106,7 +108,7 @@ pub struct Tpu {
     fetch_stage: FetchStage,
     sig_verifier: SigVerifier,
     vote_sigverify_stage: SigVerifyStage,
-    banking_stage: Arc<RwLock<Option<BankingStage>>>,
+    banking_stage: BankingStageHandle,
     forwarding_stage: JoinHandle<()>,
     cluster_info_vote_listener: ClusterInfoVoteListener,
     broadcast_stage: BroadcastStage,
@@ -137,7 +139,7 @@ impl Tpu {
         shred_version: u16,
         vote_tracker: Arc<VoteTracker>,
         bank_forks: Arc<RwLock<BankForks>>,
-        verified_vote_sender: VerifiedVoteSender,
+        verified_voter_slots_sender: VerifiedVoterSlotsSender,
         gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
         replay_vote_receiver: ReplayVoteReceiver,
         replay_vote_sender: ReplayVoteSender,
@@ -162,6 +164,8 @@ impl Tpu {
         enable_block_production_forwarding: bool,
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
         key_notifiers: Arc<RwLock<KeyUpdaters>>,
+        banking_control_receiver: mpsc::Receiver<BankingControlMsg>,
+        scheduler_bindings: Option<(PathBuf, mpsc::Sender<BankingControlMsg>)>,
         cancel: CancellationToken,
     ) -> Self {
         let TpuSockets {
@@ -215,7 +219,7 @@ impl Tpu {
             endpoints: _,
             thread: tpu_vote_quic_t,
             key_updater: vote_streamer_key_updater,
-        } = spawn_simple_qos_server_with_cancel(
+        } = spawn_simple_qos_server(
             "solQuicTVo",
             "quic_streamer_tpu_vote",
             tpu_vote_quic_sockets,
@@ -234,7 +238,7 @@ impl Tpu {
                 endpoints: _,
                 thread: tpu_quic_t,
                 key_updater,
-            } = spawn_server_with_cancel(
+            } = spawn_stake_wighted_qos_server(
                 "solQuicTpu",
                 "quic_streamer_tpu",
                 transactions_quic_sockets,
@@ -257,7 +261,7 @@ impl Tpu {
                 endpoints: _,
                 thread: tpu_forwards_quic_t,
                 key_updater: forwards_key_updater,
-            } = spawn_server_with_cancel(
+            } = spawn_stake_wighted_qos_server(
                 "solQuicTpuFwd",
                 "quic_streamer_tpu_forwards",
                 transactions_forwards_quic_sockets,
@@ -320,7 +324,7 @@ impl Tpu {
             vote_tracker,
             bank_forks.clone(),
             subscriptions,
-            verified_vote_sender,
+            verified_voter_slots_sender,
             gossip_verified_vote_hash_sender,
             replay_vote_receiver,
             blockstore.clone(),
@@ -335,6 +339,7 @@ impl Tpu {
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
+            banking_control_receiver,
             block_production_num_workers,
             block_production_scheduler_config,
             transaction_status_sender,
@@ -343,6 +348,13 @@ impl Tpu {
             bank_forks.clone(),
             prioritization_fee_cache.clone(),
         );
+
+        #[cfg(unix)]
+        if let Some((path, banking_control_sender)) = scheduler_bindings {
+            super::scheduler_bindings_server::spawn(&path, banking_control_sender);
+        }
+        #[cfg(not(unix))]
+        assert!(scheduler_bindings.is_none());
 
         let SpawnForwardingStageResult {
             join_handle: forwarding_stage,
@@ -398,7 +410,7 @@ impl Tpu {
             fetch_stage,
             sig_verifier,
             vote_sigverify_stage,
-            banking_stage: Arc::new(RwLock::new(Some(banking_stage))),
+            banking_stage,
             forwarding_stage,
             cluster_info_vote_listener,
             broadcast_stage,
@@ -411,22 +423,13 @@ impl Tpu {
         }
     }
 
-    pub fn banking_stage(&self) -> Arc<RwLock<Option<BankingStage>>> {
-        self.banking_stage.clone()
-    }
-
     pub fn join(self) -> thread::Result<()> {
         let results = vec![
             self.fetch_stage.join(),
             self.sig_verifier.join(),
             self.vote_sigverify_stage.join(),
             self.cluster_info_vote_listener.join(),
-            self.banking_stage
-                .write()
-                .unwrap()
-                .take()
-                .expect("banking_stage must be Some")
-                .join(),
+            self.banking_stage.join(),
             self.forwarding_stage.join(),
             self.staked_nodes_updater_service.join(),
             self.tpu_quic_t.map_or(Ok(()), |t| t.join()),

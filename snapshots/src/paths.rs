@@ -21,14 +21,9 @@ use {
 pub const SNAPSHOT_STATUS_CACHE_FILENAME: &str = "status_cache";
 pub const SNAPSHOT_VERSION_FILENAME: &str = "version";
 pub const SNAPSHOT_FASTBOOT_VERSION_FILENAME: &str = "fastboot_version";
-/// No longer checked in version v3.1. Can be removed in v3.2
-pub const SNAPSHOT_STATE_COMPLETE_FILENAME: &str = "state_complete";
-pub const SNAPSHOT_STORAGES_FLUSHED_FILENAME: &str = "storages_flushed";
 pub const SNAPSHOT_ACCOUNTS_HARDLINKS: &str = "accounts_hardlinks";
 pub const SNAPSHOT_ARCHIVE_DOWNLOAD_DIR: &str = "remote";
 pub const SNAPSHOT_OBSOLETE_ACCOUNTS_FILENAME: &str = "obsolete_accounts";
-/// No longer checked in version v3.1. Can be removed in v3.2
-pub const SNAPSHOT_FULL_SNAPSHOT_SLOT_FILENAME: &str = "full_snapshot_slot";
 /// When a snapshot is taken of a bank, the state is serialized under this directory.
 /// Specifically in `BANK_SNAPSHOTS_DIR/SLOT/`.
 /// This is also where the bank state is located in the snapshot archive.

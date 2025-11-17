@@ -49,7 +49,9 @@ use {
     solana_svm_measure::measure::Measure,
     solana_svm_type_overrides::sync::{atomic::Ordering, Arc},
     solana_system_interface::{instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH},
-    solana_transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
+    solana_transaction_context::{
+        instruction::InstructionContext, IndexOfAccount, TransactionContext,
+    },
     std::{cell::RefCell, mem, rc::Rc},
 };
 
@@ -64,9 +66,9 @@ thread_local! {
     pub static MEMORY_POOL: RefCell<VmMemoryPool> = RefCell::new(VmMemoryPool::new());
 }
 
-fn morph_into_deployment_environment_v1(
-    from: Arc<BuiltinProgram<InvokeContext>>,
-) -> Result<BuiltinProgram<InvokeContext>, ElfError> {
+fn morph_into_deployment_environment_v1<'a>(
+    from: Arc<BuiltinProgram<InvokeContext<'a, 'a>>>,
+) -> Result<BuiltinProgram<InvokeContext<'a, 'a>>, ElfError> {
     let mut config = from.get_config().clone();
     config.reject_broken_elfs = true;
     // Once the tests are being build using a toolchain which supports the newer SBPF versions,
@@ -94,7 +96,7 @@ pub fn load_program_from_bytes(
     loader_key: &Pubkey,
     account_size: usize,
     deployment_slot: Slot,
-    program_runtime_environment: Arc<BuiltinProgram<InvokeContext<'static>>>,
+    program_runtime_environment: Arc<BuiltinProgram<InvokeContext<'static, 'static>>>,
     reloading: bool,
 ) -> Result<ProgramCacheEntry, InstructionError> {
     let effective_slot = deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET);
@@ -258,13 +260,13 @@ pub fn calculate_heap_cost(heap_size: u32, heap_cost: u64) -> u64 {
 /// Only used in macro, do not use directly!
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
 fn create_vm<'a, 'b>(
-    program: &'a Executable<InvokeContext<'b>>,
+    program: &'a Executable<InvokeContext<'b, 'b>>,
     regions: Vec<MemoryRegion>,
     accounts_metadata: Vec<SerializedAccountMetadata>,
-    invoke_context: &'a mut InvokeContext<'b>,
+    invoke_context: &'a mut InvokeContext<'b, 'b>,
     stack: &mut [u8],
     heap: &mut [u8],
-) -> Result<EbpfVm<'a, InvokeContext<'b>>, Box<dyn std::error::Error>> {
+) -> Result<EbpfVm<'a, InvokeContext<'b, 'b>>, Box<dyn std::error::Error>> {
     let stack_size = stack.len();
     let heap_size = heap.len();
     let memory_mapping = create_memory_mapping(
@@ -365,7 +367,7 @@ fn create_memory_mapping<'a, 'b, C: ContextObject>(
 declare_builtin_function!(
     Entrypoint,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'static, 'static>,
         _arg0: u64,
         _arg1: u64,
         _arg2: u64,
@@ -382,8 +384,8 @@ mod migration_authority {
 }
 
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-pub(crate) fn process_instruction_inner(
-    invoke_context: &mut InvokeContext,
+pub(crate) fn process_instruction_inner<'a>(
+    invoke_context: &mut InvokeContext<'a, 'a>,
 ) -> Result<u64, Box<dyn std::error::Error>> {
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
@@ -1447,15 +1449,16 @@ fn common_close_account(
 
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
 fn execute<'a, 'b: 'a>(
-    executable: &'a Executable<InvokeContext<'static>>,
-    invoke_context: &'a mut InvokeContext<'b>,
+    executable: &'a Executable<InvokeContext<'static, 'static>>,
+    invoke_context: &'a mut InvokeContext<'b, 'b>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // We dropped the lifetime tracking in the Executor by setting it to 'static,
     // thus we need to reintroduce the correct lifetime of InvokeContext here again.
     let executable = unsafe {
-        mem::transmute::<&'a Executable<InvokeContext<'static>>, &'a Executable<InvokeContext<'b>>>(
-            executable,
-        )
+        mem::transmute::<
+            &'a Executable<InvokeContext<'static, 'static>>,
+            &'a Executable<InvokeContext<'b, 'b>>,
+        >(executable)
     };
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;

@@ -749,7 +749,7 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
                             break;
                         }
                         let attempts = attempts.fetch_add(1, Ordering::Relaxed);
-                        if attempts % 1_000_000 == 0 {
+                        if attempts.is_multiple_of(1_000_000) {
                             println!(
                                 "Searched {} keypairs in {}s. {} matches found.",
                                 attempts,

@@ -35,6 +35,8 @@ use {
     },
     crate::banking_trace::Channels,
     agave_banking_stage_ingress_types::BankingPacketBatch,
+    solana_accounts_db::account_locks::validate_account_locks,
+    solana_address_lookup_table_interface::state::estimate_last_valid_slot,
     solana_clock::Slot,
     solana_message::{v0::LoadedAddresses, SimpleAddressLoader},
     solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
@@ -42,7 +44,9 @@ use {
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
     },
-    solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup,
+    solana_svm_transaction::{
+        message_address_table_lookup::SVMMessageAddressTableLookup, svm_message::SVMMessage,
+    },
     solana_transaction::{
         sanitized::{MessageHash, SanitizedTransaction},
         versioned::{sanitized::SanitizedVersionedTransaction, VersionedTransaction},
@@ -107,12 +111,17 @@ pub(crate) fn ensure_banking_stage_setup(
 
                     // WARN: Ignoring deactivation slot here can lead to the production of invalid
                     // blocks. Currently, this code is not used in prod.
-                    let (loaded_addresses, _deactivation_slot) =
+                    let (loaded_addresses, deactivation_slot) =
                         resolve_addresses_with_deactivation(&tx, &bank).ok()?;
                     let tx = RuntimeTransaction::<SanitizedTransaction>::try_from(
                         tx,
                         SimpleAddressLoader::Enabled(loaded_addresses),
                         bank.get_reserved_account_keys(),
+                    )
+                    .ok()?;
+                    validate_account_locks(
+                        tx.account_keys(),
+                        bank.get_transaction_account_lock_limit(),
                     )
                     .ok()?;
 
@@ -125,7 +134,13 @@ pub(crate) fn ensure_banking_stage_setup(
                         calculate_priority_and_cost(&tx, &compute_budget_limits.into(), &bank);
                     let task_id = BankingStageHelper::new_task_id(task_id_base + i, priority);
 
-                    Some(helper.create_new_task(tx, task_id, packet.meta().size))
+                    Some(helper.create_new_task(
+                        tx,
+                        task_id,
+                        packet.meta().size,
+                        bank.epoch(),
+                        estimate_last_valid_slot(bank.slot().min(deactivation_slot)),
+                    ))
                 });
 
                 for task in tasks {

@@ -13,15 +13,15 @@ use {
     solana_sdk_ids::bpf_loader_deprecated,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     solana_transaction_context::{
-        BorrowedInstructionAccount, IndexOfAccount, InstructionContext,
-        MAX_ACCOUNTS_PER_INSTRUCTION,
+        instruction::InstructionContext, instruction_accounts::BorrowedInstructionAccount,
+        IndexOfAccount, MAX_ACCOUNTS_PER_INSTRUCTION,
     },
     std::mem::{self, size_of},
 };
 
 /// Modifies the memory mapping in serialization and CPI return for stricter_abi_and_runtime_constraints
 pub fn modify_memory_region_of_account(
-    account: &mut BorrowedInstructionAccount<'_>,
+    account: &mut BorrowedInstructionAccount<'_, '_>,
     region: &mut MemoryRegion,
 ) {
     region.len = account.get_data().len() as u64;
@@ -36,7 +36,7 @@ pub fn modify_memory_region_of_account(
 
 /// Creates the memory mapping in serialization and CPI return for account_data_direct_mapping
 pub fn create_memory_region_of_account(
-    account: &mut BorrowedInstructionAccount<'_>,
+    account: &mut BorrowedInstructionAccount<'_, '_>,
     vaddr: u64,
 ) -> Result<MemoryRegion, InstructionError> {
     let can_data_be_changed = account.can_data_be_changed().is_ok();
@@ -52,8 +52,8 @@ pub fn create_memory_region_of_account(
 }
 
 #[allow(dead_code)]
-enum SerializeAccount<'a> {
-    Account(IndexOfAccount, BorrowedInstructionAccount<'a>),
+enum SerializeAccount<'a, 'ix_data> {
+    Account(IndexOfAccount, BorrowedInstructionAccount<'a, 'ix_data>),
     Duplicate(IndexOfAccount),
 }
 
@@ -127,7 +127,7 @@ impl Serializer {
 
     fn write_account(
         &mut self,
-        account: &mut BorrowedInstructionAccount<'_>,
+        account: &mut BorrowedInstructionAccount<'_, '_>,
     ) -> Result<u64, InstructionError> {
         if !self.stricter_abi_and_runtime_constraints {
             let vm_data_addr = self.vaddr.saturating_add(self.buffer.len() as u64);
@@ -680,9 +680,11 @@ mod tests {
         solana_sdk_ids::bpf_loader,
         solana_system_interface::MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
         solana_transaction_context::{
-            InstructionAccount, TransactionContext, MAX_ACCOUNTS_PER_TRANSACTION,
+            instruction_accounts::InstructionAccount, TransactionContext,
+            MAX_ACCOUNTS_PER_TRANSACTION,
         },
         std::{
+            borrow::Cow,
             cell::RefCell,
             mem::transmute,
             rc::Rc,
@@ -791,7 +793,7 @@ mod tests {
                             0,
                             instruction_accounts,
                             dedup_map,
-                            instruction_data.clone(),
+                            Cow::Owned(instruction_data.clone()),
                         )
                         .unwrap();
                 } else {

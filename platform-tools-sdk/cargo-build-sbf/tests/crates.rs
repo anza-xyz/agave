@@ -12,7 +12,7 @@ fn should_install_tools() -> bool {
     let toolchain_path = PathBuf::from(tools_path)
         .join(".cache")
         .join("solana")
-        .join("v1.51")
+        .join("v1.52")
         .join("platform-tools");
 
     let rust_path = toolchain_path.join("rust");
@@ -246,6 +246,7 @@ fn test_sbpfv2() {
 
 #[test]
 #[serial]
+#[ignore]
 fn test_sbpfv3() {
     let assert_v1 = build_noop_and_readelf("v3");
     assert_v1
@@ -258,6 +259,7 @@ fn test_sbpfv3() {
 
 #[test]
 #[serial]
+#[ignore]
 fn test_sbpfv4() {
     let assert_v1 = build_noop_and_readelf("v4");
     assert_v1

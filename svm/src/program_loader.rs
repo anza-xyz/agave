@@ -805,11 +805,12 @@ mod tests {
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let upcoming_environments = ProgramRuntimeEnvironments::default();
         let current_environments = batch_processor.environments.clone();
-        batch_processor
-            .epoch_boundary_preparation
-            .write()
-            .unwrap()
-            .upcoming_environments = Some(upcoming_environments.clone());
+        {
+            let mut epoch_boundary_preparation =
+                batch_processor.epoch_boundary_preparation.write().unwrap();
+            epoch_boundary_preparation.upcoming_epoch = 1;
+            epoch_boundary_preparation.upcoming_environments = Some(upcoming_environments.clone());
+        }
         mock_bank
             .account_shared_data
             .borrow_mut()

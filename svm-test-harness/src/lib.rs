@@ -1,5 +1,6 @@
 //! Solana SVM test harness.
 
+pub mod file;
 pub mod fixture;
 pub mod instr;
 pub mod program_cache;

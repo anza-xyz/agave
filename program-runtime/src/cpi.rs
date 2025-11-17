@@ -18,7 +18,7 @@ use {
     solana_svm_measure::measure::Measure,
     solana_svm_timings::ExecuteTimings,
     solana_transaction_context::{
-        vm_slice::VmSlice, BorrowedInstructionAccount, IndexOfAccount,
+        instruction_accounts::BorrowedInstructionAccount, vm_slice::VmSlice, IndexOfAccount,
         MAX_ACCOUNTS_PER_INSTRUCTION, MAX_INSTRUCTION_DATA_LEN,
     },
     std::mem,
@@ -1143,7 +1143,7 @@ fn consume_compute_meter(invoke_context: &InvokeContext, amount: u64) -> Result<
 fn update_callee_account(
     check_aligned: bool,
     caller_account: &CallerAccount,
-    mut callee_account: BorrowedInstructionAccount<'_>,
+    mut callee_account: BorrowedInstructionAccount<'_, '_>,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
 ) -> Result<bool, Error> {
@@ -1200,7 +1200,7 @@ fn update_caller_account_region(
     memory_mapping: &mut MemoryMapping,
     check_aligned: bool,
     caller_account: &CallerAccount,
-    callee_account: &mut BorrowedInstructionAccount<'_>,
+    callee_account: &mut BorrowedInstructionAccount<'_, '_>,
     account_data_direct_mapping: bool,
 ) -> Result<(), Error> {
     let is_caller_loader_deprecated = !check_aligned;
@@ -1250,7 +1250,7 @@ fn update_caller_account(
     memory_mapping: &MemoryMapping<'_>,
     check_aligned: bool,
     caller_account: &mut CallerAccount<'_>,
-    callee_account: &mut BorrowedInstructionAccount<'_>,
+    callee_account: &mut BorrowedInstructionAccount<'_, '_>,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
 ) -> Result<(), Error> {
@@ -1353,7 +1353,8 @@ mod tests {
         solana_sdk_ids::{bpf_loader, system_program},
         solana_svm_feature_set::SVMFeatureSet,
         solana_transaction_context::{
-            transaction_accounts::KeyedAccountSharedData, IndexOfAccount, InstructionAccount,
+            instruction_accounts::InstructionAccount, transaction_accounts::KeyedAccountSharedData,
+            IndexOfAccount,
         },
         std::{
             cell::{Cell, RefCell},
@@ -1361,7 +1362,7 @@ mod tests {
             rc::Rc,
             slice,
         },
-        test_case::test_matrix,
+        test_case::case,
     };
 
     macro_rules! mock_invoke_context {
@@ -1388,6 +1389,7 @@ mod tests {
                 .collect::<Vec<KeyedAccountSharedData>>();
             let mut feature_set = SVMFeatureSet::all_enabled();
             feature_set.stricter_abi_and_runtime_constraints = false;
+            feature_set.account_data_direct_mapping = false;
             let feature_set = &feature_set;
             with_mock_invoke_context_with_feature_set!(
                 $invoke_context,
@@ -1499,7 +1501,7 @@ mod tests {
             }
         }
 
-        fn caller_account(&mut self) -> CallerAccount {
+        fn caller_account(&mut self) -> CallerAccount<'_> {
             let data = if self.stricter_abi_and_runtime_constraints {
                 &mut []
             } else {
@@ -1528,7 +1530,7 @@ mod tests {
     }
 
     impl MockAccountInfo<'_> {
-        fn new(key: Pubkey, account: &AccountSharedData) -> MockAccountInfo {
+        fn new(key: Pubkey, account: &AccountSharedData) -> MockAccountInfo<'_> {
             MockAccountInfo {
                 key,
                 is_signer: false,
@@ -1980,8 +1982,13 @@ mod tests {
         assert_eq!(caller_account.serialized_data, account.data());
     }
 
-    #[test_matrix([false, true])]
-    fn test_update_caller_account_lamports_owner(stricter_abi_and_runtime_constraints: bool) {
+    #[case(false, false)]
+    #[case(true, false)]
+    #[case(true, true)]
+    fn test_update_caller_account_lamports_owner(
+        stricter_abi_and_runtime_constraints: bool,
+        account_data_direct_mapping: bool,
+    ) {
         let transaction_accounts = transaction_with_one_writable_instruction_account(vec![]);
         let account = transaction_accounts[1].1.clone();
         mock_invoke_context!(
@@ -2027,7 +2034,7 @@ mod tests {
             &mut caller_account,
             &mut callee_account,
             stricter_abi_and_runtime_constraints,
-            stricter_abi_and_runtime_constraints,
+            account_data_direct_mapping,
         )
         .unwrap();
 
@@ -2164,8 +2171,13 @@ mod tests {
         assert_eq!(data_len, 0);
     }
 
-    #[test_matrix([false, true])]
-    fn test_update_callee_account_lamports_owner(stricter_abi_and_runtime_constraints: bool) {
+    #[case(false, false)]
+    #[case(true, false)]
+    #[case(true, true)]
+    fn test_update_callee_account_lamports_owner(
+        stricter_abi_and_runtime_constraints: bool,
+        account_data_direct_mapping: bool,
+    ) {
         let transaction_accounts = transaction_with_one_writable_instruction_account(vec![]);
         let account = transaction_accounts[1].1.clone();
 
@@ -2193,7 +2205,7 @@ mod tests {
             &caller_account,
             callee_account,
             stricter_abi_and_runtime_constraints,
-            true, // account_data_direct_mapping
+            account_data_direct_mapping,
         )
         .unwrap();
 
@@ -2202,8 +2214,13 @@ mod tests {
         assert_eq!(caller_account.owner, callee_account.get_owner());
     }
 
-    #[test_matrix([false, true])]
-    fn test_update_callee_account_data_writable(stricter_abi_and_runtime_constraints: bool) {
+    #[case(false, false)]
+    #[case(true, false)]
+    #[case(true, true)]
+    fn test_update_callee_account_data_writable(
+        stricter_abi_and_runtime_constraints: bool,
+        account_data_direct_mapping: bool,
+    ) {
         let transaction_accounts =
             transaction_with_one_writable_instruction_account(b"foobar".to_vec());
         let account = transaction_accounts[1].1.clone();
@@ -2246,7 +2263,7 @@ mod tests {
                 &caller_account,
                 callee_account,
                 stricter_abi_and_runtime_constraints,
-                true, // account_data_direct_mapping
+                account_data_direct_mapping,
             )
             .unwrap(),
             stricter_abi_and_runtime_constraints,
@@ -2263,7 +2280,7 @@ mod tests {
                 &caller_account,
                 callee_account,
                 stricter_abi_and_runtime_constraints,
-                true, // account_data_direct_mapping
+                account_data_direct_mapping,
             )
             .unwrap(),
             stricter_abi_and_runtime_constraints,
@@ -2281,7 +2298,7 @@ mod tests {
             &caller_account,
             callee_account,
             stricter_abi_and_runtime_constraints,
-            true, // account_data_direct_mapping
+            account_data_direct_mapping,
         )
         .unwrap();
         borrow_instruction_account!(callee_account, invoke_context, 0);
@@ -2294,7 +2311,7 @@ mod tests {
             &caller_account,
             callee_account,
             stricter_abi_and_runtime_constraints,
-            true, // account_data_direct_mapping
+            account_data_direct_mapping,
         );
         if stricter_abi_and_runtime_constraints {
             assert_matches!(
@@ -2306,8 +2323,13 @@ mod tests {
         }
     }
 
-    #[test_matrix([false, true])]
-    fn test_update_callee_account_data_readonly(stricter_abi_and_runtime_constraints: bool) {
+    #[case(false, false)]
+    #[case(true, false)]
+    #[case(true, true)]
+    fn test_update_callee_account_data_readonly(
+        stricter_abi_and_runtime_constraints: bool,
+        account_data_direct_mapping: bool,
+    ) {
         let transaction_accounts =
             transaction_with_one_readonly_instruction_account(b"foobar".to_vec());
         let account = transaction_accounts[1].1.clone();
@@ -2350,7 +2372,7 @@ mod tests {
                 &caller_account,
                 callee_account,
                 stricter_abi_and_runtime_constraints,
-                true, // account_data_direct_mapping
+                account_data_direct_mapping,
             ),
             Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::AccountDataSizeChanged
         );
@@ -2366,7 +2388,7 @@ mod tests {
                 &caller_account,
                 callee_account,
                 stricter_abi_and_runtime_constraints,
-                true, // account_data_direct_mapping
+                account_data_direct_mapping,
             ),
             Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::AccountDataSizeChanged
         );

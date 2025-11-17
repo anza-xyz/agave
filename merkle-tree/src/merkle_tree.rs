@@ -139,7 +139,7 @@ impl MerkleTree {
         self.nodes.iter().last()
     }
 
-    pub fn find_path(&self, index: usize) -> Option<Proof> {
+    pub fn find_path(&self, index: usize) -> Option<Proof<'_>> {
         if index >= self.leaf_count {
             return None;
         }
@@ -157,7 +157,7 @@ impl MerkleTree {
             if lsib.is_some() || rsib.is_some() {
                 path.push(ProofEntry::new(target, lsib, rsib));
             }
-            if node_index % 2 == 0 {
+            if node_index.is_multiple_of(2) {
                 lsib = None;
                 rsib = if node_index + 1 < level.len() {
                     Some(&level[node_index + 1])

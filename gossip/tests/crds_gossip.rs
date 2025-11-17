@@ -19,11 +19,11 @@ use {
         crds_value::{CrdsValue, CrdsValueLabel},
     },
     solana_keypair::Keypair,
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
     solana_sha256_hasher::hash,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_time_utils::timestamp,
     std::{
         collections::{HashMap, HashSet},
@@ -458,7 +458,7 @@ fn network_run_push(
                 }
             }
         }
-        if now % CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS == 0 && now > 0 {
+        if now.is_multiple_of(CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS) && now > 0 {
             network_values.par_iter().for_each(|node| {
                 node.gossip.refresh_push_active_set(
                     &node.keypair,

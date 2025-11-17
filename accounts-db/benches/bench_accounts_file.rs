@@ -104,7 +104,11 @@ fn bench_write_accounts_file_file_io(c: &mut Criterion) {
 }
 
 fn bench_write_accounts_file_mmap(c: &mut Criterion) {
-    bench_write_accounts_file(c, StorageAccess::Mmap);
+    bench_write_accounts_file(
+        c,
+        #[allow(deprecated)]
+        StorageAccess::Mmap,
+    );
 }
 
 fn bench_scan_pubkeys(c: &mut Criterion) {
@@ -145,9 +149,14 @@ fn bench_scan_pubkeys(c: &mut Criterion) {
         // these new append vecs because that would cause double-free (or triple-free here).
         // Wrap the append vecs in ManuallyDrop to *not* remove the backing file on drop.
         let append_vec_mmap = ManuallyDrop::new(
-            AppendVec::new_from_file(append_vec.path(), append_vec.len(), StorageAccess::Mmap)
-                .unwrap()
-                .0,
+            AppendVec::new_from_file(
+                append_vec.path(),
+                append_vec.len(),
+                #[allow(deprecated)]
+                StorageAccess::Mmap,
+            )
+            .unwrap()
+            .0,
         );
         let append_vec_file = ManuallyDrop::new(
             AppendVec::new_from_file(append_vec.path(), append_vec.len(), StorageAccess::File)
@@ -230,9 +239,14 @@ fn bench_get_account_shared_data(c: &mut Criterion) {
         // these new append vecs because that would cause double-free (or triple-free here).
         // Wrap the append vecs in ManuallyDrop to *not* remove the backing file on drop.
         let append_vec_mmap = ManuallyDrop::new(
-            AppendVec::new_from_file(append_vec.path(), append_vec.len(), StorageAccess::Mmap)
-                .unwrap()
-                .0,
+            AppendVec::new_from_file(
+                append_vec.path(),
+                append_vec.len(),
+                #[allow(deprecated)]
+                StorageAccess::Mmap,
+            )
+            .unwrap()
+            .0,
         );
         let append_vec_file = ManuallyDrop::new(
             AppendVec::new_from_file(append_vec.path(), append_vec.len(), StorageAccess::File)

@@ -45,9 +45,8 @@ use {
         accounts_index::{
             in_mem_accounts_index::StartupStats, AccountSecondaryIndexes, AccountsIndex,
             AccountsIndexRootsStats, AccountsIndexScanResult, IndexKey, IsCached, ReclaimsSlotList,
-            RefCount, ScanConfig, ScanFilter, ScanResult, SlotList, UpsertReclaim,
+            RefCount, ScanConfig, ScanFilter, ScanResult, SlotList, Startup, UpsertReclaim,
         },
-        accounts_index_storage::Startup,
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
@@ -64,7 +63,7 @@ use {
     agave_fs::buffered_reader::RequiredLenBufFileRead,
     dashmap::{DashMap, DashSet},
     log::*,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     rayon::{prelude::*, ThreadPool},
     seqlock::SeqLock,
     smallvec::SmallVec,
@@ -918,7 +917,7 @@ impl AccountStorageEntry {
     }
 
     /// Locks obsolete accounts with a read lock and returns the the accounts with the guard
-    pub(crate) fn obsolete_accounts_read_lock(&self) -> RwLockReadGuard<ObsoleteAccounts> {
+    pub(crate) fn obsolete_accounts_read_lock(&self) -> RwLockReadGuard<'_, ObsoleteAccounts> {
         self.obsolete_accounts.read().unwrap()
     }
 
@@ -1060,8 +1059,8 @@ struct CleaningInfo {
 /// * Enabled - mark accounts obsolete during write cache flush
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarkObsoleteAccounts {
-    #[default]
     Disabled,
+    #[default]
     Enabled,
 }
 
@@ -4362,7 +4361,7 @@ impl AccountsDb {
         self.stats
             .create_store_count
             .fetch_add(1, Ordering::Relaxed);
-        let path_index = thread_rng().gen_range(0..paths.len());
+        let path_index = rng().random_range(0..paths.len());
         let store = Arc::new(self.new_storage_entry(slot, Path::new(&paths[path_index]), size));
 
         debug!(
@@ -5051,6 +5050,19 @@ impl AccountsDb {
         // Safe because queries to the index will be reading updates from later roots.
         self.purge_slot_cache_pubkeys(slot, pubkeys, is_dead_slot);
 
+        // Use ReclaimOldSlots to reclaim old slots if marking obsolete accounts and cleaning
+        // Cleaning is enabled if `should_flush_f` is Some.
+        // should_flush_f is set to None when
+        // 1) There's an ongoing scan to avoid reclaiming accounts being scanned.
+        // 2) The slot is > max_clean_root to prevent unrooted slots from reclaiming rooted versions.
+        let reclaim_method = if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled
+            && should_flush_f.is_some()
+        {
+            UpsertReclaim::ReclaimOldSlots
+        } else {
+            UpsertReclaim::IgnoreReclaims
+        };
+
         if !is_dead_slot {
             // This ensures that all updates are written to an AppendVec, before any
             // updates to the index happen, so anybody that sees a real entry in the index,
@@ -5060,19 +5072,6 @@ impl AccountsDb {
                 flush_stats.num_bytes_flushed.0,
                 "flush_slot_cache",
             );
-
-            // Use ReclaimOldSlots to reclaim old slots if marking obsolete accounts and cleaning
-            // Cleaning is enabled if `should_flush_f` is Some.
-            // should_flush_f is set to None when
-            // 1) There's an ongoing scan to avoid reclaiming accounts being scanned.
-            // 2) The slot is > max_clean_root to prevent unrooted slots from reclaiming rooted versions.
-            let reclaim_method = if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled
-                && should_flush_f.is_some()
-            {
-                UpsertReclaim::ReclaimOldSlots
-            } else {
-                UpsertReclaim::IgnoreReclaims
-            };
 
             let (store_accounts_timing_inner, store_accounts_total_inner_us) = measure_us!(self
                 ._store_accounts_frozen(
@@ -5096,12 +5095,23 @@ impl AccountsDb {
         // flushing. That case is handled by retry_to_get_account_accessor()
         assert!(self.accounts_cache.remove_slot(slot).is_some());
 
-        // Add `accounts` to uncleaned_pubkeys since we know they were written
-        // to a storage and should be visited by `clean`.
-        self.uncleaned_pubkeys
-            .entry(slot)
-            .or_default()
-            .extend(accounts.into_iter().map(|(pubkey, _account)| *pubkey));
+        // Add `accounts` to uncleaned_pubkeys since they were written to storage
+        // and should be visited by `clean`.
+        // If old slots were reclaimed, accounts were already cleaned,
+        // but zero lamports need to be visited during clean for full removal.
+        if reclaim_method == UpsertReclaim::ReclaimOldSlots {
+            self.uncleaned_pubkeys.entry(slot).or_default().extend(
+                accounts
+                    .into_iter()
+                    .filter(|(_pubkey, account)| account.is_zero_lamport())
+                    .map(|(pubkey, _account)| pubkey),
+            );
+        } else {
+            self.uncleaned_pubkeys
+                .entry(slot)
+                .or_default()
+                .extend(accounts.into_iter().map(|(pubkey, _account)| *pubkey));
+        }
 
         flush_stats
     }
@@ -6464,8 +6474,7 @@ impl AccountsDb {
         }
         let num_storages = storages.len();
 
-        self.accounts_index
-            .set_startup(Startup::StartupWithExtraThreads);
+        self.accounts_index.set_startup(Startup::Startup);
         let storage_info = StorageSizeAndCountMap::default();
 
         /// Accumulator for the values produced while generating the index
@@ -6609,7 +6618,7 @@ impl AccountsDb {
 
         {
             // Update the index stats now.
-            let index_stats = self.accounts_index.bucket_map_holder_stats();
+            let index_stats = self.accounts_index.stats();
 
             // stats for inserted entries that previously did *not* exist
             index_stats.inc_insert_count(total_accum.num_did_not_exist);
@@ -6839,7 +6848,7 @@ impl AccountsDb {
             .map(|bin| bin.capacity_for_startup())
             .sum();
         self.accounts_index
-            .bucket_map_holder_stats()
+            .stats()
             .capacity_in_mem
             .store(index_capacity, Ordering::Relaxed);
 
@@ -7272,7 +7281,7 @@ impl AccountsDb {
     pub fn check_accounts(&self, pubkeys: &[Pubkey], slot: Slot, num: usize, count: usize) {
         let ancestors = vec![(slot, 0)].into_iter().collect();
         for _ in 0..num {
-            let idx = thread_rng().gen_range(0..num);
+            let idx = rng().random_range(0..num);
             let account = self.load_without_fixed_root(&ancestors, &pubkeys[idx]);
             let account1 = Some((
                 AccountSharedData::new(
@@ -7283,24 +7292,6 @@ impl AccountsDb {
                 slot,
             ));
             assert_eq!(account, account1);
-        }
-    }
-
-    /// Iterate over all accounts from all `storages` and call `callback` with each account.
-    ///
-    /// `callback` parameters:
-    /// * Offset: the offset within the file of this account
-    /// * StoredAccountInfo: the account itself, with account data
-    pub fn scan_accounts_from_storages(
-        storages: &[Arc<AccountStorageEntry>],
-        mut callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
-    ) {
-        let mut reader = append_vec::new_scan_accounts_reader();
-        for storage in storages {
-            storage
-                .accounts
-                .scan_accounts(&mut reader, &mut callback)
-                .expect("must scan accounts storage");
         }
     }
 
@@ -7410,9 +7401,5 @@ impl AccountsDb {
         } else {
             0
         }
-    }
-
-    pub fn uncleaned_pubkeys(&self) -> &DashMap<Slot, Vec<Pubkey>, BuildNoHashHasher<Slot>> {
-        &self.uncleaned_pubkeys
     }
 }

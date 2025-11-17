@@ -23,7 +23,7 @@ dev-context-only-utils = [
     "dep:solana-keypair",
     "dep:solana-rent",
     "dep:solana-signer",
-    "dep:solana-stake-program",
+    "dep:solana-stake-interface",
     "dep:solana-vote-program",
     "solana-account/dev-context-only-utils",
     "solana-transaction/dev-context-only-utils",
@@ -54,7 +54,7 @@ modular-bitfield = { workspace = true }
 num_cpus = { workspace = true }
 num_enum = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
-rand = { workspace = true }
+rand = "0.9.2"
 rayon = { workspace = true }
 seqlock = { workspace = true }
 serde = { workspace = true, features = ["rc"] }
@@ -89,7 +89,7 @@ solana-reward-info = { workspace = true, features = ["serde"] }
 solana-sha256-hasher = { workspace = true }
 solana-signer = { workspace = true, optional = true }
 solana-slot-hashes = { workspace = true }
-solana-stake-program = { workspace = true, optional = true }
+solana-stake-interface = { workspace = true, optional = true }
 solana-svm-transaction = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar = { workspace = true }
@@ -110,7 +110,7 @@ assert_matches = { workspace = true }
 criterion = { workspace = true }
 libsecp256k1 = { workspace = true }
 memoffset = { workspace = true }
-rand_chacha = { workspace = true }
+rand_chacha = "0.9.0"
 serde_bytes = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-accounts-db = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }

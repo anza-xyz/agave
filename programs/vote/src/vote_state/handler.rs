@@ -14,7 +14,7 @@ use {
     solana_clock::{Clock, Epoch, Slot, UnixTimestamp},
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
-    solana_transaction_context::BorrowedInstructionAccount,
+    solana_transaction_context::instruction_accounts::BorrowedInstructionAccount,
     solana_vote_interface::{
         authorized_voters::AuthorizedVoters,
         error::VoteError,
@@ -1023,7 +1023,9 @@ mod tests {
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_sdk_ids::native_loader,
-        solana_transaction_context::{InstructionAccount, TransactionContext},
+        solana_transaction_context::{
+            instruction_accounts::InstructionAccount, TransactionContext,
+        },
         solana_vote_interface::{
             authorized_voters::AuthorizedVoters,
             state::{BlockTimestamp, VoteInit, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY},
@@ -1036,7 +1038,7 @@ mod tests {
         vote_pubkey: Pubkey,
         vote_account: AccountSharedData,
         rent: Rent,
-    ) -> TransactionContext {
+    ) -> TransactionContext<'static> {
         let program_account = AccountSharedData::new(0, 0, &native_loader::id());
         let mut transaction_context = TransactionContext::new(
             vec![(id(), program_account), (vote_pubkey, vote_account)],

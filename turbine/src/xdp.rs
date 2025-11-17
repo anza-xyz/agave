@@ -13,7 +13,11 @@ use {
 use {
     crossbeam_channel::{Sender, TrySendError},
     solana_ledger::shred,
-    std::{error::Error, net::SocketAddr, thread},
+    std::{
+        error::Error,
+        net::{Ipv4Addr, SocketAddr},
+        thread,
+    },
 };
 
 #[derive(Clone, Debug)]
@@ -105,12 +109,20 @@ pub struct XdpRetransmitter {
 
 impl XdpRetransmitter {
     #[cfg(not(target_os = "linux"))]
-    pub fn new(_config: XdpConfig, _src_port: u16) -> Result<(Self, XdpSender), Box<dyn Error>> {
+    pub fn new(
+        _config: XdpConfig,
+        _src_port: u16,
+        _src_ip: Option<Ipv4Addr>,
+    ) -> Result<(Self, XdpSender), Box<dyn Error>> {
         Err("XDP is only supported on Linux".into())
     }
 
     #[cfg(target_os = "linux")]
-    pub fn new(config: XdpConfig, src_port: u16) -> Result<(Self, XdpSender), Box<dyn Error>> {
+    pub fn new(
+        config: XdpConfig,
+        src_port: u16,
+        src_ip: Option<Ipv4Addr>,
+    ) -> Result<(Self, XdpSender), Box<dyn Error>> {
         use caps::{
             CapSet,
             Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON},
@@ -187,7 +199,7 @@ impl XdpRetransmitter {
                             QueueId(i as u64),
                             config.zero_copy,
                             None,
-                            None,
+                            src_ip,
                             src_port,
                             None,
                             receiver,
@@ -207,4 +219,29 @@ impl XdpRetransmitter {
         }
         Ok(())
     }
+}
+
+/// Returns the IPv4 address of the master interface if the given interface is part of a bond.
+#[cfg(target_os = "linux")]
+pub fn master_ip_if_bonded(interface: &str) -> Option<Ipv4Addr> {
+    let master_ifindex_path = format!("/sys/class/net/{interface}/master/ifindex");
+    if let Ok(contents) = std::fs::read_to_string(&master_ifindex_path) {
+        let idx = contents.trim().parse().unwrap();
+        return Some(
+            NetworkDevice::new_from_index(idx)
+                .and_then(|dev| dev.ipv4_addr())
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "failed to open bond master interface for {interface}: master index \
+                         {idx}: {e}"
+                    )
+                }),
+        );
+    }
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn master_ip_if_bonded(_interface: &str) -> Option<Ipv4Addr> {
+    None
 }

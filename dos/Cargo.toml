@@ -47,7 +47,6 @@ solana-rpc-client = { workspace = true }
 solana-signature = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
 solana-stake-interface = { workspace = true }
-solana-streamer = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-tps-client = { workspace = true }

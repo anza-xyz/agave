@@ -33,7 +33,7 @@ impl PushActiveSet {
         pubkey: &'a Pubkey, // This node.
         origin: &'a Pubkey, // CRDS value owner.
         stakes: &HashMap<Pubkey, u64>,
-    ) -> impl Iterator<Item = &'a Pubkey> + 'a {
+    ) -> impl Iterator<Item = &'a Pubkey> + 'a + use<'a> {
         let stake = stakes.get(pubkey).min(stakes.get(origin));
         self.get_entry(stake).get_nodes(pubkey, origin)
     }

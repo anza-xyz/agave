@@ -24,13 +24,11 @@ use {
     solana_ledger::{blockstore::Blockstore, shred::Shred},
     solana_measure::measure::Measure,
     solana_metrics::{inc_new_counter_error, inc_new_counter_info},
+    solana_net_utils::SocketAddrSpace,
     solana_poh::poh_recorder::WorkingBankEntry,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::MAX_LEADER_SCHEDULE_STAKES, bank_forks::BankForks},
-    solana_streamer::{
-        sendmmsg::{batch_send, SendPktsError},
-        socket::SocketAddrSpace,
-    },
+    solana_streamer::sendmmsg::{batch_send, SendPktsError},
     solana_time_utils::{timestamp, AtomicInterval},
     std::{
         collections::{HashMap, HashSet},
@@ -506,7 +504,7 @@ pub fn broadcast_shreds(
     };
     let (packets, quic_packets): (Vec<_>, Vec<_>) = shreds
         .iter()
-        .group_by(|shred| shred.slot())
+        .chunk_by(|shred| shred.slot())
         .into_iter()
         .flat_map(|(slot, shreds)| {
             let cluster_nodes =

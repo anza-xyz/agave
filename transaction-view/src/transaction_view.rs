@@ -9,7 +9,10 @@ use {
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
-    solana_svm_transaction::instruction::SVMInstruction,
+    solana_svm_transaction::{
+        instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
+        svm_message::SVMStaticMessage,
+    },
 };
 
 // alias for convenience
@@ -143,7 +146,7 @@ impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
 
     /// Return an iterator over the instructions in the transaction.
     #[inline]
-    pub fn instructions_iter(&self) -> InstructionsIterator {
+    pub fn instructions_iter(&self) -> InstructionsIterator<'_> {
         let data = self.data();
         // SAFETY: `frame` was created from `data`.
         unsafe { self.frame.instructions_iter(data) }
@@ -151,7 +154,7 @@ impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
 
     /// Return an iterator over the address table lookups in the transaction.
     #[inline]
-    pub fn address_table_lookup_iter(&self) -> AddressTableLookupIterator {
+    pub fn address_table_lookup_iter(&self) -> AddressTableLookupIterator<'_> {
         let data = self.data();
         // SAFETY: `frame` was created from `data`.
         unsafe { self.frame.address_table_lookup_iter(data) }
@@ -181,7 +184,7 @@ impl<D: TransactionData> TransactionView<true, D> {
     /// Return an iterator over the instructions paired with their program ids.
     pub fn program_instructions_iter(
         &self,
-    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone {
+    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
         self.instructions_iter().map(|ix| {
             let program_id_index = usize::from(ix.program_id_index);
             let program_id = &self.static_account_keys()[program_id_index];
@@ -244,6 +247,52 @@ impl<const SANITIZED: bool, D: TransactionData> Debug for TransactionView<SANITI
             .field("instructions", &self.instructions_iter())
             .field("address_table_lookups", &self.address_table_lookup_iter())
             .finish()
+    }
+}
+
+impl<D: TransactionData> SVMStaticMessage for TransactionView<true, D> {
+    fn num_transaction_signatures(&self) -> u64 {
+        self.num_required_signatures() as u64
+    }
+
+    fn num_write_locks(&self) -> u64 {
+        self.num_requested_write_locks()
+    }
+
+    fn recent_blockhash(&self) -> &Hash {
+        self.recent_blockhash()
+    }
+
+    fn num_instructions(&self) -> usize {
+        self.num_instructions() as usize
+    }
+
+    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction<'_>> {
+        self.instructions_iter()
+    }
+
+    fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
+        self.program_instructions_iter()
+    }
+
+    fn static_account_keys(&self) -> &[Pubkey] {
+        self.static_account_keys()
+    }
+
+    fn fee_payer(&self) -> &Pubkey {
+        &self.static_account_keys()[0]
+    }
+
+    fn num_lookup_tables(&self) -> usize {
+        self.num_address_table_lookups() as usize
+    }
+
+    fn message_address_table_lookups(
+        &self,
+    ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>> {
+        self.address_table_lookup_iter()
     }
 }
 

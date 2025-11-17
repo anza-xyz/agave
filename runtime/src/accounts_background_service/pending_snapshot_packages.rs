@@ -1,5 +1,6 @@
 use {
-    crate::snapshot_package::{cmp_snapshot_packages_by_priority, SnapshotKind, SnapshotPackage},
+    crate::snapshot_package::{cmp_snapshot_packages_by_priority, SnapshotPackage},
+    agave_snapshots::SnapshotKind,
     log::*,
     std::cmp::Ordering::Greater,
 };

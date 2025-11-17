@@ -29,7 +29,7 @@ use {
     solana_ledger::{create_new_tmp_ledger_with_size, shred::Shred},
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_net_utils::sockets::bind_to_localhost_unique,
+    solana_net_utils::{sockets::bind_to_localhost_unique, SocketAddrSpace},
     solana_poh_config::PohConfig,
     solana_program_binaries::core_bpf_programs,
     solana_pubkey::Pubkey,
@@ -42,10 +42,9 @@ use {
     solana_signer::{signers::Signers, Signer},
     solana_stake_interface::{
         instruction as stake_instruction,
-        state::{Authorized, Lockup},
+        state::{Authorized, Lockup, StakeStateV2},
     },
-    solana_stake_program::stake_state,
-    solana_streamer::{socket::SocketAddrSpace, streamer::StakedNodes},
+    solana_streamer::streamer::StakedNodes,
     solana_system_transaction as system_transaction,
     solana_tpu_client::tpu_client::{
         TpuClient, TpuClientConfig, DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP,
@@ -1106,7 +1105,10 @@ impl LocalCluster {
                 match (stake_account.value, vote_account.value) {
                     (Some(stake_account), Some(vote_account)) => {
                         match (
-                            stake_state::stake_from(&stake_account),
+                            stake_account
+                                .deserialize_data::<StakeStateV2>()
+                                .ok()
+                                .and_then(|state| state.stake()),
                             VoteStateV4::deserialize(vote_account.data(), &vote_account_pubkey)
                                 .ok(),
                         ) {

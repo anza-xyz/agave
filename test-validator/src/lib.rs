@@ -45,7 +45,9 @@ use {
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_net_utils::{find_available_ports_in_range, multihomed_sockets::BindIpAddrs, PortRange},
+    solana_net_utils::{
+        find_available_ports_in_range, multihomed_sockets::BindIpAddrs, PortRange, SocketAddrSpace,
+    },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
@@ -58,7 +60,7 @@ use {
     },
     solana_sdk_ids::address_lookup_table,
     solana_signer::Signer,
-    solana_streamer::{quic::DEFAULT_QUIC_ENDPOINTS, socket::SocketAddrSpace},
+    solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_transaction::Transaction,
     solana_validator_exit::Exit,
@@ -136,6 +138,7 @@ pub struct TestValidatorGenesis {
     pub max_ledger_shreds: Option<u64>,
     pub max_genesis_archive_unpacked_size: Option<u64>,
     pub geyser_plugin_config_files: Option<Vec<PathBuf>>,
+    pub enable_scheduler_bindings: bool,
     deactivate_feature_set: HashSet<Pubkey>,
     compute_unit_limit: Option<u64>,
     pub log_messages_bytes_limit: Option<usize>,
@@ -171,6 +174,7 @@ impl Default for TestValidatorGenesis {
             max_ledger_shreds: Option::<u64>::default(),
             max_genesis_archive_unpacked_size: Option::<u64>::default(),
             geyser_plugin_config_files: Option::<Vec<PathBuf>>::default(),
+            enable_scheduler_bindings: false,
             deactivate_feature_set,
             compute_unit_limit: Option::<u64>::default(),
             log_messages_bytes_limit: Option::<usize>::default(),
@@ -1035,6 +1039,7 @@ impl TestValidator {
                 gossip_port: config.node_config.gossip_addr.port(),
                 port_range: config.node_config.port_range,
                 advertised_ip: bind_ip_addr,
+                public_tvu_addr: None,
                 public_tpu_addr: None,
                 public_tpu_forwards_addr: None,
                 num_tvu_receive_sockets: NonZero::new(1).unwrap(),
@@ -1135,6 +1140,7 @@ impl TestValidator {
             staked_nodes_overrides: config.staked_nodes_overrides.clone(),
             accounts_db_config,
             runtime_config,
+            enable_scheduler_bindings: config.enable_scheduler_bindings,
             ..ValidatorConfig::default_for_test()
         };
         if let Some(ref tower_storage) = config.tower_storage {

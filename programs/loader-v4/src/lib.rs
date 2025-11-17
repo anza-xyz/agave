@@ -27,7 +27,9 @@ use {
     solana_svm_log_collector::{ic_logger_msg, LogCollector},
     solana_svm_measure::measure::Measure,
     solana_svm_type_overrides::sync::Arc,
-    solana_transaction_context::{BorrowedInstructionAccount, InstructionContext},
+    solana_transaction_context::{
+        instruction::InstructionContext, instruction_accounts::BorrowedInstructionAccount,
+    },
     std::{cell::RefCell, rc::Rc},
 };
 
@@ -428,7 +430,7 @@ fn process_instruction_finalize(
 declare_builtin_function!(
     Entrypoint,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'static, 'static>,
         _arg0: u64,
         _arg1: u64,
         _arg2: u64,
@@ -440,8 +442,8 @@ declare_builtin_function!(
     }
 );
 
-fn process_instruction_inner(
-    invoke_context: &mut InvokeContext,
+fn process_instruction_inner<'a>(
+    invoke_context: &mut InvokeContext<'a, 'a>,
 ) -> Result<u64, Box<dyn std::error::Error>> {
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;

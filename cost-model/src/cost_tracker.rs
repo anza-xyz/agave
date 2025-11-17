@@ -291,7 +291,7 @@ impl CostTracker {
     fn find_costliest_account(&self) -> (Pubkey, u64) {
         self.cost_by_writable_accounts
             .iter()
-            .max_by_key(|(_, &cost)| cost)
+            .max_by_key(|(_, cost)| **cost)
             .map(|(&pubkey, &cost)| (pubkey, cost))
             .unwrap_or_default()
     }
@@ -501,7 +501,7 @@ mod tests {
     fn simple_usage_cost_details(
         transaction: &WritableKeysTransaction,
         programs_execution_cost: u64,
-    ) -> UsageCostDetails<WritableKeysTransaction> {
+    ) -> UsageCostDetails<'_, WritableKeysTransaction> {
         UsageCostDetails {
             transaction,
             signature_cost: 0,
@@ -516,7 +516,7 @@ mod tests {
     fn simple_transaction_cost(
         transaction: &WritableKeysTransaction,
         programs_execution_cost: u64,
-    ) -> TransactionCost<WritableKeysTransaction> {
+    ) -> TransactionCost<'_, WritableKeysTransaction> {
         TransactionCost::Transaction(simple_usage_cost_details(
             transaction,
             programs_execution_cost,
@@ -525,7 +525,7 @@ mod tests {
 
     fn simple_vote_transaction_cost(
         transaction: &WritableKeysTransaction,
-    ) -> TransactionCost<WritableKeysTransaction> {
+    ) -> TransactionCost<'_, WritableKeysTransaction> {
         TransactionCost::SimpleVote { transaction }
     }
 

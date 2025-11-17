@@ -70,11 +70,11 @@ use {
         installed_scheduler_pool::BankWithScheduler,
         snapshot_bank_utils,
         snapshot_minimizer::SnapshotMinimizer,
+        stake_utils,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_shred_version::compute_shred_version,
     solana_stake_interface::{self as stake, state::StakeStateV2},
-    solana_stake_program::stake_state,
     solana_system_interface::program as system_program,
     solana_transaction::sanitized::MessageHash,
     solana_transaction_status::parse_ui_instruction,
@@ -2345,7 +2345,7 @@ fn main() {
 
                             bank.store_account(
                                 stake_pubkey,
-                                &stake_state::create_account(
+                                &stake_utils::create_stake_account(
                                     bootstrap_stake_authorized_pubkey
                                         .as_ref()
                                         .unwrap_or(identity_pubkey),
@@ -2571,8 +2571,8 @@ fn main() {
                     };
                     process_options.halt_at_slot = Some(parent_slot);
 
-                    // PrimaryForMaintenance needed over Secondary to purge any
-                    // existing simulated shreds from previous runs
+                    // PrimaryForMaintenance needed to purge (write) any existing simulated shreds
+                    // from previous runs
                     let blockstore = Arc::new(open_blockstore(
                         &ledger_path,
                         arg_matches,
@@ -3165,7 +3165,7 @@ fn main() {
                 }
                 ("compute-slot-cost", Some(arg_matches)) => {
                     let blockstore =
-                        open_blockstore(&ledger_path, arg_matches, AccessType::Secondary);
+                        open_blockstore(&ledger_path, arg_matches, AccessType::ReadOnly);
 
                     let mut slots: Vec<u64> = vec![];
                     if !arg_matches.is_present("slots") {

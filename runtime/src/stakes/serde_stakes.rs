@@ -5,7 +5,7 @@ use {
     serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    solana_stake_program::stake_state::Stake,
+    solana_stake_interface::state::Stake,
     solana_vote::vote_account::VoteAccounts,
     std::{collections::HashMap, sync::Arc},
 };
@@ -187,8 +187,11 @@ impl Serialize for SerdeStakeAccountMapToStakeFormat {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::stakes::StakesCache, rand::Rng, solana_rent::Rent,
-        solana_stake_interface::state::Delegation, solana_stake_program::stake_state,
+        super::*,
+        crate::{stake_utils, stakes::StakesCache},
+        rand::Rng,
+        solana_rent::Rent,
+        solana_stake_interface::state::Delegation,
         solana_vote_program::vote_state,
     };
 
@@ -199,7 +202,7 @@ mod tests {
         let node_pubkey = Pubkey::new_unique();
         stake_delegations.insert(
             Pubkey::new_unique(),
-            StakeAccount::try_from(stake_state::create_account(
+            StakeAccount::try_from(stake_utils::create_stake_account(
                 &Pubkey::new_unique(),
                 &vote_pubkey,
                 &vote_state::create_v4_account_with_authorized(
@@ -258,16 +261,16 @@ mod tests {
             }
         }
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let stakes_cache = StakesCache::new(Stakes {
-            unused: rng.gen(),
-            epoch: rng.gen(),
+            unused: rng.random(),
+            epoch: rng.random(),
             ..Stakes::default()
         });
-        for _ in 0..rng.gen_range(5usize..10) {
+        for _ in 0..rng.random_range(5usize..10) {
             let vote_pubkey = solana_pubkey::new_rand();
             let node_pubkey = solana_pubkey::new_rand();
-            let commission = rng.gen_range(0..101);
+            let commission = rng.random_range(0..101);
             let commission_bps = commission * 100;
             let vote_account = vote_state::create_v4_account_with_authorized(
                 &node_pubkey,
@@ -275,18 +278,18 @@ mod tests {
                 &vote_pubkey,
                 None,
                 commission_bps,
-                rng.gen_range(0..1_000_000), // lamports
+                rng.random_range(0..1_000_000), // lamports
             );
             stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
-            for _ in 0..rng.gen_range(10usize..20) {
+            for _ in 0..rng.random_range(10usize..20) {
                 let stake_pubkey = solana_pubkey::new_rand();
-                let rent = Rent::with_slots_per_epoch(rng.gen());
-                let stake_account = stake_state::create_account(
+                let rent = Rent::with_slots_per_epoch(rng.random());
+                let stake_account = stake_utils::create_stake_account(
                     &stake_pubkey, // authorized
                     &vote_pubkey,
                     &vote_account,
                     &rent,
-                    rng.gen_range(0..1_000_000), // lamports
+                    rng.random_range(0..1_000_000), // lamports
                 );
                 stakes_cache.check_and_store(&stake_pubkey, &stake_account, None);
             }

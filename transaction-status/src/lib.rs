@@ -467,7 +467,7 @@ impl TransactionWithStatusMeta {
         }
     }
 
-    pub fn account_keys(&self) -> AccountKeys {
+    pub fn account_keys(&self) -> AccountKeys<'_> {
         match self {
             Self::MissingMetadata(tx) => AccountKeys::new(&tx.message.account_keys, None),
             Self::Complete(tx_with_meta) => tx_with_meta.account_keys(),
@@ -545,7 +545,7 @@ impl VersionedTransactionWithStatusMeta {
         })
     }
 
-    pub fn account_keys(&self) -> AccountKeys {
+    pub fn account_keys(&self) -> AccountKeys<'_> {
         AccountKeys::new(
             self.transaction.message.static_account_keys(),
             Some(&self.meta.loaded_addresses),

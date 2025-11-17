@@ -107,7 +107,7 @@ impl<D: TransactionData> RuntimeTransaction<ResolvedTransactionView<D>> {
 }
 
 impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTransactionView<D>> {
-    fn as_sanitized_transaction(&self) -> Cow<SanitizedTransaction> {
+    fn as_sanitized_transaction(&self) -> Cow<'_, SanitizedTransaction> {
         let VersionedTransaction {
             signatures,
             message,

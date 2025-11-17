@@ -10,7 +10,7 @@ use {
         storable_accounts::AccountForStorage,
     },
     itertools::Itertools,
-    rand::{prelude::SliceRandom, thread_rng, Rng},
+    rand::{prelude::SliceRandom, rng, Rng},
     solana_account::{
         accounts_equal, Account, AccountSharedData, InheritableAccountFields, ReadableAccount,
         WritableAccount, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
@@ -322,7 +322,7 @@ fn test_sort_and_remove_dups_random() {
     use rand::prelude::*;
     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1234);
     let accounts: Vec<_> =
-        std::iter::repeat_with(|| generate_sample_account_from_storage(rng.gen::<u8>()))
+        std::iter::repeat_with(|| generate_sample_account_from_storage(rng.random::<u8>()))
             .take(1000)
             .collect();
 
@@ -575,7 +575,7 @@ define_accounts_db_test!(test_accountsdb_add_root_many, |db| {
     let mut pubkeys: Vec<Pubkey> = vec![];
     db.create_account(&mut pubkeys, 0, 100, 0, 0);
     for _ in 1..100 {
-        let idx = thread_rng().gen_range(0..99);
+        let idx = rng().random_range(0..99);
         let ancestors = vec![(0, 0)].into_iter().collect();
         let account = db
             .load_without_fixed_root(&ancestors, &pubkeys[idx])
@@ -591,7 +591,7 @@ define_accounts_db_test!(test_accountsdb_add_root_many, |db| {
 
     // check that all the accounts appear with a new root
     for _ in 1..100 {
-        let idx = thread_rng().gen_range(0..99);
+        let idx = rng().random_range(0..99);
         let ancestors = vec![(0, 0)].into_iter().collect();
         let account0 = db
             .load_without_fixed_root(&ancestors, &pubkeys[idx])
@@ -802,7 +802,7 @@ define_accounts_db_test!(test_remove_unrooted_slot_storage, |db| {
 
 fn update_accounts(accounts: &AccountsDb, pubkeys: &[Pubkey], slot: Slot, range: usize) {
     for _ in 1..1000 {
-        let idx = thread_rng().gen_range(0..range);
+        let idx = rng().random_range(0..range);
         let ancestors = vec![(slot, 0)].into_iter().collect();
         if let Some((mut account, _)) = accounts.load_without_fixed_root(&ancestors, &pubkeys[idx])
         {
@@ -1929,7 +1929,7 @@ fn test_store_account_stress() {
                     let mut account = AccountSharedData::new(1, 0, &pubkey);
                     let mut i = 0;
                     loop {
-                        let account_bal = thread_rng().gen_range(1..99);
+                        let account_bal = rng().random_range(1..99);
                         account.set_lamports(account_bal);
                         db.store_for_tests((slot, [(&pubkey, &account)].as_slice()));
 
@@ -2568,7 +2568,7 @@ fn test_select_candidates_by_total_usage_no_candidates() {
     assert_eq!(0, next_candidates.len());
 }
 
-#[test_case(StorageAccess::Mmap)]
+#[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
 #[test_case(StorageAccess::File)]
 fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: StorageAccess) {
     // three candidates, one selected for shrink, one is put back to the candidate list and one is ignored
@@ -2635,7 +2635,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: S
     assert!(next_candidates.contains(&store2_slot));
 }
 
-#[test_case(StorageAccess::Mmap)]
+#[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
 #[test_case(StorageAccess::File)]
 fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: StorageAccess) {
     // three candidates, 2 are selected for shrink, one is ignored
@@ -2699,7 +2699,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: S
     assert_eq!(0, next_candidates.len());
 }
 
-#[test_case(StorageAccess::Mmap)]
+#[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
 #[test_case(StorageAccess::File)]
 fn test_select_candidates_by_total_usage_all_clean(storage_access: StorageAccess) {
     // 2 candidates, they must be selected to achieve the target alive ratio
@@ -4388,7 +4388,7 @@ fn start_load_thread(
                 // Ordering::Relaxed is ok because of no data dependencies; the modified field is
                 // completely free-standing cfg(test) control-flow knob.
                 db.load_limit
-                    .store(thread_rng().gen_range(0..10) as u64, Ordering::Relaxed);
+                    .store(rng().random_range(0..10) as u64, Ordering::Relaxed);
 
                 // Load should never be unable to find this key
                 let loaded_account = db
@@ -4654,7 +4654,7 @@ fn test_cache_flush_remove_unrooted_race_multiple_slots() {
                 (slot, bank_id)
             })
             .collect();
-        all_slots.shuffle(&mut rand::thread_rng());
+        all_slots.shuffle(&mut rand::rng());
         let slots_to_dump = &all_slots[0..num_cached_slots as usize / 2];
         let slots_to_keep = &all_slots[num_cached_slots as usize / 2..];
 
@@ -4797,7 +4797,7 @@ fn test_remove_uncleaned_slots_and_collect_pubkeys_up_to_slot() {
     assert!(candidates_contain(&pubkey3));
 }
 
-#[test_case(StorageAccess::Mmap)]
+#[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
 #[test_case(StorageAccess::File)]
 fn test_shrink_productive(storage_access: StorageAccess) {
     agave_logger::setup();
@@ -4833,7 +4833,7 @@ fn test_shrink_productive(storage_access: StorageAccess) {
     assert!(!AccountsDb::is_shrinking_productive(&store));
 }
 
-#[test_case(StorageAccess::Mmap)]
+#[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
 #[test_case(StorageAccess::File)]
 fn test_is_candidate_for_shrink(storage_access: StorageAccess) {
     agave_logger::setup();
@@ -5012,7 +5012,7 @@ fn test_calculate_storage_count_and_alive_bytes_obsolete_account(
     let mut offsets: Vec<_> = offsets.into_iter().zip(data_lens).collect();
 
     // Randomize the accounts that get marked obsolete
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     offsets.shuffle(&mut rng);
 
     let (accounts_to_mark_obsolete, accounts_to_keep) =
@@ -5320,28 +5320,6 @@ fn test_filter_zero_lamport_clean_for_incremental_snapshots() {
     }
 }
 
-impl AccountsDb {
-    /// helper function to test unref_accounts  clean_dead_slots_from_accounts_index
-    fn test_unref(
-        &self,
-        call_clean: bool,
-        purged_slot_pubkeys: HashSet<(Slot, Pubkey)>,
-        purged_stored_account_slots: &mut AccountSlots,
-        pubkeys_removed_from_accounts_index: &PubkeysRemovedFromAccountsIndex,
-    ) {
-        self.unref_accounts(
-            purged_slot_pubkeys,
-            purged_stored_account_slots,
-            pubkeys_removed_from_accounts_index,
-        );
-
-        if call_clean {
-            let empty_vec = Vec::default();
-            self.clean_dead_slots_from_accounts_index(empty_vec.iter());
-        }
-    }
-}
-
 #[test]
 /// test 'unref' parameter 'pubkeys_removed_from_accounts_index'
 fn test_unref_pubkeys_removed_from_accounts_index() {
@@ -5369,8 +5347,7 @@ fn test_unref_pubkeys_removed_from_accounts_index() {
         );
 
         let mut purged_stored_account_slots = AccountSlots::default();
-        db.test_unref(
-            false,
+        db.unref_accounts(
             purged_slot_pubkeys,
             &mut purged_stored_account_slots,
             &pubkeys_removed_from_accounts_index,
@@ -5387,93 +5364,89 @@ fn test_unref_pubkeys_removed_from_accounts_index() {
 #[test]
 fn test_unref_accounts() {
     let pubkeys_removed_from_accounts_index = PubkeysRemovedFromAccountsIndex::default();
-    for call_clean in [true, false] {
-        {
-            let db = AccountsDb::new_single_for_tests();
-            let mut purged_stored_account_slots = AccountSlots::default();
 
-            db.test_unref(
-                call_clean,
-                HashSet::default(),
-                &mut purged_stored_account_slots,
-                &pubkeys_removed_from_accounts_index,
-            );
-            assert!(purged_stored_account_slots.is_empty());
-        }
+    {
+        let db = AccountsDb::new_single_for_tests();
+        let mut purged_stored_account_slots = AccountSlots::default();
 
-        let slot1 = 1;
-        let slot2 = 2;
-        let pk1 = Pubkey::from([1; 32]);
-        let pk2 = Pubkey::from([2; 32]);
-        {
-            // pk1 in slot1, purge it
-            let db = AccountsDb::new_single_for_tests();
-            let mut purged_slot_pubkeys = HashSet::default();
-            purged_slot_pubkeys.insert((slot1, pk1));
-            let mut reclaims = ReclaimsSlotList::default();
-            db.accounts_index.upsert(
-                slot1,
-                slot1,
-                &pk1,
-                &AccountSharedData::default(),
-                &AccountSecondaryIndexes::default(),
-                AccountInfo::default(),
-                &mut reclaims,
-                UpsertReclaim::IgnoreReclaims,
-            );
+        db.unref_accounts(
+            HashSet::default(),
+            &mut purged_stored_account_slots,
+            &pubkeys_removed_from_accounts_index,
+        );
+        assert!(purged_stored_account_slots.is_empty());
+    }
 
-            let mut purged_stored_account_slots = AccountSlots::default();
-            db.test_unref(
-                call_clean,
-                purged_slot_pubkeys,
-                &mut purged_stored_account_slots,
-                &pubkeys_removed_from_accounts_index,
-            );
-            assert_eq!(
-                vec![(pk1, vec![slot1].into_iter().collect::<IntSet<_>>())],
-                purged_stored_account_slots.into_iter().collect::<Vec<_>>()
-            );
-            db.assert_ref_count(&pk1, 0);
-        }
-        {
-            let db = AccountsDb::new_single_for_tests();
-            let mut purged_stored_account_slots = AccountSlots::default();
-            let mut purged_slot_pubkeys = HashSet::default();
-            let mut reclaims = ReclaimsSlotList::default();
-            // pk1 and pk2 both in slot1 and slot2, so each has refcount of 2
-            for slot in [slot1, slot2] {
-                for pk in [pk1, pk2] {
-                    db.accounts_index.upsert(
-                        slot,
-                        slot,
-                        &pk,
-                        &AccountSharedData::default(),
-                        &AccountSecondaryIndexes::default(),
-                        AccountInfo::default(),
-                        &mut reclaims,
-                        UpsertReclaim::IgnoreReclaims,
-                    );
-                }
+    let slot1 = 1;
+    let slot2 = 2;
+    let pk1 = Pubkey::from([1; 32]);
+    let pk2 = Pubkey::from([2; 32]);
+    {
+        // pk1 in slot1, purge it
+        let db = AccountsDb::new_single_for_tests();
+        let mut purged_slot_pubkeys = HashSet::default();
+        purged_slot_pubkeys.insert((slot1, pk1));
+        let mut reclaims = ReclaimsSlotList::default();
+        db.accounts_index.upsert(
+            slot1,
+            slot1,
+            &pk1,
+            &AccountSharedData::default(),
+            &AccountSecondaryIndexes::default(),
+            AccountInfo::default(),
+            &mut reclaims,
+            UpsertReclaim::IgnoreReclaims,
+        );
+
+        let mut purged_stored_account_slots = AccountSlots::default();
+        db.unref_accounts(
+            purged_slot_pubkeys,
+            &mut purged_stored_account_slots,
+            &pubkeys_removed_from_accounts_index,
+        );
+        assert_eq!(
+            vec![(pk1, vec![slot1].into_iter().collect::<IntSet<_>>())],
+            purged_stored_account_slots.into_iter().collect::<Vec<_>>()
+        );
+        db.assert_ref_count(&pk1, 0);
+    }
+    {
+        let db = AccountsDb::new_single_for_tests();
+        let mut purged_stored_account_slots = AccountSlots::default();
+        let mut purged_slot_pubkeys = HashSet::default();
+        let mut reclaims = ReclaimsSlotList::default();
+        // pk1 and pk2 both in slot1 and slot2, so each has refcount of 2
+        for slot in [slot1, slot2] {
+            for pk in [pk1, pk2] {
+                db.accounts_index.upsert(
+                    slot,
+                    slot,
+                    &pk,
+                    &AccountSharedData::default(),
+                    &AccountSecondaryIndexes::default(),
+                    AccountInfo::default(),
+                    &mut reclaims,
+                    UpsertReclaim::IgnoreReclaims,
+                );
             }
-            // purge pk1 from both 1 and 2 and pk2 from slot 1
-            let purges = vec![(slot1, pk1), (slot1, pk2), (slot2, pk1)];
-            purges.into_iter().for_each(|(slot, pk)| {
-                purged_slot_pubkeys.insert((slot, pk));
-            });
-            db.test_unref(
-                call_clean,
-                purged_slot_pubkeys,
-                &mut purged_stored_account_slots,
-                &pubkeys_removed_from_accounts_index,
-            );
-            for (pk, slots) in [(pk1, vec![slot1, slot2]), (pk2, vec![slot1])] {
-                let result = purged_stored_account_slots.remove(&pk).unwrap();
-                assert_eq!(result, slots.into_iter().collect::<IntSet<_>>());
-            }
-            assert!(purged_stored_account_slots.is_empty());
-            db.assert_ref_count(&pk1, 0);
-            db.assert_ref_count(&pk2, 1);
         }
+        // purge pk1 from both 1 and 2 and pk2 from slot 1
+        let purges = vec![(slot1, pk1), (slot1, pk2), (slot2, pk1)];
+        purges.into_iter().for_each(|(slot, pk)| {
+            purged_slot_pubkeys.insert((slot, pk));
+        });
+        db.unref_accounts(
+            purged_slot_pubkeys,
+            &mut purged_stored_account_slots,
+            &pubkeys_removed_from_accounts_index,
+        );
+        for (pk, slots) in [(pk1, vec![slot1, slot2]), (pk2, vec![slot1])] {
+            let result = purged_stored_account_slots.remove(&pk).unwrap();
+            assert_eq!(result, slots.into_iter().collect::<IntSet<_>>());
+        }
+        assert!(purged_stored_account_slots.is_empty());
+        db.assert_ref_count(&pk1, 0);
+        db.assert_ref_count(&pk2, 1);
     }
 }
 
@@ -6335,7 +6308,7 @@ fn insert_store(db: &AccountsDb, append_vec: Arc<AccountStorageEntry>) {
     db.storage.insert(append_vec.slot(), append_vec);
 }
 
-#[test_case(StorageAccess::Mmap)]
+#[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
 #[test_case(StorageAccess::File)]
 #[should_panic(expected = "self.storage.remove")]
 fn test_handle_dropped_roots_for_ancient_assert(storage_access: StorageAccess) {

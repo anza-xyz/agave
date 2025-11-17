@@ -24,11 +24,11 @@ use {
     },
     solana_keypair::Keypair,
     solana_ledger::{blockstore_options::BlockstoreOptions, use_snapshot_archives_at_startup},
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{collections::HashSet, net::SocketAddr, path::PathBuf, str::FromStr},
 };
@@ -225,37 +225,10 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Rendezvous with the cluster at this gossip entrypoint"),
     )
     .arg(
-        Arg::with_name("no_snapshot_fetch")
-            .long("no-snapshot-fetch")
-            .takes_value(false)
-            .help(
-                "Do not attempt to fetch a snapshot from the cluster, start from a local snapshot \
-                 if present",
-            ),
-    )
-    .arg(
-        Arg::with_name("no_genesis_fetch")
-            .long("no-genesis-fetch")
-            .takes_value(false)
-            .help("Do not fetch genesis from the cluster"),
-    )
-    .arg(
         Arg::with_name("no_voting")
             .long("no-voting")
             .takes_value(false)
             .help("Launch validator without voting"),
-    )
-    .arg(
-        Arg::with_name("check_vote_account")
-            .long("check-vote-account")
-            .takes_value(true)
-            .value_name("RPC_URL")
-            .requires("entrypoint")
-            .conflicts_with_all(&["no_voting"])
-            .help(
-                "Sanity check vote account state at startup. The JSON RPC endpoint at RPC_URL \
-                 must expose `--full-rpc-api`",
-            ),
     )
     .arg(
         Arg::with_name("restricted_repair_only_mode")
@@ -375,7 +348,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .validator(solana_net_utils::is_host_port)
             .help(
-                "Specify TPU address to advertise in gossip [default: ask --entrypoint or \
+                "Specify TPU QUIC address to advertise in gossip [default: ask --entrypoint or \
                  localhost when --entrypoint is not provided]",
             ),
     )
@@ -386,8 +359,20 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .validator(solana_net_utils::is_host_port)
             .help(
-                "Specify TPU Forwards address to advertise in gossip [default: ask --entrypoint \
-                 or localhostwhen --entrypoint is not provided]",
+                "Specify TPU Forwards QUIC address to advertise in gossip [default: ask \
+                 --entrypoint or localhostwhen --entrypoint is not provided]",
+            ),
+    )
+    .arg(
+        Arg::with_name("public_tvu_addr")
+            .long("public-tvu-address")
+            .alias("tvu-host-addr")
+            .value_name("HOST:PORT")
+            .takes_value(true)
+            .validator(solana_net_utils::is_host_port)
+            .help(
+                "Specify TVU address to advertise in gossip [default: ask --entrypoint or \
+                 localhost when --entrypoint is not provided]",
             ),
     )
     .arg(
@@ -445,12 +430,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                 "full_snapshot_interval_slots",
             ])
             .help("Disable all snapshot generation"),
-    )
-    .arg(
-        Arg::with_name("no_incremental_snapshots")
-            .long("no-incremental-snapshots")
-            .takes_value(false)
-            .help("Disable incremental snapshots"),
     )
     .arg(
         Arg::with_name("snapshot_interval_slots")
@@ -595,64 +574,10 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Output snapshot version"),
     )
     .arg(
-        Arg::with_name("limit_ledger_size")
-            .long("limit-ledger-size")
-            .value_name("SHRED_COUNT")
-            .takes_value(true)
-            .min_values(0)
-            .max_values(1)
-            /* .default_value() intentionally not used here! */
-            .help("Keep this amount of shreds in root slots."),
-    )
-    .arg(
-        Arg::with_name("rocksdb_shred_compaction")
-            .long("rocksdb-shred-compaction")
-            .value_name("ROCKSDB_COMPACTION_STYLE")
-            .takes_value(true)
-            .possible_values(&["level"])
-            .default_value(&default_args.rocksdb_shred_compaction)
-            .help(
-                "Controls how RocksDB compacts shreds. *WARNING*: You will lose your Blockstore \
-                 data when you switch between options.",
-            ),
-    )
-    .arg(
-        Arg::with_name("rocksdb_ledger_compression")
-            .hidden(hidden_unless_forced())
-            .long("rocksdb-ledger-compression")
-            .value_name("COMPRESSION_TYPE")
-            .takes_value(true)
-            .possible_values(&["none", "lz4", "snappy", "zlib"])
-            .default_value(&default_args.rocksdb_ledger_compression)
-            .help(
-                "The compression algorithm that is used to compress transaction status data. \
-                 Turning on compression can save ~10% of the ledger size.",
-            ),
-    )
-    .arg(
-        Arg::with_name("rocksdb_perf_sample_interval")
-            .hidden(hidden_unless_forced())
-            .long("rocksdb-perf-sample-interval")
-            .value_name("ROCKS_PERF_SAMPLE_INTERVAL")
-            .takes_value(true)
-            .validator(is_parsable::<usize>)
-            .default_value(&default_args.rocksdb_perf_sample_interval)
-            .help(
-                "Controls how often RocksDB read/write performance samples are collected. Perf \
-                 samples are collected in 1 / ROCKS_PERF_SAMPLE_INTERVAL sampling rate.",
-            ),
-    )
-    .arg(
         Arg::with_name("skip_startup_ledger_verification")
             .long("skip-startup-ledger-verification")
             .takes_value(false)
             .help("Skip ledger verification at validator bootup."),
-    )
-    .arg(
-        Arg::with_name("cuda")
-            .long("cuda")
-            .takes_value(false)
-            .help("Use CUDA"),
     )
     .arg(
         clap::Arg::with_name("require_tower")
@@ -750,14 +675,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Log when transactions are processed which reference a given key."),
     )
     .arg(
-        Arg::with_name("only_known_rpc")
-            .alias("no-untrusted-rpc")
-            .long("only-known-rpc")
-            .takes_value(false)
-            .requires("known_validators")
-            .help("Use the RPC service of known validators only"),
-    )
-    .arg(
         Arg::with_name("repair_validators")
             .long("repair-validator")
             .validator(is_pubkey)
@@ -824,10 +741,30 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
         Arg::with_name("tpu_max_connections_per_peer")
             .long("tpu-max-connections-per-peer")
             .takes_value(true)
-            .default_value(&default_args.tpu_max_connections_per_peer)
             .validator(is_parsable::<u32>)
             .hidden(hidden_unless_forced())
-            .help("Controls the max concurrent connections per IpAddr."),
+            .help(
+                "Controls the max concurrent connections per IpAddr or staked identity.Overrides \
+                 tpu-max-connections-per-unstaked-peer and tpu-max-connections-per-staked-peer",
+            ),
+    )
+    .arg(
+        Arg::with_name("tpu_max_connections_per_unstaked_peer")
+            .long("tpu-max-connections-per-unstaked-peer")
+            .takes_value(true)
+            .default_value(&default_args.tpu_max_connections_per_unstaked_peer)
+            .validator(is_parsable::<u32>)
+            .hidden(hidden_unless_forced())
+            .help("Controls the max concurrent connections per IpAddr for unstaked clients."),
+    )
+    .arg(
+        Arg::with_name("tpu_max_connections_per_staked_peer")
+            .long("tpu-max-connections-per-staked-peer")
+            .takes_value(true)
+            .default_value(&default_args.tpu_max_connections_per_staked_peer)
+            .validator(is_parsable::<u32>)
+            .hidden(hidden_unless_forced())
+            .help("Controls the max concurrent connections per staked identity."),
     )
     .arg(
         Arg::with_name("tpu_max_staked_connections")
@@ -962,27 +899,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                  generally produce higher compression ratio at the expense of speed and memory. \
                  See the zstd manpage for more information.",
             ),
-    )
-    .arg(
-        Arg::with_name("max_genesis_archive_unpacked_size")
-            .long("max-genesis-archive-unpacked-size")
-            .value_name("NUMBER")
-            .takes_value(true)
-            .default_value(&default_args.genesis_archive_unpacked_size)
-            .help("maximum total uncompressed file size of downloaded genesis archive"),
-    )
-    .arg(
-        Arg::with_name("wal_recovery_mode")
-            .long("wal-recovery-mode")
-            .value_name("MODE")
-            .takes_value(true)
-            .possible_values(&[
-                "tolerate_corrupted_tail_records",
-                "absolute_consistency",
-                "point_in_time",
-                "skip_any_corrupted_record",
-            ])
-            .help("Mode to recovery the ledger db write ahead log."),
     )
     .arg(
         Arg::with_name("poh_pinned_cpu_core")
@@ -1148,12 +1064,13 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
     .arg(
         Arg::with_name("accounts_db_mark_obsolete_accounts")
             .long("accounts-db-mark-obsolete-accounts")
-            .help("Enables experimental obsolete account tracking")
+            .help("Controls obsolete account tracking")
+            .takes_value(true)
+            .possible_values(&["enabled", "disabled"])
             .long_help(
-                "Enables experimental obsolete account tracking. This feature tracks obsolete \
-                 accounts in the account storage entry allowing for earlier cleaning of obsolete \
-                 accounts in the storages and index. At this time this feature is not compatible \
-                 with booting from local snapshot state and must unpack from archives.",
+                "Controls obsolete account tracking. This feature tracks obsolete accounts in the \
+                 account storage entry allowing for earlier cleaning of obsolete accounts in the \
+                 storages and index. This value is currently enabled by default.",
             )
             .hidden(hidden_unless_forced()),
     )
@@ -1175,6 +1092,15 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(is_pow2)
             .takes_value(true)
             .help("Number of bins to divide the accounts index into"),
+    )
+    .arg(
+        Arg::with_name("accounts_index_initial_accounts_count")
+            .long("accounts-index-initial-accounts-count")
+            .value_name("NUMBER")
+            .validator(is_parsable::<usize>)
+            .takes_value(true)
+            .help("Pre-allocate the accounts index, assuming this many accounts")
+            .hidden(hidden_unless_forced()),
     )
     .arg(
         Arg::with_name("accounts_index_path")
@@ -1308,6 +1234,12 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("enable_scheduler_bindings")
+            .long("enable-scheduler-bindings")
+            .takes_value(false)
+            .help("Enables external processes to connect and manage block production"),
+    )
+    .arg(
         Arg::with_name("unified_scheduler_handler_threads")
             .long("unified-scheduler-handler-threads")
             .value_name("COUNT")
@@ -1376,10 +1308,12 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                  set,tpu-client-next is used by default.",
             ),
     )
-    .args(&pub_sub_config::args())
+    .args(&pub_sub_config::args(/*test_validator:*/ false))
     .args(&json_rpc_config::args())
     .args(&rpc_bigtable_config::args())
     .args(&send_transaction_config::args())
+    .args(&rpc_bootstrap_config::args())
+    .args(&blockstore_options::args())
 }
 
 fn validators_set(
