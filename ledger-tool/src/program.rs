@@ -161,15 +161,6 @@ and the following fields are required
                 .arg(&load_genesis_config_arg)
                 .args(&snapshot_config_args)
                 .arg(
-                    Arg::with_name("memory")
-                        .help("Heap memory for the program to run on")
-                        .short("m")
-                        .long("memory")
-                        .value_name("BYTES")
-                        .takes_value(true)
-                        .default_value("0"),
-                )
-                .arg(
                     Arg::with_name("mode")
                         .help(
                             "Mode of execution, where 'interpreter' runs \
