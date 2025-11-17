@@ -14,6 +14,7 @@ pub(crate) struct TargetBpfV2 {
     pub program_address: Pubkey,
     pub program_account: AccountSharedData,
     pub program_data_address: Pubkey,
+    pub program_data_account_lamports: u64,
 }
 
 impl TargetBpfV2 {
@@ -24,7 +25,7 @@ impl TargetBpfV2 {
     pub(crate) fn new_checked(
         bank: &Bank,
         program_address: &Pubkey,
-    ) -> Result<(Self, Option<u64>), CoreBpfMigrationError> {
+    ) -> Result<Self, CoreBpfMigrationError> {
         // The program account should exist.
         let program_account = bank
             .get_account_with_fixed_root(program_address)
@@ -45,7 +46,7 @@ impl TargetBpfV2 {
         let program_data_address = get_program_data_address(program_address);
 
         // The program data account is expected not to exist.
-        let current_lamports =
+        let program_data_account_lamports =
             if let Some(account) = bank.get_account_with_fixed_root(&program_data_address) {
                 // The program data account should not exist, but a system account with funded
                 // lamports is acceptable.
@@ -54,19 +55,17 @@ impl TargetBpfV2 {
                         *program_address,
                     ));
                 }
-                Some(account.lamports())
+                account.lamports()
             } else {
-                None
+                0
             };
 
-        Ok((
-            Self {
-                program_address: *program_address,
-                program_account,
-                program_data_address,
-            },
-            current_lamports,
-        ))
+        Ok(Self {
+            program_address: *program_address,
+            program_account,
+            program_data_address,
+            program_data_account_lamports,
+        })
     }
 }
 
@@ -128,7 +127,7 @@ mod tests {
         // Success
         store_account(&bank, &program_address, &elf, &bpf_loader::id(), true);
 
-        let (target_bpf_v2, _) = TargetBpfV2::new_checked(&bank, &program_address).unwrap();
+        let target_bpf_v2 = TargetBpfV2::new_checked(&bank, &program_address).unwrap();
 
         assert_eq!(target_bpf_v2.program_address, program_address);
         assert_eq!(target_bpf_v2.program_account.data(), elf.as_slice());

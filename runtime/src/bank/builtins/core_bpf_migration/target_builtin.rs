@@ -17,6 +17,7 @@ pub(crate) struct TargetBuiltin {
     pub program_address: Pubkey,
     pub program_account: AccountSharedData,
     pub program_data_address: Pubkey,
+    pub program_data_account_lamports: u64,
 }
 
 impl TargetBuiltin {
@@ -26,7 +27,7 @@ impl TargetBuiltin {
         bank: &Bank,
         program_address: &Pubkey,
         migration_target: &CoreBpfMigrationTargetType,
-    ) -> Result<(Self, Option<u64>), CoreBpfMigrationError> {
+    ) -> Result<Self, CoreBpfMigrationError> {
         let program_account = match migration_target {
             CoreBpfMigrationTargetType::Builtin => {
                 // The program account should exist.
@@ -54,7 +55,7 @@ impl TargetBuiltin {
         let program_data_address = get_program_data_address(program_address);
 
         // The program data account is expected not to exist.
-        let current_lamports =
+        let program_data_account_lamports =
             if let Some(account) = bank.get_account_with_fixed_root(&program_data_address) {
                 // The program data account should not exist, but a system account with funded
                 // lamports is acceptable.
@@ -63,19 +64,17 @@ impl TargetBuiltin {
                         *program_address,
                     ));
                 }
-                Some(account.lamports())
+                account.lamports()
             } else {
-                None
+                0
             };
 
-        Ok((
-            Self {
-                program_address: *program_address,
-                program_account,
-                program_data_address,
-            },
-            current_lamports,
-        ))
+        Ok(Self {
+            program_address: *program_address,
+            program_account,
+            program_data_address,
+            program_data_account_lamports,
+        })
     }
 }
 
@@ -146,7 +145,7 @@ mod tests {
         let program_data_address = get_program_data_address(&program_address);
 
         // Success
-        let (target_builtin, _) =
+        let target_builtin =
             TargetBuiltin::new_checked(&bank, &program_address, &migration_target).unwrap();
         assert_eq!(target_builtin.program_address, program_address);
         assert_eq!(target_builtin.program_account, program_account);
@@ -209,7 +208,7 @@ mod tests {
         let program_data_address = get_program_data_address(&program_address);
 
         // Success
-        let (target_builtin, _) =
+        let target_builtin =
             TargetBuiltin::new_checked(&bank, &program_address, &migration_target).unwrap();
         assert_eq!(target_builtin.program_address, program_address);
         assert_eq!(target_builtin.program_account, program_account);
