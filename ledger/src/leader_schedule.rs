@@ -1,6 +1,6 @@
 use {
-    rand::distr::{weighted::WeightedIndex, Distribution},
-    rand_chacha::{rand_core::SeedableRng, ChaChaRng},
+    rand0_8_5::distributions::{Distribution, WeightedIndex},
+    rand_chacha0_3_1::{rand_core::SeedableRng, ChaChaRng},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     std::{collections::HashMap, convert::identity, ops::Index, sync::Arc},
