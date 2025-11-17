@@ -7295,24 +7295,6 @@ impl AccountsDb {
         }
     }
 
-    /// Iterate over all accounts from all `storages` and call `callback` with each account.
-    ///
-    /// `callback` parameters:
-    /// * Offset: the offset within the file of this account
-    /// * StoredAccountInfo: the account itself, with account data
-    pub fn scan_accounts_from_storages(
-        storages: &[Arc<AccountStorageEntry>],
-        mut callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
-    ) {
-        let mut reader = append_vec::new_scan_accounts_reader();
-        for storage in storages {
-            storage
-                .accounts
-                .scan_accounts(&mut reader, &mut callback)
-                .expect("must scan accounts storage");
-        }
-    }
-
     /// callers used to call store_uncached. But, this is not allowed anymore.
     pub fn store_for_tests<'a>(&self, accounts: impl StorableAccounts<'a>) {
         self.store_accounts_unfrozen(
@@ -7419,9 +7401,5 @@ impl AccountsDb {
         } else {
             0
         }
-    }
-
-    pub fn uncleaned_pubkeys(&self) -> &DashMap<Slot, Vec<Pubkey>, BuildNoHashHasher<Slot>> {
-        &self.uncleaned_pubkeys
     }
 }
