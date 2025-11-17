@@ -922,6 +922,7 @@ mod test {
             receiver,
             server_address,
             Some(&client_keypair),
+            Some(&rich_node_keypair),
             num_expected_packets,
         ));
         cancel.cancel();
@@ -968,11 +969,12 @@ mod test {
     async fn check_multiple_packets_with_client_id(
         receiver: Receiver<PacketBatch>,
         server_address: SocketAddr,
-        client_keypair: Option<&Keypair>,
+        client_keypair1: Option<&Keypair>,
+        client_keypair2: Option<&Keypair>,
         num_expected_packets: usize,
     ) {
-        let conn1 = Arc::new(make_client_endpoint(&server_address, client_keypair).await);
-        let conn2 = Arc::new(make_client_endpoint(&server_address, client_keypair).await);
+        let conn1 = Arc::new(make_client_endpoint(&server_address, client_keypair1).await);
+        let conn2 = Arc::new(make_client_endpoint(&server_address, client_keypair2).await);
 
         debug!(
             "Connections established: {} and {}",
@@ -980,7 +982,8 @@ mod test {
             conn2.remote_address(),
         );
 
-        let expected_client_pubkey = client_keypair.map(|kp| kp.pubkey());
+        let expected_client_pubkey_1 = client_keypair1.map(|kp| kp.pubkey());
+        let expected_client_pubkey_2 = client_keypair2.map(|kp| kp.pubkey());
 
         let mut num_packets_sent = 0;
         for i in 0..num_expected_packets {
@@ -996,15 +999,13 @@ mod test {
             debug!("Stream {i}.1 sent and finished");
 
             if i < num_expected_packets - 1 {
-                s2.write_all(&[0u8]).await.unwrap();
+                s2.write_all(&[1u8]).await.unwrap();
                 s2.finish().unwrap();
                 debug!("Stream {i}.2 sent and finished");
                 num_packets_sent += 2;
             } else {
                 num_packets_sent += 1;
             }
-
-            sleep(Duration::from_millis(200)).await;
         }
 
         debug!("All streams sent, expecting {num_packets_sent} packets with client ID");
@@ -1013,7 +1014,7 @@ mod test {
         let mut total_packets = 0;
         let mut iterations = 0;
 
-        while now.elapsed().as_secs() < 10 {
+        while now.elapsed().as_secs() < 2 {
             iterations += 1;
             match receiver.try_recv() {
                 Ok(packet_batch) => {
@@ -1028,7 +1029,15 @@ mod test {
                             panic!("Expected PacketBatch::Simple but got PacketBatch::Pinned");
                         }
                         PacketBatch::Single(packet) => {
-                            assert_eq!(packet.meta().remote_pubkey(), expected_client_pubkey);
+                            if *packet.data(0).unwrap() == 0u8 {
+                                debug!("Packet from stream with client 1");
+                                assert_eq!(packet.meta().remote_pubkey(), expected_client_pubkey_1);
+                            } else if *packet.data(0).unwrap() == 1u8 {
+                                debug!("Packet from stream with client 2");
+                                assert_eq!(packet.meta().remote_pubkey(), expected_client_pubkey_2);
+                            } else {
+                                panic!("Unexpected data in packet: {:?}", packet.data(0));
+                            }
                             total_packets += 1;
                         }
                     }
