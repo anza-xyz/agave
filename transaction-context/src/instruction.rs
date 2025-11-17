@@ -48,7 +48,6 @@ impl InstructionFrame {
     pub fn configure_vm_slices(
         &mut self,
         instruction_index: u64,
-        trace_len: u64,
         penultimate_slice: Option<VmSlice<InstructionAccount>>,
         instruction_accounts_len: usize,
         instruction_data_len: u64,
@@ -61,15 +60,15 @@ impl InstructionFrame {
         );
 
         // Instruction accounts slice
-        let instruction_accounts_start_address = if trace_len < 2 {
-            GUEST_INSTRUCTION_ACCOUNTS_ADDRESS
-        } else {
-            penultimate_slice.unwrap().ptr().saturating_add(
+        let instruction_accounts_start_address = if let Some(penultimate_slice) = penultimate_slice
+        {
+            penultimate_slice.ptr().saturating_add(
                 penultimate_slice
-                    .unwrap()
                     .len()
                     .saturating_mul(size_of::<InstructionAccount>() as u64),
             )
+        } else {
+            GUEST_INSTRUCTION_ACCOUNTS_ADDRESS
         };
 
         self.instruction_accounts = VmSlice::new(

@@ -286,7 +286,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         let instruction_index = trace_len.saturating_sub(1);
         let penultimate_instruction_accounts = self
             .instruction_trace
-            .get(trace_len.saturating_sub(2))
+            .get(trace_len.overflowing_sub(2).0)
             .map(|item| item.instruction_accounts);
 
         let instruction = self
@@ -297,7 +297,6 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction.program_account_index_in_tx = program_index;
         instruction.configure_vm_slices(
             instruction_index as u64,
-            trace_len as u64,
             penultimate_instruction_accounts,
             instruction_accounts.len(),
             instruction_data.len() as u64,
