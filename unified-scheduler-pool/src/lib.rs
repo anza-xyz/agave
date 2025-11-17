@@ -2885,10 +2885,10 @@ mod tests {
         // - Keeping the test fast (as small as possible)
         // - Providing a large enough window to avoid the race condition where the second
         //   scheduler could also be freed before we can assert only one remains
-        const TEST_MAX_POOLING_DURATION: Duration = Duration::from_millis(300);
-        // Add a generous safety margin to avoid flakiness in CI. We need old_scheduler to be
-        // reliably older than TEST_MAX_POOLING_DURATION when the cleaner runs.
-        const TEST_WAIT_FOR_IDLE: Duration = Duration::from_millis(500);
+        const TEST_MAX_POOLING_DURATION_MS: u64 = 300;
+        const TEST_MAX_POOLING_DURATION: Duration = Duration::from_millis(TEST_MAX_POOLING_DURATION_MS);
+        const TEST_WAIT_FOR_IDLE_MS: u64 = TEST_MAX_POOLING_DURATION_MS + 200;
+        const TEST_WAIT_FOR_IDLE: Duration = Duration::from_millis(TEST_WAIT_FOR_IDLE_MS);
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool_raw = DefaultSchedulerPool::do_new(
             None,
@@ -2923,8 +2923,8 @@ mod tests {
         // See the old (= idle) scheduler gone only after solScCleaner did its job...
         sleepless_testing::at(&TestCheckPoint::AfterIdleSchedulerCleaned);
 
-        // Only new_scheduler should remain. old_scheduler (~500ms old) exceeds the
-        // 300ms idle threshold, while new_scheduler (~50ms old) does not.
+        // Only new_scheduler should remain. old_scheduler exceeds the
+        // TEST_MAX_POOLING_DURATION idle threshold, while new_scheduler does not.
         assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 1);
         assert_eq!(
             pool_raw
