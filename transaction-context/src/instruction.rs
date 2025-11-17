@@ -2,8 +2,8 @@ use {
     crate::{
         instruction_accounts::BorrowedInstructionAccount,
         vm_addresses::{
-            GUEST_DEDUPLICATION_MAPS_ADDRESS, GUEST_INSTRUCTION_ACCOUNTS_ADDRESS,
-            GUEST_INSTRUCTION_DATA_BASE_ADDRESS, GUEST_REGION_SIZE,
+            GUEST_INSTRUCTION_ACCOUNTS_ADDRESS, GUEST_INSTRUCTION_DATA_BASE_ADDRESS,
+            GUEST_REGION_SIZE,
         },
         vm_slice::VmSlice,
         IndexOfAccount, InstructionAccount, TransactionContext, MAX_ACCOUNTS_PER_TRANSACTION,
@@ -21,7 +21,6 @@ pub struct InstructionFrame {
     pub nesting_level: usize,
     pub program_account_index_in_tx: IndexOfAccount,
     pub instruction_accounts: VmSlice<InstructionAccount>,
-    pub dedup_map: VmSlice<u8>,
     pub instruction_data: VmSlice<u8>,
 }
 
@@ -65,23 +64,11 @@ impl InstructionFrame {
     }
 
     /// This function retrieves the range to index transaction_context.deduplication_maps
-    pub fn deduplication_map_range(&self, instruction_index: usize) -> Range<usize> {
+    pub fn deduplication_map_range(instruction_index: usize) -> Range<usize> {
         instruction_index.saturating_mul(MAX_ACCOUNTS_PER_TRANSACTION)
             ..instruction_index
                 .saturating_add(1)
                 .saturating_mul(MAX_ACCOUNTS_PER_TRANSACTION)
-    }
-
-    /// This function correctly creates the deduplication map slice to be shared with programs.
-    /// Since the logic is similar to `deduplication_map_range`, keep this function close to the
-    /// latter.
-    fn set_deduplication_slice(&mut self, instruction_index: u64) {
-        self.dedup_map = VmSlice::new(
-            GUEST_DEDUPLICATION_MAPS_ADDRESS.saturating_add(
-                (MAX_ACCOUNTS_PER_TRANSACTION as u64).saturating_mul(instruction_index),
-            ),
-            MAX_ACCOUNTS_PER_TRANSACTION as u64,
-        );
     }
 
     /// This function correctly creates the instruction data slice to be shared with programs.
@@ -101,7 +88,6 @@ impl InstructionFrame {
         instruction_accounts_len: usize,
         instruction_data_len: u64,
     ) {
-        self.set_deduplication_slice(instruction_index);
         self.set_instruction_slice(trace_len, penultimate_slice, instruction_accounts_len);
         self.set_instruction_data_slice(instruction_index, instruction_data_len);
     }

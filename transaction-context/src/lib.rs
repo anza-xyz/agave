@@ -199,7 +199,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
             .unwrap_or_default();
         let dedup_map = self
             .deduplication_maps
-            .get(instruction.deduplication_map_range(index_in_trace))
+            .get(InstructionFrame::deduplication_map_range(index_in_trace))
             .unwrap_or_default();
         let instruction_data = self
             .instruction_data
