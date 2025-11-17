@@ -1375,7 +1375,7 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
             let blockstore = crate::open_blockstore(
                 &canonicalize_ledger_path(ledger_path),
                 arg_matches,
-                AccessType::Secondary,
+                AccessType::ReadOnly,
             );
             let config = solana_storage_bigtable::LedgerStorageConfig {
                 read_only: false,

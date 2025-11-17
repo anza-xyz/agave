@@ -40,11 +40,11 @@ use {
 pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER: usize = 8;
 
 // allow multiple connections per ID for geo-distributed forwarders
-pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER: usize = 8;
+pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER: usize = 16;
 
 pub const DEFAULT_MAX_STAKED_CONNECTIONS: usize = 2000;
 
-pub const DEFAULT_MAX_UNSTAKED_CONNECTIONS: usize = 500;
+pub const DEFAULT_MAX_UNSTAKED_CONNECTIONS: usize = 4000;
 
 /// Limit to 500K PPS
 pub const DEFAULT_MAX_STREAMS_PER_MS: u64 = 500;
@@ -717,7 +717,7 @@ pub fn spawn_simple_qos_server(
 
     let simple_qos = Arc::new(SimpleQos::new(
         qos_config,
-        quic_server_params.max_connections_per_unstaked_peer,
+        quic_server_params.max_connections_per_staked_peer,
         quic_server_params.max_staked_connections,
         stats.clone(),
         staked_nodes,
@@ -916,6 +916,8 @@ mod test {
 
         let server_params = QuicStreamerConfig {
             max_unstaked_connections: 0,
+            max_connections_per_staked_peer: 1,
+            max_connections_per_unstaked_peer: 0,
             ..QuicStreamerConfig::default_for_tests()
         };
         let qos_config = SimpleQosConfig {

@@ -7,8 +7,9 @@ use {
     dashmap::{mapref::entry::Entry, DashMap},
     log::*,
     rand::{
-        seq::{IteratorRandom, SliceRandom},
-        thread_rng, Rng,
+        rng,
+        seq::{IndexedRandom as _, IteratorRandom},
+        Rng,
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
@@ -287,7 +288,7 @@ impl ReadOnlyAccountsCache {
             .name("solAcctReadCache".to_string())
             .spawn(move || {
                 info!("AccountsReadCacheEvictor has started");
-                let mut rng = thread_rng();
+                let mut rng = rng();
                 loop {
                     if exit.load(Ordering::Relaxed) {
                         break;
@@ -492,7 +493,7 @@ mod tests {
             usize::MAX, // <-- do not evict in the background
             evict_sample_size,
         );
-        let slots: Vec<Slot> = repeat_with(|| rng.gen_range(0..1000)).take(5).collect();
+        let slots: Vec<Slot> = repeat_with(|| rng.random_range(0..1000)).take(5).collect();
         let pubkeys: Vec<Pubkey> = repeat_with(|| {
             let mut arr = [0u8; 32];
             rng.fill(&mut arr[..]);
@@ -502,7 +503,7 @@ mod tests {
         .collect();
         let mut hash_map = HashMap::<ReadOnlyCacheKey, (AccountSharedData, Slot, usize)>::new();
         for ix in 0..1000 {
-            if rng.gen_bool(0.1) {
+            if rng.random_bool(0.1) {
                 let element = cache.cache.iter().choose(&mut rng).unwrap();
                 let (pubkey, entry) = element.pair();
                 let slot = entry.slot;
@@ -515,10 +516,10 @@ mod tests {
                 let mut data = vec![0u8; DATA_SIZE];
                 rng.fill(&mut data[..]);
                 let account = AccountSharedData::from(Account {
-                    lamports: rng.gen(),
+                    lamports: rng.random(),
                     data,
-                    executable: rng.gen(),
-                    rent_epoch: rng.gen(),
+                    executable: rng.random(),
+                    rent_epoch: rng.random(),
                     owner: Pubkey::default(),
                 });
                 let slot = *slots.choose(&mut rng).unwrap();

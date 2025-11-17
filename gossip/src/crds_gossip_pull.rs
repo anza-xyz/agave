@@ -32,10 +32,10 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
+    solana_net_utils::SocketAddrSpace,
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     std::{
         collections::{HashMap, HashSet, VecDeque},
         convert::TryInto,
@@ -665,7 +665,6 @@ pub(crate) mod tests {
         super::*,
         crate::{
             crds_data::{CrdsData, Vote},
-            legacy_contact_info::LegacyContactInfo,
             protocol::Protocol,
         },
         itertools::Itertools,
@@ -1560,14 +1559,8 @@ pub(crate) mod tests {
             node
         };
         {
-            let caller = CrdsValue::new(CrdsData::from(&node), &keypair);
+            let caller: CrdsValue = CrdsValue::new(CrdsData::from(&node), &keypair);
             assert_eq!(get_max_bloom_filter_bytes(&caller), 1175);
-            verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
-        }
-        let node = LegacyContactInfo::try_from(&node).unwrap();
-        {
-            let caller = CrdsValue::new(CrdsData::LegacyContactInfo(node), &keypair);
-            assert_eq!(get_max_bloom_filter_bytes(&caller), 1136);
             verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
         }
         let node = {
@@ -1580,12 +1573,6 @@ pub(crate) mod tests {
         {
             let caller = CrdsValue::new(CrdsData::from(&node), &keypair);
             assert_eq!(get_max_bloom_filter_bytes(&caller), 1155);
-            verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
-        }
-        let node = LegacyContactInfo::try_from(&node).unwrap();
-        {
-            let caller = CrdsValue::new(CrdsData::LegacyContactInfo(node), &keypair);
-            assert_eq!(get_max_bloom_filter_bytes(&caller), 992);
             verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
         }
     }

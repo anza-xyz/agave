@@ -8,7 +8,7 @@ use {
         DiskIndexValue, IndexValue, ReclaimsSlotList, RefCount, SlotList, UpsertReclaim,
     },
     crate::pubkey_bins::PubkeyBinCalculator24,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     solana_bucket_map::bucket_api::BucketApi,
     solana_clock::Slot,
     solana_measure::measure::Measure,
@@ -146,7 +146,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             // Spread out the scanning across all ages within the window.
             // This causes us to scan 1/N of the bins each 'Age'
             remaining_ages_to_skip_flushing: AtomicAge::new(
-                thread_rng().gen_range(0..num_ages_to_distribute_flushes),
+                rng().random_range(0..num_ages_to_distribute_flushes),
             ),
             num_ages_to_distribute_flushes,
             startup_stats: Arc::clone(&storage.startup_stats),
@@ -168,16 +168,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
     fn last_age_flushed(&self) -> Age {
         self.last_age_flushed.load(Ordering::Acquire)
-    }
-
-    /// Release entire in-mem hashmap to free all memory associated with it.
-    /// Idea is that during startup we needed a larger map than we need during runtime.
-    /// When using disk-buckets, in-mem index grows over time with dynamic use and then shrinks, in theory back to 0.
-    pub fn shrink_to_fit(&self) {
-        // shrink_to_fit could be quite expensive on large map sizes, which 'no disk buckets' could produce, so avoid shrinking in case we end up here
-        if self.storage.is_disk_index_enabled() {
-            self.map_internal.write().unwrap().shrink_to_fit();
-        }
     }
 
     /// return all keys in this bin

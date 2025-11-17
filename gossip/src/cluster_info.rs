@@ -56,7 +56,7 @@ use {
         bind_in_range,
         multihomed_sockets::BindIpAddrs,
         sockets::{bind_gossip_port_in_range, bind_to_localhost_unique},
-        PortRange, VALIDATOR_PORT_RANGE,
+        PortRange, SocketAddrSpace, VALIDATOR_PORT_RANGE,
     },
     solana_perf::{
         data_budget::DataBudget,
@@ -70,7 +70,6 @@ use {
     solana_signer::Signer,
     solana_streamer::{
         packet,
-        socket::SocketAddrSpace,
         streamer::{ChannelSend, PacketBatchReceiver},
     },
     solana_time_utils::timestamp,
@@ -227,10 +226,9 @@ impl ClusterInfo {
         sender: &impl ChannelSend<PacketBatch>,
     ) {
         let shred_version = self.my_contact_info.read().unwrap().shred_version();
-        let self_keypair = self.keypair();
         let mut pings = Vec::new();
         self.gossip.refresh_push_active_set(
-            &self_keypair,
+            &self.keypair(),
             shred_version,
             stakes,
             gossip_validators,
@@ -414,17 +412,23 @@ impl ClusterInfo {
         Ok(())
     }
 
-    pub fn set_tpu(&self, tpu_addr: SocketAddr) -> Result<(), ContactInfoError> {
-        self.my_contact_info.write().unwrap().set_tpu(tpu_addr)?;
+    pub fn set_tpu_quic(&self, tpu_addr: SocketAddr) -> Result<(), ContactInfoError> {
+        self.my_contact_info
+            .write()
+            .unwrap()
+            .set_tpu(contact_info::Protocol::QUIC, tpu_addr)?;
         self.refresh_my_gossip_contact_info();
         Ok(())
     }
 
-    pub fn set_tpu_forwards(&self, tpu_forwards_addr: SocketAddr) -> Result<(), ContactInfoError> {
+    pub fn set_tpu_forwards_quic(
+        &self,
+        tpu_forwards_addr: SocketAddr,
+    ) -> Result<(), ContactInfoError> {
         self.my_contact_info
             .write()
             .unwrap()
-            .set_tpu_forwards(tpu_forwards_addr)?;
+            .set_tpu_forwards(contact_info::Protocol::QUIC, tpu_forwards_addr)?;
         self.refresh_my_gossip_contact_info();
         Ok(())
     }
@@ -634,7 +638,8 @@ impl ClusterInfo {
 
     // TODO: This has a race condition if called from more than one thread.
     pub fn push_lowest_slot(&self, min: Slot) {
-        let self_pubkey = self.id();
+        let self_keypair = self.keypair();
+        let self_pubkey = self_keypair.pubkey();
         let last = {
             let gossip_crds = self.gossip.crds.read().unwrap();
             gossip_crds
@@ -646,7 +651,7 @@ impl ClusterInfo {
             let now = timestamp();
             let entry = CrdsValue::new(
                 CrdsData::LowestSlot(0, LowestSlot::new(self_pubkey, min, now)),
-                &self.keypair(),
+                &self_keypair,
             );
             self.push_message(entry);
         }
@@ -655,7 +660,8 @@ impl ClusterInfo {
     // TODO: If two threads call into this function then epoch_slot_index has a
     // race condition and the threads will overwrite each other in crds table.
     pub fn push_epoch_slots(&self, mut update: &[Slot]) {
-        let self_pubkey = self.id();
+        let self_keypair = self.keypair();
+        let self_pubkey = self_keypair.pubkey();
         let current_slots: Vec<_> = {
             let gossip_crds =
                 self.time_gossip_read_lock("lookup_epoch_slots", &self.stats.epoch_slots_lookup);
@@ -693,7 +699,6 @@ impl ClusterInfo {
             None => 0,
         };
         let mut entries = Vec::default();
-        let keypair = self.keypair();
         while !update.is_empty() {
             let now = timestamp();
             let mut slots = if !reset {
@@ -705,7 +710,7 @@ impl ClusterInfo {
             update = &update[n..];
             if n > 0 {
                 let epoch_slots = CrdsData::EpochSlots(epoch_slot_index, slots);
-                let entry = CrdsValue::new(epoch_slots, &keypair);
+                let entry = CrdsValue::new(epoch_slots, &self_keypair);
                 entries.push(entry);
             }
             epoch_slot_index = epoch_slot_index.wrapping_add(1);
@@ -726,8 +731,9 @@ impl ClusterInfo {
         last_vote_bankhash: Hash,
     ) -> Result<(), RestartLastVotedForkSlotsError> {
         let now = timestamp();
+        let self_keypair = self.keypair();
         let last_voted_fork_slots = RestartLastVotedForkSlots::new(
-            self.id(),
+            self_keypair.pubkey(),
             now,
             fork,
             last_vote_bankhash,
@@ -735,7 +741,7 @@ impl ClusterInfo {
         )?;
         self.push_message(CrdsValue::new(
             CrdsData::RestartLastVotedForkSlots(last_voted_fork_slots),
-            &self.keypair(),
+            &self_keypair,
         ));
         Ok(())
     }
@@ -746,8 +752,9 @@ impl ClusterInfo {
         last_slot_hash: Hash,
         observed_stake: u64,
     ) {
+        let self_keypair = self.keypair();
         let restart_heaviest_fork = RestartHeaviestFork {
-            from: self.id(),
+            from: self_keypair.pubkey(),
             wallclock: timestamp(),
             last_slot,
             last_slot_hash,
@@ -756,7 +763,7 @@ impl ClusterInfo {
         };
         self.push_message(CrdsValue::new(
             CrdsData::RestartHeaviestFork(restart_heaviest_fork),
-            &self.keypair(),
+            &self_keypair,
         ));
     }
 
@@ -784,24 +791,26 @@ impl ClusterInfo {
             return Err(ClusterInfoError::TooManyIncrementalSnapshotHashes);
         }
 
+        let self_keypair = self.keypair();
+
         let message = CrdsData::SnapshotHashes(SnapshotHashes {
-            from: self.id(),
+            from: self_keypair.pubkey(),
             full,
             incremental,
             wallclock: timestamp(),
         });
-        self.push_message(CrdsValue::new(message, &self.keypair()));
+        self.push_message(CrdsValue::new(message, &self_keypair));
 
         Ok(())
     }
 
-    pub fn push_vote_at_index(&self, vote: Transaction, vote_index: u8) {
+    pub fn push_vote_at_index(&self, vote: Transaction, vote_index: u8, self_keypair: &Keypair) {
         assert!(vote_index < MAX_VOTES);
-        let self_pubkey = self.id();
+        let self_pubkey = self_keypair.pubkey();
         let now = timestamp();
         let vote = Vote::new(self_pubkey, vote, now).unwrap();
         let vote = CrdsData::Vote(vote_index, vote);
-        let vote = CrdsValue::new(vote, &self.keypair());
+        let vote = CrdsValue::new(vote, self_keypair);
         let mut gossip_crds = self.gossip.crds.write().unwrap();
         if let Err(err) = gossip_crds.insert(vote, now, GossipRoute::LocalMessage) {
             error!("push_vote failed: {err:?}");
@@ -853,6 +862,7 @@ impl ClusterInfo {
     }
 
     pub fn push_vote(&self, tower: &[Slot], vote: Transaction) {
+        let self_keypair = self.keypair();
         debug_assert!(tower.iter().tuple_windows().all(|(a, b)| a < b));
         // Find the oldest crds vote by wallclock that has a lower slot than `tower`
         // and recycle its vote-index. If the crds buffer is not full we instead add a new vote-index.
@@ -870,16 +880,16 @@ impl ClusterInfo {
             );
         };
         debug_assert!(vote_index < MAX_VOTES);
-        self.push_vote_at_index(vote, vote_index);
+        self.push_vote_at_index(vote, vote_index, &self_keypair);
     }
 
     pub fn refresh_vote(&self, refresh_vote: Transaction, refresh_vote_slot: Slot) {
+        let self_keypair = self.keypair();
         let vote_index = {
-            let self_pubkey = self.id();
             let gossip_crds =
                 self.time_gossip_read_lock("gossip_read_push_vote", &self.stats.push_vote_read);
             (0..MAX_VOTES).find(|ix| {
-                let vote = CrdsValueLabel::Vote(*ix, self_pubkey);
+                let vote = CrdsValueLabel::Vote(*ix, self_keypair.pubkey());
                 let Some(vote) = gossip_crds.get::<&CrdsData>(&vote) else {
                     return false;
                 };
@@ -899,7 +909,7 @@ impl ClusterInfo {
         // We don't write to an arbitrary index, because it may replace one of this validator's
         // existing votes on the network.
         if let Some(vote_index) = vote_index {
-            self.push_vote_at_index(refresh_vote, vote_index);
+            self.push_vote_at_index(refresh_vote, vote_index, &self_keypair);
         } else {
             // If you don't see a vote with the same slot yet, this means you probably
             // restarted, and need to repush and evict the oldest vote
@@ -911,7 +921,7 @@ impl ClusterInfo {
                 return;
             };
             debug_assert!(vote_index < MAX_VOTES);
-            self.push_vote_at_index(refresh_vote, vote_index);
+            self.push_vote_at_index(refresh_vote, vote_index, &self_keypair);
         }
     }
 
@@ -1906,7 +1916,8 @@ impl ClusterInfo {
         stakes: &HashMap<Pubkey, u64>,
     ) -> Vec<(SocketAddr, Protocol /*::PruneMessage*/)> {
         let _st = ScopedTimer::from(&self.stats.generate_prune_messages);
-        let self_pubkey = self.id();
+        let self_keypair = self.keypair();
+        let self_pubkey = self_keypair.pubkey();
         // Obtain redundant gossip links which can be pruned.
         let prunes: HashMap</*gossip peer:*/ Pubkey, /*origins:*/ Vec<Pubkey>> = {
             let _st = ScopedTimer::from(&self.stats.prune_received_cache);
@@ -1938,7 +1949,6 @@ impl ClusterInfo {
         // Create and sign Protocol::PruneMessages.
         thread_pool.install(|| {
             let wallclock = timestamp();
-            let keypair = self.keypair();
             prunes
                 .into_par_iter()
                 .flat_map(|(destination, addr, prunes)| {
@@ -1954,7 +1964,7 @@ impl ClusterInfo {
                         destination,
                         wallclock,
                     };
-                    prune_data.sign(&keypair);
+                    prune_data.sign(&self_keypair);
                     let prune_message = Protocol::PruneMessage(self_pubkey, prune_data);
                     (addr, prune_message)
                 })
@@ -1973,7 +1983,8 @@ impl ClusterInfo {
         should_check_duplicate_instance: bool,
     ) -> Result<(), GossipError> {
         let _st = ScopedTimer::from(&self.stats.process_gossip_packets_time);
-        let self_pubkey = self.id();
+        let self_keypair = self.keypair();
+        let self_pubkey = self_keypair.pubkey();
         // Filter out values if the shred-versions are different.
         let self_shred_version = self.my_shred_version();
         {
@@ -2009,11 +2020,10 @@ impl ClusterInfo {
         };
         let mut pings = Vec::new();
         let mut rng = rand::thread_rng();
-        let keypair = self.keypair();
         let mut verify_gossip_addr = |value: &CrdsValue| {
             if verify_gossip_addr(
                 &mut rng,
-                &keypair,
+                &self_keypair,
                 value,
                 &self.socket_addr_space,
                 &self.ping_cache,
@@ -2445,7 +2455,6 @@ pub fn push_messages_to_peer_for_tests(
 fn check_pull_request_shred_version(self_shred_version: u16, caller: &CrdsValue) -> bool {
     let shred_version = match caller.data() {
         CrdsData::ContactInfo(node) => node.shred_version(),
-        CrdsData::LegacyContactInfo(node) => node.shred_version(),
         _ => return false,
     };
     shred_version == self_shred_version
@@ -2507,7 +2516,6 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
 ) -> bool {
     let (pubkey, addr) = match value.data() {
         CrdsData::ContactInfo(node) => (node.pubkey(), node.gossip()),
-        CrdsData::LegacyContactInfo(node) => (node.pubkey(), node.gossip()),
         _ => return true, // If not a contact-info, nothing to verify.
     };
     // Invalid addresses are not verifiable.

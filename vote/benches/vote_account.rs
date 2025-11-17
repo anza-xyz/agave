@@ -17,18 +17,18 @@ fn new_rand_vote_account<R: Rng>(
         node_pubkey: node_pubkey.unwrap_or_else(Pubkey::new_unique),
         authorized_voter: Pubkey::new_unique(),
         authorized_withdrawer: Pubkey::new_unique(),
-        commission: rng.gen(),
+        commission: rng.random(),
     };
     let clock = solana_clock::Clock {
-        slot: rng.gen(),
-        epoch_start_timestamp: rng.gen(),
-        epoch: rng.gen(),
-        leader_schedule_epoch: rng.gen(),
-        unix_timestamp: rng.gen(),
+        slot: rng.random(),
+        epoch_start_timestamp: rng.random(),
+        epoch: rng.random(),
+        leader_schedule_epoch: rng.random(),
+        unix_timestamp: rng.random(),
     };
     let vote_state = VoteStateV4::new(&vote_pubkey, &vote_init, &clock);
     let account = AccountSharedData::new_data(
-        rng.gen(), // lamports
+        rng.random(), // lamports
         &VoteStateVersions::new_v4(vote_state.clone()),
         &solana_sdk_ids::vote::id(), // owner
     )
@@ -37,7 +37,7 @@ fn new_rand_vote_account<R: Rng>(
 }
 
 fn bench_vote_account_try_from(b: &mut Bencher) {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let (account, vote_state) = new_rand_vote_account(&mut rng, None);
 
     b.iter(|| {
@@ -58,7 +58,7 @@ fn bench_vote_account_try_from(b: &mut Bencher) {
 }
 
 fn bench_staked_nodes_compute(b: &mut Bencher) {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut vote_accounts_map = HashMap::new();
 
     // Create a scenario with ~400 vote accounts
@@ -70,7 +70,7 @@ fn bench_staked_nodes_compute(b: &mut Bencher) {
         let (account, _) = new_rand_vote_account(&mut rng, None);
         let vote_account = VoteAccount::try_from(account).unwrap();
         // Stake amount represents total delegated stake (from multiple stake accounts)
-        let stake: u64 = rng.gen_range(1_000_000..100_000_000);
+        let stake: u64 = rng.random_range(1_000_000..100_000_000);
         vote_accounts_map.insert(Pubkey::new_unique(), (stake, vote_account));
     }
 

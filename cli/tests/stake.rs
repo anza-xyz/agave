@@ -17,6 +17,7 @@ use {
     solana_fee_structure::FeeStructure,
     solana_keypair::{keypair_from_seed, Keypair},
     solana_native_token::LAMPORTS_PER_SOL,
+    solana_net_utils::SocketAddrSpace,
     solana_nonce::state::State as NonceState,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -29,7 +30,6 @@ use {
         instruction::LockupArgs,
         state::{Lockup, StakeAuthorize, StakeStateV2},
     },
-    solana_streamer::socket::SocketAddrSpace,
     solana_test_validator::{TestValidator, TestValidatorGenesis},
     test_case::test_case,
 };

@@ -576,7 +576,9 @@ impl BankingStage {
                 Builder::new()
                     .name(format!("solCoWorker{id:02}"))
                     .spawn(|| {
-                        let _ = consume_worker.run();
+                        if let Err(err) = consume_worker.run() {
+                            error!("Internal consume worker error; err={err}");
+                        }
                     })
                     .unwrap(),
             )
@@ -759,7 +761,9 @@ mod external {
                     Builder::new()
                         .name(format!("solECoWorker{id:02}"))
                         .spawn(move || {
-                            let _ = consume_worker.run(pack_to_worker);
+                            if let Err(err) = consume_worker.run(pack_to_worker) {
+                                error!("External consume worker error; err={err}");
+                            }
                         })
                         .unwrap(),
                 );

@@ -11,7 +11,7 @@ use {
     rand::{thread_rng, Rng},
     solana_client::{connection_cache::ConnectionCache, tpu_client::TpuClientWrapper},
     solana_keypair::Keypair,
-    solana_net_utils::DEFAULT_IP_ECHO_SERVER_THREADS,
+    solana_net_utils::{SocketAddrSpace, DEFAULT_IP_ECHO_SERVER_THREADS},
     solana_perf::recycler::Recycler,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
@@ -19,7 +19,6 @@ use {
     solana_signer::Signer,
     solana_streamer::{
         evicting_sender::EvictingSender,
-        socket::SocketAddrSpace,
         streamer::{self, StreamerReceiveStats},
     },
     solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig},

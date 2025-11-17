@@ -2053,7 +2053,7 @@ impl ReplayStage {
         current_leader: &mut Option<Pubkey>,
         new_leader: &Pubkey,
     ) {
-        if let Some(ref current_leader) = current_leader {
+        if let Some(current_leader) = current_leader.as_ref() {
             if current_leader != new_leader {
                 let msg = if current_leader == my_pubkey {
                     ". I am no longer the leader"
@@ -4465,6 +4465,7 @@ pub(crate) mod tests {
             get_tmp_ledger_path, get_tmp_ledger_path_auto_delete,
             shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         },
+        solana_net_utils::SocketAddrSpace,
         solana_poh::poh_recorder::create_test_recorder,
         solana_poh_config::PohConfig,
         solana_rpc::{
@@ -4477,7 +4478,6 @@ pub(crate) mod tests {
             genesis_utils::{GenesisConfigInfo, ValidatorVoteKeypairs},
         },
         solana_sha256_hasher::hash,
-        solana_streamer::socket::SocketAddrSpace,
         solana_system_transaction as system_transaction,
         solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
         solana_transaction_error::TransactionError,
@@ -7236,7 +7236,7 @@ pub(crate) mod tests {
             ..
         } = replay_blockstore_components(Some(forks), 1, None);
 
-        let VoteSimulator {
+        let &mut VoteSimulator {
             ref mut progress,
             ref bank_forks,
             ..
@@ -7330,7 +7330,7 @@ pub(crate) mod tests {
             ..
         } = replay_components;
 
-        let VoteSimulator {
+        let &mut VoteSimulator {
             ref mut progress,
             ref bank_forks,
             ref mut tbft_structs,
@@ -8824,7 +8824,7 @@ pub(crate) mod tests {
             ..
         } = replay_blockstore_components(Some(forks), 1, None);
 
-        let VoteSimulator {
+        let &mut VoteSimulator {
             ref mut progress,
             ref bank_forks,
             ..

@@ -1,7 +1,7 @@
 //! Helpers for AppendVec tests and benches
 #![cfg(feature = "dev-context-only-utils")]
 use {
-    rand::{distributions::Alphanumeric, Rng},
+    rand::{distr::Alphanumeric, Rng},
     solana_account::AccountSharedData,
     solana_pubkey::Pubkey,
     std::path::PathBuf,
@@ -24,7 +24,7 @@ pub fn get_append_vec_dir() -> String {
 
 pub fn get_append_vec_path(path: &str) -> TempFile {
     let out_dir = get_append_vec_dir();
-    let rand_string: String = rand::thread_rng()
+    let rand_string: String = rand::rng()
         .sample_iter(&Alphanumeric)
         .map(char::from)
         .take(30)

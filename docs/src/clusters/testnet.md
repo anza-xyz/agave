@@ -200,18 +200,3 @@ branch), once the testnet has been created run:
 ```bash
 $ ./net.sh start -t edge
 ```
-
-### Enabling CUDA
-> [!NOTE]
-> CUDA is currently not available on GCE
-First ensure the network instances are created with GPU enabled:
-```bash
-$ ./gce.sh create -g ...
-```
-or
-```bash
-$ ./ec2.sh create -g ...
-```
-
-If deploying a tarball-based network nothing further is required, as GPU presence
-is detected at runtime and the CUDA build is auto selected.

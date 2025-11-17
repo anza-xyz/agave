@@ -813,7 +813,7 @@ pub mod tests {
         // each slot has a random number of accounts, between 1 and 10
         for _slot in 0..num_slots {
             // generate random accounts per slot
-            let n = rand::thread_rng().gen_range(1..10);
+            let n = rand::rng().random_range(1..10);
             total += n;
             let accounts = (0..n).map(|_| &account_from_storage).collect::<Vec<_>>();
             all_accounts.push(accounts);

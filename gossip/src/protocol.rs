@@ -157,7 +157,7 @@ impl Sanitize for Protocol {
                 filter.sanitize()?;
                 // PullRequest is only allowed to have ContactInfo in its CrdsData
                 match val.data() {
-                    CrdsData::LegacyContactInfo(_) | CrdsData::ContactInfo(_) => val.sanitize(),
+                    CrdsData::ContactInfo(_) => val.sanitize(),
                     _ => Err(SanitizeError::InvalidValue),
                 }
             }

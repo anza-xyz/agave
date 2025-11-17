@@ -140,7 +140,11 @@ mod tests {
             ObsoleteAccounts,
         },
         log::*,
-        rand::{rngs::StdRng, seq::SliceRandom, SeedableRng},
+        rand::{
+            rngs::StdRng,
+            seq::{IndexedMutRandom as _, IndexedRandom},
+            SeedableRng,
+        },
         solana_account::AccountSharedData,
         solana_pubkey::Pubkey,
         std::iter,

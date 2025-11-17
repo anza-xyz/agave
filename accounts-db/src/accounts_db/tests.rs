@@ -10,7 +10,7 @@ use {
         storable_accounts::AccountForStorage,
     },
     itertools::Itertools,
-    rand::{prelude::SliceRandom, thread_rng, Rng},
+    rand::{prelude::SliceRandom, rng, Rng},
     solana_account::{
         accounts_equal, Account, AccountSharedData, InheritableAccountFields, ReadableAccount,
         WritableAccount, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
@@ -322,7 +322,7 @@ fn test_sort_and_remove_dups_random() {
     use rand::prelude::*;
     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1234);
     let accounts: Vec<_> =
-        std::iter::repeat_with(|| generate_sample_account_from_storage(rng.gen::<u8>()))
+        std::iter::repeat_with(|| generate_sample_account_from_storage(rng.random::<u8>()))
             .take(1000)
             .collect();
 
@@ -575,7 +575,7 @@ define_accounts_db_test!(test_accountsdb_add_root_many, |db| {
     let mut pubkeys: Vec<Pubkey> = vec![];
     db.create_account(&mut pubkeys, 0, 100, 0, 0);
     for _ in 1..100 {
-        let idx = thread_rng().gen_range(0..99);
+        let idx = rng().random_range(0..99);
         let ancestors = vec![(0, 0)].into_iter().collect();
         let account = db
             .load_without_fixed_root(&ancestors, &pubkeys[idx])
@@ -591,7 +591,7 @@ define_accounts_db_test!(test_accountsdb_add_root_many, |db| {
 
     // check that all the accounts appear with a new root
     for _ in 1..100 {
-        let idx = thread_rng().gen_range(0..99);
+        let idx = rng().random_range(0..99);
         let ancestors = vec![(0, 0)].into_iter().collect();
         let account0 = db
             .load_without_fixed_root(&ancestors, &pubkeys[idx])
@@ -802,7 +802,7 @@ define_accounts_db_test!(test_remove_unrooted_slot_storage, |db| {
 
 fn update_accounts(accounts: &AccountsDb, pubkeys: &[Pubkey], slot: Slot, range: usize) {
     for _ in 1..1000 {
-        let idx = thread_rng().gen_range(0..range);
+        let idx = rng().random_range(0..range);
         let ancestors = vec![(slot, 0)].into_iter().collect();
         if let Some((mut account, _)) = accounts.load_without_fixed_root(&ancestors, &pubkeys[idx])
         {
@@ -1929,7 +1929,7 @@ fn test_store_account_stress() {
                     let mut account = AccountSharedData::new(1, 0, &pubkey);
                     let mut i = 0;
                     loop {
-                        let account_bal = thread_rng().gen_range(1..99);
+                        let account_bal = rng().random_range(1..99);
                         account.set_lamports(account_bal);
                         db.store_for_tests((slot, [(&pubkey, &account)].as_slice()));
 
@@ -4388,7 +4388,7 @@ fn start_load_thread(
                 // Ordering::Relaxed is ok because of no data dependencies; the modified field is
                 // completely free-standing cfg(test) control-flow knob.
                 db.load_limit
-                    .store(thread_rng().gen_range(0..10) as u64, Ordering::Relaxed);
+                    .store(rng().random_range(0..10) as u64, Ordering::Relaxed);
 
                 // Load should never be unable to find this key
                 let loaded_account = db
@@ -4654,7 +4654,7 @@ fn test_cache_flush_remove_unrooted_race_multiple_slots() {
                 (slot, bank_id)
             })
             .collect();
-        all_slots.shuffle(&mut rand::thread_rng());
+        all_slots.shuffle(&mut rand::rng());
         let slots_to_dump = &all_slots[0..num_cached_slots as usize / 2];
         let slots_to_keep = &all_slots[num_cached_slots as usize / 2..];
 
@@ -5012,7 +5012,7 @@ fn test_calculate_storage_count_and_alive_bytes_obsolete_account(
     let mut offsets: Vec<_> = offsets.into_iter().zip(data_lens).collect();
 
     // Randomize the accounts that get marked obsolete
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     offsets.shuffle(&mut rng);
 
     let (accounts_to_mark_obsolete, accounts_to_keep) =

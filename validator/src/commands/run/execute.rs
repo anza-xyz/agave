@@ -6,7 +6,6 @@ use {
         commands::{run::args::RunArgs, FromClapArgMatches},
         ledger_lockfile, lock_ledger,
     },
-    agave_logger::redirect_stderr_to_file,
     agave_snapshots::{
         paths::BANK_SNAPSHOTS_DIR,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
@@ -120,7 +119,7 @@ pub fn execute(
         println!("log file: {}", logfile.display());
     }
     let use_progress_bar = logfile.is_none();
-    let _logger_thread = redirect_stderr_to_file(logfile);
+    agave_logger::initialize_logging(logfile.clone());
 
     info!("{} {}", crate_name!(), solana_version);
     info!("Starting validator with: {:#?}", std::env::args_os());
@@ -261,13 +260,6 @@ pub fn execute(
     let restricted_repair_only_mode = matches.is_present("restricted_repair_only_mode");
     let accounts_shrink_optimize_total_space =
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
-    let tpu_use_quic = !matches.is_present("tpu_disable_quic");
-    if !tpu_use_quic {
-        warn!(
-            "TPU QUIC was disabled via --tpu_disable_quic, this will prevent validator from \
-             receiving transactions!"
-        );
-    }
     let vote_use_quic = value_t_or_exit!(matches, "vote_use_quic", bool);
 
     let tpu_enable_udp = if matches.is_present("tpu_enable_udp") {
@@ -382,24 +374,6 @@ pub fn execute(
                 }
             }
         });
-    // accounts-db-read-cache-limit-mb was deprecated in v3.0.0
-    let read_cache_limit_mb =
-        values_of::<usize>(matches, "accounts_db_read_cache_limit_mb").map(|limits| {
-            match limits.len() {
-                // we were given explicit low and high watermark values, so use them
-                2 => (limits[0] * MB, limits[1] * MB),
-                // we were given a single value, so use it for both low and high watermarks
-                1 => (limits[0] * MB, limits[0] * MB),
-                _ => {
-                    // clap will enforce either one or two values is given
-                    unreachable!(
-                        "invalid number of values given to accounts-db-read-cache-limit-mb"
-                    )
-                }
-            }
-        });
-    // clap will enforce only one cli arg is provided, so pick whichever is Some
-    let read_cache_limit_bytes = read_cache_limit_bytes.or(read_cache_limit_mb);
 
     let storage_access = matches
         .value_of("accounts_db_access_storages_method")
@@ -538,6 +512,7 @@ pub fn execute(
     );
 
     let mut validator_config = ValidatorConfig {
+        logfile,
         require_tower: matches.is_present("require_tower"),
         tower_storage,
         halt_at_slot: value_t!(matches, "dev_halt_at_slot", Slot).ok(),
@@ -749,18 +724,6 @@ pub fn execute(
         },
     );
 
-    let gossip_host = matches
-        .value_of("gossip_host")
-        .map(|gossip_host| {
-            warn!(
-                "--gossip-host is deprecated. Use --bind-address or rely on automatic public IP \
-                 discovery instead."
-            );
-            solana_net_utils::parse_host(gossip_host)
-                .map_err(|err| format!("failed to parse --gossip-host: {err}"))
-        })
-        .transpose()?;
-
     let advertised_ip = matches
         .value_of("advertised_ip")
         .map(|advertised_ip| {
@@ -769,9 +732,7 @@ pub fn execute(
         })
         .transpose()?;
 
-    let advertised_ip = if let Some(ip) = gossip_host {
-        ip
-    } else if let Some(cli_ip) = advertised_ip {
+    let advertised_ip = if let Some(cli_ip) = advertised_ip {
         cli_ip
     } else if !bind_addresses.active().is_unspecified() && !bind_addresses.active().is_loopback() {
         bind_addresses.active()
@@ -1041,7 +1002,7 @@ pub fn execute(
         start_progress,
         run_args.socket_addr_space,
         ValidatorTpuConfig {
-            use_quic: tpu_use_quic,
+            use_quic: true,
             vote_use_quic,
             tpu_connection_pool_size,
             tpu_enable_udp,
@@ -1073,6 +1034,7 @@ pub fn execute(
         File::create(filename).map_err(|err| format!("unable to create {filename}: {err}"))?;
     }
     info!("Validator initialized");
+    validator.listen_for_signals()?;
     validator.join();
     info!("Validator exiting..");
 

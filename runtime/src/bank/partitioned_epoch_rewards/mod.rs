@@ -86,7 +86,9 @@ impl PartitionedStakeRewards {
     }
 
     unsafe fn assume_init(&mut self, num_stake_rewards: usize) {
-        self.rewards.set_len(self.rewards.capacity());
+        unsafe {
+            self.rewards.set_len(self.rewards.capacity());
+        }
         self.num_rewards = num_stake_rewards;
     }
 }
@@ -1008,7 +1010,7 @@ mod tests {
         let vote_account = genesis_config
             .accounts
             .iter()
-            .find(|(&address, _)| address == vote_key)
+            .find(|(address, _)| **address == vote_key)
             .map(|(_, account)| account)
             .unwrap()
             .clone();

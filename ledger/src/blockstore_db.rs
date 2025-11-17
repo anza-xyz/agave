@@ -124,18 +124,17 @@ impl Rocks {
             AccessType::Primary | AccessType::PrimaryForMaintenance => {
                 DB::open_cf_descriptors(&db_options, &path, cf_descriptors)?
             }
-            AccessType::Secondary => {
-                let secondary_path = path.join("solana-secondary");
+            AccessType::ReadOnly => {
                 info!(
-                    "Opening Rocks with secondary (read only) access at: {secondary_path:?}. This \
-                     secondary access could temporarily degrade other accesses, such as by \
-                     agave-validator"
+                    "Opening Rocks with read only access. This additional access could \
+                     temporarily degrade other accesses, such as by agave-validator"
                 );
-                DB::open_cf_descriptors_as_secondary(
+                let error_if_log_file_exists = false;
+                DB::open_cf_descriptors_read_only(
                     &db_options,
                     &path,
-                    &secondary_path,
                     cf_descriptors,
+                    error_if_log_file_exists,
                 )?
             }
         };
@@ -196,13 +195,9 @@ impl Rocks {
             new_cf_descriptor::<columns::MerkleRootMeta>(options, oldest_slot),
         ];
 
-        // If the access type is Secondary, we don't need to open all of the
-        // columns so we can just return immediately.
-        match options.access_type {
-            AccessType::Secondary => {
-                return cf_descriptors;
-            }
-            AccessType::Primary | AccessType::PrimaryForMaintenance => {}
+        // When remaining columns are optional we can just return immediately here.
+        if !must_open_all_column_families(&options.access_type) {
+            return cf_descriptors;
         }
 
         // Attempt to detect the column families that are present. It is not a
@@ -1185,8 +1180,7 @@ fn get_db_options(blockstore_options: &BlockstoreOptions) -> Options {
     options.set_keep_log_file_num(10);
 
     // Allow Rocks to open/keep open as many files as it needs for performance;
-    // however, this is also explicitly required for a secondary instance.
-    // See https://github.com/facebook/rocksdb/wiki/Secondary-instance
+    // it is not required for read-only access, but should be fine with our high ulimit.
     options.set_max_open_files(-1);
 
     options
@@ -1241,6 +1235,11 @@ fn should_enable_cf_compaction(cf_name: &str) -> bool {
 // Returns true if the column family enables compression.
 fn should_enable_compression<C: 'static + Column + ColumnName>() -> bool {
     C::NAME == columns::TransactionStatus::NAME
+}
+
+// If the access type is read-only, we don't need to open all of the columns
+fn must_open_all_column_families(access_type: &AccessType) -> bool {
+    !matches!(access_type, AccessType::ReadOnly)
 }
 
 #[cfg(test)]
@@ -1318,7 +1317,7 @@ pub mod tests {
         assert!(should_disable_auto_compactions(
             &AccessType::PrimaryForMaintenance
         ));
-        assert!(should_disable_auto_compactions(&AccessType::Secondary));
+        assert!(should_disable_auto_compactions(&AccessType::ReadOnly));
     }
 
     #[test]
@@ -1355,11 +1354,11 @@ pub mod tests {
                 .unwrap();
         }
 
-        // Opening with either Secondary or Primary access should succeed,
+        // Opening with any access mode should succeed,
         // even though the Rocks code is unaware of "new_column"
         {
             let options = BlockstoreOptions {
-                access_type: AccessType::Secondary,
+                access_type: AccessType::ReadOnly,
                 ..BlockstoreOptions::default()
             };
             let _ = Rocks::open(db_path.to_path_buf(), options).unwrap();

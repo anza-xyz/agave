@@ -16,7 +16,6 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_pubkey::Pubkey,
     solana_pubsub_client::nonblocking::pubsub_client::{PubsubClient, PubsubClientError},
-    solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_api::{
         client_error::{Error as ClientError, ErrorKind, Result as ClientResult},
@@ -196,12 +195,7 @@ impl LeaderTpuCache {
             .filter_map(|contact_info| {
                 let pubkey = Pubkey::from_str(&contact_info.pubkey).ok()?;
                 let socket = match protocol {
-                    Protocol::QUIC => contact_info.tpu_quic.or_else(|| {
-                        let mut socket = contact_info.tpu?;
-                        let port = socket.port().checked_add(QUIC_PORT_OFFSET)?;
-                        socket.set_port(port);
-                        Some(socket)
-                    }),
+                    Protocol::QUIC => contact_info.tpu_quic,
                     Protocol::UDP => contact_info.tpu,
                 }?;
                 Some((pubkey, socket))

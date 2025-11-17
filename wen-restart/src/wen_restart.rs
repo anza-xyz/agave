@@ -1435,6 +1435,7 @@ mod tests {
             blockstore_processor::{fill_blockstore_slot_with_ticks, test_process_blockstore},
             get_tmp_ledger_path_auto_delete,
         },
+        solana_net_utils::SocketAddrSpace,
         solana_pubkey::Pubkey,
         solana_runtime::{
             epoch_stakes::VersionedEpochStakes,
@@ -1444,7 +1445,6 @@ mod tests {
             snapshot_bank_utils::bank_to_full_snapshot_archive,
         },
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
         solana_time_utils::timestamp,
         solana_vote::vote_account::VoteAccount,
         solana_vote_interface::state::{TowerSync, Vote},

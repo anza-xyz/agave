@@ -162,13 +162,14 @@ fn memmove(
 // Marked unsafe since it assumes that the slices are at least `n` bytes long.
 unsafe fn memcmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
     for i in 0..n {
-        let a = *s1.get_unchecked(i);
-        let b = *s2.get_unchecked(i);
-        if a != b {
-            return (a as i32).saturating_sub(b as i32);
-        };
+        unsafe {
+            let a = *s1.get_unchecked(i);
+            let b = *s2.get_unchecked(i);
+            if a != b {
+                return (a as i32).saturating_sub(b as i32);
+            };
+        }
     }
-
     0
 }
 

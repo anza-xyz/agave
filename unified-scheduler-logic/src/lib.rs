@@ -785,7 +785,7 @@ impl UsageQueueInner {
         match self {
             Self::Fifo { current_usage, .. } => {
                 match current_usage {
-                    Some(FifoUsage::Readonly(ref mut count)) => match requested_usage {
+                    Some(FifoUsage::Readonly(count)) => match requested_usage {
                         RequestedUsage::Readonly => {
                             if count.is_one() {
                                 is_newly_lockable = true;
@@ -1460,7 +1460,7 @@ impl SchedulingStateMachine {
 
     #[cfg(test)]
     unsafe fn exclusively_initialize_current_thread_for_scheduling_for_test() -> Self {
-        Self::exclusively_initialize_current_thread_for_scheduling(None)
+        unsafe { Self::exclusively_initialize_current_thread_for_scheduling(None) }
     }
 }
 
