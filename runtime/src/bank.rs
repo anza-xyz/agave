@@ -1494,6 +1494,14 @@ impl Bank {
             },
         );
 
+        report_rent_controller_metrics(
+            &new,
+            parent.load_accounts_net_state_growth(),
+            new.rent_collector.rent.lamports_per_byte_year,
+            new.rent_collector.rent.exemption_threshold,
+            new.rent_controller_integral.load(Relaxed),
+        );
+
         report_loaded_programs_stats(
             &parent
                 .transaction_processor
