@@ -377,14 +377,20 @@ pub fn validate_fee_payer(
             TransactionError::InsufficientFundsForFee
         })?;
 
-    let payer_pre_rent_state =
-        get_account_rent_state(rent, payer_account.lamports(), payer_account.data().len());
+    let payer_pre_rent_state = get_account_rent_state(
+        payer_account.lamports(),
+        payer_account.data().len(),
+        rent.minimum_balance(payer_account.data().len()),
+    );
     payer_account
         .checked_sub_lamports(fee)
         .map_err(|_| TransactionError::InsufficientFundsForFee)?;
 
-    let payer_post_rent_state =
-        get_account_rent_state(rent, payer_account.lamports(), payer_account.data().len());
+    let payer_post_rent_state = get_account_rent_state(
+        payer_account.lamports(),
+        payer_account.data().len(),
+        rent.minimum_balance(payer_account.data().len()),
+    );
     check_rent_state_with_account(
         &payer_pre_rent_state,
         &payer_post_rent_state,
@@ -648,7 +654,7 @@ fn construct_instructions_account(message: &impl SVMMessage) -> AccountSharedDat
 mod tests {
     use {
         super::*,
-        crate::transaction_account_state_info::TransactionAccountStateInfo,
+        crate::transaction_account_state_info::{new_post_exec, new_pre_exec},
         rand0_7::prelude::*,
         solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         solana_hash::Hash,
@@ -1873,9 +1879,17 @@ mod tests {
             compute_budget.max_instruction_trace_length,
         );
 
+        let pre_account_state_info = new_pre_exec(&transaction_context, sanitized_tx.message());
+        assert_eq!(pre_account_state_info.len(), num_accounts,);
+
         assert_eq!(
-            TransactionAccountStateInfo::new(&transaction_context, sanitized_tx.message(), &rent,)
-                .len(),
+            new_post_exec(
+                &transaction_context,
+                &pre_account_state_info,
+                sanitized_tx.message(),
+                &rent,
+            )
+            .len(),
             num_accounts,
         );
     }
