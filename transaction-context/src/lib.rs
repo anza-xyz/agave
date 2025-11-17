@@ -88,8 +88,12 @@ pub struct TransactionContext<'ix_data> {
     /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
     /// Usage: dedup_map[index_in_transaction] = index_in_instruction
     /// This is a vector of u8s to save memory, since many entries may be unused.
+    /// Each deduplication map contains 256 entries and is concatenated to `deduplication_maps`.
     deduplication_maps: Vec<u8>,
+    /// The instruction accounts for all accounts are concatenated in `instruction_accounts`
     instruction_accounts: Vec<InstructionAccount>,
+    /// Each entry in `instruction_data` represents the data for instruction at the corresponding
+    /// index.
     instruction_data: Vec<Cow<'ix_data, [u8]>>,
 }
 
