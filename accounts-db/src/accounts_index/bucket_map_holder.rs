@@ -115,6 +115,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
         })
     }
 
+    /// Get the target entries per bin for threshold-based flushing
+    pub fn target_entries_per_bin(&self) -> Option<usize> {
+        self.target_entries_per_bin
+    }
+
     pub fn increment_age(&self) {
         // since we are about to change age, there are now 0 buckets that have been flushed at this age
         // this should happen before the age.fetch_add
@@ -251,8 +256,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
             IndexLimit::Threshold(limit_bytes) => {
                 let bytes_per_bin = (limit_bytes as usize) / bins;
                 let entries_per_bin = bytes_per_bin
-                    / InMemAccountsIndex::<T, U>::size_of_uninitialized()
-                    + InMemAccountsIndex::<T, U>::size_of_single_entry();
+                    / (InMemAccountsIndex::<T, U>::size_of_uninitialized()
+                        + InMemAccountsIndex::<T, U>::size_of_single_entry());
                 let target_entries_per_bin = if entries_per_bin == 0 {
                     0
                 } else {
