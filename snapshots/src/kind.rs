@@ -19,8 +19,8 @@ impl SnapshotKind {
     }
 }
 
-/// Archives come in two kinds, Full and Incremental. The incremental archive has a Slot field,
-/// which is the incremental archive base slot.
+/// Snapshot archives come in two kinds, Full and Incremental. The incremental snapshot archive has a Slot field,
+/// which is the incremental snapshot base slot.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SnapshotArchiveKind {
     Full,
