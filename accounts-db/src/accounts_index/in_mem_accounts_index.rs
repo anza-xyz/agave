@@ -970,7 +970,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             // Low water mark: flush down to 50% of limit
             let max_evictions = self
                 .storage
-                .max_evictions_for_threshold(entries_in_bin, 0.60);
+                .max_evictions_for_threshold(entries_in_bin, 0.70);
 
             let possible_evictions = Self::gather_possible_evictions(
                 map.iter(),
@@ -1113,7 +1113,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         // For threshold-based flushing, check if current entry count warrants flushing
         if !startup {
             let entries_in_bin = self.map_internal.read().unwrap().len();
-            if !self.storage.should_flush_to_disk(entries_in_bin, 0.8) {
+            if !self.storage.should_flush_to_disk(entries_in_bin, 0.85) {
                 // Entry count is below threshold, no need to flush
                 // Still mark as aged to avoid infinite scanning
                 assert_eq!(current_age, self.storage.current_age());
