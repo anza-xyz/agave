@@ -262,7 +262,7 @@ dependencies = [
  "crossbeam-channel",
  "log",
  "lz4",
- "rand 0.8.5",
+ "rand 0.9.2",
  "regex",
  "semver",
  "solana-accounts-db",
@@ -6402,7 +6402,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "bv",
  "fnv",
- "rand 0.8.5",
+ "rand 0.9.2",
  "serde",
  "solana-sanitize",
  "solana-time-utils",
@@ -6788,7 +6788,7 @@ dependencies = [
  "futures-util",
  "indexmap 2.12.0",
  "log",
- "rand 0.8.5",
+ "rand 0.9.2",
  "rayon",
  "solana-keypair",
  "solana-measure",
@@ -7774,7 +7774,7 @@ dependencies = [
  "crossbeam-channel",
  "itertools 0.13.0",
  "log",
- "rand 0.8.5",
+ "rand 0.9.2",
  "rayon",
  "solana-account",
  "solana-accounts-db",
@@ -7901,7 +7901,7 @@ dependencies = [
  "itertools 0.13.0",
  "log",
  "nix",
- "rand 0.8.5",
+ "rand 0.9.2",
  "serde",
  "socket2 0.6.1",
  "solana-serde",
@@ -8154,7 +8154,7 @@ dependencies = [
  "itertools 0.13.0",
  "log",
  "percentage",
- "rand 0.8.5",
+ "rand 0.9.2",
  "serde",
  "solana-account",
  "solana-account-info",
@@ -9083,7 +9083,7 @@ dependencies = [
  "percentage",
  "quinn",
  "quinn-proto",
- "rand 0.8.5",
+ "rand 0.9.2",
  "rustls 0.23.35",
  "smallvec",
  "socket2 0.6.1",
@@ -9199,7 +9199,7 @@ dependencies = [
 name = "solana-svm-type-overrides"
 version = "4.0.0-alpha.0"
 dependencies = [
- "rand 0.8.5",
+ "rand 0.9.2",
 ]
 
 [[package]]
@@ -9514,7 +9514,7 @@ dependencies = [
  "base64 0.22.1",
  "bincode",
  "log",
- "rand 0.8.5",
+ "rand 0.9.2",
  "solana-packet 4.0.0",
  "solana-perf",
  "solana-short-vec",
@@ -9710,7 +9710,7 @@ name = "solana-version"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
- "rand 0.8.5",
+ "rand 0.9.2",
  "semver",
  "serde",
  "solana-sanitize",

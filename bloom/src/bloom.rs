@@ -86,7 +86,7 @@ impl<T: BloomHashIndex> Bloom<T> {
         let m = Self::num_bits(num_items as f64, false_rate);
         let num_bits = cmp::max(1, cmp::min(m as usize, max_bits));
         let num_keys = Self::num_keys(num_bits as f64, num_items as f64) as usize;
-        let keys: Vec<u64> = (0..num_keys).map(|_| rand::thread_rng().gen()).collect();
+        let keys: Vec<u64> = (0..num_keys).map(|_| rand::rng().random()).collect();
         Self::new(num_bits, keys)
     }
     fn num_bits(num_items: f64, false_rate: f64) -> f64 {
@@ -351,7 +351,7 @@ mod test {
     }
 
     fn generate_random_hash() -> Hash {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut hash = [0u8; solana_hash::HASH_BYTES];
         rng.fill(&mut hash);
         Hash::new_from_array(hash)
@@ -385,8 +385,8 @@ mod test {
 
     #[test]
     fn test_atomic_bloom_round_trip() {
-        let mut rng = rand::thread_rng();
-        let keys: Vec<_> = std::iter::repeat_with(|| rng.gen()).take(5).collect();
+        let mut rng = rand::rng();
+        let keys: Vec<_> = std::iter::repeat_with(|| rng.random()).take(5).collect();
         let mut bloom = Bloom::<Hash>::new(9731, keys.clone());
         let hash_values: Vec<_> = std::iter::repeat_with(generate_random_hash)
             .take(1000)
