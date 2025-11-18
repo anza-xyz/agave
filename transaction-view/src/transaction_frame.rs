@@ -166,10 +166,12 @@ impl TransactionFrame {
         //   `bytes`. This means it will not be mutated or deallocated while
         //   holding the slice.
         // - The length does not overflow `isize`.
-        core::slice::from_raw_parts(
-            bytes.as_ptr().add(usize::from(self.signature.offset)) as *const Signature,
-            usize::from(self.signature.num_signatures),
-        )
+        unsafe {
+            core::slice::from_raw_parts(
+                bytes.as_ptr().add(usize::from(self.signature.offset)) as *const Signature,
+                usize::from(self.signature.num_signatures),
+            )
+        }
     }
 
     /// Return the slice of static account keys in the transaction.
@@ -196,12 +198,15 @@ impl TransactionFrame {
         //   `bytes`. This means it will not be mutated or deallocated while
         //   holding the slice.
         // - The length does not overflow `isize`.
-        core::slice::from_raw_parts(
-            bytes
-                .as_ptr()
-                .add(usize::from(self.static_account_keys.offset)) as *const Pubkey,
-            usize::from(self.static_account_keys.num_static_accounts),
-        )
+        unsafe {
+            core::slice::from_raw_parts(
+                bytes
+                    .as_ptr()
+                    .add(usize::from(self.static_account_keys.offset))
+                    as *const Pubkey,
+                usize::from(self.static_account_keys.num_static_accounts),
+            )
+        }
     }
 
     /// Return the recent blockhash in the transaction.
@@ -219,9 +224,11 @@ impl TransactionFrame {
         //   is not initialized properly.
         // - Aliasing rules are respected because the lifetime of the returned
         //   reference is the same as the input/source `bytes`.
-        &*(bytes
-            .as_ptr()
-            .add(usize::from(self.recent_blockhash_offset)) as *const Hash)
+        unsafe {
+            &*(bytes
+                .as_ptr()
+                .add(usize::from(self.recent_blockhash_offset)) as *const Hash)
+        }
     }
 
     /// Return an iterator over the instructions in the transaction.

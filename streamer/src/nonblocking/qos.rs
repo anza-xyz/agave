@@ -51,4 +51,9 @@ pub(crate) trait QosController<C: ConnectionContext> {
         context: &C,
         connection: Connection,
     ) -> impl Future<Output = usize> + Send;
+
+    /// How many concurrent
+    fn max_concurrent_connections(&self) -> usize;
 }
+
+pub trait QosConfig {}

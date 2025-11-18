@@ -7,10 +7,10 @@ use {
     },
     assert_matches::{assert_matches, debug_assert_matches},
     serde::{Deserialize, Deserializer, Serialize},
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     solana_serde_varint as serde_varint, solana_short_vec as short_vec,
-    solana_streamer::socket::SocketAddrSpace,
     static_assertions::const_assert_eq,
     std::{
         cmp::Ordering,

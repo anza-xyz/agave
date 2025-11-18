@@ -11,7 +11,7 @@ mod serde_snapshot_tests {
         },
         bincode::{serialize_into, Error},
         log::info,
-        rand::{thread_rng, Rng},
+        rand::{rng, Rng},
         solana_account::{AccountSharedData, ReadableAccount},
         solana_accounts_db::{
             account_storage::AccountStorageMap,
@@ -197,7 +197,7 @@ mod serde_snapshot_tests {
 
     fn check_accounts_local(accounts: &Accounts, pubkeys: &[Pubkey], num: usize) {
         for _ in 1..num {
-            let idx = thread_rng().gen_range(0..num - 1);
+            let idx = rng().random_range(0..num - 1);
             let ancestors = vec![(0, 0)].into_iter().collect();
             let account = accounts.load_without_fixed_root(&ancestors, &pubkeys[idx]);
             let account1 = Some((

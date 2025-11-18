@@ -22,11 +22,12 @@ impl SocketAddrSpace {
         if matches!(self, SocketAddrSpace::Unspecified) {
             return true;
         }
+
         // TODO: remove these once IpAddr::is_global is stable.
         match addr.ip() {
             IpAddr::V4(addr) => {
                 // TODO: Consider excluding:
-                //    addr.is_link_local() || addr.is_broadcast()
+                // addr.is_link_local() || addr.is_broadcast()
                 // || addr.is_documentation() || addr.is_unspecified()
                 !(addr.is_private() || addr.is_loopback())
             }

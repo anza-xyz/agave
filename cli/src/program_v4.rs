@@ -23,11 +23,11 @@ use {
     solana_cli_output::{
         return_signers_with_config, CliProgramId, CliProgramV4, CliProgramsV4, ReturnSignersConfig,
     },
-    solana_client::send_and_confirm_transactions_in_parallel::{
-        send_and_confirm_transactions_in_parallel_v2, SendAndConfirmConfigV2,
-    },
-    solana_connection_cache::connection_cache::{
-        ConnectionCache as BackendConnectionCache, NewConnectionConfig,
+    solana_client::{
+        connection_cache::ConnectionCache,
+        send_and_confirm_transactions_in_parallel::{
+            send_and_confirm_transactions_in_parallel_v2, SendAndConfirmConfigV2,
+        },
     },
     solana_instruction::Instruction,
     solana_loader_v4_interface::{
@@ -42,7 +42,6 @@ use {
         execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
     },
     solana_pubkey::Pubkey,
-    solana_quic_client::{QuicConfig, QuicConnectionManager},
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_api::{
@@ -55,9 +54,8 @@ use {
     solana_sdk_ids::{loader_v4, system_program},
     solana_signer::Signer,
     solana_system_interface::{instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH},
-    solana_tpu_client::{nonblocking::tpu_client::TpuClient, tpu_client::TpuClientConfig},
+    solana_tpu_client::tpu_client::TpuClientConfig,
     solana_transaction::Transaction,
-    solana_udp_client::UdpConnectionManager,
     std::{
         cmp::Ordering,
         fs::File,
@@ -1327,71 +1325,61 @@ async fn send_messages(
     }
 
     if !write_messages.is_empty() {
-        let transaction_errors = if config.use_quic {
-            // Create QUIC connection cache
-            use solana_client::nonblocking::tpu_client::TpuClient as ClientTpuClient; // type expected by `send_and_confirm_transactions_in_parallel_v2`
-            let quic_config = QuicConfig::new().unwrap();
-            let connection_manager = QuicConnectionManager::new_with_connection_config(quic_config);
-            let connection_cache = Arc::new(
-                BackendConnectionCache::new(
-                    "connection_cache_cli_program_quic",
-                    connection_manager,
-                    1,
-                )
-                .unwrap(),
-            );
+        use solana_client::nonblocking::tpu_client::TpuClient;
 
-            let tpu_client = if additional_cli_config.use_rpc {
-                None
-            } else {
-                Some(
-                    ClientTpuClient::new_with_connection_cache(
-                        rpc_client.clone(),
-                        &config.websocket_url,
-                        TpuClientConfig::default(),
-                        connection_cache,
+        let connection_cache = {
+            #[cfg(feature = "dev-context-only-utils")]
+            let cache =
+                ConnectionCache::new_quic_for_tests("connection_cache_cli_program_v4_quic", 1);
+            #[cfg(not(feature = "dev-context-only-utils"))]
+            let cache = ConnectionCache::new_quic("connection_cache_cli_program_v4_quic", 1);
+            cache
+        };
+
+        let transaction_errors = match connection_cache {
+            ConnectionCache::Udp(cache) => {
+                TpuClient::new_with_connection_cache(
+                    rpc_client.clone(),
+                    &config.websocket_url,
+                    TpuClientConfig::default(),
+                    cache,
+                )
+                .await?
+                .send_and_confirm_messages_with_spinner(
+                    &write_messages,
+                    &[config.signers[0], config.signers[*auth_signer_index]],
+                )
+                .await
+            }
+            ConnectionCache::Quic(cache) => {
+                let tpu_client = if additional_cli_config.use_rpc {
+                    None
+                } else {
+                    Some(
+                        TpuClient::new_with_connection_cache(
+                            rpc_client.clone(),
+                            &config.websocket_url,
+                            TpuClientConfig::default(),
+                            cache,
+                        )
+                        .await
+                        .expect("Should return a valid tpu client"),
                     )
-                    .await
-                    .expect("Should return a valid tpu client"),
-                )
-            };
+                };
 
-            send_and_confirm_transactions_in_parallel_v2(
-                rpc_client.clone(),
-                tpu_client,
-                &write_messages,
-                &[config.signers[0], config.signers[*auth_signer_index]],
-                SendAndConfirmConfigV2 {
-                    resign_txs_count: Some(5),
-                    with_spinner: true,
-                    rpc_send_transaction_config: config.send_transaction_config,
-                },
-            )
-            .await
-        } else {
-            // Create UDP connection cache
-            let connection_manager = UdpConnectionManager::default();
-            let connection_cache = Arc::new(
-                BackendConnectionCache::new(
-                    "connection_cache_cli_program_v4_udp",
-                    connection_manager,
-                    1,
+                send_and_confirm_transactions_in_parallel_v2(
+                    rpc_client.clone(),
+                    tpu_client,
+                    &write_messages,
+                    &[config.signers[0], config.signers[*auth_signer_index]],
+                    SendAndConfirmConfigV2 {
+                        resign_txs_count: Some(5),
+                        with_spinner: true,
+                        rpc_send_transaction_config: config.send_transaction_config,
+                    },
                 )
-                .unwrap(),
-            );
-
-            TpuClient::new_with_connection_cache(
-                rpc_client.clone(),
-                &config.websocket_url,
-                TpuClientConfig::default(),
-                connection_cache,
-            )
-            .await?
-            .send_and_confirm_messages_with_spinner(
-                &write_messages,
-                &[config.signers[0], config.signers[*auth_signer_index]],
-            )
-            .await
+                .await
+            }
         }
         .map_err(|err| format!("Data writes to account failed: {err}"))?
         .into_iter()

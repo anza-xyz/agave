@@ -14,7 +14,6 @@ gce)
 
   # use n1 instead of n2 so we don't need to spin up >= 4 local SSD's
   cpuBootstrapLeaderMachineType="--custom-cpu 24 --min-cpu-platform Intel%20Skylake --custom-vm-type n1"
-  gpuBootstrapLeaderMachineType="$cpuBootstrapLeaderMachineType --accelerator count=1,type=nvidia-tesla-p100"
   clientMachineType="--custom-cpu 16 --custom-memory 20GB"
   blockstreamerMachineType="--machine-type n1-standard-8"
   selfDestructHours=8
@@ -25,10 +24,6 @@ ec2)
 
   cpuBootstrapLeaderMachineType=m5.4xlarge
 
-  # NOTE: At this time only the p3dn.24xlarge EC2 instance type has GPU and
-  #       AVX-512 support.  The default, p2.xlarge, does not support
-  #       AVX-512
-  gpuBootstrapLeaderMachineType=p2.xlarge
   clientMachineType=c5.2xlarge
   blockstreamerMachineType=m5.4xlarge
   selfDestructHours=0
@@ -38,7 +33,6 @@ azure)
   source "$here"/scripts/azure-provider.sh
 
   cpuBootstrapLeaderMachineType=Standard_D16s_v3
-  gpuBootstrapLeaderMachineType=Standard_NC12
   clientMachineType=Standard_D16s_v3
   blockstreamerMachineType=Standard_D16s_v3
   selfDestructHours=0
@@ -48,7 +42,6 @@ colo)
   source "$here"/scripts/colo-provider.sh
 
   cpuBootstrapLeaderMachineType=0
-  gpuBootstrapLeaderMachineType=1
   clientMachineType=0
   blockstreamerMachineType=0
   selfDestructHours=0
@@ -75,7 +68,6 @@ customMemoryGB="$defaultCustomMemoryGB"
 
 publicNetwork=false
 letsEncryptDomainName=
-enableGpu=false
 customMachineType=
 customAddress=
 zones=()
@@ -123,10 +115,6 @@ Manage testnet instances
    -c [number]      - Number of client nodes (default: $clientNodeCount)
    -u               - Include a Blockstreamer (default: $blockstreamer)
    -P               - Use public network IP addresses (default: $publicNetwork)
-   -g               - Enable GPU and automatically set validator machine types to $gpuBootstrapLeaderMachineType
-                      (default: $enableGpu)
-   -G               - Enable GPU, and set custom GPU machine type to use
-                      (e.g $gpuBootstrapLeaderMachineType)
    -a [address]     - Address to be be assigned to the Blockstreamer if present,
                       otherwise the bootstrap validator.
                       * For GCE, [address] is the "name" of the desired External
@@ -139,15 +127,13 @@ Manage testnet instances
                       DNS name (useful only when the -a and -P options
                       are also provided)
    --custom-machine-type [type]
-                    - Set a custom machine type without assuming whether or not
-                      GPU is enabled.  Set this explicitly with --enable-gpu/-g to call out the presence of GPUs.
+                    - Set a custom machine type.
 $(
   if [[ -n "$defaultCustomMemoryGB" ]]; then
     echo "   --custom-memory-gb"
     echo "                    - Set memory size for custom machine type in GB (default: $defaultCustomMemoryGB)"
   fi
 )
-   --enable-gpu     - Use with --custom-machine-type to specify whether or not GPUs should be used/enabled
    --validator-additional-disk-size-gb [number]
                     - Add an additional [number] GB SSD to all validators to store the config directory.
                       If not set, config will be written to the boot disk by default.
@@ -200,7 +186,7 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --validator-additional-disk-size-gb ]]; then
       validatorAdditionalDiskSizeInGb="$2"
       shift 2
-    elif [[ $1 == --machine-type* || $1 == --custom-cpu* ]]; then # Bypass quoted long args for GPUs
+    elif [[ $1 == --machine-type* || $1 == --custom-cpu* ]]; then # Bypass quoted long args
       shortArgs+=("$1")
       shift
     elif [[ $1 == --allow-boot-failures ]]; then
@@ -213,7 +199,7 @@ while [[ -n $1 ]]; do
       evalInfo=true
       shift
     elif [[ $1 == --enable-gpu ]]; then
-      enableGpu=true
+      echo "GPU support has been dropped, --enable-gpu is a noop"
       shift
     elif [[ $1 = --custom-machine-type ]]; then
       customMachineType="$2"
@@ -276,11 +262,10 @@ while getopts "h?p:Pn:c:r:z:gG:a:d:uxf" opt "${shortArgs[@]}"; do
     containsZone "$OPTARG" "${zones[@]}" || zones+=("$OPTARG")
     ;;
   g)
-    enableGpu=true
+    echo "GPU support has been dropped, -g argument is a noop"
     ;;
   G)
-    enableGpu=true
-    customMachineType="$OPTARG"
+    echo "GPU support has been dropped, -G argument is a noop"
     ;;
   a)
     customAddress=$OPTARG
@@ -316,14 +301,12 @@ case $cloudProvider in
 gce)
   if [[ "$tmpfsAccounts" = "true" ]]; then
     cpuBootstrapLeaderMachineType+=" --local-ssd interface=nvme"
-    gpuBootstrapLeaderMachineType+=" --local-ssd interface=nvme"
     if [[ $customMemoryGB -lt 100 ]]; then
       # shellcheck disable=SC2016 # We don't want expression expansion on these backticks
       echo -e '\nWarning: At least 100GB of system RAM is recommending with `--tmpfs-accounts` (see `--custom-memory-gb`)\n'
     fi
   fi
   cpuBootstrapLeaderMachineType+=" --custom-memory ${customMemoryGB}GB"
-  gpuBootstrapLeaderMachineType+=" --custom-memory ${customMemoryGB}GB"
   ;;
 ec2|azure|colo)
   if [[ -n $validatorAdditionalDiskSizeInGb ]] ; then
@@ -363,8 +346,6 @@ fi
 
 if [[ -n "$customMachineType" ]] ; then
   bootstrapLeaderMachineType="$customMachineType"
-elif [[ "$enableGpu" = "true" ]] ; then
-  bootstrapLeaderMachineType="$gpuBootstrapLeaderMachineType"
 else
   bootstrapLeaderMachineType="$cpuBootstrapLeaderMachineType"
 fi
@@ -718,7 +699,7 @@ create)
   printNetworkInfo() {
     cat <<EOF
 ==[ Network composition ]===============================================================
-  Bootstrap validator = $bootstrapLeaderMachineType (GPU=$enableGpu)
+  Bootstrap validator = $bootstrapLeaderMachineType
   Additional validators = $additionalValidatorCount x $validatorMachineType
   Client(s) = $clientNodeCount x $clientMachineType
   Blockstreamer = $blockstreamer
@@ -748,9 +729,6 @@ if [[ -f /solana-scratch/.instance-startup-complete ]]; then
   echo reboot
   $(
     cd "$here"/scripts/
-    if "$enableGpu"; then
-      cat enable-nvidia-persistence-mode.sh
-    fi
 
     if [[ -n $validatorAdditionalDiskSizeInGb ]]; then
       cat mount-additional-disk.sh
@@ -811,10 +789,6 @@ $(
     localtime.sh \
     network-config.sh \
     remove-docker-interface.sh \
-
-  if "$enableGpu"; then
-    cat enable-nvidia-persistence-mode.sh
-  fi
 
   if [[ -n $validatorAdditionalDiskSizeInGb ]]; then
     cat mount-additional-disk.sh
@@ -900,7 +874,7 @@ EOF
     echo "Bootstrap validator is already configured"
   else
     cloud_CreateInstances "$prefix" "$prefix-bootstrap-validator" 1 \
-      "$enableGpu" "$bootstrapLeaderMachineType" "${zones[0]}" "$validatorBootDiskSizeInGb" \
+      "$bootstrapLeaderMachineType" "${zones[0]}" "$validatorBootDiskSizeInGb" \
       "$startupScript" "$bootstrapLeaderAddress" "$bootDiskType" "$validatorAdditionalDiskSizeInGb" \
       "$maybePreemptible" "$sshPrivateKey"
   fi
@@ -921,7 +895,7 @@ EOF
         numNodesPerZone=$((numNodesPerZone + numLeftOverNodes))
       fi
       cloud_CreateInstances "$prefix" "$prefix-$zone-validator" "$numNodesPerZone" \
-        "$enableGpu" "$validatorMachineType" "$zone" "$validatorBootDiskSizeInGb" \
+        "$validatorMachineType" "$zone" "$validatorBootDiskSizeInGb" \
         "$startupScript" "" "$bootDiskType" "$validatorAdditionalDiskSizeInGb" \
         "$preemptible" "$sshPrivateKey" &
     done
@@ -931,13 +905,13 @@ EOF
 
   if [[ $clientNodeCount -gt 0 ]]; then
     cloud_CreateInstances "$prefix" "$prefix-client" "$clientNodeCount" \
-      "$enableGpu" "$clientMachineType" "${zones[0]}" "$clientBootDiskSizeInGb" \
+      "$clientMachineType" "${zones[0]}" "$clientBootDiskSizeInGb" \
       "$startupScript" "" "$bootDiskType" "" "$maybePreemptible" "$sshPrivateKey"
   fi
 
   if $blockstreamer; then
     cloud_CreateInstances "$prefix" "$prefix-blockstreamer" "1" \
-      "$enableGpu" "$blockstreamerMachineType" "${zones[0]}" "$validatorBootDiskSizeInGb" \
+      "$blockstreamerMachineType" "${zones[0]}" "$validatorBootDiskSizeInGb" \
       "$startupScript" "$blockstreamerAddress" "$bootDiskType" "" "$maybePreemptible" "$sshPrivateKey"
   fi
 

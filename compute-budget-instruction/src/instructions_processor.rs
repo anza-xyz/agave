@@ -29,7 +29,7 @@ mod tests {
         solana_message::Message,
         solana_pubkey::Pubkey,
         solana_signer::Signer,
-        solana_svm_transaction::svm_message::SVMMessage,
+        solana_svm_transaction::svm_message::SVMStaticMessage,
         solana_system_interface::instruction::transfer,
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},
         solana_transaction_error::TransactionError,
@@ -51,7 +51,7 @@ mod tests {
             ));
 
             let result = process_compute_budget_instructions(
-                SVMMessage::program_instructions_iter(&tx),
+                SVMStaticMessage::program_instructions_iter(&tx),
                 $feature_set,
             );
             assert_eq!($expected_result, result);
@@ -437,7 +437,7 @@ mod tests {
             ),
         ] {
             let result = process_compute_budget_instructions(
-                SVMMessage::program_instructions_iter(&transaction),
+                SVMStaticMessage::program_instructions_iter(&transaction),
                 &feature_set,
             );
 

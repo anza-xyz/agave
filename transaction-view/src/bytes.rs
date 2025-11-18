@@ -42,7 +42,7 @@ pub fn read_byte(bytes: &[u8], offset: &mut usize) -> Result<u8> {
 /// 2. `offset` must be a valid offset into `bytes`.
 #[inline(always)]
 pub unsafe fn unchecked_read_byte(bytes: &[u8], offset: &mut usize) -> u8 {
-    let value = *bytes.get_unchecked(*offset);
+    let value = unsafe { *bytes.get_unchecked(*offset) };
     *offset = offset.wrapping_add(1);
     value
 }
@@ -185,7 +185,7 @@ pub unsafe fn read_slice_data<'a, T: Sized>(
     offset: &mut usize,
     num_elements: u16,
 ) -> Result<&'a [T]> {
-    let current_ptr = bytes.as_ptr().add(*offset);
+    let current_ptr = unsafe { bytes.as_ptr().add(*offset) };
     advance_offset_for_array::<T>(bytes, offset, num_elements)?;
     Ok(unsafe { core::slice::from_raw_parts(current_ptr as *const T, usize::from(num_elements)) })
 }
@@ -210,7 +210,7 @@ pub unsafe fn unchecked_read_slice_data<'a, T: Sized>(
     offset: &mut usize,
     num_elements: u16,
 ) -> &'a [T] {
-    let current_ptr = bytes.as_ptr().add(*offset);
+    let current_ptr = unsafe { bytes.as_ptr().add(*offset) };
     let array_len_bytes = usize::from(num_elements).wrapping_mul(core::mem::size_of::<T>());
     *offset = offset.wrapping_add(array_len_bytes);
     unsafe { core::slice::from_raw_parts(current_ptr as *const T, usize::from(num_elements)) }
@@ -230,7 +230,7 @@ pub unsafe fn unchecked_read_slice_data<'a, T: Sized>(
 /// 4. `T` must be validly initialized.
 #[inline(always)]
 pub unsafe fn read_type<'a, T: Sized>(bytes: &'a [u8], offset: &mut usize) -> Result<&'a T> {
-    let current_ptr = bytes.as_ptr().add(*offset);
+    let current_ptr = unsafe { bytes.as_ptr().add(*offset) };
     advance_offset_for_type::<T>(bytes, offset)?;
     Ok(unsafe { &*(current_ptr as *const T) })
 }

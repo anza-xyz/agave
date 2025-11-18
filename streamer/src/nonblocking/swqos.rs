@@ -14,7 +14,11 @@ use {
                 STREAM_THROTTLING_INTERVAL_MS,
             },
         },
-        quic::{StreamerStats, DEFAULT_MAX_STREAMS_PER_MS},
+        quic::{
+            StreamerStats, DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
+            DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER, DEFAULT_MAX_STAKED_CONNECTIONS,
+            DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
+        },
         streamer::StakedNodes,
     },
     percentage::Percentage,
@@ -41,21 +45,37 @@ use {
 #[derive(Clone)]
 pub struct SwQosConfig {
     pub max_streams_per_ms: u64,
+    pub max_staked_connections: usize,
+    pub max_unstaked_connections: usize,
+    pub max_connections_per_staked_peer: usize,
+    pub max_connections_per_unstaked_peer: usize,
 }
 
 impl Default for SwQosConfig {
     fn default() -> Self {
         SwQosConfig {
             max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
+            max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS,
+            max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
+            max_connections_per_staked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
+            max_connections_per_unstaked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER,
+        }
+    }
+}
+
+impl SwQosConfig {
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn default_for_tests() -> Self {
+        Self {
+            max_connections_per_unstaked_peer: 1,
+            max_connections_per_staked_peer: 1,
+            ..Self::default()
         }
     }
 }
 
 pub struct SwQos {
-    max_staked_connections: usize,
-    max_unstaked_connections: usize,
-    max_connections_per_staked_peer: usize,
-    max_connections_per_unstaked_peer: usize,
+    config: SwQosConfig,
     staked_stream_load_ema: Arc<StakedStreamLoadEMA>,
     stats: Arc<StreamerStats>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
@@ -89,24 +109,17 @@ impl ConnectionContext for SwQosConnectionContext {
 
 impl SwQos {
     pub fn new(
-        qos_config: SwQosConfig,
-        max_staked_connections: usize,
-        max_unstaked_connections: usize,
-        max_connections_per_staked_peer: usize,
-        max_connections_per_unstaked_peer: usize,
+        config: SwQosConfig,
         stats: Arc<StreamerStats>,
         staked_nodes: Arc<RwLock<StakedNodes>>,
         cancel: CancellationToken,
     ) -> Self {
         Self {
-            max_staked_connections,
-            max_unstaked_connections,
-            max_connections_per_staked_peer,
-            max_connections_per_unstaked_peer,
+            config: config.clone(),
             staked_stream_load_ema: Arc::new(StakedStreamLoadEMA::new(
                 stats.clone(),
-                max_unstaked_connections,
-                qos_config.max_streams_per_ms,
+                config.max_unstaked_connections,
+                config.max_streams_per_ms,
             )),
             stats,
             staked_nodes,
@@ -229,8 +242,8 @@ impl SwQos {
             );
 
             let max_connections_per_peer = match conn_context.peer_type() {
-                ConnectionPeerType::Unstaked => self.max_connections_per_unstaked_peer,
-                ConnectionPeerType::Staked(_) => self.max_connections_per_staked_peer,
+                ConnectionPeerType::Unstaked => self.config.max_connections_per_unstaked_peer,
+                ConnectionPeerType::Staked(_) => self.config.max_connections_per_staked_peer,
             };
             if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
                 .try_add_connection(
@@ -391,7 +404,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                 ConnectionPeerType::Staked(stake) => {
                     let mut connection_table_l = self.staked_connection_table.lock().await;
 
-                    if connection_table_l.total_size >= self.max_staked_connections {
+                    if connection_table_l.total_size >= self.config.max_staked_connections {
                         let num_pruned =
                             connection_table_l.prune_random(PRUNE_RANDOM_SAMPLE_SIZE, stake);
                         self.stats
@@ -400,7 +413,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                         update_open_connections_stat(&self.stats, &connection_table_l);
                     }
 
-                    if connection_table_l.total_size < self.max_staked_connections {
+                    if connection_table_l.total_size < self.config.max_staked_connections {
                         if let Ok((last_update, cancel_connection, stream_counter)) = self
                             .cache_new_connection(
                                 client_connection_tracker,
@@ -426,7 +439,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                                 client_connection_tracker,
                                 connection,
                                 self.unstaked_connection_table.clone(),
-                                self.max_unstaked_connections,
+                                self.config.max_unstaked_connections,
                                 conn_context,
                             )
                             .await
@@ -454,7 +467,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                             client_connection_tracker,
                             connection,
                             self.unstaked_connection_table.clone(),
-                            self.max_unstaked_connections,
+                            self.config.max_unstaked_connections,
                             conn_context,
                         )
                         .await
@@ -549,6 +562,12 @@ impl QosController<SwQosConnectionContext> for SwQos {
             )
             .await;
         }
+    }
+
+    fn max_concurrent_connections(&self) -> usize {
+        // Allow 25% more connections than required to allow for handshake
+
+        (self.config.max_staked_connections + self.config.max_unstaked_connections) * 5 / 4
     }
 }
 

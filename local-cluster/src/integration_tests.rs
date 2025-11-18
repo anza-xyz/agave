@@ -37,10 +37,10 @@ use {
         leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule, LeaderSchedule},
     },
     solana_native_token::LAMPORTS_PER_SOL,
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_turbine::broadcast_stage::BroadcastStageType,
     static_assertions,
     std::{

@@ -29,12 +29,14 @@ use {
     },
     solana_clock::{self as clock, Clock, Epoch, Slot},
     solana_commitment_config::CommitmentConfig,
+    solana_connection_cache::connection_cache::{
+        ConnectionManager, ConnectionPool, NewConnectionConfig,
+    },
     solana_hash::Hash,
     solana_message::Message,
     solana_nonce::state::State as NonceState,
     solana_pubkey::Pubkey,
     solana_pubsub_client::pubsub_client::PubsubClient,
-    solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rent::Rent,
     solana_rpc_client::{
@@ -1498,8 +1500,8 @@ pub async fn process_get_transaction_count(
     Ok(transaction_count.to_string())
 }
 
-pub async fn process_ping(
-    tpu_client: Option<&TpuClient<QuicPool, QuicConnectionManager, QuicConfig>>,
+pub async fn process_ping<P, M, C>(
+    tpu_client: Option<&TpuClient<P, M, C>>,
     config: &CliConfig<'_>,
     interval: &Duration,
     count: &Option<u64>,
@@ -1508,7 +1510,12 @@ pub async fn process_ping(
     print_timestamp: bool,
     compute_unit_price: Option<u64>,
     rpc_client: &RpcClient,
-) -> ProcessResult {
+) -> ProcessResult
+where
+    P: ConnectionPool<NewConnectionConfig = C>,
+    M: ConnectionManager<ConnectionPool = P, NewConnectionConfig = C>,
+    C: NewConnectionConfig,
+{
     let (signal_sender, signal_receiver) = unbounded();
     let handler = move || {
         let _ = signal_sender.send(());

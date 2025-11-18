@@ -24,11 +24,11 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::blockstore::Blockstore,
+    solana_net_utils::SocketAddrSpace,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig, TpuSenderError},
@@ -627,7 +627,7 @@ fn get_and_verify_slot_entries(
     last_entry: &Hash,
 ) -> Vec<Entry> {
     let entries = blockstore.get_slot_entries(slot, 0).unwrap();
-    assert!(entries.verify(last_entry, thread_pool));
+    assert!(entries.verify(last_entry, thread_pool).status());
     entries
 }
 

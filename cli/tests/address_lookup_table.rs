@@ -10,9 +10,9 @@ use {
     solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_test_validator::TestValidator,
     std::str::FromStr,
 };

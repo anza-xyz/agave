@@ -17,7 +17,6 @@ use {
     },
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client_api::config::RpcSendTransactionConfig,
-    solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     std::{collections::HashMap, error, path::PathBuf, rc::Rc, time::Duration},
 };
 
@@ -201,14 +200,6 @@ pub fn parse_args<'a>(
         config.address_labels
     };
 
-    let use_quic = if matches.is_present("use_quic") {
-        true
-    } else if matches.is_present("use_udp") {
-        false
-    } else {
-        !DEFAULT_TPU_ENABLE_UDP
-    };
-
     let skip_preflight = matches.is_present("skip_preflight");
 
     let use_tpu_client = matches.is_present("use_tpu_client");
@@ -232,7 +223,6 @@ pub fn parse_args<'a>(
             },
             confirm_transaction_initial_timeout,
             address_labels,
-            use_quic,
             use_tpu_client,
         },
         signers,

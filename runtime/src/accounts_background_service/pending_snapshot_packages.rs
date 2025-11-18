@@ -1,6 +1,6 @@
 use {
     crate::snapshot_package::{cmp_snapshot_packages_by_priority, SnapshotPackage},
-    agave_snapshots::SnapshotKind,
+    agave_snapshots::{SnapshotArchiveKind, SnapshotKind},
     log::*,
     std::cmp::Ordering::Greater,
 };
@@ -21,7 +21,7 @@ impl PendingSnapshotPackages {
     /// than any currently-pending in-kind packages.
     pub fn push(&mut self, snapshot_package: SnapshotPackage) {
         match snapshot_package.snapshot_kind {
-            SnapshotKind::FullSnapshot => {
+            SnapshotKind::Archive(SnapshotArchiveKind::Full) => {
                 if let Some(pending_full_snapshot_package) = self.full.as_ref() {
                     // snapshots are monotonically increasing; only overwrite *old* packages
                     assert!(pending_full_snapshot_package
@@ -43,7 +43,7 @@ impl PendingSnapshotPackages {
                 }
                 self.full = Some(snapshot_package)
             }
-            SnapshotKind::IncrementalSnapshot(_) => {
+            SnapshotKind::Archive(SnapshotArchiveKind::Incremental(_)) => {
                 if let Some(pending_incremental_snapshot_package) = self.incremental.as_ref() {
                     // snapshots are monotonically increasing; only overwrite *old* packages
                     assert!(pending_incremental_snapshot_package
@@ -82,7 +82,7 @@ impl PendingSnapshotPackages {
                 // slots *older* than the latest full snapshot.  This is why we do not
                 // re-enqueue every incremental snapshot.
                 if let Some(pending_incremental) = pending_incremental {
-                    let SnapshotKind::IncrementalSnapshot(base_slot) =
+                    let SnapshotKind::Archive(SnapshotArchiveKind::Incremental(base_slot)) =
                         &pending_incremental.snapshot_kind
                     else {
                         panic!(
@@ -122,10 +122,13 @@ mod tests {
         }
     }
     fn new_full(slot: Slot) -> SnapshotPackage {
-        new(SnapshotKind::FullSnapshot, slot)
+        new(SnapshotKind::Archive(SnapshotArchiveKind::Full), slot)
     }
     fn new_incr(slot: Slot, base: Slot) -> SnapshotPackage {
-        new(SnapshotKind::IncrementalSnapshot(base), slot)
+        new(
+            SnapshotKind::Archive(SnapshotArchiveKind::Incremental(base)),
+            slot,
+        )
     }
 
     #[test]
