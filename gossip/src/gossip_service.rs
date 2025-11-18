@@ -379,8 +379,6 @@ fn spy(
     (met_criteria, now.elapsed(), all_peers, tvu_peers)
 }
 
-/// Makes a spy or gossip node based on whether or not a gossip_addr was passed in
-/// Pass in a gossip addr to fully participate in gossip instead of relying on just pulls
 #[deprecated(since = "3.1.0", note = "use `make_node` instead")]
 pub fn make_gossip_node(
     keypair: Keypair,
@@ -404,8 +402,6 @@ pub fn make_gossip_node(
     )
 }
 
-/// Makes a spy or gossip node based on whether or not a gossip_addr was passed in
-/// Pass in a gossip addr to fully participate in gossip instead of relying on just pulls
 pub fn make_node(
     keypair: Keypair,
     entrypoints: &[SocketAddr],

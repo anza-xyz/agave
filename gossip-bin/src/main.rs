@@ -167,9 +167,7 @@ fn parse_matches() -> ArgMatches<'static> {
 }
 
 /// Determine bind address by checking these sources in order:
-/// 1. cli args:
-///    a. bind-address
-///    b. gossip-host
+/// 1. --bind-address cli arg
 /// 2. connect to entrypoints to determine my public IP address
 fn parse_bind_address(matches: &ArgMatches, entrypoint_addrs: &[SocketAddr]) -> IpAddr {
     if let Some(bind_address) = matches.value_of("bind_address") {
