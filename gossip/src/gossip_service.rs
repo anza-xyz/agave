@@ -165,41 +165,6 @@ pub fn discover_validators(
     Ok(validators)
 }
 
-#[deprecated(since = "3.1.0", note = "use `discover_peers` instead")]
-pub fn discover(
-    keypair: Option<Keypair>,
-    entrypoint: Option<&SocketAddr>,
-    num_nodes: Option<usize>, // num_nodes only counts validators, excludes spy nodes
-    timeout: Duration,
-    find_nodes_by_pubkey: Option<&[Pubkey]>,
-    find_node_by_gossip_addr: Option<&SocketAddr>,
-    my_gossip_addr: Option<&SocketAddr>,
-    my_shred_version: u16,
-    socket_addr_space: SocketAddrSpace,
-) -> std::io::Result<(
-    Vec<ContactInfo>, // all gossip peers
-    Vec<ContactInfo>, // tvu peers (validators)
-)> {
-    let entrypoints = &entrypoint.into_iter().copied().collect::<Vec<SocketAddr>>();
-
-    let find_nodes_by_gossip_addr = &find_node_by_gossip_addr
-        .into_iter()
-        .copied()
-        .collect::<Vec<SocketAddr>>();
-
-    discover_peers(
-        keypair,
-        entrypoints,
-        num_nodes,
-        timeout,
-        find_nodes_by_pubkey,
-        find_nodes_by_gossip_addr,
-        my_gossip_addr,
-        my_shred_version,
-        socket_addr_space,
-    )
-}
-
 pub fn discover_peers(
     keypair: Option<Keypair>,
     entrypoints: &Vec<SocketAddr>,
@@ -377,29 +342,6 @@ fn spy(
         i += 1;
     }
     (met_criteria, now.elapsed(), all_peers, tvu_peers)
-}
-
-#[deprecated(since = "3.1.0", note = "use `make_node` instead")]
-pub fn make_gossip_node(
-    keypair: Keypair,
-    entrypoint: Option<&SocketAddr>,
-    exit: Arc<AtomicBool>,
-    gossip_addr: Option<&SocketAddr>,
-    shred_version: u16,
-    should_check_duplicate_instance: bool,
-    socket_addr_space: SocketAddrSpace,
-) -> (GossipService, Option<TcpListener>, Arc<ClusterInfo>) {
-    let entrypoints = &entrypoint.into_iter().copied().collect::<Vec<SocketAddr>>();
-
-    make_node(
-        keypair,
-        entrypoints,
-        exit,
-        gossip_addr,
-        shred_version,
-        should_check_duplicate_instance,
-        socket_addr_space,
-    )
 }
 
 pub fn make_node(
