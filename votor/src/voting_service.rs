@@ -269,7 +269,7 @@ mod tests {
         solana_bls_signatures::Signature as BLSSignature,
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_keypair::Keypair,
-        solana_net_utils::sockets::bind_to_localhost_unique,
+        solana_net_utils::{sockets::bind_to_localhost_unique, SocketAddrSpace},
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
@@ -281,7 +281,6 @@ mod tests {
         solana_streamer::{
             nonblocking::swqos::SwQosConfig,
             quic::{spawn_stake_wighted_qos_server, QuicStreamerConfig, SpawnServerResult},
-            socket::SocketAddrSpace,
             streamer::StakedNodes,
         },
         std::{net::SocketAddr, sync::Arc},

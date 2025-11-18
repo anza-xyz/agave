@@ -572,8 +572,8 @@ mod tests {
                 .map(|_| StakeReward::new_random())
                 .collect::<Vec<_>>();
 
-            let mut rng = rand::thread_rng();
-            let i_zero = rng.gen_range(0..expected_num);
+            let mut rng = rand::rng();
+            let i_zero = rng.random_range(0..expected_num);
             if zero_reward {
                 // pick one entry to have zero rewards so it gets ignored
                 stake_rewards[i_zero].stake_reward_info.lamports = 0;

@@ -35,9 +35,7 @@ use {
     solana_signer::{Signer, SignerError},
     solana_stake_interface::{instruction::LockupArgs, state::Lockup},
     solana_tps_client::TpsClient,
-    solana_tpu_client::tpu_client::{
-        TpuClient, TpuClientConfig, DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP,
-    },
+    solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig, DEFAULT_TPU_CONNECTION_POOL_SIZE},
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_error::TransactionError,
     solana_vote_program::vote_state::VoteAuthorize,
@@ -540,7 +538,6 @@ pub struct CliConfig<'a> {
     pub send_transaction_config: RpcSendTransactionConfig,
     pub confirm_transaction_initial_timeout: Duration,
     pub address_labels: HashMap<String, String>,
-    pub use_quic: bool,
     pub use_tpu_client: bool,
 }
 
@@ -589,7 +586,6 @@ impl Default for CliConfig<'_> {
                 u64::from_str(DEFAULT_CONFIRM_TX_TIMEOUT_SECONDS).unwrap(),
             ),
             address_labels: HashMap::new(),
-            use_quic: !DEFAULT_TPU_ENABLE_UDP,
             use_tpu_client: DEFAULT_PING_USE_TPU_CLIENT,
         }
     }
@@ -951,7 +947,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
                 #[cfg(feature = "dev-context-only-utils")]
                 let connection_cache = create_connection_cache_for_tests(
                     DEFAULT_TPU_CONNECTION_POOL_SIZE,
-                    config.use_quic,
+                    true,
                     "127.0.0.1".parse().unwrap(),
                     Some(&keypair),
                     rpc_client.clone(),
@@ -959,7 +955,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
                 #[cfg(not(feature = "dev-context-only-utils"))]
                 let connection_cache = create_connection_cache(
                     DEFAULT_TPU_CONNECTION_POOL_SIZE,
-                    config.use_quic,
+                    true,
                     "127.0.0.1".parse().unwrap(),
                     Some(&keypair),
                     rpc_client.clone(),

@@ -131,7 +131,7 @@ cloud_Initialize() {
 
 #
 # cloud_CreateInstances [networkName] [namePrefix] [numNodes]
-#                       [enableGpu] [machineType] [zone]
+#                       [machineType] [zone]
 #                       [bootDiskSize] [startupScript] [address]
 #                       [bootDiskType] [additionalDiskSize] [preemptible]
 #
@@ -140,8 +140,6 @@ cloud_Initialize() {
 # networkName   - unique name of this testnet
 # namePrefix    - unique string to prefix all the instance names with
 # numNodes      - number of instances to create
-# enableGpu     - Optionally enable GPU, use the value "true" to enable
-#                 eg, request 4 K80 GPUs with "count=4,type=nvidia-tesla-k80"
 # machineType   - GCE machine type.  Note that this may also include an
 #                 `--accelerator=` or other |gcloud compute instances create|
 #                 options
@@ -161,31 +159,16 @@ cloud_CreateInstances() {
   declare networkName="$1"
   declare namePrefix="$2"
   declare numNodes="$3"
-  declare enableGpu="$4"
-  declare machineType="$5"
-  declare zone="$6"
-  declare optionalBootDiskSize="$7"
-  declare optionalStartupScript="$8"
-  declare optionalAddress="$9"
-  declare optionalBootDiskType="${10:-pd-ssd}"
-  declare optionalAdditionalDiskSize="${11}"
-  declare optionalPreemptible="${12}"
+  declare machineType="$4"
+  declare zone="$5"
+  declare optionalBootDiskSize="$6"
+  declare optionalStartupScript="$7"
+  declare optionalAddress="$8"
+  declare optionalBootDiskType="${9:-pd-ssd}"
+  declare optionalAdditionalDiskSize="${10}"
+  declare optionalPreemptible="${11}"
 
-  if $enableGpu; then
-    # Custom Ubuntu 20.04 LTS image with CUDA 10.2 installed
-    #
-    # Unfortunately this image is not public.  When this becomes an issue, use
-    # the stock Ubuntu 20.04 image and programmatically install CUDA after the
-    # instance boots
-    #
-    # imageName="ubuntu-2004-focal-v20201211-with-cuda-10-2 --image-project principal-lane-200702"
-
-    # We don't have custom cuda image for ubnutu 22.04
-    echo "Error: Not supported" >&2
-    exit 1
-  else
-    imageName="ubuntu-2404-noble-amd64-v20250709 --image-project ubuntu-os-cloud"
-  fi
+  imageName="ubuntu-2404-noble-amd64-v20250709 --image-project ubuntu-os-cloud"
 
   declare -a nodes
   if [[ $numNodes = 1 ]]; then

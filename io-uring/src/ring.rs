@@ -50,7 +50,7 @@ impl<T, E: RingOp<T>> Ring<T, E> {
     /// See
     /// [Submitter::register_buffers](https://docs.rs/io-uring/0.6.3/io_uring/struct.Submitter.html#method.register_buffers).
     pub unsafe fn register_buffers(&self, iovecs: &[libc::iovec]) -> io::Result<()> {
-        self.ring.submitter().register_buffers(iovecs)
+        unsafe { self.ring.submitter().register_buffers(iovecs) }
     }
 
     /// Registers file descriptors as fixed for I/O with the kernel.

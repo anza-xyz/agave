@@ -2,7 +2,7 @@ use {
     super::{repair_handler::RepairHandler, repair_response},
     solana_clock::Slot,
     solana_ledger::{blockstore::Blockstore, shred::Nonce},
-    solana_perf::packet::{Packet, PacketBatch, PacketBatchRecycler, PinnedPacketBatch},
+    solana_perf::packet::{Packet, PacketBatch, PacketBatchRecycler, RecycledPacketBatch},
     std::{net::SocketAddr, sync::Arc},
 };
 
@@ -45,8 +45,7 @@ impl RepairHandler for StandardRepairHandler {
         max_responses: usize,
         nonce: Nonce,
     ) -> Option<PacketBatch> {
-        let mut res =
-            PinnedPacketBatch::new_unpinned_with_recycler(recycler, max_responses, "run_orphan");
+        let mut res = RecycledPacketBatch::new_with_recycler(recycler, max_responses, "run_orphan");
         // Try to find the next "n" parent slots of the input slot
         let packets = std::iter::successors(self.blockstore.meta(slot).ok()?, |meta| {
             self.blockstore.meta(meta.parent_slot?).ok()?

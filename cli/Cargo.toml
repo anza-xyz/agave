@@ -88,7 +88,6 @@ solana-signature = { version = "=3.1.0", default-features = false }
 solana-signer = "=3.0.0"
 solana-slot-history = "=3.0.0"
 solana-stake-interface = "=2.0.1"
-solana-streamer = { workspace = true }
 solana-system-interface = { version = "=2.0", features = ["bincode"] }
 solana-sysvar = "=3.0.0"
 solana-tps-client = { workspace = true }
@@ -108,11 +107,11 @@ tiny-bip39 = { workspace = true }
 assert_matches = { workspace = true }
 solana-client = { workspace = true, features = ["dev-context-only-utils"] }
 solana-faucet = { workspace = true, features = ["dev-context-only-utils"] }
+solana-net-utils = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-presigner = { workspace = true }
 solana-rpc = { workspace = true }
 solana-sha256-hasher = { workspace = true }
-solana-streamer = { workspace = true }
 solana-test-validator = { workspace = true }
 solana-tps-client = { workspace = true, features = ["dev-context-only-utils"] }
 tempfile = { workspace = true }

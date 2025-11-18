@@ -137,16 +137,6 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         usage_warning: "CUDA support will be dropped"
     );
     add_arg!(
-        // deprecated in v3.0.0
-        Arg::with_name("gossip_host")
-            .long("gossip-host")
-            .value_name("HOST")
-            .takes_value(true)
-            .validator(solana_net_utils::is_host),
-            replaced_by : "bind-address",
-            usage_warning:"Use --bind-address instead",
-    );
-    add_arg!(
         // deprecated in v3.1.0
         Arg::with_name("tpu_coalesce_ms")
             .long("tpu-coalesce-ms")
@@ -155,22 +145,6 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .validator(is_parsable::<u64>)
             .help("Milliseconds to wait in the TPU receiver for packet coalescing."),
             usage_warning:"tpu_coalesce will be dropped (currently ignored)",
-    );
-    add_arg!(
-        // deprecated in v3.0.0
-        Arg::with_name("tpu_disable_quic")
-            .long("tpu-disable-quic")
-            .takes_value(false)
-            .help("Do not use QUIC to send transactions."),
-        usage_warning: "UDP support will be dropped"
-    );
-    add_arg!(
-        // deprecated in v3.0.0
-        Arg::with_name("tpu_enable_udp")
-            .long("tpu-enable-udp")
-            .takes_value(false)
-            .help("Enable UDP for receiving/sending transactions."),
-        usage_warning: "UDP support will be dropped"
     );
     add_arg!(
         // deprecated in v3.1.0
@@ -246,10 +220,6 @@ pub struct DefaultArgs {
     pub snapshot_archive_format: String,
     pub snapshot_zstd_compression_level: String,
 
-    pub rocksdb_shred_compaction: String,
-    pub rocksdb_ledger_compression: String,
-    pub rocksdb_perf_sample_interval: String,
-
     pub accounts_shrink_optimize_total_space: String,
     pub accounts_shrink_ratio: String,
     pub tpu_connection_pool_size: String,
@@ -301,9 +271,6 @@ impl DefaultArgs {
             snapshot_zstd_compression_level: "1".to_string(), // level 1 is optimized for speed
             contact_debug_interval: "120000".to_string(),
             snapshot_version: SnapshotVersion::default(),
-            rocksdb_shred_compaction: "level".to_string(),
-            rocksdb_ledger_compression: "none".to_string(),
-            rocksdb_perf_sample_interval: "0".to_string(),
             accounts_shrink_optimize_total_space: DEFAULT_ACCOUNTS_SHRINK_OPTIMIZE_TOTAL_SPACE
                 .to_string(),
             accounts_shrink_ratio: DEFAULT_ACCOUNTS_SHRINK_RATIO.to_string(),

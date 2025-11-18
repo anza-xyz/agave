@@ -80,7 +80,6 @@ solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-slot-history = { workspace = true }
 solana-storage-bigtable = { workspace = true }
-solana-streamer = { workspace = true }
 solana-svm = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-system-transaction = { workspace = true }

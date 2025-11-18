@@ -11,7 +11,7 @@ use {
 };
 #[cfg(not(feature = "shuttle-test"))]
 use {
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     std::sync::{Arc, Mutex},
 };
 
@@ -190,7 +190,7 @@ impl<T: Serialize + Clone> StatusCache<T> {
                 #[cfg(feature = "shuttle-test")]
                 let key_index = 0;
                 #[cfg(not(feature = "shuttle-test"))]
-                let key_index = thread_rng().gen_range(0..max_key_index + 1);
+                let key_index = rng().random_range(0..max_key_index + 1);
                 (slot, key_index, HashMap::new())
             });
 

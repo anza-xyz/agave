@@ -7,9 +7,9 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
     solana_keypair::{keypair_from_seed, Keypair},
+    solana_net_utils::SocketAddrSpace,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_test_validator::TestValidator,
     test_case::test_case,
 };

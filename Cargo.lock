@@ -161,7 +161,7 @@ dependencies = [
  "crossbeam-channel",
  "ctrlc",
  "dirs-next",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "nix",
  "reqwest 0.12.24",
  "scopeguard",
@@ -419,7 +419,7 @@ dependencies = [
  "core_affinity",
  "crossbeam-channel",
  "fd-lock",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "itertools 0.13.0",
  "jsonrpc-core",
  "jsonrpc-core-client",
@@ -2964,7 +2964,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3023,13 +3023,13 @@ checksum = "e8c02a5121d4ea3eb16a80748c74f5549a5665e4c21333c6098f283870fbdea6"
 
 [[package]]
 name = "fd-lock"
-version = "3.0.13"
+version = "4.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef033ed5e9bad94e55838ca0ca906db0e043f517adda0c8b79c7a8c66c93c1b5"
+checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
 dependencies = [
  "cfg-if 1.0.4",
- "rustix 0.38.39",
- "windows-sys 0.48.0",
+ "rustix 1.0.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4098,9 +4098,9 @@ dependencies = [
 
 [[package]]
 name = "indicatif"
-version = "0.18.2"
+version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ade6dfcba0dfb62ad59e59e7241ec8912af34fd29e0e743e3db992bd278e8b65"
+checksum = "9375e112e4b463ec1b1c6c011953545c65a30164fbab5b581df32b3abf0dcb88"
 dependencies = [
  "console 0.16.1",
  "portable-atomic",
@@ -6323,7 +6323,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.9.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6401,7 +6401,7 @@ dependencies = [
  "security-framework 3.2.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7131,7 +7131,6 @@ dependencies = [
  "solana-runtime",
  "solana-signature",
  "solana-signer",
- "solana-streamer",
  "solana-system-interface",
  "solana-test-validator",
  "solana-transaction",
@@ -7568,7 +7567,7 @@ dependencies = [
  "memmap2 0.9.8",
  "modular-bitfield",
  "num_enum",
- "rand 0.8.5",
+ "rand 0.9.2",
  "rayon",
  "solana-bucket-map",
  "solana-clock",
@@ -7765,6 +7764,7 @@ dependencies = [
  "solana-loader-v4-program",
  "solana-message",
  "solana-native-token",
+ "solana-net-utils",
  "solana-nonce",
  "solana-nonce-account",
  "solana-offchain-message",
@@ -7787,7 +7787,6 @@ dependencies = [
  "solana-signer",
  "solana-slot-history",
  "solana-stake-interface",
- "solana-streamer",
  "solana-system-interface",
  "solana-sysvar",
  "solana-test-validator",
@@ -7832,7 +7831,7 @@ dependencies = [
  "console 0.16.1",
  "ed25519-dalek 1.0.1",
  "humantime",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "pretty-hex",
  "semver 1.0.27",
  "serde",
@@ -7875,7 +7874,7 @@ dependencies = [
  "futures 0.3.31",
  "futures-util",
  "indexmap 2.11.4",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "log",
  "quinn",
  "rayon",
@@ -7937,7 +7936,6 @@ dependencies = [
  "solana-rpc-client-api",
  "solana-runtime",
  "solana-signer",
- "solana-streamer",
  "solana-system-interface",
  "solana-system-transaction",
  "solana-test-validator",
@@ -8103,7 +8101,7 @@ dependencies = [
  "crossbeam-channel",
  "futures-util",
  "indexmap 2.11.4",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "log",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
@@ -8886,7 +8884,6 @@ dependencies = [
  "solana-gossip",
  "solana-net-utils",
  "solana-pubkey",
- "solana-streamer",
  "solana-version",
 ]
 
@@ -10062,7 +10059,6 @@ dependencies = [
  "solana-slot-history",
  "solana-stake-interface",
  "solana-storage-bigtable",
- "solana-streamer",
  "solana-svm",
  "solana-svm-log-collector",
  "solana-system-interface",
@@ -10102,7 +10098,7 @@ dependencies = [
  "bs58",
  "crossbeam-channel",
  "futures 0.3.31",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "jsonrpc-core",
  "jsonrpc-http-server",
  "log",
@@ -10243,7 +10239,6 @@ dependencies = [
  "solana-rpc-client-api",
  "solana-signature",
  "solana-signer",
- "solana-streamer",
  "solana-system-transaction",
  "solana-test-validator",
  "solana-tpu-client",
@@ -10296,8 +10291,8 @@ dependencies = [
  "num_enum",
  "percentage",
  "qualifier_attr",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
+ "rand 0.9.2",
+ "rand_chacha 0.9.0",
  "rayon",
  "regex",
  "semver 1.0.27",
@@ -11245,7 +11240,7 @@ dependencies = [
  "csv",
  "ctrlc",
  "indexmap 2.11.4",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "pickledb",
  "serde",
  "solana-account-decoder",
@@ -11259,6 +11254,7 @@ dependencies = [
  "solana-keypair",
  "solana-message",
  "solana-native-token",
+ "solana-net-utils",
  "solana-program-error",
  "solana-program-pack",
  "solana-pubkey",
@@ -11268,7 +11264,6 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-stake-interface",
- "solana-streamer",
  "solana-system-interface",
  "solana-test-validator",
  "solana-transaction",
@@ -11321,7 +11316,7 @@ dependencies = [
  "bincode",
  "futures-util",
  "indexmap 2.11.4",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "log",
  "rayon",
  "solana-client-traits",
@@ -11458,7 +11453,6 @@ dependencies = [
  "solana-rpc-client",
  "solana-runtime",
  "solana-signer",
- "solana-streamer",
  "solana-system-interface",
  "solana-transaction",
  "solana-transaction-status",
@@ -11781,7 +11775,7 @@ dependencies = [
  "bincode",
  "itertools 0.13.0",
  "log",
- "rand 0.8.5",
+ "rand 0.9.2",
  "serde",
  "solana-account",
  "solana-bincode",
@@ -11900,11 +11894,11 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
+ "solana-net-utils",
  "solana-pubkey",
  "solana-runtime",
  "solana-shred-version",
  "solana-signer",
- "solana-streamer",
  "solana-svm-timings",
  "solana-time-utils",
  "solana-vote",

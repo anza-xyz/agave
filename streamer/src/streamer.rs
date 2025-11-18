@@ -4,18 +4,21 @@
 use {
     crate::{
         packet::{
-            self, PacketBatch, PacketBatchRecycler, PacketRef, PinnedPacketBatch, PACKETS_PER_BATCH,
+            self, Packet, PacketBatch, PacketBatchRecycler, PacketRef, RecycledPacketBatch,
+            PACKETS_PER_BATCH,
         },
         sendmmsg::{batch_send, SendPktsError},
-        socket::SocketAddrSpace,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
     histogram::Histogram,
     itertools::Itertools,
-    solana_net_utils::multihomed_sockets::{
-        BindIpAddrs, CurrentSocket, FixedSocketProvider, MultihomedSocketProvider, SocketProvider,
+    solana_net_utils::{
+        multihomed_sockets::{
+            BindIpAddrs, CurrentSocket, FixedSocketProvider, MultihomedSocketProvider,
+            SocketProvider,
+        },
+        SocketAddrSpace,
     },
-    solana_packet::Packet,
     solana_pubkey::Pubkey,
     solana_time_utils::timestamp,
     std::{
@@ -187,9 +190,9 @@ fn recv_loop<P: SocketProvider>(
 
     loop {
         let mut packet_batch = if use_pinned_memory {
-            PinnedPacketBatch::new_with_recycler(recycler, PACKETS_PER_BATCH, stats.name)
+            RecycledPacketBatch::new_with_recycler(recycler, PACKETS_PER_BATCH, stats.name)
         } else {
-            PinnedPacketBatch::with_capacity(PACKETS_PER_BATCH)
+            RecycledPacketBatch::with_capacity(PACKETS_PER_BATCH)
         };
         packet_batch.resize(PACKETS_PER_BATCH, Packet::default());
 
@@ -625,7 +628,7 @@ mod test {
     use {
         super::*,
         crate::{
-            packet::{Packet, PinnedPacketBatch, PACKET_DATA_SIZE},
+            packet::{Packet, RecycledPacketBatch, PACKET_DATA_SIZE},
             streamer::{receiver, responder},
         },
         crossbeam_channel::unbounded,
@@ -659,7 +662,7 @@ mod test {
     #[test]
     fn streamer_debug() {
         write!(io::sink(), "{:?}", Packet::default()).unwrap();
-        write!(io::sink(), "{:?}", PinnedPacketBatch::default()).unwrap();
+        write!(io::sink(), "{:?}", RecycledPacketBatch::default()).unwrap();
     }
     #[test]
     fn streamer_send_test() {
@@ -692,7 +695,7 @@ mod test {
                 SocketAddrSpace::Unspecified,
                 None,
             );
-            let mut packet_batch = PinnedPacketBatch::default();
+            let mut packet_batch = RecycledPacketBatch::default();
             for i in 0..NUM_PACKETS {
                 let mut p = Packet::default();
                 {

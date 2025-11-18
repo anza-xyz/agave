@@ -55,7 +55,6 @@ use {
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
     solana_net_utils::multihomed_sockets::BindIpAddrs,
-    solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
     solana_pubkey::Pubkey,
     solana_runtime::{runtime_config::RuntimeConfig, snapshot_utils},
@@ -123,12 +122,6 @@ pub fn execute(
 
     info!("{} {}", crate_name!(), solana_version);
     info!("Starting validator with: {:#?}", std::env::args_os());
-
-    let cuda = matches.is_present("cuda");
-    if cuda {
-        solana_perf::perf_libs::init_cuda();
-        enable_recycler_warming();
-    }
 
     solana_core::validator::report_target_features();
 
@@ -260,13 +253,6 @@ pub fn execute(
     let restricted_repair_only_mode = matches.is_present("restricted_repair_only_mode");
     let accounts_shrink_optimize_total_space =
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
-    let tpu_use_quic = !matches.is_present("tpu_disable_quic");
-    if !tpu_use_quic {
-        warn!(
-            "TPU QUIC was disabled via --tpu_disable_quic, this will prevent validator from \
-             receiving transactions!"
-        );
-    }
     let vote_use_quic = value_t_or_exit!(matches, "vote_use_quic", bool);
 
     let tpu_enable_udp = if matches.is_present("tpu_enable_udp") {
@@ -731,18 +717,6 @@ pub fn execute(
         },
     );
 
-    let gossip_host = matches
-        .value_of("gossip_host")
-        .map(|gossip_host| {
-            warn!(
-                "--gossip-host is deprecated. Use --bind-address or rely on automatic public IP \
-                 discovery instead."
-            );
-            solana_net_utils::parse_host(gossip_host)
-                .map_err(|err| format!("failed to parse --gossip-host: {err}"))
-        })
-        .transpose()?;
-
     let advertised_ip = matches
         .value_of("advertised_ip")
         .map(|advertised_ip| {
@@ -751,9 +725,7 @@ pub fn execute(
         })
         .transpose()?;
 
-    let advertised_ip = if let Some(ip) = gossip_host {
-        ip
-    } else if let Some(cli_ip) = advertised_ip {
+    let advertised_ip = if let Some(cli_ip) = advertised_ip {
         cli_ip
     } else if !bind_addresses.active().is_unspecified() && !bind_addresses.active().is_loopback() {
         bind_addresses.active()
@@ -965,6 +937,11 @@ pub fn execute(
 
     let tpu_quic_server_config = SwQosQuicStreamerConfig {
         quic_streamer_config: QuicStreamerConfig {
+            max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+            num_threads: tpu_transaction_receive_threads,
+            ..Default::default()
+        },
+        qos_config: SwQosConfig {
             max_connections_per_unstaked_peer: tpu_max_connections_per_unstaked_peer
                 .try_into()
                 .unwrap(),
@@ -973,15 +950,17 @@ pub fn execute(
                 .unwrap(),
             max_staked_connections: tpu_max_staked_connections.try_into().unwrap(),
             max_unstaked_connections: tpu_max_unstaked_connections.try_into().unwrap(),
-            max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-            num_threads: tpu_transaction_receive_threads,
-            ..Default::default()
+            max_streams_per_ms,
         },
-        qos_config: SwQosConfig { max_streams_per_ms },
     };
 
     let tpu_fwd_quic_server_config = SwQosQuicStreamerConfig {
         quic_streamer_config: QuicStreamerConfig {
+            max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+            num_threads: tpu_transaction_forward_receive_threads,
+            ..Default::default()
+        },
+        qos_config: SwQosConfig {
             max_connections_per_staked_peer: tpu_max_connections_per_staked_peer
                 .try_into()
                 .unwrap(),
@@ -990,23 +969,19 @@ pub fn execute(
                 .unwrap(),
             max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
             max_unstaked_connections: tpu_max_fwd_unstaked_connections.try_into().unwrap(),
-            max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-            num_threads: tpu_transaction_forward_receive_threads,
-            ..Default::default()
+            max_streams_per_ms,
         },
-        qos_config: SwQosConfig { max_streams_per_ms },
     };
 
     let vote_quic_server_config = SimpleQosQuicStreamerConfig {
         quic_streamer_config: QuicStreamerConfig {
-            max_connections_per_unstaked_peer: 1,
-            max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
             max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
             num_threads: tpu_vote_transaction_receive_threads,
             ..Default::default()
         },
         qos_config: SimpleQosConfig {
             max_streams_per_second: MAX_VOTES_PER_SECOND,
+            ..Default::default()
         },
     };
 
@@ -1023,7 +998,7 @@ pub fn execute(
         start_progress,
         run_args.socket_addr_space,
         ValidatorTpuConfig {
-            use_quic: tpu_use_quic,
+            use_quic: true,
             vote_use_quic,
             tpu_connection_pool_size,
             tpu_enable_udp,

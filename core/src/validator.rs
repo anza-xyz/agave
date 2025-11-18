@@ -25,7 +25,6 @@ use {
             adjust_nofile_limit, validate_memlock_limit_for_disk_io, ResourceLimitError,
         },
         sample_performance_service::SamplePerformanceService,
-        sigverify,
         snapshot_packager_service::SnapshotPackagerService,
         stats_reporter_service::StatsReporterService,
         system_monitor_service::{
@@ -93,6 +92,7 @@ use {
     },
     solana_measure::measure::Measure,
     solana_metrics::{datapoint_info, metrics::metrics_config_sanity_check},
+    solana_net_utils::SocketAddrSpace,
     solana_poh::{
         poh_controller::PohController,
         poh_recorder::PohRecorder,
@@ -137,7 +137,6 @@ use {
     solana_streamer::{
         nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
         quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
-        socket::SocketAddrSpace,
         streamer::StakedNodes,
     },
     solana_time_utils::timestamp,
@@ -589,17 +588,18 @@ impl ValidatorTpuConfig {
         let tpu_fwd_quic_server_config = SwQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
                 max_connections_per_ipaddr_per_min: 32,
+                ..Default::default()
+            },
+            qos_config: SwQosConfig {
                 max_unstaked_connections: 0,
                 ..Default::default()
             },
-            qos_config: SwQosConfig::default(),
         };
 
         // vote and tpu_fwd share the same characteristics -- disallow non-staked connections:
         let vote_quic_server_config = SimpleQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
                 max_connections_per_ipaddr_per_min: 32,
-                max_unstaked_connections: 0,
                 ..Default::default()
             },
             qos_config: SimpleQosConfig::default(),
@@ -768,14 +768,6 @@ impl Validator {
         for cluster_entrypoint in &cluster_entrypoints {
             info!("entrypoint: {cluster_entrypoint:?}");
         }
-
-        if solana_perf::perf_libs::api().is_some() {
-            info!("Initializing sigverify, this could take a while...");
-        } else {
-            info!("Initializing sigverify...");
-        }
-        sigverify::init();
-        info!("Initializing sigverify done.");
 
         validate_memlock_limit_for_disk_io(config.accounts_db_config.memlock_budget_size)?;
 
