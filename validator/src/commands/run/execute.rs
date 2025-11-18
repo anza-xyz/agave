@@ -66,7 +66,7 @@ use {
     },
     solana_turbine::{
         broadcast_stage::BroadcastStageType,
-        xdp::{set_cpu_affinity, XdpConfig},
+        xdp::{master_ip_if_bonded, set_cpu_affinity, XdpConfig, XdpRetransmitBuilder},
     },
     solana_validator_exit::Exit,
     std::{
@@ -268,6 +268,26 @@ pub fn execute(
     };
 
     let mut node = Node::new_with_external_ip(&identity_keypair.pubkey(), node_config);
+
+    // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
+    // capabilities do not leak, leaving the process in a state where it could
+    // potentially be used as a privilege escalation gadget
+    let maybe_partial_xdp_retransmitter = retransmit_xdp.clone().map(|xdp_config| {
+        let src_port = node.sockets.retransmit_sockets[0]
+            .local_addr()
+            .expect("failed to get local address")
+            .port();
+        let src_ip = match node.bind_ip_addrs.active() {
+            IpAddr::V4(ip) if !ip.is_unspecified() => Some(ip),
+            IpAddr::V4(_unspecified) => xdp_config
+                .interface
+                .as_ref()
+                .and_then(|iface| master_ip_if_bonded(iface)),
+            _ => panic!("IPv6 not supported"),
+        };
+        XdpRetransmitBuilder::new(xdp_config, src_port, src_ip)
+            .expect("failed to create xdp retransmitter")
+    });
 
     solana_core::validator::report_target_features();
 
@@ -1031,6 +1051,7 @@ pub fn execute(
             vote_quic_server_config,
         },
         admin_service_post_init,
+        maybe_partial_xdp_retransmitter,
     ) {
         Ok(validator) => Ok(validator),
         Err(err) => {
