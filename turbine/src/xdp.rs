@@ -190,6 +190,13 @@ impl PartialXdpRetransmitter {
             caps::drop(None, CapSet::Effective, cap).unwrap();
         }
 
+        // for a cap to be in the `ambient` set, it must be in both `inheritable` and
+        // `permitted` sets, so we can skip explicitly clearing it here
+        caps::clear(None, CapSet::Inheritable)
+            .map_err(|e| format!("failed to clear `inheritable` cap set: {e}"))?;
+        caps::clear(None, CapSet::Permitted)
+            .map_err(|e| format!("failed to clear `permitted` cap set: {e}"))?;
+
         Ok(Self {
             tx_loops,
             rtx_channel_cap,
