@@ -147,6 +147,7 @@ pub trait WorkersBroadcaster {
     /// encounters an unrecoverable error. In this case, it will trigger
     /// stopping the scheduler and cleaning all the data.
     async fn send_to_workers(
+        &self,
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
@@ -214,14 +215,76 @@ impl ConnectionWorkersScheduler {
             max_reconnect_attempts,
             leaders_fanout,
         }: ConnectionWorkersSchedulerConfig,
+        broadcaster: Broadcaster,
     ) -> Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError> {
-        let ConnectionWorkersScheduler {
+        ConnectionWorkersSchedulerBuilder::new(
+            self.leader_updater,
+            self.transaction_receiver,
+            self.update_identity_receiver,
+            ConnectionWorkersSchedulerConfig {
+                bind,
+                stake_identity,
+                num_connections,
+                skip_check_transaction_age,
+                worker_channel_size,
+                max_reconnect_attempts,
+                leaders_fanout,
+            },
+            self.cancel,
+        )
+        .run(broadcaster)
+        .await
+    }
+}
+
+pub struct ConnectionWorkersSchedulerBuilder {
+    leader_updater: Box<dyn LeaderUpdater>,
+    transaction_receiver: mpsc::Receiver<TransactionBatch>,
+    config: ConnectionWorkersSchedulerConfig,
+    update_identity_receiver: watch::Receiver<Option<StakeIdentity>>,
+    cancel: CancellationToken,
+}
+
+impl ConnectionWorkersSchedulerBuilder {
+    pub fn new(
+        leader_updater: Box<dyn LeaderUpdater>,
+        transaction_receiver: mpsc::Receiver<TransactionBatch>,
+        update_identity_receiver: watch::Receiver<Option<StakeIdentity>>,
+        config: ConnectionWorkersSchedulerConfig,
+        cancel: CancellationToken,
+    ) -> Self {
+        Self {
+            leader_updater,
+            transaction_receiver,
+            config,
+            update_identity_receiver,
+            cancel,
+        }
+    }
+
+    pub async fn run<Broadcaster: WorkersBroadcaster>(
+        self,
+        broadcaster: Broadcaster,
+    ) -> Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError> {
+        let stats = Arc::new(SendTransactionStats::default());
+
+        let Self {
             mut leader_updater,
             mut transaction_receiver,
-            mut update_identity_receiver,
+            config:
+                ConnectionWorkersSchedulerConfig {
+                    bind,
+                    stake_identity,
+                    num_connections,
+                    skip_check_transaction_age,
+                    worker_channel_size,
+                    max_reconnect_attempts,
+                    leaders_fanout,
+                },
             cancel,
-            stats,
+            mut update_identity_receiver,
         } = self;
+
         let mut endpoint = setup_endpoint(bind, stake_identity)?;
 
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
@@ -283,8 +346,9 @@ impl ConnectionWorkersScheduler {
                 }
             }
 
-            if let Err(error) =
-                Broadcaster::send_to_workers(&mut workers, &send_leaders, transaction_batch).await
+            if let Err(error) = broadcaster
+                .send_to_workers(&mut workers, &send_leaders, transaction_batch)
+                .await
             {
                 last_error = Some(error);
                 break;
@@ -298,6 +362,7 @@ impl ConnectionWorkersScheduler {
         if let Some(error) = last_error {
             return Err(error);
         }
+
         Ok(stats)
     }
 }
