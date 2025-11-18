@@ -202,13 +202,22 @@ impl XdpRetransmitBuilder {
 
         // switch to higher caps while we setup XDP. We assume that an error in
         // this function is irrecoverable so we don't try to drop on errors.
-        for cap in [CAP_NET_ADMIN, CAP_NET_RAW, CAP_BPF, CAP_PERFMON] {
-            caps::raise(None, CapSet::Effective, cap)
-                .map_err(|e| format!("failed to raise {cap:?} capability: {e}"))?;
-        }
+        caps::raise(None, CapSet::Effective, CAP_NET_ADMIN)
+            .expect("raise CAP_NET_ADMIN capability");
+        caps::raise(None, CapSet::Effective, CAP_NET_RAW).expect("raise CAP_NET_RAW capability");
 
         let maybe_ebpf_result = if zero_copy {
-            Some(load_xdp_program(&dev).map_err(|e| format!("failed to attach xdp program: {e}")))
+            caps::raise(None, CapSet::Effective, CAP_BPF).expect("raise CAP_BPF capability");
+            caps::raise(None, CapSet::Effective, CAP_PERFMON)
+                .expect("raise CAP_PERFMON capability");
+
+            let load_result =
+                load_xdp_program(&dev).map_err(|e| format!("failed to attach xdp program: {e}"));
+
+            caps::drop(None, CapSet::Effective, CAP_PERFMON).expect("drop CAP_PERFMON capability");
+            caps::drop(None, CapSet::Effective, CAP_BPF).expect("drop CAP_BPF capability");
+
+            Some(load_result)
         } else {
             None
         };
@@ -220,9 +229,8 @@ impl XdpRetransmitBuilder {
 
         let router_result = Router::new();
 
-        for cap in [CAP_NET_ADMIN, CAP_NET_RAW, CAP_BPF, CAP_PERFMON] {
-            caps::drop(None, CapSet::Effective, cap).unwrap();
-        }
+        caps::drop(None, CapSet::Effective, CAP_NET_RAW).expect("drop CAP_NET_RAW capability");
+        caps::drop(None, CapSet::Effective, CAP_NET_ADMIN).expect("drop CAP_NET_ADMIN capability");
 
         let router = router_result?;
         // Use ArcSwap for lock-free updates of the routing table
