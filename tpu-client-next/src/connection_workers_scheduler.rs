@@ -38,7 +38,6 @@ pub struct ConnectionWorkersScheduler {
     update_identity_receiver: watch::Receiver<Option<StakeIdentity>>,
     cancel: CancellationToken,
     stats: Arc<SendTransactionStats>,
-    broadcaster: Arc<dyn WorkersBroadcaster>,
 }
 
 /// Errors that arise from running [`ConnectionWorkersSchedulerError`].
@@ -171,12 +170,7 @@ impl ConnectionWorkersScheduler {
             update_identity_receiver,
             cancel,
             stats,
-            broadcaster: Arc::new(NonblockingBroadcaster),
         }
-    }
-
-    pub fn with_broadcaster(&mut self, broadcaster: Arc<dyn WorkersBroadcaster>) {
-        self.broadcaster = broadcaster;
     }
 
     /// Retrieves a reference to the statistics of the scheduler
@@ -197,20 +191,20 @@ impl ConnectionWorkersScheduler {
         self,
         config: ConnectionWorkersSchedulerConfig,
     ) -> Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError> {
-        self.run_with_broadcaster::<NonblockingBroadcaster>(config)
+        self.run_with_broadcaster(config, Box::new(NonblockingBroadcaster))
             .await
     }
 
-    /// Starts the scheduler, which manages the distribution of transactions to
-    /// the network's upcoming leaders. `Broadcaster` allows to customize the
-    /// way transactions are send to the leaders, see [`WorkersBroadcaster`].
+    /// Starts the scheduler, which manages the distribution of transactions to the network's
+    /// upcoming leaders. `broadcaster` allows to customize the way transactions are send to the
+    /// leaders, see [`WorkersBroadcaster`].
     ///
-    /// Runs the main loop that handles worker scheduling and management for
-    /// connections. Returns [`SendTransactionStats`] or an error.
+    /// Runs the main loop that handles worker scheduling and management for connections. Returns
+    /// [`SendTransactionStats`] or an error.
     ///
-    /// Importantly, if some transactions were not delivered due to network
-    /// problems, they will not be retried when the problem is resolved.
-    pub async fn run_with_broadcaster<Broadcaster: WorkersBroadcaster>(
+    /// Importantly, if some transactions were not delivered due to network problems, they will not
+    /// be retried when the problem is resolved.
+    pub async fn run_with_broadcaster(
         self,
         ConnectionWorkersSchedulerConfig {
             bind,
@@ -221,6 +215,7 @@ impl ConnectionWorkersScheduler {
             max_reconnect_attempts,
             leaders_fanout,
         }: ConnectionWorkersSchedulerConfig,
+        broadcaster: Box<dyn WorkersBroadcaster>,
     ) -> Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError> {
         let ConnectionWorkersScheduler {
             mut leader_updater,
@@ -228,7 +223,6 @@ impl ConnectionWorkersScheduler {
             mut update_identity_receiver,
             cancel,
             stats,
-            broadcaster,
         } = self;
         let mut endpoint = setup_endpoint(bind, stake_identity)?;
 

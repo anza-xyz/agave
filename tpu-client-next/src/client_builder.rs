@@ -42,7 +42,8 @@
 use {
     crate::{
         connection_workers_scheduler::{
-            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity, WorkersBroadcaster,
+            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, NonblockingBroadcaster,
+            StakeIdentity, WorkersBroadcaster,
         },
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
@@ -84,6 +85,7 @@ pub struct ClientBuilder {
     sender_channel_size: usize,
     worker_channel_size: usize,
     max_reconnect_attempts: usize,
+    broadcaster: Box<dyn WorkersBroadcaster>,
     report_fn: Option<ReportFn>,
     cancel_scheduler: CancellationToken,
     cancel_reporter: CancellationToken,
@@ -102,6 +104,7 @@ impl ClientBuilder {
             worker_channel_size: 2,
             sender_channel_size: 64,
             max_reconnect_attempts: 2,
+            broadcaster: Box::new(NonblockingBroadcaster),
             report_fn: None,
             cancel_scheduler: CancellationToken::new(),
             cancel_reporter: CancellationToken::new(),
@@ -175,6 +178,12 @@ impl ClientBuilder {
         self
     }
 
+    /// Set the broadcaster used by the scheduler.
+    pub fn broadcaster(mut self, broadcaster: impl WorkersBroadcaster + 'static) -> Self {
+        self.broadcaster = Box::new(broadcaster);
+        self
+    }
+
     /// Set the reporting function which runs in the background to report metrics.
     pub fn metric_reporter<F, Fut>(mut self, f: F) -> Self
     where
@@ -186,10 +195,7 @@ impl ClientBuilder {
     }
 
     /// Build the [`TransactionSender`] and [`Client`] using the provided configuration.
-    pub fn build<Broadcaster>(self) -> Result<(TransactionSender, Client), ClientBuilderError>
-    where
-        Broadcaster: WorkersBroadcaster + 'static,
-    {
+    pub fn build(self) -> Result<(TransactionSender, Client), ClientBuilderError> {
         let bind = self.bind_target.ok_or(ClientBuilderError::Misconfigured)?;
         let (sender, receiver) = mpsc::channel(self.sender_channel_size);
 
@@ -227,7 +233,7 @@ impl ClientBuilder {
             None
         };
         let scheduler_handle =
-            runtime_handle.spawn(scheduler.run_with_broadcaster::<Broadcaster>(config));
+            runtime_handle.spawn(scheduler.run_with_broadcaster(config, self.broadcaster));
         let client = Client {
             update_certificate_sender,
             scheduler_handle: CancellableHandle {
