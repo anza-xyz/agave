@@ -512,6 +512,15 @@ fn bench_create_account_with_seed(c: &mut Criterion) {
     });
 }
 
+fn bench_create_account_allow_prefund(c: &mut Criterion) {
+    let mut test_setup = TestSetup::new();
+    test_setup.prep_create_account_allow_prefund();
+
+    c.bench_function("create_account_allow_prefund", |bencher| {
+        bencher.iter(|| test_setup.run())
+    });
+}
+
 fn bench_allocate(c: &mut Criterion) {
     let mut test_setup = TestSetup::new();
     test_setup.prep_allocate();
@@ -609,6 +618,7 @@ criterion_group!(
     benches,
     bench_create_account,
     bench_create_account_with_seed,
+    bench_create_account_allow_prefund,
     bench_allocate,
     bench_allocate_with_seed,
     bench_assign,

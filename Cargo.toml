@@ -542,7 +542,7 @@ solana-svm-test-harness = { path = "svm-test-harness", version = "=4.0.0-alpha.0
 solana-svm-timings = { path = "svm-timings", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-transaction = { path = "svm-transaction", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-type-overrides = { path = "svm-type-overrides", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-system-interface = "2.0"
+solana-system-interface = { version = "3.0", features = ["alloc","bincode","serde"] }
 solana-system-program = { path = "programs/system", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-system-transaction = "3.0.0"
 solana-sysvar = "3.0.0"
@@ -687,18 +687,3 @@ crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d
 # There is a similar override in `programs/sbf/Cargo.toml`.  Please keep both
 # comments and the overrides in sync.
 solana-curve25519 = { path = "curves/curve25519" }
-
-# Patching in create-account-prefunded interface until feature is merged
-solana-system-interface = { version = "2.0", git = "https://github.com/rustopian/solana-sdk.git", branch = "create-account-allow-prefund" }
-solana-address = { version = "1.0", git = "https://github.com/rustopian/solana-sdk.git", branch = "create-account-allow-prefund" }
-solana-hash = { version = "3.0", git = "https://github.com/rustopian/solana-sdk.git", branch = "create-account-allow-prefund" }
-solana-instruction = { version = "3.0", git = "https://github.com/rustopian/solana-sdk.git", branch = "create-account-allow-prefund" }
-solana-instruction-error = { version = "2.0", git = "https://github.com/rustopian/solana-sdk.git", branch = "create-account-allow-prefund" }
-solana-message = { version = "3.0", git = "https://github.com/rustopian/solana-sdk.git", branch = "create-account-allow-prefund" }
-solana-pubkey = { version = "3.0", git = "https://github.com/rustopian/solana-sdk.git", branch = "create-account-allow-prefund" }
-solana-signature = { version = "3.0", git = "https://github.com/rustopian/solana-sdk.git", branch = "create-account-allow-prefund" }
-solana-signer = { version = "3.0", git = "https://github.com/rustopian/solana-sdk.git", branch = "create-account-allow-prefund" }
-solana-sdk-ids = { version = "3.0", git = "https://github.com/rustopian/solana-sdk.git", branch = "create-account-allow-prefund" }
-solana-transaction = { version = "3.0", git = "https://github.com/rustopian/solana-sdk.git", branch = "create-account-allow-prefund" }
-solana-transaction-error = { version = "3.0", git = "https://github.com/rustopian/solana-sdk.git", branch = "create-account-allow-prefund" }
-solana-sanitize = { version = "3.0", git = "https://github.com/rustopian/solana-sdk.git", branch = "create-account-allow-prefund" }

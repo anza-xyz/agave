@@ -354,7 +354,10 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             space,
             owner,
         } => {
-            if !invoke_context.get_feature_set().create_account_allow_prefund {
+            if !invoke_context
+                .get_feature_set()
+                .create_account_allow_prefund
+            {
                 return Err(InstructionError::InvalidInstructionData);
             }
             instruction_context.check_number_of_instruction_accounts(2)?;
@@ -1442,9 +1445,11 @@ mod tests {
 
     #[test]
     fn test_create_account_allow_prefund_feature_gate_off() {
-        use solana_instruction::AccountMeta;
-        use solana_program_runtime::invoke_context::mock_process_instruction_with_feature_set;
-        use solana_svm_feature_set::SVMFeatureSet;
+        use {
+            solana_instruction::AccountMeta,
+            solana_program_runtime::invoke_context::mock_process_instruction_with_feature_set,
+            solana_svm_feature_set::SVMFeatureSet,
+        };
 
         let feature_set = SVMFeatureSet::default();
 
