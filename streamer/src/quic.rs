@@ -897,14 +897,9 @@ mod test {
             HashMap::<Pubkey, u64>::default(), // overrides
         );
 
-        let server_params = QuicStreamerConfig {
-            max_unstaked_connections: 0,
-            max_connections_per_staked_peer: 2,
-            max_connections_per_unstaked_peer: 0,
-            ..QuicStreamerConfig::default_for_tests()
-        };
+        let server_params = QuicStreamerConfig::default_for_tests();
         let qos_config = SimpleQosConfig {
-            max_connections_per_peer: 1,
+            max_connections_per_peer: 2,
             max_streams_per_second: 20,
             ..Default::default()
         };
