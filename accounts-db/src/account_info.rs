@@ -89,6 +89,9 @@ pub struct AccountInfo {
     account_offset_and_flags: PackedOffsetAndFlags,
 }
 
+// Ensure the size of AccountInfo never changes unexpectedly
+const _: () = assert!(size_of::<AccountInfo>() == 8);
+
 impl IsZeroLamport for AccountInfo {
     fn is_zero_lamport(&self) -> bool {
         self.account_offset_and_flags.is_zero_lamport()
