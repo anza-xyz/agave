@@ -7,6 +7,7 @@ use {
         CodingShredHeader, Error, ShredCommonHeader, ShredType, DATA_SHREDS_PER_FEC_BLOCK,
         MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT, SIZE_OF_NONCE,
     },
+    agave_votor_messages::slice_root::SliceRoot,
     solana_hash::Hash,
     solana_packet::PACKET_DATA_SIZE,
     solana_signature::Signature,
@@ -38,13 +39,13 @@ impl ShredCode {
         shred.signed_data()
     }
 
-    pub(super) fn chained_merkle_root(&self) -> Result<Hash, Error> {
+    pub(super) fn chained_merkle_root(&self) -> Result<SliceRoot, Error> {
         match self {
             Self::Merkle(shred) => shred.chained_merkle_root(),
         }
     }
 
-    pub(super) fn merkle_root(&self) -> Result<Hash, Error> {
+    pub(super) fn merkle_root(&self) -> Result<SliceRoot, Error> {
         match self {
             Self::Merkle(shred) => shred.merkle_root(),
         }

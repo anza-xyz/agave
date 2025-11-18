@@ -8,6 +8,7 @@ use {
         DataShredHeader, Error, ShredCommonHeader, ShredFlags, ShredType, ShredVariant,
         MAX_DATA_SHREDS_PER_SLOT,
     },
+    agave_votor_messages::slice_root::SliceRoot,
     solana_clock::Slot,
     solana_hash::Hash,
     solana_signature::Signature,
@@ -34,13 +35,13 @@ impl ShredData {
         shred.signed_data()
     }
 
-    pub(super) fn chained_merkle_root(&self) -> Result<Hash, Error> {
+    pub(super) fn chained_merkle_root(&self) -> Result<SliceRoot, Error> {
         match self {
             Self::Merkle(shred) => shred.chained_merkle_root(),
         }
     }
 
-    pub(super) fn merkle_root(&self) -> Result<Hash, Error> {
+    pub(super) fn merkle_root(&self) -> Result<SliceRoot, Error> {
         match self {
             Self::Merkle(shred) => shred.merkle_root(),
         }

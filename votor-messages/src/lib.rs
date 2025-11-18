@@ -19,6 +19,7 @@
 #![warn(unsafe_op_in_unsafe_fn)]
 
 pub mod consensus_message;
+pub mod slice_root;
 pub mod vote;
 
 #[cfg_attr(feature = "frozen-abi", macro_use)]

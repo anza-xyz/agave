@@ -58,12 +58,11 @@ use {
         voting_service::BLSOp,
         voting_utils::VotingContext,
     },
-    agave_votor_messages::consensus_message::ConsensusMessage,
+    agave_votor_messages::{consensus_message::ConsensusMessage, slice_root::SliceRoot},
     crossbeam_channel::{Receiver, Sender},
     parking_lot::RwLock as PlRwLock,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
-    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
     solana_pubkey::Pubkey,
@@ -91,7 +90,7 @@ use {
 pub struct LeaderWindowNotifier {
     pub window_info: Mutex<Option<LeaderWindowInfo>>,
     pub window_notification: Condvar,
-    pub highest_parent_ready: RwLock<(Slot, (Slot, Hash))>,
+    pub highest_parent_ready: RwLock<(Slot, (Slot, SliceRoot))>,
 }
 
 /// Inputs to Votor

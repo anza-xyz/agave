@@ -1,10 +1,10 @@
 use {
+    agave_votor_messages::slice_root::SliceRoot,
     bencher::{benchmark_group, benchmark_main, Bencher},
     rand::{seq::SliceRandom, Rng},
     solana_clock::Slot,
     solana_cluster_type::ClusterType,
     solana_gossip::contact_info::ContactInfo,
-    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
     solana_net_utils::SocketAddrSpace,
@@ -44,11 +44,11 @@ fn get_retransmit_peers_deterministic(
 
     let shreds = shredder.make_merkle_shreds_from_entries(
         &keypair,
-        &[],             // entries
-        true,            // is_last_in_slot
-        Hash::default(), // chained_merkle_root
-        0,               // next_shred_index
-        0,               // next_code_index
+        &[],  // entries
+        true, // is_last_in_slot
+        SliceRoot::default(),
+        0, // next_shred_index
+        0, // next_code_index
         &reed_solomon_cache,
         &mut stats,
     );

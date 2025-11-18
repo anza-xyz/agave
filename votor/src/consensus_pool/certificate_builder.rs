@@ -248,19 +248,19 @@ mod tests {
         super::*,
         agave_votor_messages::{
             consensus_message::{CertificateType, VoteMessage},
+            slice_root::SliceRoot,
             vote::Vote,
         },
         solana_bls_signatures::{
             Keypair as BLSKeypair, PubkeyProjective as BLSPubkeyProjective,
             Signature as BLSSignature, SignatureProjective, VerifiablePubkey,
         },
-        solana_hash::Hash,
         solana_signer_store::{decode, Decoded},
     };
 
     #[test]
     fn test_normal_build() {
-        let hash = Hash::new_unique();
+        let hash = SliceRoot::new_unique();
         let cert_type = CertificateType::NotarizeFallback(1, hash);
         let mut builder = CertificateBuilder::new(cert_type);
         // Test building the certificate from Notarize and NotarizeFallback votes
@@ -360,7 +360,7 @@ mod tests {
 
     #[test]
     fn test_builder_with_errors() {
-        let hash = Hash::new_unique();
+        let hash = SliceRoot::new_unique();
         let cert_type = CertificateType::NotarizeFallback(1, hash);
         let mut builder = CertificateBuilder::new(cert_type);
 
@@ -420,7 +420,7 @@ mod tests {
     #[test]
     fn test_certificate_verification_base2_encoding() {
         let slot = 10;
-        let hash = Hash::new_unique();
+        let hash = SliceRoot::new_unique();
         let cert_type = CertificateType::Notarize(slot, hash);
 
         // 1. Setup: Create keypairs and a single vote object.
@@ -466,7 +466,7 @@ mod tests {
     #[test]
     fn test_certificate_verification_base3_encoding() {
         let slot = 20;
-        let hash = Hash::new_unique();
+        let hash = SliceRoot::new_unique();
         // A NotarizeFallback certificate can be composed of both Notarize and NotarizeFallback
         // votes.
         let cert_type = CertificateType::NotarizeFallback(slot, hash);

@@ -4,6 +4,7 @@ use {
         paths as snapshot_paths, snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_config::SnapshotConfig, SnapshotArchiveKind, SnapshotInterval,
     },
+    agave_votor_messages::slice_root::SliceRoot,
     assert_matches::assert_matches,
     crossbeam_channel::{unbounded, Receiver},
     gag::BufferRedirect,
@@ -5904,10 +5905,10 @@ fn test_invalid_forks_persisted_on_restart() {
             .entries_to_merkle_shreds_for_tests(
                 &majority_keypair,
                 &entries,
-                true,            // is_full_slot
-                Hash::default(), // chained_merkle_root
-                0,               // next_shred_index,
-                0,               // next_code_index
+                true, // is_full_slot
+                SliceRoot::default(),
+                0, // next_shred_index,
+                0, // next_code_index
                 &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             )

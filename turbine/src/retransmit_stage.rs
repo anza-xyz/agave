@@ -914,6 +914,7 @@ fn notify_subscribers(
 mod tests {
     use {
         super::*,
+        agave_votor_messages::slice_root::SliceRoot,
         rand::SeedableRng,
         rand_chacha::ChaChaRng,
         solana_entry::entry::create_ticks,
@@ -944,8 +945,7 @@ mod tests {
                 &keypair,
                 &entries,
                 true,
-                // chained_merkle_root
-                Hash::new_from_array(rand::thread_rng().gen()),
+                SliceRoot(Hash::new_from_array(rand::thread_rng().gen())),
                 0,
                 code_index,
                 &rsc,

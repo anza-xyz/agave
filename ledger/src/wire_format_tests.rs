@@ -44,8 +44,8 @@ mod tests {
         );
         println!(
             "Shred merkle root {:X?}, chained root {:X?}, rtx_sign {:X?}",
-            merkle_root.map(|v| v.as_ref().to_vec()),
-            chained_merkle_root.map(|v| v.as_ref().to_vec()),
+            merkle_root.map(|v| v.0.as_ref().to_vec()),
+            chained_merkle_root.map(|v| v.0.as_ref().to_vec()),
             rtx_sign.map(|v| v.as_ref().to_vec())
         );
         println!(

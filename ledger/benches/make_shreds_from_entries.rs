@@ -1,5 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
+    agave_votor_messages::slice_root::SliceRoot,
     criterion::{black_box, criterion_group, criterion_main, Criterion},
     rand::Rng,
     solana_entry::entry::Entry,
@@ -53,7 +54,7 @@ fn make_shreds_from_entries<R: Rng>(
     keypair: &Keypair,
     entries: &[Entry],
     is_last_in_slot: bool,
-    chained_merkle_root: Hash,
+    chained_merkle_root: SliceRoot,
     reed_solomon_cache: &ReedSolomonCache,
     stats: &mut ProcessShredsStats,
 ) -> (Vec<Shred>, Vec<Shred>) {
@@ -89,7 +90,7 @@ fn run_make_shreds_from_entries(
     let keypair = Keypair::new();
     let data_size = num_packets * PACKET_DATA_SIZE;
     let entries = make_dummy_entries(&mut rng, data_size);
-    let chained_merkle_root = make_dummy_hash(&mut rng);
+    let chained_merkle_root = SliceRoot(make_dummy_hash(&mut rng));
     let reed_solomon_cache = ReedSolomonCache::default();
     let mut stats = ProcessShredsStats::default();
     // Initialize the thread-pool and warm the Reed-Solomon cache.
@@ -143,7 +144,7 @@ fn run_recover_shreds(
     let keypair = Keypair::new();
     let data_size = num_packets * PACKET_DATA_SIZE;
     let entries = make_dummy_entries(&mut rng, data_size);
-    let chained_merkle_root = make_dummy_hash(&mut rng);
+    let chained_merkle_root = SliceRoot(make_dummy_hash(&mut rng));
     let reed_solomon_cache = ReedSolomonCache::default();
     let mut stats = ProcessShredsStats::default();
     let (data, code) = make_shreds_from_entries(

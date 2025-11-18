@@ -4432,6 +4432,7 @@ pub(crate) mod tests {
             replay_stage::ReplayStage,
             vote_simulator::{self, VoteSimulator},
         },
+        agave_votor_messages::slice_root::SliceRoot,
         blockstore_processor::{
             confirm_full_slot, fill_blockstore_slot_with_ticks, process_bank_0, ProcessOptions,
         },
@@ -5085,7 +5086,7 @@ pub(crate) mod tests {
                     &keypair,
                     &gibberish,
                     true,
-                    Hash::default(),
+                    SliceRoot::default(),
                     0,
                     0,
                     &reed_solomon_cache,

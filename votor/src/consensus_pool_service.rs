@@ -425,6 +425,7 @@ mod tests {
         crate::common::DELTA_STANDSTILL,
         agave_votor_messages::{
             consensus_message::{CertificateType, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
+            slice_root::SliceRoot,
             vote::Vote,
         },
         crossbeam_channel::Sender,
@@ -432,7 +433,6 @@ mod tests {
             keypair::Keypair as BLSKeypair, signature::Signature as BLSSignature,
         },
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
-        solana_hash::Hash,
         solana_ledger::get_tmp_ledger_path_auto_delete,
         solana_net_utils::SocketAddrSpace,
         solana_runtime::{
@@ -553,7 +553,7 @@ mod tests {
         let setup_result = setup(None);
 
         // validator 0 to 7 send Notarize on slot 2
-        let block_id = Hash::new_unique();
+        let block_id = SliceRoot::new_unique();
         let target_slot = 2;
         let notarize_vote = Vote::new_notarization_vote(target_slot, block_id);
         let messages_to_send = (0..8)
@@ -703,7 +703,7 @@ mod tests {
         // A lot of the receiver needs a finalize certificate to trigger an exit
         if channel_name != "consensus_message_receiver" {
             let finalize_certificate = Certificate {
-                cert_type: CertificateType::FinalizeFast(2, Hash::new_unique()),
+                cert_type: CertificateType::FinalizeFast(2, SliceRoot::new_unique()),
                 signature: BLSSignature::default(),
                 bitmap: vec![],
             };

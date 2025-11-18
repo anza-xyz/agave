@@ -1,17 +1,16 @@
 //! Put Alpenglow consensus messages here so all clients can agree on the format.
 use {
-    crate::vote::Vote,
+    crate::{slice_root::SliceRoot, vote::Vote},
     serde::{Deserialize, Serialize},
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
-    solana_hash::Hash,
 };
 
 /// The seed used to derive the BLS keypair
 pub const BLS_KEYPAIR_DERIVE_SEED: &[u8; 9] = b"alpenglow";
 
 /// Block, a (slot, hash) tuple
-pub type Block = (Slot, Hash);
+pub type Block = (Slot, SliceRoot);
 
 /// A consensus vote.
 #[cfg_attr(
@@ -40,11 +39,11 @@ pub enum CertificateType {
     /// Finalize certificate
     Finalize(Slot),
     /// Fast finalize certificate
-    FinalizeFast(Slot, Hash),
+    FinalizeFast(Slot, SliceRoot),
     /// Notarize certificate
-    Notarize(Slot, Hash),
+    Notarize(Slot, SliceRoot),
     /// Notarize fallback certificate
-    NotarizeFallback(Slot, Hash),
+    NotarizeFallback(Slot, SliceRoot),
     /// Skip certificate
     Skip(Slot),
 }

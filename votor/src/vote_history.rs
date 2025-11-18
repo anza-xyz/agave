@@ -2,10 +2,9 @@ use {
     super::vote_history_storage::{
         Result, SavedVoteHistory, SavedVoteHistoryVersions, VoteHistoryStorage,
     },
-    agave_votor_messages::{consensus_message::Block, vote::Vote},
+    agave_votor_messages::{consensus_message::Block, slice_root::SliceRoot, vote::Vote},
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
-    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     std::collections::{hash_map::Entry, HashMap, HashSet},
@@ -43,11 +42,11 @@ pub struct VoteHistory {
 
     /// The blocks for which this node has cast a notarization vote
     /// In the format of slot, block_id, bank_hash
-    voted_notar: HashMap<Slot, Hash>,
+    voted_notar: HashMap<Slot, SliceRoot>,
 
     /// The blocks for which this node has cast a notarization fallback
     /// vote in this slot
-    voted_notar_fallback: HashMap<Slot, HashSet<Hash>>,
+    voted_notar_fallback: HashMap<Slot, HashSet<SliceRoot>>,
 
     /// The slots for which this node has cast a skip fallback vote
     voted_skip_fallback: HashSet<Slot>,
@@ -92,13 +91,13 @@ impl VoteHistory {
     }
 
     /// The block for which we voted notarize in slot `slot`
-    pub fn voted_notar(&self, slot: Slot) -> Option<Hash> {
+    pub fn voted_notar(&self, slot: Slot) -> Option<SliceRoot> {
         assert!(slot >= self.root);
         self.voted_notar.get(&slot).copied()
     }
 
     /// Whether we voted notarize fallback in `slot` for block `(block_id, bank_hash)`
-    pub fn voted_notar_fallback(&self, slot: Slot, block_id: Hash) -> bool {
+    pub fn voted_notar_fallback(&self, slot: Slot, block_id: SliceRoot) -> bool {
         assert!(slot >= self.root);
         self.voted_notar_fallback
             .get(&slot)
@@ -317,7 +316,7 @@ mod test {
         assert!(vote_history.votes_cast_since(0).is_empty());
 
         // Vote Notarize on slot 1
-        let block_id_1 = Hash::new_unique();
+        let block_id_1 = SliceRoot::new_unique();
         let vote_notarize_1 = Vote::new_notarization_vote(1, block_id_1);
         vote_history.add_vote(vote_notarize_1);
         assert!(vote_history.voted(1));
@@ -351,7 +350,7 @@ mod test {
         assert!(vote_history.bad_window(2));
 
         // Now vote NotarizeFallback on slot 2
-        let block_id_2 = Hash::new_unique();
+        let block_id_2 = SliceRoot::new_unique();
         let vote_notarize_fallback_2 = Vote::new_notarization_fallback_vote(2, block_id_2);
         vote_history.add_vote(vote_notarize_fallback_2);
         assert!(vote_history.voted(2));
@@ -372,7 +371,7 @@ mod test {
         assert!(vote_history.bad_window(2));
 
         // Vote Notarize on slot 3
-        let block_id_3 = Hash::new_unique();
+        let block_id_3 = SliceRoot::new_unique();
         let vote_notarize_3 = Vote::new_notarization_vote(3, block_id_3);
         vote_history.add_vote(vote_notarize_3);
         assert!(vote_history.voted(3));
@@ -436,12 +435,12 @@ mod test {
     #[test]
     fn test_add_notarized_blocks() {
         let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
-        let block_1 = (1, Hash::new_unique());
+        let block_1 = (1, SliceRoot::new_unique());
         assert!(!vote_history.is_block_notarized(&block_1));
         vote_history.add_block_notarized(block_1);
         assert!(vote_history.is_block_notarized(&block_1));
 
-        let block_2 = (2, Hash::new_unique());
+        let block_2 = (2, SliceRoot::new_unique());
         assert!(!vote_history.is_block_notarized(&block_2));
         vote_history.add_block_notarized(block_2);
         assert!(vote_history.is_block_notarized(&block_2));
@@ -460,7 +459,7 @@ mod test {
     fn test_add_parent_ready() {
         let mut vote_history = VoteHistory::new(Pubkey::new_unique(), 0);
         assert_eq!(vote_history.highest_parent_ready_slot(), None);
-        let block_id_0 = (0, Hash::new_unique());
+        let block_id_0 = (0, SliceRoot::new_unique());
         vote_history.add_parent_ready(1, block_id_0);
         assert!(vote_history.is_parent_ready(1, &block_id_0));
         assert_eq!(vote_history.highest_parent_ready_slot(), Some(1));
@@ -471,8 +470,8 @@ mod test {
         assert_eq!(vote_history.highest_parent_ready_slot(), Some(1));
 
         // Add parent ready for slot 2
-        let block_id_2_0 = (1, Hash::new_unique());
-        let block_id_2_1 = (1, Hash::new_unique());
+        let block_id_2_0 = (1, SliceRoot::new_unique());
+        let block_id_2_1 = (1, SliceRoot::new_unique());
         assert!(vote_history.add_parent_ready(2, block_id_2_0));
         assert!(vote_history.is_parent_ready(2, &block_id_2_0));
         assert_eq!(vote_history.highest_parent_ready_slot(), Some(2));
@@ -502,7 +501,7 @@ mod test {
         let vote_history_storage = FileVoteHistoryStorage::new(tmp_dir.path().to_path_buf());
 
         // Add Notarize on 1 and Skip on 2
-        let vote_1 = Vote::new_notarization_vote(1, Hash::new_unique());
+        let vote_1 = Vote::new_notarization_vote(1, SliceRoot::new_unique());
         let vote_2 = Vote::new_skip_vote(2);
         vote_history.add_vote(vote_1);
         vote_history.add_vote(vote_2);

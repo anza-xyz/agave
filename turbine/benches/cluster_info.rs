@@ -1,4 +1,5 @@
 use {
+    agave_votor_messages::slice_root::SliceRoot,
     bencher::{benchmark_group, benchmark_main, Bencher},
     rand::{thread_rng, Rng},
     solana_entry::entry::Entry,
@@ -56,10 +57,10 @@ fn broadcast_shreds_bench(b: &mut Bencher) {
     let data_shreds = shredder.make_merkle_shreds_from_entries(
         &leader_keypair,
         &entries,
-        true,            // is_last_in_slot
-        Hash::default(), // chained_merkle_root
-        0,               // next_shred_index
-        0,               // next_code_index
+        true, // is_last_in_slot
+        SliceRoot::default(),
+        0, // next_shred_index
+        0, // next_code_index
         &ReedSolomonCache::default(),
         &mut ProcessShredsStats::default(),
     );

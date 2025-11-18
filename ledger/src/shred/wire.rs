@@ -9,6 +9,7 @@ use {
             ShredId, ShredType, ShredVariant, SIZE_OF_COMMON_SHRED_HEADER,
         },
     },
+    agave_votor_messages::slice_root::SliceRoot,
     solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -203,7 +204,7 @@ pub fn get_shred_id(shred: &[u8]) -> Option<ShredId> {
     ))
 }
 
-pub(crate) fn get_signed_data(shred: &[u8]) -> Option<Hash> {
+pub(crate) fn get_signed_data(shred: &[u8]) -> Option<SliceRoot> {
     let data = match get_shred_variant(shred).ok()? {
         ShredVariant::MerkleCode {
             proof_size,
@@ -227,7 +228,7 @@ pub fn get_reference_tick(shred: &[u8]) -> Result<u8, Error> {
     Ok(flags & ShredFlags::SHRED_TICK_REFERENCE_MASK.bits())
 }
 
-pub fn get_merkle_root(shred: &[u8]) -> Option<Hash> {
+pub fn get_merkle_root(shred: &[u8]) -> Option<SliceRoot> {
     match get_shred_variant(shred).ok()? {
         ShredVariant::MerkleCode {
             proof_size,
@@ -240,7 +241,7 @@ pub fn get_merkle_root(shred: &[u8]) -> Option<Hash> {
     }
 }
 
-pub(crate) fn get_chained_merkle_root(shred: &[u8]) -> Option<Hash> {
+pub(crate) fn get_chained_merkle_root(shred: &[u8]) -> Option<SliceRoot> {
     let offset = match get_shred_variant(shred).ok()? {
         ShredVariant::MerkleCode {
             proof_size,
@@ -253,9 +254,9 @@ pub(crate) fn get_chained_merkle_root(shred: &[u8]) -> Option<Hash> {
     }
     .ok()?;
     let merkle_root = shred.get(offset..offset + SIZE_OF_MERKLE_ROOT)?;
-    Some(Hash::from(
+    Some(SliceRoot(Hash::from(
         <[u8; SIZE_OF_MERKLE_ROOT]>::try_from(merkle_root).unwrap(),
-    ))
+    )))
 }
 
 fn get_retransmitter_signature_offset(shred: &[u8]) -> Result<usize, Error> {
@@ -354,7 +355,7 @@ pub fn resign_shred(shred: &mut [u8], keypair: &Keypair) -> Result<(), Error> {
     let Some(buffer) = shred.get_mut(offset..offset + SIGNATURE_BYTES) else {
         return Err(Error::InvalidPayloadSize(shred.len()));
     };
-    let signature = keypair.sign_message(merkle_root.as_ref());
+    let signature = keypair.sign_message(merkle_root.0.as_ref());
     buffer.copy_from_slice(signature.as_ref());
     Ok(())
 }
@@ -411,12 +412,12 @@ pub(crate) fn corrupt_packet<R: Rng>(
     if coin_flip {
         let pubkey = keypairs[&slot].pubkey();
         let data = get_signed_data(shred).unwrap();
-        assert!(!signature.verify(pubkey.as_ref(), data.as_ref()));
+        assert!(!signature.verify(pubkey.as_ref(), data.0.as_ref()));
     } else {
         // Slot may have been corrupted and no longer mapping to a keypair.
         let pubkey = keypairs.get(&slot).map(Keypair::pubkey).unwrap_or_default();
         if let Some(data) = get_signed_data(shred) {
-            assert!(!signature.verify(pubkey.as_ref(), data.as_ref()));
+            assert!(!signature.verify(pubkey.as_ref(), data.0.as_ref()));
         }
     }
 }
@@ -601,7 +602,7 @@ mod tests {
                 {
                     let mut bytes = bytes.to_vec();
                     let keypair = Keypair::new();
-                    let signature = keypair.sign_message(shred.merkle_root().unwrap().as_ref());
+                    let signature = keypair.sign_message(shred.merkle_root().unwrap().0.as_ref());
                     assert_matches!(resign_shred(&mut bytes, &keypair), Ok(()));
                     assert_eq!(get_retransmitter_signature(&bytes).unwrap(), signature);
                     let shred = shred::merkle::Shred::from_payload(bytes).unwrap();

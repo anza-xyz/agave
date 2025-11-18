@@ -50,6 +50,7 @@ agave-snapshots = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-verified-packet-receiver = { workspace = true }
 agave-votor = { workspace = true, features = ["agave-unstable-api"] }
+agave-votor-messages = { workspace = true }
 ahash = { workspace = true }
 anyhow = { workspace = true }
 arc-swap = { workspace = true }

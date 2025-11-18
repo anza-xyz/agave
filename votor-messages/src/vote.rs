@@ -1,8 +1,8 @@
 //! Vote data types for use by clients
 use {
+    crate::slice_root::SliceRoot,
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
-    solana_hash::Hash,
 };
 
 /// Enum that clients can use to parse and create the vote
@@ -28,7 +28,7 @@ pub enum Vote {
 
 impl Vote {
     /// Create a new notarization vote
-    pub fn new_notarization_vote(slot: Slot, block_id: Hash) -> Self {
+    pub fn new_notarization_vote(slot: Slot, block_id: SliceRoot) -> Self {
         Self::from(NotarizationVote { slot, block_id })
     }
 
@@ -43,7 +43,7 @@ impl Vote {
     }
 
     /// Create a new notarization fallback vote
-    pub fn new_notarization_fallback_vote(slot: Slot, block_id: Hash) -> Self {
+    pub fn new_notarization_fallback_vote(slot: Slot, block_id: SliceRoot) -> Self {
         Self::from(NotarizationFallbackVote { slot, block_id })
     }
 
@@ -64,7 +64,7 @@ impl Vote {
     }
 
     /// The block id associated with the block which was voted for
-    pub fn block_id(&self) -> Option<&Hash> {
+    pub fn block_id(&self) -> Option<&SliceRoot> {
         match self {
             Self::Notarize(vote) => Some(&vote.block_id),
             Self::NotarizeFallback(vote) => Some(&vote.block_id),
@@ -139,12 +139,12 @@ impl From<SkipFallbackVote> for Vote {
     derive(AbiExample),
     frozen_abi(digest = "5AdwChAjsj5QUXLdpDnGGK2L2nA8y8EajVXi6jsmTv1m")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NotarizationVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
     /// The block id this vote is for.
-    pub block_id: Hash,
+    pub block_id: SliceRoot,
 }
 
 /// A finalization vote
@@ -179,12 +179,12 @@ pub struct SkipVote {
     derive(AbiExample),
     frozen_abi(digest = "7j5ZPwwyz1FaG3fpyQv5PVnQXicdSmqSk8NvqzkG1Eqz")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NotarizationFallbackVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
     /// The block id this vote is for.
-    pub block_id: Hash,
+    pub block_id: SliceRoot,
 }
 
 /// A skip fallback vote

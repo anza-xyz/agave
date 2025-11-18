@@ -19,6 +19,7 @@ dev-context-only-utils = ["solana-core/dev-context-only-utils"]
 [dependencies]
 agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
+agave-votor-messages = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
