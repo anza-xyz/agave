@@ -270,26 +270,105 @@ pub fn execute(
 
     let exit = Arc::new(AtomicBool::new(false));
 
-    // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
-    // capabilities do not leak, leaving the process in a state where it could
-    // potentially be used as a privilege escalation gadget
-    let maybe_xdp_retransmit_builder = retransmit_xdp.clone().map(|xdp_config| {
-        use solana_turbine::xdp::{master_ip_if_bonded, XdpRetransmitBuilder};
-        let src_port = node.sockets.retransmit_sockets[0]
-            .local_addr()
-            .expect("failed to get local address")
-            .port();
-        let src_ip = match node.bind_ip_addrs.active() {
-            IpAddr::V4(ip) if !ip.is_unspecified() => Some(ip),
-            IpAddr::V4(_unspecified) => xdp_config
-                .interface
-                .as_ref()
-                .and_then(|iface| master_ip_if_bonded(iface)),
-            _ => panic!("IPv6 not supported"),
+    #[cfg(target_os = "linux")]
+    let maybe_xdp_retransmit_builder = {
+        use {
+            caps::{
+                CapSet,
+                Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON, CAP_SYS_NICE},
+            },
+            solana_turbine::xdp::{master_ip_if_bonded, XdpRetransmitBuilder},
         };
-        XdpRetransmitBuilder::new(xdp_config, src_port, src_ip, exit.clone())
-            .expect("failed to create xdp retransmitter")
-    });
+
+        let mut required_caps = HashSet::new();
+        let mut retained_caps = HashSet::new();
+        let supported_caps = HashSet::from_iter([
+            CAP_BPF,
+            CAP_NET_ADMIN,
+            CAP_NET_RAW,
+            CAP_PERFMON,
+            CAP_SYS_NICE,
+        ]);
+
+        if let Some(xdp_config) = retransmit_xdp.as_ref() {
+            required_caps.insert(CAP_NET_ADMIN);
+            required_caps.insert(CAP_NET_RAW);
+            if xdp_config.zero_copy {
+                required_caps.insert(CAP_BPF);
+                required_caps.insert(CAP_PERFMON);
+            }
+        }
+
+        let snapshot_packager_niceness_adj =
+            value_t_or_exit!(matches, "snapshot_packager_niceness_adj", i8);
+
+        if snapshot_packager_niceness_adj != 0 || run_args.json_rpc_config.rpc_niceness_adj != 0 {
+            required_caps.insert(CAP_SYS_NICE);
+            retained_caps.insert(CAP_SYS_NICE);
+        }
+
+        // lazy dev check
+        assert!(
+            required_caps.is_subset(&supported_caps),
+            "required_caps contains a cap not in supported_caps",
+        );
+
+        // validate and minimize the permitted set
+        let current_permitted =
+            caps::read(None, CapSet::Permitted).expect("permitted capset to be readable");
+        let missing_caps = required_caps
+            .difference(&current_permitted)
+            .collect::<Vec<_>>();
+        if !missing_caps.is_empty() {
+            error!(
+                "the current configuration requires the following capabilities, which have not \
+                 been permitted to the current process: {missing_caps:?}",
+            );
+            std::process::exit(1);
+        }
+        // warn about extraneous caps that no configuration requires
+        let extra_caps = current_permitted
+            .difference(&supported_caps)
+            .collect::<Vec<_>>();
+        if !extra_caps.is_empty() {
+            warn!(
+                "dropping extraneous capabilities ({extra_caps:?}) from the current process. \
+                 consider removing them from your operational configuration.",
+            );
+        }
+        // drop all caps that the current configuration does not require
+        caps::set(None, CapSet::Permitted, &required_caps)
+            .expect("permitted capset to be writable");
+
+        // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
+        // capabilities do not leak, leaving the process in a state where it could
+        // potentially be used as a privilege escalation gadget
+        let maybe_xdp_retransmit_builder = retransmit_xdp.clone().map(|xdp_config| {
+            let src_port = node.sockets.retransmit_sockets[0]
+                .local_addr()
+                .expect("failed to get local address")
+                .port();
+            let src_ip = match node.bind_ip_addrs.active() {
+                IpAddr::V4(ip) if !ip.is_unspecified() => Some(ip),
+                IpAddr::V4(_unspecified) => xdp_config
+                    .interface
+                    .as_ref()
+                    .and_then(|iface| master_ip_if_bonded(iface)),
+                _ => panic!("IPv6 not supported"),
+            };
+            XdpRetransmitBuilder::new(xdp_config, src_port, src_ip, exit.clone())
+                .expect("failed to create xdp retransmitter")
+        });
+
+        // we're done with caps needed to init xdp now. remove them from our process
+        caps::set(None, CapSet::Permitted, &retained_caps)
+            .expect("linux allows permitted capset to be set");
+
+        maybe_xdp_retransmit_builder
+    };
+
+    #[cfg(not(target_os = "linux"))]
+    let maybe_xdp_retransmit_builder = None;
 
     let reserved = retransmit_xdp
         .map(|xdp| xdp.cpus.clone())

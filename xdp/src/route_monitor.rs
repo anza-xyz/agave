@@ -26,14 +26,18 @@ impl RouteMonitor {
     /// Subscribes to RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH multicast groups
     /// Waits for updates to arrive on the netlink socket
     /// Publishes the updated routing table every `update_interval` if needed
-    pub fn start(
+    pub fn start<F: FnOnce() + Send + Sync + 'static>(
         atomic_router: Arc<ArcSwap<Router>>,
         exit: Arc<AtomicBool>,
         update_interval: Duration,
+        on_thread_start: F,
     ) -> thread::JoinHandle<()> {
         thread::Builder::new()
             .name("solRouteMon".to_string())
             .spawn(move || {
+                // MUST remain first to run here
+                on_thread_start();
+
                 let mut state =
                     RouteMonitorState::new(Router::new().expect("error creating Router"));
 

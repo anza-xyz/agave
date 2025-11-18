@@ -281,6 +281,7 @@ dependencies = [
  "agave-geyser-plugin-interface",
  "agave-logger",
  "agave-snapshots",
+ "caps",
  "chrono",
  "clap",
  "console 0.16.2",

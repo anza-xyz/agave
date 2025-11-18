@@ -441,6 +441,7 @@ dependencies = [
  "agave-logger",
  "agave-snapshots",
  "assert_cmd",
+ "caps",
  "chrono",
  "clap 2.33.3",
  "console 0.16.2",
