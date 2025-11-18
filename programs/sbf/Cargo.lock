@@ -6637,6 +6637,7 @@ dependencies = [
  "agave-transaction-view",
  "agave-verified-packet-receiver",
  "agave-votor",
+ "agave-votor-messages",
  "ahash 0.8.11",
  "anyhow",
  "arc-swap",
@@ -7160,6 +7161,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
+ "agave-votor-messages",
  "arc-swap",
  "arrayvec",
  "assert_matches",
@@ -7359,6 +7361,7 @@ dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
  "agave-snapshots",
+ "agave-votor-messages",
  "anyhow",
  "assert_matches",
  "bincode",
@@ -10065,6 +10068,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-votor",
+ "agave-votor-messages",
  "agave-xdp",
  "bincode",
  "bytes",
