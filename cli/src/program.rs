@@ -2644,7 +2644,7 @@ async fn process_migrate_program(
         .await?;
 
     let mut tx = Transaction::new_unsigned(message);
-    tx.try_sign(&[config.signers[0], config.signers[1]], blockhash)?;
+    tx.try_sign(&[config.signers[0], authority_signer], blockhash)?;
     let result = rpc_client
         .send_and_confirm_transaction_with_spinner_and_config(
             &tx,

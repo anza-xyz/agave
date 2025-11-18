@@ -3442,9 +3442,9 @@ dependencies = [
 
 [[package]]
 name = "indicatif"
-version = "0.18.2"
+version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ade6dfcba0dfb62ad59e59e7241ec8912af34fd29e0e743e3db992bd278e8b65"
+checksum = "9375e112e4b463ec1b1c6c011953545c65a30164fbab5b581df32b3abf0dcb88"
 dependencies = [
  "console 0.16.1",
  "portable-atomic",
@@ -6580,7 +6580,7 @@ dependencies = [
  "clap 2.34.0",
  "console 0.16.1",
  "humantime",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "pretty-hex",
  "semver",
  "serde",
@@ -6619,7 +6619,7 @@ dependencies = [
  "futures 0.3.31",
  "futures-util",
  "indexmap 2.11.4",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "log",
  "quinn",
  "rayon",
@@ -8433,7 +8433,7 @@ dependencies = [
  "bincode",
  "bs58",
  "futures 0.3.31",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "log",
  "reqwest 0.12.24",
  "reqwest-middleware",
@@ -9362,7 +9362,7 @@ dependencies = [
  "bincode",
  "futures-util",
  "indexmap 2.11.4",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "log",
  "rayon",
  "solana-client-traits",
