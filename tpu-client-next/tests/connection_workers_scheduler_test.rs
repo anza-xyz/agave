@@ -405,7 +405,7 @@ async fn test_connection_pruned_and_reopened() {
     let (scheduler_handle, _update_identity_sender, _scheduler_cancel) =
         setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
 
-    sleep(Duration::from_millis(400)).await;
+    sleep(Duration::from_millis(600)).await;
     let _connection_to_prune_client = make_client_endpoint(&server_address, None).await;
 
     // Check results
