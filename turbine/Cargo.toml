@@ -62,6 +62,7 @@ tokio = { workspace = true }
 wincode = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+aya = { workspace = true }
 caps = { workspace = true }
 
 [dev-dependencies]

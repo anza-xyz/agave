@@ -146,7 +146,7 @@ use {
     solana_turbine::{
         self,
         broadcast_stage::BroadcastStageType,
-        xdp::{master_ip_if_bonded, XdpConfig, XdpRetransmitter},
+        xdp::{master_ip_if_bonded, PartialXdpRetransmitter, XdpConfig, XdpRetransmitter},
     },
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_validator_exit::Exit,
@@ -1586,8 +1586,10 @@ impl Validator {
                         .and_then(|iface| master_ip_if_bonded(iface)),
                     _ => panic!("IPv6 not supported"),
                 };
-                let (rtx, sender) = XdpRetransmitter::new(xdp_config, src_port, src_ip)
-                    .expect("failed to create xdp retransmitter");
+                let partial_xdp_retransmitter =
+                    PartialXdpRetransmitter::new(xdp_config, src_port, src_ip)
+                        .expect("failed to create xdp retransmitter");
+                let (rtx, sender) = partial_xdp_retransmitter.finish();
                 (Some(rtx), Some(sender))
             } else {
                 (None, None)

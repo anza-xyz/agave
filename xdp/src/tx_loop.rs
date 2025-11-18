@@ -13,10 +13,6 @@ use {
         socket::{Socket, Tx, TxRing},
         umem::{Frame, OwnedUmem, PageAlignedMemory, Umem},
     },
-    caps::{
-        CapSet,
-        Capability::{CAP_NET_ADMIN, CAP_NET_RAW},
-    },
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     libc::{sysconf, _SC_PAGESIZE},
     std::{
@@ -198,11 +194,6 @@ impl PartialTxLoop<OwnedUmem<PageAlignedMemory>> {
             umem,
         } = self;
 
-        // we need NET_ADMIN and NET_RAW for the socket
-        for cap in [CAP_NET_ADMIN, CAP_NET_RAW] {
-            caps::raise(None, CapSet::Effective, cap).unwrap();
-        }
-
         let Ok((socket, tx)) = Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size) else {
             panic!("failed to create AF_XDP socket on queue {queue_id:?}");
         };
@@ -216,11 +207,6 @@ impl PartialTxLoop<OwnedUmem<PageAlignedMemory>> {
 
         // get the routing table from netlink
         let router = Router::new().expect("failed to create router");
-
-        // we don't need higher caps anymore
-        for cap in [CAP_NET_ADMIN, CAP_NET_RAW] {
-            caps::drop(None, CapSet::Effective, cap).unwrap();
-        }
 
         TxLoop {
             cpu_id,

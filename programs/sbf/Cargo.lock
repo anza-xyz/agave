@@ -409,7 +409,6 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-xdp-ebpf",
  "aya",
- "caps",
  "crossbeam-channel",
  "libc",
  "log",
@@ -10066,6 +10065,7 @@ dependencies = [
  "agave-feature-set",
  "agave-votor",
  "agave-xdp",
+ "aya",
  "bincode",
  "bytes",
  "caps",
