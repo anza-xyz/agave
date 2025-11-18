@@ -68,7 +68,7 @@ A contract deployed on Solana which coordinates and intermediates the interactio
 
 ### Proof Request
 
-A message sent by the Client to the SPV engine denoting a request for a proof of a specific transaction or set of transactions. Proof Requests can either manually specify a certain transaction by its hash or can elect to submit a filter that matches multiple transactions or classes of transactions. For example, a filter matching “any transaction from address xxx to address yyy” could be used to detect payment of a debt or settlement of an inter-chain swap. Likewise, a filter matching “any transaction from address xxx” could be used by a lending or synthetic token minting contract to monitor and react to changes in collateralization. Proof Requests are sent with a fee, which is disbursed by the SPV engine contract to the appropriate Prover once a proof matching that request is validated.
+A message sent by the Client to the SPV engine denoting a request for a proof of a specific transaction or set of transactions. Proof Requests can either manually specify a certain transaction by its hash or can elect to submit a filter that matches multiple transactions or classes of transactions. For example, a filter matching "any transaction from address xxx to address yyy" could be used to detect payment of a debt or settlement of an inter-chain swap. Likewise, a filter matching "any transaction from address xxx" could be used by a lending or synthetic token minting contract to monitor and react to changes in collateralization. Proof Requests are sent with a fee, which is disbursed by the SPV engine contract to the appropriate Prover once a proof matching that request is validated.
 
 ### Request Book
 
