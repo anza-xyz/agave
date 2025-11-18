@@ -1325,8 +1325,6 @@ async fn send_messages(
     }
 
     if !write_messages.is_empty() {
-        use solana_client::nonblocking::tpu_client::TpuClient;
-
         let connection_cache = {
             #[cfg(feature = "dev-context-only-utils")]
             let cache =
@@ -1338,7 +1336,7 @@ async fn send_messages(
 
         let transaction_errors = match connection_cache {
             ConnectionCache::Udp(cache) => {
-                TpuClient::new_with_connection_cache(
+                solana_tpu_client::nonblocking::tpu_client::TpuClient::new_with_connection_cache(
                     rpc_client.clone(),
                     &config.websocket_url,
                     TpuClientConfig::default(),
@@ -1355,8 +1353,9 @@ async fn send_messages(
                 let tpu_client = if additional_cli_config.use_rpc {
                     None
                 } else {
+                    // `solana_client` type currently required by `send_and_confirm_transactions_in_parallel_v2`
                     Some(
-                        TpuClient::new_with_connection_cache(
+                        solana_client::nonblocking::tpu_client::TpuClient::new_with_connection_cache(
                             rpc_client.clone(),
                             &config.websocket_url,
                             TpuClientConfig::default(),

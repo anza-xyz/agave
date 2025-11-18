@@ -36,11 +36,9 @@ use {
     },
     solana_client::{
         connection_cache::ConnectionCache,
-        nonblocking::tpu_client::TpuClient,
         send_and_confirm_transactions_in_parallel::{
             send_and_confirm_transactions_in_parallel_v2, SendAndConfirmConfigV2,
         },
-        tpu_client::TpuClientConfig,
     },
     solana_commitment_config::CommitmentConfig,
     solana_instruction::{error::InstructionError, Instruction},
@@ -69,6 +67,7 @@ use {
     solana_signature::Signature,
     solana_signer::Signer,
     solana_system_interface::{error::SystemError, MAX_PERMITTED_DATA_LENGTH},
+    solana_tpu_client::tpu_client::TpuClientConfig,
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
     std::{
@@ -3319,7 +3318,7 @@ async fn send_deploy_messages(
             };
             let transaction_errors = match connection_cache {
                 ConnectionCache::Udp(cache) => {
-                    TpuClient::new_with_connection_cache(
+                    solana_tpu_client::nonblocking::tpu_client::TpuClient::new_with_connection_cache(
                         rpc_client.clone(),
                         &config.websocket_url,
                         TpuClientConfig::default(),
@@ -3333,7 +3332,8 @@ async fn send_deploy_messages(
                     .await
                 }
                 ConnectionCache::Quic(cache) => {
-                    let tpu_client_fut = TpuClient::new_with_connection_cache(
+                    // `solana_client` type currently required by `send_and_confirm_transactions_in_parallel_v2`
+                    let tpu_client_fut = solana_client::nonblocking::tpu_client::TpuClient::new_with_connection_cache(
                         rpc_client.clone(),
                         config.websocket_url.as_str(),
                         TpuClientConfig::default(),
