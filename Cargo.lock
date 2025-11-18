@@ -161,7 +161,7 @@ dependencies = [
  "crossbeam-channel",
  "ctrlc",
  "dirs-next",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "nix",
  "reqwest 0.12.24",
  "scopeguard",
@@ -419,7 +419,7 @@ dependencies = [
  "core_affinity",
  "crossbeam-channel",
  "fd-lock",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "itertools 0.13.0",
  "jsonrpc-core",
  "jsonrpc-core-client",
@@ -4098,9 +4098,9 @@ dependencies = [
 
 [[package]]
 name = "indicatif"
-version = "0.18.2"
+version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ade6dfcba0dfb62ad59e59e7241ec8912af34fd29e0e743e3db992bd278e8b65"
+checksum = "9375e112e4b463ec1b1c6c011953545c65a30164fbab5b581df32b3abf0dcb88"
 dependencies = [
  "console 0.16.1",
  "portable-atomic",
@@ -7831,7 +7831,7 @@ dependencies = [
  "console 0.16.1",
  "ed25519-dalek 1.0.1",
  "humantime",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "pretty-hex",
  "semver 1.0.27",
  "serde",
@@ -7874,7 +7874,7 @@ dependencies = [
  "futures 0.3.31",
  "futures-util",
  "indexmap 2.11.4",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "log",
  "quinn",
  "rayon",
@@ -8101,7 +8101,7 @@ dependencies = [
  "crossbeam-channel",
  "futures-util",
  "indexmap 2.11.4",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "log",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
@@ -10098,7 +10098,7 @@ dependencies = [
  "bs58",
  "crossbeam-channel",
  "futures 0.3.31",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "jsonrpc-core",
  "jsonrpc-http-server",
  "log",
@@ -11240,7 +11240,7 @@ dependencies = [
  "csv",
  "ctrlc",
  "indexmap 2.11.4",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "pickledb",
  "serde",
  "solana-account-decoder",
@@ -11316,7 +11316,7 @@ dependencies = [
  "bincode",
  "futures-util",
  "indexmap 2.11.4",
- "indicatif 0.18.2",
+ "indicatif 0.18.3",
  "log",
  "rayon",
  "solana-client-traits",
