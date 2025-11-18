@@ -141,7 +141,7 @@ use {
     solana_turbine::{
         self,
         broadcast_stage::BroadcastStageType,
-        xdp::{master_ip_if_bonded, XdpConfig, XdpRetransmitBuilder, XdpRetransmitter},
+        xdp::{XdpRetransmitBuilder, XdpRetransmitter},
     },
     solana_unified_scheduler_logic::SchedulingMode,
     solana_unified_scheduler_pool::{DefaultSchedulerPool, SupportedSchedulingMode},
@@ -151,7 +151,7 @@ use {
     std::{
         borrow::Cow,
         collections::{HashMap, HashSet},
-        net::{IpAddr, SocketAddr},
+        net::SocketAddr,
         num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
         str::FromStr,
@@ -412,7 +412,6 @@ pub struct ValidatorConfig {
     pub replay_transactions_threads: NonZeroUsize,
     pub tvu_shred_sigverify_threads: NonZeroUsize,
     pub delay_leader_block_for_pending_fork: bool,
-    pub retransmit_xdp: Option<XdpConfig>,
     pub repair_handler_type: RepairHandlerType,
 }
 
@@ -494,7 +493,6 @@ impl ValidatorConfig {
             tvu_shred_sigverify_threads: NonZeroUsize::new(get_thread_count())
                 .expect("thread count is non-zero"),
             delay_leader_block_for_pending_fork: false,
-            retransmit_xdp: None,
             repair_handler_type: RepairHandlerType::default(),
         }
     }
@@ -688,6 +686,43 @@ pub struct Validator {
 impl Validator {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        node: Node,
+        identity_keypair: Arc<Keypair>,
+        ledger_path: &Path,
+        vote_account: &Pubkey,
+        authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
+        cluster_entrypoints: Vec<ContactInfo>,
+        config: &ValidatorConfig,
+        should_check_duplicate_instance: bool,
+        rpc_to_plugin_manager_receiver: Option<Receiver<GeyserPluginManagerRequest>>,
+        start_progress: Arc<RwLock<ValidatorStartProgress>>,
+        socket_addr_space: SocketAddrSpace,
+        tpu_config: ValidatorTpuConfig,
+        admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
+        maybe_xdp_retransmit_builder: Option<XdpRetransmitBuilder>,
+    ) -> Result<Self> {
+        let exit = Arc::new(AtomicBool::new(false));
+        Self::new_with_exit(
+            node,
+            identity_keypair,
+            ledger_path,
+            vote_account,
+            authorized_voter_keypairs,
+            cluster_entrypoints,
+            config,
+            should_check_duplicate_instance,
+            rpc_to_plugin_manager_receiver,
+            start_progress,
+            socket_addr_space,
+            tpu_config,
+            admin_rpc_service_post_init,
+            maybe_xdp_retransmit_builder,
+            exit,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_exit(
         mut node: Node,
         identity_keypair: Arc<Keypair>,
         ledger_path: &Path,
@@ -701,6 +736,8 @@ impl Validator {
         socket_addr_space: SocketAddrSpace,
         tpu_config: ValidatorTpuConfig,
         admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
+        maybe_xdp_retransmit_builder: Option<XdpRetransmitBuilder>,
+        exit: Arc<AtomicBool>,
     ) -> Result<Self> {
         #[cfg(debug_assertions)]
         const DEBUG_ASSERTION_STATUS: &str = "enabled";
@@ -745,8 +782,6 @@ impl Validator {
         }
 
         let mut bank_notification_senders = Vec::new();
-
-        let exit = Arc::new(AtomicBool::new(false));
 
         let geyser_plugin_config_files = config
             .on_start_geyser_plugin_config_files
@@ -1544,22 +1579,7 @@ impl Validator {
         });
 
         let (xdp_retransmitter, xdp_sender) =
-            if let Some(xdp_config) = config.retransmit_xdp.clone() {
-                let src_port = node.sockets.retransmit_sockets[0]
-                    .local_addr()
-                    .expect("failed to get local address")
-                    .port();
-                let src_ip = match node.bind_ip_addrs.active() {
-                    IpAddr::V4(ip) if !ip.is_unspecified() => Some(ip),
-                    IpAddr::V4(_unspecified) => xdp_config
-                        .interface
-                        .as_ref()
-                        .and_then(|iface| master_ip_if_bonded(iface)),
-                    _ => panic!("IPv6 not supported"),
-                };
-                let xdp_retransmit_builder =
-                    XdpRetransmitBuilder::new(xdp_config, src_port, src_ip, exit.clone())
-                        .expect("failed to create xdp retransmitter");
+            if let Some(xdp_retransmit_builder) = maybe_xdp_retransmit_builder {
                 let (rtx, sender) = xdp_retransmit_builder.build();
                 (Some(rtx), Some(sender))
             } else {
@@ -2944,6 +2964,7 @@ mod tests {
             SocketAddrSpace::Unspecified,
             ValidatorTpuConfig::new_for_tests(),
             Arc::new(RwLock::new(None)),
+            None,
         )
         .expect("assume successful validator start");
         assert_eq!(
@@ -3158,6 +3179,7 @@ mod tests {
                     SocketAddrSpace::Unspecified,
                     ValidatorTpuConfig::new_for_tests(),
                     Arc::new(RwLock::new(None)),
+                    None,
                 )
                 .expect("assume successful validator start")
             })

@@ -76,7 +76,6 @@ use {
         net::{IpAddr, Ipv4Addr, SocketAddr},
         num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
-        process::exit,
         str::{self, FromStr},
         sync::{atomic::AtomicBool, Arc, RwLock},
     },
@@ -245,7 +244,7 @@ pub fn execute(
                 solana_net_utils::parse_host_port(tpu_vortexor_receiver_address).unwrap_or_else(
                     |err| {
                         eprintln!("Failed to parse --tpu-vortexor-receiver-address: {err}");
-                        exit(1);
+                        std::process::exit(1);
                     },
                 )
             });
@@ -268,6 +267,45 @@ pub fn execute(
     };
 
     let mut node = Node::new_with_external_ip(&identity_keypair.pubkey(), node_config);
+
+    let exit = Arc::new(AtomicBool::new(false));
+
+    // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
+    // capabilities do not leak, leaving the process in a state where it could
+    // potentially be used as a privilege escalation gadget
+    let maybe_xdp_retransmit_builder = retransmit_xdp.clone().map(|xdp_config| {
+        use solana_turbine::xdp::{master_ip_if_bonded, XdpRetransmitBuilder};
+        let src_port = node.sockets.retransmit_sockets[0]
+            .local_addr()
+            .expect("failed to get local address")
+            .port();
+        let src_ip = match node.bind_ip_addrs.active() {
+            IpAddr::V4(ip) if !ip.is_unspecified() => Some(ip),
+            IpAddr::V4(_unspecified) => xdp_config
+                .interface
+                .as_ref()
+                .and_then(|iface| master_ip_if_bonded(iface)),
+            _ => panic!("IPv6 not supported"),
+        };
+        XdpRetransmitBuilder::new(xdp_config, src_port, src_ip, exit.clone())
+            .expect("failed to create xdp retransmitter")
+    });
+
+    let reserved = retransmit_xdp
+        .map(|xdp| xdp.cpus.clone())
+        .unwrap_or_default()
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    if !reserved.is_empty() {
+        let available = core_affinity::get_core_ids()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|core_id| core_id.id)
+            .collect::<HashSet<_>>();
+        let available = available.difference(&reserved);
+        set_cpu_affinity(available.into_iter().copied()).unwrap();
+    }
 
     solana_core::validator::report_target_features();
 
@@ -714,7 +752,6 @@ pub fn execute(
         wen_restart_proto_path: value_t!(matches, "wen_restart", PathBuf).ok(),
         wen_restart_coordinator: value_t!(matches, "wen_restart_coordinator", Pubkey).ok(),
         turbine_disabled: Arc::<AtomicBool>::default(),
-        retransmit_xdp,
         broadcast_stage_type: BroadcastStageType::Standard,
         block_verification_method: value_t_or_exit!(
             matches,
@@ -750,24 +787,6 @@ pub fn execute(
         )]
         .into(),
     };
-
-    let reserved = validator_config
-        .retransmit_xdp
-        .as_ref()
-        .map(|xdp| xdp.cpus.clone())
-        .unwrap_or_default()
-        .iter()
-        .cloned()
-        .collect::<HashSet<_>>();
-    if !reserved.is_empty() {
-        let available = core_affinity::get_core_ids()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|core_id| core_id.id)
-            .collect::<HashSet<_>>();
-        let available = available.difference(&reserved);
-        set_cpu_affinity(available.into_iter().copied()).unwrap();
-    }
 
     let vote_account = pubkey_of(matches, "vote_account").unwrap_or_else(|| {
         if !validator_config.voting_disabled {
@@ -1011,7 +1030,7 @@ pub fn execute(
         },
     };
 
-    let validator = match Validator::new(
+    let validator = match Validator::new_with_exit(
         node,
         identity_keypair,
         &ledger_path,
@@ -1031,6 +1050,8 @@ pub fn execute(
             vote_quic_server_config,
         },
         admin_service_post_init,
+        maybe_xdp_retransmit_builder,
+        exit,
     ) {
         Ok(validator) => Ok(validator),
         Err(err) => {
@@ -1044,7 +1065,7 @@ pub fn execute(
                     "Please remove --wen_restart and use --wait_for_supermajority as instructed \
                      above"
                 );
-                exit(200);
+                std::process::exit(200);
             }
             Err(format!("{err:?}"))
         }

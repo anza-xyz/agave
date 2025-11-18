@@ -1618,6 +1618,7 @@ mod tests {
                 SocketAddrSpace::Unspecified,
                 ValidatorTpuConfig::new_for_tests(),
                 post_init.clone(),
+                None,
             )
             .expect("assume successful validator start");
             assert_eq!(

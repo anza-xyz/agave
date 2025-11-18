@@ -1227,6 +1227,7 @@ impl TestValidator {
             socket_addr_space,
             ValidatorTpuConfig::new_for_tests(),
             config.admin_rpc_service_post_init.clone(),
+            None,
         )?);
 
         let test_validator = TestValidator {
