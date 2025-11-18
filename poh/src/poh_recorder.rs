@@ -181,8 +181,6 @@ pub struct PohRecorder {
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     ticks_per_slot: u64,
     metrics: PohRecorderMetrics,
-    delay_leader_block_for_pending_fork: bool,
-    last_reported_slot_for_pending_fork: Arc<Mutex<Slot>>,
     pub is_exited: Arc<AtomicBool>,
 
     // Allocation to hold PohEntrys recorded into PoHStream.
@@ -212,14 +210,12 @@ impl PohRecorder {
         poh_config: &PohConfig,
         is_exited: Arc<AtomicBool>,
     ) -> (Self, Receiver<WorkingBankEntry>) {
-        let delay_leader_block_for_pending_fork = false;
         Self::new_with_clear_signal(
             tick_height,
             last_entry_hash,
             start_bank,
             next_leader_slot,
             ticks_per_slot,
-            delay_leader_block_for_pending_fork,
             blockstore,
             None,
             leader_schedule_cache,
@@ -235,7 +231,6 @@ impl PohRecorder {
         start_bank: Arc<Bank>,
         next_leader_slot: Option<(Slot, Slot)>,
         ticks_per_slot: u64,
-        delay_leader_block_for_pending_fork: bool,
         blockstore: Arc<Blockstore>,
         clear_bank_signal: Option<Sender<bool>>,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
@@ -273,8 +268,6 @@ impl PohRecorder {
                 leader_schedule_cache: leader_schedule_cache.clone(),
                 ticks_per_slot,
                 metrics: PohRecorderMetrics::default(),
-                delay_leader_block_for_pending_fork,
-                last_reported_slot_for_pending_fork: Arc::default(),
                 is_exited,
                 entries: Vec::with_capacity(64),
                 is_alpenglow_enabled: false,
@@ -756,51 +749,16 @@ impl PohRecorder {
     }
 
     fn can_skip_grace_ticks(&self, my_pubkey: &Pubkey, next_leader_slot: Slot) -> bool {
-        if self.start_slot_was_mine(my_pubkey) {
-            // Building off my own block. No need to wait.
-            return true;
-        }
-
-        if self.start_slot_was_mine_or_previous_leader(next_leader_slot) {
-            // Planning to build off block produced by the leader previous to
-            // me. Check if they've completed all of their slots.
-            return self.building_off_previous_leader_last_block(my_pubkey, next_leader_slot);
-        }
-
-        if !self.is_new_reset_bank_pending(next_leader_slot) {
-            // No pending blocks from previous leader have been observed. No
-            // need to wait.
-            return true;
-        }
-
-        self.report_pending_fork_was_detected(next_leader_slot);
-        if !self.delay_leader_block_for_pending_fork {
-            // Not configured to wait for pending blocks from previous leader.
-            return true;
-        }
-
-        // Wait for grace ticks
-        false
-    }
-
-    fn start_slot_was_mine_or_previous_leader(&self, next_leader_slot: Slot) -> bool {
-        (next_leader_slot.saturating_sub(NUM_CONSECUTIVE_LEADER_SLOTS)..next_leader_slot).any(
-            |slot| {
-                // Check if the last slot PoH reset to was any of the
-                // previous leader's slots.
-                // If so, PoH is currently building on the previous leader's blocks
-                // If not, PoH is building on a different fork
-                slot == self.start_slot()
-            },
-        )
+        !self.previous_leader_building_last_block(my_pubkey, next_leader_slot)
     }
 
     // Check if the last slot PoH reset onto was the previous leader's last slot.
-    fn building_off_previous_leader_last_block(
+    fn previous_leader_building_last_block(
         &self,
         my_pubkey: &Pubkey,
         next_leader_slot: Slot,
     ) -> bool {
+        let mut previous_leader_slots_seen = 0;
         // Walk backwards from the slot before our next leader slot.
         for slot in
             (next_leader_slot.saturating_sub(NUM_CONSECUTIVE_LEADER_SLOTS)..next_leader_slot).rev()
@@ -812,48 +770,32 @@ impl PohRecorder {
                 continue;
             };
 
-            // If the leader for this slot is not me, then it's the previous
-            // leader's last slot.
-            if leader_for_slot != *my_pubkey {
-                // Check if the last slot PoH reset onto was the previous leader's last slot.
+            if leader_for_slot == *my_pubkey {
+                // Keep walking through any of my own slots.
+                continue;
+            }
+
+            // This must be the previous leader's slot.
+            previous_leader_slots_seen += 1;
+
+            // Check if the previous leader is building their last slot.
+            if previous_leader_slots_seen == 2 {
+                // I've identified the previous leader's second to last slot.
+                // Now check if I've fully received that slot. This would imply
+                // the last slot is the one currently being built.
                 return slot == self.start_slot();
             }
         }
         false
     }
 
-    fn start_slot_was_mine(&self, my_pubkey: &Pubkey) -> bool {
-        self.start_bank.collector_id() == my_pubkey
-    }
-
     // Active descendants of the last reset bank that are smaller than the
     // next leader slot could soon become the new reset bank.
+    #[cfg(test)]
     fn is_new_reset_bank_pending(&self, next_leader_slot: Slot) -> bool {
         self.start_bank_active_descendants
             .iter()
             .any(|pending_slot| *pending_slot < next_leader_slot)
-    }
-
-    // Report metrics when poh recorder detects a pending fork that could
-    // soon lead to poh reset.
-    fn report_pending_fork_was_detected(&self, next_leader_slot: Slot) {
-        // Only report once per next leader slot to avoid spamming metrics. It's
-        // enough to know that a leader decided to delay or not once per slot
-        let mut last_slot = self.last_reported_slot_for_pending_fork.lock().unwrap();
-        if *last_slot == next_leader_slot {
-            return;
-        }
-        *last_slot = next_leader_slot;
-
-        datapoint_info!(
-            "poh_recorder-detected_pending_fork",
-            ("next_leader_slot", next_leader_slot, i64),
-            (
-                "did_delay_leader_slot",
-                self.delay_leader_block_for_pending_fork,
-                bool
-            ),
-        );
     }
 
     // returns (leader_first_tick_height, leader_last_tick_height, grace_ticks) given the next
@@ -1671,7 +1613,6 @@ mod tests {
             bank.clone(),
             None,
             bank.ticks_per_slot(),
-            false,
             Arc::new(blockstore),
             Some(sender),
             &Arc::new(LeaderScheduleCache::default()),
@@ -1789,24 +1730,14 @@ mod tests {
         // Setup leader schedule.
         let leader_a_pubkey = validator_pubkey;
         let leader_b_pubkey = Pubkey::new_unique();
-        let leader_c_pubkey = Pubkey::new_unique();
-        let leader_d_pubkey = Pubkey::new_unique();
         let consecutive_leader_slots = NUM_CONSECUTIVE_LEADER_SLOTS as usize;
         let mut slot_leaders = Vec::with_capacity(consecutive_leader_slots * 3);
         slot_leaders.extend(std::iter::repeat_n(
             leader_a_pubkey,
-            consecutive_leader_slots,
+            consecutive_leader_slots * 2,
         ));
         slot_leaders.extend(std::iter::repeat_n(
             leader_b_pubkey,
-            consecutive_leader_slots,
-        ));
-        slot_leaders.extend(std::iter::repeat_n(
-            leader_c_pubkey,
-            consecutive_leader_slots,
-        ));
-        slot_leaders.extend(std::iter::repeat_n(
-            leader_d_pubkey,
             consecutive_leader_slots,
         ));
         let mut leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
@@ -1839,31 +1770,28 @@ mod tests {
         poh_recorder.grace_ticks = grace_ticks;
 
         // Setup leader slot ranges.
-        let leader_a_start_slot = 0;
+        let leader_a_start_slot = 4;
         let leader_a_end_slot = leader_a_start_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 1;
         let leader_b_start_slot = leader_a_end_slot + 1;
         let leader_b_end_slot = leader_b_start_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 1;
-        let leader_c_start_slot = leader_b_end_slot + 1;
-        let leader_c_end_slot = leader_c_start_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 1;
-        let leader_d_start_slot = leader_c_end_slot + 1;
-        let leader_d_end_slot = leader_d_start_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 1;
 
-        // Reset onto Leader A's first slot 0.
-        poh_recorder.reset(
-            bank.clone(),
-            Some((leader_a_start_slot + 1, leader_a_end_slot)),
-        );
+        // Reset onto Leader A's first slot.
+        poh_recorder.reset(bank.clone(), Some((leader_a_start_slot, leader_a_end_slot)));
 
         // Setup leader start ticks.
         let ticks_in_leader_slot_set = ticks_per_slot * NUM_CONSECUTIVE_LEADER_SLOTS;
-        let leader_a_start_tick = 1;
+        let leader_a_start_tick = leader_a_start_slot * ticks_per_slot;
         let leader_b_start_tick = leader_a_start_tick + ticks_in_leader_slot_set;
-        let leader_c_start_tick = leader_b_start_tick + ticks_in_leader_slot_set;
-        let leader_d_start_tick = leader_c_start_tick + ticks_in_leader_slot_set;
 
-        // True, because from Leader A's perspective, the previous slot was also
-        // its own slot, and validators don't give grace periods if previous
-        // slot was also their own.
+        // False because we haven't ticked to Leader A first slot yet.
+        assert!(!poh_recorder.reached_leader_tick(&leader_a_pubkey, leader_a_start_tick));
+
+        // Tick to leader A first slot.
+        for _ in ticks_per_slot..ticks_in_leader_slot_set {
+            poh_recorder.tick();
+        }
+
+        // True because there is no previous leader slot to wait for.
         assert!(poh_recorder.reached_leader_tick(&leader_a_pubkey, leader_a_start_tick));
 
         // Tick through grace ticks.
@@ -1874,19 +1802,37 @@ mod tests {
         // True, because we have ticked through all the grace ticks.
         assert!(poh_recorder.reached_leader_tick(&leader_a_pubkey, leader_a_start_tick));
 
-        // Reset PoH on Leader A's first slot 0, ticking towards Leader B's leader slots.
+        // Reset onto Leader A's first slot, ticking towards Leader B's leader slots.
+        for _ in 0..leader_a_start_slot {
+            let child_slot = bank.slot() + 1;
+            bank = Arc::new(Bank::new_from_parent(bank, &leader_a_pubkey, child_slot));
+        }
         poh_recorder.reset(bank.clone(), Some((leader_b_start_slot, leader_b_end_slot)));
 
         // False, because Leader B hasn't ticked to its starting slot yet.
         assert!(!poh_recorder.reached_leader_tick(&leader_b_pubkey, leader_b_start_tick));
 
         // Tick through Leader A's remaining slots.
-        for _ in poh_recorder.tick_height()..ticks_in_leader_slot_set {
+        for _ in poh_recorder.tick_height()..leader_b_start_tick {
             poh_recorder.tick();
         }
 
-        // False, because the PoH was reset on slot 0, which is a block produced
-        // by previous leader A, so a grace period must be given.
+        // True, because the PoH was reset on slot 0, which is the first block
+        // produced by previous leader A, so no grace period must be given.
+        assert!(poh_recorder.reached_leader_tick(&leader_b_pubkey, leader_b_start_tick));
+
+        // Reset onto Leader A's second to last slot.
+        for _ in leader_a_start_slot + 1..leader_a_end_slot {
+            let child_slot = bank.slot() + 1;
+            bank = Arc::new(Bank::new_from_parent(bank, &leader_a_pubkey, child_slot));
+        }
+        poh_recorder.reset(bank.clone(), Some((leader_b_start_slot, leader_b_end_slot)));
+        // Tick through Leader A's remaining slot.
+        for _ in 0..ticks_per_slot {
+            poh_recorder.tick();
+        }
+
+        // False, because Leader A is presumably building their last slot, so grace ticks must be provided.
         assert!(!poh_recorder.reached_leader_tick(&leader_b_pubkey, leader_b_start_tick));
 
         // Reset onto Leader A's last slot.
@@ -1899,54 +1845,6 @@ mod tests {
         // True, because the PoH was reset the last slot produced by the
         // previous leader, so we can run immediately.
         assert!(poh_recorder.reached_leader_tick(&leader_b_pubkey, leader_b_start_tick));
-
-        // Simulate skipping Leader B's first slot.
-        poh_recorder.reset(
-            bank.clone(),
-            Some((leader_b_start_slot + 1, leader_b_end_slot)),
-        );
-        for _ in 0..ticks_per_slot {
-            poh_recorder.tick();
-        }
-
-        // True, because we're building off the previous leader A's last block.
-        assert!(poh_recorder.reached_leader_tick(&leader_b_pubkey, leader_b_start_tick));
-
-        // Simulate generating Leader B's second slot.
-        let child_slot = bank.slot() + 1;
-        bank = Arc::new(Bank::new_from_parent(bank, &leader_b_pubkey, child_slot));
-
-        // Reset PoH targeting Leader D's slots.
-        poh_recorder.reset(bank, Some((leader_d_start_slot, leader_d_end_slot)));
-
-        // Tick through Leader B's remaining slots.
-        for _ in ticks_per_slot..ticks_in_leader_slot_set {
-            poh_recorder.tick();
-        }
-
-        // Tick through Leader C's slots.
-        for _ in 0..ticks_in_leader_slot_set {
-            poh_recorder.tick();
-        }
-
-        // True, because Leader D is not building on any of Leader C's slots.
-        // The PoH was last reset onto Leader B's second slot.
-        assert!(poh_recorder.reached_leader_tick(&leader_d_pubkey, leader_d_start_tick));
-
-        // Add some active (partially received) blocks to the active fork.
-        let active_descendants = vec![NUM_CONSECUTIVE_LEADER_SLOTS];
-        poh_recorder.update_start_bank_active_descendants(&active_descendants);
-
-        // True, because Leader D observes pending blocks on the active fork,
-        // but the config to delay for these is not set.
-        assert!(poh_recorder.reached_leader_tick(&leader_d_pubkey, leader_d_start_tick));
-
-        // Flip the config to delay for pending blocks.
-        poh_recorder.delay_leader_block_for_pending_fork = true;
-
-        // False, because Leader D observes pending blocks on the active fork,
-        // and the config to delay for these is set.
-        assert!(!poh_recorder.reached_leader_tick(&leader_d_pubkey, leader_d_start_tick));
     }
 
     #[test]
@@ -2152,13 +2050,6 @@ mod tests {
                     poh_slot: 9,
                     parent_slot: 4,
                 }
-            );
-
-            // After setting delay_leader_block_for_pending_fork, grace ticks are required
-            poh_recorder.delay_leader_block_for_pending_fork = true;
-            assert_eq!(
-                poh_recorder.reached_leader_slot(&test_validator_pubkey),
-                PohLeaderStatus::NotReached,
             );
 
             // Tick through grace ticks
