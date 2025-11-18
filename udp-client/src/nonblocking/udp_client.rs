@@ -2,10 +2,12 @@
 //! an interface for sending data
 
 use {
-    async_trait::async_trait, core::iter::repeat,
+    async_trait::async_trait,
     solana_connection_cache::nonblocking::client_connection::ClientConnection,
-    solana_streamer::nonblocking::sendmmsg::batch_send, solana_transaction_error::TransportResult,
-    std::net::SocketAddr, tokio::net::UdpSocket,
+    solana_streamer::nonblocking::sendmmsg::batch_send,
+    solana_transaction_error::TransportResult,
+    std::{net::SocketAddr, sync::Arc},
+    tokio::net::UdpSocket,
 };
 
 pub struct UdpClientConnection {
@@ -35,8 +37,11 @@ impl ClientConnection for UdpClientConnection {
         Ok(())
     }
 
-    async fn send_data_batch(&self, buffers: &[Vec<u8>]) -> TransportResult<()> {
-        let pkts: Vec<_> = buffers.iter().zip(repeat(self.server_addr())).collect();
+    async fn send_data_batch(&self, buffers: &[Arc<Vec<u8>>]) -> TransportResult<()> {
+        let pkts: Vec<_> = buffers
+            .iter()
+            .map(|buf| (buf.as_slice(), self.server_addr()))
+            .collect();
         batch_send(&self.socket, &pkts).await?;
         Ok(())
     }
@@ -65,7 +70,9 @@ mod tests {
     }
 
     async fn check_send_batch(connection: &UdpClientConnection, reader: &UdpSocket) {
-        let packets: Vec<_> = (0..32).map(|_| vec![0u8; PACKET_DATA_SIZE]).collect();
+        let packets: Vec<_> = (0..32)
+            .map(|_| Arc::new(vec![0u8; PACKET_DATA_SIZE]))
+            .collect();
         connection.send_data_batch(&packets).await.unwrap();
         let mut packets = vec![Packet::default(); 32];
         let recv = recv_mmsg(reader, &mut packets[..]).await.unwrap();

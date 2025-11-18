@@ -144,7 +144,9 @@ where
     pub fn try_send_transaction_batch(&self, transactions: &[Transaction]) -> TransportResult<()> {
         let wire_transactions = transactions
             .into_par_iter()
-            .map(|tx| bincode::serialize(&tx).expect("serialize Transaction in send_batch"))
+            .map(|tx| {
+                Arc::new(bincode::serialize(&tx).expect("serialize Transaction in send_batch"))
+            })
             .collect::<Vec<_>>();
         self.invoke(
             self.tpu_client
@@ -162,6 +164,10 @@ where
         &self,
         wire_transactions: Vec<Vec<u8>>,
     ) -> TransportResult<()> {
+        let wire_transactions = wire_transactions
+            .into_iter()
+            .map(Arc::new)
+            .collect::<Vec<_>>();
         self.invoke(
             self.tpu_client
                 .try_send_wire_transaction_batch(wire_transactions),
