@@ -43,7 +43,7 @@ pub(crate) trait QosController<C: ConnectionContext> {
     fn on_stream_error(&self, context: &C);
 
     /// Called when a stream is closed
-    fn on_stream_closed(&self, context: &C);
+    fn on_stream_closed(&self, connection: &Connection, conn_context: &C, stream_index: u64);
 
     /// Remove a connection. Return the number of open connections after removal.
     fn remove_connection(
