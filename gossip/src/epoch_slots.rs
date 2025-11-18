@@ -136,13 +136,7 @@ impl Flate2 {
         Self::DECOMPRESS_BUF.with_borrow_mut(|v| {
             v.clear();
             // Perform the actual decompression and check that the result fits into provided buffer
-            #[allow(unused_must_use)]
-            let _status =
-                decompress.decompress_vec(&self.compressed, v, FlushDecompress::Finish)?;
-            // This logic should work, but may cause unintended packet loss.
-            /*if status != flate2::Status::StreamEnd {
-                return Err(Error::DecompressError);
-            }*/
+            let _ = decompress.decompress_vec(&self.compressed, v, FlushDecompress::Finish)?;
 
             Ok(Uncompressed {
                 first_slot: self.first_slot,
