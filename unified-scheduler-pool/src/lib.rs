@@ -2886,7 +2886,8 @@ mod tests {
         // - Providing a large enough window to avoid the race condition where the second
         //   scheduler could also be freed before we can assert only one remains
         const TEST_MAX_POOLING_DURATION_MS: u64 = 300;
-        const TEST_MAX_POOLING_DURATION: Duration = Duration::from_millis(TEST_MAX_POOLING_DURATION_MS);
+        const TEST_MAX_POOLING_DURATION: Duration =
+            Duration::from_millis(TEST_MAX_POOLING_DURATION_MS);
         const TEST_WAIT_FOR_IDLE_MS: u64 = TEST_MAX_POOLING_DURATION_MS + 200;
         const TEST_WAIT_FOR_IDLE: Duration = Duration::from_millis(TEST_WAIT_FOR_IDLE_MS);
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
