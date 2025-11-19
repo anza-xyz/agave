@@ -1065,29 +1065,6 @@ mod tests {
     }
 
     #[test]
-    fn test_version_from_hash() {
-        let hash = [
-            0xa5u8, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5,
-            0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a,
-            0xa5, 0xa5, 0x5a, 0x5a,
-        ];
-        let version = solana_shred_version::version_from_hash(&Hash::new_from_array(hash));
-        assert_eq!(version, 1);
-        let hash = [
-            0xa5u8, 0xa5, 0x5a, 0x5a, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0,
-        ];
-        let version = solana_shred_version::version_from_hash(&Hash::new_from_array(hash));
-        assert_eq!(version, 0xffff);
-        let hash = [
-            0xa5u8, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        ];
-        let version = solana_shred_version::version_from_hash(&Hash::new_from_array(hash));
-        assert_eq!(version, 0x5a5b);
-    }
-
-    #[test]
     fn test_invalid_parent_offset() {
         let keypair = Keypair::new();
         let shred = Shredder::single_shred_for_tests(10, &keypair);
