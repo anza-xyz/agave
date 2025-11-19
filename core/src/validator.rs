@@ -25,7 +25,6 @@ use {
             adjust_nofile_limit, validate_memlock_limit_for_disk_io, ResourceLimitError,
         },
         sample_performance_service::SamplePerformanceService,
-        sigverify,
         snapshot_packager_service::SnapshotPackagerService,
         stats_reporter_service::StatsReporterService,
         system_monitor_service::{
@@ -336,7 +335,7 @@ pub struct ValidatorConfig {
     pub repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>, // Empty = repair with all
     pub gossip_validators: Option<HashSet<Pubkey>>, // None = gossip with all
     pub max_genesis_archive_unpacked_size: u64,
-    /// Run PoH, transaction signature and other transaction verifications during blockstore
+    /// Run PoH, transaction signature and other transaction verification during blockstore
     /// processing.
     pub run_verification: bool,
     pub require_tower: bool,
@@ -564,7 +563,7 @@ pub struct ValidatorTpuConfig {
     pub vote_use_quic: bool,
     /// Controls the connection cache pool size
     pub tpu_connection_pool_size: usize,
-    /// Controls if to enable UDP for TPU tansactions.
+    /// Controls if to enable UDP for TPU transactions.
     pub tpu_enable_udp: bool,
     /// QUIC server config for regular TPU
     pub tpu_quic_server_config: SwQosQuicStreamerConfig,
@@ -589,17 +588,18 @@ impl ValidatorTpuConfig {
         let tpu_fwd_quic_server_config = SwQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
                 max_connections_per_ipaddr_per_min: 32,
+                ..Default::default()
+            },
+            qos_config: SwQosConfig {
                 max_unstaked_connections: 0,
                 ..Default::default()
             },
-            qos_config: SwQosConfig::default(),
         };
 
         // vote and tpu_fwd share the same characteristics -- disallow non-staked connections:
         let vote_quic_server_config = SimpleQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
                 max_connections_per_ipaddr_per_min: 32,
-                max_unstaked_connections: 0,
                 ..Default::default()
             },
             qos_config: SimpleQosConfig::default(),
@@ -768,14 +768,6 @@ impl Validator {
         for cluster_entrypoint in &cluster_entrypoints {
             info!("entrypoint: {cluster_entrypoint:?}");
         }
-
-        if solana_perf::perf_libs::api().is_some() {
-            info!("Initializing sigverify, this could take a while...");
-        } else {
-            info!("Initializing sigverify...");
-        }
-        sigverify::init();
-        info!("Initializing sigverify done.");
 
         validate_memlock_limit_for_disk_io(config.accounts_db_config.memlock_budget_size)?;
 

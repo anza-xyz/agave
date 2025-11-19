@@ -2999,7 +2999,7 @@ fn test_reuse_storage_id() {
         let slot = slot as Slot;
         db.store_for_tests((slot, [(key, &zero_lamport_account)].as_slice()));
         db.add_root_and_flush_write_cache(slot);
-        // reset next_id to what it was previously to cause us to re-use the same id
+        // reset next_id to what it was previously to cause us to reuse the same id
         db.next_id.store(AccountsFileId::MAX, Ordering::Release);
     });
     let ancestors = Ancestors::default();

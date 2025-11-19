@@ -3082,7 +3082,7 @@ fn test_is_empty() {
     let (bank0, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let key1 = Keypair::new();
 
-    // The zeroth bank is empty becasue there are no transactions
+    // The zeroth bank is empty because there are no transactions
     assert!(bank0.is_empty());
 
     // Set is_delta to true, bank is no longer empty
@@ -4122,7 +4122,7 @@ fn test_nonce_transaction() {
     let new_nonce = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
     assert_ne!(nonce_hash, new_nonce);
 
-    /* Nonce re-use fails */
+    /* Nonce reuse fails */
     let nonce_tx = Transaction::new_signed_with_payer(
         &[
             system_instruction::advance_nonce_account(&nonce_pubkey, &nonce_pubkey),
@@ -4249,7 +4249,7 @@ fn test_nonce_transaction_with_tx_wide_caps() {
     let new_nonce = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
     assert_ne!(nonce_hash, new_nonce);
 
-    /* Nonce re-use fails */
+    /* Nonce reuse fails */
     let nonce_tx = Transaction::new_signed_with_payer(
         &[
             system_instruction::advance_nonce_account(&nonce_pubkey, &nonce_pubkey),

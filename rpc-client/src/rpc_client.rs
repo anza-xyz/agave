@@ -713,7 +713,7 @@ impl RpcClient {
     /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
     ///
     /// After sending the transaction, this method polls in a loop for the
-    /// status of the transaction until it has ben confirmed.
+    /// status of the transaction until it has been confirmed.
     ///
     /// # Errors
     ///

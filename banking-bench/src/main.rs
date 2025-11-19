@@ -581,7 +581,7 @@ fn main() {
 
         // This signature clear may not actually clear the signatures
         // in this chunk, but since we rotate between CHUNKS then
-        // we should clear them by the time we come around again to re-use that chunk.
+        // we should clear them by the time we come around again to reuse that chunk.
         bank.clear_signatures();
         total_us += now.elapsed().as_micros() as u64;
         total_sent += sent;

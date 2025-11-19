@@ -1,6 +1,5 @@
 //! The `banking_stage` processes Transaction messages. It is intended to be used
-//! to construct a software pipeline. The stage uses all available CPU cores and
-//! can do its processing in parallel with signature verification on the GPU.
+//! to construct a software pipeline.
 
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
@@ -1039,7 +1038,9 @@ mod tests {
             .collect();
         trace!("done");
         assert_eq!(entries.len(), genesis_config.ticks_per_slot as usize);
-        assert!(entries.verify(&start_hash, &entry::thread_pool_for_tests()));
+        assert!(entries
+            .verify(&start_hash, &entry::thread_pool_for_tests())
+            .status());
         assert_eq!(entries[entries.len() - 1].hash, bank.last_blockhash());
     }
 
@@ -1157,7 +1158,9 @@ mod tests {
                 .map(|(_bank, (entry, _tick_height))| entry),
         );
 
-        assert!(entries.verify(&blockhash, &entry::thread_pool_for_tests()));
+        assert!(entries
+            .verify(&blockhash, &entry::thread_pool_for_tests())
+            .status());
         for entry in entries {
             bank.process_entry_transactions(entry.transactions)
                 .iter()

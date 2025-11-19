@@ -15,13 +15,13 @@ use {
     solana_perf::packet::{PacketRef, PacketRefMut},
     solana_signature::{Signature, SIGNATURE_BYTES},
     solana_signer::Signer,
-    std::ops::Range,
 };
 #[cfg(test)]
 use {
     rand::{seq::SliceRandom, Rng},
     solana_perf::packet::Packet,
     std::collections::HashMap,
+    std::ops::Range,
 };
 
 #[inline]
@@ -70,6 +70,7 @@ pub(crate) fn get_signature(shred: &[u8]) -> Option<Signature> {
     Some(Signature::from(bytes))
 }
 
+#[cfg(test)]
 pub(crate) const fn get_signature_range() -> Range<usize> {
     0..SIGNATURE_BYTES
 }

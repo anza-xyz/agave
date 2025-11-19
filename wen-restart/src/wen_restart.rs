@@ -24,7 +24,6 @@ use {
     log::*,
     prost::Message,
     solana_clock::{Epoch, Slot},
-    solana_entry::entry::VerifyRecyclers,
     solana_gossip::{
         cluster_info::{ClusterInfo, GOSSIP_SLEEP_MILLIS},
         restart_crds_values::RestartLastVotedForkSlots,
@@ -510,7 +509,7 @@ pub(crate) fn generate_snapshot(
     }
 
     // Snapshot generation calls AccountsDb background tasks (flush/clean/shrink).
-    // These cannot run conncurrent with each other, so we must shutdown
+    // These cannot run concurrent with each other, so we must shutdown
     // AccountsBackgroundService before proceeding.
     abs_status.stop();
     info!("Waiting for AccountsBackgroundService to stop");
@@ -616,7 +615,6 @@ pub(crate) fn find_bankhash_of_heaviest_fork(
         .thread_name(|i| format!("solReplayTx{i:02}"))
         .build()
         .expect("new rayon threadpool");
-    let recyclers = VerifyRecyclers::default();
     let mut timing = ExecuteTimings::default();
     let opts = ProcessOptions::default();
     // Now replay all the missing blocks.
@@ -645,7 +643,6 @@ pub(crate) fn find_bankhash_of_heaviest_fork(
                 &bank_with_scheduler,
                 &replay_tx_thread_pool,
                 &opts,
-                &recyclers,
                 &mut progress,
                 None,
                 None,
@@ -2015,7 +2012,6 @@ mod tests {
             .thread_name(|i| format!("solReplayTx{i:02}"))
             .build()
             .expect("new rayon threadpool");
-        let recyclers = VerifyRecyclers::default();
         let mut timing = ExecuteTimings::default();
         let opts = ProcessOptions::default();
         let mut progress = ConfirmationProgress::new(old_root_bank.last_blockhash());
@@ -2030,7 +2026,6 @@ mod tests {
             &bank_with_scheduler,
             &replay_tx_thread_pool,
             &opts,
-            &recyclers,
             &mut progress,
             None,
             None,
