@@ -209,7 +209,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
 
         let disk = match config.index_limit {
             IndexLimit::InMemOnly => None,
-            IndexLimit::Minimal | IndexLimit::Threshold(_) => Some(BucketMap::new(bucket_config)),
+            IndexLimit::Minimal => Some(BucketMap::new(bucket_config)),
         };
 
         Self {

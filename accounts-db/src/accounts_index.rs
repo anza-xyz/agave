@@ -234,8 +234,6 @@ pub enum IndexLimit {
     Minimal,
     /// in-mem-only was specified, no disk index
     InMemOnly,
-    /// flush to disk when memory usage exceeds threshold in bytes
-    Threshold(u64),
 }
 
 #[derive(Debug, Clone)]
