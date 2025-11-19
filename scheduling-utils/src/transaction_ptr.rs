@@ -19,6 +19,12 @@ impl TransactionData for TransactionPtr {
     }
 }
 
+impl TransactionData for &TransactionPtr {
+    fn data(&self) -> &[u8] {
+        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+}
+
 impl TransactionPtr {
     /// # Safety
     /// - `sharable_transaction_region` must reference a valid offset and length
