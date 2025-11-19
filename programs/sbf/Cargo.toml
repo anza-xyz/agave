@@ -250,7 +250,7 @@ solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
 solana-system-interface = "2.0"
 solana-sysvar = "3.0.0"
-solana-transaction = "3.0.0"
+solana-transaction = "3.0.2"
 solana-transaction-context = { workspace = true, features = [
     "dev-context-only-utils",
 ] }
