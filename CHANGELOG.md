@@ -29,6 +29,8 @@ Release channels have their own copy of this changelog:
   * `--disable-accounts-disk-index`
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
+#### Changes
+* Implement XDP Dispatcher
 
 ## 3.1.0
 ### RPC

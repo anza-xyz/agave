@@ -1,0 +1,27 @@
+[package]
+name = "agave-xdp-dispatcher-ebpf"
+version.workspace = true
+authors.workspace = true
+description.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+edition.workspace = true
+include = ["Cargo.toml", "src/**", "README", "agave-xdp-dispatcher-prog"]
+
+[[bin]]
+name = "agave-xdp-dispatcher-prog"
+path = "src/bin/agave-xdp-dispatcher-prog.rs"
+required-features = ["ebpf"]
+
+[features]
+ebpf = []
+
+[target.'cfg(target_arch = "bpf")'.dependencies]
+aya-ebpf = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+aya = { workspace = true }
+
+[lints]
+workspace = true
