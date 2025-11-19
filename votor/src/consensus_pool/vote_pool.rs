@@ -4,7 +4,7 @@
 //! Further detects duplicate votes which are defined as identical vote from the same sender received multiple times.
 
 use {
-    crate::common::{Stake, VoteType},
+    crate::common::Stake,
     agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
     solana_clock::Slot,
     solana_hash::Hash,
@@ -146,31 +146,29 @@ impl InternalVotePool {
         }
     }
 
-    /// Get votes for the corresponding [`VoteType`] and block id.
+    /// Get [`VoteMessage`]s for the corresponding [`Vote`].
     ///
     // TODO: figure out how to return an iterator here instead which would require `CertificateBuilder::aggregate()` to accept an iterator.
-    // TODO: instead of passing vote_type and block_id, pass in `Vote` which will remove some unwraps below.
-    fn get_votes(&self, vote_type: &VoteType, block_id: Option<&Hash>) -> Vec<VoteMessage> {
-        match vote_type {
-            VoteType::Finalize => self.finalize.values().cloned().collect(),
-            VoteType::Notarize => {
-                self.notar
-                    .values()
-                    .filter(|vote| {
-                        // unwrap on the stored vote should be safe as we should only store notar type votes here
-                        vote.vote.block_id().unwrap() == block_id.unwrap()
-                    })
-                    .cloned()
-                    .collect()
-            }
-            VoteType::NotarizeFallback => self
-                .notar_fallback
+    fn get_votes(&self, vote: &Vote) -> Vec<VoteMessage> {
+        match vote {
+            Vote::Finalize(_) => self.finalize.values().cloned().collect(),
+            Vote::Notarize(notar) => self
+                .notar
                 .values()
-                .filter_map(|map| map.get(block_id.unwrap()))
+                .filter(|vote| {
+                    // unwrap should be safe as we should only store notar votes here
+                    vote.vote.block_id().unwrap() == &notar.block_id
+                })
                 .cloned()
                 .collect(),
-            VoteType::Skip => self.skip.values().cloned().collect(),
-            VoteType::SkipFallback => self.skip_fallback.values().cloned().collect(),
+            Vote::NotarizeFallback(nf) => self
+                .notar_fallback
+                .values()
+                .filter_map(|map| map.get(&nf.block_id))
+                .cloned()
+                .collect(),
+            Vote::Skip(_) => self.skip.values().cloned().collect(),
+            Vote::SkipFallback(_) => self.skip_fallback.values().cloned().collect(),
         }
     }
 }
@@ -238,16 +236,14 @@ impl Stakes {
         }
     }
 
-    /// Get the stake corresponding to the [`VoteType`] and block id.
-    //
-    // TODO: instead of passing vote_type and block_id, pass in `Vote` which will remove unwraps below.
-    fn get_stake(&self, vote_type: &VoteType, block_id: Option<&Hash>) -> Stake {
-        match vote_type {
-            VoteType::Notarize => *self.notar.get(block_id.unwrap()).unwrap_or(&0),
-            VoteType::NotarizeFallback => *self.notar_fallback.get(block_id.unwrap()).unwrap_or(&0),
-            VoteType::Skip => self.skip,
-            VoteType::SkipFallback => self.skip_fallback,
-            VoteType::Finalize => self.finalize,
+    /// Get the stake corresponding to the [`Vote`].
+    fn get_stake(&self, vote: &Vote) -> Stake {
+        match vote {
+            Vote::Notarize(notar) => *self.notar.get(&notar.block_id).unwrap_or(&0),
+            Vote::NotarizeFallback(nf) => *self.notar_fallback.get(&nf.block_id).unwrap_or(&0),
+            Vote::Skip(_) => self.skip,
+            Vote::SkipFallback(_) => self.skip_fallback,
+            Vote::Finalize(_) => self.finalize,
         }
     }
 }
@@ -289,17 +285,13 @@ impl VotePool {
     }
 
     /// Returns the [`Stake`] corresponding to the specific [`Vote`].
-    pub(super) fn get_stake(&self, vote_type: &VoteType, block_id: Option<&Hash>) -> Stake {
-        self.stakes.get_stake(vote_type, block_id)
+    pub(super) fn get_stake(&self, vote: &Vote) -> Stake {
+        self.stakes.get_stake(vote)
     }
 
     /// Returns a list of votes corresponding to the specific [`Vote`].
-    pub(super) fn get_votes(
-        &self,
-        vote_type: &VoteType,
-        block_id: Option<&Hash>,
-    ) -> Vec<VoteMessage> {
-        self.votes.get_votes(vote_type, block_id)
+    pub(super) fn get_votes(&self, vote: &Vote) -> Vec<VoteMessage> {
+        self.votes.get_votes(vote)
     }
 }
 
@@ -573,17 +565,17 @@ mod test {
         let mut stakes = Stakes::new(slot);
         let vote = Vote::new_skip_vote(slot);
         assert_eq!(stakes.add_stake(stake, &vote), stake);
-        assert_eq!(stakes.get_stake(&VoteType::get_type(&vote), None), stake);
+        assert_eq!(stakes.get_stake(&vote), stake);
 
         let mut stakes = Stakes::new(slot);
         let vote = Vote::new_skip_fallback_vote(slot);
         assert_eq!(stakes.add_stake(stake, &vote), stake);
-        assert_eq!(stakes.get_stake(&VoteType::get_type(&vote), None), stake);
+        assert_eq!(stakes.get_stake(&vote), stake);
 
         let mut stakes = Stakes::new(slot);
         let vote = Vote::new_finalization_vote(slot);
         assert_eq!(stakes.add_stake(stake, &vote), stake);
-        assert_eq!(stakes.get_stake(&VoteType::get_type(&vote), None), stake);
+        assert_eq!(stakes.get_stake(&vote), stake);
 
         let mut stakes = Stakes::new(slot);
         let stake0 = 10;
@@ -594,14 +586,8 @@ mod test {
         let vote1 = Vote::new_notarization_vote(slot, hash1);
         assert_eq!(stakes.add_stake(stake0, &vote0), stake0);
         assert_eq!(stakes.add_stake(stake1, &vote1), stake1);
-        assert_eq!(
-            stakes.get_stake(&VoteType::get_type(&vote0), Some(&hash0)),
-            stake0
-        );
-        assert_eq!(
-            stakes.get_stake(&VoteType::get_type(&vote1), Some(&hash1)),
-            stake1
-        );
+        assert_eq!(stakes.get_stake(&vote0), stake0);
+        assert_eq!(stakes.get_stake(&vote1), stake1);
 
         let mut stakes = Stakes::new(slot);
         let stake0 = 10;
@@ -612,14 +598,8 @@ mod test {
         let vote1 = Vote::new_notarization_fallback_vote(slot, hash1);
         assert_eq!(stakes.add_stake(stake0, &vote0), stake0);
         assert_eq!(stakes.add_stake(stake1, &vote1), stake1);
-        assert_eq!(
-            stakes.get_stake(&VoteType::get_type(&vote0), Some(&hash0)),
-            stake0
-        );
-        assert_eq!(
-            stakes.get_stake(&VoteType::get_type(&vote1), Some(&hash1)),
-            stake1
-        );
+        assert_eq!(stakes.get_stake(&vote0), stake0);
+        assert_eq!(stakes.get_stake(&vote1), stake1);
     }
 
     #[test]
@@ -643,9 +623,8 @@ mod test {
                 .unwrap(),
             stake
         );
-        let vote_type = VoteType::get_type(&vote);
-        assert_eq!(vote_pool.get_stake(&vote_type, None), stake);
-        let returned_votes = vote_pool.get_votes(&vote_type, None);
+        assert_eq!(vote_pool.get_stake(&vote), stake);
+        let returned_votes = vote_pool.get_votes(&vote);
         assert_eq!(returned_votes.len(), 1);
         assert_eq!(returned_votes[0], vote_message);
     }
