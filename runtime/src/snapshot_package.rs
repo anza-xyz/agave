@@ -99,8 +99,8 @@ impl SnapshotPackage {
             slot: Slot::default(),
             block_height: Slot::default(),
             hash: SnapshotHash(Hash::default()),
-            bank_snapshot_package,
             snapshot_storages: Vec::default(),
+            bank_snapshot_package,
             enqueued: Instant::now(),
         }
     }
