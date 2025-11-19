@@ -283,16 +283,13 @@ mod tests {
         solana_hash::Hash,
         std::{
             convert::TryInto,
-            iter::{repeat_with, successors, Sum},
+            iter::{repeat_with, successors},
             str::FromStr,
         },
         test_case::test_case,
     };
 
-    fn verify_shuffle<T>(shuffle: &[usize], weights: &[T], mut mask: Vec<bool>)
-    where
-        T: ConstZero + Copy + PartialEq + PartialOrd + Sum<T>,
-    {
+    fn verify_shuffle(shuffle: &[usize], weights: &[u64], mut mask: Vec<bool>) {
         assert_eq!(weights.len(), mask.len());
         let num_dropped = mask.iter().copied().map(usize::from).sum::<usize>();
         // Assert that only the indices which were not dropped appear in
@@ -307,14 +304,14 @@ mod tests {
         // Assert that the random shuffle is weighted.
         assert!(shuffle
             .chunks(shuffle.len() / 10)
-            .map(|chunk| chunk.iter().map(|&i| weights[i]).sum::<T>())
+            .map(|chunk| chunk.iter().map(|&i| weights[i]).sum::<u64>())
             .tuple_windows()
             .all(|(a, b)| a > b));
         // Assert that zero weights only appear at the end of the shuffle.
         assert!(shuffle
             .iter()
             .tuple_windows()
-            .all(|(&i, &j)| weights[i] != T::ZERO || weights[j] == T::ZERO));
+            .all(|(&i, &j)| weights[i] != 0 || weights[j] == 0));
     }
 
     fn weighted_shuffle_slow<R>(rng: &mut R, mut weights: Vec<u64>) -> Vec<usize>
@@ -344,8 +341,8 @@ mod tests {
             weights[index] = 0;
         }
         while !zeros.is_empty() {
-            let index = <usize as SampleUniform>::Sampler::sample_single(0usize, zeros.len(), rng);
-            shuffle.push(zeros.swap_remove(index));
+            let index = <u64 as SampleUniform>::Sampler::sample_single(0, zeros.len() as u64, rng);
+            shuffle.push(zeros.swap_remove(index as usize));
         }
         shuffle
     }
@@ -421,21 +418,21 @@ mod tests {
         let mut rng = ChaChaRng::from_seed(seed);
         test_weighted_shuffle_sanity_impl(
             &mut rng,
-            &[95, 0, 90069, 0, 0, 908, 8928, 0],
-            &[97, 0, 90862, 0, 0, 0, 9041, 0],
+            &[80, 0, 89972, 0, 0, 890, 9058, 0],
+            &[94, 0, 90781, 0, 0, 0, 9125, 0],
         );
         let mut rng = ChaCha8Rng::from_seed(seed);
         test_weighted_shuffle_sanity_impl(
             &mut rng,
-            &[93, 0, 90185, 0, 0, 892, 8830, 0],
-            &[89, 0, 90741, 0, 0, 0, 9170, 0],
+            &[96, 0, 89962, 0, 0, 891, 9051, 0],
+            &[88, 0, 90680, 0, 0, 0, 9232, 0],
         );
         fn test_weighted_shuffle_sanity_impl<R: Rng>(
             rng: &mut R,
             counts1: &[i32],
             counts2: &[i32],
         ) {
-            let weights = [1, 0, 1000, 0, 0, 10, 100, 0];
+            let weights = [1u64, 0, 1000, 0, 0, 10, 100, 0];
             let mut counts = [0; 8];
             for _ in 0..100000 {
                 let mut weighted_shuffle = WeightedShuffle::new("", weights);
@@ -459,26 +456,15 @@ mod tests {
     }
 
     #[test]
-    fn test_weighted_shuffle_negative_overflow() {
-        test_weighted_shuffle_negative_overflow_impl::<ChaChaRng>(&[
-            8, 1, 5, 10, 11, 0, 2, 6, 9, 4, 3, 7,
-        ]);
-        test_weighted_shuffle_negative_overflow_impl::<ChaCha8Rng>(&[
-            5, 11, 2, 0, 10, 1, 6, 8, 7, 3, 9, 4,
-        ]);
+    fn test_weighted_shuffle_overflow() {
+        test_weighted_shuffle_overflow_impl::<ChaChaRng>(&[8, 1, 5, 10, 11, 0, 2, 6, 9, 4, 3, 7]);
+        test_weighted_shuffle_overflow_impl::<ChaCha8Rng>(&[5, 11, 2, 0, 10, 1, 6, 8, 7, 3, 9, 4]);
 
-        fn test_weighted_shuffle_negative_overflow_impl<
-            R: Rng + rand::SeedableRng<Seed = [u8; 32]>,
-        >(
+        fn test_weighted_shuffle_overflow_impl<R: Rng + rand::SeedableRng<Seed = [u8; 32]>>(
             counts: &[usize],
         ) {
             const SEED: [u8; 32] = [48u8; 32];
-            let weights = [19i64, 23, 7, 0, 0, 23, 3, 0, 5, 0, 19, 29];
-            let mut rng = R::from_seed(SEED);
-            let mut shuffle = WeightedShuffle::new("", weights);
-            assert_eq!(shuffle.shuffle(&mut rng).collect::<Vec<_>>(), counts);
-            // Negative weights and overflowing ones are treated as zero.
-            let weights = [19, 23, 7, -57, i64::MAX, 23, 3, i64::MAX, 5, -79, 19, 29];
+            let weights = [19u64, 23, 7, 0, 0, 23, 3, 0, 5, 0, 19, 29];
             let mut rng = R::from_seed(SEED);
             let mut shuffle = WeightedShuffle::new("", weights);
             assert_eq!(shuffle.shuffle(&mut rng).collect::<Vec<_>>(), counts);
@@ -488,17 +474,17 @@ mod tests {
     #[test]
     fn test_weighted_shuffle_hard_coded() {
         let weights = [
-            78, 70, 38, 27, 21, 0, 82, 42, 21, 77, 77, 0, 17, 4, 50, 96, 0, 83, 33, 16, 72,
+            78u64, 70, 38, 27, 21, 0, 82, 42, 21, 77, 77, 0, 17, 4, 50, 96, 0, 83, 33, 16, 72,
         ];
         let seed = [48u8; 32];
         let mut rng = ChaChaRng::from_seed(seed);
         let mut shuffle = WeightedShuffle::new("", weights);
         assert_eq!(
             shuffle.clone().shuffle(&mut rng).collect::<Vec<_>>(),
-            [2, 12, 18, 0, 14, 15, 17, 10, 1, 9, 7, 6, 13, 20, 4, 19, 3, 8, 11, 16, 5]
+            [10, 3, 14, 18, 0, 9, 19, 6, 2, 1, 17, 7, 13, 15, 20, 12, 4, 8, 5, 16, 11]
         );
         let mut rng = ChaChaRng::from_seed(seed);
-        assert_eq!(shuffle.first(&mut rng), Some(2));
+        assert_eq!(shuffle.first(&mut rng), Some(10));
         let mut rng = ChaChaRng::from_seed(seed);
         shuffle.remove_index(11);
         shuffle.remove_index(3);
@@ -506,19 +492,19 @@ mod tests {
         shuffle.remove_index(0);
         assert_eq!(
             shuffle.clone().shuffle(&mut rng).collect::<Vec<_>>(),
-            [4, 6, 1, 12, 19, 14, 17, 20, 2, 9, 10, 8, 7, 18, 13, 5, 16]
+            [10, 6, 9, 17, 20, 8, 4, 1, 2, 14, 7, 12, 18, 19, 13, 16, 5]
         );
         let mut rng = ChaChaRng::from_seed(seed);
-        assert_eq!(shuffle.first(&mut rng), Some(4));
+        assert_eq!(shuffle.first(&mut rng), Some(10));
         let seed = [37u8; 32];
         let mut rng = ChaChaRng::from_seed(seed);
         let mut shuffle = WeightedShuffle::new("", weights);
         assert_eq!(
             shuffle.clone().shuffle(&mut rng).collect::<Vec<_>>(),
-            [19, 3, 15, 14, 6, 10, 17, 18, 9, 2, 4, 1, 0, 7, 8, 20, 12, 13, 16, 5, 11]
+            [3, 15, 10, 6, 19, 17, 2, 0, 9, 20, 1, 14, 7, 8, 12, 18, 4, 13, 5, 11, 16]
         );
         let mut rng = ChaChaRng::from_seed(seed);
-        assert_eq!(shuffle.first(&mut rng), Some(19));
+        assert_eq!(shuffle.first(&mut rng), Some(3));
         shuffle.remove_index(16);
         shuffle.remove_index(8);
         shuffle.remove_index(20);
@@ -528,10 +514,10 @@ mod tests {
         let mut rng = ChaChaRng::from_seed(seed);
         assert_eq!(
             shuffle.clone().shuffle(&mut rng).collect::<Vec<_>>(),
-            [17, 2, 9, 14, 6, 10, 12, 1, 15, 13, 7, 0, 18, 3, 11]
+            [2, 14, 10, 6, 17, 15, 3, 9, 12, 0, 1, 7, 18, 13, 11]
         );
         let mut rng = ChaChaRng::from_seed(seed);
-        assert_eq!(shuffle.first(&mut rng), Some(17));
+        assert_eq!(shuffle.first(&mut rng), Some(2));
     }
 
     // Verifies that changes to the code or dependencies (e.g. rand or
