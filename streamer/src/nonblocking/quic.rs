@@ -83,6 +83,13 @@ const MAX_CONNECTION_BURST: u64 = 1000;
 /// peer, and is canceled when we get a Handshake packet from them.
 const QUIC_CONNECTION_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Absolute max RTT to allow for a legitimate connection.
+/// Enough to cover any non-malicious link on Earth.
+pub(crate) const MAX_RTT: Duration = Duration::from_millis(320);
+/// Prevent connections from having 0 RTT when RTT is too small,
+/// as this would break some BDP calculations and assign zero bandwidth
+pub(crate) const MIN_RTT: Duration = Duration::from_millis(2);
+
 // A struct to accumulate the bytes making up
 // a packet, along with their offsets, and the
 // packet metadata. We use this accumulator to avoid
@@ -391,7 +398,7 @@ pub fn get_remote_pubkey(connection: &Connection) -> Option<Pubkey> {
 pub fn get_connection_stake(
     connection: &Connection,
     staked_nodes: &RwLock<StakedNodes>,
-) -> Option<(Pubkey, u64, u64, u64, u64)> {
+) -> Option<(Pubkey, u64, u64)> {
     let pubkey = get_remote_pubkey(connection)?;
     debug!("Peer public key is {pubkey:?}");
     let staked_nodes = staked_nodes.read().unwrap();
@@ -399,8 +406,6 @@ pub fn get_connection_stake(
         pubkey,
         staked_nodes.get_node_stake(&pubkey)?,
         staked_nodes.total_stake(),
-        staked_nodes.max_stake(),
-        staked_nodes.min_stake(),
     ))
 }
 
