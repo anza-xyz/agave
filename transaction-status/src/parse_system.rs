@@ -47,6 +47,12 @@ pub fn parse_system(
             owner,
         } => match instruction.accounts.len() {
             1 => {
+                // With only 1 account, lamports to transfer must be 0 (no payer case)
+                if lamports > 0 {
+                    return Err(ParseInstructionError::InstructionKeyMismatch(
+                        ParsableProgram::System,
+                    ));
+                }
                 check_num_system_accounts(&instruction.accounts, 1)?;
                 Ok(ParsedInstructionEnum {
                     instruction_type: "createAccountAllowPrefund".to_string(),
