@@ -2,7 +2,6 @@
 //! Proof of History ledger as well as iterative read, append write, and random
 //! access read to a persistent file-based ledger.
 
-use agave_votor_messages::slice_root::SliceRoot;
 #[cfg(feature = "dev-context-only-utils")]
 use trees::{Tree, TreeWalk};
 use {
@@ -26,6 +25,7 @@ use {
     },
     agave_feature_set::FeatureSet,
     agave_snapshots::unpack_genesis_archive,
+    agave_votor_messages::slice_root::SliceRoot,
     assert_matches::debug_assert_matches,
     bincode::{deserialize, serialize},
     crossbeam_channel::{bounded, Receiver, Sender, TrySendError},
