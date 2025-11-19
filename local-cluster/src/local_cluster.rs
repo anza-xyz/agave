@@ -22,7 +22,7 @@ use {
     solana_genesis_config::GenesisConfig,
     solana_gossip::{
         contact_info::{ContactInfo, Protocol},
-        gossip_service::{discover, discover_validators},
+        gossip_service::{discover_peers, discover_validators},
         node::Node,
     },
     solana_keypair::Keypair,
@@ -484,13 +484,13 @@ impl LocalCluster {
             );
         });
 
-        discover(
+        discover_peers(
             None,
-            Some(&cluster.entry_point_info.gossip().unwrap()),
+            &vec![cluster.entry_point_info.gossip().unwrap()],
             Some(config.node_stakes.len() + config.num_listeners as usize),
             Duration::from_secs(120),
             None,
-            None,
+            &[],
             None,
             leader_contact_info.shred_version(),
             socket_addr_space,

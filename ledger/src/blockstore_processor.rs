@@ -3455,6 +3455,7 @@ pub mod tests {
                 InstructionError::DuplicateAccountIndex,
                 InstructionError::ExecutableModified,
                 InstructionError::RentEpochModified,
+                #[allow(deprecated)]
                 InstructionError::NotEnoughAccountKeys,
                 InstructionError::AccountDataSizeChanged,
                 InstructionError::AccountNotExecutable,

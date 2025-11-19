@@ -769,6 +769,7 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
                     16 => InstructionError::DuplicateAccountIndex,
                     17 => InstructionError::ExecutableModified,
                     18 => InstructionError::RentEpochModified,
+                    #[allow(deprecated)]
                     19 => InstructionError::NotEnoughAccountKeys,
                     20 => InstructionError::AccountDataSizeChanged,
                     21 => InstructionError::AccountNotExecutable,
@@ -1058,6 +1059,7 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                             InstructionError::RentEpochModified => {
                                 tx_by_addr::InstructionErrorType::RentEpochModified
                             }
+                            #[allow(deprecated)]
                             InstructionError::NotEnoughAccountKeys => {
                                 tx_by_addr::InstructionErrorType::NotEnoughAccountKeys
                             }
@@ -1770,6 +1772,7 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
+        #[allow(deprecated)]
         let transaction_error =
             TransactionError::InstructionError(10, InstructionError::NotEnoughAccountKeys);
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =

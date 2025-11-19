@@ -1039,17 +1039,33 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let current_age = self.storage.current_age();
         let iterate_for_age = self.get_should_age(current_age);
         let startup = self.storage.get_startup();
-        if !iterate_for_age && !startup {
-            // no need to age, so no need to flush this bucket
-            // but, at startup we want to evict from buckets as fast as possible if any items exist
+
+        if startup {
+            // At startup we do not insert index entries into the normal in-mem index.
+            // Instead, they are written to a startup-only struct.  Thus, at startup
+            // we only need to flush that startup struct and then can return early.
+            self.write_startup_info_to_disk();
+            if iterate_for_age {
+                // Note we still have to iterate ages too, since it is checked when
+                // transitioning from startup back to normal/steady state.
+                assert_eq!(current_age, self.storage.current_age());
+                self.set_has_aged(current_age, can_advance_age);
+            }
             return;
         }
 
-        if startup {
-            self.write_startup_info_to_disk();
+        // from this point forward, we know startup == false
+        debug_assert!(!startup);
+
+        if !iterate_for_age {
+            // no need to age, so no need to flush this bucket
+            return;
         }
 
-        let ages_flushing_now = if iterate_for_age && !startup {
+        // from this point forward, we know iterate_for_age == true
+        debug_assert!(iterate_for_age);
+
+        let ages_flushing_now = {
             let old_value = self
                 .remaining_ages_to_skip_flushing
                 .fetch_sub(1, Ordering::AcqRel);
@@ -1063,9 +1079,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 return;
             }
             self.num_ages_to_distribute_flushes
-        } else {
-            // just 1 age to flush. 0 means age == age
-            0
         };
 
         Self::update_stat(&self.stats().buckets_scanned, 1);
