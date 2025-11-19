@@ -1,8 +1,13 @@
 #[cfg(feature = "dev-context-only-utils")]
 use solana_hash::Hash;
 use {
-    crate::bank::{Bank, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
-    agave_snapshots::{snapshot_hash::SnapshotHash, SnapshotArchiveKind, SnapshotKind},
+    crate::{
+        bank::{Bank, BankSlotDelta},
+        snapshot_utils::BankSnapshotPackage,
+    },
+    agave_snapshots::{
+        snapshot_hash::SnapshotHash, SnapshotArchiveKind, SnapshotArchivePackage, SnapshotKind,
+    },
     solana_accounts_db::accounts_db::AccountStorageEntry,
     solana_clock::Slot,
     std::{
@@ -19,12 +24,9 @@ pub struct SnapshotPackage {
     pub snapshot_kind: SnapshotKind,
     pub slot: Slot,
     pub block_height: Slot,
-    pub hash: SnapshotHash,
     pub snapshot_storages: Vec<Arc<AccountStorageEntry>>,
-    pub status_cache_slot_deltas: Vec<BankSlotDelta>,
-    pub bank_fields_to_serialize: BankFieldsToSerialize,
-    pub bank_hash_stats: BankHashStats,
-    pub write_version: u64,
+    pub bank_snapshot_package: BankSnapshotPackage,
+    pub snapshot_archive_package: Option<SnapshotArchivePackage>,
 
     /// The instant this snapshot package was sent to the queue.
     /// Used to track how long snapshot packages wait before handling.
@@ -50,41 +52,67 @@ impl SnapshotPackage {
         }
 
         let bank_fields_to_serialize = bank.get_fields_to_serialize();
-        Self {
-            snapshot_kind,
-            slot,
-            block_height: bank.block_height(),
-            hash: SnapshotHash::new(bank_fields_to_serialize.accounts_lt_hash.0.checksum()),
-            snapshot_storages,
-            status_cache_slot_deltas,
-            bank_fields_to_serialize,
+
+        let snapshot_archive_package = match snapshot_kind {
+            SnapshotKind::Archive(snapshot_archive_kind) => {
+                let checksum = bank_fields_to_serialize.accounts_lt_hash.0.checksum();
+                Some(SnapshotArchivePackage {
+                    snapshot_archive_kind,
+                    hash: SnapshotHash::new(checksum),
+                })
+            }
+        };
+
+        let bank_snapshot_package = BankSnapshotPackage {
+            bank_fields: bank_fields_to_serialize,
             bank_hash_stats: bank.get_bank_hash_stats(),
+            slot_deltas: status_cache_slot_deltas,
             write_version: bank
                 .rc
                 .accounts
                 .accounts_db
                 .write_version
                 .load(Ordering::Acquire),
+        };
+
+        Self {
+            snapshot_kind,
+            block_height: bank.block_height(),
+            slot,
+            bank_snapshot_package,
+            snapshot_archive_package,
+            snapshot_storages,
             enqueued: Instant::now(),
         }
     }
 }
 
 #[cfg(feature = "dev-context-only-utils")]
+use crate::bank::{BankFieldsToSerialize, BankHashStats};
+#[cfg(feature = "dev-context-only-utils")]
 impl SnapshotPackage {
     /// Create a new SnapshotPackage where basically every field is defaulted.
     /// Only use for tests; many of the fields are invalid!
     pub fn default_for_tests() -> Self {
+        let bank_snapshot_package = BankSnapshotPackage {
+            bank_fields: BankFieldsToSerialize::default_for_tests(),
+            bank_hash_stats: BankHashStats::default(),
+            slot_deltas: Vec::default(),
+            write_version: u64::default(),
+        };
+
+        let snapshot_archive_package = Some(SnapshotArchivePackage {
+            snapshot_archive_kind: SnapshotArchiveKind::Full,
+            hash: SnapshotHash(Hash::default()),
+        });
+
         Self {
             snapshot_kind: SnapshotKind::Archive(SnapshotArchiveKind::Full),
             slot: Slot::default(),
             block_height: Slot::default(),
-            hash: SnapshotHash(Hash::default()),
+            bank_snapshot_package,
+            snapshot_archive_package,
             snapshot_storages: Vec::default(),
-            status_cache_slot_deltas: Vec::default(),
-            bank_fields_to_serialize: BankFieldsToSerialize::default_for_tests(),
-            bank_hash_stats: BankHashStats::default(),
-            write_version: u64::default(),
             enqueued: Instant::now(),
         }
     }

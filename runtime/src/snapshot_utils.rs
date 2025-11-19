@@ -26,8 +26,7 @@ use {
             SnapshotArchiveInfoGetter,
         },
         snapshot_config::SnapshotConfig,
-        streaming_unarchive_snapshot, ArchiveFormat, Result, SnapshotArchiveKind,
-        SnapshotArchivePackage, SnapshotKind, SnapshotVersion,
+        streaming_unarchive_snapshot, ArchiveFormat, Result, SnapshotArchiveKind, SnapshotVersion,
     },
     crossbeam_channel::{Receiver, Sender},
     log::*,
@@ -451,24 +450,14 @@ pub fn serialize_and_archive_snapshot_package(
     should_flush_and_hard_link_storages: bool,
 ) -> Result<SnapshotArchiveInfo> {
     let SnapshotPackage {
-        snapshot_kind,
+        snapshot_kind: _,
         slot: snapshot_slot,
         block_height: _,
-        hash: snapshot_hash,
         mut snapshot_storages,
-        status_cache_slot_deltas,
-        bank_fields_to_serialize,
-        bank_hash_stats,
-        write_version,
+        bank_snapshot_package,
+        snapshot_archive_package,
         enqueued: _,
     } = snapshot_package;
-
-    let bank_snapshot_package = BankSnapshotPackage {
-        bank_fields: bank_fields_to_serialize,
-        bank_hash_stats,
-        slot_deltas: status_cache_slot_deltas,
-        write_version,
-    };
 
     let bank_snapshot_info = serialize_snapshot(
         &snapshot_config.bank_snapshots_dir,
@@ -478,12 +467,7 @@ pub fn serialize_and_archive_snapshot_package(
         should_flush_and_hard_link_storages,
     )?;
 
-    let SnapshotKind::Archive(snapshot_archive_kind) = snapshot_kind;
-
-    let snapshot_archive_package = SnapshotArchivePackage {
-        snapshot_archive_kind,
-        hash: snapshot_hash,
-    };
+    let snapshot_archive_package = snapshot_archive_package.expect("Archive is present");
 
     let snapshot_archive_path = match snapshot_archive_package.snapshot_archive_kind {
         SnapshotArchiveKind::Full => snapshot_paths::build_full_snapshot_archive_path(

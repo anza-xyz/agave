@@ -81,7 +81,10 @@ impl SnapshotPackagerService {
                     let measure_handling = Measure::start("");
                     let snapshot_kind = snapshot_package.snapshot_kind;
                     let snapshot_slot = snapshot_package.slot;
-                    let snapshot_hash = snapshot_package.hash;
+                    let snapshot_hash = snapshot_package
+                        .snapshot_archive_package
+                        .as_ref()
+                        .map(|package| package.hash);
 
                     if exit_backpressure.is_some() {
                         // With exit backpressure, we will delay flushing snapshot storages
@@ -113,9 +116,11 @@ impl SnapshotPackagerService {
                         break;
                     }
 
-                    if let Some(snapshot_gossip_manager) = snapshot_gossip_manager.as_mut() {
-                        snapshot_gossip_manager
-                            .push_snapshot_hash(snapshot_kind, (snapshot_slot, snapshot_hash));
+                    if let Some(snapshot_hash) = snapshot_hash {
+                        if let Some(snapshot_gossip_manager) = snapshot_gossip_manager.as_mut() {
+                            snapshot_gossip_manager
+                                .push_snapshot_hash(snapshot_kind, (snapshot_slot, snapshot_hash));
+                        }
                     }
 
                     let (_, purge_archives_time_us) =
