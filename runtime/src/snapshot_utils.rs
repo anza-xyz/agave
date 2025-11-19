@@ -2,13 +2,13 @@
 use solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs;
 use {
     crate::{
-        bank::{BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
+        bank::BankFieldsToDeserialize,
         serde_snapshot::{
             self, AccountsDbFields, ExtraFieldsToSerialize, SerdeObsoleteAccountsMap,
             SerializableAccountStorageEntry, SnapshotAccountsDbFields, SnapshotBankFields,
             SnapshotStreams,
         },
-        snapshot_package::SnapshotPackage,
+        snapshot_package::{BankSnapshotPackage, SnapshotPackage},
         snapshot_utils::snapshot_storage_rebuilder::{
             get_slot_and_append_vec_id, SnapshotStorageRebuilder,
         },
@@ -72,15 +72,6 @@ const MAX_SNAPSHOT_VERSION_FILE_SIZE: u64 = 8; // byte
 //         Snapshots created with version 2.0.0 will not fastboot to older versions
 //         Snapshots created with versions <2.0.0 will fastboot to version 2.0.0
 const SNAPSHOT_FASTBOOT_VERSION: Version = Version::new(2, 0, 0);
-
-/// A package created from a snapshot request, containing information required to serialize the bank
-/// snapshot
-pub struct BankSnapshotPackage {
-    pub bank_fields: BankFieldsToSerialize,
-    pub bank_hash_stats: BankHashStats,
-    pub slot_deltas: Vec<BankSlotDelta>,
-    pub write_version: u64,
-}
 
 /// Information about a bank snapshot. Namely the slot of the bank, the path to the snapshot, and
 /// the kind of the snapshot.

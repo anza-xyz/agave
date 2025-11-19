@@ -1,16 +1,8 @@
 #[cfg(feature = "dev-context-only-utils")]
+use solana_hash::Hash;
 use {
-    crate::bank::{BankFieldsToSerialize, BankHashStats},
-    solana_hash::Hash,
-};
-use {
-    crate::{
-        bank::{Bank, BankSlotDelta},
-        snapshot_utils::BankSnapshotPackage,
-    },
-    agave_snapshots::{
-        snapshot_hash::SnapshotHash, SnapshotArchiveKind, SnapshotKind,
-    },
+    crate::bank::{Bank, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
+    agave_snapshots::{snapshot_hash::SnapshotHash, SnapshotArchiveKind, SnapshotKind},
     solana_accounts_db::accounts_db::AccountStorageEntry,
     solana_clock::Slot,
     std::{
@@ -21,6 +13,15 @@ use {
 
 mod compare;
 pub use compare::*;
+
+/// A package created from a snapshot request, containing information required to serialize the bank
+/// snapshot
+pub struct BankSnapshotPackage {
+    pub bank_fields: BankFieldsToSerialize,
+    pub bank_hash_stats: BankHashStats,
+    pub slot_deltas: Vec<BankSlotDelta>,
+    pub write_version: u64,
+}
 
 /// This struct packages up fields to send to SnapshotPackagerService
 pub struct SnapshotPackage {
