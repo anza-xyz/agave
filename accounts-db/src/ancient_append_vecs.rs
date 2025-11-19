@@ -3413,7 +3413,7 @@ pub mod tests {
                     assert!(storage.is_none());
                     continue;
                 }
-                // any of the several slots could have been chosen to be re-used
+                // any of the several slots could have been chosen to be reused
                 let active_slots = (0..num_slots)
                     .filter_map(|slot| db.storage.get_slot_storage_entry((slot as Slot) + slot1))
                     .count();
@@ -3503,7 +3503,9 @@ pub mod tests {
         create_storages_and_update_index(&db, None, initial_slot, MAX_RECYCLE_STORES, true, None);
         let max_slot_inclusive = initial_slot + (MAX_RECYCLE_STORES as Slot) - 1;
         let range = initial_slot..(max_slot_inclusive + 1);
-        // storages with Arc::strong_count > 1 cannot be pulled out of the recycling bin, so hold refcounts so these storages are never re-used by the actual test code
+        // storages with Arc::strong_count > 1 cannot be pulled out of the
+        // recycling bin, so hold refcounts so these storages are never reused
+        // by the actual test code
         let _storages_hold_to_prevent_recycling = range
             .filter_map(|slot| db.storage.get_slot_storage_entry(slot))
             .collect::<Vec<_>>();

@@ -6,7 +6,11 @@
 version: 2
 updates:
   - package-ecosystem: cargo
-    directory: "/"
+    directories:
+      - "/"
+      - "/dev-bins"
+      - "/ci/xtask"
+      - "/programs/sbf"
     schedule:
       interval: daily
       time: "01:00"

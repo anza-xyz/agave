@@ -10,7 +10,7 @@ use {
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
-    std::{borrow::Cow, sync::Arc},
+    std::{borrow::Cow, cell::RefCell, sync::Arc},
 };
 
 pub const MAX_SLOTS_PER_ENTRY: usize = 2048 * 8;
@@ -108,14 +108,14 @@ impl std::convert::From<flate2::DecompressError> for Error {
 }
 
 impl Flate2 {
-    fn deflate(mut unc: Uncompressed) -> Result<Self> {
+    fn deflate(unc: Uncompressed) -> Result<Self> {
         let mut compressed = Vec::with_capacity(unc.slots.block_capacity());
         let mut compressor = Compress::new(Compression::best(), false);
         let first_slot = unc.first_slot;
         let num = unc.num;
-        Arc::make_mut(&mut unc.slots).shrink_to_fit();
+        let block_len = unc.slots.block_len();
         let bits = Arc::unwrap_or_clone(unc.slots).into_boxed_slice();
-        compressor.compress_vec(&bits, &mut compressed, FlushCompress::Finish)?;
+        compressor.compress_vec(&bits[0..block_len], &mut compressed, FlushCompress::Finish)?;
         let rv = Self {
             first_slot,
             num,
@@ -124,15 +124,25 @@ impl Flate2 {
         let _ = rv.inflate()?;
         Ok(rv)
     }
+
+    thread_local! {
+        // Thread-local buffer to prevent reallocation on every incoming packet
+        static DECOMPRESS_BUF: RefCell<Vec<u8>> = RefCell::new(vec![0; MAX_SLOTS_PER_ENTRY/8]);
+    }
+
     pub fn inflate(&self) -> Result<Uncompressed> {
         //add some head room for the decompressor which might spill more bits
-        let mut uncompressed = Vec::with_capacity(32 + (self.num + 4) / 8);
         let mut decompress = Decompress::new(false);
-        decompress.decompress_vec(&self.compressed, &mut uncompressed, FlushDecompress::Finish)?;
-        Ok(Uncompressed {
-            first_slot: self.first_slot,
-            num: self.num,
-            slots: Arc::new(BitVec::from_bits(&uncompressed)),
+        Self::DECOMPRESS_BUF.with_borrow_mut(|v| {
+            v.clear();
+            // Perform the actual decompression and check that the result fits into provided buffer
+            let _ = decompress.decompress_vec(&self.compressed, v, FlushDecompress::Finish)?;
+
+            Ok(Uncompressed {
+                first_slot: self.first_slot,
+                num: self.num,
+                slots: Arc::new(BitVec::from_bits(v)),
+            })
         })
     }
 }

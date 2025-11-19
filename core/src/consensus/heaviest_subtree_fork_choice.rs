@@ -2704,8 +2704,8 @@ mod test {
         let (bank, vote_pubkeys) =
             bank_utils::setup_bank_and_vote_pubkeys_for_tests(num_validators, stake);
 
-        // Both voters voted on duplicate_leaves_descended_from_4[1], so thats the heaviest
-        // branch
+        // Both voters voted on duplicate_leaves_descended_from_4[1], so that is
+        // the heaviest branch
         let pubkey_votes: Vec<(Pubkey, SlotHashKey)> = vec![
             (vote_pubkeys[0], duplicate_leaves_descended_from_4[1]),
             (vote_pubkeys[1], duplicate_leaves_descended_from_4[1]),

@@ -1,6 +1,6 @@
 # Introduction
 The Vortexor is a service that can offload the tasks of receiving transactions
-from the public, performing signature verifications, and deduplications from the
+from the public, performing signature verification, and deduplication from the
 core validator, enabling it to focus on processing and executing the
 transactions. The verified and filtered transactions will then be forwarded to
 the validators linked with the Vortexor. This setup makes the TPU transaction

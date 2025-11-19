@@ -9,7 +9,7 @@ a validator to process a transaction.  The fee structure is only based on the
 number of signatures in a transaction but is meant to account for the work that
 the validator must perform to validate each transaction.  The validator performs
 a lot more user-defined work than just signature verification.  Processing a
-transaction typically includes signature verifications, account locking, account
+transaction typically includes signature verification, account locking, account
 loading, and instruction processing.
 
 ## Proposed Solution

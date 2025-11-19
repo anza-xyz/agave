@@ -246,7 +246,7 @@ pub type SharedBytes = Arc<Vec<u8>>;
 pub(crate) type RuntimeTransactionView = RuntimeTransaction<ResolvedTransactionView<SharedBytes>>;
 pub(crate) type TransactionViewState = TransactionState<RuntimeTransactionView>;
 
-/// A wrapper around `TransactionStateContainer` that allows re-uses
+/// A wrapper around `TransactionStateContainer` that allows reuse of
 /// pre-allocated `Bytes` to copy packet data into and use for serialization.
 /// This is used to avoid allocations in parsing transactions.
 pub struct TransactionViewStateContainer {

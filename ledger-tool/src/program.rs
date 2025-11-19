@@ -166,7 +166,7 @@ and the following fields are required
                             "Mode of execution, where 'interpreter' runs \
                              the program in the virtual machine's interpreter, 'debugger' is the same as 'interpreter' \
                              but hosts a GDB interface, and 'jit' precompiles the program to native machine code \
-                             before execting it in the virtual machine.",
+                             before executing it in the virtual machine.",
                         )
                         .short("e")
                         .long("mode")

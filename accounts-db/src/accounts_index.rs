@@ -1057,7 +1057,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         pubkeys.into_iter().for_each(|pubkey| {
             let bin = self.bin_calculator.bin_from_pubkey(pubkey);
             if bin != last_bin {
-                // cannot re-use lock since next pubkey is in a different bin than previous one
+                // cannot reuse lock since next pubkey is in a different bin than previous one
                 lock = Some(&self.account_maps[bin]);
                 last_bin = bin;
             }
