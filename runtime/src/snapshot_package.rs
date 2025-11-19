@@ -9,7 +9,7 @@ use {
         snapshot_utils::BankSnapshotPackage,
     },
     agave_snapshots::{
-        snapshot_hash::SnapshotHash, SnapshotArchiveKind, SnapshotArchivePackage, SnapshotKind,
+        snapshot_hash::SnapshotHash, SnapshotArchiveKind, SnapshotKind,
     },
     solana_accounts_db::accounts_db::AccountStorageEntry,
     solana_clock::Slot,
@@ -27,9 +27,9 @@ pub struct SnapshotPackage {
     pub snapshot_kind: SnapshotKind,
     pub slot: Slot,
     pub block_height: Slot,
+    pub hash: SnapshotHash,
     pub snapshot_storages: Vec<Arc<AccountStorageEntry>>,
     pub bank_snapshot_package: BankSnapshotPackage,
-    pub snapshot_archive_package: Option<SnapshotArchivePackage>,
 
     /// The instant this snapshot package was sent to the queue.
     /// Used to track how long snapshot packages wait before handling.
@@ -55,16 +55,7 @@ impl SnapshotPackage {
         }
 
         let bank_fields_to_serialize = bank.get_fields_to_serialize();
-
-        let snapshot_archive_package = match snapshot_kind {
-            SnapshotKind::Archive(snapshot_archive_kind) => {
-                let checksum = bank_fields_to_serialize.accounts_lt_hash.0.checksum();
-                Some(SnapshotArchivePackage {
-                    snapshot_archive_kind,
-                    hash: SnapshotHash::new(checksum),
-                })
-            }
-        };
+        let hash = SnapshotHash::new(bank_fields_to_serialize.accounts_lt_hash.0.checksum());
 
         let bank_snapshot_package = BankSnapshotPackage {
             bank_fields: bank_fields_to_serialize,
@@ -82,8 +73,8 @@ impl SnapshotPackage {
             snapshot_kind,
             slot,
             block_height: bank.block_height(),
+            hash,
             bank_snapshot_package,
-            snapshot_archive_package,
             snapshot_storages,
             enqueued: Instant::now(),
         }
@@ -102,17 +93,12 @@ impl SnapshotPackage {
             write_version: u64::default(),
         };
 
-        let snapshot_archive_package = Some(SnapshotArchivePackage {
-            snapshot_archive_kind: SnapshotArchiveKind::Full,
-            hash: SnapshotHash(Hash::default()),
-        });
-
         Self {
             snapshot_kind: SnapshotKind::Archive(SnapshotArchiveKind::Full),
             slot: Slot::default(),
             block_height: Slot::default(),
+            hash: SnapshotHash(Hash::default()),
             bank_snapshot_package,
-            snapshot_archive_package,
             snapshot_storages: Vec::default(),
             enqueued: Instant::now(),
         }
