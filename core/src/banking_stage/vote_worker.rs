@@ -514,7 +514,7 @@ fn consume_scan_should_process_packet(
     error_counters: &mut TransactionErrorMetrics,
 ) -> Option<RuntimeTransactionView> {
     // Construct the RuntimeTransaction.
-    let Ok(view) = RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+    let Ok(view) = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
         packet,
         MessageHash::Compute,
         None,
@@ -529,7 +529,7 @@ fn consume_scan_should_process_packet(
 
     // Resolve the transaction (votes do not have LUTs).
     debug_assert!(!matches!(view.version(), TransactionVersion::V0));
-    let Ok(view) = RuntimeTransactionView::try_from(view, None, bank.get_reserved_account_keys())
+    let Ok(view) = RuntimeTransactionView::try_new(view, None, bank.get_reserved_account_keys())
     else {
         return None;
     };
@@ -574,14 +574,14 @@ mod tests {
         let tx =
             SanitizedTransactionView::try_new_sanitized(Arc::new(packet.buffer().to_vec()), false)
                 .unwrap();
-        let tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+        let tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
             tx,
             MessageHash::Compute,
             None,
         )
         .unwrap();
 
-        RuntimeTransactionView::try_from(tx, None, &HashSet::default()).unwrap()
+        RuntimeTransactionView::try_new(tx, None, &HashSet::default()).unwrap()
     }
 
     #[test]
