@@ -874,7 +874,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let mut candidates_to_flush = Vec::new();
         let mut candidates_to_evict = Vec::new();
         for (k, v) in iter {
-            if current_age.wrapping_sub(v.age()) > ages_flushing_now {
+            if !Self::should_evict_based_on_age(current_age, v, ages_flushing_now) {
                 // not planning to evict this item from memory within 'ages_flushing_now' ages
                 continue;
             }
