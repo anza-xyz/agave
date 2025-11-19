@@ -705,7 +705,7 @@ mod tests {
         solana_bls_signatures::{Keypair as BLSKeypair, Signature as BLSSignature},
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_perf::packet::{Packet, PinnedPacketBatch},
+        solana_perf::packet::{Packet, RecycledPacketBatch},
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
@@ -888,7 +888,7 @@ mod tests {
         let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
         let packets = vec![Packet::default()];
-        let packet_batches = vec![PinnedPacketBatch::new(packets).into()];
+        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
         assert!(verifier
             .verify_and_send_batches(packet_batches, Some(&pool))
             .is_ok());
@@ -1026,7 +1026,7 @@ mod tests {
         packet.meta_mut().set_discard(true); // Manually discard
 
         let packets = vec![packet];
-        let packet_batches = vec![PinnedPacketBatch::new(packets).into()];
+        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
 
         assert!(verifier
             .verify_and_send_batches(packet_batches, Some(&pool))
@@ -1062,7 +1062,7 @@ mod tests {
             packets.push(packet);
         }
 
-        let packet_batches = vec![PinnedPacketBatch::new(packets).into()];
+        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
         assert!(verifier
             .verify_and_send_batches(packet_batches, Some(&pool))
             .is_ok());
@@ -1118,7 +1118,7 @@ mod tests {
             packets.push(p);
         }
 
-        let packet_batches = vec![PinnedPacketBatch::new(packets).into()];
+        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
         assert!(verifier
             .verify_and_send_batches(packet_batches, Some(&pool))
             .is_ok());
@@ -1186,7 +1186,7 @@ mod tests {
             packets.push(packet);
         }
 
-        let packet_batches = vec![PinnedPacketBatch::new(packets).into()];
+        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
         assert!(verifier
             .verify_and_send_batches(packet_batches, Some(&pool))
             .is_ok());
@@ -1257,7 +1257,7 @@ mod tests {
             packets.push(packet);
         }
 
-        let packet_batches = vec![PinnedPacketBatch::new(packets).into()];
+        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
         assert!(verifier
             .verify_and_send_batches(packet_batches, Some(&pool))
             .is_ok());
@@ -1480,7 +1480,7 @@ mod tests {
             .unwrap();
         packets.push(cert_packet);
 
-        let packet_batches = vec![PinnedPacketBatch::new(packets).into()];
+        let packet_batches = vec![RecycledPacketBatch::new(packets).into()];
         assert!(verifier
             .verify_and_send_batches(packet_batches, Some(&pool))
             .is_ok());
@@ -1670,6 +1670,6 @@ mod tests {
                 p
             })
             .collect();
-        vec![PinnedPacketBatch::new(packets).into()]
+        vec![RecycledPacketBatch::new(packets).into()]
     }
 }
