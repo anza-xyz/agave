@@ -1046,7 +1046,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
 
         if startup {
+            // At startup we do not insert index entries into the normal in-mem index.
+            // Instead, they are written to a startup-only struct.  Thus, at startup
+            // we only need to flush that startup struct and then can return early.
             self.write_startup_info_to_disk();
+            if iterate_for_age {
+                // Note we still have to iterate ages too, since it is checked when
+                // transitioning from startup back to normal/steady state.
+                assert_eq!(current_age, self.storage.current_age());
+                self.set_has_aged(current_age, can_advance_age);
+            }
+            return;
         }
 
         let ages_flushing_now = if iterate_for_age && !startup {
