@@ -66,14 +66,12 @@ jobs:
             fi
           )" >> $GITHUB_OUTPUT
 
-  build_and_deploy:
+  build:
     needs:
       - check
     if: >
       github.repository == 'anza-xyz/agave' &&
       needs.check.outputs.continue == 1
-    # the name is used by .mergify.yml as well
-    name: build & deploy docs
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
@@ -89,6 +87,40 @@ jobs:
         run: |
           npm install
           ./build.sh
+
+      - name: Upload artifacts
+        if: ${{ github.event_name == 'push' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: docs-build
+          path: ./docs/build
+          retention-days: 1
+
+  deploy:
+    needs:
+      - build
+    if: >
+      github.repository == 'anza-xyz/agave' &&
+      github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v6
+        with:
+          name: docs-build
+          path: ./docs/build
+
+      - name: Deploy
+        working-directory: docs
+        run: ./deploy.sh
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_SCOPE: ${{ secrets.VERCEL_SCOPE }}
@@ -96,7 +128,8 @@ jobs:
   error_reporting:
     needs:
       - check
-      - build_and_deploy
+      - build
+      - deploy
     if: failure() && github.event_name == 'push'
     uses: ./.github/workflows/error-reporting.yml
     secrets:
