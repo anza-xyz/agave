@@ -14,15 +14,6 @@ use {
 mod compare;
 pub use compare::*;
 
-/// A package created from a snapshot request, containing information required to serialize the bank
-/// snapshot
-pub struct BankSnapshotPackage {
-    pub bank_fields: BankFieldsToSerialize,
-    pub bank_hash_stats: BankHashStats,
-    pub slot_deltas: Vec<BankSlotDelta>,
-    pub write_version: u64,
-}
-
 /// This struct packages up fields to send to SnapshotPackagerService
 pub struct SnapshotPackage {
     pub snapshot_kind: SnapshotKind,
@@ -35,6 +26,15 @@ pub struct SnapshotPackage {
     /// The instant this snapshot package was sent to the queue.
     /// Used to track how long snapshot packages wait before handling.
     pub enqueued: Instant,
+}
+
+/// A package created from a snapshot request, containing information required to serialize the bank
+/// snapshot
+pub struct BankSnapshotPackage {
+    pub bank_fields: BankFieldsToSerialize,
+    pub bank_hash_stats: BankHashStats,
+    pub slot_deltas: Vec<BankSlotDelta>,
+    pub write_version: u64,
 }
 
 impl SnapshotPackage {
