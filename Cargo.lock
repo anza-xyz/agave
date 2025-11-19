@@ -10215,6 +10215,7 @@ name = "solana-rpc-test"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
+ "async-trait",
  "bincode",
  "bs58",
  "crossbeam-channel",
@@ -10242,6 +10243,7 @@ dependencies = [
  "solana-system-transaction",
  "solana-test-validator",
  "solana-tpu-client",
+ "solana-tpu-client-next",
  "solana-transaction",
  "solana-transaction-status",
  "tokio",

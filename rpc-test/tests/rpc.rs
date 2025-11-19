@@ -1,4 +1,5 @@
 use {
+    async_trait::async_trait,
     bincode::serialize,
     crossbeam_channel::unbounded,
     futures_util::StreamExt,
@@ -6,15 +7,13 @@ use {
     reqwest::{self, header::CONTENT_TYPE},
     serde_json::{json, Value},
     solana_account_decoder::UiAccount,
-    solana_client::nonblocking::tpu_client::TpuClient,
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_net_utils::SocketAddrSpace,
+    solana_net_utils::{SocketAddrSpace},
     solana_pubkey::Pubkey,
     solana_pubsub_client::nonblocking::pubsub_client::PubsubClient,
     solana_rent::Rent,
-    solana_rpc_client::nonblocking::rpc_client::RpcClient as NonblockingRpcClient,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{
         client_error::{ErrorKind as ClientErrorKind, Result as ClientResult},
@@ -26,11 +25,16 @@ use {
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
     solana_test_validator::TestValidator,
-    solana_tpu_client::tpu_client::TpuClientConfig,
     solana_transaction::Transaction,
     solana_transaction_status::TransactionStatus,
+    solana_tpu_client_next::{
+        client_builder::ClientBuilder,
+        connection_workers_scheduler::NonblockingBroadcaster,
+        leader_updater::LeaderUpdater,
+    },
     std::{
         collections::HashSet,
+        net::{SocketAddr, UdpSocket},
         sync::{
             atomic::{AtomicUsize, Ordering},
             Arc,
@@ -282,6 +286,20 @@ fn test_rpc_slot_updates() {
     }
 }
 
+/// LeaderUpdater for testing - returns a fixed TPU address
+struct TestLeaderUpdater {
+    address: SocketAddr,
+}
+
+#[async_trait]
+impl LeaderUpdater for TestLeaderUpdater {
+    fn next_leaders(&mut self, _lookahead_leaders: usize) -> Vec<SocketAddr> {
+        vec![self.address]
+    }
+
+    async fn stop(&mut self) {}
+}
+
 #[test]
 fn test_rpc_subscriptions() {
     agave_logger::setup();
@@ -421,22 +439,27 @@ fn test_rpc_subscriptions() {
         .value;
     assert!(mint_balance >= transactions.len() as u64);
 
-    // Send all transactions via TPU client using tpu-client-next
-    let nonblocking_rpc_client = Arc::new(NonblockingRpcClient::new(test_validator.rpc_url()));
-    let tpu_client = rt.block_on(async {
-        TpuClient::new(
-            "test_rpc_subscriptions",
-            nonblocking_rpc_client.clone(),
-            &test_validator.rpc_pubsub_url(),
-            TpuClientConfig::default(),
-        )
-        .await
-        .unwrap()
+    let bind_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let tpu_address = *test_validator.tpu();
+
+    let leader_updater = Box::new(TestLeaderUpdater { address: tpu_address });
+
+    let (transaction_sender, _client) = rt.block_on(async {
+        let builder = ClientBuilder::new(leader_updater)
+            .bind_socket(bind_socket)
+            .identity(&alice)
+            .sender_channel_size(128);
+
+        builder
+            .build::<NonblockingBroadcaster>()
+            .expect("Failed to build TPU client")
     });
 
+    // Send all transactions
     rt.block_on(async {
         for tx in &transactions {
-            let _ = tpu_client.send_transaction(tx).await;
+            let wire_tx = bincode::serialize(tx).unwrap();
+            let _ = transaction_sender.send_transactions_in_batch(vec![wire_tx]).await;
         }
     });
 
