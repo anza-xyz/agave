@@ -26,8 +26,6 @@ use {
     },
     solana_account_info::AccountInfo,
     solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
-    solana_banks_client::start_client,
-    solana_banks_server::banks_server::start_local_server,
     solana_clock::{Epoch, Slot},
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
@@ -84,7 +82,6 @@ use {
 };
 // Export types so test clients can limit their solana crate dependencies
 pub use {
-    solana_banks_client::{BanksClient, BanksClientError},
     solana_banks_interface::BanksTransactionResultWithMetadata,
     solana_program_runtime::invoke_context::InvokeContext,
     solana_sbpf::{

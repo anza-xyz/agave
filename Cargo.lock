@@ -7278,36 +7278,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-banks-client"
-version = "4.0.0-alpha.0"
-dependencies = [
- "borsh",
- "futures 0.3.31",
- "solana-account",
- "solana-banks-interface",
- "solana-banks-server",
- "solana-clock",
- "solana-commitment-config",
- "solana-hash",
- "solana-message",
- "solana-program-pack",
- "solana-pubkey",
- "solana-rent",
- "solana-runtime",
- "solana-signature",
- "solana-signer",
- "solana-system-interface",
- "solana-sysvar",
- "solana-transaction",
- "solana-transaction-context",
- "solana-transaction-error",
- "tarpc",
- "thiserror 2.0.17",
- "tokio",
- "tokio-serde",
-]
-
-[[package]]
 name = "solana-banks-interface"
 version = "4.0.0-alpha.0"
 dependencies = [
@@ -7323,34 +7293,6 @@ dependencies = [
  "solana-transaction-context",
  "solana-transaction-error",
  "tarpc",
-]
-
-[[package]]
-name = "solana-banks-server"
-version = "4.0.0-alpha.0"
-dependencies = [
- "agave-feature-set",
- "bincode",
- "crossbeam-channel",
- "futures 0.3.31",
- "solana-account",
- "solana-banks-interface",
- "solana-client",
- "solana-clock",
- "solana-commitment-config",
- "solana-hash",
- "solana-message",
- "solana-pubkey",
- "solana-runtime",
- "solana-runtime-transaction",
- "solana-send-transaction-service",
- "solana-signature",
- "solana-svm",
- "solana-transaction",
- "solana-transaction-error",
- "tarpc",
- "tokio",
- "tokio-serde",
 ]
 
 [[package]]
@@ -9795,9 +9737,7 @@ dependencies = [
  "solana-account",
  "solana-account-info",
  "solana-accounts-db",
- "solana-banks-client",
  "solana-banks-interface",
- "solana-banks-server",
  "solana-clock",
  "solana-cluster-type",
  "solana-commitment-config",
