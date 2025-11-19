@@ -25,7 +25,7 @@ pub struct SnapshotArchivePackage {
     pub hash: SnapshotHash,
 }
 
-/// Archives an archive package into `archive_path`
+/// Archives a snapshot archive package into `archive_path`
 pub fn archive_snapshot(
     snapshot_archive_package: SnapshotArchivePackage,
     snapshot_slot: Slot,
