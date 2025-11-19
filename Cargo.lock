@@ -2964,7 +2964,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3029,7 +3029,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
 dependencies = [
  "cfg-if 1.0.4",
  "rustix 1.0.2",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6323,7 +6323,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.9.2",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6401,7 +6401,7 @@ dependencies = [
  "security-framework 3.2.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7218,7 +7218,7 @@ dependencies = [
  "spl-generic-token",
  "static_assertions",
  "strum",
- "strum_macros",
+ "strum_macros 0.24.3",
  "tempfile",
  "test-case",
  "thiserror 2.0.17",
@@ -8265,7 +8265,7 @@ dependencies = [
  "spl-memo-interface",
  "static_assertions",
  "strum",
- "strum_macros",
+ "strum_macros 0.24.3",
  "sys-info",
  "sysctl",
  "tempfile",
@@ -9159,7 +9159,7 @@ dependencies = [
  "spl-pod",
  "static_assertions",
  "strum",
- "strum_macros",
+ "strum_macros 0.24.3",
  "tar",
  "tempfile",
  "test-case",
@@ -10389,7 +10389,7 @@ dependencies = [
  "spl-generic-token",
  "static_assertions",
  "strum",
- "strum_macros",
+ "strum_macros 0.24.3",
  "symlink",
  "tempfile",
  "test-case",
@@ -12310,11 +12310,11 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "strum"
-version = "0.24.1"
+version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "063e6045c0e62079840579a7e47a355ae92f60eb74daaf156fb1e84ba164e63f"
+checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
 dependencies = [
- "strum_macros",
+ "strum_macros 0.27.2",
 ]
 
 [[package]]
@@ -12328,6 +12328,18 @@ dependencies = [
  "quote",
  "rustversion",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.110",
 ]
 
 [[package]]
