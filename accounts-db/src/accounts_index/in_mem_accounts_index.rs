@@ -1039,11 +1039,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let current_age = self.storage.current_age();
         let iterate_for_age = self.get_should_age(current_age);
         let startup = self.storage.get_startup();
-        if !iterate_for_age && !startup {
-            // no need to age, so no need to flush this bucket
-            // but, at startup we want to evict from buckets as fast as possible if any items exist
-            return;
-        }
 
         if startup {
             // At startup we do not insert index entries into the normal in-mem index.
@@ -1059,7 +1054,18 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             return;
         }
 
-        let ages_flushing_now = if iterate_for_age && !startup {
+        // from this point forward, we know startup == false
+        debug_assert!(!startup);
+
+        if !iterate_for_age {
+            // no need to age, so no need to flush this bucket
+            return;
+        }
+
+        // from this point forward, we know iterate_for_age == true
+        debug_assert!(iterate_for_age);
+
+        let ages_flushing_now = {
             let old_value = self
                 .remaining_ages_to_skip_flushing
                 .fetch_sub(1, Ordering::AcqRel);
@@ -1073,9 +1079,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 return;
             }
             self.num_ages_to_distribute_flushes
-        } else {
-            // just 1 age to flush. 0 means age == age
-            0
         };
 
         Self::update_stat(&self.stats().buckets_scanned, 1);
