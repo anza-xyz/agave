@@ -641,13 +641,9 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
             } else if !account_data_direct_mapping && borrowed_account.can_data_be_changed().is_ok()
             {
                 let data = buffer
-                    .get(start..start + post_len.min(borrowed_account.get_data().len()))
+                    .get(start..start + post_len)
                     .ok_or(InstructionError::InvalidArgument)?;
                 borrowed_account.set_data_from_slice(data)?;
-                // Explicitly resize (which might zero extend) since the length of the account
-                // as the program runtime last saw it (via CPI or the AccessViolationHandler) might
-                // differ from what the program wrote in post_len when it returned.
-                borrowed_account.set_data_length(post_len)?;
             } else if borrowed_account.get_data().len() != post_len {
                 borrowed_account.set_data_length(post_len)?;
             }
