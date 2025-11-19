@@ -17,6 +17,7 @@ use {
         replay_stage::{HeaviestForkFailures, ReplayStage, TowerBFTStructures},
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
+    agave_votor_messages::slice_root::SliceRoot,
     crossbeam_channel::unbounded,
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
@@ -152,7 +153,7 @@ impl VoteSimulator {
 
             new_bank.fill_bank_with_ticks_for_tests();
             if !visit.node().has_no_child() || is_frozen {
-                new_bank.set_block_id(Some(Hash::new_unique()));
+                new_bank.set_block_id(Some(SliceRoot::new_unique()));
                 new_bank.freeze();
                 self.progress
                     .get_fork_stats_mut(new_bank.slot())
@@ -399,7 +400,7 @@ pub fn initialize_state(
     genesis_config.epoch_schedule = EpochSchedule::without_warmup();
     genesis_config.poh_config.hashes_per_tick = Some(2);
     let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    bank0.set_block_id(Some(Hash::new_unique()));
+    bank0.set_block_id(Some(SliceRoot::new_unique()));
 
     for pubkey in validator_keypairs_map.keys() {
         bank0.transfer(10_000, &mint_keypair, pubkey).unwrap();

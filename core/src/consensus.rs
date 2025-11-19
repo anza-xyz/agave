@@ -20,6 +20,7 @@ use {
         tower_vote_state::TowerVoteState,
     },
     crate::{consensus::progress_map::LockoutInterval, replay_stage::DUPLICATE_THRESHOLD},
+    agave_votor_messages::slice_root::SliceRoot,
     chrono::prelude::*,
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
@@ -658,7 +659,7 @@ impl Tower {
             // Note: since the new shred format is yet to be rolled out to all clusters,
             // this can also happen for non-leader banks. Once rolled out we can assert
             // here that this is our leader bank.
-            Hash::default()
+            SliceRoot::default()
         });
         self.record_bank_vote_and_update_lockouts(
             bank.slot(),
@@ -675,14 +676,14 @@ impl Tower {
         &mut self,
         vote_hash: Hash,
         enable_tower_sync_ix: bool,
-        block_id: Hash,
+        block_id: SliceRoot,
     ) {
         let mut new_vote = if enable_tower_sync_ix {
             VoteTransaction::from(TowerSync::new(
                 self.vote_state.votes.clone(),
                 self.vote_state.root_slot,
                 vote_hash,
-                block_id,
+                block_id.0,
             ))
         } else {
             VoteTransaction::from(VoteStateUpdate::new(
@@ -701,7 +702,7 @@ impl Tower {
         vote_slot: Slot,
         vote_hash: Hash,
         enable_tower_sync_ix: bool,
-        block_id: Hash,
+        block_id: SliceRoot,
     ) -> Option<Slot> {
         if let Some(last_voted_slot) = self.vote_state.last_voted_slot() {
             if vote_slot <= last_voted_slot {
@@ -736,7 +737,7 @@ impl Tower {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn record_vote(&mut self, slot: Slot, hash: Hash) -> Option<Slot> {
-        self.record_bank_vote_and_update_lockouts(slot, hash, true, Hash::default())
+        self.record_bank_vote_and_update_lockouts(slot, hash, true, SliceRoot::default())
     }
 
     #[cfg(feature = "dev-context-only-utils")]

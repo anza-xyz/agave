@@ -141,6 +141,7 @@ pub mod test {
     use {
         super::*,
         crate::repair::repair_service::sleep_shred_deferment_period,
+        agave_votor_messages::slice_root::SliceRoot,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
@@ -293,7 +294,7 @@ pub mod test {
                     &keypair,
                     &[],
                     true,
-                    Hash::default(),
+                    SliceRoot::default(),
                     last_shred as u32,
                     last_shred as u32,
                     &reed_solomon_cache,

@@ -552,14 +552,16 @@ impl ConsensusPool {
 mod tests {
     use {
         super::*,
-        agave_votor_messages::consensus_message::{VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
+        agave_votor_messages::{
+            consensus_message::{VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
+            slice_root::SliceRoot,
+        },
         solana_bls_signatures::{
             keypair::Keypair as BLSKeypair, Pubkey as BLSPubkey, Signature as BLSSignature,
             VerifiableSignature,
         },
         solana_clock::Slot,
         solana_gossip::contact_info::ContactInfo,
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_net_utils::SocketAddrSpace,
         solana_runtime::{
@@ -841,7 +843,7 @@ mod tests {
             &mut pool,
             &bank_forks.read().unwrap().root_bank(),
             &validator_keypairs,
-            Vote::new_notarization_vote(5, Hash::default()),
+            Vote::new_notarization_vote(5, SliceRoot::default()),
         );
         assert_eq!(pool.highest_notarized_slot(), 5);
 
@@ -866,7 +868,7 @@ mod tests {
             &mut pool,
             &bank_forks.read().unwrap().root_bank(),
             &validator_keypairs,
-            Vote::new_notarization_vote(5, Hash::default()),
+            Vote::new_notarization_vote(5, SliceRoot::default()),
         );
         assert_eq!(pool.highest_notarized_slot(), 5);
 
@@ -886,7 +888,7 @@ mod tests {
             &mut pool,
             &bank_forks.read().unwrap().root_bank(),
             &validator_keypairs,
-            Vote::new_notarization_vote(5, Hash::default()),
+            Vote::new_notarization_vote(5, SliceRoot::default()),
         );
         assert_eq!(pool.highest_notarized_slot(), 5);
 
@@ -915,7 +917,7 @@ mod tests {
             &mut pool,
             &bank_forks.read().unwrap().root_bank(),
             &validator_keypairs,
-            Vote::new_notarization_vote(5, Hash::default()),
+            Vote::new_notarization_vote(5, SliceRoot::default()),
         );
         assert_eq!(pool.highest_notarized_slot(), 5);
 
@@ -945,7 +947,7 @@ mod tests {
         do_test_add_vote_and_create_new_certificate_with_types(vote, cert_types);
 
         let slot = 6;
-        let block_id = Hash::new_unique();
+        let block_id = SliceRoot::new_unique();
         let vote = Vote::new_notarization_vote(slot, block_id);
         let cert_types = vec![
             CertificateType::Notarize(slot, block_id),
@@ -954,7 +956,7 @@ mod tests {
         do_test_add_vote_and_create_new_certificate_with_types(vote, cert_types);
 
         let slot = 7;
-        let block_id = Hash::new_unique();
+        let block_id = SliceRoot::new_unique();
         let vote = Vote::new_notarization_fallback_vote(slot, block_id);
         let cert_types = vec![CertificateType::NotarizeFallback(slot, block_id)];
         do_test_add_vote_and_create_new_certificate_with_types(vote, cert_types);
@@ -1060,16 +1062,16 @@ mod tests {
 
     #[test_case(CertificateType::Finalize(5), Vote::new_finalization_vote(5))]
     #[test_case(
-        CertificateType::FinalizeFast(6, Hash::default()),
-        Vote::new_notarization_vote(6, Hash::default())
+        CertificateType::FinalizeFast(6, SliceRoot::default()),
+        Vote::new_notarization_vote(6, SliceRoot::default())
     )]
     #[test_case(
-        CertificateType::Notarize(6, Hash::default()),
-        Vote::new_notarization_vote(6, Hash::default())
+        CertificateType::Notarize(6, SliceRoot::default()),
+        Vote::new_notarization_vote(6, SliceRoot::default())
     )]
     #[test_case(
-        CertificateType::NotarizeFallback(7, Hash::default()),
-        Vote::new_notarization_fallback_vote(7, Hash::default())
+        CertificateType::NotarizeFallback(7, SliceRoot::default()),
+        Vote::new_notarization_fallback_vote(7, SliceRoot::default())
     )]
     #[test_case(CertificateType::Skip(8), Vote::new_skip_vote(8))]
     fn test_add_certificate_with_types(cert_type: CertificateType, vote: Vote) {
@@ -1500,7 +1502,7 @@ mod tests {
 
         // Create bank 2
         let slot = 2;
-        let block_id = Hash::new_unique();
+        let block_id = SliceRoot::new_unique();
 
         // Add a skip from myself.
         let vote = Vote::new_skip_vote(2);
@@ -1543,7 +1545,7 @@ mod tests {
 
         // Create bank 3
         let slot = 3;
-        let block_id = Hash::new_unique();
+        let block_id = SliceRoot::new_unique();
 
         // Add 20% notarize, but no vote from myself, should fail
         for rank in 1..3 {
@@ -1561,7 +1563,7 @@ mod tests {
         assert!(new_events.is_empty());
 
         // Add a notarize from myself for some other block, but still not enough notar or skip, should fail.
-        let vote = Vote::new_notarization_vote(3, Hash::new_unique());
+        let vote = Vote::new_notarization_vote(3, SliceRoot::new_unique());
         pool.add_message(
             bank.epoch_schedule(),
             bank.epoch_stakes_map(),
@@ -1607,7 +1609,7 @@ mod tests {
 
         // Add 20% notarization for another block, we should notify on new block_id
         // but not on the same block_id because we already sent the event
-        let duplicate_block_id = Hash::new_unique();
+        let duplicate_block_id = SliceRoot::new_unique();
         for rank in 7..9 {
             let vote = Vote::new_notarization_vote(3, duplicate_block_id);
             pool.add_message(
@@ -1641,7 +1643,7 @@ mod tests {
         let mut new_events = vec![];
 
         // Add a notarize from myself.
-        let block_id = Hash::new_unique();
+        let block_id = SliceRoot::new_unique();
         let vote = Vote::new_notarization_vote(2, block_id);
         pool.add_message(
             bank.epoch_schedule(),
@@ -1715,7 +1717,7 @@ mod tests {
         )
         .unwrap();
         let cert_2 = Certificate {
-            cert_type: CertificateType::FinalizeFast(2, Hash::new_unique()),
+            cert_type: CertificateType::FinalizeFast(2, SliceRoot::new_unique()),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
@@ -1755,7 +1757,7 @@ mod tests {
             .is_err());
 
         // Send a cert on slot 2, it should be rejected
-        let cert_type = CertificateType::Notarize(2, Hash::new_unique());
+        let cert_type = CertificateType::Notarize(2, SliceRoot::new_unique());
         let cert = ConsensusMessage::Certificate(Certificate {
             cert_type,
             signature: BLSSignature::default(),
@@ -1782,7 +1784,7 @@ mod tests {
 
         // Add notar-fallback cert on 3 and finalize cert on 4
         let cert_3 = Certificate {
-            cert_type: CertificateType::NotarizeFallback(3, Hash::new_unique()),
+            cert_type: CertificateType::NotarizeFallback(3, SliceRoot::new_unique()),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
@@ -1820,7 +1822,7 @@ mod tests {
 
         // Add Notarize cert on 5
         let cert_5 = Certificate {
-            cert_type: CertificateType::Notarize(5, Hash::new_unique()),
+            cert_type: CertificateType::Notarize(5, SliceRoot::new_unique()),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
@@ -1852,7 +1854,7 @@ mod tests {
 
         // Add FinalizeFast cert on 5
         let cert_5 = Certificate {
-            cert_type: CertificateType::FinalizeFast(5, Hash::new_unique()),
+            cert_type: CertificateType::FinalizeFast(5, SliceRoot::new_unique()),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
@@ -1875,7 +1877,7 @@ mod tests {
 
         // Now add Notarize cert on 6
         let cert_6 = Certificate {
-            cert_type: CertificateType::Notarize(6, Hash::new_unique()),
+            cert_type: CertificateType::Notarize(6, SliceRoot::new_unique()),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
@@ -1913,7 +1915,7 @@ mod tests {
         .unwrap();
         // Add a NotarizeFallback cert on 6
         let cert_6_notarize_fallback = Certificate {
-            cert_type: CertificateType::NotarizeFallback(6, Hash::new_unique()),
+            cert_type: CertificateType::NotarizeFallback(6, SliceRoot::new_unique()),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
@@ -1978,7 +1980,7 @@ mod tests {
         )
         .unwrap();
         let cert_8_notarize = Certificate {
-            cert_type: CertificateType::Notarize(8, Hash::new_unique()),
+            cert_type: CertificateType::Notarize(8, SliceRoot::new_unique()),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         };
@@ -2008,7 +2010,7 @@ mod tests {
         let mut events = vec![];
 
         // Add a notarization cert on slot 1 to 3
-        let hash = Hash::new_unique();
+        let hash = SliceRoot::new_unique();
         for slot in 1..=3 {
             let cert = Certificate {
                 cert_type: CertificateType::Notarize(slot, hash),
@@ -2107,7 +2109,7 @@ mod tests {
     fn test_vote_message_signature_verification() {
         let (validator_keypairs, _, _) = create_initial_state();
         let rank_to_test = 3;
-        let vote = Vote::new_notarization_vote(42, Hash::new_unique());
+        let vote = Vote::new_notarization_vote(42, SliceRoot::new_unique());
 
         let consensus_message = dummy_vote_message(&validator_keypairs, &vote, rank_to_test);
         let ConsensusMessage::Vote(vote_message) = consensus_message else {

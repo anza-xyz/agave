@@ -375,7 +375,7 @@ fn verify_retransmitter_signature(
             return false;
         }
     };
-    if signature.verify(parent.as_ref(), merkle_root.as_ref()) {
+    if signature.verify(parent.as_ref(), merkle_root.0.as_ref()) {
         stats
             .num_retranmitter_signature_verified
             .fetch_add(1, Ordering::Relaxed);
@@ -555,6 +555,7 @@ impl ShredSigVerifyStats {
 mod tests {
     use {
         super::*,
+        agave_votor_messages::slice_root::SliceRoot,
         rand::Rng,
         solana_entry::entry::{create_ticks, Entry},
         solana_gossip::contact_info::ContactInfo,
@@ -593,7 +594,7 @@ mod tests {
             &leader_keypair,
             &entries,
             true,
-            Hash::new_unique(),
+            SliceRoot::new_unique(),
             0,
             0,
             &ReedSolomonCache::default(),
@@ -603,7 +604,7 @@ mod tests {
             &wrong_keypair,
             &entries,
             true,
-            Hash::new_unique(),
+            SliceRoot::new_unique(),
             0,
             0,
             &ReedSolomonCache::default(),
@@ -655,7 +656,7 @@ mod tests {
             let bank_forks = bank_forks.read().unwrap();
             (bank_forks.working_bank(), bank_forks.root_bank())
         };
-        let chained_merkle_root = Hash::new_from_array(rng.gen());
+        let chained_merkle_root = SliceRoot(Hash::new_from_array(rng.gen()));
 
         let shredder = Shredder::new(root_bank.slot(), root_bank.parent_slot(), 0, 0).unwrap();
         let entries = vec![Entry::new(&Hash::default(), 0, vec![])];

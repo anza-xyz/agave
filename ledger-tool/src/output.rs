@@ -408,8 +408,8 @@ impl From<Shred> for CliDuplicateShred {
             index: shred.index(),
             shred_type: shred.shred_type(),
             version: shred.version(),
-            merkle_root: shred.merkle_root().ok(),
-            chained_merkle_root: shred.chained_merkle_root().ok(),
+            merkle_root: shred.merkle_root().ok().map(|r| r.0),
+            chained_merkle_root: shred.chained_merkle_root().ok().map(|r| r.0),
             last_in_slot: shred.last_in_slot(),
             payload: Vec::from(shred.into_payload().bytes),
         }

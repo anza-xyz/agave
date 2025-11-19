@@ -1,9 +1,9 @@
 #![allow(clippy::implicit_hasher)]
 use {
     crate::shred,
+    agave_votor_messages::slice_root::SliceRoot,
     rayon::{prelude::*, ThreadPool},
     solana_clock::Slot,
-    solana_hash::Hash,
     solana_metrics::inc_new_counter_debug,
     solana_nohash_hasher::BuildNoHashHasher,
     solana_perf::{
@@ -17,7 +17,7 @@ use {
 #[cfg(test)]
 use {solana_keypair::Keypair, solana_perf::packet::PacketRefMut, solana_signer::Signer};
 
-pub type LruCache = lazy_lru::LruCache<(Signature, Pubkey, /*merkle root:*/ Hash), ()>;
+pub type LruCache = lazy_lru::LruCache<(Signature, Pubkey, SliceRoot), ()>;
 
 pub type SlotPubkeys = HashMap<Slot, Pubkey, BuildNoHashHasher<Slot>>;
 
@@ -51,7 +51,7 @@ pub fn verify_shred_cpu(
     let key = (signature, *pubkey, data);
     if cache.read().unwrap().get(&key).is_some() {
         true
-    } else if key.0.verify(key.1.as_ref(), key.2.as_ref()) {
+    } else if key.0.verify(key.1.as_ref(), key.2 .0.as_ref()) {
         cache.write().unwrap().put(key, ());
         true
     } else {
@@ -92,7 +92,7 @@ fn sign_shred_cpu(keypair: &Keypair, packet: &mut PacketRefMut) {
         packet.meta().size >= sig.end,
         "packet is not large enough for a signature"
     );
-    let signature = keypair.sign_message(msg.as_ref());
+    let signature = keypair.sign_message(msg.0.as_ref());
     trace!("signature {signature:?}");
     let mut buffer = packet
         .data(..)
@@ -151,7 +151,7 @@ mod tests {
             &keypair,
             &[],
             true,
-            Hash::default(),
+            SliceRoot::default(),
             0,
             0,
             &reed_solomon_cache,
@@ -259,7 +259,7 @@ mod tests {
             keypair,
             &[],
             true,
-            Hash::default(),
+            SliceRoot::default(),
             0,
             0,
             &reed_solomon_cache,
@@ -330,9 +330,9 @@ mod tests {
                     keypair,
                     &make_entries(rng, num_entries),
                     is_last_in_slot,
-                    Hash::new_from_array(rng.gen()), // chained_merkle_root
-                    rng.gen_range(0..2671),          // next_shred_index
-                    rng.gen_range(0..2781),          // next_code_index
+                    SliceRoot(Hash::new_from_array(rng.gen())),
+                    rng.gen_range(0..2671), // next_shred_index
+                    rng.gen_range(0..2781), // next_code_index
                     &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 )
@@ -352,7 +352,7 @@ mod tests {
             let signature = shred::layout::get_signature(shred).unwrap();
             let pubkey = keypairs[&slot].pubkey();
             let data = shred::layout::get_signed_data(shred).unwrap();
-            assert!(signature.verify(pubkey.as_ref(), data.as_ref()));
+            assert!(signature.verify(pubkey.as_ref(), data.0.as_ref()));
         }
         shreds
     }

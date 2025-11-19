@@ -1,6 +1,6 @@
 use {
-    crate::shred::Error, solana_hash::Hash, solana_sha256_hasher::hashv,
-    static_assertions::const_assert_eq, std::iter::successors,
+    crate::shred::Error, agave_votor_messages::slice_root::SliceRoot, solana_hash::Hash,
+    solana_sha256_hasher::hashv, static_assertions::const_assert_eq, std::iter::successors,
 };
 
 pub(crate) const SIZE_OF_MERKLE_ROOT: usize = std::mem::size_of::<Hash>();
@@ -83,7 +83,7 @@ fn join_nodes<S: AsRef<[u8]>, T: AsRef<[u8]>>(node: S, other: T) -> Hash {
 
 // Recovers root of the merkle tree from a leaf node
 // at the given index and the respective proof.
-pub fn get_merkle_root<'a, I>(index: usize, node: Hash, proof: I) -> Result<Hash, Error>
+pub fn get_merkle_root<'a, I>(index: usize, node: Hash, proof: I) -> Result<SliceRoot, Error>
 where
     I: IntoIterator<Item = &'a MerkleProofEntry>,
 {
@@ -98,7 +98,7 @@ where
             (index >> 1, parent)
         });
     (index == 0)
-        .then_some(root)
+        .then_some(SliceRoot(root))
         .ok_or(Error::InvalidMerkleProof)
 }
 
@@ -169,9 +169,9 @@ mod tests {
             for (k, &node) in nodes.iter().enumerate() {
                 let proof = make_merkle_proof(index, size, &tree).map(Result::unwrap);
                 if k == index {
-                    assert_eq!(root, get_merkle_root(k, node, proof).unwrap());
+                    assert_eq!(root, get_merkle_root(k, node, proof).unwrap().0);
                 } else {
-                    assert_ne!(root, get_merkle_root(k, node, proof).unwrap());
+                    assert_ne!(root, get_merkle_root(k, node, proof).unwrap().0);
                 }
             }
         }

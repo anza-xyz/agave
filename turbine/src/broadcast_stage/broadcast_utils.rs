@@ -1,9 +1,9 @@
 use {
     super::{Error, Result},
+    agave_votor_messages::slice_root::SliceRoot,
     crossbeam_channel::Receiver,
     solana_clock::Slot,
     solana_entry::entry::Entry,
-    solana_hash::Hash,
     solana_ledger::{
         blockstore::Blockstore,
         shred::{self, get_data_shred_bytes_per_batch_typical, ProcessShredsStats},
@@ -164,10 +164,10 @@ pub(super) fn get_chained_merkle_root_from_parent(
     slot: Slot,
     parent: Slot,
     blockstore: &Blockstore,
-) -> Result<Hash> {
+) -> Result<SliceRoot> {
     if slot == parent {
         debug_assert_eq!(slot, 0u64);
-        return Ok(Hash::default());
+        return Ok(SliceRoot::default());
     }
     debug_assert!(parent < slot, "parent: {parent} >= slot: {slot}");
     let index = blockstore

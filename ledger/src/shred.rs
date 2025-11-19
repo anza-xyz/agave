@@ -62,6 +62,7 @@ pub use {
 use {
     self::{shred_code::ShredCode, traits::Shred as _},
     crate::blockstore::{self},
+    agave_votor_messages::slice_root::SliceRoot,
     assert_matches::debug_assert_matches,
     bitflags::bitflags,
     num_enum::{IntoPrimitive, TryFromPrimitive},
@@ -371,11 +372,11 @@ impl Shred {
     dispatch!(fn set_signature(&mut self, signature: Signature));
     dispatch!(fn signed_data(&self) -> Result<Hash, Error>);
 
-    dispatch!(pub fn chained_merkle_root(&self) -> Result<Hash, Error>);
+    dispatch!(pub fn chained_merkle_root(&self) -> Result<SliceRoot, Error>);
     dispatch!(pub(crate) fn retransmitter_signature(&self) -> Result<Signature, Error>);
 
     dispatch!(pub fn into_payload(self) -> Payload);
-    dispatch!(pub fn merkle_root(&self) -> Result<Hash, Error>);
+    dispatch!(pub fn merkle_root(&self) -> Result<SliceRoot, Error>);
     dispatch!(pub fn payload(&self) -> &Payload);
     dispatch!(pub fn sanitize(&self) -> Result<(), Error>);
 
@@ -967,7 +968,7 @@ mod tests {
         is_last_in_slot: bool,
     ) -> Result<Vec<merkle::Shred>, Error> {
         let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
-        let chained_merkle_root = Hash::new_from_array(rng.gen());
+        let chained_merkle_root = SliceRoot(Hash::new_from_array(rng.gen()));
         let parent_offset = rng.gen_range(1..=u16::try_from(slot).unwrap_or(u16::MAX));
         let parent_slot = slot.checked_sub(u64::from(parent_offset)).unwrap();
         let mut data = vec![0u8; data_size];
@@ -1760,7 +1761,7 @@ mod tests {
                 &keypair,
                 &data,
                 false,
-                Hash::default(),
+                SliceRoot::default(),
                 64,
                 64,
                 &reed_solomon_cache,

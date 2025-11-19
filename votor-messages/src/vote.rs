@@ -1,8 +1,8 @@
 //! Vote data types for use by clients
 use {
+    crate::slice_root::SliceRoot,
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
-    solana_hash::Hash,
 };
 
 /// Enum that clients can use to parse and create the vote
@@ -10,7 +10,7 @@ use {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "6NFC2nmHc5VdjYKn6cbiskj9cLyk7jsWErJinojzYQhX")
+    frozen_abi(digest = "J5CizUrd4VF5KU2voT5JNNNHZy1FgNmwg86bQz92fLDw")
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Vote {
@@ -28,7 +28,7 @@ pub enum Vote {
 
 impl Vote {
     /// Create a new notarization vote
-    pub fn new_notarization_vote(slot: Slot, block_id: Hash) -> Self {
+    pub fn new_notarization_vote(slot: Slot, block_id: SliceRoot) -> Self {
         Self::from(NotarizationVote { slot, block_id })
     }
 
@@ -43,7 +43,7 @@ impl Vote {
     }
 
     /// Create a new notarization fallback vote
-    pub fn new_notarization_fallback_vote(slot: Slot, block_id: Hash) -> Self {
+    pub fn new_notarization_fallback_vote(slot: Slot, block_id: SliceRoot) -> Self {
         Self::from(NotarizationFallbackVote { slot, block_id })
     }
 
@@ -64,7 +64,7 @@ impl Vote {
     }
 
     /// The block id associated with the block which was voted for
-    pub fn block_id(&self) -> Option<&Hash> {
+    pub fn block_id(&self) -> Option<&SliceRoot> {
         match self {
             Self::Notarize(vote) => Some(&vote.block_id),
             Self::NotarizeFallback(vote) => Some(&vote.block_id),
@@ -137,14 +137,14 @@ impl From<SkipFallbackVote> for Vote {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "5AdwChAjsj5QUXLdpDnGGK2L2nA8y8EajVXi6jsmTv1m")
+    frozen_abi(digest = "2PxE2asFggYtErv5YjbjMkaoaDCNrv6NmTCsHXKEeyKj")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NotarizationVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
     /// The block id this vote is for.
-    pub block_id: Hash,
+    pub block_id: SliceRoot,
 }
 
 /// A finalization vote
@@ -177,14 +177,14 @@ pub struct SkipVote {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "7j5ZPwwyz1FaG3fpyQv5PVnQXicdSmqSk8NvqzkG1Eqz")
+    frozen_abi(digest = "CqysqvN3ZzSNeZFbL2qQ2kUBTQYqTGwcJoZKDy8pYK4K")
 )]
-#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NotarizationFallbackVote {
     /// The slot this vote is cast for.
     pub slot: Slot,
     /// The block id this vote is for.
-    pub block_id: Hash,
+    pub block_id: SliceRoot,
 }
 
 /// A skip fallback vote

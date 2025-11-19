@@ -5,9 +5,8 @@
 
 use {
     crate::common::{Stake, VoteType},
-    agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
+    agave_votor_messages::{consensus_message::VoteMessage, slice_root::SliceRoot, vote::Vote},
     solana_clock::Slot,
-    solana_hash::Hash,
     solana_pubkey::Pubkey,
     std::collections::{btree_map::Entry, BTreeMap},
     thiserror::Error,
@@ -55,7 +54,7 @@ struct InternalVotePool {
     /// A validator can vote notar fallback on upto 3 blocks.
     ///
     /// Per validator, we store a map of which block ids the validator has voted notar fallback on.
-    notar_fallback: BTreeMap<Pubkey, BTreeMap<Hash, VoteMessage>>,
+    notar_fallback: BTreeMap<Pubkey, BTreeMap<SliceRoot, VoteMessage>>,
 }
 
 impl InternalVotePool {
@@ -150,7 +149,7 @@ impl InternalVotePool {
     ///
     // TODO: figure out how to return an iterator here instead which would require `CertificateBuilder::aggregate()` to accept an iterator.
     // TODO: instead of passing vote_type and block_id, pass in `Vote` which will remove some unwraps below.
-    fn get_votes(&self, vote_type: &VoteType, block_id: Option<&Hash>) -> Vec<VoteMessage> {
+    fn get_votes(&self, vote_type: &VoteType, block_id: Option<&SliceRoot>) -> Vec<VoteMessage> {
         match vote_type {
             VoteType::Finalize => self.finalize.values().cloned().collect(),
             VoteType::Notarize => {
@@ -187,12 +186,12 @@ struct Stakes {
     /// Stake that has voted notar.
     ///
     /// Different validators may vote notar for different blocks, so this tracks stake per block id.
-    notar: BTreeMap<Hash, Stake>,
+    notar: BTreeMap<SliceRoot, Stake>,
     /// Stake that has voted notar fallback.
     ///
     /// A single validator may vote for upto 3 blocks and different validators can vote for different blocks.
     /// Hence, this tracks stake per block id.
-    notar_fallback: BTreeMap<Hash, Stake>,
+    notar_fallback: BTreeMap<SliceRoot, Stake>,
 }
 
 impl Stakes {
@@ -241,7 +240,7 @@ impl Stakes {
     /// Get the stake corresponding to the [`VoteType`] and block id.
     //
     // TODO: instead of passing vote_type and block_id, pass in `Vote` which will remove unwraps below.
-    fn get_stake(&self, vote_type: &VoteType, block_id: Option<&Hash>) -> Stake {
+    fn get_stake(&self, vote_type: &VoteType, block_id: Option<&SliceRoot>) -> Stake {
         match vote_type {
             VoteType::Notarize => *self.notar.get(block_id.unwrap()).unwrap_or(&0),
             VoteType::NotarizeFallback => *self.notar_fallback.get(block_id.unwrap()).unwrap_or(&0),
@@ -289,7 +288,7 @@ impl VotePool {
     }
 
     /// Returns the [`Stake`] corresponding to the specific [`Vote`].
-    pub(super) fn get_stake(&self, vote_type: &VoteType, block_id: Option<&Hash>) -> Stake {
+    pub(super) fn get_stake(&self, vote_type: &VoteType, block_id: Option<&SliceRoot>) -> Stake {
         self.stakes.get_stake(vote_type, block_id)
     }
 
@@ -297,7 +296,7 @@ impl VotePool {
     pub(super) fn get_votes(
         &self,
         vote_type: &VoteType,
-        block_id: Option<&Hash>,
+        block_id: Option<&SliceRoot>,
     ) -> Vec<VoteMessage> {
         self.votes.get_votes(vote_type, block_id)
     }
@@ -326,7 +325,7 @@ mod test {
         };
         votes.add_vote(voter, skip).unwrap();
         let notar = VoteMessage {
-            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
+            vote: Vote::new_notarization_vote(slot, SliceRoot::new_unique()),
             signature,
             rank,
         };
@@ -337,13 +336,13 @@ mod test {
 
         let mut votes = InternalVotePool::new(slot);
         let notar = VoteMessage {
-            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
+            vote: Vote::new_notarization_vote(slot, SliceRoot::new_unique()),
             signature,
             rank,
         };
         votes.add_vote(voter, notar).unwrap();
         let notar = VoteMessage {
-            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
+            vote: Vote::new_notarization_vote(slot, SliceRoot::new_unique()),
             signature,
             rank,
         };
@@ -354,7 +353,7 @@ mod test {
 
         let mut votes = InternalVotePool::new(slot);
         let notar = VoteMessage {
-            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
+            vote: Vote::new_notarization_vote(slot, SliceRoot::new_unique()),
             signature,
             rank,
         };
@@ -380,7 +379,7 @@ mod test {
         };
         votes.add_vote(voter, finalize).unwrap();
         let nf = VoteMessage {
-            vote: Vote::new_notarization_fallback_vote(slot, Hash::default()),
+            vote: Vote::new_notarization_fallback_vote(slot, SliceRoot::default()),
             signature,
             rank,
         };
@@ -392,14 +391,14 @@ mod test {
         let mut votes = InternalVotePool::new(slot);
         for _ in 0..3 {
             let nf = VoteMessage {
-                vote: Vote::new_notarization_fallback_vote(slot, Hash::new_unique()),
+                vote: Vote::new_notarization_fallback_vote(slot, SliceRoot::new_unique()),
                 signature,
                 rank,
             };
             votes.add_vote(voter, nf).unwrap();
         }
         let nf = VoteMessage {
-            vote: Vote::new_notarization_fallback_vote(slot, Hash::new_unique()),
+            vote: Vote::new_notarization_fallback_vote(slot, SliceRoot::new_unique()),
             signature,
             rank,
         };
@@ -410,7 +409,7 @@ mod test {
 
         let mut votes = InternalVotePool::new(slot);
         let nf = VoteMessage {
-            vote: Vote::new_notarization_fallback_vote(slot, Hash::new_unique()),
+            vote: Vote::new_notarization_fallback_vote(slot, SliceRoot::new_unique()),
             signature,
             rank,
         };
@@ -430,7 +429,7 @@ mod test {
 
         let mut votes = InternalVotePool::new(slot);
         let notar = VoteMessage {
-            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
+            vote: Vote::new_notarization_vote(slot, SliceRoot::new_unique()),
             signature,
             rank,
         };
@@ -588,8 +587,8 @@ mod test {
         let mut stakes = Stakes::new(slot);
         let stake0 = 10;
         let stake1 = 20;
-        let hash0 = Hash::new_unique();
-        let hash1 = Hash::new_unique();
+        let hash0 = SliceRoot::new_unique();
+        let hash1 = SliceRoot::new_unique();
         let vote0 = Vote::new_notarization_vote(slot, hash0);
         let vote1 = Vote::new_notarization_vote(slot, hash1);
         assert_eq!(stakes.add_stake(stake0, &vote0), stake0);
@@ -606,8 +605,8 @@ mod test {
         let mut stakes = Stakes::new(slot);
         let stake0 = 10;
         let stake1 = 20;
-        let hash0 = Hash::new_unique();
-        let hash1 = Hash::new_unique();
+        let hash0 = SliceRoot::new_unique();
+        let hash1 = SliceRoot::new_unique();
         let vote0 = Vote::new_notarization_fallback_vote(slot, hash0);
         let vote1 = Vote::new_notarization_fallback_vote(slot, hash1);
         assert_eq!(stakes.add_stake(stake0, &vote0), stake0);

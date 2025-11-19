@@ -1,23 +1,22 @@
 //! Put Alpenglow consensus messages here so all clients can agree on the format.
 use {
-    crate::vote::Vote,
+    crate::{slice_root::SliceRoot, vote::Vote},
     serde::{Deserialize, Serialize},
     solana_bls_signatures::Signature as BLSSignature,
     solana_clock::Slot,
-    solana_hash::Hash,
 };
 
 /// The seed used to derive the BLS keypair
 pub const BLS_KEYPAIR_DERIVE_SEED: &[u8; 9] = b"alpenglow";
 
 /// Block, a (slot, hash) tuple
-pub type Block = (Slot, Hash);
+pub type Block = (Slot, SliceRoot);
 
 /// A consensus vote.
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "5SPmMTisBngyvNzKsXYbo1rbhefNYeGAgVJSYF5Su6N5")
+    frozen_abi(digest = "75XoTh2mmchVZjz4EGTQHKTPP4ceTxyo4ppBdigumMMV")
 )]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VoteMessage {
@@ -33,18 +32,18 @@ pub struct VoteMessage {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "8RmeGAzMoXh7ENiFCG1iHDh8ejokjR1hqJ2m4Ba7Uxgo")
+    frozen_abi(digest = "2DVZDP2HfTCwib9sD26zbj6ZPh22hYBHzzJ8Uny755Me")
 )]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub enum CertificateType {
     /// Finalize certificate
     Finalize(Slot),
     /// Fast finalize certificate
-    FinalizeFast(Slot, Hash),
+    FinalizeFast(Slot, SliceRoot),
     /// Notarize certificate
-    Notarize(Slot, Hash),
+    Notarize(Slot, SliceRoot),
     /// Notarize fallback certificate
-    NotarizeFallback(Slot, Hash),
+    NotarizeFallback(Slot, SliceRoot),
     /// Skip certificate
     Skip(Slot),
 }
@@ -77,7 +76,7 @@ impl CertificateType {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "2jUyAYKXdK7gfncAx3JxhdUfA8DrkVkcbDB6J5tsiuEA")
+    frozen_abi(digest = "5Adxu6tk28qk72Qmz6XgWscELzQw4B6cezmgpPMLaqQW")
 )]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Certificate {
@@ -94,7 +93,7 @@ pub struct Certificate {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "7r7dyUzmnYbxug6r7QkggXgBH5WUWvuC2Z9UcXLJfBgm")
+    frozen_abi(digest = "2JhXW7PuHXrKMtgfxgpWsUJcX6FVBi6CukKGHPYjAYdv")
 )]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[allow(clippy::large_enum_variant)]

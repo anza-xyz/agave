@@ -2,12 +2,12 @@ use {
     crate::shred::{
         self, Error, ProcessShredsStats, Shred, ShredData, ShredFlags, DATA_SHREDS_PER_FEC_BLOCK,
     },
+    agave_votor_messages::slice_root::SliceRoot,
     lazy_lru::LruCache,
     rayon::ThreadPool,
     reed_solomon_erasure::{galois_8::ReedSolomon, Error::TooFewDataShards},
     solana_clock::Slot,
     solana_entry::entry::Entry,
-    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_rayon_threadlimit::get_thread_count,
     std::{
@@ -69,7 +69,7 @@ impl Shredder {
         keypair: &Keypair,
         entries: &[Entry],
         is_last_in_slot: bool,
-        chained_merkle_root: Hash,
+        chained_merkle_root: SliceRoot,
         next_shred_index: u32,
         next_code_index: u32,
         reed_solomon_cache: &ReedSolomonCache,
@@ -98,7 +98,7 @@ impl Shredder {
         keypair: &Keypair,
         data: &[u8],
         is_last_in_slot: bool,
-        chained_merkle_root: Hash,
+        chained_merkle_root: SliceRoot,
         next_shred_index: u32,
         next_code_index: u32,
         reed_solomon_cache: &ReedSolomonCache,
@@ -128,7 +128,7 @@ impl Shredder {
         keypair: &Keypair,
         entries: &[Entry],
         is_last_in_slot: bool,
-        chained_merkle_root: Hash,
+        chained_merkle_root: SliceRoot,
         next_shred_index: u32,
         next_code_index: u32,
         reed_solomon_cache: &ReedSolomonCache,
@@ -205,7 +205,7 @@ impl Shredder {
             keypair,
             &[],
             true,
-            Hash::default(),
+            SliceRoot::default(),
             0,
             0,
             &reed_solomon_cache,
@@ -309,9 +309,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            Hash::new_from_array(rand::thread_rng().gen()), // chained_merkle_root
-            start_index,                                    // next_shred_index
-            start_index,                                    // next_code_index
+            SliceRoot(Hash::new_from_array(rand::thread_rng().gen())),
+            start_index, // next_shred_index
+            start_index, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -395,9 +395,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            Hash::new_from_array(rand::thread_rng().gen()), // chained_merkle_root
-            369,                                            // next_shred_index
-            776,                                            // next_code_index
+            SliceRoot(Hash::new_from_array(rand::thread_rng().gen())),
+            369, // next_shred_index
+            776, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -427,9 +427,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            Hash::new_from_array(rand::thread_rng().gen()), // chained_merkle_root
-            0,                                              // next_shred_index
-            0,                                              // next_code_index
+            SliceRoot(Hash::new_from_array(rand::thread_rng().gen())),
+            0, // next_shred_index
+            0, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -464,9 +464,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            Hash::new_from_array(rand::thread_rng().gen()), // chained_merkle_root
-            0,                                              // next_shred_index
-            0,                                              // next_code_index
+            SliceRoot(Hash::new_from_array(rand::thread_rng().gen())),
+            0, // next_shred_index
+            0, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -511,9 +511,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            Hash::new_from_array(rand::thread_rng().gen()), // chained_merkle_root
-            0,                                              // next_shred_index
-            0,                                              // next_code_index
+            SliceRoot(Hash::new_from_array(rand::thread_rng().gen())),
+            0, // next_shred_index
+            0, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -561,9 +561,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            Hash::new_from_array(rand::thread_rng().gen()), // chained_merkle_root
-            0,                                              // next_shred_index
-            0,                                              // next_code_index
+            SliceRoot(Hash::new_from_array(rand::thread_rng().gen())),
+            0, // next_shred_index
+            0, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -595,9 +595,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            Hash::new_from_array(rand::thread_rng().gen()), // chained_merkle_root
-            start_index,                                    // next_shred_index
-            start_index,                                    // next_code_index
+            SliceRoot(Hash::new_from_array(rand::thread_rng().gen())),
+            start_index, // next_shred_index
+            start_index, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
