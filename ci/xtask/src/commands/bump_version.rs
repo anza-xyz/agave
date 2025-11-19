@@ -3,7 +3,7 @@ use {
     clap::{Args, ValueEnum},
     log::{debug, info},
     semver::Version,
-    std::{fmt, fs, process::Command},
+    std::{fs, process::Command},
     toml_edit::{value, DocumentMut},
 };
 
@@ -18,17 +18,6 @@ pub enum BumpLevel {
     Major,
     Minor,
     Patch,
-}
-
-impl fmt::Display for BumpLevel {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
-            BumpLevel::Major => "major",
-            BumpLevel::Minor => "minor",
-            BumpLevel::Patch => "patch",
-        };
-        write!(f, "{s}")
-    }
 }
 
 pub fn run(args: CommandArgs) -> Result<()> {
