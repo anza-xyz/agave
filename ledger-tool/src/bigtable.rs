@@ -10,6 +10,7 @@ use {
         },
         parse_process_options, LoadAndProcessLedgerOutput,
     },
+    agave_votor_messages::slice_root::SliceRoot,
     clap::{
         value_t, value_t_or_exit, values_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand,
     },
@@ -393,10 +394,10 @@ async fn shreds(
             .make_merkle_shreds_from_entries(
                 &keypair,
                 &entries,
-                true,            // last_in_slot
-                Hash::default(), // chained_merkle_root
-                0,               // next_shred_index
-                0,               // next_code_index
+                true, // last_in_slot
+                SliceRoot::default(),
+                0, // next_shred_index
+                0, // next_code_index
                 &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             )

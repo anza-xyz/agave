@@ -119,6 +119,7 @@ dependencies = [
  "agave-reserved-account-keys",
  "agave-snapshots",
  "agave-syscalls",
+ "agave-votor-messages",
  "assert_cmd",
  "bs58",
  "chrono",
