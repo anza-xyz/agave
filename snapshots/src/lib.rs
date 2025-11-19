@@ -31,7 +31,7 @@ mod unarchive;
 pub type Result<T> = std::result::Result<T, error::SnapshotError>;
 
 pub use {
-    archive::archive_snapshot,
+    archive::{archive_snapshot, SnapshotArchivePackage},
     archive_format::*,
     kind::{SnapshotArchiveKind, SnapshotKind},
     snapshot_interval::SnapshotInterval,

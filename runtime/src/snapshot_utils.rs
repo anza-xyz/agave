@@ -26,8 +26,8 @@ use {
             SnapshotArchiveInfoGetter,
         },
         snapshot_config::SnapshotConfig,
-        streaming_unarchive_snapshot, ArchiveFormat, Result, SnapshotArchiveKind, SnapshotKind,
-        SnapshotVersion,
+        streaming_unarchive_snapshot, ArchiveFormat, Result, SnapshotArchiveKind,
+        SnapshotArchivePackage, SnapshotKind, SnapshotVersion,
     },
     crossbeam_channel::{Receiver, Sender},
     log::*,
@@ -480,11 +480,16 @@ pub fn serialize_and_archive_snapshot_package(
 
     let SnapshotKind::Archive(snapshot_archive_kind) = snapshot_kind;
 
-    let snapshot_archive_path = match snapshot_archive_kind {
+    let snapshot_archive_package = SnapshotArchivePackage {
+        snapshot_archive_kind,
+        hash: snapshot_hash,
+    };
+
+    let snapshot_archive_path = match snapshot_archive_package.snapshot_archive_kind {
         SnapshotArchiveKind::Full => snapshot_paths::build_full_snapshot_archive_path(
             &snapshot_config.full_snapshot_archives_dir,
-            snapshot_package.slot,
-            &snapshot_package.hash,
+            snapshot_slot,
+            &snapshot_archive_package.hash,
             snapshot_config.archive_format,
         ),
         SnapshotArchiveKind::Incremental(incremental_snapshot_base_slot) => {
@@ -494,17 +499,16 @@ pub fn serialize_and_archive_snapshot_package(
             snapshot_paths::build_incremental_snapshot_archive_path(
                 &snapshot_config.incremental_snapshot_archives_dir,
                 incremental_snapshot_base_slot,
-                snapshot_package.slot,
-                &snapshot_package.hash,
+                snapshot_slot,
+                &snapshot_archive_package.hash,
                 snapshot_config.archive_format,
             )
         }
     };
 
     let snapshot_archive_info = archive_snapshot(
-        snapshot_archive_kind,
+        snapshot_archive_package,
         snapshot_slot,
-        snapshot_hash,
         snapshot_storages.as_slice(),
         &bank_snapshot_info.snapshot_dir,
         snapshot_archive_path,

@@ -19,11 +19,16 @@ use {
 // and towards the end of archive (sizes equalize) writes are >256KiB / file.
 const INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO: (usize, usize) = (4, 1);
 
-/// Archives a snapshot into `archive_path`
+/// Package created from a snapshot request to archive the snapshot
+pub struct SnapshotArchivePackage {
+    pub snapshot_archive_kind: SnapshotArchiveKind,
+    pub hash: SnapshotHash,
+}
+
+/// Archives an archive package into `archive_path`
 pub fn archive_snapshot(
-    snapshot_archive_kind: SnapshotArchiveKind,
+    snapshot_archive_package: SnapshotArchivePackage,
     snapshot_slot: Slot,
-    snapshot_hash: SnapshotHash,
     snapshot_storages: &[Arc<AccountStorageEntry>],
     bank_snapshot_dir: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
@@ -31,6 +36,12 @@ pub fn archive_snapshot(
 ) -> Result<SnapshotArchiveInfo> {
     use ArchiveSnapshotPackageError as E;
     const ACCOUNTS_DIR: &str = "accounts";
+
+    let SnapshotArchivePackage {
+        snapshot_archive_kind,
+        hash: snapshot_hash,
+    } = snapshot_archive_package;
+
     info!("Generating snapshot archive for slot {snapshot_slot}, kind: {snapshot_archive_kind:?}");
 
     let mut timer = Measure::start("snapshot_package-package_snapshots");
