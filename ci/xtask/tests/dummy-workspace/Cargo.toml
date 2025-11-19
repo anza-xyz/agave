@@ -1,0 +1,12 @@
+[workspace]
+members = ["a", "b"]
+
+exclude = ["sub", "d"]
+
+[workspace.package]
+version = "1.2.3"
+edition = "2021"
+
+[workspace.dependencies]
+a = { path = "a", version = "=1.2.3" }
+b = { path = "b", version = "=1.2.3" }
