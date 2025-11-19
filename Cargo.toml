@@ -458,8 +458,10 @@ solana-fee = { path = "fee", version = "=4.0.0-alpha.0", features = ["agave-unst
 solana-fee-calculator = "3.0.0"
 solana-fee-structure = "3.0.0"
 solana-file-download = "3.1.0"
-solana-frozen-abi = "3.0.1"
-solana-frozen-abi-macro = "3.0.1"
+
+solana-frozen-abi = { path = "../solana-sdk/frozen-abi", features = ["frozen-abi"] }
+solana-frozen-abi-macro = { path = "../solana-sdk/frozen-abi-macro", features = ["frozen-abi"] }
+
 solana-genesis = { path = "genesis", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-genesis-config = "3.0.0"
 solana-genesis-utils = { path = "genesis-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }

@@ -247,12 +247,28 @@ impl CompressedSlots {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+use rand::{distributions::Standard, prelude::Distribution, Rng};
+
+#[cfg_attr(
+    feature = "frozen-abi",
+    frozen_abi(abi_digest = "EUSmnof24f7q8258wPBLiW7VAdtZXfRa1mN8j6aVwDAB",),
+    derive(StableAbi)
+)]
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
 pub struct EpochSlots {
     pub from: Pubkey,
     pub slots: Vec<CompressedSlots>,
     pub wallclock: u64,
+}
+
+impl Distribution<EpochSlots> for Standard {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> EpochSlots {
+        EpochSlots {
+            from: Pubkey::new_from_array(rng.gen()),
+            slots: vec![CompressedSlots::new(rng.gen_range(0..1000))],
+            wallclock: rng.gen(),
+        }
+    }
 }
 
 impl Sanitize for EpochSlots {
