@@ -1,5 +1,8 @@
 #[cfg(feature = "dev-context-only-utils")]
-use solana_hash::Hash;
+use {
+    crate::bank::{BankFieldsToSerialize, BankHashStats},
+    solana_hash::Hash,
+};
 use {
     crate::{
         bank::{Bank, BankSlotDelta},
@@ -77,8 +80,8 @@ impl SnapshotPackage {
 
         Self {
             snapshot_kind,
-            block_height: bank.block_height(),
             slot,
+            block_height: bank.block_height(),
             bank_snapshot_package,
             snapshot_archive_package,
             snapshot_storages,
@@ -87,8 +90,6 @@ impl SnapshotPackage {
     }
 }
 
-#[cfg(feature = "dev-context-only-utils")]
-use crate::bank::{BankFieldsToSerialize, BankHashStats};
 #[cfg(feature = "dev-context-only-utils")]
 impl SnapshotPackage {
     /// Create a new SnapshotPackage where basically every field is defaulted.
