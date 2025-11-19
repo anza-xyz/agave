@@ -1,0 +1,14 @@
+[package]
+name = "sub"
+version = { workspace = true }
+edition = { workspace = true }
+
+[workspace]
+members = ["c"]
+
+[workspace.package]
+version = "1.2.3"
+edition = "2021"
+
+[workspace.dependencies]
+c = { path = "c", version = "=1.2.3" }
