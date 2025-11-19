@@ -1,7 +1,6 @@
 use {
     clap::{builder::ValueParser, crate_description, crate_name, ArgAction, ColorChoice, Parser},
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
-    solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_streamer::quic::{
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STAKED_CONNECTIONS,
         DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
@@ -24,8 +23,6 @@ fn parse_port_range(port_range: &str) -> Result<(u16, u16), String> {
                 start,
                 start.saturating_add(MINIMUM_VALIDATOR_PORT_RANGE_WIDTH)
             ))
-        } else if end.checked_add(QUIC_PORT_OFFSET).is_none() {
-            Err("Invalid dynamic_port_range.".to_string())
         } else {
             Ok((start, end))
         }

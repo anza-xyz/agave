@@ -9,7 +9,7 @@
 //! - datapoint_info!
 //! - datapoint_debug!
 //!
-//! The matric macro consists of the following three main parts:
+//! The metric macro consists of the following three main parts:
 //!  - name: the name of the metric.
 //!
 //!  - tags (optional): when a metric sample is reported with tags, you can use
@@ -20,7 +20,7 @@
 //!
 //!  - fields (optional): fields are the main content of a metric sample. The
 //!    macro supports four different types of fields: bool, i64, f64, and String.
-//!    Here're their syntax:
+//!    Here is their syntax:
 //!
 //!    - ("field-name", "field-value", bool)
 //!    - ("field-name", "field-value", i64)

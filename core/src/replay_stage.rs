@@ -37,7 +37,6 @@ use {
     rayon::{prelude::*, ThreadPool},
     solana_accounts_db::contains::Contains,
     solana_clock::{BankId, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
-    solana_entry::entry::VerifyRecyclers,
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
@@ -135,9 +134,9 @@ enum ForkReplayMode {
 
 enum GenerateVoteTxResult {
     // non voting validator, not eligible for refresh
-    // until authorized keypair is overriden
+    // until authorized keypair is overridden
     NonVoting,
-    // hot spare validator, not eligble for refresh
+    // hot spare validator, not eligible for refresh
     // until set identity is invoked
     HotSpare,
     // failed generation, eligible for refresh
@@ -157,12 +156,12 @@ impl GenerateVoteTxResult {
 
 // Implement a destructor for the ReplayStage thread to signal it exited
 // even on panics
-struct Finalizer {
+pub(crate) struct Finalizer {
     exit_sender: Arc<AtomicBool>,
 }
 
 impl Finalizer {
-    fn new(exit_sender: Arc<AtomicBool>) -> Self {
+    pub(crate) fn new(exit_sender: Arc<AtomicBool>) -> Self {
         Finalizer { exit_sender }
     }
 }
@@ -650,7 +649,6 @@ impl ReplayStage {
             rpc_subscriptions.clone(),
         );
         let run_replay = move || {
-            let verify_recyclers = VerifyRecyclers::default();
             let _exit = Finalizer::new(exit.clone());
 
             let mut identity_keypair = cluster_info.keypair();
@@ -789,7 +787,6 @@ impl ReplayStage {
                     &mut progress,
                     transaction_status_sender.as_ref(),
                     entry_notification_sender.as_ref(),
-                    &verify_recyclers,
                     &replay_vote_sender,
                     &bank_notification_sender,
                     rpc_subscriptions.as_deref(),
@@ -2053,7 +2050,7 @@ impl ReplayStage {
         current_leader: &mut Option<Pubkey>,
         new_leader: &Pubkey,
     ) {
-        if let Some(ref current_leader) = current_leader {
+        if let Some(current_leader) = current_leader.as_ref() {
             if current_leader != new_leader {
                 let msg = if current_leader == my_pubkey {
                     ". I am no longer the leader"
@@ -2301,7 +2298,6 @@ impl ReplayStage {
         transaction_status_sender: Option<&TransactionStatusSender>,
         entry_notification_sender: Option<&EntryNotifierSender>,
         replay_vote_sender: &ReplayVoteSender,
-        verify_recyclers: &VerifyRecyclers,
         log_messages_bytes_limit: Option<usize>,
         prioritization_fee_cache: &PrioritizationFeeCache,
     ) -> result::Result<usize, BlockstoreProcessorError> {
@@ -2321,7 +2317,6 @@ impl ReplayStage {
             transaction_status_sender,
             entry_notification_sender,
             Some(replay_vote_sender),
-            verify_recyclers,
             false,
             log_messages_bytes_limit,
             prioritization_fee_cache,
@@ -2740,7 +2735,7 @@ impl ReplayStage {
             // On the fly adjustments via the cli will be picked up for the next vote.
             BlockhashStatus::NonVoting | BlockhashStatus::HotSpare => return false,
             // In this case we have not voted since restart, our setup is unclear.
-            // We have a vote from our previous restart that is eligble for refresh, we must refresh.
+            // We have a vote from our previous restart that is eligible for refresh, we must refresh.
             BlockhashStatus::Uninitialized => None,
             BlockhashStatus::Blockhash(blockhash) => Some(blockhash),
         };
@@ -2951,7 +2946,6 @@ impl ReplayStage {
         progress: &mut ProgressMap,
         transaction_status_sender: Option<&TransactionStatusSender>,
         entry_notification_sender: Option<&EntryNotifierSender>,
-        verify_recyclers: &VerifyRecyclers,
         replay_vote_sender: &ReplayVoteSender,
         replay_timing: &mut ReplayLoopTiming,
         log_messages_bytes_limit: Option<usize>,
@@ -3036,7 +3030,6 @@ impl ReplayStage {
                             transaction_status_sender,
                             entry_notification_sender,
                             &replay_vote_sender.clone(),
-                            &verify_recyclers.clone(),
                             log_messages_bytes_limit,
                             prioritization_fee_cache,
                         );
@@ -3066,7 +3059,6 @@ impl ReplayStage {
         progress: &mut ProgressMap,
         transaction_status_sender: Option<&TransactionStatusSender>,
         entry_notification_sender: Option<&EntryNotifierSender>,
-        verify_recyclers: &VerifyRecyclers,
         replay_vote_sender: &ReplayVoteSender,
         replay_timing: &mut ReplayLoopTiming,
         log_messages_bytes_limit: Option<usize>,
@@ -3125,7 +3117,6 @@ impl ReplayStage {
                     transaction_status_sender,
                     entry_notification_sender,
                     &replay_vote_sender.clone(),
-                    &verify_recyclers.clone(),
                     log_messages_bytes_limit,
                     prioritization_fee_cache,
                 );
@@ -3480,7 +3471,6 @@ impl ReplayStage {
         progress: &mut ProgressMap,
         transaction_status_sender: Option<&TransactionStatusSender>,
         entry_notification_sender: Option<&EntryNotifierSender>,
-        verify_recyclers: &VerifyRecyclers,
         replay_vote_sender: &ReplayVoteSender,
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
         rpc_subscriptions: Option<&RpcSubscriptions>,
@@ -3522,7 +3512,6 @@ impl ReplayStage {
                     progress,
                     transaction_status_sender,
                     entry_notification_sender,
-                    verify_recyclers,
                     replay_vote_sender,
                     replay_timing,
                     log_messages_bytes_limit,
@@ -3542,7 +3531,6 @@ impl ReplayStage {
                         progress,
                         transaction_status_sender,
                         entry_notification_sender,
-                        verify_recyclers,
                         replay_vote_sender,
                         replay_timing,
                         log_messages_bytes_limit,
@@ -4342,7 +4330,7 @@ impl ReplayStage {
             generate_new_bank_forks_write_lock.as_us();
     }
 
-    fn new_bank_from_parent_with_notify(
+    pub(crate) fn new_bank_from_parent_with_notify(
         parent: Arc<Bank>,
         slot: u64,
         root_slot: u64,
@@ -4465,6 +4453,7 @@ pub(crate) mod tests {
             get_tmp_ledger_path, get_tmp_ledger_path_auto_delete,
             shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         },
+        solana_net_utils::SocketAddrSpace,
         solana_poh::poh_recorder::create_test_recorder,
         solana_poh_config::PohConfig,
         solana_rpc::{
@@ -4477,7 +4466,6 @@ pub(crate) mod tests {
             genesis_utils::{GenesisConfigInfo, ValidatorVoteKeypairs},
         },
         solana_sha256_hasher::hash,
-        solana_streamer::socket::SocketAddrSpace,
         solana_system_transaction as system_transaction,
         solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
         solana_transaction_error::TransactionError,
@@ -5195,7 +5183,6 @@ pub(crate) mod tests {
                 None,
                 None,
                 &replay_vote_sender,
-                &VerifyRecyclers::default(),
                 None,
                 &PrioritizationFeeCache::new(0u64),
             );
@@ -7236,7 +7223,7 @@ pub(crate) mod tests {
             ..
         } = replay_blockstore_components(Some(forks), 1, None);
 
-        let VoteSimulator {
+        let &mut VoteSimulator {
             ref mut progress,
             ref bank_forks,
             ..
@@ -7330,7 +7317,7 @@ pub(crate) mod tests {
             ..
         } = replay_components;
 
-        let VoteSimulator {
+        let &mut VoteSimulator {
             ref mut progress,
             ref bank_forks,
             ref mut tbft_structs,
@@ -8083,7 +8070,7 @@ pub(crate) mod tests {
 
         // Trying to refresh the vote on a sibling bank where:
         // 1) The vote for slot 1 hasn't landed
-        // 2) The blockheight is still eligble for a refresh
+        // 2) The blockheight is still eligible for a refresh
         // This will still not refresh because `MAX_VOTE_REFRESH_INTERVAL_MILLIS` has not expired yet
         let expired_bank_sibling = {
             let mut parent_bank = bank2.clone();
@@ -8824,7 +8811,7 @@ pub(crate) mod tests {
             ..
         } = replay_blockstore_components(Some(forks), 1, None);
 
-        let VoteSimulator {
+        let &mut VoteSimulator {
             ref mut progress,
             ref bank_forks,
             ..
@@ -9309,13 +9296,12 @@ pub(crate) mod tests {
             last_hash =
                 fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, i + 1, i, last_hash);
         }
-        // Artifically root 3 and 4
+        // Artificially root 3 and 4
         blockstore.set_roots([3, 4].iter()).unwrap();
 
         // Set up bank0
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let bank0 = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
-        let recyclers = VerifyRecyclers::default();
         let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
             .num_threads(1)
             .thread_name(|i| format!("solReplayTx{i:02}"))
@@ -9328,7 +9314,6 @@ pub(crate) mod tests {
             &replay_tx_thread_pool,
             &ProcessOptions::default(),
             None,
-            &recyclers,
             None,
         )
         .unwrap();
@@ -9349,7 +9334,6 @@ pub(crate) mod tests {
             &bank1,
             &replay_tx_thread_pool,
             &ProcessOptions::default(),
-            &recyclers,
             &mut ConfirmationProgress::new(bank0.last_blockhash()),
             None,
             None,
@@ -9570,7 +9554,7 @@ pub(crate) mod tests {
 
         assert!(!duplicate_confirmed_slots.contains_key(&0));
 
-        // Mark 5 as duplicate confirmed, should suceed
+        // Mark 5 as duplicate confirmed, should succeed
         let bank_hash_5 = bank_forks.read().unwrap().bank_hash(5).unwrap();
         let confirmed_slots = [(5, bank_hash_5)];
 
@@ -9709,7 +9693,7 @@ pub(crate) mod tests {
             .is_duplicate_confirmed(&(5, bank_hash_5))
             .unwrap_or(false));
 
-        // Mark 5 and 6 as duplicate confirmed, should suceed
+        // Mark 5 and 6 as duplicate confirmed, should succeed
         let bank_hash_6 = bank_forks.read().unwrap().bank_hash(6).unwrap();
         if same_batch {
             sender

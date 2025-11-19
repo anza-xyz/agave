@@ -88,7 +88,7 @@ pub fn transaction_error_to_not_included_reason(error: &TransactionError) -> u8 
             not_included_reasons::PROGRAM_CACHE_HIT_MAX_LIMIT
         }
 
-        // SPECIAL CASE - CommitCancelled is an internal error re-used to avoid breaking sdk
+        // SPECIAL CASE - CommitCancelled is an internal error reused to avoid breaking sdk
         TransactionError::CommitCancelled => not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
     }
 }

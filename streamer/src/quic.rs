@@ -40,11 +40,11 @@ use {
 pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER: usize = 8;
 
 // allow multiple connections per ID for geo-distributed forwarders
-pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER: usize = 8;
+pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER: usize = 16;
 
 pub const DEFAULT_MAX_STAKED_CONNECTIONS: usize = 2000;
 
-pub const DEFAULT_MAX_UNSTAKED_CONNECTIONS: usize = 500;
+pub const DEFAULT_MAX_UNSTAKED_CONNECTIONS: usize = 4000;
 
 /// Limit to 500K PPS
 pub const DEFAULT_MAX_STREAMS_PER_MS: u64 = 500;
@@ -560,10 +560,6 @@ impl StreamerStats {
 
 #[derive(Clone)]
 pub struct QuicStreamerConfig {
-    pub max_connections_per_unstaked_peer: usize,
-    pub max_connections_per_staked_peer: usize,
-    pub max_staked_connections: usize,
-    pub max_unstaked_connections: usize,
     pub max_connections_per_ipaddr_per_min: u64,
     pub wait_for_chunk_timeout: Duration,
     pub num_threads: NonZeroUsize,
@@ -584,10 +580,6 @@ pub struct SimpleQosQuicStreamerConfig {
 impl Default for QuicStreamerConfig {
     fn default() -> Self {
         Self {
-            max_connections_per_unstaked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_UNSTAKED_PEER,
-            max_connections_per_staked_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
-            max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS,
-            max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
@@ -602,16 +594,9 @@ impl QuicStreamerConfig {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn default_for_tests() -> Self {
         Self {
-            max_connections_per_unstaked_peer: 1,
-            max_connections_per_staked_peer: 1,
             num_threads: Self::DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
             ..Self::default()
         }
-    }
-
-    pub(crate) fn max_concurrent_connections(&self) -> usize {
-        let conns = self.max_staked_connections + self.max_unstaked_connections;
-        conns + conns / 4
     }
 }
 
@@ -680,10 +665,6 @@ pub fn spawn_stake_wighted_qos_server(
     let stats = Arc::<StreamerStats>::default();
     let swqos = Arc::new(SwQos::new(
         qos_config,
-        quic_server_params.max_staked_connections,
-        quic_server_params.max_unstaked_connections,
-        quic_server_params.max_connections_per_unstaked_peer,
-        quic_server_params.max_connections_per_unstaked_peer,
         stats.clone(),
         staked_nodes,
         cancel.clone(),
@@ -714,11 +695,8 @@ pub fn spawn_simple_qos_server(
     cancel: CancellationToken,
 ) -> Result<SpawnServerResult, QuicServerError> {
     let stats = Arc::<StreamerStats>::default();
-
     let simple_qos = Arc::new(SimpleQos::new(
         qos_config,
-        quic_server_params.max_connections_per_unstaked_peer,
-        quic_server_params.max_staked_connections,
         stats.clone(),
         staked_nodes,
         cancel.clone(),
@@ -741,12 +719,16 @@ pub fn spawn_simple_qos_server(
 mod test {
     use {
         super::*,
-        crate::nonblocking::{quic::test::*, testing_utilities::check_multiple_streams},
-        crossbeam_channel::unbounded,
+        crate::nonblocking::{
+            quic::test::*,
+            testing_utilities::{check_multiple_streams, make_client_endpoint},
+        },
+        crossbeam_channel::{unbounded, Receiver},
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_pubkey::Pubkey,
         solana_signer::Signer,
-        std::{collections::HashMap, net::SocketAddr},
+        std::{collections::HashMap, net::SocketAddr, time::Instant},
+        tokio::time::sleep,
     };
 
     fn rt_for_test() -> Runtime {
@@ -815,7 +797,7 @@ mod test {
             sender,
             staked_nodes,
             server_params,
-            SwQosConfig::default(),
+            SwQosConfig::default_for_tests(),
             cancel.clone(),
         )
         .unwrap();
@@ -871,10 +853,12 @@ mod test {
             sender,
             staked_nodes,
             QuicStreamerConfig {
-                max_connections_per_unstaked_peer: 2,
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig::default(),
+            SwQosConfig {
+                max_connections_per_unstaked_peer: 2,
+                ..Default::default()
+            },
             cancel.clone(),
         )
         .unwrap();
@@ -898,9 +882,8 @@ mod test {
 
     #[test]
     fn test_quic_server_multiple_packets_with_simple_qos() {
-        // Send multiple writes from a staked node with SimpleStreamsPerSecond QoS mode
-        // with a super low staked client stake to ensure it can send all packets
-        // within the rate limit.
+        // Send multiple writes from a staked node with simple QoS mode
+        // and verify pubkey is sent along with packets.
         agave_logger::setup();
         let client_keypair = Keypair::new();
         let rich_node_keypair = Keypair::new();
@@ -914,12 +897,11 @@ mod test {
             HashMap::<Pubkey, u64>::default(), // overrides
         );
 
-        let server_params = QuicStreamerConfig {
-            max_unstaked_connections: 0,
-            ..QuicStreamerConfig::default_for_tests()
-        };
+        let server_params = QuicStreamerConfig::default_for_tests();
         let qos_config = SimpleQosConfig {
-            max_streams_per_second: 20, // low limit to ensure staked node can send all packets
+            max_connections_per_peer: 2,
+            max_streams_per_second: 20,
+            ..Default::default()
         };
         let server_params = SimpleQosQuicStreamerConfig {
             quic_streamer_config: server_params,
@@ -931,10 +913,11 @@ mod test {
         let runtime = rt_for_test();
         let num_expected_packets = 20;
 
-        runtime.block_on(check_multiple_packets(
+        runtime.block_on(check_multiple_packets_with_client_id(
             receiver,
             server_address,
             Some(&client_keypair),
+            Some(&rich_node_keypair),
             num_expected_packets,
         ));
         cancel.cancel();
@@ -962,10 +945,12 @@ mod test {
             sender,
             staked_nodes,
             QuicStreamerConfig {
-                max_unstaked_connections: 0,
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig::default(),
+            SwQosConfig {
+                max_unstaked_connections: 0,
+                ..Default::default()
+            },
             cancel.clone(),
         )
         .unwrap();
@@ -974,5 +959,112 @@ mod test {
         runtime.block_on(check_unstaked_node_connect_failure(server_address));
         cancel.cancel();
         t.join().unwrap();
+    }
+
+    async fn check_multiple_packets_with_client_id(
+        receiver: Receiver<PacketBatch>,
+        server_address: SocketAddr,
+        client_keypair1: Option<&Keypair>,
+        client_keypair2: Option<&Keypair>,
+        num_expected_packets: usize,
+    ) {
+        let conn1 = Arc::new(make_client_endpoint(&server_address, client_keypair1).await);
+        let conn2 = Arc::new(make_client_endpoint(&server_address, client_keypair2).await);
+
+        debug!(
+            "Connections established: {} and {}",
+            conn1.remote_address(),
+            conn2.remote_address(),
+        );
+
+        let expected_client_pubkey_1 = client_keypair1.map(|kp| kp.pubkey());
+        let expected_client_pubkey_2 = client_keypair2.map(|kp| kp.pubkey());
+
+        let mut num_packets_sent = 0;
+        for i in 0..num_expected_packets {
+            debug!("Sending stream pair {i}");
+            let c1 = conn1.clone();
+            let c2 = conn2.clone();
+
+            let mut s1 = c1.open_uni().await.unwrap();
+            let mut s2 = c2.open_uni().await.unwrap();
+
+            s1.write_all(&[0u8]).await.unwrap();
+            s1.finish().unwrap();
+            debug!("Stream {i}.1 sent and finished");
+
+            if i < num_expected_packets - 1 {
+                s2.write_all(&[1u8]).await.unwrap();
+                s2.finish().unwrap();
+                debug!("Stream {i}.2 sent and finished");
+                num_packets_sent += 2;
+            } else {
+                num_packets_sent += 1;
+            }
+        }
+
+        debug!("All streams sent, expecting {num_packets_sent} packets with client ID");
+
+        let now = Instant::now();
+        let mut total_packets = 0;
+        let mut iterations = 0;
+
+        while now.elapsed().as_secs() < 2 {
+            iterations += 1;
+            match receiver.try_recv() {
+                Ok(packet_batch) => {
+                    debug!("Received packet batch (iteration {iterations})");
+
+                    // Verify we get the client pubkey
+                    match &packet_batch {
+                        PacketBatch::Bytes(_) => {
+                            panic!("Expected PacketBatch::Simple but got PacketBatch::Bytes");
+                        }
+                        PacketBatch::Pinned(_) => {
+                            panic!("Expected PacketBatch::Simple but got PacketBatch::Pinned");
+                        }
+                        PacketBatch::Single(packet) => {
+                            if *packet.data(0).unwrap() == 0u8 {
+                                debug!("Packet from stream with client 1");
+                                assert_eq!(packet.meta().remote_pubkey(), expected_client_pubkey_1);
+                            } else if *packet.data(0).unwrap() == 1u8 {
+                                debug!("Packet from stream with client 2");
+                                assert_eq!(packet.meta().remote_pubkey(), expected_client_pubkey_2);
+                            } else {
+                                panic!("Unexpected data in packet: {:?}", packet.data(0));
+                            }
+                            total_packets += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    if iterations % 10 == 0 {
+                        debug!("No packets yet (iteration {iterations}): {e:?}");
+                    }
+                    sleep(Duration::from_millis(100)).await;
+                }
+            }
+
+            if total_packets >= num_packets_sent {
+                debug!("Received all expected packets with client ID!");
+                break;
+            }
+
+            if iterations % 50 == 0 {
+                debug!(
+                    "Still waiting... received {total_packets}/{num_packets_sent} packets after \
+                     {iterations} iterations",
+                );
+            }
+        }
+
+        debug!(
+            "Final: received {total_packets}/{num_packets_sent} packets in {iterations} iterations",
+        );
+
+        assert!(
+            total_packets >= num_packets_sent,
+            "Expected at least {num_packets_sent} packets with client ID, got {total_packets}",
+        );
     }
 }

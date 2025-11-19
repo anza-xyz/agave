@@ -63,7 +63,7 @@ use {
     agave_fs::buffered_reader::RequiredLenBufFileRead,
     dashmap::{DashMap, DashSet},
     log::*,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     rayon::{prelude::*, ThreadPool},
     seqlock::SeqLock,
     smallvec::SmallVec,
@@ -2593,8 +2593,8 @@ impl AccountsDb {
     /// pubkeys_removed_from_accounts_index - These keys have already been removed from the accounts index
     ///    and should not be unref'd. If they exist in the accounts index, they are NEW.
     /// clean_stored_dead_slots - clean_stored_dead_slots iterates through all the pubkeys in the dead
-    ///    slots and unrefs them in the acocunts index if they are not present in
-    ///    pubkeys_removed_from_accounts_index. Skipping clean is the equivilent to
+    ///    slots and unrefs them in the accounts index if they are not present in
+    ///    pubkeys_removed_from_accounts_index. Skipping clean is the equivalent to
     ///    pubkeys_removed_from_accounts_index containing all the pubkeys in the dead slots
     fn process_dead_slots(
         &self,
@@ -4361,7 +4361,7 @@ impl AccountsDb {
         self.stats
             .create_store_count
             .fetch_add(1, Ordering::Relaxed);
-        let path_index = thread_rng().gen_range(0..paths.len());
+        let path_index = rng().random_range(0..paths.len());
         let store = Arc::new(self.new_storage_entry(slot, Path::new(&paths[path_index]), size));
 
         debug!(
@@ -6839,7 +6839,7 @@ impl AccountsDb {
 
         // Now that the index is generated, get the total capacity of the in-mem maps
         // across all the bins and set the initial value for the stat.
-        // We do this all at once, at the end, since getting the capacity requries iterating all
+        // We do this all at once, at the end, since getting the capacity requires iterating all
         // the bins and grabbing a read lock, which we try to avoid whenever possible.
         let index_capacity = self
             .accounts_index
@@ -7281,7 +7281,7 @@ impl AccountsDb {
     pub fn check_accounts(&self, pubkeys: &[Pubkey], slot: Slot, num: usize, count: usize) {
         let ancestors = vec![(slot, 0)].into_iter().collect();
         for _ in 0..num {
-            let idx = thread_rng().gen_range(0..num);
+            let idx = rng().random_range(0..num);
             let account = self.load_without_fixed_root(&ancestors, &pubkeys[idx]);
             let account1 = Some((
                 AccountSharedData::new(
@@ -7292,24 +7292,6 @@ impl AccountsDb {
                 slot,
             ));
             assert_eq!(account, account1);
-        }
-    }
-
-    /// Iterate over all accounts from all `storages` and call `callback` with each account.
-    ///
-    /// `callback` parameters:
-    /// * Offset: the offset within the file of this account
-    /// * StoredAccountInfo: the account itself, with account data
-    pub fn scan_accounts_from_storages(
-        storages: &[Arc<AccountStorageEntry>],
-        mut callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
-    ) {
-        let mut reader = append_vec::new_scan_accounts_reader();
-        for storage in storages {
-            storage
-                .accounts
-                .scan_accounts(&mut reader, &mut callback)
-                .expect("must scan accounts storage");
         }
     }
 
@@ -7419,9 +7401,5 @@ impl AccountsDb {
         } else {
             0
         }
-    }
-
-    pub fn uncleaned_pubkeys(&self) -> &DashMap<Slot, Vec<Pubkey>, BuildNoHashHasher<Slot>> {
-        &self.uncleaned_pubkeys
     }
 }

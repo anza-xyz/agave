@@ -1903,7 +1903,7 @@ fn main() {
 
                     if let Some(mut slot_recorder_config) = slot_recorder_config {
                         // Drop transaction_status_sender to break transaction_recorder
-                        // out of its' recieve loop
+                        // out of its' receive loop
                         let transaction_status_sender =
                             slot_recorder_config.transaction_status_sender.take();
                         drop(transaction_status_sender);
@@ -2571,8 +2571,8 @@ fn main() {
                     };
                     process_options.halt_at_slot = Some(parent_slot);
 
-                    // PrimaryForMaintenance needed over Secondary to purge any
-                    // existing simulated shreds from previous runs
+                    // PrimaryForMaintenance needed to purge (write) any existing simulated shreds
+                    // from previous runs
                     let blockstore = Arc::new(open_blockstore(
                         &ledger_path,
                         arg_matches,
@@ -3165,7 +3165,7 @@ fn main() {
                 }
                 ("compute-slot-cost", Some(arg_matches)) => {
                     let blockstore =
-                        open_blockstore(&ledger_path, arg_matches, AccessType::Secondary);
+                        open_blockstore(&ledger_path, arg_matches, AccessType::ReadOnly);
 
                     let mut slots: Vec<u64> = vec![];
                     if !arg_matches.is_present("slots") {

@@ -34,7 +34,7 @@ use {
     dyn_clone::{clone_trait_object, DynClone},
     log::*,
     scopeguard::defer,
-    solana_clock::Slot,
+    solana_clock::{Epoch, Slot},
     solana_cost_model::cost_model::CostModel,
     solana_ledger::blockstore_processor::{
         execute_batch, TransactionBatchWithIndexes, TransactionStatusSender,
@@ -326,13 +326,13 @@ clone_trait_object!(BankingPacketHandler);
 /// This block-production struct is expected to be shared across the scheduler thread and its
 /// handler threads because all of them needs to handle task creation unlike block verification.
 ///
-/// Particularly, usage_queue_loader is desired to be shared across hanlders so that task creation
+/// Particularly, usage_queue_loader is desired to be shared across handlers so that task creation
 /// can be processed in the multi-threaded way. For more details, see
 /// solana_core::banking_stage::unified_scheduler module doc.
 #[derive(Debug)]
 pub struct BankingStageHelper {
     usage_queue_loader: UsageQueueLoaderInner,
-    // Supplemental identification for tasks of identical priority, alloted according to FIFO of
+    // Supplemental identification for tasks of identical priority, allotted according to FIFO of
     // batch granularity, resulting in the total order over the set of available tasks,
     // collectively.
     next_task_id: AtomicUsize,
@@ -345,7 +345,7 @@ pub struct BankingStageHelper {
 // Note that this concern is of theoretical matter. As such, we introduce rather a naive limit with
 // great safety margin, considering relatively frequent check interval (a single session, usually a
 // slot). Regardless the aforementioned interval precondition, it's exceedingly hard to conceive
-// task id is alloted more than half of usize. That's because we'd still need to be running for
+// task id is allotted more than half of usize. That's because we'd still need to be running for
 // almost 300 years continuously to index BANKING_STAGE_MAX_TASK_ID txs at the rate of
 // 1_000_000_000/secs ingestion.
 // For the completeness of discussion, the existence of this check will alleviate the concern of
@@ -387,11 +387,15 @@ impl BankingStageHelper {
         transaction: RuntimeTransaction<SanitizedTransaction>,
         task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
+        sanitized_epoch: Epoch,
+        alt_invalidation_slot: Slot,
     ) -> Task {
         SchedulingStateMachine::create_block_production_task(
             transaction,
             task_id,
             consumed_block_size,
+            sanitized_epoch,
+            alt_invalidation_slot,
             &mut |pubkey| self.usage_queue_loader.load(pubkey),
         )
     }
@@ -399,8 +403,16 @@ impl BankingStageHelper {
     fn recreate_task(&self, executed_task: Box<ExecutedTask>) -> Task {
         let new_task_id = self.regenerated_task_id(executed_task.task.task_id());
         let consumed_block_size = executed_task.consumed_block_size();
+        let sanitized_epoch = executed_task.sanitized_epoch();
+        let alt_invalidation_slot = executed_task.alt_invalidation_slot();
         let transaction = executed_task.into_transaction();
-        self.create_new_task(transaction, new_task_id, consumed_block_size)
+        self.create_new_task(
+            transaction,
+            new_task_id,
+            consumed_block_size,
+            sanitized_epoch,
+            alt_invalidation_slot,
+        )
     }
 
     pub fn send_new_task(&self, task: Task) {
@@ -1045,6 +1057,15 @@ impl TaskHandler for DefaultTaskHandler {
                 bank.prepare_unlocked_batch_from_single_tx(transaction)
             }
             BlockProduction => {
+                if let Err(error) = bank.resanitize_transaction_minimally(
+                    transaction,
+                    task.sanitized_epoch(),
+                    task.alt_invalidation_slot(),
+                ) {
+                    *result = Err(error);
+                    return;
+                }
+
                 // Due to the probable presence of an independent banking thread (like the jito
                 // thread), we are forced to lock the addresses unlike block verification. The
                 // scheduling thread isn't appropriate for these kinds of work; so, instead do that
@@ -1083,7 +1104,7 @@ impl TaskHandler for DefaultTaskHandler {
         };
         let transaction_indexes = match scheduling_context.mode() {
             BlockVerification => {
-                // Blcok verification's task_id should always be within usize.
+                // Block verification's task_id should always be within usize.
                 vec![task_id.try_into().unwrap()]
             }
             BlockProduction => {
@@ -1187,6 +1208,14 @@ impl ExecutedTask {
 
     fn consumed_block_size(&self) -> BlockSize {
         self.task.consumed_block_size()
+    }
+
+    fn sanitized_epoch(&self) -> Epoch {
+        self.task.sanitized_epoch()
+    }
+
+    fn alt_invalidation_slot(&self) -> Slot {
+        self.task.alt_invalidation_slot()
     }
 
     fn into_transaction(self) -> RuntimeTransaction<SanitizedTransaction> {
@@ -1496,7 +1525,7 @@ fn disconnected<T>() -> Receiver<T> {
 /// Timeouts are for rare conditions where there are abandoned-yet-unpruned banks in the
 /// [`BankForks`](solana_runtime::bank_forks::BankForks) under forky (unsteady rooting) cluster
 /// conditions. The pool's background cleaner thread (`solScCleaner`) triggers the timeout-based
-/// out-of-pool (i.e. _taken_) scheduler reclaimation with prior coordination of
+/// out-of-pool (i.e. _taken_) scheduler reclamation with prior coordination of
 /// [`BankForks::insert()`](solana_runtime::bank_forks::BankForks::insert) via
 /// [`InstalledSchedulerPool::register_timeout_listener`].
 ///
@@ -1522,7 +1551,7 @@ fn disconnected<T>() -> Receiver<T> {
 ///         Aborted --> if_usable: Dropped (BankForks-pruning by solReplayStage)
 ///         if_usable --> Pooled: IF !overgrown && !aborted
 ///         Active --> Aborted: Errored on TX execution
-///         Aborted --> Stale: !Droppped after TIMEOUT_DURATION since taken
+///         Aborted --> Stale: !Dropped after TIMEOUT_DURATION since taken
 ///         Active --> Stale: No new TX after TIMEOUT_DURATION since taken
 ///         Stale --> if_usable: Returned (Timeout-triggered by solScCleaner)
 ///         Pooled --> Active: Taken (New bank by solReplayStage)
@@ -2009,7 +2038,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             //
             // That's because it could be the most notable bottleneck of throughput in the future
             // when there are ~100 handler threads. Unified scheduler's overall throughput is
-            // largely dependant on its ultra-low latency characteristic, which is the most
+            // largely dependent on its ultra-low latency characteristic, which is the most
             // important design goal of the scheduler in order to reduce the transaction
             // confirmation latency for end users.
             //
@@ -2502,7 +2531,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
         if nonblocking {
             // Bail out session ending bookkeeping under this special case codepath for block
-            // production. This means skipping the `abort_detected`-dependant thread joining step
+            // production. This means skipping the `abort_detected`-dependent thread joining step
             // as well; Otherwise, we could be dead-locked around poh, because we would technically
             // wait for joining handler threads in _the poh thread_, which holds the poh lock (This
             // `nonblocking` special case is called by the thread).
@@ -2775,7 +2804,9 @@ mod tests {
         solana_system_transaction as system_transaction,
         solana_transaction::sanitized::SanitizedTransaction,
         solana_transaction_error::TransactionError,
-        solana_unified_scheduler_logic::NO_CONSUMED_BLOCK_SIZE,
+        solana_unified_scheduler_logic::{
+            MAX_ALT_INVALIDATION_SLOT, MAX_SANITIZED_EPOCH, NO_CONSUMED_BLOCK_SIZE,
+        },
         std::{
             num::Saturating,
             sync::{Arc, RwLock},
@@ -4654,7 +4685,13 @@ mod tests {
             transaction: RuntimeTransaction<SanitizedTransaction>,
             task_id: OrderedTaskId,
         ) -> Task {
-            self.create_new_task(transaction, task_id, NO_CONSUMED_BLOCK_SIZE)
+            self.create_new_task(
+                transaction,
+                task_id,
+                NO_CONSUMED_BLOCK_SIZE,
+                MAX_SANITIZED_EPOCH,
+                MAX_ALT_INVALIDATION_SLOT,
+            )
         }
     }
 
@@ -5093,7 +5130,7 @@ mod tests {
             Box::new(SimpleBankingMinitor),
         );
 
-        // By now, there shuold be a bufferd transaction. Let's discard it.
+        // By now, there should be a buffered transaction. Let's discard it.
         *START_DISCARD.lock().unwrap() = true;
 
         sleepless_testing::at(TestCheckPoint::AfterDiscarded);

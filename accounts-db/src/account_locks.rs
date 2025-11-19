@@ -43,7 +43,7 @@ impl AccountLocks {
         >,
     ) -> Vec<TransactionResult<()>> {
         validated_batch_keys.iter_mut().for_each(|validated_keys| {
-            if let Ok(ref keys) = validated_keys {
+            if let Ok(keys) = validated_keys.as_ref() {
                 if let Err(e) = self.can_lock_accounts(keys.clone()) {
                     *validated_keys = Err(e);
                 }

@@ -71,6 +71,7 @@ use {
         mem::transmute,
         panic::AssertUnwindSafe,
         path::{Path, PathBuf},
+        ptr,
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc, RwLock,
@@ -113,7 +114,7 @@ fn get_invoke_context<'a, 'b>() -> &'a mut InvokeContext<'b, 'b> {
         Some(val) => val,
         None => panic!("Invoke context not set!"),
     });
-    unsafe { transmute::<usize, &mut InvokeContext>(ptr) }
+    unsafe { &mut *ptr::with_exposed_provenance_mut(ptr) }
 }
 
 pub fn invoke_builtin_function(

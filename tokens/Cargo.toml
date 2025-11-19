@@ -36,6 +36,7 @@ solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-message = { workspace = true }
 solana-native-token = { workspace = true }
+solana-net-utils = { workspace = true }
 solana-program-error = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
@@ -58,6 +59,5 @@ thiserror = { workspace = true }
 agave-logger = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
-solana-streamer = { workspace = true }
 solana-test-validator = { workspace = true }
 solana-transaction-error = { workspace = true }

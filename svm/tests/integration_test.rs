@@ -43,7 +43,10 @@ use {
         },
     },
     solana_svm_feature_set::SVMFeatureSet,
-    solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
+    solana_svm_transaction::{
+        instruction::SVMInstruction,
+        svm_message::{SVMMessage, SVMStaticMessage},
+    },
     solana_svm_type_overrides::sync::{Arc, RwLock},
     solana_system_interface::{instruction as system_instruction, program as system_program},
     solana_system_transaction as system_transaction,
@@ -352,7 +355,7 @@ pub struct SvmTestEntry {
     // enables drop on failure processing (transactions without Ok status have no state effect)
     pub drop_on_failure: bool,
 
-    // enables all or nothing processing (if not all transactions can be commited then none are)
+    // enables all or nothing processing (if not all transactions can be committed then none are)
     pub all_or_nothing: bool,
 
     // programs to deploy to the new svm
@@ -515,7 +518,7 @@ impl SvmTestEntry {
                 let message = SanitizedTransaction::from_transaction_for_tests(item.transaction);
                 let check_result = item.check_result.map(|tx_details| {
                     let compute_budget_limits = process_test_compute_budget_instructions(
-                        SVMMessage::program_instructions_iter(&message),
+                        SVMStaticMessage::program_instructions_iter(&message),
                     );
                     let signature_count = message
                         .num_transaction_signatures()
@@ -1050,7 +1053,7 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
     // there are four cases of fee_paying_nonce and fake_fee_payer:
     // * false/false: normal nonce account with rent minimum, normal fee payer account with 1sol
     // * true/false: normal nonce account used to pay fees with rent minimum plus 1sol
-    // * false/true: normal nonce account with rent minimum, fee payer doesnt exist
+    // * false/true: normal nonce account with rent minimum, fee payer doesn't exist
     // * true/true: same account for both which does not exist
     // we also provide a side door to bring a fee-paying nonce account below rent-exemption
     let mk_nonce_transaction = |test_entry: &mut SvmTestEntry,
@@ -1134,7 +1137,7 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
             .copy_from_slice(nonce_info.account().data());
     }
 
-    // 1: non-executing nonce transaction (fee payer doesnt exist) regardless of features
+    // 1: non-executing nonce transaction (fee payer doesn't exist) regardless of features
     {
         let (transaction, _fee_payer, nonce_info) =
             mk_nonce_transaction(&mut test_entry, real_program_id, true, false);

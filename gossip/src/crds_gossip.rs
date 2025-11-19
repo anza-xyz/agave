@@ -26,9 +26,9 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::Shred,
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_time_utils::timestamp,
     std::{
         collections::{HashMap, HashSet},
@@ -213,7 +213,8 @@ impl CrdsGossip {
         ping_cache: &Mutex<PingCache>,
         pings: &mut Vec<(SocketAddr, Ping)>,
         socket_addr_space: &SocketAddrSpace,
-    ) -> Result<impl Iterator<Item = (SocketAddr, CrdsFilter)> + Clone, CrdsGossipError> {
+    ) -> Result<impl Iterator<Item = (SocketAddr, CrdsFilter)> + Clone + use<>, CrdsGossipError>
+    {
         self.pull.new_pull_request(
             thread_pool,
             &self.crds,

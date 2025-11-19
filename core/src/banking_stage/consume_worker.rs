@@ -756,7 +756,7 @@ pub(crate) mod external {
                 .is_active(&agave_feature_set::static_instruction_limit::ID);
             let mut parsing_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             let mut parsed_transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
-            for tx_ptr in batch.iter() {
+            for (tx_ptr, _) in batch.iter() {
                 // Parsing and basic sanitization checks
                 match SanitizedTransactionView::try_new_sanitized(
                     tx_ptr,
@@ -949,7 +949,7 @@ pub(crate) mod external {
             let mut translation_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             let mut transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             let mut max_ages = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
-            for transaction_ptr in batch.iter() {
+            for (transaction_ptr, _) in batch.iter() {
                 match Self::translate_transaction(
                     transaction_ptr,
                     bank,
@@ -995,16 +995,18 @@ pub(crate) mod external {
         /// - destination is appropriately sized
         /// - destination does not overlap with loaded_addresses allocation
         unsafe fn copy_loaded_addresses(loaded_addresses: &LoadedAddresses, dest: NonNull<Pubkey>) {
-            core::ptr::copy_nonoverlapping(
-                loaded_addresses.writable.as_ptr(),
-                dest.as_ptr(),
-                loaded_addresses.writable.len(),
-            );
-            core::ptr::copy_nonoverlapping(
-                loaded_addresses.readonly.as_ptr(),
-                dest.add(loaded_addresses.writable.len()).as_ptr(),
-                loaded_addresses.readonly.len(),
-            );
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    loaded_addresses.writable.as_ptr(),
+                    dest.as_ptr(),
+                    loaded_addresses.writable.len(),
+                );
+                core::ptr::copy_nonoverlapping(
+                    loaded_addresses.readonly.as_ptr(),
+                    dest.add(loaded_addresses.writable.len()).as_ptr(),
+                    loaded_addresses.readonly.len(),
+                );
+            }
         }
 
         /// Returns `true` if a message is valid and can be processed.
@@ -1499,7 +1501,7 @@ fn active_leader_state_with_timeout(
     // If the initial check above didn't find a bank, we will
     // spin up to some timeout to wait for a bank to execute on.
     // This is conservatively long because transitions between slots
-    // can occassionally be slow.
+    // can occasionally be slow.
     const TIMEOUT: Duration = Duration::from_millis(50);
     let now = Instant::now();
     while now.elapsed() < TIMEOUT {
@@ -1512,7 +1514,7 @@ fn active_leader_state_with_timeout(
     None
 }
 
-/// Returns an active leader state if avaiable, otherwise None.
+/// Returns an active leader state if available, otherwise None.
 fn active_leader_state(
     shared_leader_state: &SharedLeaderState,
 ) -> Option<arc_swap::Guard<Arc<LeaderState>>> {
@@ -2261,8 +2263,8 @@ mod tests {
             mint_keypair,
             genesis_config,
             bank,
-            ref mut record_receiver,
-            ref mut shared_leader_state,
+            record_receiver,
+            shared_leader_state,
             consume_sender,
             consumed_receiver,
             ..
@@ -2315,8 +2317,8 @@ mod tests {
             mint_keypair,
             genesis_config,
             bank,
-            ref mut record_receiver,
-            ref mut shared_leader_state,
+            record_receiver,
+            shared_leader_state,
             consume_sender,
             consumed_receiver,
             ..
@@ -2380,8 +2382,8 @@ mod tests {
             mint_keypair,
             genesis_config,
             bank,
-            ref mut record_receiver,
-            ref mut shared_leader_state,
+            record_receiver,
+            shared_leader_state,
             consume_sender,
             consumed_receiver,
             ..
@@ -2459,8 +2461,8 @@ mod tests {
             mint_keypair,
             genesis_config,
             bank,
-            ref mut record_receiver,
-            ref mut shared_leader_state,
+            record_receiver,
+            shared_leader_state,
             consume_sender,
             consumed_receiver,
             ..

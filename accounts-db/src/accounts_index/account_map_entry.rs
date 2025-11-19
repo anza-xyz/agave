@@ -3,7 +3,7 @@ use {
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         AtomicRefCount, DiskIndexValue, IndexValue, RefCount, SlotList,
     },
-    crate::is_zero_lamport::IsZeroLamport,
+    crate::{account_info::AccountInfo, is_zero_lamport::IsZeroLamport},
     solana_clock::Slot,
     std::{
         fmt::Debug,
@@ -29,6 +29,9 @@ pub struct AccountMapEntry<T> {
     /// synchronization metadata for in-memory state since last flush to disk accounts index
     meta: AccountMapEntryMeta,
 }
+
+// Ensure the size of AccountMapEntry never changes unexpectedly
+const _: () = assert!(size_of::<AccountMapEntry<AccountInfo>>() == 48);
 
 impl<T: IndexValue> AccountMapEntry<T> {
     pub fn new(slot_list: SlotList<T>, ref_count: RefCount, meta: AccountMapEntryMeta) -> Self {

@@ -19,7 +19,7 @@ use {
     },
     iter::{AccountsIndexPubkeyIterOrder, AccountsIndexPubkeyIterator},
     log::*,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     roots_tracker::RootsTracker,
     secondary::{RwLockSecondaryIndexEntry, SecondaryIndex, SecondaryIndexEntry},
@@ -1057,7 +1057,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         pubkeys.into_iter().for_each(|pubkey| {
             let bin = self.bin_calculator.bin_from_pubkey(pubkey);
             if bin != last_bin {
-                // cannot re-use lock since next pubkey is in a different bin than previous one
+                // cannot reuse lock since next pubkey is in a different bin than previous one
                 lock = Some(&self.account_maps[bin]);
                 last_bin = bin;
             }
@@ -1317,7 +1317,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         // This results in calls to insert_new_entry_if_missing_with_lock from different threads starting at different bins to avoid
         // lock contention.
         let bins = self.bins();
-        let random_bin_offset = thread_rng().gen_range(0..bins);
+        let random_bin_offset = rng().random_range(0..bins);
         let bin_calc = self.bin_calculator;
         items.sort_unstable_by(|(pubkey_a, _), (pubkey_b, _)| {
             ((bin_calc.bin_from_pubkey(pubkey_a) + random_bin_offset) % bins)

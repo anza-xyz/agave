@@ -29,7 +29,7 @@ impl Source {
                 let (blockhash, _) = rpc_client.get_latest_blockhash_with_commitment(commitment)?;
                 Ok(blockhash)
             }
-            Self::NonceAccount(ref pubkey) => {
+            Self::NonceAccount(pubkey) => {
                 let data = crate::get_account_with_commitment(rpc_client, pubkey, commitment)
                     .and_then(|ref a| crate::data_from_account(a))?;
                 Ok(data.blockhash())
@@ -45,7 +45,7 @@ impl Source {
     ) -> Result<bool, Box<dyn std::error::Error>> {
         Ok(match self {
             Self::Cluster => rpc_client.is_blockhash_valid(blockhash, commitment)?,
-            Self::NonceAccount(ref pubkey) => {
+            Self::NonceAccount(pubkey) => {
                 let _ = crate::get_account_with_commitment(rpc_client, pubkey, commitment)
                     .and_then(|ref a| crate::data_from_account(a))?;
                 true

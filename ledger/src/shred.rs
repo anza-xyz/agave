@@ -50,10 +50,7 @@
 //! So, given a) - c), we must restrict data shred's payload length such that the entire coding
 //! payload can fit into one coding shred / packet.
 
-pub(crate) use self::{
-    merkle_tree::{PROOF_ENTRIES_FOR_32_32_BATCH, SIZE_OF_MERKLE_ROOT},
-    payload::serde_bytes_payload,
-};
+pub(crate) use self::{merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH, payload::serde_bytes_payload};
 pub use {
     self::{
         payload::Payload,
@@ -661,10 +658,10 @@ impl TryFrom<u8> for ShredVariant {
     }
 }
 
-pub fn recover(
-    shreds: impl IntoIterator<Item = Shred>,
+pub fn recover<T: IntoIterator<Item = Shred>>(
+    shreds: T,
     reed_solomon_cache: &ReedSolomonCache,
-) -> Result<impl Iterator<Item = Result<Shred, Error>>, Error> {
+) -> Result<impl Iterator<Item = Result<Shred, Error>> + use<T>, Error> {
     let shreds = shreds
         .into_iter()
         .map(|shred| {

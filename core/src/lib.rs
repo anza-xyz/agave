@@ -12,8 +12,7 @@
 #![recursion_limit = "2048"]
 //! The `solana` library implements the Solana high-performance blockchain architecture.
 //! It includes a full Rust implementation of the architecture (see
-//! [Validator](validator/struct.Validator.html)) as well as hooks to GPU implementations of its most
-//! paralellizable components (i.e. [SigVerify](sigverify/index.html)).  It also includes
+//! [Validator](validator/struct.Validator.html))).  It also includes
 //! command-line tools to spin up validators and a Rust library
 //!
 
@@ -21,6 +20,8 @@ pub mod admin_rpc_post_init;
 pub mod banking_simulation;
 pub mod banking_stage;
 pub mod banking_trace;
+#[allow(dead_code)]
+mod block_creation_loop;
 pub mod cluster_info_vote_listener;
 pub mod cluster_slots_service;
 pub mod commitment_service;

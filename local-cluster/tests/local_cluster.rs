@@ -2,7 +2,7 @@
 use {
     agave_snapshots::{
         paths as snapshot_paths, snapshot_archive_info::SnapshotArchiveInfoGetter,
-        snapshot_config::SnapshotConfig, SnapshotInterval, SnapshotKind,
+        snapshot_config::SnapshotConfig, SnapshotArchiveKind, SnapshotInterval,
     },
     assert_matches::assert_matches,
     crossbeam_channel::{unbounded, Receiver},
@@ -60,6 +60,7 @@ use {
         local_cluster::{ClusterConfig, LocalCluster, DEFAULT_MINT_LAMPORTS},
         validator_configs::*,
     },
+    solana_net_utils::SocketAddrSpace,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_pubsub_client::pubsub_client::PubsubClient,
@@ -74,7 +75,6 @@ use {
     solana_runtime::{commitment::VOTE_THRESHOLD_SIZE, snapshot_bank_utils, snapshot_utils},
     solana_signer::Signer,
     solana_stake_interface::{self as stake, state::NEW_WARMUP_COOLDOWN_RATE},
-    solana_streamer::socket::SocketAddrSpace,
     solana_system_interface::program as system_program,
     solana_system_transaction as system_transaction,
     solana_turbine::broadcast_stage::{
@@ -526,7 +526,7 @@ fn test_snapshot_download() {
             full_snapshot_archive_info.slot(),
             *full_snapshot_archive_info.hash(),
         ),
-        SnapshotKind::FullSnapshot,
+        SnapshotArchiveKind::Full,
         validator_snapshot_test_config
             .validator_config
             .snapshot_config
@@ -655,7 +655,7 @@ fn test_incremental_snapshot_download() {
             full_snapshot_archive_info.slot(),
             *full_snapshot_archive_info.hash(),
         ),
-        SnapshotKind::FullSnapshot,
+        SnapshotArchiveKind::Full,
         validator_snapshot_test_config
             .validator_config
             .snapshot_config
@@ -683,7 +683,7 @@ fn test_incremental_snapshot_download() {
             incremental_snapshot_archive_info.slot(),
             *incremental_snapshot_archive_info.hash(),
         ),
-        SnapshotKind::IncrementalSnapshot(incremental_snapshot_archive_info.base_slot()),
+        SnapshotArchiveKind::Incremental(incremental_snapshot_archive_info.base_slot()),
         validator_snapshot_test_config
             .validator_config
             .snapshot_config
@@ -828,7 +828,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
             .incremental_snapshot_archives_dir
             .path(),
         (full_snapshot_archive.slot(), *full_snapshot_archive.hash()),
-        SnapshotKind::FullSnapshot,
+        SnapshotArchiveKind::Full,
         validator_snapshot_test_config
             .validator_config
             .snapshot_config
@@ -865,7 +865,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
             incremental_snapshot_archive.slot(),
             *incremental_snapshot_archive.hash(),
         ),
-        SnapshotKind::IncrementalSnapshot(incremental_snapshot_archive.base_slot()),
+        SnapshotArchiveKind::Incremental(incremental_snapshot_archive.base_slot()),
         validator_snapshot_test_config
             .validator_config
             .snapshot_config
@@ -4092,7 +4092,7 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
                     );
                     gossip_vote_index += 1;
                     gossip_vote_index %= MAX_VOTES;
-                    cluster_info.push_vote_at_index(vote_tx, gossip_vote_index);
+                    cluster_info.push_vote_at_index(vote_tx, gossip_vote_index, &node_keypair);
                 }
             }
         },

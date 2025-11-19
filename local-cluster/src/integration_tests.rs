@@ -37,10 +37,10 @@ use {
         leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule, LeaderSchedule},
     },
     solana_native_token::LAMPORTS_PER_SOL,
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_turbine::broadcast_stage::BroadcastStageType,
     static_assertions,
     std::{
@@ -108,13 +108,13 @@ pub fn open_blockstore(ledger_path: &Path) -> Blockstore {
             ..BlockstoreOptions::default()
         },
     )
-    // Fall back on Secondary if Primary fails; Primary will fail if
+    // Fall back on ReadOnly if Primary fails; Primary will fail if
     // a handle to Blockstore is being held somewhere else
     .unwrap_or_else(|_| {
         Blockstore::open_with_options(
             ledger_path,
             BlockstoreOptions {
-                access_type: AccessType::Secondary,
+                access_type: AccessType::ReadOnly,
                 recovery_mode: None,
                 ..BlockstoreOptions::default()
             },
@@ -182,7 +182,7 @@ pub fn copy_blocks(end_slot: Slot, source: &Blockstore, dest: &Blockstore, is_tr
     }
 }
 
-/// Computes the numbr of milliseconds `num_blocks` blocks will take given
+/// Computes the number of milliseconds `num_blocks` blocks will take given
 /// each slot contains `ticks_per_slot`
 pub fn ms_for_n_slots(num_blocks: u64, ticks_per_slot: u64) -> u64 {
     (ticks_per_slot * DEFAULT_MS_PER_SLOT * num_blocks).div_ceil(DEFAULT_TICKS_PER_SLOT)

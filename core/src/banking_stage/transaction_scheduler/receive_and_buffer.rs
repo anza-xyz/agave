@@ -583,7 +583,7 @@ mod tests {
             v0, AccountMeta, AddressLookupTableAccount, Instruction, VersionedMessage,
         },
         solana_packet::{Meta, PACKET_DATA_SIZE},
-        solana_perf::packet::{to_packet_batches, Packet, PacketBatch, PinnedPacketBatch},
+        solana_perf::packet::{to_packet_batches, Packet, PacketBatch, RecycledPacketBatch},
         solana_pubkey::Pubkey,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
@@ -785,7 +785,7 @@ mod tests {
         let (mut receive_and_buffer, mut container) =
             setup_transaction_view_receive_and_buffer(receiver, bank_forks.clone());
 
-        let packet_batches = Arc::new(vec![PacketBatch::from(PinnedPacketBatch::new(vec![
+        let packet_batches = Arc::new(vec![PacketBatch::from(RecycledPacketBatch::new(vec![
             Packet::new([1u8; PACKET_DATA_SIZE], Meta::default()),
         ]))]);
         sender.send(packet_batches).unwrap();

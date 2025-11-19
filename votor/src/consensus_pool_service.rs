@@ -434,6 +434,7 @@ mod tests {
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_hash::Hash,
         solana_ledger::get_tmp_ledger_path_auto_delete,
+        solana_net_utils::SocketAddrSpace,
         solana_runtime::{
             bank_forks::{BankForks, SharableBanks},
             genesis_utils::{
@@ -441,7 +442,6 @@ mod tests {
             },
         },
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
         std::sync::{Arc, Mutex},
         test_case::test_case,
     };
@@ -524,7 +524,8 @@ mod tests {
         let start = Instant::now();
         let mut event_received = false;
         while start.elapsed() < Duration::from_secs(5) {
-            if let Ok(event) = receiver.recv_timeout(Duration::from_millis(500)) {
+            let res = receiver.recv_timeout(Duration::from_millis(500));
+            if let Ok(event) = res {
                 if condition(&event) {
                     event_received = true;
                     break;

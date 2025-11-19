@@ -83,7 +83,7 @@ use {
 #[cfg(feature = "dev-context-only-utils")]
 impl StakeReward {
     pub fn new_random() -> Self {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         let rent = Rent::free();
 
@@ -101,7 +101,7 @@ impl StakeReward {
             validator_stake_lamports,
         );
 
-        let reward_lamports: i64 = rng.gen_range(1..200);
+        let reward_lamports: i64 = rng.random_range(1..200);
         let validator_stake_account = create_stake_account(
             &validator_staking_keypair.pubkey(),
             &validator_voting_keypair.pubkey(),

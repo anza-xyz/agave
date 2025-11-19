@@ -626,7 +626,7 @@ fn get_merkle_node(shred: &[u8], offsets: Range<usize>) -> Result<Hash, Error> {
 pub(super) fn recover(
     mut shreds: Vec<Shred>,
     reed_solomon_cache: &ReedSolomonCache,
-) -> Result<impl Iterator<Item = Result<Shred, Error>>, Error> {
+) -> Result<impl Iterator<Item = Result<Shred, Error>> + use<>, Error> {
     // Sort shreds by their erasure shard index.
     // In particular this places all data shreds before coding shreds.
     let is_sorted = |(a, b)| cmp_shred_erasure_shard_index(a, b).is_le();
@@ -1830,7 +1830,7 @@ mod test {
                 Shred::ShredCode(_) => Some(shred.clone()),
                 Shred::ShredData(_) => None,
             })
-            .group_by(|shred| shred.common_header().fec_set_index)
+            .chunk_by(|shred| shred.common_header().fec_set_index)
             .into_iter()
             .flat_map(|(_, shreds)| {
                 recover(shreds.collect(), reed_solomon_cache)

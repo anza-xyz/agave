@@ -1,7 +1,7 @@
 use {
     agave_snapshots::{
         paths as snapshot_paths, snapshot_archive_info::SnapshotArchiveInfoGetter as _,
-        SnapshotKind,
+        SnapshotArchiveKind,
     },
     itertools::Itertools,
     log::*,
@@ -23,10 +23,10 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_metrics::datapoint_info,
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_vote_program::vote_state::VoteStateV4,
     std::{
         collections::{hash_map::RandomState, HashMap, HashSet},
@@ -340,7 +340,7 @@ pub fn fail_rpc_node(
     blacklisted_rpc_nodes: &mut HashSet<Pubkey, RandomState>,
 ) {
     warn!("{err}");
-    if let Some(ref known_validators) = known_validators {
+    if let Some(known_validators) = known_validators {
         if known_validators.contains(rpc_id) {
             return;
         }
@@ -862,7 +862,7 @@ type KnownSnapshotHashes = HashMap<(Slot, Hash), HashSet<(Slot, Hash)>>;
 /// queried for their individual snapshot hashes, their results will be checked against this
 /// map to verify correctness.
 ///
-/// NOTE: Only a single snashot hash is allowed per slot.  If somehow two known validators have
+/// NOTE: Only a single snapshot hash is allowed per slot.  If somehow two known validators have
 /// a snapshot hash with the same slot and _different_ hashes, the second will be skipped.
 /// This applies to both full and incremental snapshot hashes.
 fn get_snapshot_hashes_from_known_validators(
@@ -1153,7 +1153,7 @@ fn download_snapshots(
             download_abort_count,
             rpc_contact_info,
             full_snapshot_hash,
-            SnapshotKind::FullSnapshot,
+            SnapshotArchiveKind::Full,
         )?;
     }
 
@@ -1184,7 +1184,7 @@ fn download_snapshots(
                     download_abort_count,
                     rpc_contact_info,
                     incremental_snapshot_hash,
-                    SnapshotKind::IncrementalSnapshot(full_snapshot_hash.0),
+                    SnapshotArchiveKind::Incremental(full_snapshot_hash.0),
                 )?;
             }
         }
@@ -1205,7 +1205,7 @@ fn download_snapshot(
     download_abort_count: &mut u64,
     rpc_contact_info: &ContactInfo,
     desired_snapshot_hash: (Slot, Hash),
-    snapshot_kind: SnapshotKind,
+    snapshot_kind: SnapshotArchiveKind,
 ) -> Result<(), String> {
     let maximum_full_snapshot_archives_to_retain = validator_config
         .snapshot_config

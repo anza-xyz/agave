@@ -1,0 +1,28 @@
+[package]
+name = "solana-gossip-bin"
+version = { workspace = true }
+authors = { workspace = true }
+description = "Binary crate providing the Solana Gossip command-line tool."
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+publish = false
+edition = { workspace = true }
+
+[[bin]]
+name = "solana-gossip"
+path = "src/main.rs"
+bench = false
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+agave-logger = { workspace = true }
+clap = { workspace = true }
+log = { workspace = true }
+solana-clap-utils = { workspace = true }
+solana-gossip = { workspace = true, features = ["agave-unstable-api"] }
+solana-net-utils = { workspace = true, features = ["agave-unstable-api"] }
+solana-pubkey = { version = "=3.0.0", features = ["rand"] }
+solana-version = { workspace = true }

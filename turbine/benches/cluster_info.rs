@@ -9,11 +9,10 @@ use {
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
         shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
     },
-    solana_net_utils::sockets::bind_to_localhost_unique,
+    solana_net_utils::{sockets::bind_to_localhost_unique, SocketAddrSpace},
     solana_pubkey as pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_time_utils::{timestamp, AtomicInterval},
     solana_turbine::{
         broadcast_stage::{

@@ -675,7 +675,7 @@ impl Blockstore {
     pub fn iterator_cf(
         &self,
         cf_name: &str,
-    ) -> Result<impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
+    ) -> Result<impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_ + use<'_>> {
         let cf = self.db.cf_handle(cf_name);
         let iterator = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
         Ok(iterator.map(|pair| pair.unwrap()))
@@ -1374,7 +1374,7 @@ impl Blockstore {
         }
     }
 
-    // Bypasses erasure recovery becuase it is called from broadcast stage
+    // Bypasses erasure recovery because it is called from broadcast stage
     // when inserting own shreds during leader slots.
     pub fn insert_cow_shreds<'a>(
         &self,
@@ -1863,7 +1863,7 @@ impl Blockstore {
                 .map(Cow::into_owned)
             else {
                 error!(
-                    "Shred {shred_id:?} indiciated by merkle root meta {merkle_root_meta:?} is \
+                    "Shred {shred_id:?} indicated by merkle root meta {merkle_root_meta:?} is \
                      missing from blockstore. This should only happen in extreme cases where \
                      blockstore cleanup has caught up to the root. Skipping the merkle root \
                      consistency check"
@@ -2100,7 +2100,7 @@ impl Blockstore {
                     .map(Cow::into_owned)
                 else {
                     error!(
-                        "Last index data shred {shred_id:?} indiciated by slot meta {slot_meta:?} \
+                        "Last index data shred {shred_id:?} indicated by slot meta {slot_meta:?} \
                          is missing from blockstore. This should only happen in extreme cases \
                          where blockstore cleanup has caught up to the root. Skipping data shred \
                          insertion"
@@ -2150,7 +2150,7 @@ impl Blockstore {
                     .map(Cow::into_owned)
                 else {
                     error!(
-                        "Last received data shred {shred_id:?} indiciated by slot meta \
+                        "Last received data shred {shred_id:?} indicated by slot meta \
                          {slot_meta:?} is missing from blockstore. This should only happen in \
                          extreme cases where blockstore cleanup has caught up to the root. \
                          Skipping data shred insertion"
@@ -2200,7 +2200,7 @@ impl Blockstore {
         shred: &Shred,
         write_batch: &mut WriteBatch,
         shred_source: ShredSource,
-    ) -> Result<impl Iterator<Item = CompletedDataSetInfo> + 'a> {
+    ) -> Result<impl Iterator<Item = CompletedDataSetInfo> + 'a + use<'a>> {
         let slot = shred.slot();
         let index = u64::from(shred.index());
 
@@ -3873,7 +3873,7 @@ impl Blockstore {
         if let Some(prev_value) = self.bank_hash_cf.get(slot).unwrap() {
             if prev_value.frozen_hash() == frozen_hash && prev_value.is_duplicate_confirmed() {
                 // Don't overwrite is_duplicate_confirmed == true with is_duplicate_confirmed == false,
-                // which may happen on startup when procesing from blockstore processor because the
+                // which may happen on startup when processing from blockstore processor because the
                 // blocks may not reflect earlier observed gossip votes from before the restart.
                 return;
             }
@@ -4636,7 +4636,7 @@ fn update_completed_data_indexes<'a>(
     received_data_shreds: &'a ShredIndex,
     // Shreds indices which are marked data complete.
     completed_data_indexes: &mut CompletedDataIndexes,
-) -> impl Iterator<Item = Range<u32>> + 'a {
+) -> impl Iterator<Item = Range<u32>> + 'a + use<'a> {
     // new_shred_index is data complete, so need to insert here into
     // the completed_data_indexes.
     if is_last_in_data {
@@ -4674,7 +4674,7 @@ fn update_slot_meta<'a>(
     new_consumed: u64,
     reference_tick: u8,
     received_data_shreds: &'a ShredIndex,
-) -> impl Iterator<Item = Range<u32>> + 'a {
+) -> impl Iterator<Item = Range<u32>> + 'a + use<'a> {
     let first_insert = slot_meta.received == 0;
     // Index is zero-indexed, while the "received" height starts from 1,
     // so received = index + 1 for the same shred.
@@ -7647,7 +7647,7 @@ pub mod tests {
             blockstore.insert_shreds(slot_shreds, None, false).unwrap();
         }
 
-        // Slot doesnt exist, iterator should be empty
+        // Slot doesn't exist, iterator should be empty
         let shred_iter = blockstore.slot_data_iterator(5, 0).unwrap();
         let result: Vec<_> = shred_iter.collect();
         assert_eq!(result, vec![]);

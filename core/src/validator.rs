@@ -25,7 +25,6 @@ use {
             adjust_nofile_limit, validate_memlock_limit_for_disk_io, ResourceLimitError,
         },
         sample_performance_service::SamplePerformanceService,
-        sigverify,
         snapshot_packager_service::SnapshotPackagerService,
         stats_reporter_service::StatsReporterService,
         system_monitor_service::{
@@ -93,6 +92,7 @@ use {
     },
     solana_measure::measure::Measure,
     solana_metrics::{datapoint_info, metrics::metrics_config_sanity_check},
+    solana_net_utils::SocketAddrSpace,
     solana_poh::{
         poh_controller::PohController,
         poh_recorder::PohRecorder,
@@ -137,7 +137,6 @@ use {
     solana_streamer::{
         nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
         quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
-        socket::SocketAddrSpace,
         streamer::StakedNodes,
     },
     solana_time_utils::timestamp,
@@ -147,7 +146,7 @@ use {
     solana_turbine::{
         self,
         broadcast_stage::BroadcastStageType,
-        xdp::{XdpConfig, XdpRetransmitter},
+        xdp::{master_ip_if_bonded, XdpConfig, XdpRetransmitter},
     },
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_validator_exit::Exit,
@@ -156,7 +155,7 @@ use {
     std::{
         borrow::Cow,
         collections::{HashMap, HashSet},
-        net::SocketAddr,
+        net::{IpAddr, SocketAddr},
         num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
         str::FromStr,
@@ -164,7 +163,7 @@ use {
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, Mutex, RwLock,
         },
-        thread::{sleep, Builder, JoinHandle},
+        thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
     strum::VariantNames,
@@ -308,6 +307,8 @@ pub struct GeneratorConfig {
 }
 
 pub struct ValidatorConfig {
+    /// The destination file for validator logs; `stderr` is used if `None`
+    pub logfile: Option<PathBuf>,
     pub halt_at_slot: Option<Slot>,
     pub expected_genesis_hash: Option<Hash>,
     pub expected_bank_hash: Option<Hash>,
@@ -334,7 +335,7 @@ pub struct ValidatorConfig {
     pub repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>, // Empty = repair with all
     pub gossip_validators: Option<HashSet<Pubkey>>, // None = gossip with all
     pub max_genesis_archive_unpacked_size: u64,
-    /// Run PoH, transaction signature and other transaction verifications during blockstore
+    /// Run PoH, transaction signature and other transaction verification during blockstore
     /// processing.
     pub run_verification: bool,
     pub require_tower: bool,
@@ -391,6 +392,7 @@ impl ValidatorConfig {
             NonZeroUsize::new(num_cpus::get()).expect("thread count is non-zero");
 
         Self {
+            logfile: None,
             halt_at_slot: None,
             expected_genesis_hash: None,
             expected_bank_hash: None,
@@ -561,7 +563,7 @@ pub struct ValidatorTpuConfig {
     pub vote_use_quic: bool,
     /// Controls the connection cache pool size
     pub tpu_connection_pool_size: usize,
-    /// Controls if to enable UDP for TPU tansactions.
+    /// Controls if to enable UDP for TPU transactions.
     pub tpu_enable_udp: bool,
     /// QUIC server config for regular TPU
     pub tpu_quic_server_config: SwQosQuicStreamerConfig,
@@ -586,17 +588,18 @@ impl ValidatorTpuConfig {
         let tpu_fwd_quic_server_config = SwQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
                 max_connections_per_ipaddr_per_min: 32,
+                ..Default::default()
+            },
+            qos_config: SwQosConfig {
                 max_unstaked_connections: 0,
                 ..Default::default()
             },
-            qos_config: SwQosConfig::default(),
         };
 
         // vote and tpu_fwd share the same characteristics -- disallow non-staked connections:
         let vote_quic_server_config = SimpleQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
                 max_connections_per_ipaddr_per_min: 32,
-                max_unstaked_connections: 0,
                 ..Default::default()
             },
             qos_config: SimpleQosConfig::default(),
@@ -615,6 +618,11 @@ impl ValidatorTpuConfig {
 }
 
 pub struct Validator {
+    /// The destination file for validator logs; `stderr` is used if `None`
+    #[cfg_attr(not(unix), allow(dead_code))]
+    logfile: Option<PathBuf>,
+    /// A global flag to indicate communicate shutdown between threads
+    exit: Arc<AtomicBool>,
     validator_exit: Arc<RwLock<Exit>>,
     json_rpc_service: Option<JsonRpcService>,
     pubsub_service: Option<PubSubService>,
@@ -760,14 +768,6 @@ impl Validator {
         for cluster_entrypoint in &cluster_entrypoints {
             info!("entrypoint: {cluster_entrypoint:?}");
         }
-
-        if solana_perf::perf_libs::api().is_some() {
-            info!("Initializing sigverify, this could take a while...");
-        } else {
-            info!("Initializing sigverify...");
-        }
-        sigverify::init();
-        info!("Initializing sigverify done.");
 
         validate_memlock_limit_for_disk_io(config.accounts_db_config.memlock_budget_size)?;
 
@@ -1578,7 +1578,15 @@ impl Validator {
                     .local_addr()
                     .expect("failed to get local address")
                     .port();
-                let (rtx, sender) = XdpRetransmitter::new(xdp_config, src_port)
+                let src_ip = match node.bind_ip_addrs.active() {
+                    IpAddr::V4(ip) if !ip.is_unspecified() => Some(ip),
+                    IpAddr::V4(_unspecified) => xdp_config
+                        .interface
+                        .as_ref()
+                        .and_then(|iface| master_ip_if_bonded(iface)),
+                    _ => panic!("IPv6 not supported"),
+                };
+                let (rtx, sender) = XdpRetransmitter::new(xdp_config, src_port, src_ip)
                     .expect("failed to create xdp retransmitter");
                 (Some(rtx), Some(sender))
             } else {
@@ -1720,7 +1728,7 @@ impl Validator {
             blockstore.clone(),
             &config.broadcast_stage_type,
             xdp_sender,
-            exit,
+            exit.clone(),
             node.info.shred_version(),
             vote_tracker,
             bank_forks.clone(),
@@ -1795,6 +1803,8 @@ impl Validator {
         });
 
         Ok(Self {
+            logfile: config.logfile.clone(),
+            exit,
             stats_reporter_service,
             gossip_service,
             serve_repair_service,
@@ -1829,6 +1839,53 @@ impl Validator {
             xdp_retransmitter,
             _tpu_client_next_runtime: tpu_client_next_runtime,
         })
+    }
+
+    /// Register and listen for signals that the validator will act on. Also,
+    /// monitor the validator's exit flag incase a shutdown has been initated
+    /// by one of the validator threads
+    pub fn listen_for_signals(&self) -> Result<()> {
+        // Reopen the logfile when the SIGUSR1 signal is received; this provides
+        // a hook for working with logrotate
+        let sigusr1_flag = Arc::new(AtomicBool::new(false));
+        #[cfg(unix)]
+        {
+            if self.logfile.is_some() {
+                signal_hook::flag::register(libc::SIGUSR1, sigusr1_flag.clone())?;
+            }
+        }
+
+        info!("Validator::listen_for_signals() has started");
+        loop {
+            if self.exit.load(Ordering::Relaxed) {
+                break;
+            }
+
+            if sigusr1_flag.load(Ordering::Relaxed) {
+                #[cfg(unix)]
+                {
+                    if let Some(logfile) = self.logfile.as_ref() {
+                        info!("Received SIGUSR1, reopening {}", logfile.display());
+                        agave_logger::redirect_stderr(logfile);
+                        // Reset the flag to `false` to allow detection of the
+                        // signal again and to avoid hitting this case every
+                        // iteration
+                        sigusr1_flag.store(false, Ordering::Relaxed);
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    unreachable!("The SIGUSR1 signal is only handled on unix systems");
+                }
+            }
+
+            // One second is a reasonable response time for these signals to
+            // avoid this thread from being overly active
+            thread::sleep(Duration::from_secs(1));
+        }
+        info!("Validator::listen_for_signals() has stopped");
+
+        Ok(())
     }
 
     // Used for notifying many nodes in parallel to exit
@@ -2332,7 +2389,7 @@ impl<'a> ProcessBlockStore<'a> {
                             let slot = bank_forks.read().unwrap().working_bank().slot();
                             *start_progress.write().unwrap() =
                                 ValidatorStartProgress::ProcessingLedger { slot, max_slot };
-                            sleep(Duration::from_secs(2));
+                            thread::sleep(Duration::from_secs(2));
                         }
                     })
                     .unwrap();
@@ -2769,7 +2826,7 @@ fn wait_for_supermajority(
                 // prevent load balancers from removing the node from their list of candidates during a
                 // manual restart.
                 rpc_override_health_check.store(true, Ordering::Relaxed);
-                sleep(Duration::new(1, 0));
+                thread::sleep(Duration::new(1, 0));
             }
             rpc_override_health_check.store(false, Ordering::Relaxed);
             Ok(true)

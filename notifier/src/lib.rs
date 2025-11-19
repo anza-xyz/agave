@@ -212,8 +212,8 @@ impl Notifier {
                         NotificationType::Resolve { incident: _ } => String::from("resolve"),
                     };
                     let dedup_key = match notification_type {
-                        NotificationType::Trigger { ref incident } => incident.clone().to_string(),
-                        NotificationType::Resolve { ref incident } => incident.clone().to_string(),
+                        NotificationType::Trigger { incident } => incident.clone().to_string(),
+                        NotificationType::Resolve { incident } => incident.clone().to_string(),
                     };
 
                     let data = json!({"payload":{"summary":msg,"source":"agave-watchtower","severity":"critical"},"routing_key":routing_key,"event_action":event_action,"dedup_key":dedup_key});

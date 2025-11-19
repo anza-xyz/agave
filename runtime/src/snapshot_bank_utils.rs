@@ -20,9 +20,8 @@ use {
         },
         snapshot_package::SnapshotPackage,
         snapshot_utils::{
-            self, get_highest_bank_snapshot, rebuild_storages_from_snapshot_dir,
-            verify_and_unarchive_snapshots, BankSnapshotInfo, StorageAndNextAccountsFileId,
-            UnarchivedSnapshots,
+            self, rebuild_storages_from_snapshot_dir, verify_and_unarchive_snapshots,
+            BankSnapshotInfo, StorageAndNextAccountsFileId, UnarchivedSnapshots,
         },
         status_cache,
     },
@@ -40,7 +39,7 @@ use {
         },
         snapshot_config::SnapshotConfig,
         snapshot_hash::SnapshotHash,
-        ArchiveFormat, SnapshotKind, SnapshotVersion,
+        ArchiveFormat, SnapshotArchiveKind, SnapshotKind, SnapshotVersion,
     },
     log::*,
     solana_accounts_db::{
@@ -428,39 +427,6 @@ pub fn bank_from_snapshot_dir(
     Ok(bank)
 }
 
-/// follow the prototype of fn bank_from_latest_snapshot_archives, implement the from_dir case
-#[allow(clippy::too_many_arguments)]
-pub fn bank_from_latest_snapshot_dir(
-    bank_snapshots_dir: impl AsRef<Path>,
-    genesis_config: &GenesisConfig,
-    runtime_config: &RuntimeConfig,
-    account_paths: &[PathBuf],
-    debug_keys: Option<Arc<HashSet<Pubkey>>>,
-    limit_load_slot_count_from_snapshot: Option<usize>,
-    verify_index: bool,
-    accounts_db_config: AccountsDbConfig,
-    accounts_update_notifier: Option<AccountsUpdateNotifier>,
-    exit: Arc<AtomicBool>,
-) -> agave_snapshots::Result<Bank> {
-    let bank_snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).ok_or_else(|| {
-        SnapshotError::NoSnapshotSlotDir(bank_snapshots_dir.as_ref().to_path_buf())
-    })?;
-    let bank = bank_from_snapshot_dir(
-        account_paths,
-        &bank_snapshot,
-        genesis_config,
-        runtime_config,
-        debug_keys,
-        limit_load_slot_count_from_snapshot,
-        verify_index,
-        accounts_db_config,
-        accounts_update_notifier,
-        exit,
-    )?;
-
-    Ok(bank)
-}
-
 /// Verifies the snapshot's slot and hash matches the bank's
 fn verify_bank_against_expected_slot_hash(
     bank: &Bank,
@@ -649,7 +615,7 @@ fn _verify_epoch_stakes(
 ) -> std::result::Result<(), VerifyEpochStakesError> {
     // Ensure epoch stakes from the snapshot does not contain entries for invalid epochs.
     // Since epoch stakes are computed for the leader schedule epoch (usually `epoch + 1`),
-    // the snapshot's epoch stakes therefor can have entries for epochs at-or-below the
+    // the snapshot's epoch stakes therefore can have entries for epochs at-or-below the
     // leader schedule epoch.
     let max_epoch = *required_epochs.end();
     if let Some(invalid_epoch) = epoch_stakes_map.keys().find(|epoch| **epoch > max_epoch) {
@@ -726,7 +692,7 @@ fn bank_to_full_snapshot_archive_with(
     bank.clean_accounts();
 
     let snapshot_package = SnapshotPackage::new(
-        SnapshotKind::FullSnapshot,
+        SnapshotKind::Archive(SnapshotArchiveKind::Full),
         bank,
         bank.get_snapshot_storages(None),
         bank.status_cache.read().unwrap().root_slot_deltas(),
@@ -781,7 +747,7 @@ pub fn bank_to_incremental_snapshot_archive(
     bank.clean_accounts();
 
     let snapshot_package = SnapshotPackage::new(
-        SnapshotKind::IncrementalSnapshot(full_snapshot_slot),
+        SnapshotKind::Archive(SnapshotArchiveKind::Incremental(full_snapshot_slot)),
         bank,
         bank.get_snapshot_storages(Some(full_snapshot_slot)),
         bank.status_cache.read().unwrap().root_slot_deltas(),
@@ -2125,34 +2091,6 @@ mod tests {
         assert_eq!(max_id, next_id - 1);
     }
 
-    #[test]
-    fn test_bank_from_latest_snapshot_dir() {
-        let genesis_config = GenesisConfig::default();
-        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
-        let bank = create_snapshot_dirs_for_tests(&genesis_config, &bank_snapshots_dir, 3, true);
-
-        let account_paths = &bank.rc.accounts.accounts_db.paths;
-
-        let deserialized_bank = bank_from_latest_snapshot_dir(
-            &bank_snapshots_dir,
-            &genesis_config,
-            &RuntimeConfig::default(),
-            account_paths,
-            None,
-            None,
-            false,
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
-            None,
-            Arc::default(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            deserialized_bank, bank,
-            "Ensure rebuilding bank from the highest snapshot dir results in the highest bank",
-        );
-    }
-
     #[test_case(false)]
     #[test_case(true)]
     fn test_purge_all_bank_snapshots(should_flush_and_hard_link_storages: bool) {
@@ -2534,15 +2472,5 @@ mod tests {
         .unwrap();
         let bank_snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
         assert_eq!(bank_snapshot.slot, highest_bank_snapshot.slot - 1);
-
-        // 6. delete the full snapshot slot file, get_highest_loadable() should return return Some() again, with slot-1
-        fs::remove_file(
-            bank_snapshot
-                .snapshot_dir
-                .join(snapshot_paths::SNAPSHOT_FULL_SNAPSHOT_SLOT_FILENAME),
-        )
-        .unwrap();
-        let bank_snapshot2 = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
-        assert_eq!(bank_snapshot2, bank_snapshot);
     }
 }

@@ -288,6 +288,7 @@ impl BorrowedInstructionAccount<'_, '_> {
     #[inline]
     #[deprecated(since = "2.1.0", note = "Use `get_owner` instead")]
     pub fn is_executable(&self) -> bool {
+        #[allow(deprecated)]
         self.account.executable()
     }
 

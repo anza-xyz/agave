@@ -17,7 +17,7 @@ use {
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
         u64_align,
     },
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     rayon::prelude::{IntoParallelRefIterator, ParallelIterator},
     solana_clock::Slot,
     solana_measure::measure_us,
@@ -106,7 +106,7 @@ impl AncientSlotInfos {
             let should_shrink = if capacity > 0 {
                 if is_candidate_for_shrink {
                     true
-                } else if can_randomly_shrink && thread_rng().gen_range(0..10000) == 0 {
+                } else if can_randomly_shrink && rng().random_range(0..10000) == 0 {
                     was_randomly_shrunk = true;
                     true
                 } else {
@@ -1416,8 +1416,7 @@ pub mod tests {
                 // add some accounts to each storage so we can make partial progress
                 let mut data_size = 450;
                 // random # of extra accounts here
-                let total_accounts_per_storage =
-                    thread_rng().gen_range(0..total_accounts_per_storage);
+                let total_accounts_per_storage = rng().random_range(0..total_accounts_per_storage);
                 let _pubkeys_and_accounts = storages
                     .iter()
                     .map(|storage| {
@@ -2802,7 +2801,7 @@ pub mod tests {
             .collect();
 
         // shuffle the infos so they actually need to be sorted
-        infos.all_infos.shuffle(&mut thread_rng());
+        infos.all_infos.shuffle(&mut rng());
         infos.filter_by_smallest_capacity(&tuning, &ShrinkAncientStats::default());
 
         infos
@@ -2847,7 +2846,7 @@ pub mod tests {
             .collect();
 
         // shuffle the infos so they actually need to be sorted
-        infos.all_infos.shuffle(&mut thread_rng());
+        infos.all_infos.shuffle(&mut rng());
         infos.filter_by_smallest_capacity(&tuning, &ShrinkAncientStats::default());
 
         infos
@@ -3414,7 +3413,7 @@ pub mod tests {
                     assert!(storage.is_none());
                     continue;
                 }
-                // any of the several slots could have been chosen to be re-used
+                // any of the several slots could have been chosen to be reused
                 let active_slots = (0..num_slots)
                     .filter_map(|slot| db.storage.get_slot_storage_entry((slot as Slot) + slot1))
                     .count();
@@ -3504,7 +3503,9 @@ pub mod tests {
         create_storages_and_update_index(&db, None, initial_slot, MAX_RECYCLE_STORES, true, None);
         let max_slot_inclusive = initial_slot + (MAX_RECYCLE_STORES as Slot) - 1;
         let range = initial_slot..(max_slot_inclusive + 1);
-        // storages with Arc::strong_count > 1 cannot be pulled out of the recycling bin, so hold refcounts so these storages are never re-used by the actual test code
+        // storages with Arc::strong_count > 1 cannot be pulled out of the
+        // recycling bin, so hold refcounts so these storages are never reused
+        // by the actual test code
         let _storages_hold_to_prevent_recycling = range
             .filter_map(|slot| db.storage.get_slot_storage_entry(slot))
             .collect::<Vec<_>>();

@@ -1196,7 +1196,7 @@ pub mod fix_alt_bn128_pairing_length_check {
 pub mod replace_spl_token_with_p_token {
     use super::Pubkey;
 
-    solana_pubkey::declare_id!("ptokSWRqZz5u2xdqMdstkMKpFurauUpVen7TZXgDpkQ");
+    solana_pubkey::declare_id!("ptokEXBPT9HuYdAQRysaStZNTY9bHsAcQzNscEoA6HC");
 
     pub const SPL_TOKEN_PROGRAM_ID: Pubkey =
         Pubkey::from_str_const("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
@@ -2192,7 +2192,7 @@ pub struct FullInflationFeaturePair {
     pub enable_id: Pubkey, // Feature to enable full inflation by the candidate
 }
 
-/// Set of feature pairs that once enabled will trigger full inflationi
+/// Set of feature pairs that once enabled will trigger full inflation
 pub static FULL_INFLATION_FEATURE_PAIRS: LazyLock<AHashSet<FullInflationFeaturePair>> =
     LazyLock::new(|| {
         [FullInflationFeaturePair {

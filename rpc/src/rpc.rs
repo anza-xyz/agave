@@ -122,12 +122,12 @@ use {
 use {
     solana_gossip::contact_info::ContactInfo,
     solana_ledger::get_tmp_ledger_path,
+    solana_net_utils::SocketAddrSpace,
     solana_runtime::commitment::CommitmentSlots,
     solana_send_transaction_service::{
         send_transaction_service::Config as SendTransactionServiceConfig,
         send_transaction_service::SendTransactionService, test_utils::ClientWithCreator,
     },
-    solana_streamer::socket::SocketAddrSpace,
 };
 
 mod transaction {

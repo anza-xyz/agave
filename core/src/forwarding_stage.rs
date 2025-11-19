@@ -850,7 +850,7 @@ mod tests {
         packet::PacketFlags,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_perf::packet::{Packet, PacketBatch, PinnedPacketBatch},
+        solana_perf::packet::{Packet, PacketBatch, RecycledPacketBatch},
         solana_pubkey::Pubkey,
         solana_runtime::genesis_utils::create_genesis_config,
         solana_system_transaction as system_transaction,
@@ -885,10 +885,9 @@ mod tests {
     }
 
     fn meta_with_flags(packet_flags: PacketFlags) -> packet::Meta {
-        packet::Meta {
-            flags: packet_flags,
-            ..packet::Meta::default()
-        }
+        let mut meta = packet::Meta::default();
+        meta.flags = packet_flags;
+        meta
     }
 
     fn simple_transfer_with_flags(packet_flags: PacketFlags) -> Packet {
@@ -942,13 +941,13 @@ mod tests {
 
         // Send packet batches.
         let non_vote_packets =
-            BankingPacketBatch::new(vec![PacketBatch::from(PinnedPacketBatch::new(vec![
+            BankingPacketBatch::new(vec![PacketBatch::from(RecycledPacketBatch::new(vec![
                 simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE),
                 simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD),
                 simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::FORWARDED),
             ]))]);
         let vote_packets =
-            BankingPacketBatch::new(vec![PacketBatch::from(PinnedPacketBatch::new(vec![
+            BankingPacketBatch::new(vec![PacketBatch::from(RecycledPacketBatch::new(vec![
                 simple_transfer_with_flags(
                     PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE,
                 ),

@@ -44,7 +44,6 @@ const GOSSIP_PING_TOKEN_SIZE: usize = 32;
 /// Minimum serialized size of a Protocol::PullResponse packet.
 pub(crate) const PULL_RESPONSE_MIN_SERIALIZED_SIZE: usize = 161;
 
-// TODO These messages should go through the gpu pipeline for spam filtering
 /// Gossip protocol messages base enum
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(clippy::large_enum_variant)]
@@ -157,7 +156,7 @@ impl Sanitize for Protocol {
                 filter.sanitize()?;
                 // PullRequest is only allowed to have ContactInfo in its CrdsData
                 match val.data() {
-                    CrdsData::LegacyContactInfo(_) | CrdsData::ContactInfo(_) => val.sanitize(),
+                    CrdsData::ContactInfo(_) => val.sanitize(),
                     _ => Err(SanitizeError::InvalidValue),
                 }
             }

@@ -267,6 +267,13 @@ pub trait AdminRpc {
         public_tpu_forwards_addr: SocketAddr,
     ) -> Result<()>;
 
+    #[rpc(meta, name = "setPublicTvuAddress")]
+    fn set_public_tvu_address(
+        &self,
+        meta: Self::Metadata,
+        public_tvu_addr: SocketAddr,
+    ) -> Result<()>;
+
     #[rpc(meta, name = "manageBlockProduction")]
     fn manage_block_production(
         &self,
@@ -694,10 +701,10 @@ impl AdminRpc for AdminRpcImpl {
             post_init
                 .cluster_info
                 .my_contact_info()
-                .tpu(Protocol::UDP)
+                .tpu(Protocol::QUIC)
                 .ok_or_else(|| {
                     error!(
-                        "The public TPU address isn't being published. The node is likely in \
+                        "The public TPU QUIC address isn't being published. The node is likely in \
                          repair mode. See help for --restricted-repair-only-mode for more \
                          information."
                     );
@@ -705,15 +712,14 @@ impl AdminRpc for AdminRpcImpl {
                 })?;
             post_init
                 .cluster_info
-                .set_tpu(public_tpu_addr)
+                .set_tpu_quic(public_tpu_addr)
                 .map_err(|err| {
-                    error!("Failed to set public TPU address to {public_tpu_addr}: {err}");
+                    error!("Failed to set public TPU QUIC address to {public_tpu_addr}: {err}");
                     jsonrpc_core::error::Error::internal_error()
                 })?;
             let my_contact_info = post_init.cluster_info.my_contact_info();
             warn!(
-                "Public TPU addresses set to {:?} (udp) and {:?} (quic)",
-                my_contact_info.tpu(Protocol::UDP),
+                "Public TPU addresses set to {:?} (quic)",
                 my_contact_info.tpu(Protocol::QUIC),
             );
             Ok(())
@@ -731,7 +737,7 @@ impl AdminRpc for AdminRpcImpl {
             post_init
                 .cluster_info
                 .my_contact_info()
-                .tpu_forwards(Protocol::UDP)
+                .tpu_forwards(Protocol::QUIC)
                 .ok_or_else(|| {
                     error!(
                         "The public TPU Forwards address isn't being published. The node is \
@@ -742,16 +748,54 @@ impl AdminRpc for AdminRpcImpl {
                 })?;
             post_init
                 .cluster_info
-                .set_tpu_forwards(public_tpu_forwards_addr)
+                .set_tpu_forwards_quic(public_tpu_forwards_addr)
                 .map_err(|err| {
-                    error!("Failed to set public TPU address to {public_tpu_forwards_addr}: {err}");
+                    error!(
+                        "Failed to set public TPU QUIC address to {public_tpu_forwards_addr}: \
+                         {err}"
+                    );
                     jsonrpc_core::error::Error::internal_error()
                 })?;
             let my_contact_info = post_init.cluster_info.my_contact_info();
             warn!(
-                "Public TPU Forwards addresses set to {:?} (udp) and {:?} (quic)",
-                my_contact_info.tpu_forwards(Protocol::UDP),
+                "Public TPU Forwards address set to {:?} (quic)",
                 my_contact_info.tpu_forwards(Protocol::QUIC),
+            );
+            Ok(())
+        })
+    }
+
+    fn set_public_tvu_address(
+        &self,
+        meta: Self::Metadata,
+        public_tvu_addr: SocketAddr,
+    ) -> Result<()> {
+        debug!("set_public_tvu_address rpc request received: {public_tvu_addr}");
+
+        meta.with_post_init(|post_init| {
+            post_init
+                .cluster_info
+                .my_contact_info()
+                .tvu(Protocol::UDP)
+                .ok_or_else(|| {
+                    error!(
+                        "The public TVU address isn't being published. The node is likely in \
+                         repair mode. See help for --restricted-repair-only-mode for more \
+                         information."
+                    );
+                    jsonrpc_core::error::Error::internal_error()
+                })?;
+            post_init
+                .cluster_info
+                .set_tvu_socket(public_tvu_addr)
+                .map_err(|err| {
+                    error!("Failed to set public TVU address to {public_tvu_addr}: {err}");
+                    jsonrpc_core::error::Error::internal_error()
+                })?;
+            let my_contact_info = post_init.cluster_info.my_contact_info();
+            warn!(
+                "Public TVU addresses set to {:?}",
+                my_contact_info.tvu(Protocol::UDP),
             );
             Ok(())
         })
@@ -1004,7 +1048,7 @@ mod tests {
                 create_genesis_config, create_genesis_config_with_leader, GenesisConfigInfo,
             },
         },
-        solana_net_utils::sockets::bind_to_localhost_unique,
+        solana_net_utils::{sockets::bind_to_localhost_unique, SocketAddrSpace},
         solana_program_option::COption,
         solana_program_pack::Pack,
         solana_pubkey::Pubkey,
@@ -1013,7 +1057,6 @@ mod tests {
             bank::{Bank, BankTestConfig},
             bank_forks::BankForks,
         },
-        solana_streamer::socket::SocketAddrSpace,
         solana_system_interface::program as system_program,
         solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
         spl_generic_token::token,

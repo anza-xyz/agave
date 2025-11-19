@@ -4,7 +4,7 @@
 
 use {
     rand::{
-        distributions::{Distribution, WeightedIndex},
+        distr::{weighted::WeightedIndex, Distribution},
         Rng, SeedableRng,
     },
     rand_chacha::ChaChaRng,
@@ -28,7 +28,7 @@ pub fn accounts<'a>(
     iter::repeat_with(move || {
         let index = distribution.sample(&mut rng);
         let data_size = data_sizes[index];
-        let owner: [u8; 32] = rng.gen();
+        let owner: [u8; 32] = rng.random();
         let owner = Pubkey::new_from_array(owner);
         (
             owner,

@@ -117,7 +117,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
         genesis_config.hash(),
     ));
 
-    // Delay transaction execution to ensure transaction execution happens after termintion has
+    // Delay transaction execution to ensure transaction execution happens after termination has
     // been started
     let lock_to_stall = LOCK_TO_STALL.lock().unwrap();
     pruned_bank

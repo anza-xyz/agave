@@ -59,13 +59,12 @@ use {
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_message::{compiled_instruction::CompiledInstruction, Message},
-    solana_net_utils::bind_to_unspecified,
+    solana_net_utils::{bind_to_unspecified, SocketAddrSpace},
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signature::Signature,
     solana_signer::Signer,
     solana_stake_interface as stake,
-    solana_streamer::socket::SocketAddrSpace,
     solana_system_interface::{
         instruction::{self as system_instruction, SystemInstruction},
         program as system_program,
@@ -251,7 +250,7 @@ struct TransactionBatchMsg {
 
 /// Creates thread which receives batches of transactions from tx_receiver
 /// and sends them to the target.
-/// If `iterations` is 0, it works indefenetely.
+/// If `iterations` is 0, it works indefinitely.
 /// Otherwise, it sends at least `iterations` number of transactions
 fn create_sender_thread(
     tx_receiver: Receiver<TransactionBatchMsg>,

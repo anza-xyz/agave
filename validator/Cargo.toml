@@ -69,7 +69,6 @@ solana-perf = { workspace = true }
 solana-poh = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-quic-definitions = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true }
 solana-rpc = { workspace = true }
@@ -98,7 +97,6 @@ jemallocator = { workspace = true }
 
 [target."cfg(unix)".dependencies]
 libc = { workspace = true }
-signal-hook = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }

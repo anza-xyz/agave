@@ -36,10 +36,11 @@ use {
     solana_hash::{Hash, HASH_BYTES},
     solana_keypair::{signable::Signable, Keypair},
     solana_ledger::shred::{self, Nonce, ShredFetchStats, SIZE_OF_NONCE},
+    solana_net_utils::SocketAddrSpace,
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::{
         data_budget::DataBudget,
-        packet::{Packet, PacketBatch, PacketBatchRecycler, PinnedPacketBatch},
+        packet::{Packet, PacketBatch, PacketBatchRecycler, RecycledPacketBatch},
     },
     solana_pubkey::{Pubkey, PUBKEY_BYTES},
     solana_runtime::bank_forks::SharableBanks,
@@ -47,7 +48,6 @@ use {
     solana_signer::Signer,
     solana_streamer::{
         sendmmsg::{batch_send, SendPktsError},
-        socket::SocketAddrSpace,
         streamer::PacketBatchSender,
     },
     solana_time_utils::timestamp,
@@ -1052,7 +1052,7 @@ impl ServeRepair {
 
         if !pending_pings.is_empty() {
             stats.pings_sent += pending_pings.len();
-            let batch = PinnedPacketBatch::new(pending_pings);
+            let batch = RecycledPacketBatch::new(pending_pings);
             let _ = packet_batch_sender.send(batch.into());
         }
     }
@@ -1362,10 +1362,10 @@ mod tests {
                 max_ticks_per_n_shreds, ProcessShredsStats, ReedSolomonCache, Shred, Shredder,
             },
         },
+        solana_net_utils::SocketAddrSpace,
         solana_perf::packet::{deserialize_from_with_limit, Packet, PacketFlags, PacketRef},
         solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
-        solana_streamer::socket::SocketAddrSpace,
         solana_time_utils::timestamp,
         std::{io::Cursor, net::Ipv4Addr},
     };
@@ -1919,9 +1919,6 @@ mod tests {
         nxt.set_gossip((Ipv4Addr::LOCALHOST, 1234)).unwrap();
         nxt.set_tvu(UDP, (Ipv4Addr::LOCALHOST, 1235)).unwrap();
         nxt.set_tvu(QUIC, (Ipv4Addr::LOCALHOST, 1236)).unwrap();
-        nxt.set_tpu((Ipv4Addr::LOCALHOST, 1238)).unwrap();
-        nxt.set_tpu_forwards((Ipv4Addr::LOCALHOST, 1239)).unwrap();
-        nxt.set_tpu_vote(UDP, (Ipv4Addr::LOCALHOST, 1240)).unwrap();
         nxt.set_rpc((Ipv4Addr::LOCALHOST, 1241)).unwrap();
         nxt.set_rpc_pubsub((Ipv4Addr::LOCALHOST, 1242)).unwrap();
         nxt.set_serve_repair(UDP, serve_repair_addr).unwrap();
@@ -1954,9 +1951,6 @@ mod tests {
         nxt.set_gossip((Ipv4Addr::LOCALHOST, 1234)).unwrap();
         nxt.set_tvu(UDP, (Ipv4Addr::LOCALHOST, 1235)).unwrap();
         nxt.set_tvu(QUIC, (Ipv4Addr::LOCALHOST, 1236)).unwrap();
-        nxt.set_tpu((Ipv4Addr::LOCALHOST, 1238)).unwrap();
-        nxt.set_tpu_forwards((Ipv4Addr::LOCALHOST, 1239)).unwrap();
-        nxt.set_tpu_vote(UDP, (Ipv4Addr::LOCALHOST, 1240)).unwrap();
         nxt.set_rpc((Ipv4Addr::LOCALHOST, 1241)).unwrap();
         nxt.set_rpc_pubsub((Ipv4Addr::LOCALHOST, 1242)).unwrap();
         nxt.set_serve_repair(UDP, serve_repair_addr2).unwrap();
@@ -2045,7 +2039,7 @@ mod tests {
                 )
             })
             .collect();
-        let expected = PacketBatch::Pinned(PinnedPacketBatch::new(expected));
+        let expected = PacketBatch::Pinned(RecycledPacketBatch::new(expected));
         assert_eq!(rv, expected);
     }
 
@@ -2087,7 +2081,7 @@ mod tests {
             .expect("run_orphan packets");
 
         // Verify responses
-        let expected = PinnedPacketBatch::new(vec![repair_response::repair_response_packet(
+        let expected = RecycledPacketBatch::new(vec![repair_response::repair_response_packet(
             &blockstore,
             2,
             31, // shred_index

@@ -185,7 +185,7 @@ all_test_steps() {
   command_step dcou-2-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 2/3" 20 check
   command_step dcou-3-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 3/3" 20 check
   command_step miri "ci/docker-run-default-image.sh ci/test-miri.sh" 5 check
-  command_step frozen-abi "ci/docker-run-default-image.sh ci/test-abi.sh" 15 check
+  command_step frozen-abi "ci/docker-run-default-image.sh ci/test-frozen-abi.sh" 30 check
   wait_step
 
   # Full test suite
@@ -256,7 +256,25 @@ EOF
              ^ci/test-coverage.sh \
              ^scripts/coverage.sh \
       ; then
-    command_step coverage "ci/docker-run-default-image.sh ci/test-coverage.sh" 80
+    cat >> "$output_file" <<"EOF"
+  - group: "coverage"
+    steps:
+      - command: "ci/docker-run-default-image.sh ci/coverage/part-1.sh"
+        name: "coverage-1"
+        timeout_in_minutes: 60
+        agents:
+          queue: "solana"
+      - command: "ci/docker-run-default-image.sh ci/coverage/part-2.sh"
+        name: "coverage-2"
+        timeout_in_minutes: 60
+        agents:
+          queue: "solana"
+      - command: "ci/docker-run-default-image.sh ci/coverage/part-3.sh"
+        name: "coverage-3"
+        timeout_in_minutes: 60
+        agents:
+          queue: "solana"
+EOF
   else
     annotate --style info --context test-coverage \
       "Coverage skipped as no .rs files were modified"

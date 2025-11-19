@@ -3,7 +3,7 @@
 
 # Introduction
 The Vortexor is a service that can offload the tasks of receiving transactions
-from the public, performing signature verifications, and deduplications from the
+from the public, performing signature verification, and deduplication from the
 core validator, enabling it to focus on processing and executing the
 transactions. The verified and filtered transactions will then be forwarded to
 the validators linked with the Vortexor. This setup makes the TPU transaction
@@ -201,13 +201,6 @@ The Vortexor's TPU and forward addresses can be found in its log file. For examp
 ```
 [2025-04-24T17:40:13.098760226Z INFO  solana_vortexor] Creating the Vortexor. The tpu socket is: Ok(0.0.0.0:9200), tpu_fwd: Ok(0.0.0.0:9201)
 ```
-
-When configuring the validator, deduct the `QUIC_PORT_OFFSET` (which is 6) from
-the TPU and forward ports. For example, with the ports shown in the vortexor's
-log file, the TPU and forward port should be set to the following when starting
-the validator:
-- TPU port: `9200` → `9194`, then specify 9194 in the --public-tpu-address for the validator.
-- TPU forward port: `9201` → `9195`, then specify 9195 in the --public-tpu-forwards-address for the validator.
 
 ---
 

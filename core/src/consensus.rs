@@ -881,7 +881,7 @@ impl Tower {
         if last_vote_ancestors.is_empty() {
             // If `last_vote_ancestors` is empty, this means we must have a last vote that is stray. If the `last_voted_slot`
             // is stray, it must be descended from some earlier root than the latest root (the anchor at startup).
-            // The above check also guarentees that the candidate slot is not a descendant of this stray last vote.
+            // The above check also guarantees that the candidate slot is not a descendant of this stray last vote.
             //
             // This gives us a fork graph:
             //     / ------------- stray `last_voted_slot`

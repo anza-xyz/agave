@@ -110,7 +110,7 @@ pub(crate) fn withdraw_nonce_account(
             }
             *from.get_key()
         }
-        State::Initialized(ref data) => {
+        State::Initialized(data) => {
             if lamports == from.get_lamports() {
                 let durable_nonce =
                     DurableNonce::from_blockhash(&invoke_context.environment_config.blockhash);

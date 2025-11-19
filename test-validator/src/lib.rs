@@ -45,7 +45,9 @@ use {
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_net_utils::{find_available_ports_in_range, multihomed_sockets::BindIpAddrs, PortRange},
+    solana_net_utils::{
+        find_available_ports_in_range, multihomed_sockets::BindIpAddrs, PortRange, SocketAddrSpace,
+    },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
@@ -58,7 +60,7 @@ use {
     },
     solana_sdk_ids::address_lookup_table,
     solana_signer::Signer,
-    solana_streamer::{quic::DEFAULT_QUIC_ENDPOINTS, socket::SocketAddrSpace},
+    solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_transaction::Transaction,
     solana_validator_exit::Exit,
@@ -1037,6 +1039,7 @@ impl TestValidator {
                 gossip_port: config.node_config.gossip_addr.port(),
                 port_range: config.node_config.port_range,
                 advertised_ip: bind_ip_addr,
+                public_tvu_addr: None,
                 public_tpu_addr: None,
                 public_tpu_forwards_addr: None,
                 num_tvu_receive_sockets: NonZero::new(1).unwrap(),
@@ -1222,7 +1225,7 @@ impl TestValidator {
     }
 
     /// programs added to genesis ain't immediately usable. Actively check "Program
-    /// is not deployed" error for their availibility.
+    /// is not deployed" error for their availability.
     async fn wait_for_upgradeable_programs_deployed(
         &self,
         upgradeable_programs: &[&Pubkey],
@@ -1499,10 +1502,10 @@ mod test {
 
         // The first one, where we provided `--deactivate-feature`, should be
         // the account we provided.
-        let overriden_account = our_accounts[0].as_ref().unwrap();
-        assert_eq!(overriden_account.lamports, 100_000);
-        assert_eq!(overriden_account.data.len(), 0);
-        assert_eq!(overriden_account.owner, owner);
+        let overridden_account = our_accounts[0].as_ref().unwrap();
+        assert_eq!(overridden_account.lamports, 100_000);
+        assert_eq!(overridden_account.data.len(), 0);
+        assert_eq!(overridden_account.owner, owner);
 
         // The second one should be a feature account.
         let feature_account = our_accounts[1].as_ref().unwrap();

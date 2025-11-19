@@ -157,7 +157,7 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let max_concurrent_connections = quic_server_params.max_concurrent_connections();
+    let max_concurrent_connections = qos.max_concurrent_connections();
     let handle = tokio::spawn({
         let endpoints = endpoints.clone();
         let stats = stats.clone();
@@ -334,10 +334,9 @@ where
                 continue;
             }
 
-            let Ok(client_connection_tracker) = ClientConnectionTracker::new(
-                stats.clone(),
-                quic_server_params.max_concurrent_connections(),
-            ) else {
+            let Ok(client_connection_tracker) =
+                ClientConnectionTracker::new(stats.clone(), qos.max_concurrent_connections())
+            else {
                 stats
                     .refused_connections_too_many_open_connections
                     .fetch_add(1, Ordering::Relaxed);
@@ -631,8 +630,11 @@ async fn handle_connection<Q, C>(
         let mut meta = Meta::default();
         meta.set_socket_addr(&remote_addr);
         meta.set_from_staked_node(matches!(peer_type, ConnectionPeerType::Staked(_)));
-        let mut accum = PacketAccumulator::new(meta);
+        if let Some(pubkey) = context.remote_pubkey() {
+            meta.set_remote_pubkey(pubkey);
+        }
 
+        let mut accum = PacketAccumulator::new(meta);
         // Virtually all small transactions will fit in 1 chunk. Larger transactions will fit in 1
         // or 2 chunks if the first chunk starts towards the end of a datagram. A small number of
         // transaction will have other protocol frames inserted in the middle. Empirically it's been
@@ -1351,7 +1353,7 @@ pub mod test {
         } = setup_quic_server(
             None,
             QuicStreamerConfig::default_for_tests(),
-            SwQosConfig::default(),
+            SwQosConfig::default_for_tests(),
         );
         check_block_multiple_connections(server_address).await;
         cancel.cancel();
@@ -1372,10 +1374,12 @@ pub mod test {
         } = setup_quic_server(
             None,
             QuicStreamerConfig {
-                max_connections_per_unstaked_peer: 2,
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig::default(),
+            SwQosConfig {
+                max_connections_per_unstaked_peer: 2,
+                ..SwQosConfig::default_for_tests()
+            },
         );
 
         let client_socket = bind_to_localhost_unique().expect("should bind - client");
@@ -1582,10 +1586,12 @@ pub mod test {
             sender,
             staked_nodes,
             QuicStreamerConfig {
-                max_unstaked_connections: 0, // Do not allow any connection from unstaked clients/nodes
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig::default(),
+            SwQosConfig {
+                max_unstaked_connections: 0, // Do not allow any connection from unstaked clients/nodes
+                ..Default::default()
+            },
             cancel.clone(),
         )
         .unwrap();
@@ -1616,10 +1622,12 @@ pub mod test {
             sender,
             staked_nodes,
             QuicStreamerConfig {
-                max_connections_per_unstaked_peer: 2,
                 ..QuicStreamerConfig::default_for_tests()
             },
-            SwQosConfig::default(),
+            SwQosConfig {
+                max_connections_per_unstaked_peer: 2,
+                ..Default::default()
+            },
             cancel.clone(),
         )
         .unwrap();

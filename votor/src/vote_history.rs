@@ -128,7 +128,7 @@ impl VoteHistory {
     pub fn votes_cast_since(&self, slot: Slot) -> Vec<Vote> {
         self.votes_cast
             .iter()
-            .filter(|(&s, _)| s > slot)
+            .filter(|(s, _)| s > &&slot)
             .flat_map(|(_, votes)| votes.iter())
             .cloned()
             .collect()

@@ -79,7 +79,7 @@ fn load_blockstore(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -> Arc<Bank
 
     let genesis_config = open_genesis_config_by(ledger_path, arg_matches);
     info!("genesis hash: {}", genesis_config.hash());
-    let blockstore = open_blockstore(ledger_path, arg_matches, AccessType::Secondary);
+    let blockstore = open_blockstore(ledger_path, arg_matches, AccessType::ReadOnly);
     let LoadAndProcessLedgerOutput { bank_forks, .. } = load_and_process_ledger_or_exit(
         arg_matches,
         &genesis_config,
@@ -161,21 +161,12 @@ and the following fields are required
                 .arg(&load_genesis_config_arg)
                 .args(&snapshot_config_args)
                 .arg(
-                    Arg::with_name("memory")
-                        .help("Heap memory for the program to run on")
-                        .short("m")
-                        .long("memory")
-                        .value_name("BYTES")
-                        .takes_value(true)
-                        .default_value("0"),
-                )
-                .arg(
                     Arg::with_name("mode")
                         .help(
                             "Mode of execution, where 'interpreter' runs \
                              the program in the virtual machine's interpreter, 'debugger' is the same as 'interpreter' \
                              but hosts a GDB interface, and 'jit' precompiles the program to native machine code \
-                             before execting it in the virtual machine.",
+                             before executing it in the virtual machine.",
                         )
                         .short("e")
                         .long("mode")

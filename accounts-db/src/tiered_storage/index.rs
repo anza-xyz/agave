@@ -168,13 +168,13 @@ mod tests {
         let addresses: Vec<_> = std::iter::repeat_with(Pubkey::new_unique)
             .take(ENTRY_COUNT)
             .collect();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let index_entries: Vec<_> = addresses
             .iter()
             .map(|address| AccountIndexWriterEntry {
                 address: *address,
                 offset: HotAccountOffset::new(
-                    rng.gen_range(0..u32::MAX) as usize * HOT_ACCOUNT_ALIGNMENT,
+                    rng.random_range(0..u32::MAX) as usize * HOT_ACCOUNT_ALIGNMENT,
                 )
                 .unwrap(),
             })
