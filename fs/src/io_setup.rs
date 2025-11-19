@@ -70,14 +70,15 @@ mod tests {
         let mut file_creator = IoUringFileCreator::with_buffer_capacity(
             1 << 20,
             io_setup.shared_sqpoll_fd(),
-            move |path| {
+            move |file_info| {
                 let mut reader = SequentialFileReaderBuilder::new()
                     .shared_sqpoll(io_setup.shared_sqpoll_fd())
-                    .build(path, 1 << 20)
+                    .build(file_info.path, 1 << 20)
                     .unwrap();
                 reader
                     .read_to_end(read_bytes_ref.write().unwrap().as_mut())
                     .unwrap();
+                None
             },
         )
         .unwrap();

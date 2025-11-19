@@ -2,8 +2,7 @@
 
 //! File i/o helper functions.
 use {
-    crate::io_setup::IoSetupState,
-    crate::FileInfo,
+    crate::{io_setup::IoSetupState, FileInfo},
     std::{
         fs::{self, File, OpenOptions},
         io::{self, BufWriter, Write},
@@ -431,7 +430,7 @@ mod tests {
         // Shared state to capture callback invocations
         let mut callback_provided_file_info = None;
 
-        let mut creator = file_creator(2 << 20, |file_info| {
+        let mut creator = file_creator(2 << 20, &IoSetupState::default(), |file_info| {
             callback_provided_file_info = Some(file_info);
             None
         })?;
