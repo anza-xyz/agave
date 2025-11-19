@@ -73,6 +73,15 @@ const MAX_SNAPSHOT_VERSION_FILE_SIZE: u64 = 8; // byte
 //         Snapshots created with versions <2.0.0 will fastboot to version 2.0.0
 const SNAPSHOT_FASTBOOT_VERSION: Version = Version::new(2, 0, 0);
 
+/// A package created from a snapshot request, containing information required to serialize the bank
+/// snapshot
+pub struct BankSnapshotPackage {
+    pub bank_fields: BankFieldsToSerialize,
+    pub bank_hash_stats: BankHashStats,
+    pub slot_deltas: Vec<BankSlotDelta>,
+    pub write_version: u64,
+}
+
 /// Information about a bank snapshot. Namely the slot of the bank, the path to the snapshot, and
 /// the kind of the snapshot.
 #[derive(PartialEq, Eq, Debug)]
@@ -454,14 +463,18 @@ pub fn serialize_and_archive_snapshot_package(
         enqueued: _,
     } = snapshot_package;
 
+    let bank_snapshot_package = BankSnapshotPackage {
+        bank_fields: bank_fields_to_serialize,
+        bank_hash_stats,
+        slot_deltas: status_cache_slot_deltas,
+        write_version,
+    };
+
     let bank_snapshot_info = serialize_snapshot(
         &snapshot_config.bank_snapshots_dir,
         snapshot_config.snapshot_version,
-        snapshot_storages.as_slice(),
-        status_cache_slot_deltas.as_slice(),
-        bank_fields_to_serialize,
-        bank_hash_stats,
-        write_version,
+        bank_snapshot_package,
+        &snapshot_storages,
         should_flush_and_hard_link_storages,
     )?;
 
@@ -502,17 +515,20 @@ pub fn serialize_and_archive_snapshot_package(
 }
 
 /// Serializes a snapshot into `bank_snapshots_dir`
-#[allow(clippy::too_many_arguments)]
 fn serialize_snapshot(
     bank_snapshots_dir: impl AsRef<Path>,
     snapshot_version: SnapshotVersion,
+    bank_snapshot_package: BankSnapshotPackage,
     snapshot_storages: &[Arc<AccountStorageEntry>],
-    slot_deltas: &[BankSlotDelta],
-    mut bank_fields: BankFieldsToSerialize,
-    bank_hash_stats: BankHashStats,
-    write_version: u64,
     should_flush_and_hard_link_storages: bool,
 ) -> Result<BankSnapshotInfo> {
+    let BankSnapshotPackage {
+        mut bank_fields,
+        bank_hash_stats,
+        slot_deltas,
+        write_version,
+    } = bank_snapshot_package;
+    let slot_deltas = slot_deltas.as_slice();
     let slot = bank_fields.slot;
 
     // this lambda function is to facilitate converting between
