@@ -1283,9 +1283,12 @@ fn finish_erasure_batch(
         shred.set_signature(signature);
         debug_assert!(shred.verify(&keypair.pubkey()));
         debug_assert_matches!(shred.sanitize(), Ok(()));
-        // Assert that shred payload is fully populated.
-        let expected_shred = Shred::from_payload(shred.payload().clone()).unwrap();
-        debug_assert_eq!(shred, &expected_shred);
+        #[cfg(debug_assertions)]
+        {
+            // Assert that shred payload is fully populated.
+            let expected_shred = Shred::from_payload(shred.payload().clone()).unwrap();
+            debug_assert_eq!(shred, &expected_shred);
+        }
     }
     Ok(root)
 }
