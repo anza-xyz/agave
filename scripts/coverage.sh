@@ -80,6 +80,7 @@ grcov_common_args=(
   --llvm
   --llvm-path "$llvm_path"
   --ignore /\*
+  --ignore \*/tests/\*
 )
 
 grcov "${grcov_common_args[@]}" -t html -o "$here/../target/cov/${COMMIT_HASH}/coverage/html"
