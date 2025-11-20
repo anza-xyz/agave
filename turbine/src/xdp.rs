@@ -165,7 +165,7 @@ impl XdpRetransmitter {
             .map(|_| crossbeam_channel::bounded(config.rtx_channel_cap))
             .unzip::<_, _, Vec<_>, Vec<_>>();
 
-        // Create router handle (ArcSwap) for lock-free updates
+        // Use ArcSwap for lock-free updates of the routing table
         let atomic_router = Arc::new(ArcSwap::from_pointee(Router::new()?));
         let monitor_handle = RouteMonitor::start(
             Arc::clone(&atomic_router),

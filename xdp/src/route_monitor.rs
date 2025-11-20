@@ -1,15 +1,18 @@
 use {
     crate::{
         netlink::{
-            is_supported_ipv4_neigh_header, is_supported_ipv4_route_header, parse_rtm_newneigh,
-            parse_rtm_newroute, NetlinkMessage, NetlinkSocket,
+            parse_rtm_newneigh, parse_rtm_newroute, NeighborEntry, NetlinkMessage, NetlinkSocket,
+            RouteEntry,
         },
         route::Router,
     },
     arc_swap::ArcSwap,
     libc::{
-        self, pollfd, POLLERR, POLLHUP, POLLIN, POLLNVAL, RTMGRP_IPV4_ROUTE, RTMGRP_NEIGH,
-        RTM_DELNEIGH, RTM_DELROUTE, RTM_NEWNEIGH, RTM_NEWROUTE,
+        self, pollfd, AF_INET, NUD_PERMANENT, NUD_REACHABLE, NUD_STALE, POLLERR, POLLHUP, POLLIN,
+        POLLNVAL, RTMGRP_IPV4_ROUTE, RTMGRP_NEIGH, RTM_DELNEIGH, RTM_DELROUTE, RTM_F_CLONED,
+        RTM_NEWNEIGH, RTM_NEWROUTE, RTN_ANYCAST, RTN_BLACKHOLE, RTN_BROADCAST, RTN_LOCAL,
+        RTN_MULTICAST, RTN_NAT, RTN_PROHIBIT, RTN_THROW, RTN_UNICAST, RTN_UNREACHABLE, RTN_UNSPEC,
+        RTN_XRESOLVE, RT_TABLE_DEFAULT, RT_TABLE_LOCAL, RT_TABLE_MAIN, RT_TABLE_UNSPEC,
     },
     log::*,
     std::{
@@ -28,9 +31,7 @@ pub struct RouteMonitor;
 impl RouteMonitor {
     /// Subscribes to RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH multicast groups
     /// Waits for updates to arrive on the netlink socket
-    /// Batches updates for `drain_window`
-    /// Once drain_window expires, publishes the working routing table to the atomic router
-    /// If the netlink socket is invalid, recreates the socket and resyncs the atomic router
+    /// Publishes the updated routing table every `update_interval` if needed
     pub fn start(
         atomic_router: Arc<ArcSwap<Router>>,
         exit: Arc<AtomicBool>,
@@ -63,7 +64,7 @@ impl RouteMonitor {
                         }
                     };
 
-                    assert!(ev & POLLNVAL == 0);
+                    debug_assert!(ev & POLLNVAL == 0);
 
                     if (ev & (POLLHUP | POLLERR)) != 0 {
                         error!(
@@ -101,25 +102,35 @@ impl RouteMonitor {
         let mut dirty = false;
         for m in msgs {
             match m.header.nlmsg_type {
-                RTM_NEWROUTE if is_supported_ipv4_route_header(m) => {
+                RTM_NEWROUTE => {
                     if let Some(r) = parse_rtm_newroute(m) {
-                        dirty |= router.upsert_route(r);
+                        if r.family as i32 == AF_INET && is_valid_route_entry(&r) {
+                            dirty |= router.upsert_route(r);
+                        }
                     }
                 }
-                RTM_DELROUTE if is_supported_ipv4_route_header(m) => {
+                RTM_DELROUTE => {
                     if let Some(r) = parse_rtm_newroute(m) {
-                        dirty |= router.remove_route(r);
+                        if r.family as i32 == AF_INET && is_valid_route_entry(&r) {
+                            dirty |= router.remove_route(r);
+                        }
                     }
                 }
-                RTM_NEWNEIGH if is_supported_ipv4_neigh_header(m) => {
+                RTM_NEWNEIGH => {
                     if let Some(n) = parse_rtm_newneigh(m, None) {
-                        dirty |= router.upsert_neighbor(n);
+                        if let Some(IpAddr::V4(_)) = n.destination {
+                            if is_valid_neighbor_entry(&n) {
+                                dirty |= router.upsert_neighbor(n);
+                            }
+                        }
                     }
                 }
-                RTM_DELNEIGH if is_supported_ipv4_neigh_header(m) => {
+                RTM_DELNEIGH => {
                     if let Some(n) = parse_rtm_newneigh(m, None) {
                         if let Some(IpAddr::V4(ip)) = n.destination {
-                            dirty |= router.remove_neighbor(ip, n.ifindex as u32);
+                            if is_valid_neighbor_entry(&n) {
+                                dirty |= router.remove_neighbor(ip, n.ifindex as u32);
+                            }
                         }
                     }
                 }
@@ -179,4 +190,53 @@ fn poll(pfd: &mut pollfd, timeout: Duration) -> Result<i32, Error> {
         return Err(Error::last_os_error());
     }
     Ok(rc)
+}
+
+#[inline]
+fn is_valid_route_entry(r: &RouteEntry) -> bool {
+    if r.flags & RTM_F_CLONED != 0 {
+        return false;
+    }
+    if !match r.table {
+        None => true,
+        Some(t) => is_supported_route_table_id(t),
+    } {
+        return false;
+    }
+    is_supported_route_type(r.type_)
+}
+
+/// Returns true if this neighbor entry is valid and usable
+#[inline]
+fn is_valid_neighbor_entry(n: &NeighborEntry) -> bool {
+    n.lladdr.is_some() && (n.state & (NUD_REACHABLE | NUD_PERMANENT | NUD_STALE)) != 0
+}
+
+// Removes cloned routes, non-main/local table routes, and invalid route types
+// Many invisible routes may be inserted, we need to remove them.
+#[inline]
+fn is_supported_route_type(ty: u8) -> bool {
+    matches!(
+        ty,
+        RTN_UNICAST
+            | RTN_LOCAL
+            | RTN_ANYCAST
+            | RTN_BROADCAST
+            | RTN_MULTICAST
+            | RTN_BLACKHOLE
+            | RTN_THROW
+            | RTN_UNREACHABLE
+            | RTN_PROHIBIT
+            | RTN_NAT
+            | RTN_XRESOLVE
+            | RTN_UNSPEC
+    )
+}
+
+#[inline]
+fn is_supported_route_table_id(table: u32) -> bool {
+    table == RT_TABLE_MAIN as u32
+        || table == RT_TABLE_LOCAL as u32
+        || table == RT_TABLE_DEFAULT as u32
+        || table == RT_TABLE_UNSPEC as u32
 }

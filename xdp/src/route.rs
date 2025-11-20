@@ -29,7 +29,10 @@ pub struct NextHop {
     pub if_index: u32,
 }
 
-fn lookup_route(routes: &[RouteEntry], dest: IpAddr) -> Option<&RouteEntry> {
+fn lookup_route<'a, I>(routes: I, dest: IpAddr) -> Option<&'a RouteEntry>
+where
+    I: Iterator<Item = &'a RouteEntry>,
+{
     let mut best_match = None;
 
     let family = match dest {
@@ -37,7 +40,7 @@ fn lookup_route(routes: &[RouteEntry], dest: IpAddr) -> Option<&RouteEntry> {
         IpAddr::V6(_) => AF_INET6 as u8,
     };
 
-    for route in routes.iter().filter(|r| r.family == family) {
+    for route in routes.filter(|r| r.family == family) {
         match (dest, route.destination) {
             // this is the default route
             (_, None) => {
@@ -122,12 +125,8 @@ impl RouteTable {
         Ok(Self { routes })
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &RouteEntry> {
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &RouteEntry> {
         self.routes.iter()
-    }
-
-    pub fn as_slice(&self) -> &[RouteEntry] {
-        &self.routes
     }
 
     pub fn upsert(&mut self, new_route: RouteEntry) -> bool {
@@ -192,7 +191,7 @@ impl Router {
     }
 
     pub fn route(&self, dest_ip: IpAddr) -> Result<NextHop, RouteError> {
-        let route = lookup_route(self.route_table.as_slice(), dest_ip)
+        let route = lookup_route(self.route_table.iter(), dest_ip)
             .ok_or(RouteError::NoRouteFound(dest_ip))?;
 
         let if_index = route
@@ -249,9 +248,6 @@ impl ArpTable {
     }
 
     pub fn upsert(&mut self, new_neighbor: NeighborEntry) -> bool {
-        if !new_neighbor.is_valid() {
-            return false;
-        }
         let Some((ifidx, ip)) = new_neighbor.key() else {
             return false;
         };
@@ -348,7 +344,7 @@ mod tests {
         let next_hop = router.route("1.1.1.1".parse().unwrap()).unwrap();
         eprintln!("{next_hop:?}");
 
-        let before_routes_len = router.route_table.as_slice().len();
+        let before_routes_len = router.route_table.iter().len();
 
         // Create a unique, private IPv4 /32 route to avoid collisions
         let test_dst = Ipv4Addr::new(10, 255, 255, 123);
@@ -371,12 +367,12 @@ mod tests {
         // Upsert new route and check that it was inserted and routes are dirty
         assert!(router.upsert_route(route.clone()));
         assert!(router.route_table.iter().any(|r| r == &route));
-        assert!(router.route_table.as_slice().len() >= before_routes_len);
+        assert!(router.route_table.iter().len() >= before_routes_len);
 
         // Delete using same key should remove the route
         assert!(router.remove_route(route.clone()));
         assert!(router.route_table.iter().all(|r| r != &route));
-        assert_eq!(router.route_table.as_slice().len(), before_routes_len);
+        assert_eq!(router.route_table.iter().len(), before_routes_len);
     }
 
     #[test]
