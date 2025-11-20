@@ -52,7 +52,9 @@ use {
     solana_rent::Rent,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_rpc_client::{nonblocking, rpc_client::RpcClient},
-    solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
+    solana_rpc_client_api::{
+        client_error::Error as RpcClientError, request::MAX_MULTIPLE_ACCOUNTS,
+    },
     solana_runtime::{
         bank_forks::BankForks,
         genesis_utils::{self, create_genesis_config_with_leader_ex_no_features},
@@ -1322,7 +1324,7 @@ impl TestValidator {
         &self,
         upgradeable_programs: &[&Pubkey],
         payer: &Keypair,
-    ) -> Result<(), TransactionError> {
+    ) -> Result<(), RpcClientError> {
         let rpc_client = nonblocking::rpc_client::RpcClient::new_with_commitment(
             self.rpc_url.clone(),
             CommitmentConfig::processed(),
@@ -1356,7 +1358,9 @@ impl TestValidator {
                                 debug!("{program_id:?} - not deployed");
                             } else if err_string.contains("AccountNotFound") {
                                 // Payer account not funded - this is a caller error
-                                return Err(TransactionError::AccountNotFound);
+                                return Err(RpcClientError::from(
+                                    TransactionError::AccountNotFound,
+                                ));
                             } else {
                                 // Assuming all other errors could only occur *after*
                                 // program is deployed for usability
@@ -1368,7 +1372,11 @@ impl TestValidator {
                         }
                     }
                     Err(e) => {
-                        debug!("Failed to simulate transaction: {e:?}");
+                        warn!("Failed to simulate transaction: {e:?}");
+                        // Error if we're at final attempt - flakiness is tolerated up to MAX_ATTEMPTS
+                        if attempt == MAX_ATTEMPTS {
+                            return Err(e);
+                        }
                     }
                 }
             }
@@ -1653,7 +1661,7 @@ mod test {
         assert!(account.executable);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_wait_for_program_with_unfunded_payer() {
         let program_id = Pubkey::new_unique();
         let (test_validator, _mint_keypair) = TestValidatorGenesis::default()
@@ -1670,7 +1678,12 @@ mod test {
             .await;
 
         // Verify it returns AccountNotFound error
-        assert!(result.is_err());
-        assert!(matches!(result, Err(TransactionError::AccountNotFound)));
+        let err = result.unwrap_err();
+        assert!(matches!(
+            *err.kind,
+            solana_rpc_client_api::client_error::ErrorKind::TransactionError(
+                TransactionError::AccountNotFound
+            )
+        ));
     }
 }
