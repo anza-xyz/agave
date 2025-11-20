@@ -101,6 +101,22 @@ pub struct CheckResponsesPtr {
 }
 
 impl CheckResponsesPtr {
+    /// Constructions a [`CheckResponsesPtr`] from raw parts.
+    ///
+    /// # Safety
+    ///
+    /// - `ptr` must be valid for reads.
+    /// - `count` must be accurate (in number of responses) and not overrun the end of `ptr`.
+    ///
+    /// # Note
+    ///
+    /// If you are trying to construct a pointer for use by Agave, you almost certainly want to use
+    /// [`Self::from_transaction_response_region`].
+    #[cfg(feature = "dev-context-only-utils")]
+    pub unsafe fn from_raw_parts(ptr: NonNull<CheckResponse>, count: usize) -> Self {
+        Self { ptr, count }
+    }
+
     /// Constructs the pointer from a [`TransactionResponseRegion`].
     ///
     /// # Safety
@@ -153,6 +169,22 @@ pub struct ExecutionResponsesPtr {
 }
 
 impl ExecutionResponsesPtr {
+    /// Constructions a [`ExecutionResponsesPtr`] from raw parts.
+    ///
+    /// # Safety
+    ///
+    /// - `ptr` must be valid for reads.
+    /// - `count` must be accurate (in number of responses) and not overrun the end of `ptr`.
+    ///
+    /// # Note
+    ///
+    /// If you are trying to construct a pointer for use by Agave, you almost certainly want to use
+    /// [`Self::from_transaction_response_region`].
+    #[cfg(feature = "dev-context-only-utils")]
+    pub unsafe fn from_raw_parts(ptr: NonNull<ExecutionResponse>, count: usize) -> Self {
+        Self { ptr, count }
+    }
+
     /// Constructs the pointer from a [`TransactionResponseRegion`].
     ///
     /// # Safety
