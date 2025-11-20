@@ -27,6 +27,7 @@ use {
             RequiredLenBufRead as _,
         },
         file_io::{read_into_buffer, write_buffer_to_file},
+        FileInfo,
     },
     log::*,
     memmap2::MmapMut,
@@ -423,17 +424,17 @@ impl AppendVec {
         Ok((new, num_accounts))
     }
 
-    /// Creates a new AppendVec for the underlying storage at `path`
+    /// Creates a new AppendVec for the underlying storage at `file_info`
     ///
     /// This version of `new()` may only be called when reconstructing storages as part of startup.
     /// It trusts the snapshot's value for `current_len`, and relies on later index generation or
     /// accounts verification to ensure it is valid.
     pub fn new_for_startup(
-        path: impl Into<PathBuf>,
+        file_info: FileInfo,
         current_len: usize,
         storage_access: StorageAccess,
     ) -> Result<Self> {
-        let new = Self::new_from_file_unchecked(path, current_len, storage_access)?;
+        let new = Self::new_from_file_info_unchecked(file_info, current_len, storage_access)?;
 
         // The current_len is allowed to be either exactly the same as file_size, or
         // u64-aligned-equivalent to file_size.  This is because `flush` and `shink` compute the
@@ -462,7 +463,7 @@ impl AppendVec {
         }
     }
 
-    /// Creates an appendvec from existing file in read-only mode and without full data checks
+    /// Creates an appendvec in read-only mode from `path` and without full data checks
     ///
     /// Validation of account data and counting the number of accounts is skipped.
     pub fn new_from_file_unchecked(
@@ -470,18 +471,23 @@ impl AppendVec {
         current_len: usize,
         storage_access: StorageAccess,
     ) -> Result<Self> {
-        let path = path.into();
-        let file_size = std::fs::metadata(&path)?.len();
-        Self::sanitize_len_and_size(current_len, file_size as usize)?;
-
         // AppendVec is in read-only mode, but mmap access requires file to be writable
         #[allow(deprecated)]
         let is_writable = storage_access == StorageAccess::Mmap;
-        let data = OpenOptions::new()
-            .read(true)
-            .write(is_writable)
-            .create(false)
-            .open(&path)?;
+
+        let file_info = FileInfo::new_from_path_writable(path.into(), is_writable)?;
+        Self::new_from_file_info_unchecked(file_info, current_len, storage_access)
+    }
+
+    /// Creates an appendvec in read-only mode from existing `FileInfo` and without full data checks
+    ///
+    /// Validation of account data and counting the number of accounts is skipped.
+    pub fn new_from_file_info_unchecked(
+        file_info: FileInfo,
+        current_len: usize,
+        storage_access: StorageAccess,
+    ) -> Result<Self> {
+        Self::sanitize_len_and_size(current_len, file_info.size as usize)?;
 
         APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
 
@@ -491,18 +497,18 @@ impl AppendVec {
                 .fetch_add(1, Ordering::Relaxed);
 
             return Ok(AppendVec {
-                path,
-                backing: AppendVecFileBacking::File(data),
+                path: file_info.path,
+                backing: AppendVecFileBacking::File(file_info.file),
                 read_write_state: ReadWriteState::ReadOnly,
                 current_len: AtomicUsize::new(current_len),
-                file_size,
+                file_size: file_info.size,
                 remove_file_on_drop: AtomicBool::new(true),
                 is_dirty: AtomicBool::new(false),
             });
         }
 
         let mmap = unsafe {
-            let result = MmapMut::map_mut(&data);
+            let result = MmapMut::map_mut(&file_info.file);
             if result.is_err() {
                 // for vm.max_map_count, error is: {code: 12, kind: Other, message: "Cannot allocate memory"}
                 info!(
@@ -518,11 +524,11 @@ impl AppendVec {
             .fetch_add(1, Ordering::Relaxed);
 
         Ok(AppendVec {
-            path,
+            path: file_info.path,
             backing: AppendVecFileBacking::Mmap(mmap),
             read_write_state: ReadWriteState::ReadOnly,
             current_len: AtomicUsize::new(current_len),
-            file_size,
+            file_size: file_info.size,
             remove_file_on_drop: AtomicBool::new(true),
             is_dirty: AtomicBool::new(false),
         })
