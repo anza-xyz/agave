@@ -1,12 +1,15 @@
-use std::{
-    sync::atomic::{AtomicU64, Ordering},
-    time::{Duration, Instant},
+use {
+    solana_measure::measure::Measure,
+    std::{
+        sync::atomic::{AtomicU64, Ordering},
+        time::{Duration, Instant},
+    },
 };
 
 pub(crate) const STATS_INTERVAL_DURATION: Duration = Duration::from_secs(1);
 
 #[derive(Debug)]
-pub(crate) struct BLSPreVerifyPacketStats {
+pub(crate) struct BLSPreVerifyStats {
     pub(crate) recv_batches_us_hist: histogram::Histogram, // time to call recv_batch
     pub(crate) verify_batches_pp_us_hist: histogram::Histogram, // per-packet time to call verify_batch
     pub(crate) dedup_packets_pp_us_hist: histogram::Histogram, // per-packet time to call verify_batch
@@ -20,7 +23,7 @@ pub(crate) struct BLSPreVerifyPacketStats {
     pub(crate) last_stats_logged: Instant,
 }
 
-impl BLSPreVerifyPacketStats {
+impl BLSPreVerifyStats {
     pub(crate) fn new() -> Self {
         Self {
             recv_batches_us_hist: histogram::Histogram::default(),
@@ -38,13 +41,11 @@ impl BLSPreVerifyPacketStats {
     }
 
     pub(crate) fn maybe_report(&mut self) {
-        let now = Instant::now();
-        let time_since_last_log = now.duration_since(self.last_stats_logged);
-        if time_since_last_log < STATS_INTERVAL_DURATION {
+        if Instant::now().duration_since(self.last_stats_logged) < STATS_INTERVAL_DURATION {
             return;
         }
         datapoint_info!(
-            "bls_sig_verifier_packet_stats",
+            "bls_pre_verify_stats",
             (
                 "recv_batches_us_90pct",
                 self.recv_batches_us_hist.percentile(90.0).unwrap_or(0),
@@ -127,7 +128,33 @@ impl BLSPreVerifyPacketStats {
             ("total_dedup", self.total_dedup, i64),
             ("total_dedup_time_us", self.total_dedup_time_us, i64),
         );
-        *self = BLSPreVerifyPacketStats::new();
+        *self = BLSPreVerifyStats::new();
+    }
+
+    pub fn increase_stats(
+        &mut self,
+        recv_duration: &Duration,
+        verify_time: &Measure,
+        dedup_time: &Measure,
+        batches_len: usize,
+        num_packets: usize,
+        discard_or_dedup_fail: usize,
+    ) {
+        self.recv_batches_us_hist
+            .increment(recv_duration.as_micros() as u64)
+            .unwrap();
+        self.verify_batches_pp_us_hist
+            .increment(verify_time.as_us() / (num_packets as u64))
+            .unwrap();
+        self.dedup_packets_pp_us_hist
+            .increment(dedup_time.as_us() / (num_packets as u64))
+            .unwrap();
+        self.batches_hist.increment(batches_len as u64).unwrap();
+        self.packets_hist.increment(num_packets as u64).unwrap();
+        self.total_batches += batches_len;
+        self.total_packets += num_packets;
+        self.total_dedup += discard_or_dedup_fail;
+        self.total_dedup_time_us += dedup_time.as_us() as usize;
     }
 }
 

@@ -1,5 +1,5 @@
 use {
-    crate::bls_sigverify::{bls_sigverifier::BLSSigVerifier, stats::BLSPreVerifyPacketStats},
+    crate::bls_sigverify::{bls_sigverifier::BLSSigVerifier, stats::BLSPreVerifyStats},
     agave_votor_messages::consensus_message::ConsensusMessage,
     core::time::Duration,
     crossbeam_channel::{Receiver, RecvTimeoutError, TrySendError},
@@ -16,16 +16,24 @@ use {
 
 #[derive(Error, Debug)]
 pub enum BLSSigVerifyServiceError {
-    #[error("try_send packet errror")]
-    TrySendError,
+    #[error("try_send packet errror {0:?}")]
+    TrySendError(String),
 
     #[error("streamer error")]
     Streamer(#[from] StreamerError),
 }
 
 impl From<TrySendError<ConsensusMessage>> for BLSSigVerifyServiceError {
-    fn from(_: TrySendError<ConsensusMessage>) -> Self {
-        BLSSigVerifyServiceError::TrySendError
+    fn from(e: TrySendError<ConsensusMessage>) -> Self {
+        // We don't send TrySendError because it's big
+        match e {
+            TrySendError::Full(_) => {
+                BLSSigVerifyServiceError::TrySendError("channel full".to_string())
+            }
+            TrySendError::Disconnected(_) => {
+                BLSSigVerifyServiceError::TrySendError("channel disconnected".to_string())
+            }
+        }
     }
 }
 
@@ -45,7 +53,7 @@ impl BLSSigverifyService {
         deduper: &Deduper<K, [u8]>,
         recvr: &Receiver<PacketBatch>,
         verifier: &mut BLSSigVerifier,
-        stats: &mut BLSPreVerifyPacketStats,
+        stats: &mut BLSPreVerifyStats,
     ) -> Result<()> {
         let (mut batches, num_packets, recv_duration) = streamer::recv_packet_batches(recvr)?;
 
@@ -74,8 +82,7 @@ impl BLSSigverifyService {
             (num_packets as f32 / verify_time.as_s())
         );
 
-        Self::increase_stats(
-            stats,
+        stats.increase_stats(
             &recv_duration,
             &verify_time,
             &dedup_time,
@@ -86,40 +93,11 @@ impl BLSSigverifyService {
         Ok(())
     }
 
-    fn increase_stats(
-        stats: &mut BLSPreVerifyPacketStats,
-        recv_duration: &Duration,
-        verify_time: &Measure,
-        dedup_time: &Measure,
-        batches_len: usize,
-        num_packets: usize,
-        discard_or_dedup_fail: usize,
-    ) {
-        stats
-            .recv_batches_us_hist
-            .increment(recv_duration.as_micros() as u64)
-            .unwrap();
-        stats
-            .verify_batches_pp_us_hist
-            .increment(verify_time.as_us() / (num_packets as u64))
-            .unwrap();
-        stats
-            .dedup_packets_pp_us_hist
-            .increment(dedup_time.as_us() / (num_packets as u64))
-            .unwrap();
-        stats.batches_hist.increment(batches_len as u64).unwrap();
-        stats.packets_hist.increment(num_packets as u64).unwrap();
-        stats.total_batches += batches_len;
-        stats.total_packets += num_packets;
-        stats.total_dedup += discard_or_dedup_fail;
-        stats.total_dedup_time_us += dedup_time.as_us() as usize;
-    }
-
     fn verifier_service(
         packet_receiver: Receiver<PacketBatch>,
         mut verifier: BLSSigVerifier,
     ) -> JoinHandle<()> {
-        let mut stats = BLSPreVerifyPacketStats::new();
+        let mut stats = BLSPreVerifyStats::new();
         const MAX_DEDUPER_AGE: Duration = Duration::from_secs(2);
         const DEDUPER_FALSE_POSITIVE_RATE: f64 = 0.001;
         const DEDUPER_NUM_BITS: u64 = 63_999_979;
@@ -146,8 +124,8 @@ impl BLSSigverifyService {
                                     _ => error!("{streamer_error_box}"),
                                 }
                             }
-                            BLSSigVerifyServiceError::TrySendError => {
-                                error!("consensus pool receiver disconnected");
+                            BLSSigVerifyServiceError::TrySendError(e) => {
+                                error!("consensus pool receiver: {e}");
                                 break;
                             }
                         }

@@ -71,16 +71,6 @@ impl CertificateType {
         }
     }
 
-    /// "Critical" certs are the certificates necessary to make progress
-    /// We do not consider the next slot for voting until we've seen either
-    /// a Skip certificate or a NotarizeFallback certificate for ParentReady
-    ///
-    /// Note: Notarization certificates necessarily generate a
-    /// NotarizeFallback certificate as well
-    pub fn is_critical(&self) -> bool {
-        matches!(self, Self::NotarizeFallback(_, _) | Self::Skip(_))
-    }
-
     /// Reconstructs the single source `Vote` payload for this certificate.
     ///
     /// This method is used primarily by the signature verifier. For
