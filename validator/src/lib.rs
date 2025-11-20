@@ -18,6 +18,7 @@ pub mod admin_rpc_service;
 pub mod bootstrap;
 pub mod cli;
 pub mod commands;
+pub mod config_file;
 pub mod dashboard;
 
 pub fn format_name_value(name: &str, value: &str) -> String {

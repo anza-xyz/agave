@@ -4,6 +4,7 @@ use {
         bootstrap,
         cli::{self},
         commands::{run::args::RunArgs, FromClapArgMatches},
+        config_file::ConfigFile,
         ledger_lockfile, lock_ledger,
     },
     agave_snapshots::{
@@ -91,6 +92,7 @@ pub fn execute(
     matches: &ArgMatches,
     solana_version: &str,
     operation: Operation,
+    config_file: &ConfigFile,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let run_args = RunArgs::from_clap_arg_match(matches)?;
 
@@ -448,15 +450,17 @@ pub fn execute(
     let starting_with_geyser_plugins: bool = on_start_geyser_plugin_config_files.is_some()
         || matches.is_present("geyser_plugin_always_enabled");
 
-    let xdp_interface = matches.value_of("retransmit_xdp_interface");
-    let xdp_zero_copy = matches.is_present("retransmit_xdp_zero_copy");
-    let retransmit_xdp = matches.value_of("retransmit_xdp_cpu_cores").map(|cpus| {
-        XdpConfig::new(
-            xdp_interface,
-            parse_cpu_ranges(cpus).unwrap(),
-            xdp_zero_copy,
-        )
-    });
+    let xdp_interface = matches
+        .value_of("retransmit_xdp_interface")
+        .or(config_file.net.xdp.interface.as_deref())
+        .map(str::to_string);
+    let xdp_zero_copy = matches.is_present("retransmit_xdp_zero_copy")
+        || config_file.net.xdp.zero_copy.unwrap_or_default();
+    let xdp_cpus = matches
+        .value_of("retransmit_xdp_cpu_cores")
+        .map(|cpus| parse_cpu_ranges(cpus).unwrap())
+        .or_else(|| config_file.xdp_cpus());
+    let retransmit_xdp = xdp_cpus.map(|cpus| XdpConfig::new(xdp_interface, cpus, xdp_zero_copy));
 
     let account_paths: Vec<PathBuf> =
         if let Ok(account_paths) = values_t!(matches, "account_paths", String) {
@@ -553,6 +557,7 @@ pub fn execute(
         // permission to do so in order to fail quickly and give a direct error
         enforce_ulimit_nofile: true,
         poh_pinned_cpu_core: value_of(matches, "poh_pinned_cpu_core")
+            .or_else(|| config_file.poh_cpu())
             .unwrap_or(poh_service::DEFAULT_PINNED_CPU_CORE),
         poh_hashes_per_batch: value_of(matches, "poh_hashes_per_batch")
             .unwrap_or(poh_service::DEFAULT_HASHES_PER_BATCH),
