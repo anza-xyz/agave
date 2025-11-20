@@ -160,13 +160,18 @@ impl BLSSigVerifier {
         }
     }
 
+    // Given a vote message, following preprocessing steps are performed:
+    // 1. Get the corresponding vote account pubkey and BLS pubkey from rank.
+    // 2. Capture metrics for received votes.
+    // 3. Check if the vote is newer than root slot, discard if not.
+    // Uppon success, returns the vote account pubkey and BLS pubkey.
     fn preprocess_vote(
         &mut self,
         vote_message: VoteMessage,
         root_bank: &Bank,
         consensus_metrics_to_send: &mut Vec<ConsensusMetricsEvent>,
     ) -> Option<(Pubkey, BlsPubkey)> {
-        // Missing epoch states
+        // Missing epoch stakes
         let Some(key_to_rank_map) = get_key_to_rank_map(root_bank, vote_message.vote.slot()) else {
             self.stats
                 .received_no_epoch_stakes
@@ -175,7 +180,7 @@ impl BLSSigVerifier {
         };
 
         // Invalid rank
-        let Some((solana_pubkey, bls_pubkey)) =
+        let Some((vote_account_pubkey, bls_pubkey)) =
             key_to_rank_map.get_pubkey(vote_message.rank.into())
         else {
             self.stats.received_bad_rank.fetch_add(1, Ordering::Relaxed);
@@ -184,7 +189,7 @@ impl BLSSigVerifier {
 
         // Capture votes received metrics before old messages are potentially discarded below.
         consensus_metrics_to_send.push(ConsensusMetricsEvent::Vote {
-            id: *solana_pubkey,
+            id: *vote_account_pubkey,
             vote: vote_message.vote,
         });
         // Only need votes newer than root slot
@@ -192,7 +197,7 @@ impl BLSSigVerifier {
             self.stats.received_old.fetch_add(1, Ordering::Relaxed);
             return None;
         }
-        Some((*solana_pubkey, *bls_pubkey))
+        Some((*vote_account_pubkey, *bls_pubkey))
     }
 
     fn preprocess_packets(
