@@ -8,6 +8,7 @@ use {
     std::marker::PhantomData,
 };
 
+#[derive(Debug)]
 pub struct TransactionPtr {
     ptr: NonNull<u8>,
     len: usize,

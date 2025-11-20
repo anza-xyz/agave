@@ -3,6 +3,7 @@ use {
     std::ptr::NonNull,
 };
 
+#[derive(Debug)]
 pub struct PubkeysPtr {
     ptr: NonNull<Pubkey>,
     count: usize,
