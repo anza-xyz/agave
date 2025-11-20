@@ -1674,42 +1674,45 @@ mod tests {
     fn test_gather_possible_evictions() {
         const AGE_MAX: Age = 255;
         let ref_count = 1;
-        let mut map = HashMap::new();
-        for age in 0..=AGE_MAX {
-            // The values in the slot list element do not matter.
-            let one_element_slot_list = SlotList::from([(0, 0)]);
-
-            let clean_entry = Box::new(AccountMapEntry::new(
-                one_element_slot_list.clone(),
-                ref_count,
-                AccountMapEntryMeta::default(),
-            ));
-            clean_entry.set_dirty(false);
-            clean_entry.set_age(age);
-
-            let dirty_entry = Box::new(AccountMapEntry::new(
-                one_element_slot_list,
-                ref_count,
-                AccountMapEntryMeta::default(),
-            ));
-            dirty_entry.set_dirty(true);
-            dirty_entry.set_age(age);
-
-            map.insert(Pubkey::new_unique(), clean_entry);
-            map.insert(Pubkey::new_unique(), dirty_entry);
-        }
-        let map = map;
+        // The values in the slot list elements do not matter.
+        // They are different so we can distinguish between 'dirty' and 'clean' for the test.
+        let slot_list_dirty = [(0xD1, 0xD2)];
+        let slot_list_clean = [(0xC3, 0xC4)];
+        let map_dirty: HashMap<_, _> = (0..=AGE_MAX)
+            .map(|age| {
+                let entry = Box::new(AccountMapEntry::new(
+                    SlotList::from(slot_list_dirty),
+                    ref_count,
+                    AccountMapEntryMeta::default(),
+                ));
+                entry.set_dirty(true);
+                entry.set_age(age);
+                (Pubkey::new_unique(), entry)
+            })
+            .collect();
+        let map_clean: HashMap<_, _> = (0..=AGE_MAX)
+            .map(|age| {
+                let entry = Box::new(AccountMapEntry::new(
+                    SlotList::from(slot_list_clean),
+                    ref_count,
+                    AccountMapEntryMeta::default(),
+                ));
+                entry.set_dirty(false);
+                entry.set_age(age);
+                (Pubkey::new_unique(), entry)
+            })
+            .collect();
 
         for current_age in 0..=AGE_MAX {
             for ages_flushing_now in 0..=AGE_MAX {
                 let (candidates_to_flush, candidates_to_evict) =
                     InMemAccountsIndex::<u64, u64>::gather_possible_evictions(
-                        map.iter(),
+                        map_dirty.iter().chain(&map_clean),
                         current_age,
                         ages_flushing_now,
                     );
                 // Verify that the number of entries selected for eviction matches the expected count.
-                // Test setup: map contains 256 clean entries and 256 dirty entries.
+                // Test setup: map contains 256 dirty entries and 256 clean entries.
                 // Each with ages 0-255 (one entry per age value).
                 //
                 // gather_possible_evictions includes entries where:
@@ -1724,8 +1727,9 @@ mod tests {
                 assert_eq!(candidates_to_flush.0.len(), 1 + ages_flushing_now as usize);
                 assert_eq!(candidates_to_evict.0.len(), 1 + ages_flushing_now as usize);
                 candidates_to_flush.0.iter().for_each(|key| {
-                    let entry = map.get(key).unwrap();
+                    let entry = map_dirty.get(key).unwrap();
                     assert!(entry.dirty());
+                    assert_eq!(*entry.slot_list_read_lock(), slot_list_dirty);
                     assert!(
                         InMemAccountsIndex::<u64, u64>::should_evict_based_on_age(
                             current_age,
@@ -1739,8 +1743,9 @@ mod tests {
                     );
                 });
                 candidates_to_evict.0.iter().for_each(|key| {
-                    let entry = map.get(key).unwrap();
+                    let entry = map_clean.get(key).unwrap();
                     assert!(!entry.dirty());
+                    assert_eq!(*entry.slot_list_read_lock(), slot_list_clean);
                     assert!(
                         InMemAccountsIndex::<u64, u64>::should_evict_based_on_age(
                             current_age,
