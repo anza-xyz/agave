@@ -1,5 +1,5 @@
 use {
-    crate::bls_sigverify::{bls_sigverifier::BLSSigVerifier, stats::BLSPreVerifyStats},
+    crate::bls_sigverify::{sigverifier::BLSSigVerifier, stats::BLSPreVerifyStats},
     agave_votor_messages::consensus_message::ConsensusMessage,
     core::time::Duration,
     crossbeam_channel::{Receiver, RecvTimeoutError, TrySendError},

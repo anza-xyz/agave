@@ -2,9 +2,7 @@
 
 use {
     crate::{
-        bls_sigverify::{
-            bls_sigverify_service::BLSSigVerifyServiceError, stats::BLSSigVerifierStats,
-        },
+        bls_sigverify::{sigverify_service::BLSSigVerifyServiceError, stats::BLSSigVerifierStats},
         cluster_info_vote_listener::VerifiedVoterSlotsSender,
     },
     agave_votor::consensus_metrics::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
