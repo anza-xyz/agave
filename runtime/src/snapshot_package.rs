@@ -28,15 +28,6 @@ pub struct SnapshotPackage {
     pub enqueued: Instant,
 }
 
-/// A package created from a snapshot request, containing information required to serialize the bank
-/// snapshot
-pub struct BankSnapshotPackage {
-    pub bank_fields: BankFieldsToSerialize,
-    pub bank_hash_stats: BankHashStats,
-    pub status_cache_slot_deltas: Vec<BankSlotDelta>,
-    pub write_version: u64,
-}
-
 impl SnapshotPackage {
     pub fn new(
         snapshot_kind: SnapshotKind,
@@ -114,4 +105,13 @@ impl std::fmt::Debug for SnapshotPackage {
             .field("block_height", &self.block_height)
             .finish_non_exhaustive()
     }
+}
+
+/// A package created from a snapshot request, containing information required to serialize the bank
+/// snapshot
+pub struct BankSnapshotPackage {
+    pub bank_fields: BankFieldsToSerialize,
+    pub bank_hash_stats: BankHashStats,
+    pub status_cache_slot_deltas: Vec<BankSlotDelta>,
+    pub write_version: u64,
 }
