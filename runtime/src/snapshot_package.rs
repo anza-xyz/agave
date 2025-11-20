@@ -33,7 +33,7 @@ pub struct SnapshotPackage {
 pub struct BankSnapshotPackage {
     pub bank_fields: BankFieldsToSerialize,
     pub bank_hash_stats: BankHashStats,
-    pub slot_deltas: Vec<BankSlotDelta>,
+    pub status_cache_slot_deltas: Vec<BankSlotDelta>,
     pub write_version: u64,
 }
 
@@ -61,7 +61,7 @@ impl SnapshotPackage {
         let bank_snapshot_package = BankSnapshotPackage {
             bank_fields: bank_fields_to_serialize,
             bank_hash_stats: bank.get_bank_hash_stats(),
-            slot_deltas: status_cache_slot_deltas,
+            status_cache_slot_deltas,
             write_version: bank
                 .rc
                 .accounts

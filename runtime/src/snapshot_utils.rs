@@ -506,10 +506,10 @@ fn serialize_snapshot(
     let BankSnapshotPackage {
         mut bank_fields,
         bank_hash_stats,
-        slot_deltas,
+        status_cache_slot_deltas,
         write_version,
     } = bank_snapshot_package;
-    let slot_deltas = slot_deltas.as_slice();
+    let status_cache_slot_deltas = status_cache_slot_deltas.as_slice();
     let slot = bank_fields.slot;
 
     // this lambda function is to facilitate converting between
@@ -562,7 +562,7 @@ fn serialize_snapshot(
         let status_cache_path =
             bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_STATUS_CACHE_FILENAME);
         let (status_cache_consumed_size, status_cache_serialize_us) = measure_us!(
-            serde_snapshot::serialize_status_cache(slot_deltas, &status_cache_path)
+            serde_snapshot::serialize_status_cache(status_cache_slot_deltas, &status_cache_path)
                 .map_err(|err| AddBankSnapshotError::SerializeStatusCache(Box::new(err)))?
         );
 
