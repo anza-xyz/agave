@@ -887,7 +887,7 @@ pub(crate) fn reconstruct_single_storage(
     };
 
     let accounts_file =
-        AccountsFile::new_for_startup(append_vec_file_info.path, current_len, storage_access)?;
+        AccountsFile::new_for_startup(append_vec_file_info, current_len, storage_access)?;
     Ok(Arc::new(AccountStorageEntry::new_existing(
         *slot,
         id,

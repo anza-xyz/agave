@@ -1149,7 +1149,7 @@ fn get_snapshot_file_kind(filename: &str) -> Option<SnapshotFileKind> {
 fn get_version_and_snapshot_files(
     file_receiver: &Receiver<FileInfo>,
 ) -> Result<(FileInfo, FileInfo, Vec<FileInfo>)> {
-    let mut append_vecs = Vec::with_capacity(1024);
+    let mut append_vec_files = Vec::with_capacity(1024);
     let mut snapshot_version = None;
     let mut snapshot_bank = None;
 
@@ -1174,7 +1174,7 @@ fn get_version_and_snapshot_files(
                     }
                 }
                 Some(SnapshotFileKind::Storage) => {
-                    append_vecs.push(file_info);
+                    append_vec_files.push(file_info);
                 }
                 None => {} // do nothing for other kinds of files
             }
@@ -1187,7 +1187,7 @@ fn get_version_and_snapshot_files(
     let snapshot_version = snapshot_version.unwrap();
     let snapshot_bank = snapshot_bank.unwrap();
 
-    Ok((snapshot_version, snapshot_bank, append_vecs))
+    Ok((snapshot_version, snapshot_bank, append_vec_files))
 }
 
 /// Fields and information parsed from the snapshot.
@@ -1195,13 +1195,13 @@ struct SnapshotFieldsBundle {
     snapshot_version: SnapshotVersion,
     bank_fields: BankFieldsToDeserialize,
     accounts_db_fields: AccountsDbFields<SerializableAccountStorageEntry>,
-    append_vecs: Vec<FileInfo>,
+    append_vec_files: Vec<FileInfo>,
 }
 
 /// Parses fields and information from the snapshot files provided by
 /// `file_receiver`.
 fn snapshot_fields_from_files(file_receiver: &Receiver<FileInfo>) -> Result<SnapshotFieldsBundle> {
-    let (snapshot_version, snapshot_bank, append_vecs) =
+    let (snapshot_version, snapshot_bank, append_vec_files) =
         get_version_and_snapshot_files(file_receiver)?;
     let snapshot_version_str = snapshot_version_from_file(snapshot_version)?;
     let snapshot_version = snapshot_version_str.parse().map_err(|err| {
@@ -1219,7 +1219,7 @@ fn snapshot_fields_from_files(file_receiver: &Receiver<FileInfo>) -> Result<Snap
         snapshot_version,
         bank_fields,
         accounts_db_fields,
-        append_vecs,
+        append_vec_files,
     })
 }
 
@@ -1292,13 +1292,13 @@ fn unarchive_snapshot(
              snapshot_version,
              bank_fields,
              accounts_db_fields,
-             append_vecs,
+             append_vec_files,
              ..
          }| {
             let (storage, measure_untar) = measure_time!(
                 SnapshotStorageRebuilder::rebuild_storage(
                     &accounts_db_fields,
-                    append_vecs,
+                    append_vec_files,
                     file_receiver,
                     num_rebuilder_threads,
                     next_append_vec_id,
@@ -1453,14 +1453,14 @@ pub fn rebuild_storages_from_snapshot_dir(
     let SnapshotFieldsBundle {
         bank_fields,
         accounts_db_fields,
-        append_vecs,
+        append_vec_files,
         ..
     } = snapshot_fields_from_files(&file_receiver)?;
 
     let num_rebuilder_threads = num_cpus::get_physical().saturating_sub(1).max(1);
     let storage = SnapshotStorageRebuilder::rebuild_storage(
         &accounts_db_fields,
-        append_vecs,
+        append_vec_files,
         file_receiver,
         num_rebuilder_threads,
         next_append_vec_id,

@@ -42,8 +42,8 @@ pub(crate) struct SnapshotStorageRebuilder {
     num_threads: usize,
     /// Snapshot storage lengths - from the snapshot file
     snapshot_storage_lengths: HashMap<Slot, HashMap<SerializedAccountsFileId, usize>>,
-    /// Container for storing snapshot file paths
-    storage_paths: DashMap<Slot, Mutex<Vec<FileInfo>>>,
+    /// Container for storing snapshot file infos
+    storage_file_infos: DashMap<Slot, Mutex<Vec<FileInfo>>>,
     /// Container for storing rebuilt snapshot storages
     storage: AccountStorageMap,
     /// Tracks next append_vec_id
@@ -64,7 +64,7 @@ impl SnapshotStorageRebuilder {
     /// Synchronously spawns threads to rebuild snapshot storages
     pub(crate) fn rebuild_storage(
         accounts_db_fields: &AccountsDbFields<SerializableAccountStorageEntry>,
-        append_vecs: Vec<FileInfo>,
+        append_vecs_files: Vec<FileInfo>,
         file_receiver: Receiver<FileInfo>,
         num_threads: usize,
         next_append_vec_id: Arc<AtomicAccountsFileId>,
@@ -79,7 +79,7 @@ impl SnapshotStorageRebuilder {
             num_threads,
             next_append_vec_id,
             snapshot_storage_lengths,
-            append_vecs,
+            append_vecs_files,
             snapshot_from,
             storage_access,
             obsolete_accounts,
@@ -89,7 +89,7 @@ impl SnapshotStorageRebuilder {
     }
 
     /// Create the SnapshotStorageRebuilder for storing state during rebuilding
-    ///     - pre-allocates data for storage paths
+    ///     - pre-allocates data for storage file infos
     fn new(
         file_receiver: Receiver<FileInfo>,
         num_threads: usize,
@@ -100,7 +100,7 @@ impl SnapshotStorageRebuilder {
         obsolete_accounts: Option<SerdeObsoleteAccountsMap>,
     ) -> Self {
         let storage = AccountStorageMap::with_capacity(snapshot_storage_lengths.len());
-        let storage_paths: DashMap<_, _> = snapshot_storage_lengths
+        let storage_file_infos: DashMap<_, _> = snapshot_storage_lengths
             .iter()
             .map(|(slot, storage_lengths)| {
                 (*slot, Mutex::new(Vec::with_capacity(storage_lengths.len())))
@@ -110,7 +110,7 @@ impl SnapshotStorageRebuilder {
             file_receiver,
             num_threads,
             snapshot_storage_lengths,
-            storage_paths,
+            storage_file_infos,
             storage,
             next_append_vec_id,
             processed_slot_count: AtomicUsize::new(0),
@@ -127,7 +127,7 @@ impl SnapshotStorageRebuilder {
         num_threads: usize,
         next_append_vec_id: Arc<AtomicAccountsFileId>,
         snapshot_storage_lengths: HashMap<Slot, HashMap<usize, usize>>,
-        append_vecs: Vec<FileInfo>,
+        append_vec_files: Vec<FileInfo>,
         snapshot_from: SnapshotFrom,
         storage_access: StorageAccess,
         obsolete_accounts: Option<SerdeObsoleteAccountsMap>,
@@ -146,7 +146,7 @@ impl SnapshotStorageRebuilder {
 
         if snapshot_from == SnapshotFrom::Archive {
             // Synchronously process buffered append_vec_files
-            thread_pool.install(|| rebuilder.process_buffered_files(append_vecs))?;
+            thread_pool.install(|| rebuilder.process_buffered_files(append_vec_files))?;
         }
 
         // Asynchronously spawn threads to process received append_vec_files
@@ -218,21 +218,20 @@ impl SnapshotStorageRebuilder {
 
     /// Insert storage path into slot and return the number of storage files for the slot
     fn insert_storage_file(&self, slot: &Slot, file_info: FileInfo) -> usize {
-        let slot_paths = self.storage_paths.get(slot).unwrap();
-        let mut lock = slot_paths.lock().unwrap();
+        let slot_file_infos = self.storage_file_infos.get(slot).unwrap();
+        let mut lock = slot_file_infos.lock().unwrap();
         lock.push(file_info);
         lock.len()
     }
 
     /// Process a slot that has received all storage entries
     fn process_complete_slot(&self, slot: Slot) -> Result<(), SnapshotError> {
-        let slot_storage_paths = self.storage_paths.get(&slot).unwrap();
-        let mut lock = slot_storage_paths.lock().unwrap();
+        let slot_storage_file_infos = self.storage_file_infos.get(&slot).unwrap();
+        let mut lock = slot_storage_file_infos.lock().unwrap();
 
         let slot_stores = lock
             .drain(..)
             .map(|file_info| {
-                // TODO: use file
                 let filename = file_info.path.file_name().unwrap().to_str().unwrap();
                 let (_, old_append_vec_id) = get_slot_and_append_vec_id(filename)?;
                 let current_len = *self
