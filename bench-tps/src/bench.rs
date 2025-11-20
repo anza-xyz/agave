@@ -584,7 +584,8 @@ fn generate_system_txs(
         let compute_unit_prices = match compute_unit_price {
             ComputeUnitPrice::Random => {
                 let mut rng = rand::rng();
-                let range = Uniform::try_from(0..MAX_RANDOM_COMPUTE_UNIT_PRICE).unwrap();
+                let range = Uniform::try_from(0..MAX_RANDOM_COMPUTE_UNIT_PRICE)
+                    .expect("ok for non-empty range");
                 (0..pairs.len())
                     .map(|_| {
                         range

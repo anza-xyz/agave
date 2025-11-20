@@ -61,7 +61,7 @@ fn bench_random_submission(b: &mut Bencher) {
     let writer = Arc::new(MockMetricsWriter::new());
     let agent = MetricsAgent::new(writer, Duration::from_secs(10), 1000);
     let mut rng = rand::rng();
-    let die = Uniform::<i32>::try_from(1..7).unwrap();
+    let die = Uniform::<i32>::try_from(1..7).expect("ok for non-empty range");
 
     b.iter(|| {
         for i in 0..1000 {
