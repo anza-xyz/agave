@@ -7,8 +7,8 @@ pub enum ResourceLimitError {
          {error}"
     )]
     Nofile {
-        desired: u64,
-        current: u64,
+        desired: libc::rlim_t,
+        current: libc::rlim_t,
         error: libc::c_int,
     },
 }
