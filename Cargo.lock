@@ -390,7 +390,6 @@ dependencies = [
  "bincode",
  "criterion",
  "solana-address 2.0.0",
- "solana-hash",
  "solana-hash 3.1.0",
  "solana-instruction",
  "solana-keypair",
