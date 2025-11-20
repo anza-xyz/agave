@@ -3,13 +3,12 @@ use {
     std::ptr::NonNull,
 };
 
-pub struct PubkeysPtr<'a> {
+pub struct PubkeysPtr {
     ptr: NonNull<Pubkey>,
     count: usize,
-    allocator: &'a Allocator,
 }
 
-impl<'a> PubkeysPtr<'a> {
+impl PubkeysPtr {
     /// Constructs the pointer from a [`SharablePubkeys`].
     ///
     /// # Safety
@@ -19,7 +18,7 @@ impl<'a> PubkeysPtr<'a> {
     /// - `sharable_pubkeys.num_pubkeys` must be accurate and not overrun the allocation.
     pub unsafe fn from_sharable_pubkeys(
         sharable_pubkeys: &SharablePubkeys,
-        allocator: &'a Allocator,
+        allocator: &Allocator,
     ) -> Self {
         assert_ne!(sharable_pubkeys.num_pubkeys, 0);
         let ptr = allocator.ptr_from_offset(sharable_pubkeys.offset).cast();
@@ -27,7 +26,6 @@ impl<'a> PubkeysPtr<'a> {
         Self {
             ptr,
             count: sharable_pubkeys.num_pubkeys as usize,
-            allocator,
         }
     }
 
@@ -39,9 +37,13 @@ impl<'a> PubkeysPtr<'a> {
     }
 
     /// Frees the underlying allocation.
-    pub fn free(self) {
+    ///
+    /// # Safety
+    ///
+    /// - `Self` must be exclusively owned.
+    pub unsafe fn free(self, allocator: &Allocator) {
         // SAFETY
-        // - Constructor invariants guarantee that we exclusively own this pointer.
-        unsafe { self.allocator.free(self.ptr.cast()) };
+        // - Caller guarantees that we exclusively own this pointer.
+        unsafe { allocator.free(self.ptr.cast()) };
     }
 }

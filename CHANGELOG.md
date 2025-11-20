@@ -312,15 +312,3 @@ makes the feature code complete.
 * Link to any relevant feature gate issues or SIMDs.
 * If you add entries on multiple branches use the same wording if possible.
 This simplifies the process of diffing between versions of the log.
-
-## Maintaining This Changelog
-### When creating a new release branch:
-* Commit to master updating the changelog:
-  * Update the edge, beta, and stable links
-  * Create new section: `vx.y+1.0 - Unreleased`
-  * Remove `Unreleased` annotation from vx.y.0 section.
-* Create vx.y branch starting at that commit.
-* Commit to `vx.y` updating the changelog:
-  * Remove the `vx.y+1.0 - Unreleased` section
-  * Remove the channel links
-* Tag vx.y.0 on the new branch

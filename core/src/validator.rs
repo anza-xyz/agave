@@ -140,9 +140,7 @@ use {
         streamer::StakedNodes,
     },
     solana_time_utils::timestamp,
-    solana_tpu_client::tpu_client::{
-        DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
-    },
+    solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
     solana_turbine::{
         self,
         broadcast_stage::BroadcastStageType,
@@ -381,7 +379,6 @@ pub struct ValidatorConfig {
     pub replay_transactions_threads: NonZeroUsize,
     pub tvu_shred_sigverify_threads: NonZeroUsize,
     pub delay_leader_block_for_pending_fork: bool,
-    pub use_tpu_client_next: bool,
     pub retransmit_xdp: Option<XdpConfig>,
     pub repair_handler_type: RepairHandlerType,
 }
@@ -465,7 +462,6 @@ impl ValidatorConfig {
             tvu_shred_sigverify_threads: NonZeroUsize::new(get_thread_count())
                 .expect("thread count is non-zero"),
             delay_leader_block_for_pending_fork: false,
-            use_tpu_client_next: true,
             retransmit_xdp: None,
             repair_handler_type: RepairHandlerType::default(),
         }
@@ -557,8 +553,6 @@ struct TransactionHistoryServices {
 
 /// A struct easing passing Validator TPU Configurations
 pub struct ValidatorTpuConfig {
-    /// Controls if to use QUIC for sending regular TPU transaction
-    pub use_quic: bool,
     /// Controls if to use QUIC for sending TPU votes
     pub vote_use_quic: bool,
     /// Controls the connection cache pool size
@@ -606,7 +600,6 @@ impl ValidatorTpuConfig {
         };
 
         ValidatorTpuConfig {
-            use_quic: DEFAULT_TPU_USE_QUIC,
             vote_use_quic: DEFAULT_VOTE_USE_QUIC,
             tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
             tpu_enable_udp,
@@ -685,7 +678,6 @@ impl Validator {
         info!("debug-assertion status: {DEBUG_ASSERTION_STATUS}");
 
         let ValidatorTpuConfig {
-            use_quic,
             vote_use_quic,
             tpu_connection_pool_size,
             tpu_enable_udp,
@@ -1130,38 +1122,6 @@ impl Validator {
 
         let mut tpu_transactions_forwards_client_sockets =
             Some(node.sockets.tpu_transaction_forwarding_clients);
-        let connection_cache = match (config.use_tpu_client_next, use_quic) {
-            (false, true) => Some(Arc::new(ConnectionCache::new_with_client_options(
-                "connection_cache_tpu_quic",
-                tpu_connection_pool_size,
-                Some({
-                    // this conversion is not beautiful but rust does not allow popping single
-                    // elements from a boxed slice
-                    let socketbox: Box<[_; 1]> = tpu_transactions_forwards_client_sockets
-                        .take()
-                        .unwrap()
-                        .try_into()
-                        .expect("Multihoming support for connection cache is not available");
-                    let [sock] = *socketbox;
-                    sock
-                }),
-                Some((
-                    &identity_keypair,
-                    node.info
-                        .tpu(Protocol::UDP)
-                        .ok_or_else(|| {
-                            ValidatorError::Other(String::from("Invalid UDP address for TPU"))
-                        })?
-                        .ip(),
-                )),
-                Some((&staked_nodes, &identity_keypair.pubkey())),
-            ))),
-            (false, false) => Some(Arc::new(ConnectionCache::with_udp(
-                "connection_cache_tpu_udp",
-                tpu_connection_pool_size,
-            ))),
-            (true, _) => None,
-        };
 
         let vote_connection_cache = if vote_use_quic {
             let vote_connection_cache = ConnectionCache::new_with_client_options(
@@ -1193,15 +1153,14 @@ impl Validator {
         // always need a tokio runtime (and the respective handle) to initialize
         // the turbine QUIC endpoint.
         let current_runtime_handle = tokio::runtime::Handle::try_current();
-        let tpu_client_next_runtime =
-            (current_runtime_handle.is_err() && config.use_tpu_client_next).then(|| {
-                tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .worker_threads(2)
-                    .thread_name("solTpuClientRt")
-                    .build()
-                    .unwrap()
-            });
+        let tpu_client_next_runtime = current_runtime_handle.is_err().then(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .worker_threads(2)
+                .thread_name("solTpuClientRt")
+                .build()
+                .unwrap()
+        });
 
         let rpc_override_health_check =
             Arc::new(AtomicBool::new(config.rpc_config.disable_health_check));
@@ -1228,7 +1187,7 @@ impl Validator {
                 None
             };
 
-            let client_option = if config.use_tpu_client_next {
+            let client_option = {
                 let runtime_handle = tpu_client_next_runtime
                     .as_ref()
                     .map(TokioRuntime::handle)
@@ -1239,11 +1198,6 @@ impl Validator {
                     runtime_handle.clone(),
                     cancel.clone(),
                 )
-            } else {
-                let Some(connection_cache) = &connection_cache else {
-                    panic!("ConnectionCache should exist by construction.");
-                };
-                ClientOption::ConnectionCache(connection_cache.clone())
             };
             let rpc_svc_config = JsonRpcServiceConfig {
                 rpc_addr,
@@ -1565,13 +1519,6 @@ impl Validator {
             )
         });
 
-        // If RPC is supported and ConnectionCache is used, pass ConnectionCache for being warmup inside Tvu.
-        let connection_cache_for_warmup =
-            if json_rpc_service.is_some() && connection_cache.is_some() {
-                connection_cache.as_ref()
-            } else {
-                None
-            };
         let (xdp_retransmitter, xdp_sender) =
             if let Some(xdp_config) = config.retransmit_xdp.clone() {
                 let src_port = node.sockets.retransmit_sockets[0]
@@ -1651,7 +1598,6 @@ impl Validator {
             config.wait_to_vote_slot,
             Some(snapshot_controller.clone()),
             config.runtime_config.log_messages_bytes_limit,
-            connection_cache_for_warmup,
             &prioritization_fee_cache,
             banking_tracer.clone(),
             turbine_quic_endpoint_sender.clone(),
@@ -1689,9 +1635,7 @@ impl Validator {
         }
 
         let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));
-        let forwarding_tpu_client = if let Some(connection_cache) = &connection_cache {
-            ForwardingClientOption::ConnectionCache(connection_cache.clone())
-        } else {
+        let forwarding_tpu_client = {
             let runtime_handle = tpu_client_next_runtime
                 .as_ref()
                 .map(TokioRuntime::handle)
@@ -1778,15 +1722,11 @@ impl Validator {
         );
 
         *start_progress.write().unwrap() = ValidatorStartProgress::Running;
-        if config.use_tpu_client_next {
-            if let Some(json_rpc_service) = &json_rpc_service {
-                key_notifiers.write().unwrap().add(
-                    KeyUpdaterType::RpcService,
-                    json_rpc_service.get_client_key_updater(),
-                );
-            }
-            // note, that we don't need to add ConnectionClient to key_notifiers
-            // because it is added inside Tpu.
+        if let Some(json_rpc_service) = &json_rpc_service {
+            key_notifiers.write().unwrap().add(
+                KeyUpdaterType::RpcService,
+                json_rpc_service.get_client_key_updater(),
+            );
         }
 
         *admin_rpc_service_post_init.write().unwrap() = Some(AdminRpcRequestMetadataPostInit {
