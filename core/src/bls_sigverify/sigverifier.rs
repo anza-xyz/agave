@@ -386,6 +386,9 @@ impl BLSSigVerifier {
         Ok(())
     }
 
+    // Assume all votes are valid, verify their aggregated signatures.
+    // If successful, return Ok(true). Otherwise return Ok(false) or Err,
+    // we need to fall back to per-vote verification.
     fn verify_optimistically(
         &self,
         votes_to_verify: &Vec<VoteToVerify>,
