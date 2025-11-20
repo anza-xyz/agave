@@ -11053,6 +11053,7 @@ dependencies = [
  "solana-program-runtime",
  "solana-pubkey 3.0.0",
  "solana-rent",
+ "solana-sbpf",
  "solana-sdk-ids",
  "solana-stable-layout",
  "solana-svm",

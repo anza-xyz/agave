@@ -15,6 +15,26 @@ name = "test_exec_instr"
 path = "bin/test_exec_instr.rs"
 required-features = ["fuzz"]
 
+[[bin]]
+name = "test_exec_elf_loader"
+path = "bin/test_exec_elf_loader.rs"
+required-features = ["fuzz"]
+
+[[bin]]
+name = "run_test_vectors"
+path = "bin/run_test_vectors.rs"
+required-features = ["fuzz"]
+
+[[bin]]
+name = "gen_fixture"
+path = "bin/gen_fixture.rs"
+required-features = ["fuzz"]
+
+[[bin]]
+name = "update_fixtures"
+path = "bin/update_fixtures.rs"
+required-features = ["fuzz"]
+
 [features]
 agave-unstable-api = []
 dummy-for-ci-check = ["fuzz"]
@@ -50,6 +70,7 @@ solana-svm-timings = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true }
 thiserror = { workspace = true }
+solana-sbpf = { workspace = true }
 
 [build-dependencies]
 prost-build = { workspace = true, optional = true }

@@ -24,8 +24,8 @@ impl TryFrom<ProtoAccount> for (Pubkey, Account) {
             ..
         } = value;
 
-        let pubkey = Pubkey::try_from(address).map_err(FixtureError::InvalidPubkeyBytes)?;
-        let owner = Pubkey::try_from(owner).map_err(FixtureError::InvalidPubkeyBytes)?;
+        let pubkey = Pubkey::try_from(address.as_slice()).map_err(|_| FixtureError::InvalidPubkeyBytes(address.clone()))?;
+        let owner = Pubkey::try_from(owner.as_slice()).map_err(|_| FixtureError::InvalidPubkeyBytes(owner.clone()))?;
 
         Ok((
             pubkey,
