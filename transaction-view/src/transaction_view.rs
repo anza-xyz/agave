@@ -174,6 +174,11 @@ impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
     }
 
     #[inline]
+    pub fn inner_data(&self) -> &D {
+        &self.data
+    }
+
+    #[inline]
     pub fn into_inner_data(self) -> D {
         self.data
     }
