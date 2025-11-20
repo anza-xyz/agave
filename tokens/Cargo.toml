@@ -17,7 +17,7 @@ remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 
 [dependencies]
 chrono = { workspace = true, features = ["default", "serde"] }
-clap = "2.33.0"
+clap = "4.5.31"
 console = { workspace = true }
 csv = { workspace = true }
 ctrlc = { workspace = true, features = ["termination"] }
