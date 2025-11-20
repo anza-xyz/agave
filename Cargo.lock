@@ -11783,7 +11783,6 @@ dependencies = [
  "percentage",
  "quinn",
  "quinn-proto",
- "rand 0.8.5",
  "rustls 0.23.34",
  "signal-hook",
  "smallvec",
