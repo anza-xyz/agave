@@ -18,7 +18,7 @@ use {
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig, MarkObsoleteAccounts},
         accounts_file::StorageAccess,
-        accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig, IndexLimitMb, ScanFilter},
+        accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig, IndexLimit, ScanFilter},
         utils::{
             create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
             create_and_canonicalize_directory,
@@ -213,10 +213,6 @@ pub fn execute(
     if bind_addresses.len() > 1 {
         for (flag, msg) in [
             (
-                "use_connection_cache",
-                "Connection cache can not be used in a multihoming context",
-            ),
-            (
                 "advertised_ip",
                 "--advertised-ip cannot be used in a multihoming context. In multihoming, the \
                  validator will advertise the first --bind-address as this node's public IP \
@@ -310,10 +306,10 @@ pub fn execute(
         accounts_index_config.num_initial_accounts = Some(num_initial_accounts);
     }
 
-    accounts_index_config.index_limit_mb = if !matches.is_present("enable_accounts_disk_index") {
-        IndexLimitMb::InMemOnly
+    accounts_index_config.index_limit = if !matches.is_present("enable_accounts_disk_index") {
+        IndexLimit::InMemOnly
     } else {
-        IndexLimitMb::Minimal
+        IndexLimit::Minimal
     };
 
     {
@@ -587,7 +583,6 @@ pub fn execute(
         turbine_disabled: Arc::<AtomicBool>::default(),
         retransmit_xdp,
         broadcast_stage_type: BroadcastStageType::Standard,
-        use_tpu_client_next: !matches.is_present("use_connection_cache"),
         block_verification_method: value_t_or_exit!(
             matches,
             "block_verification_method",
@@ -998,7 +993,6 @@ pub fn execute(
         start_progress,
         run_args.socket_addr_space,
         ValidatorTpuConfig {
-            use_quic: true,
             vote_use_quic,
             tpu_connection_pool_size,
             tpu_enable_udp,

@@ -58,7 +58,7 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_TESTING: AccountsIndexConfig = AccountsIndex
     bins: Some(BINS_FOR_TESTING),
     num_flush_threads: Some(FLUSH_THREADS_TESTING),
     drives: None,
-    index_limit_mb: IndexLimitMb::InMemOnly,
+    index_limit: IndexLimit::InMemOnly,
     ages_to_stay_in_cache: None,
     scan_results_limit_bytes: None,
     num_initial_accounts: None,
@@ -67,7 +67,7 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS: AccountsIndexConfig = AccountsIn
     bins: Some(BINS_FOR_BENCHMARKS),
     num_flush_threads: Some(FLUSH_THREADS_TESTING),
     drives: None,
-    index_limit_mb: IndexLimitMb::InMemOnly,
+    index_limit: IndexLimit::InMemOnly,
     ages_to_stay_in_cache: None,
     scan_results_limit_bytes: None,
     num_initial_accounts: None,
@@ -227,9 +227,9 @@ enum ScanTypes<R: RangeBounds<Pubkey>> {
     Indexed(IndexKey),
 }
 
-/// specification of how much memory in-mem portion of account index can use
+/// specification of how much memory the in-mem portion of account index can use
 #[derive(Debug, Copy, Clone)]
-pub enum IndexLimitMb {
+pub enum IndexLimit {
     /// use disk index while keeping a minimal amount in-mem
     Minimal,
     /// in-mem-only was specified, no disk index
@@ -241,7 +241,7 @@ pub struct AccountsIndexConfig {
     pub bins: Option<usize>,
     pub num_flush_threads: Option<NonZeroUsize>,
     pub drives: Option<Vec<PathBuf>>,
-    pub index_limit_mb: IndexLimitMb,
+    pub index_limit: IndexLimit,
     pub ages_to_stay_in_cache: Option<Age>,
     pub scan_results_limit_bytes: Option<usize>,
     /// Initial number of accounts, used to pre-allocate HashMap capacity at startup.
@@ -254,7 +254,7 @@ impl Default for AccountsIndexConfig {
             bins: None,
             num_flush_threads: None,
             drives: None,
-            index_limit_mb: IndexLimitMb::InMemOnly,
+            index_limit: IndexLimit::InMemOnly,
             ages_to_stay_in_cache: None,
             scan_results_limit_bytes: None,
             num_initial_accounts: None,
@@ -2241,10 +2241,10 @@ pub mod tests {
         let key = solana_pubkey::new_rand();
 
         let mut config = ACCOUNTS_INDEX_CONFIG_FOR_TESTING;
-        config.index_limit_mb = if use_disk {
-            IndexLimitMb::Minimal
+        config.index_limit = if use_disk {
+            IndexLimit::Minimal
         } else {
-            IndexLimitMb::InMemOnly // in-mem only
+            IndexLimit::InMemOnly
         };
         let index = AccountsIndex::<T, T>::new(&config, Arc::default());
         let mut gc = ReclaimsSlotList::new();
