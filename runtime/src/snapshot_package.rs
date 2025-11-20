@@ -90,7 +90,7 @@ impl SnapshotPackage {
         let bank_snapshot_package = BankSnapshotPackage {
             bank_fields: BankFieldsToSerialize::default_for_tests(),
             bank_hash_stats: BankHashStats::default(),
-            slot_deltas: Vec::default(),
+            status_cache_slot_deltas: Vec::default(),
             write_version: u64::default(),
         };
 
