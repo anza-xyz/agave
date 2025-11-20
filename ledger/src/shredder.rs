@@ -11,7 +11,6 @@ use {
     solana_keypair::Keypair,
     solana_rayon_threadlimit::get_thread_count,
     std::{
-        fmt::Debug,
         sync::{Arc, OnceLock, RwLock},
         time::Instant,
     },
