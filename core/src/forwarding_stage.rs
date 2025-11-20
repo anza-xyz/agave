@@ -320,7 +320,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                 )
                 .map_err(|_| ())
                 .and_then(|transaction| {
-                    RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+                    RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                         transaction,
                         MessageHash::Compute,
                         Some(packet.meta().is_simple_vote_tx()),

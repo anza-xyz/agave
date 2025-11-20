@@ -456,7 +456,7 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
         return Err(PacketHandlingError::Sanitization);
     };
 
-    let Ok(view) = RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+    let Ok(view) = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
         view,
         MessageHash::Compute,
         None,
@@ -475,7 +475,7 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
 
     let (loaded_addresses, deactivation_slot) = load_addresses_for_view(&view, bank)?;
 
-    let Ok(view) = RuntimeTransaction::<ResolvedTransactionView<_>>::try_from(
+    let Ok(view) = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
         view,
         loaded_addresses,
         bank.get_reserved_account_keys(),
