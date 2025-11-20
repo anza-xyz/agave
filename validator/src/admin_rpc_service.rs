@@ -1567,6 +1567,7 @@ mod tests {
                 SocketAddrSpace::Unspecified,
                 ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
                 post_init.clone(),
+                None,
             )
             .expect("assume successful validator start");
             assert_eq!(
