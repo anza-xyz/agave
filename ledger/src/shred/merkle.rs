@@ -1271,6 +1271,7 @@ fn finish_erasure_batch(
                 .par_iter()
                 .map(Shred::merkle_node)
                 .collect::<Vec<_>>()
+                .into_iter()
         })),
     }?;
     // Sign the root of the Merkle tree.

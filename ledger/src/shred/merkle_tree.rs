@@ -19,12 +19,9 @@ pub(crate) const MERKLE_HASH_PREFIX_NODE: &[u8] = b"\x01SOLANA_MERKLE_SHREDS_NOD
 
 pub(crate) type MerkleProofEntry = [u8; 20];
 
-pub fn make_merkle_tree<I>(shreds: I) -> Result<Vec<Hash>, Error>
-where
-    I: IntoIterator<Item = Result<Hash, Error>>,
-    <I as IntoIterator>::IntoIter: ExactSizeIterator,
-{
-    let shreds = shreds.into_iter();
+pub fn make_merkle_tree(
+    shreds: impl ExactSizeIterator<Item = Result<Hash, Error>>,
+) -> Result<Vec<Hash>, Error> {
     let num_shreds = shreds.len();
     let capacity = get_merkle_tree_size(num_shreds);
     let mut nodes = Vec::with_capacity(capacity);
