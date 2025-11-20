@@ -27,7 +27,7 @@ use {
     test_case::test_case,
 };
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(true; "Skip Preflight")]
 #[test_case(false; "Don`t skip Preflight")]
 async fn test_transfer(skip_preflight: bool) {
@@ -334,7 +334,7 @@ async fn test_transfer(skip_preflight: bool) {
     check_balance!(2_900_000_000, &rpc_client, &recipient_pubkey);
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_transfer_multisession_signing() {
     agave_logger::setup();
     let fee_one_sig = FeeStructure::default().get_max_fee(1, 0);
@@ -485,7 +485,7 @@ async fn test_transfer_multisession_signing() {
     check_balance!(42 * LAMPORTS_PER_SOL, &rpc_client, &to_pubkey);
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(None; "default")]
 #[test_case(Some(100_000); "with_compute_unit_price")]
 async fn test_transfer_all(compute_unit_price: Option<u64>) {
@@ -570,7 +570,7 @@ async fn test_transfer_all(compute_unit_price: Option<u64>) {
     check_balance!(500_000 - fee, &rpc_client, &recipient_pubkey);
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_transfer_unfunded_recipient() {
     agave_logger::setup();
     let mint_keypair = Keypair::new();
@@ -627,7 +627,7 @@ async fn test_transfer_unfunded_recipient() {
     process_command(&config).await.unwrap_err();
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_transfer_with_seed() {
     agave_logger::setup();
     let fee = FeeStructure::default().get_max_fee(1, 0);

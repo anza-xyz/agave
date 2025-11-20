@@ -2220,7 +2220,7 @@ mod tests {
         );
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     #[allow(clippy::cognitive_complexity)]
     async fn test_cli_process_command() {
         // Success cases

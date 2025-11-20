@@ -17,7 +17,7 @@ use {
     test_case::test_case,
 };
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(false, None; "rpc_base")]
 #[test_case(false, Some(1_000_000); "rpc_with_compute_unit_price")]
 #[test_case(true, None; "tpu_base")]

@@ -104,7 +104,7 @@ async fn expect_account_absent(rpc_client: &RpcClient, pubkey: Pubkey, absent_be
     );
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_cli_program_deploy_non_upgradeable() {
     agave_logger::setup();
 
@@ -314,7 +314,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
     .await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_cli_program_deploy_no_authority() {
     agave_logger::setup();
 
@@ -416,7 +416,7 @@ async fn test_cli_program_deploy_no_authority() {
     .await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(true, true; "Feature enabled, skip preflight")]
 #[test_case(true, false; "Feature enabled, don't skip preflight")]
 #[test_case(false, true; "Feature disabled, skip preflight")]
@@ -541,7 +541,7 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(true; "Feature enabled")]
 #[test_case(false; "Feature disabled")]
 async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
@@ -711,7 +711,7 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_cli_program_deploy_with_authority() {
     agave_logger::setup();
 
@@ -1111,7 +1111,7 @@ async fn test_cli_program_deploy_with_authority() {
     assert_eq!("none", authority_pubkey_str);
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(true; "Skip preflight")]
 #[test_case(false; "Dont skip preflight")]
 async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
@@ -1289,7 +1289,7 @@ async fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
     );
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_cli_program_close_program() {
     agave_logger::setup();
 
@@ -1405,7 +1405,7 @@ async fn test_cli_program_close_program() {
     assert_eq!(programdata_lamports, recipient_account.lamports);
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_cli_program_extend_program() {
     agave_logger::setup();
 
@@ -1589,7 +1589,7 @@ async fn test_cli_program_extend_program() {
     process_command(&config).await.unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_cli_program_migrate_program() {
     agave_logger::setup();
 
@@ -1669,7 +1669,7 @@ async fn test_cli_program_migrate_program() {
     process_command(&config).await.unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_cli_program_write_buffer() {
     agave_logger::setup();
 
@@ -2071,7 +2071,7 @@ async fn test_cli_program_write_buffer() {
     .await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(true; "Feature enabled")]
 #[test_case(false; "Feature disabled")]
 async fn test_cli_program_write_buffer_feature(enable_feature: bool) {
@@ -2169,7 +2169,7 @@ async fn test_cli_program_write_buffer_feature(enable_feature: bool) {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_cli_program_set_buffer_authority() {
     agave_logger::setup();
 
@@ -2351,7 +2351,7 @@ async fn test_cli_program_set_buffer_authority() {
     process_command(&config).await.unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_cli_program_mismatch_buffer_authority() {
     agave_logger::setup();
 
@@ -2474,7 +2474,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
 // Assume fee payer will be either online signer or offline signer (could be completely
 // separate signer too, but that option is unlikely to be chosen often, so don't bother
 // testing for it), we want to test for most common choices.
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(true; "offline signer will be fee payer")]
 #[test_case(false; "online signer will be fee payer")]
 async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer: bool) {
@@ -2676,7 +2676,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
     );
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_cli_program_show() {
     agave_logger::setup();
 
@@ -2873,7 +2873,7 @@ async fn test_cli_program_show() {
     assert_eq!(max_len, data_len as usize);
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_cli_program_dump() {
     agave_logger::setup();
 
@@ -3011,7 +3011,7 @@ async fn create_buffer_with_offline_authority<'a>(
 }
 
 #[allow(clippy::assertions_on_constants)]
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(None, false; "default")]
 #[test_case(Some(10), false; "with_compute_unit_price")]
 #[test_case(None, true; "use_rpc")]
@@ -3197,7 +3197,7 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_cli_program_v4() {
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");

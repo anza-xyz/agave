@@ -22,7 +22,7 @@ use {
     test_case::test_case,
 };
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(None, false, None; "base")]
 #[test_case(Some(String::from("seed")), false, None; "with_seed")]
 #[test_case(None, true, None; "with_authority")]
@@ -221,7 +221,7 @@ async fn test_nonce(
     check_balance!(200 * LAMPORTS_PER_SOL, &rpc_client, &payee_pubkey);
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_create_account_with_seed() {
     const ONE_SIG_FEE: u64 = 5000;
     agave_logger::setup();
