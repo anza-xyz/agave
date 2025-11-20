@@ -476,5 +476,72 @@ mod tests {
             .is_ok());
     }
 
-    // TODO: write test for serialization/deserialization
+    #[test]
+    fn test_rangeproof_serialization_single() {
+        let (comm, open) = Pedersen::new(55_u64);
+
+        let mut transcript_create = Transcript::new(b"Test");
+        let mut transcript_verify = Transcript::new(b"Test");
+
+        let proof = RangeProof::new(vec![55], vec![32], vec![&open], &mut transcript_create)
+            .unwrap();
+
+        let proof_bytes = proof.to_bytes();
+        let deserialized_proof = RangeProof::from_bytes(&proof_bytes).unwrap();
+
+        assert!(deserialized_proof
+            .verify(vec![&comm], vec![32], &mut transcript_verify)
+            .is_ok());
+    }
+
+    #[test]
+    fn test_rangeproof_serialization_aggregated() {
+        let (comm_1, open_1) = Pedersen::new(55_u64);
+        let (comm_2, open_2) = Pedersen::new(77_u64);
+        let (comm_3, open_3) = Pedersen::new(99_u64);
+
+        let mut transcript_create = Transcript::new(b"Test");
+        let mut transcript_verify = Transcript::new(b"Test");
+
+        let proof = RangeProof::new(
+            vec![55, 77, 99],
+            vec![64, 32, 32],
+            vec![&open_1, &open_2, &open_3],
+            &mut transcript_create,
+        )
+        .unwrap();
+
+        let proof_bytes = proof.to_bytes();
+        let deserialized_proof = RangeProof::from_bytes(&proof_bytes).unwrap();
+
+        assert!(deserialized_proof
+            .verify(
+                vec![&comm_1, &comm_2, &comm_3],
+                vec![64, 32, 32],
+                &mut transcript_verify,
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn test_rangeproof_deserialization_invalid_bytes() {
+        let invalid_bytes = vec![0u8; 100];
+        assert!(RangeProof::from_bytes(&invalid_bytes).is_err());
+
+        let empty_bytes = vec![];
+        assert!(RangeProof::from_bytes(&empty_bytes).is_err());
+    }
+
+    #[test]
+    fn test_rangeproof_deserialization_truncated() {
+        let (_comm, open) = Pedersen::new(55_u64);
+
+        let mut transcript = Transcript::new(b"Test");
+        let proof = RangeProof::new(vec![55], vec![32], vec![&open], &mut transcript).unwrap();
+
+        let proof_bytes = proof.to_bytes();
+        let truncated = &proof_bytes[..proof_bytes.len() / 2];
+
+        assert!(RangeProof::from_bytes(truncated).is_err());
+    }
 }
