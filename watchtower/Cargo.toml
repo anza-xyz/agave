@@ -23,7 +23,7 @@ log = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-cli-output = { workspace = true }
-solana-hash = "=3.0.0"
+solana-hash = "=3.1.0"
 solana-metrics = { workspace = true }
 solana-native-token = "=3.0.0"
 solana-notifier = { workspace = true }
