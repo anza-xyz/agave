@@ -2,13 +2,12 @@
 
 use {
     crate::{
-        common::{certificate_limits_and_votes, vote_to_certificate_ids, Stake},
+        common::{vote_to_certificate_ids, Stake},
         consensus_pool::{
-            certificate_builder::{BuildError as CertificateBuilderError, CertificateBuilder},
             parent_ready_tracker::ParentReadyTracker,
             slot_stake_counters::SlotStakeCounters,
             stats::ConsensusPoolStats,
-            vote_pool::{AddVoteError as VotePoolError, VotePool},
+            vote_pool::{AddVoteError as VotePoolAddVoteError, BuildCertError, VotePool},
         },
         event::VotorEvent,
     },
@@ -30,7 +29,6 @@ use {
     thiserror::Error,
 };
 
-mod certificate_builder;
 pub(crate) mod parent_ready_tracker;
 mod slot_stake_counters;
 mod stats;
@@ -43,13 +41,12 @@ enum AddVoteError {
     EpochStakesNotFound(Epoch),
     #[error("Unrooted slot")]
     UnrootedSlot,
-    #[error("Certificate builder error: {0}")]
-    CertificateBuilder(#[from] CertificateBuilderError),
     #[error("Invalid rank: {0}")]
     InvalidRank(u16),
-
-    #[error("vote pool returned error: {0}")]
-    VotePool(#[from] VotePoolError),
+    #[error("vote pool adding vote: {0}")]
+    VotePoolAddVote(#[from] VotePoolAddVoteError),
+    #[error("build cert: {0}")]
+    BuildCert(#[from] BuildCertError),
 }
 
 /// Different failure cases from calling `add_certificate()`.
@@ -152,27 +149,18 @@ impl ConsensusPool {
         };
         let mut new_certificates_to_send = Vec::new();
         for cert_type in vote_to_certificate_ids(vote) {
-            // If the certificate is already complete, skip it
             if self.completed_certificates.contains_key(&cert_type) {
                 continue;
             }
-            // Otherwise check whether the certificate is complete
-            let (limit, vote, fallback_vote) = certificate_limits_and_votes(&cert_type);
-            let accumulated_stake = vote_pool
-                .get_stake(&vote)
-                .saturating_add(fallback_vote.map_or(0, |v| vote_pool.get_stake(&v)));
-
-            if accumulated_stake as f64 / (total_stake as f64) < limit {
-                continue;
+            match vote_pool.build_cert(cert_type, total_stake) {
+                None => continue,
+                Some(Ok(cert)) => {
+                    let cert = Arc::new(cert);
+                    self.stats.incr_cert_type(&cert.cert_type, true);
+                    new_certificates_to_send.push(cert);
+                }
+                Some(Err(err)) => return Err(err.into()),
             }
-            let mut cert_builder = CertificateBuilder::new(cert_type);
-            cert_builder.aggregate(&vote_pool.get_votes(&vote)).unwrap();
-            if let Some(v) = fallback_vote {
-                cert_builder.aggregate(&vote_pool.get_votes(&v)).unwrap();
-            }
-            let new_cert = Arc::new(cert_builder.build()?);
-            self.stats.incr_cert_type(&new_cert.cert_type, true);
-            new_certificates_to_send.push(new_cert);
         }
         for cert in &new_certificates_to_send {
             self.insert_certificate(cert.cert_type, cert.clone(), events);
@@ -340,6 +328,9 @@ impl ConsensusPool {
                 }
                 vote_pool::AddVoteError::Invalid => {
                     self.stats.invalid_votes = self.stats.invalid_votes.saturating_add(1);
+                    return Err(e.into());
+                }
+                vote_pool::AddVoteError::Bls(_) => {
                     return Err(e.into());
                 }
             },

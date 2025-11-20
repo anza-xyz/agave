@@ -32,33 +32,6 @@ impl VoteType {
     }
 }
 
-/// For a given [`CertificateType`], returns the fractional stake, the [`Vote`], and the optional fallback [`Vote`] required to construct it.
-///
-/// Must be in sync with [`vote_to_certificate_ids`].
-pub(crate) fn certificate_limits_and_votes(
-    cert_type: &CertificateType,
-) -> (f64, Vote, Option<Vote>) {
-    match cert_type {
-        CertificateType::Notarize(slot, block_id) => {
-            (0.6, Vote::new_notarization_vote(*slot, *block_id), None)
-        }
-        CertificateType::NotarizeFallback(slot, block_id) => (
-            0.6,
-            Vote::new_notarization_vote(*slot, *block_id),
-            Some(Vote::new_notarization_fallback_vote(*slot, *block_id)),
-        ),
-        CertificateType::FinalizeFast(slot, block_id) => {
-            (0.8, Vote::new_notarization_vote(*slot, *block_id), None)
-        }
-        CertificateType::Finalize(slot) => (0.6, Vote::new_finalization_vote(*slot), None),
-        CertificateType::Skip(slot) => (
-            0.6,
-            Vote::new_skip_vote(*slot),
-            Some(Vote::new_skip_fallback_vote(*slot)),
-        ),
-    }
-}
-
 /// Lookup from `Vote` to the `CertificateId`s the vote accounts for
 ///
 /// Must be in sync with `certificate_limits_and_vote_types` and `VoteType::get_type`
