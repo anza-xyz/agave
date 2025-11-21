@@ -198,8 +198,7 @@ impl NotarPoolEntry {
         block_id: Hash,
         vote: VoteMessage,
     ) -> Result<Stake, AddVoteError> {
-        if self.voted.contains(&voter) {
-            // haven't seen any notar votes from this voter, can safely add vote
+        if !self.voted.contains(&voter) {
             self.entries
                 .entry(block_id)
                 .or_default()
@@ -230,8 +229,8 @@ impl VotePool {
     pub(super) fn add_vote(
         &mut self,
         voter: Pubkey,
-        stake: Stake,
         vote: VoteMessage,
+        stake: Stake,
     ) -> Result<Stake, AddVoteError> {
         match vote.vote {
             Vote::Notarize(notar) => {
@@ -357,59 +356,64 @@ mod test {
     use {
         super::*,
         agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
-        solana_bls_signatures::Signature as BLSSignature,
+        solana_bls_signatures::Keypair as BLSKeypair,
     };
 
     #[test]
     fn test_notar_failures() {
         let voter = Pubkey::new_unique();
-        let signature = BLSSignature::default();
+        let keypair = BLSKeypair::new();
         let rank = 1;
         let slot = 1;
 
-        let mut votes = VotePool::new(slot);
+        let mut pool = VotePool::default();
+        let vote = Vote::new_skip_vote(slot);
         let skip = VoteMessage {
-            vote: Vote::new_skip_vote(slot),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
-        votes.add_vote(voter, skip).unwrap();
+        pool.add_vote(voter, skip, 1).unwrap();
+        let vote = Vote::new_notarization_vote(slot, Hash::new_unique());
         let notar = VoteMessage {
-            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
         assert!(matches!(
-            votes.add_vote(voter, notar),
+            pool.add_vote(voter, notar, 1),
             Err(AddVoteError::Invalid)
         ));
 
-        let mut votes = VotePool::new(slot);
+        let mut pool = VotePool::default();
+        let vote = Vote::new_notarization_vote(slot, Hash::new_unique());
         let notar = VoteMessage {
-            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
-        votes.add_vote(voter, notar).unwrap();
+        pool.add_vote(voter, notar, 1).unwrap();
+        let vote = Vote::new_notarization_vote(slot, Hash::new_unique());
         let notar = VoteMessage {
-            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
         assert!(matches!(
-            votes.add_vote(voter, notar),
+            pool.add_vote(voter, notar, 1),
             Err(AddVoteError::Invalid)
         ));
 
-        let mut votes = VotePool::new(slot);
+        let mut pool = VotePool::default();
+        let vote = Vote::new_notarization_vote(slot, Hash::new_unique());
         let notar = VoteMessage {
-            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
-        votes.add_vote(voter, notar.clone()).unwrap();
+        pool.add_vote(voter, notar.clone(), 1).unwrap();
         assert!(matches!(
-            votes.add_vote(voter, notar),
+            pool.add_vote(voter, notar, 1),
             Err(AddVoteError::Duplicate)
         ));
     }
@@ -417,55 +421,60 @@ mod test {
     #[test]
     fn test_notar_fallback_failures() {
         let voter = Pubkey::new_unique();
-        let signature = BLSSignature::default();
+        let keypair = BLSKeypair::new();
         let rank = 1;
         let slot = 1;
 
-        let mut votes = VotePool::new(slot);
+        let mut pool = VotePool::default();
+        let vote = Vote::new_finalization_vote(slot);
         let finalize = VoteMessage {
-            vote: Vote::new_finalization_vote(slot),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
-        votes.add_vote(voter, finalize).unwrap();
+        pool.add_vote(voter, finalize, 1).unwrap();
+        let vote = Vote::new_notarization_fallback_vote(slot, Hash::default());
         let nf = VoteMessage {
-            vote: Vote::new_notarization_fallback_vote(slot, Hash::default()),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
         assert!(matches!(
-            votes.add_vote(voter, nf),
+            pool.add_vote(voter, nf, 1),
             Err(AddVoteError::Invalid)
         ));
 
-        let mut votes = VotePool::new(slot);
+        let mut pool = VotePool::default();
         for _ in 0..3 {
+            let vote = Vote::new_notarization_fallback_vote(slot, Hash::new_unique());
             let nf = VoteMessage {
-                vote: Vote::new_notarization_fallback_vote(slot, Hash::new_unique()),
-                signature,
+                vote,
+                signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
                 rank,
             };
-            votes.add_vote(voter, nf).unwrap();
+            pool.add_vote(voter, nf, 1).unwrap();
         }
+        let vote = Vote::new_notarization_fallback_vote(slot, Hash::new_unique());
         let nf = VoteMessage {
-            vote: Vote::new_notarization_fallback_vote(slot, Hash::new_unique()),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
         assert!(matches!(
-            votes.add_vote(voter, nf),
+            pool.add_vote(voter, nf, 1),
             Err(AddVoteError::Invalid)
         ));
 
-        let mut votes = VotePool::new(slot);
+        let mut pool = VotePool::default();
+        let vote = Vote::new_notarization_fallback_vote(slot, Hash::new_unique());
         let nf = VoteMessage {
-            vote: Vote::new_notarization_fallback_vote(slot, Hash::new_unique()),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
-        votes.add_vote(voter, nf.clone()).unwrap();
+        pool.add_vote(voter, nf.clone(), 1).unwrap();
         assert!(matches!(
-            votes.add_vote(voter, nf),
+            pool.add_vote(voter, nf, 1),
             Err(AddVoteError::Duplicate)
         ));
     }
@@ -473,53 +482,58 @@ mod test {
     #[test]
     fn test_skip_failures() {
         let voter = Pubkey::new_unique();
-        let signature = BLSSignature::default();
+        let keypair = BLSKeypair::new();
         let rank = 1;
         let slot = 1;
 
-        let mut votes = VotePool::new(slot);
+        let mut pool = VotePool::default();
+        let vote = Vote::new_notarization_vote(slot, Hash::new_unique());
         let notar = VoteMessage {
-            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
-        votes.add_vote(voter, notar).unwrap();
+        pool.add_vote(voter, notar, 1).unwrap();
+        let vote = Vote::new_skip_vote(slot);
         let skip = VoteMessage {
-            vote: Vote::new_skip_vote(slot),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
         assert!(matches!(
-            votes.add_vote(voter, skip),
+            pool.add_vote(voter, skip, 1),
             Err(AddVoteError::Invalid)
         ));
 
-        let mut votes = VotePool::new(slot);
+        let mut pool = VotePool::default();
+        let vote = Vote::new_finalization_vote(slot);
         let finalize = VoteMessage {
-            vote: Vote::new_finalization_vote(slot),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
-        votes.add_vote(voter, finalize).unwrap();
+        pool.add_vote(voter, finalize, 1).unwrap();
+        let vote = Vote::new_skip_vote(slot);
         let skip = VoteMessage {
-            vote: Vote::new_skip_vote(slot),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
         assert!(matches!(
-            votes.add_vote(voter, skip),
+            pool.add_vote(voter, skip, 1),
             Err(AddVoteError::Invalid)
         ));
 
-        let mut votes = VotePool::new(slot);
+        let mut pool = VotePool::default();
+        let vote = Vote::new_finalization_vote(slot);
         let skip = VoteMessage {
-            vote: Vote::new_finalization_vote(slot),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
-        votes.add_vote(voter, skip.clone()).unwrap();
+        pool.add_vote(voter, skip.clone(), 1).unwrap();
         assert!(matches!(
-            votes.add_vote(voter, skip),
+            pool.add_vote(voter, skip, 1),
             Err(AddVoteError::Duplicate)
         ));
     }
@@ -527,36 +541,39 @@ mod test {
     #[test]
     fn test_skip_fallback_failures() {
         let voter = Pubkey::new_unique();
-        let signature = BLSSignature::default();
+        let keypair = BLSKeypair::new();
         let rank = 1;
         let slot = 1;
 
-        let mut votes = VotePool::new(slot);
+        let mut pool = VotePool::default();
+        let vote = Vote::new_finalization_vote(slot);
         let finalize = VoteMessage {
-            vote: Vote::new_finalization_vote(slot),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
-        votes.add_vote(voter, finalize).unwrap();
+        pool.add_vote(voter, finalize, 1).unwrap();
+        let vote = Vote::new_skip_fallback_vote(slot);
         let sf = VoteMessage {
-            vote: Vote::new_skip_fallback_vote(slot),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
         assert!(matches!(
-            votes.add_vote(voter, sf),
+            pool.add_vote(voter, sf, 1),
             Err(AddVoteError::Invalid)
         ));
 
-        let mut votes = VotePool::new(slot);
+        let mut pool = VotePool::default();
+        let vote = Vote::new_skip_fallback_vote(slot);
         let sf = VoteMessage {
-            vote: Vote::new_skip_fallback_vote(slot),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
-        votes.add_vote(voter, sf.clone()).unwrap();
+        pool.add_vote(voter, sf.clone(), 1).unwrap();
         assert!(matches!(
-            votes.add_vote(voter, sf),
+            pool.add_vote(voter, sf, 1),
             Err(AddVoteError::Duplicate)
         ));
     }
@@ -564,122 +581,58 @@ mod test {
     #[test]
     fn test_finalize_failures() {
         let voter = Pubkey::new_unique();
-        let signature = BLSSignature::default();
+        let keypair = BLSKeypair::new();
         let rank = 1;
         let slot = 1;
-
-        let mut votes = VotePool::new(slot);
+        let vote = Vote::new_skip_vote(slot);
         let skip = VoteMessage {
-            vote: Vote::new_skip_vote(slot),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
-        votes.add_vote(voter, skip).unwrap();
+        let mut pool = VotePool::default();
+        pool.add_vote(voter, skip, 1).unwrap();
+        let vote = Vote::new_finalization_vote(slot);
         let finalize = VoteMessage {
-            vote: Vote::new_finalization_vote(slot),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
         assert!(matches!(
-            votes.add_vote(voter, finalize),
+            pool.add_vote(voter, finalize, 1),
             Err(AddVoteError::Invalid)
         ));
 
-        let mut votes = VotePool::new(slot);
+        let mut pool = VotePool::default();
+        let vote = Vote::new_skip_fallback_vote(slot);
         let sf = VoteMessage {
-            vote: Vote::new_skip_fallback_vote(slot),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
-        votes.add_vote(voter, sf).unwrap();
+        pool.add_vote(voter, sf, 1).unwrap();
+        let vote = Vote::new_finalization_vote(slot);
         let finalize = VoteMessage {
-            vote: Vote::new_finalization_vote(slot),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
         assert!(matches!(
-            votes.add_vote(voter, finalize),
+            pool.add_vote(voter, finalize, 1),
             Err(AddVoteError::Invalid)
         ));
 
-        let mut votes = VotePool::new(slot);
+        let mut pool = VotePool::default();
+        let vote = Vote::new_finalization_vote(slot);
         let finalize = VoteMessage {
-            vote: Vote::new_finalization_vote(slot),
-            signature,
+            vote,
+            signature: keypair.sign(&bincode::serialize(&vote).unwrap()).into(),
             rank,
         };
-        votes.add_vote(voter, finalize.clone()).unwrap();
+        pool.add_vote(voter, finalize.clone(), 1).unwrap();
         assert!(matches!(
-            votes.add_vote(voter, finalize),
+            pool.add_vote(voter, finalize, 1),
             Err(AddVoteError::Duplicate)
         ));
-    }
-
-    #[test]
-    fn test_stakes() {
-        let slot = 123;
-        let stake = 54321;
-        let mut stakes = Stakes::new(slot);
-        let vote = Vote::new_skip_vote(slot);
-        assert_eq!(stakes.add_stake(stake, &vote), stake);
-        assert_eq!(stakes.get_stake(&vote), stake);
-
-        let mut stakes = Stakes::new(slot);
-        let vote = Vote::new_skip_fallback_vote(slot);
-        assert_eq!(stakes.add_stake(stake, &vote), stake);
-        assert_eq!(stakes.get_stake(&vote), stake);
-
-        let mut stakes = Stakes::new(slot);
-        let vote = Vote::new_finalization_vote(slot);
-        assert_eq!(stakes.add_stake(stake, &vote), stake);
-        assert_eq!(stakes.get_stake(&vote), stake);
-
-        let mut stakes = Stakes::new(slot);
-        let stake0 = 10;
-        let stake1 = 20;
-        let hash0 = Hash::new_unique();
-        let hash1 = Hash::new_unique();
-        let vote0 = Vote::new_notarization_vote(slot, hash0);
-        let vote1 = Vote::new_notarization_vote(slot, hash1);
-        assert_eq!(stakes.add_stake(stake0, &vote0), stake0);
-        assert_eq!(stakes.add_stake(stake1, &vote1), stake1);
-        assert_eq!(stakes.get_stake(&vote0), stake0);
-        assert_eq!(stakes.get_stake(&vote1), stake1);
-
-        let mut stakes = Stakes::new(slot);
-        let stake0 = 10;
-        let stake1 = 20;
-        let hash0 = Hash::new_unique();
-        let hash1 = Hash::new_unique();
-        let vote0 = Vote::new_notarization_fallback_vote(slot, hash0);
-        let vote1 = Vote::new_notarization_fallback_vote(slot, hash1);
-        assert_eq!(stakes.add_stake(stake0, &vote0), stake0);
-        assert_eq!(stakes.add_stake(stake1, &vote1), stake1);
-        assert_eq!(stakes.get_stake(&vote0), stake0);
-        assert_eq!(stakes.get_stake(&vote1), stake1);
-    }
-
-    #[test]
-    fn test_vote_pool() {
-        let slot = 1;
-        let mut vote_pool = VotePool::new(slot);
-
-        let voter = Pubkey::new_unique();
-        let signature = BLSSignature::default();
-        let rank = 1;
-        let vote = Vote::new_finalization_vote(slot);
-        let vote_message = VoteMessage {
-            vote,
-            signature,
-            rank,
-        };
-        let stake = 12345;
-        assert_eq!(
-            vote_pool
-                .add_vote(voter, stake, vote_message.clone())
-                .unwrap(),
-            stake
-        );
-        assert_eq!(vote_pool.get_stake(&vote), stake);
     }
 }

@@ -304,8 +304,8 @@ impl ConsensusPool {
         let vote = vote_message.vote;
         match self.vote_pools.entry(vote_slot).or_default().add_vote(
             validator_vote_key,
-            validator_stake,
             vote_message,
+            validator_stake,
         ) {
             Ok(stake) => {
                 let fallback_vote_counters = self
