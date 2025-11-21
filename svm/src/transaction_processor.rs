@@ -541,6 +541,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             account_loader.update_accounts_for_successful_tx(
                                 tx,
                                 &executed_tx.loaded_transaction.accounts,
+                                self.slot,
                             );
                             // Also update local program cache with modifications made by the
                             // transaction, if it executed successfully.
@@ -823,20 +824,24 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         limit_to_load_programs: bool,
         increment_usage_counter: bool,
     ) {
-        let mut missing_programs: Vec<(Pubkey, ProgramCacheMatchCriteria)> = program_accounts_set
-            .iter()
-            .map(|pubkey| {
-                let match_criteria = if check_program_modification_slot {
-                    get_program_modification_slot(account_loader, pubkey)
-                        .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
-                            ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(slot)
-                        })
-                } else {
-                    ProgramCacheMatchCriteria::NoCriteria
-                };
-                (*pubkey, match_criteria)
-            })
-            .collect();
+        let mut missing_programs: Vec<(Pubkey, ProgramCacheMatchCriteria, Slot)> =
+            program_accounts_set
+                .iter()
+                .map(|pubkey| {
+                    let match_criteria = if check_program_modification_slot {
+                        get_program_modification_slot(account_loader, pubkey)
+                            .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
+                                ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(slot)
+                            })
+                    } else {
+                        ProgramCacheMatchCriteria::NoCriteria
+                    };
+                    let (_account, slot) = account_loader.get_account_shared_data(pubkey).expect(
+                        "called account_loader.get_account_shared_data() with nonexistent account",
+                    );
+                    (*pubkey, match_criteria, slot)
+                })
+                .collect();
 
         let mut count_hits_and_misses = true;
         loop {
@@ -855,7 +860,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
                 let program_to_store = program_to_load.map(|key| {
                     // Load, verify and compile one program.
-                    let program = load_program_with_pubkey(
+                    let (program, last_modification_slot) = load_program_with_pubkey(
                         account_loader,
                         program_runtime_environments_for_execution,
                         &key,
@@ -863,8 +868,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         execute_timings,
                         false,
                     )
-                    .expect("called load_program_with_pubkey() with nonexistent account");
-                    (key, program)
+                    .expect(
+                        "called account_loader.get_account_shared_data() with nonexistent account",
+                    );
+                    (key, last_modification_slot, program)
                 });
 
                 let task_waiter = Arc::clone(&global_program_cache.loading_task_waiter);
@@ -872,7 +879,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 // Unlock the global cache again.
             };
 
-            if let Some((key, program)) = program_to_store {
+            if let Some((key, last_modification_slot, program)) = program_to_store {
                 program_cache_for_tx_batch.loaded_missing = true;
                 let mut global_program_cache = self.global_program_cache.write().unwrap();
                 // Submit our last completed loading task.
@@ -880,6 +887,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     program_runtime_environments_for_execution,
                     self.slot,
                     key,
+                    last_modification_slot,
                     program,
                 ) && limit_to_load_programs
                 {
@@ -1145,6 +1153,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.global_program_cache.write().unwrap().assign_program(
             &self.environments,
             program_id,
+            self.slot,
             Arc::new(builtin),
         );
     }
@@ -1540,7 +1549,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic = "called load_program_with_pubkey() with nonexistent account"]
+    #[should_panic = "called account_loader.get_account_shared_data() with nonexistent account"]
     fn test_replenish_program_cache_with_nonexistent_accounts() {
         let mock_bank = MockBankCallback::default();
         let account_loader = (&mock_bank).into();
@@ -1967,7 +1976,7 @@ mod tests {
             .write()
             .unwrap()
             .extract(
-                &mut vec![(key, ProgramCacheMatchCriteria::NoCriteria)],
+                &mut vec![(key, ProgramCacheMatchCriteria::NoCriteria, 0)],
                 &mut loaded_programs_for_tx_batch,
                 &program_runtime_environments,
                 true,
