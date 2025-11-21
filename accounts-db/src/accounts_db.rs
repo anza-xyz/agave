@@ -5616,10 +5616,7 @@ impl AccountsDb {
     }
 
     fn remove_dead_slots_metadata<'a>(&'a self, dead_slots_iter: impl Iterator<Item = &'a Slot>) {
-        let mut measure = Measure::start("remove_dead_slots_metadata-ms");
         self.clean_dead_slots_from_accounts_index(dead_slots_iter);
-        measure.stop();
-        inc_new_counter_info!("remove_dead_slots_metadata-ms", measure.as_ms() as usize);
     }
 
     /// lookup each pubkey in 'pubkeys' and unref it in the accounts index
