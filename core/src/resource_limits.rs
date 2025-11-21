@@ -1,12 +1,8 @@
 use {std::io, thiserror::Error};
 
-#[cfg(not(unix))]
-#[derive(Error, Debug)]
-pub enum ResourceLimitError {}
-
-#[cfg(unix)]
 #[derive(Error, Debug)]
 pub enum ResourceLimitError {
+    #[cfg(unix)]
     #[error(
         "unable to increase the nofile limit to {desired} from {current}; setrlimit() error: \
          {error}"
