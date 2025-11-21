@@ -56,4 +56,11 @@ pub(crate) trait QosController<C: ConnectionContext> {
     fn max_concurrent_connections(&self) -> usize;
 }
 
-pub trait QosConfig {}
+/// Marker trait to indicate what is the shared state for connections
+pub(crate) trait OpaqueStreamerCounter: Send + Sync + 'static {}
+
+#[cfg(test)]
+pub(crate) struct NullStreamerCounter;
+
+#[cfg(test)]
+impl OpaqueStreamerCounter for NullStreamerCounter {}

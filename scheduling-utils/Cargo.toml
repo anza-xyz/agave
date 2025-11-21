@@ -11,6 +11,7 @@ edition = { workspace = true }
 
 [features]
 agave-unstable-api = []
+dev-context-only-utils = []
 
 [dependencies]
 agave-scheduler-bindings = { workspace = true }

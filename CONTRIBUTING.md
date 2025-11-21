@@ -98,7 +98,7 @@ maintainer to review.
 
 Add only code to the codebase that is ready to be deployed. If you are building
 a large library, consider developing it in a separate git repository. When it
-is ready to be integrated, the Solana Labs Maintainers will work with you to decide
+is ready to be integrated, the repository maintainers will work with you to decide
 on a path forward. Smaller libraries may be copied in whereas very large ones
 may be pulled in with a package manager.
 

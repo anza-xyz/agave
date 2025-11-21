@@ -69,7 +69,7 @@ pub(crate) enum TransactionLoadResult {
 #[cfg_attr(feature = "svm-internal", field_qualifiers(nonce(pub)))]
 pub struct CheckedTransactionDetails {
     pub(crate) nonce: Option<NonceInfo>,
-    pub(crate) compute_budget_and_limits: Result<SVMTransactionExecutionAndFeeBudgetLimits>,
+    pub(crate) compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits,
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -77,12 +77,12 @@ impl Default for CheckedTransactionDetails {
     fn default() -> Self {
         Self {
             nonce: None,
-            compute_budget_and_limits: Ok(SVMTransactionExecutionAndFeeBudgetLimits {
+            compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits {
                 budget: SVMTransactionExecutionBudget::default(),
                 loaded_accounts_data_size_limit: NonZeroU32::new(32)
                     .expect("Failed to set loaded_accounts_bytes"),
                 fee_details: FeeDetails::default(),
-            }),
+            },
         }
     }
 }
@@ -90,7 +90,7 @@ impl Default for CheckedTransactionDetails {
 impl CheckedTransactionDetails {
     pub fn new(
         nonce: Option<NonceInfo>,
-        compute_budget_and_limits: Result<SVMTransactionExecutionAndFeeBudgetLimits>,
+        compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits,
     ) -> Self {
         Self {
             nonce,

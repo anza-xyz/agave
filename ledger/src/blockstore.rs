@@ -4820,14 +4820,16 @@ pub fn create_new_ledger(
     let entries = create_ticks(ticks_per_slot, hashes_per_tick, genesis_config.hash());
     let last_hash = entries.last().unwrap().hash;
     let version = solana_shred_version::version_from_hash(&last_hash);
+    // Slot 0 has no parent slot so there is nothing to chain to; instead,
+    // initialize the chained merkle root with the genesis hash
+    let chained_merkle_root = genesis_config.hash();
 
     let shredder = Shredder::new(0, 0, 0, version).unwrap();
     let (shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
         &Keypair::new(),
         &entries,
         true, // is_last_in_slot
-        // chained_merkle_root
-        Hash::new_from_array(rand::rng().random()),
+        chained_merkle_root,
         0, // next_shred_index
         0, // next_code_index
         &ReedSolomonCache::default(),

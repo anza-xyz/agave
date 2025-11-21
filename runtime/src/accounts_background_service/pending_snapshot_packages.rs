@@ -117,7 +117,6 @@ mod tests {
         SnapshotPackage {
             snapshot_kind,
             slot,
-            block_height: slot,
             ..SnapshotPackage::default_for_tests()
         }
     }

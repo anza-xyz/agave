@@ -1367,8 +1367,8 @@ pub(crate) mod external {
             fn to_resolved_view(
                 tx: &'_ [u8],
             ) -> RuntimeTransaction<ResolvedTransactionView<&'_ [u8]>> {
-                RuntimeTransaction::<ResolvedTransactionView<_>>::try_from(
-                    RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+                RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
+                    RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                         SanitizedTransactionView::try_new_sanitized(tx, true).unwrap(),
                         solana_transaction::sanitized::MessageHash::Compute,
                         Some(false),
