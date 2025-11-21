@@ -1,6 +1,6 @@
 //! The `packet` module defines data structures and methods to pull data from the network.
 #[cfg(unix)]
-use nix::poll::{poll, PollFd, PollTimeout};
+use nix::poll::{PollFd, PollTimeout, poll};
 #[cfg(any(
     target_os = "linux",
     target_os = "android",
@@ -18,10 +18,10 @@ use {
     },
 };
 pub use {
-    solana_packet::{Meta, Packet, PACKET_DATA_SIZE},
+    solana_packet::{Meta, PACKET_DATA_SIZE, Packet},
     solana_perf::packet::{
-        PacketBatch, PacketBatchRecycler, PacketRef, PacketRefMut, RecycledPacketBatch,
-        NUM_PACKETS, PACKETS_PER_BATCH,
+        NUM_PACKETS, PACKETS_PER_BATCH, PacketBatch, PacketBatchRecycler, PacketRef, PacketRefMut,
+        RecycledPacketBatch,
     },
 };
 
@@ -285,12 +285,13 @@ pub fn send_to(
 ) -> Result<()> {
     for p in batch.iter() {
         let addr = p.meta().socket_addr();
-        if socket_addr_space.check(&addr) {
-            if let Some(data) = p.data(..) {
-                socket.send_to(data, addr)?;
-            }
+        if socket_addr_space.check(&addr)
+            && let Some(data) = p.data(..)
+        {
+            socket.send_to(data, addr)?;
         }
     }
+
     Ok(())
 }
 

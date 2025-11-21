@@ -4,20 +4,20 @@
 use {
     crate::{
         packet::{
-            self, Packet, PacketBatch, PacketBatchRecycler, PacketRef, RecycledPacketBatch,
-            PACKETS_PER_BATCH,
+            self, PACKETS_PER_BATCH, Packet, PacketBatch, PacketBatchRecycler, PacketRef,
+            RecycledPacketBatch,
         },
-        sendmmsg::{batch_send, SendPktsError},
+        sendmmsg::{SendPktsError, batch_send},
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
     histogram::Histogram,
     itertools::Itertools,
     solana_net_utils::{
+        SocketAddrSpace,
         multihomed_sockets::{
             BindIpAddrs, CurrentSocket, FixedSocketProvider, MultihomedSocketProvider,
             SocketProvider,
         },
-        SocketAddrSpace,
     },
     solana_pubkey::Pubkey,
     solana_time_utils::timestamp,
@@ -26,10 +26,10 @@ use {
         collections::HashMap,
         net::{IpAddr, UdpSocket},
         sync::{
-            atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
-        thread::{sleep, Builder, JoinHandle},
+        thread::{Builder, JoinHandle, sleep},
         time::{Duration, Instant},
     },
     thiserror::Error,
@@ -203,11 +203,11 @@ fn recv_loop<P: SocketProvider>(
                 return Ok(());
             }
 
-            if let Some(ref in_vote_only_mode) = in_vote_only_mode {
-                if in_vote_only_mode.load(Ordering::Relaxed) {
-                    sleep(Duration::from_millis(1));
-                    continue;
-                }
+            if let Some(ref in_vote_only_mode) = in_vote_only_mode
+                && in_vote_only_mode.load(Ordering::Relaxed)
+            {
+                sleep(Duration::from_millis(1));
+                continue;
             }
 
             #[cfg(unix)]
@@ -240,7 +240,7 @@ fn recv_loop<P: SocketProvider>(
                             stats.num_packets_dropped.fetch_add(len, Ordering::Relaxed);
                         }
                         Err(TrySendError::Disconnected(err)) => {
-                            return Err(StreamerError::Send(SendError(err)))
+                            return Err(StreamerError::Send(SendError(err)));
                         }
                     }
                 }
@@ -615,10 +615,10 @@ fn responder_loop<P: SocketProvider>(
             last_print = now;
             errors = 0;
         }
-        if let Some(ref stats_reporter_sender) = stats_reporter_sender {
-            if let Some(ref mut stats) = stats {
-                stats.maybe_submit(name, stats_reporter_sender);
-            }
+        if let Some(ref stats_reporter_sender) = stats_reporter_sender
+            && let Some(ref mut stats) = stats
+        {
+            stats.maybe_submit(name, stats_reporter_sender);
         }
     }
 }
@@ -628,7 +628,7 @@ mod test {
     use {
         super::*,
         crate::{
-            packet::{Packet, RecycledPacketBatch, PACKET_DATA_SIZE},
+            packet::{PACKET_DATA_SIZE, Packet, RecycledPacketBatch},
             streamer::{receiver, responder},
         },
         crossbeam_channel::unbounded,
@@ -637,8 +637,8 @@ mod test {
         std::{
             io::{self, Write},
             sync::{
-                atomic::{AtomicBool, Ordering},
                 Arc,
+                atomic::{AtomicBool, Ordering},
             },
             time::Duration,
         },

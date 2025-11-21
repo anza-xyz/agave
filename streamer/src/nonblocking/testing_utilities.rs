@@ -197,12 +197,12 @@ pub async fn check_multiple_streams(
     let now = Instant::now();
     let mut total_packets = 0;
     while now.elapsed().as_secs() < 10 {
-        if let Ok(packets) = receiver.try_recv() {
+        match receiver.try_recv() { Ok(packets) => {
             total_packets += packets.len();
             all_packets.push(packets)
-        } else {
+        } _ => {
             sleep(Duration::from_secs(1)).await;
-        }
+        }}
         if total_packets == num_expected_packets {
             break;
         }

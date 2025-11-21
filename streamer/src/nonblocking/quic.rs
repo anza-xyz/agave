@@ -810,7 +810,7 @@ fn handle_chunks(
     }
     let packet_batch = PacketBatch::Single(packet);
 
-    if let Err(err) = packet_sender.try_send(packet_batch) {
+    match packet_sender.try_send(packet_batch) { Err(err) => {
         stats
             .total_handle_chunk_to_packet_send_err
             .fetch_add(1, Ordering::Relaxed);
@@ -827,7 +827,7 @@ fn handle_chunks(
             }
         }
         trace!("packet batch send error {err:?}");
-    } else {
+    } _ => {
         if let Some(ppm) = &packet_perf_measure {
             track_streamer_fetch_packet_performance(core::array::from_ref(ppm), stats);
         }
@@ -853,7 +853,7 @@ fn handle_chunks(
         }
 
         trace!("sent {bytes_sent} byte packet for batching");
-    }
+    }}
 
     Ok(StreamState::Finished)
 }
@@ -1144,12 +1144,12 @@ pub mod test {
         }
         let mut received = 0;
         loop {
-            if let Ok(_x) = receiver.try_recv() {
+            match receiver.try_recv() { Ok(_x) => {
                 received += 1;
                 info!("got {received}");
-            } else {
+            } _ => {
                 sleep(Duration::from_millis(500)).await;
-            }
+            }}
             if received >= total {
                 break;
             }
@@ -1229,12 +1229,12 @@ pub mod test {
         while now.elapsed().as_secs() < 5 {
             // We're running in an async environment, we (almost) never
             // want to block
-            if let Ok(packets) = receiver.try_recv() {
+            match receiver.try_recv() { Ok(packets) => {
                 total_packets += packets.len();
                 all_packets.push(packets)
-            } else {
+            } _ => {
                 sleep(Duration::from_secs(1)).await;
-            }
+            }}
             if total_packets >= num_expected_packets {
                 break;
             }
@@ -1949,11 +1949,11 @@ pub mod test {
         let start_time = tokio::time::Instant::now();
         let mut num_txs_received = 0;
         while num_txs_received < expected_num_txs && start_time.elapsed() < Duration::from_secs(2) {
-            if let Ok(packets) = receiver.try_recv() {
+            match receiver.try_recv() { Ok(packets) => {
                 num_txs_received += packets.len();
-            } else {
+            } _ => {
                 sleep(Duration::from_millis(100)).await;
-            }
+            }}
         }
         assert_eq!(expected_num_txs, num_txs_received);
 

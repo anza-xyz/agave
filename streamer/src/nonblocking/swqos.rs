@@ -245,7 +245,7 @@ impl SwQos {
                 ConnectionPeerType::Unstaked => self.config.max_connections_per_unstaked_peer,
                 ConnectionPeerType::Staked(_) => self.config.max_connections_per_staked_peer,
             };
-            if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
+            match connection_table_l
                 .try_add_connection(
                     ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey),
                     remote_addr.port(),
@@ -255,7 +255,7 @@ impl SwQos {
                     conn_context.last_update.clone(),
                     max_connections_per_peer,
                 )
-            {
+            { Some((last_update, cancel_connection, stream_counter)) => {
                 update_open_connections_stat(&self.stats, &connection_table_l);
                 drop(connection_table_l);
 
@@ -265,12 +265,12 @@ impl SwQos {
                 connection.set_max_concurrent_uni_streams(max_uni_streams);
 
                 Ok((last_update, cancel_connection, stream_counter))
-            } else {
+            } _ => {
                 self.stats
                     .connection_add_failed
                     .fetch_add(1, Ordering::Relaxed);
                 Err(ConnectionHandlerError::ConnectionAddError)
-            }
+            }}
         } else {
             connection.close(
                 CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT.into(),
@@ -434,7 +434,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                         // If we couldn't prune a connection in the staked connection table, let's
                         // put this connection in the unstaked connection table. If needed, prune a
                         // connection from the unstaked connection table.
-                        if let Ok((last_update, cancel_connection, stream_counter)) = self
+                        match self
                             .prune_unstaked_connections_and_add_new_connection(
                                 client_connection_tracker,
                                 connection,
@@ -443,7 +443,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                                 conn_context,
                             )
                             .await
-                        {
+                        { Ok((last_update, cancel_connection, stream_counter)) => {
                             self.stats
                                 .connection_added_from_staked_peer
                                 .fetch_add(1, Ordering::Relaxed);
@@ -451,18 +451,18 @@ impl QosController<SwQosConnectionContext> for SwQos {
                             conn_context.last_update = last_update;
                             conn_context.stream_counter = Some(stream_counter);
                             return Some(cancel_connection);
-                        } else {
+                        } _ => {
                             self.stats
                                 .connection_add_failed_on_pruning
                                 .fetch_add(1, Ordering::Relaxed);
                             self.stats
                                 .connection_add_failed_staked_node
                                 .fetch_add(1, Ordering::Relaxed);
-                        }
+                        }}
                     }
                 }
                 ConnectionPeerType::Unstaked => {
-                    if let Ok((last_update, cancel_connection, stream_counter)) = self
+                    match self
                         .prune_unstaked_connections_and_add_new_connection(
                             client_connection_tracker,
                             connection,
@@ -471,7 +471,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                             conn_context,
                         )
                         .await
-                    {
+                    { Ok((last_update, cancel_connection, stream_counter)) => {
                         self.stats
                             .connection_added_from_unstaked_peer
                             .fetch_add(1, Ordering::Relaxed);
@@ -479,11 +479,11 @@ impl QosController<SwQosConnectionContext> for SwQos {
                         conn_context.last_update = last_update;
                         conn_context.stream_counter = Some(stream_counter);
                         return Some(cancel_connection);
-                    } else {
+                    } _ => {
                         self.stats
                             .connection_add_failed_unstaked_node
                             .fetch_add(1, Ordering::Relaxed);
-                    }
+                    }}
                 }
             }
 

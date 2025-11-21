@@ -3,17 +3,17 @@ use {
         nonblocking::{
             qos::{ConnectionContext, QosController},
             quic::{
-                get_connection_stake, update_open_connections_stat, ClientConnectionTracker,
-                ConnectionHandlerError, ConnectionPeerType, ConnectionTable, ConnectionTableKey,
-                ConnectionTableType,
+                ClientConnectionTracker, ConnectionHandlerError, ConnectionPeerType,
+                ConnectionTable, ConnectionTableKey, ConnectionTableType, get_connection_stake,
+                update_open_connections_stat,
             },
             stream_throttle::{
-                throttle_stream, ConnectionStreamCounter, STREAM_THROTTLING_INTERVAL,
+                ConnectionStreamCounter, STREAM_THROTTLING_INTERVAL, throttle_stream,
             },
         },
         quic::{
-            StreamerStats, DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
-            DEFAULT_MAX_STAKED_CONNECTIONS, DEFAULT_MAX_STREAMS_PER_MS,
+            DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER, DEFAULT_MAX_STAKED_CONNECTIONS,
+            DEFAULT_MAX_STREAMS_PER_MS, StreamerStats,
         },
         streamer::StakedNodes,
     },
@@ -22,8 +22,8 @@ use {
     std::{
         future::Future,
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicU64, Ordering},
         },
     },
     tokio::sync::{Mutex, MutexGuard},
@@ -94,26 +94,27 @@ impl SimpleQos {
             remote_addr,
         );
 
-        if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
-            .try_add_connection(
-                ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey),
-                remote_addr.port(),
-                client_connection_tracker,
-                Some(connection.clone()),
-                conn_context.peer_type(),
-                conn_context.last_update.clone(),
-                self.config.max_connections_per_peer,
-            )
-        {
-            update_open_connections_stat(&self.stats, &connection_table_l);
-            drop(connection_table_l);
+        match connection_table_l.try_add_connection(
+            ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey),
+            remote_addr.port(),
+            client_connection_tracker,
+            Some(connection.clone()),
+            conn_context.peer_type(),
+            conn_context.last_update.clone(),
+            self.config.max_connections_per_peer,
+        ) {
+            Some((last_update, cancel_connection, stream_counter)) => {
+                update_open_connections_stat(&self.stats, &connection_table_l);
+                drop(connection_table_l);
 
-            Ok((last_update, cancel_connection, stream_counter))
-        } else {
-            self.stats
-                .connection_add_failed
-                .fetch_add(1, Ordering::Relaxed);
-            Err(ConnectionHandlerError::ConnectionAddError)
+                Ok((last_update, cancel_connection, stream_counter))
+            }
+            _ => {
+                self.stats
+                    .connection_add_failed
+                    .fetch_add(1, Ordering::Relaxed);
+                Err(ConnectionHandlerError::ConnectionAddError)
+            }
         }
     }
 
@@ -190,22 +191,21 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
                         update_open_connections_stat(&self.stats, &connection_table_l);
                     }
 
-                    if connection_table_l.total_size < self.config.max_staked_connections {
-                        if let Ok((last_update, cancel_connection, stream_counter)) = self
+                    if connection_table_l.total_size < self.config.max_staked_connections
+                        && let Ok((last_update, cancel_connection, stream_counter)) = self
                             .cache_new_connection(
                                 client_connection_tracker,
                                 connection,
                                 connection_table_l,
                                 conn_context,
                             )
-                        {
-                            self.stats
-                                .connection_added_from_staked_peer
-                                .fetch_add(1, Ordering::Relaxed);
-                            conn_context.last_update = last_update;
-                            conn_context.stream_counter = Some(stream_counter);
-                            return Some(cancel_connection);
-                        }
+                    {
+                        self.stats
+                            .connection_added_from_staked_peer
+                            .fetch_add(1, Ordering::Relaxed);
+                        conn_context.last_update = last_update;
+                        conn_context.stream_counter = Some(stream_counter);
+                        return Some(cancel_connection);
                     }
                     None
                 }
@@ -294,7 +294,7 @@ mod tests {
                 quic::{ConnectionTable, ConnectionTableType},
                 testing_utilities::get_client_config,
             },
-            quic::{configure_server, StreamerStats},
+            quic::{StreamerStats, configure_server},
             streamer::StakedNodes,
         },
         quinn::Endpoint,
@@ -303,8 +303,8 @@ mod tests {
         std::{
             collections::HashMap,
             sync::{
-                atomic::{AtomicU64, Ordering},
                 Arc, RwLock,
+                atomic::{AtomicU64, Ordering},
             },
         },
         tokio_util::sync::CancellationToken,
