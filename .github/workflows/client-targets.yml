@@ -31,7 +31,7 @@ jobs:
           - armv7-linux-androideabi
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       # This can be removed once cargo-ndk >= 3.5.4 is used.
       - name: Setup environment for Android NDK
@@ -61,7 +61,7 @@ jobs:
           - x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Setup Rust
         run: |
