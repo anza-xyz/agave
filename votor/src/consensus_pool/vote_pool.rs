@@ -1,4 +1,4 @@
-//! Container to store received votes and associated stakes.
+//! Container to store received votes and associated stakes and construct certificates from them.
 //!
 //! Implements various checks for invalid votes as defined by the Alpenglow paper e.g. lemma 20 and 22.
 //! Further detects duplicate votes which are defined as identical vote from the same sender received multiple times.
@@ -11,7 +11,6 @@ use {
     },
     bitvec::prelude::*,
     solana_bls_signatures::{BlsError, Signature as BLSSignature, SignatureProjective},
-    solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_signer_store::{encode_base2, encode_base3, EncodeError},
@@ -22,6 +21,7 @@ use {
 /// As per the Alpenglow paper, a validator is allowed to vote notar fallback on at most 3 different block id for a given slot.
 const MAX_NOTAR_FALLBACK_PER_VALIDATOR: usize = 3;
 
+/// Different types of error that can happen when adding a vote to the pool.
 #[derive(Debug, PartialEq, Eq, Error)]
 pub(crate) enum AddVoteError {
     #[error("duplicate vote")]
@@ -33,7 +33,7 @@ pub(crate) enum AddVoteError {
     Bls(#[from] BlsError),
 }
 
-/// Different types of errors that can be returned from the [`CertificateBuilder::build()`] function.
+/// Different types of errors that can be returned when building a certificate.
 #[derive(Debug, PartialEq, Eq, Error)]
 pub(crate) enum BuildCertError {
     #[error("BLS error: {0}")]
@@ -240,9 +240,8 @@ impl NotarPoolEntry {
 }
 
 /// Container to store per slot votes.
+#[derive(Default)]
 pub(super) struct VotePool {
-    /// The slot this instance of Votes is responsible for.
-    slot: Slot,
     skip: PoolEntry,
     skip_fallback: PoolEntry,
     finalize: PoolEntry,
@@ -251,18 +250,6 @@ pub(super) struct VotePool {
 }
 
 impl VotePool {
-    /// Creates a new instance of the VotePool.
-    pub(super) fn new(slot: Slot) -> Self {
-        Self {
-            slot,
-            skip: PoolEntry::default(),
-            skip_fallback: PoolEntry::default(),
-            finalize: PoolEntry::default(),
-            notar: NotarPoolEntry::default(),
-            notar_fallback: NotarFallbackPoolEntry::default(),
-        }
-    }
-
     /// Adds votes.
     ///
     /// Checks for different types of invalid and duplicate votes returning appropriate errors.
@@ -272,7 +259,6 @@ impl VotePool {
         stake: Stake,
         vote: VoteMessage,
     ) -> Result<Stake, AddVoteError> {
-        debug_assert_eq!(self.slot, vote.vote.slot());
         match vote.vote {
             Vote::Notarize(notar) => {
                 if self.skip.votes.contains_key(&voter) {
@@ -350,33 +336,37 @@ impl VotePool {
                 })
             }
             CertificateType::NotarizeFallback(_, block_id) => {
-                let (notar_stake, notar_signature, notar_bitmap) = self
-                    .notar
-                    .entries
-                    .get(&block_id)
-                    .map(|e| (e.stake, e.signature, e.bitmap.clone()))
-                    .unwrap_or((0, SignatureProjective::identity(), default_bitvec()));
-                let (nf_stake, nf_sig_bitmap) = self
-                    .notar_fallback
-                    .entries
-                    .get(&block_id)
-                    .map(|e| (e.stake, Some((&e.signature, e.bitmap.clone()))))
-                    .unwrap_or((0, None));
+                let (notar_stake, notar_sig_bitmap) = match self.notar.entries.get(&block_id) {
+                    None => (0, None),
+                    Some(e) => (e.stake, Some((&e.signature, &e.bitmap))),
+                };
+                let (nf_stake, nf_sig_bitmap) = match self.notar_fallback.entries.get(&block_id) {
+                    None => (0, None),
+                    Some(e) => (e.stake, Some((&e.signature, &e.bitmap))),
+                };
                 let accumulated_stake = notar_stake.saturating_add(nf_stake);
-                (accumulated_stake as f64 / total_stake > 0.6).then_some(
-                    build_sig_bitmap(&notar_signature, notar_bitmap, nf_sig_bitmap).map(
-                        |(signature, bitmap)| Certificate {
-                            cert_type,
-                            signature,
-                            bitmap,
-                        },
-                    ),
-                )
+
+                (accumulated_stake as f64 / total_stake > 0.6).then_some({
+                    let (signature, bitmap) = match notar_sig_bitmap {
+                        None => (&SignatureProjective::identity(), default_bitvec()),
+                        Some((sig, bitmap)) => (sig, bitmap.clone()),
+                    };
+                    build_sig_bitmap(
+                        signature,
+                        bitmap,
+                        nf_sig_bitmap.map(|(s, b)| (s, b.clone())),
+                    )
+                    .map(|(signature, bitmap)| Certificate {
+                        cert_type,
+                        signature,
+                        bitmap,
+                    })
+                })
             }
             CertificateType::Skip(_) => {
                 let accumulated_stake =
                     self.skip.stake.saturating_add(self.skip_fallback.stake) as f64;
-                let fallback = (self.skip_fallback.stake == 0).then_some((
+                let fallback = (self.skip_fallback.stake != 0).then_some((
                     &self.skip_fallback.signature,
                     self.skip_fallback.bitmap.clone(),
                 ));

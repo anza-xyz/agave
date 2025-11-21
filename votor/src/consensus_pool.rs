@@ -302,12 +302,11 @@ impl ConsensusPool {
             return Err(AddVoteError::UnrootedSlot);
         }
         let vote = vote_message.vote;
-        match self
-            .vote_pools
-            .entry(vote_slot)
-            .or_insert(VotePool::new(vote_slot))
-            .add_vote(validator_vote_key, validator_stake, vote_message)
-        {
+        match self.vote_pools.entry(vote_slot).or_default().add_vote(
+            validator_vote_key,
+            validator_stake,
+            vote_message,
+        ) {
             Ok(stake) => {
                 let fallback_vote_counters = self
                     .slot_stake_counters_map
