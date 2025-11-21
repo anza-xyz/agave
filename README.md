@@ -10,6 +10,11 @@
 [![Release status](https://github.com/anza-xyz/agave/actions/workflows/release.yml/badge.svg)](https://github.com/anza-xyz/agave/actions/workflows/release.yml)
 [![codecov](https://codecov.io/gh/anza-xyz/agave/branch/master/graph/badge.svg)](https://codecov.io/gh/anza-xyz/agave)
 
+# Documentation
+
+- [Agave Validator](https://docs.anza.xyz) ([GitHub Repo](https://github.com/anza-xyz/agave))
+- [Solana RPC API](https://solana.com/docs/rpc) ([GitHub Repo](https://github.com/solana-foundation/solana-com/tree/main/apps/web/content/docs))
+
 # Building
 
 ## **1. Install rustc, cargo and rustfmt.**
