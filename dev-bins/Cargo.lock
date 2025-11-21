@@ -224,6 +224,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-random"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "rand 0.8.5",
+]
+
+[[package]]
 name = "agave-reserved-account-keys"
 version = "4.0.0-alpha.0"
 dependencies = [
@@ -7455,6 +7462,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
+ "agave-random",
  "arc-swap",
  "arrayvec",
  "assert_matches",
