@@ -342,10 +342,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
         let mut compute_units_consumed = 0;
         invoke_context
             .process_instruction(&mut compute_units_consumed, &mut ExecuteTimings::default())
-            .map_err(|err| match err {
-                InstructionError::Custom(code) => ProgramError::from(code as u64),
-                other => panic!("{}", other),
-            })?;
+            .map_err(|err| ProgramError::try_from(err).unwrap_or_else(|err| panic!("{}", err)))?;
 
         // Copy invoke_context accounts modifications into caller's account_info
         let transaction_context = &invoke_context.transaction_context;

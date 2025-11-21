@@ -8548,7 +8548,7 @@ dependencies = [
  "solana-svm-timings",
  "solana-svm-transaction",
  "solana-svm-type-overrides",
- "solana-system-interface 2.0.0",
+ "solana-system-interface 3.0.0",
  "solana-sysvar",
  "solana-transaction",
  "solana-transaction-context",
@@ -8817,7 +8817,7 @@ dependencies = [
  "solana-sbf-rust-invoked-dep",
  "solana-sbf-rust-realloc-dep",
  "solana-sdk-ids",
- "solana-system-interface 2.0.0",
+ "solana-system-interface 3.0.0",
 ]
 
 [[package]]
@@ -8872,7 +8872,7 @@ dependencies = [
  "solana-pubkey 3.0.0",
  "solana-sbf-rust-invoked-dep",
  "solana-sdk-ids",
- "solana-system-interface 2.0.0",
+ "solana-system-interface 3.0.0",
  "solana-sysvar",
 ]
 
@@ -9022,7 +9022,7 @@ dependencies = [
  "solana-program-error",
  "solana-pubkey 3.0.0",
  "solana-sbf-rust-realloc-dep",
- "solana-system-interface 2.0.0",
+ "solana-system-interface 3.0.0",
 ]
 
 [[package]]
@@ -9046,7 +9046,7 @@ dependencies = [
  "solana-pubkey 3.0.0",
  "solana-sbf-rust-realloc-dep",
  "solana-sbf-rust-realloc-invoke-dep",
- "solana-system-interface 2.0.0",
+ "solana-system-interface 3.0.0",
 ]
 
 [[package]]
@@ -9088,7 +9088,7 @@ dependencies = [
  "solana-program-entrypoint",
  "solana-program-error",
  "solana-pubkey 3.0.0",
- "solana-system-interface 2.0.0",
+ "solana-system-interface 3.0.0",
 ]
 
 [[package]]
@@ -9181,7 +9181,7 @@ dependencies = [
  "solana-program-entrypoint",
  "solana-program-error",
  "solana-pubkey 3.0.0",
- "solana-system-interface 2.0.0",
+ "solana-system-interface 3.0.0",
 ]
 
 [[package]]
