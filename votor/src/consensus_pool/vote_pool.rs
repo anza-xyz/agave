@@ -10,7 +10,7 @@ use {
         vote::Vote,
     },
     bitvec::prelude::*,
-    solana_bls_signatures::{BlsError, Signature as BLSSignature, SignatureProjective},
+    solana_bls_signatures::{BlsError, SignatureProjective},
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_signer_store::{encode_base2, encode_base3, EncodeError},
@@ -43,16 +43,17 @@ pub(crate) enum BuildCertError {
 }
 
 fn build_sig_bitmap(
+    cert_type: CertificateType,
     signature: &SignatureProjective,
     mut bitmap: BitVec<u8, Lsb0>,
     fallback: Option<(&SignatureProjective, BitVec<u8, Lsb0>)>,
-) -> Result<(BLSSignature, Vec<u8>), BuildCertError> {
-    match fallback {
+) -> Result<Certificate, BuildCertError> {
+    let (signature, bitmap) = match fallback {
         None => {
             let new_len = bitmap.last_one().map_or(0, |i| i.saturating_add(1));
             bitmap.resize(new_len, false);
             let bitmap = encode_base2(&bitmap).map_err(BuildCertError::Encode)?;
-            Ok((signature.into(), bitmap))
+            (signature.into(), bitmap)
         }
         Some((fallback_sig, mut fallback_bitmap)) => {
             let last_one_0 = bitmap.last_one().map_or(0, |i| i.saturating_add(1));
@@ -64,9 +65,14 @@ fn build_sig_bitmap(
             fallback_bitmap.resize(new_len, false);
             let bitmap = encode_base3(&bitmap, &fallback_bitmap).map_err(BuildCertError::Encode)?;
             let signature = SignatureProjective::aggregate([signature, fallback_sig].into_iter())?;
-            Ok((signature.into(), bitmap))
+            (signature.into(), bitmap)
         }
-    }
+    };
+    Ok(Certificate {
+        cert_type,
+        signature,
+        bitmap,
+    })
 }
 
 /// Maximum number of validators in a certificate
@@ -95,7 +101,7 @@ struct PoolEntry {
 }
 
 impl PoolEntry {
-    /// Adds the give vote checking for duplicates and returning the accumulated stake on success.
+    /// Adds the given vote checking for duplicates and returning the accumulated stake on success.
     fn add_vote(
         &mut self,
         voter: Pubkey,
@@ -207,36 +213,6 @@ impl NotarPoolEntry {
             Err(AddVoteError::Invalid)
         }
     }
-
-    /// Returns a signature and rank bitmap suitable for building a fast finalization certificate.
-    fn build_fast_finalize(
-        &self,
-        block_id: Hash,
-        total_stake: f64,
-    ) -> Option<Result<(BLSSignature, Vec<u8>), BuildCertError>> {
-        self.entries.get(&block_id).and_then(|pool_entry| {
-            (pool_entry.stake as f64 / total_stake > 0.8).then_some(build_sig_bitmap(
-                &pool_entry.signature,
-                pool_entry.bitmap.clone(),
-                None,
-            ))
-        })
-    }
-
-    /// Returns a signature and rank bitmap suitable for building a notarization certificate.
-    fn build_notarize(
-        &self,
-        block_id: Hash,
-        total_stake: f64,
-    ) -> Option<Result<(BLSSignature, Vec<u8>), BuildCertError>> {
-        self.entries.get(&block_id).and_then(|pool_entry| {
-            (pool_entry.stake as f64 / total_stake > 0.6).then_some(build_sig_bitmap(
-                &pool_entry.signature,
-                pool_entry.bitmap.clone(),
-                None,
-            ))
-        })
-    }
 }
 
 /// Container to store per slot votes.
@@ -250,9 +226,7 @@ pub(super) struct VotePool {
 }
 
 impl VotePool {
-    /// Adds votes.
-    ///
-    /// Checks for different types of invalid and duplicate votes returning appropriate errors.
+    /// Adds votes checking for different types of invalid and duplicate votes returning appropriate errors.
     pub(super) fn add_vote(
         &mut self,
         voter: Pubkey,
@@ -308,32 +282,17 @@ impl VotePool {
         let total_stake = total_stake as f64;
         match cert_type {
             CertificateType::Finalize(_) => (self.finalize.stake as f64 / total_stake > 0.6)
-                .then_some(
-                    build_sig_bitmap(&self.finalize.signature, self.finalize.bitmap.clone(), None)
-                        .map(|(signature, bitmap)| Certificate {
-                            cert_type,
-                            signature,
-                            bitmap,
-                        }),
-                ),
-            CertificateType::FinalizeFast(_, block_id) => self
-                .notar
-                .build_fast_finalize(block_id, total_stake)
-                .map(|res| {
-                    res.map(|(signature, bitmap)| Certificate {
-                        cert_type,
-                        signature,
-                        bitmap,
-                    })
-                }),
+                .then_some(build_sig_bitmap(
+                    cert_type,
+                    &self.finalize.signature,
+                    self.finalize.bitmap.clone(),
+                    None,
+                )),
+            CertificateType::FinalizeFast(_, block_id) => {
+                self.build_from_notar_votes(cert_type, &block_id, total_stake, 0.8)
+            }
             CertificateType::Notarize(_, block_id) => {
-                self.notar.build_notarize(block_id, total_stake).map(|res| {
-                    res.map(|(signature, bitmap)| Certificate {
-                        cert_type,
-                        signature,
-                        bitmap,
-                    })
-                })
+                self.build_from_notar_votes(cert_type, &block_id, total_stake, 0.6)
             }
             CertificateType::NotarizeFallback(_, block_id) => {
                 let (notar_stake, notar_sig_bitmap) = match self.notar.entries.get(&block_id) {
@@ -345,22 +304,17 @@ impl VotePool {
                     Some(e) => (e.stake, Some((&e.signature, &e.bitmap))),
                 };
                 let accumulated_stake = notar_stake.saturating_add(nf_stake);
-
                 (accumulated_stake as f64 / total_stake > 0.6).then_some({
                     let (signature, bitmap) = match notar_sig_bitmap {
                         None => (&SignatureProjective::identity(), default_bitvec()),
                         Some((sig, bitmap)) => (sig, bitmap.clone()),
                     };
                     build_sig_bitmap(
+                        cert_type,
                         signature,
                         bitmap,
                         nf_sig_bitmap.map(|(s, b)| (s, b.clone())),
                     )
-                    .map(|(signature, bitmap)| Certificate {
-                        cert_type,
-                        signature,
-                        bitmap,
-                    })
                 })
             }
             CertificateType::Skip(_) => {
@@ -370,17 +324,31 @@ impl VotePool {
                     &self.skip_fallback.signature,
                     self.skip_fallback.bitmap.clone(),
                 ));
-                (accumulated_stake / total_stake > 0.6).then_some(
-                    build_sig_bitmap(&self.skip.signature, self.skip.bitmap.clone(), fallback).map(
-                        |(signature, bitmap)| Certificate {
-                            cert_type,
-                            signature,
-                            bitmap,
-                        },
-                    ),
-                )
+                (accumulated_stake / total_stake > 0.6).then_some(build_sig_bitmap(
+                    cert_type,
+                    &self.skip.signature,
+                    self.skip.bitmap.clone(),
+                    fallback,
+                ))
             }
         }
+    }
+
+    fn build_from_notar_votes(
+        &self,
+        cert_type: CertificateType,
+        block_id: &Hash,
+        total_stake: f64,
+        threshold: f64,
+    ) -> Option<Result<Certificate, BuildCertError>> {
+        self.notar.entries.get(block_id).and_then(|pool_entry| {
+            (pool_entry.stake as f64 / total_stake > threshold).then_some(build_sig_bitmap(
+                cert_type,
+                &pool_entry.signature,
+                pool_entry.bitmap.clone(),
+                None,
+            ))
+        })
     }
 }
 
