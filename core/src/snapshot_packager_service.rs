@@ -2,7 +2,7 @@ mod snapshot_gossip_manager;
 use {
     agave_snapshots::{
         paths as snapshot_paths, snapshot_config::SnapshotConfig,
-        snapshot_hash::StartingSnapshotHashes,
+        snapshot_hash::StartingSnapshotHashes, SnapshotKind,
     },
     snapshot_gossip_manager::SnapshotGossipManager,
     solana_accounts_db::accounts_db::AccountStorageEntry,
@@ -93,18 +93,41 @@ impl SnapshotPackagerService {
                         });
                     }
 
+                    let archive_time = Instant::now();
+                    let bank_snapshot_info = snapshot_utils::serialize_snapshot(
+                        &snapshot_config.bank_snapshots_dir,
+                        snapshot_config.snapshot_version,
+                        snapshot_package.bank_snapshot_package,
+                        snapshot_package.snapshot_storages.as_slice(),
+                        exit_backpressure.is_none(),
+                    );
+
+                    let bank_snapshot_info = match bank_snapshot_info {
+                        Ok(info) => info,
+                        Err(err) => {
+                            error!(
+                                "Stopping {}! Fatal error while serializing snapshot for slot {}: \
+                                 {err}",
+                                Self::NAME,
+                                snapshot_slot,
+                            );
+                            exit.store(true, Ordering::Relaxed);
+                            break;
+                        }
+                    };
+
+                    let SnapshotKind::Archive(snapshot_archive_kind) = snapshot_kind;
                     // Archiving the snapshot package is not allowed to fail.
                     // AccountsBackgroundService calls `clean_accounts()` with a value for
                     // latest_full_snapshot_slot that requires this archive call to succeed.
-                    let (archive_result, archive_time_us) =
-                        measure_us!(snapshot_utils::serialize_and_archive_snapshot_package(
-                            snapshot_package,
-                            snapshot_config,
-                            // Without exit backpressure, always flush the snapshot storages,
-                            // which is required for fastboot.
-                            exit_backpressure.is_none(),
-                        ));
-                    if let Err(err) = archive_result {
+                    if let Err(err) = snapshot_utils::archive_snapshot_package(
+                        snapshot_archive_kind,
+                        snapshot_slot,
+                        snapshot_hash,
+                        &bank_snapshot_info.snapshot_dir,
+                        snapshot_package.snapshot_storages,
+                        snapshot_config,
+                    ) {
                         error!(
                             "Stopping {}! Fatal error while archiving snapshot package: {err}",
                             Self::NAME,
@@ -112,6 +135,7 @@ impl SnapshotPackagerService {
                         exit.store(true, Ordering::Relaxed);
                         break;
                     }
+                    let archive_time_us = archive_time.elapsed().as_micros();
 
                     if let Some(snapshot_gossip_manager) = snapshot_gossip_manager.as_mut() {
                         snapshot_gossip_manager
