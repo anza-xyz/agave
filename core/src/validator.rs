@@ -307,7 +307,6 @@ pub struct GeneratorConfig {
 pub struct ValidatorConfig {
     /// The destination file for validator logs; `stderr` is used if `None`
     pub logfile: Option<PathBuf>,
-    pub halt_at_slot: Option<Slot>,
     pub expected_genesis_hash: Option<Hash>,
     pub expected_bank_hash: Option<Hash>,
     pub expected_shred_version: Option<u16>,
@@ -390,7 +389,6 @@ impl ValidatorConfig {
 
         Self {
             logfile: None,
-            halt_at_slot: None,
             expected_genesis_hash: None,
             expected_bank_hash: None,
             expected_shred_version: None,
@@ -502,7 +500,11 @@ pub enum ValidatorStartProgress {
         max_slot: Slot,
     },
     StartingServices,
-    Halted, // Validator halted due to `--dev-halt-at-slot` argument
+    // This case corresponds to a state that is entered by using the now
+    // deprecated `--dev-halt-at-slot` flag. A different version of the
+    // validator may be used to monitor a running validator so leave the case
+    // here to avoid any compatibility concerns
+    Halted,
     WaitingForSupermajority {
         slot: Slot,
         gossip_stake_percent: u64,
@@ -1318,19 +1320,6 @@ impl Validator {
             (None, None, None, None, None, None, None, None)
         };
 
-        if config.halt_at_slot.is_some() {
-            // Simulate a confirmed root to avoid RPC errors with CommitmentConfig::finalized() and
-            // to ensure RPC endpoints like getConfirmedBlock, which require a confirmed root, work
-            block_commitment_cache
-                .write()
-                .unwrap()
-                .set_highest_super_majority_root(bank_forks.read().unwrap().root());
-
-            // Park with the RPC service running, ready for inspection!
-            warn!("Validator halted");
-            *start_progress.write().unwrap() = ValidatorStartProgress::Halted;
-            std::thread::park();
-        }
         let ip_echo_server = match node.sockets.ip_echo {
             None => None,
             Some(tcp_listener) => Some(solana_net_utils::ip_echo_server(
@@ -2179,9 +2168,7 @@ fn load_blockstore(
 
     let blockstore = Arc::new(blockstore);
     let blockstore_root_scan = BlockstoreRootScan::new(config, blockstore.clone(), exit.clone());
-    let halt_at_slot = config
-        .halt_at_slot
-        .or_else(|| blockstore.highest_slot().unwrap_or(None));
+    let halt_at_slot = blockstore.highest_slot().unwrap_or(None);
 
     let process_options = blockstore_processor::ProcessOptions {
         run_verification: config.run_verification,
