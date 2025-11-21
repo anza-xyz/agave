@@ -285,7 +285,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         &mut self,
         program_index: IndexOfAccount,
         instruction_accounts: Vec<InstructionAccount>,
-        deduplication_map: Vec<u8>,
+        deduplication_map: Vec<u16>,
         instruction_data: Cow<'ix_data, [u8]>,
     ) -> Result<(), InstructionError> {
         debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
@@ -307,14 +307,14 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_accounts: Vec<InstructionAccount>,
         instruction_data: Vec<u8>,
     ) -> Result<(), InstructionError> {
-        debug_assert!(instruction_accounts.len() <= u8::MAX as usize);
-        let mut dedup_map = vec![u8::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
+        debug_assert!(instruction_accounts.len() <= u16::MAX as usize);
+        let mut dedup_map = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
         for (idx, account) in instruction_accounts.iter().enumerate() {
             let index_in_instruction = dedup_map
                 .get_mut(account.index_in_transaction as usize)
                 .unwrap();
-            if *index_in_instruction == u8::MAX {
-                *index_in_instruction = idx as u8;
+            if *index_in_instruction == u16::MAX {
+                *index_in_instruction = idx as u16;
             }
         }
         self.configure_next_instruction(
@@ -510,7 +510,7 @@ pub struct InstructionFrame<'ix_data> {
     /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
     /// Usage: dedup_map[index_in_transaction] = index_in_instruction
     /// This is a vector of u8s to save memory, since many entries may be unused.
-    dedup_map: Vec<u8>,
+    dedup_map: Vec<u16>,
     pub instruction_data: Cow<'ix_data, [u8]>,
 }
 
@@ -523,7 +523,7 @@ pub struct InstructionContext<'a, 'ix_data> {
     nesting_level: usize,
     program_account_index_in_tx: IndexOfAccount,
     instruction_accounts: &'a [InstructionAccount],
-    dedup_map: &'a [u8],
+    dedup_map: &'a [u16],
     instruction_data: &'ix_data [u8],
 }
 
