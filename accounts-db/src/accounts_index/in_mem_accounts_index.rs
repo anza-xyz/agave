@@ -1092,93 +1092,88 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         // Process each candidate to flush
         // For each entry: lock map briefly, get entry, calculate disk value, release lock, then write to disk
         let flush_update_measure = Measure::start("flush_update");
-        let flushed_keys_to_evict: Vec<_> = candidates_to_flush
-            .0
-            .into_iter()
-            .filter_map(|key| {
-                // Entry was dirty at scan time, need to write to disk
-                let lock_measure = Measure::start("flush_read_lock");
-                let (disk_entry, disk_ref_count) = {
-                    let map_read_guard = self.map_internal.read().unwrap();
-                    let entry = map_read_guard.get(&key)?;
-
-                    let mut mse = Measure::start("flush_should_evict");
-                    let should_evict =
-                        self.should_evict_from_mem(current_age, entry, true, ages_flushing_now);
-                    mse.stop();
-                    flush_stats.flush_should_evict_us += mse.as_us();
-
-                    if !should_evict {
-                        // not evicting, so don't write, even if dirty
-                        flush_stats.flush_read_lock_us += lock_measure.end_as_us();
-                        return None;
-                    }
-
-                    // Step 1: Clear the dirty flag
-                    // Step 2: Extract data and perform disk update outside the lock
-                    // Race condition handling: If a parallel operation dirties the item again after scanning,
-                    // then we will set_dirty(true) and skip the disk update. The dirty flag will ensure the
-                    // next flush picks up the item again. If the item becomes dirty during our disk write,
-                    // that's ok - the dirty flag will be picked up on the next flush and prevent us from
-                    // evicting the item from the cache.
-                    if !entry.clear_dirty() {
-                        // Entry was not dirty anymore, skip disk write
-                        flush_stats.flush_read_lock_us += lock_measure.end_as_us();
-                        return Some(key);
-                    }
-
-                    // Check the refcount before grabbing the slot list read lock
-                    let mut ref_count = entry.ref_count();
-                    if ref_count != 1 {
-                        entry.set_dirty(true);
-                        flush_stats.flush_read_lock_us += lock_measure.end_as_us();
-                        return None;
-                    }
-
-                    let slot_list = entry.slot_list_read_lock();
-                    ref_count = entry.ref_count(); // re-check ref count after grabbing slot list lock
-                    if ref_count != 1 || slot_list.len() != 1 {
-                        entry.set_dirty(true);
-                        flush_stats.flush_read_lock_us += lock_measure.end_as_us();
-                        return None;
-                    }
-
-                    // since we know slot_list.len() == 1, we can create a stack-allocated array for single element
-                    let (slot, info) = slot_list[0];
-                    let disk_entry = [(slot, info.into())];
-
-                    (disk_entry, ref_count)
+        for key in candidates_to_flush.0 {
+            // Entry was dirty at scan time, need to write to disk
+            let lock_measure = Measure::start("flush_read_lock");
+            let (disk_entry, disk_ref_count) = {
+                let map_read_guard = self.map_internal.read().unwrap();
+                let Some(entry) = map_read_guard.get(&key) else {
+                    continue;
                 };
 
-                flush_stats.flush_read_lock_us += lock_measure.end_as_us();
+                let mut mse = Measure::start("flush_should_evict");
+                let should_evict =
+                    self.should_evict_from_mem(current_age, entry, true, ages_flushing_now);
+                mse.stop();
+                flush_stats.flush_should_evict_us += mse.as_us();
 
-                // Now write to disk WITHOUT holding any locks
-                // may have to loop if disk has to grow and we have to retry the write
-                loop {
-                    let disk_resize = disk.try_write(&key, (&disk_entry, disk_ref_count.into()));
-                    match disk_resize {
-                        Ok(_) => {
-                            // successfully written to disk
-                            flush_stats.flush_entries_updated_on_disk += 1;
-                            break;
-                        }
-                        Err(err) => {
-                            // disk needs to resize. This item did not get written. Resize and try again.
-                            let m = Measure::start("flush_grow");
-                            disk.grow(err);
-                            flush_stats.flush_grow_us += m.end_as_us();
-                        }
-                    }
+                if !should_evict {
+                    // not evicting, so don't write, even if dirty
+                    flush_stats.flush_read_lock_us += lock_measure.end_as_us();
+                    continue;
                 }
 
-                Some(key)
-            })
-            .collect();
+                // Step 1: Clear the dirty flag
+                // Step 2: Extract data and perform disk update outside the lock
+                // Race condition handling: If a parallel operation dirties the item again after scanning,
+                // then we will set_dirty(true) and skip the disk update. The dirty flag will ensure the
+                // next flush picks up the item again. If the item becomes dirty during our disk write,
+                // that's ok - the dirty flag will be picked up on the next flush and prevent us from
+                // evicting the item from the cache.
+                if !entry.clear_dirty() {
+                    // Entry was not dirty anymore, skip disk write
+                    flush_stats.flush_read_lock_us += lock_measure.end_as_us();
+                    continue;
+                }
+
+                // Check the refcount before grabbing the slot list read lock
+                let mut ref_count = entry.ref_count();
+                if ref_count != 1 {
+                    entry.set_dirty(true);
+                    flush_stats.flush_read_lock_us += lock_measure.end_as_us();
+                    continue;
+                }
+
+                let slot_list = entry.slot_list_read_lock();
+                ref_count = entry.ref_count(); // re-check ref count after grabbing slot list lock
+                if ref_count != 1 || slot_list.len() != 1 {
+                    entry.set_dirty(true);
+                    flush_stats.flush_read_lock_us += lock_measure.end_as_us();
+                    continue;
+                }
+
+                // since we know slot_list.len() == 1, we can create a stack-allocated array for single element
+                let (slot, info) = slot_list[0];
+                let disk_entry = [(slot, info.into())];
+
+                (disk_entry, ref_count)
+            };
+
+            flush_stats.flush_read_lock_us += lock_measure.end_as_us();
+
+            // Now write to disk WITHOUT holding any locks
+            // may have to loop if disk has to grow and we have to retry the write
+            loop {
+                let disk_resize = disk.try_write(&key, (&disk_entry, disk_ref_count.into()));
+                match disk_resize {
+                    Ok(_) => {
+                        // successfully written to disk
+                        flush_stats.flush_entries_updated_on_disk += 1;
+                        break;
+                    }
+                    Err(err) => {
+                        // disk needs to resize. This item did not get written. Resize and try again.
+                        let m = Measure::start("flush_grow");
+                        disk.grow(err);
+                        flush_stats.flush_grow_us += m.end_as_us();
+                    }
+                }
+            }
+        }
         flush_stats.flush_update_us = flush_update_measure.end_as_us();
         flush_stats.update_to_stats(self.stats());
 
         let m = Measure::start("flush_evict");
-        self.evict_from_cache(&flushed_keys_to_evict, current_age, ages_flushing_now);
         self.evict_from_cache(&candidates_to_evict.0, current_age, ages_flushing_now);
         Self::update_time_stat(&self.stats().flush_evict_us, m);
 
