@@ -11,7 +11,12 @@ use {
     solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_metrics::datapoint_info,
-    std::{fs, io::Write, path::Path, sync::Arc},
+    std::{
+        fs,
+        io::Write,
+        path::{Path, PathBuf},
+        sync::Arc,
+    },
 };
 
 // Balance large and small files order in snapshot tar with bias towards small (4 small + 1 large),
@@ -19,18 +24,33 @@ use {
 // and towards the end of archive (sizes equalize) writes are >256KiB / file.
 const INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO: (usize, usize) = (4, 1);
 
-/// Archives a snapshot into `archive_path`
+// A package of snapshot information needed for archiving
+pub struct ArchivePackage {
+    pub snapshot_archive_kind: SnapshotArchiveKind,
+    pub slot: Slot,
+    pub hash: SnapshotHash,
+    pub snapshot_storages: Vec<Arc<AccountStorageEntry>>,
+    pub bank_snapshot_dir: PathBuf,
+}
+
+/// Archives an archive package into `archive_path`
 pub fn archive_snapshot(
-    snapshot_archive_kind: SnapshotArchiveKind,
-    snapshot_slot: Slot,
-    snapshot_hash: SnapshotHash,
-    snapshot_storages: &[Arc<AccountStorageEntry>],
-    bank_snapshot_dir: impl AsRef<Path>,
+    archive_package: ArchivePackage,
     archive_path: impl AsRef<Path>,
     archive_format: ArchiveFormat,
 ) -> Result<SnapshotArchiveInfo> {
     use ArchiveSnapshotPackageError as E;
     const ACCOUNTS_DIR: &str = "accounts";
+
+    let ArchivePackage {
+        slot: snapshot_slot,
+        snapshot_archive_kind,
+        hash: snapshot_hash,
+        bank_snapshot_dir,
+        snapshot_storages,
+    } = archive_package;
+    let snapshot_storages = snapshot_storages.as_slice();
+
     info!("Generating snapshot archive for slot {snapshot_slot}, kind: {snapshot_archive_kind:?}");
 
     let mut timer = Measure::start("snapshot_package-package_snapshots");
@@ -56,9 +76,9 @@ pub fn archive_snapshot(
         .map_err(|err| E::CreateSnapshotStagingDir(err, staging_snapshot_dir.clone()))?;
 
     // To be a source for symlinking and archiving, the path need to be an absolute path
-    let src_snapshot_dir = bank_snapshot_dir.as_ref().canonicalize().map_err(|err| {
-        E::CanonicalizeSnapshotSourceDir(err, bank_snapshot_dir.as_ref().to_path_buf())
-    })?;
+    let src_snapshot_dir = bank_snapshot_dir
+        .canonicalize()
+        .map_err(|err| E::CanonicalizeSnapshotSourceDir(err, bank_snapshot_dir.to_path_buf()))?;
     let staging_snapshot_file = staging_snapshot_dir.join(&slot_str);
     let src_snapshot_file = src_snapshot_dir.join(slot_str);
     symlink::symlink_file(&src_snapshot_file, &staging_snapshot_file)

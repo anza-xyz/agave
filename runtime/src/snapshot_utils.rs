@@ -8,7 +8,6 @@ use {
             SerializableAccountStorageEntry, SnapshotAccountsDbFields, SnapshotBankFields,
             SnapshotStreams,
         },
-        snapshot_package::SnapshotPackage,
         snapshot_utils::snapshot_storage_rebuilder::{
             get_slot_and_append_vec_id, SnapshotStorageRebuilder,
         },
@@ -26,7 +25,7 @@ use {
             SnapshotArchiveInfoGetter,
         },
         snapshot_config::SnapshotConfig,
-        streaming_unarchive_snapshot, ArchiveFormat, Result, SnapshotArchiveKind, SnapshotKind,
+        streaming_unarchive_snapshot, ArchiveFormat, ArchivePackage, Result, SnapshotArchiveKind,
         SnapshotVersion,
     },
     crossbeam_channel::{Receiver, Sender},
@@ -72,6 +71,15 @@ const MAX_SNAPSHOT_VERSION_FILE_SIZE: u64 = 8; // byte
 //         Snapshots created with version 2.0.0 will not fastboot to older versions
 //         Snapshots created with versions <2.0.0 will fastboot to version 2.0.0
 const SNAPSHOT_FASTBOOT_VERSION: Version = Version::new(2, 0, 0);
+
+/// A package of bank snapshot data to be serialized
+pub struct BankSnapshotPackage<'a> {
+    pub bank_fields: BankFieldsToSerialize,
+    pub bank_hash_stats: BankHashStats,
+    pub snapshot_storages: &'a [Arc<AccountStorageEntry>],
+    pub slot_deltas: Vec<BankSlotDelta>,
+    pub write_version: u64,
+}
 
 /// Information about a bank snapshot. Namely the slot of the bank, the path to the snapshot, and
 /// the kind of the snapshot.
@@ -435,39 +443,12 @@ pub fn remove_tmp_snapshot_archives(snapshot_archives_dir: impl AsRef<Path>) {
     }
 }
 
-/// Serializes and archives a snapshot package
-pub fn serialize_and_archive_snapshot_package(
-    snapshot_package: SnapshotPackage,
+/// Archives an archive package
+pub fn archive_snapshot_package(
+    mut snapshot_package: ArchivePackage,
     snapshot_config: &SnapshotConfig,
-    should_flush_and_hard_link_storages: bool,
 ) -> Result<SnapshotArchiveInfo> {
-    let SnapshotPackage {
-        snapshot_kind,
-        slot: snapshot_slot,
-        block_height: _,
-        hash: snapshot_hash,
-        mut snapshot_storages,
-        status_cache_slot_deltas,
-        bank_fields_to_serialize,
-        bank_hash_stats,
-        write_version,
-        enqueued: _,
-    } = snapshot_package;
-
-    let bank_snapshot_info = serialize_snapshot(
-        &snapshot_config.bank_snapshots_dir,
-        snapshot_config.snapshot_version,
-        snapshot_storages.as_slice(),
-        status_cache_slot_deltas.as_slice(),
-        bank_fields_to_serialize,
-        bank_hash_stats,
-        write_version,
-        should_flush_and_hard_link_storages,
-    )?;
-
-    let SnapshotKind::Archive(snapshot_archive_kind) = snapshot_kind;
-
-    let snapshot_archive_path = match snapshot_archive_kind {
+    let snapshot_archive_path = match snapshot_package.snapshot_archive_kind {
         SnapshotArchiveKind::Full => snapshot_paths::build_full_snapshot_archive_path(
             &snapshot_config.full_snapshot_archives_dir,
             snapshot_package.slot,
@@ -477,7 +458,9 @@ pub fn serialize_and_archive_snapshot_package(
         SnapshotArchiveKind::Incremental(incremental_snapshot_base_slot) => {
             // After the snapshot has been serialized, it is now safe (and required) to prune all
             // the storages that are *not* to be archived for this incremental snapshot.
-            snapshot_storages.retain(|storage| storage.slot() > incremental_snapshot_base_slot);
+            snapshot_package
+                .snapshot_storages
+                .retain(|storage| storage.slot() > incremental_snapshot_base_slot);
             snapshot_paths::build_incremental_snapshot_archive_path(
                 &snapshot_config.incremental_snapshot_archives_dir,
                 incremental_snapshot_base_slot,
@@ -489,11 +472,7 @@ pub fn serialize_and_archive_snapshot_package(
     };
 
     let snapshot_archive_info = archive_snapshot(
-        snapshot_archive_kind,
-        snapshot_slot,
-        snapshot_hash,
-        snapshot_storages.as_slice(),
-        &bank_snapshot_info.snapshot_dir,
+        snapshot_package,
         snapshot_archive_path,
         snapshot_config.archive_format,
     )?;
@@ -502,17 +481,20 @@ pub fn serialize_and_archive_snapshot_package(
 }
 
 /// Serializes a snapshot into `bank_snapshots_dir`
-#[allow(clippy::too_many_arguments)]
-fn serialize_snapshot(
+pub fn serialize_snapshot(
     bank_snapshots_dir: impl AsRef<Path>,
     snapshot_version: SnapshotVersion,
-    snapshot_storages: &[Arc<AccountStorageEntry>],
-    slot_deltas: &[BankSlotDelta],
-    mut bank_fields: BankFieldsToSerialize,
-    bank_hash_stats: BankHashStats,
-    write_version: u64,
+    bank_snapshot_package: BankSnapshotPackage,
     should_flush_and_hard_link_storages: bool,
 ) -> Result<BankSnapshotInfo> {
+    let BankSnapshotPackage {
+        mut bank_fields,
+        bank_hash_stats,
+        snapshot_storages,
+        slot_deltas,
+        write_version,
+    } = bank_snapshot_package;
+    let slot_deltas = slot_deltas.as_slice();
     let slot = bank_fields.slot;
 
     // this lambda function is to facilitate converting between

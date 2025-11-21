@@ -21,7 +21,8 @@ use {
         snapshot_package::SnapshotPackage,
         snapshot_utils::{
             self, rebuild_storages_from_snapshot_dir, verify_and_unarchive_snapshots,
-            BankSnapshotInfo, StorageAndNextAccountsFileId, UnarchivedSnapshots,
+            BankSnapshotInfo, BankSnapshotPackage, StorageAndNextAccountsFileId,
+            UnarchivedSnapshots,
         },
         status_cache,
     },
@@ -39,7 +40,7 @@ use {
         },
         snapshot_config::SnapshotConfig,
         snapshot_hash::SnapshotHash,
-        ArchiveFormat, SnapshotArchiveKind, SnapshotKind, SnapshotVersion,
+        ArchiveFormat, ArchivePackage, SnapshotArchiveKind, SnapshotKind, SnapshotVersion,
     },
     log::*,
     solana_accounts_db::{
@@ -706,11 +707,34 @@ fn bank_to_full_snapshot_archive_with(
         snapshot_version,
         ..Default::default()
     };
-    let snapshot_archive_info = snapshot_utils::serialize_and_archive_snapshot_package(
-        snapshot_package,
-        &snapshot_config,
+
+    let bank_snapshot_package = BankSnapshotPackage {
+        bank_fields: snapshot_package.bank_fields_to_serialize,
+        bank_hash_stats: snapshot_package.bank_hash_stats,
+        snapshot_storages: snapshot_package.snapshot_storages.as_slice(),
+        slot_deltas: snapshot_package.status_cache_slot_deltas,
+        write_version: snapshot_package.write_version,
+    };
+
+    let bank_snapshot_info = snapshot_utils::serialize_snapshot(
+        &snapshot_config.bank_snapshots_dir,
+        snapshot_config.snapshot_version,
+        bank_snapshot_package,
         should_flush_and_hard_link_storages,
     )?;
+
+    let SnapshotKind::Archive(snapshot_archive_kind) = snapshot_package.snapshot_kind;
+
+    let archive_package = ArchivePackage {
+        snapshot_archive_kind,
+        slot: snapshot_package.slot,
+        hash: snapshot_package.hash,
+        snapshot_storages: snapshot_package.snapshot_storages,
+        bank_snapshot_dir: bank_snapshot_info.snapshot_dir,
+    };
+
+    let snapshot_archive_info =
+        snapshot_utils::archive_snapshot_package(archive_package, &snapshot_config)?;
 
     Ok(FullSnapshotArchiveInfo::new(snapshot_archive_info))
 }
@@ -765,11 +789,34 @@ pub fn bank_to_incremental_snapshot_archive(
         snapshot_version,
         ..Default::default()
     };
-    let snapshot_archive_info = snapshot_utils::serialize_and_archive_snapshot_package(
-        snapshot_package,
-        &snapshot_config,
-        false, // we do not intend to fastboot, so skip flushing and hard linking the storages
+
+    let bank_snapshot_package = BankSnapshotPackage {
+        bank_fields: snapshot_package.bank_fields_to_serialize,
+        bank_hash_stats: snapshot_package.bank_hash_stats,
+        snapshot_storages: snapshot_package.snapshot_storages.as_slice(),
+        slot_deltas: snapshot_package.status_cache_slot_deltas,
+        write_version: snapshot_package.write_version,
+    };
+
+    let bank_snapshot_info = snapshot_utils::serialize_snapshot(
+        &snapshot_config.bank_snapshots_dir,
+        snapshot_config.snapshot_version,
+        bank_snapshot_package,
+        false,
     )?;
+
+    let SnapshotKind::Archive(snapshot_archive_kind) = snapshot_package.snapshot_kind;
+
+    let archive_package = ArchivePackage {
+        snapshot_archive_kind,
+        slot: snapshot_package.slot,
+        hash: snapshot_package.hash,
+        snapshot_storages: snapshot_package.snapshot_storages,
+        bank_snapshot_dir: bank_snapshot_info.snapshot_dir,
+    };
+
+    let snapshot_archive_info =
+        snapshot_utils::archive_snapshot_package(archive_package, &snapshot_config)?;
 
     Ok(IncrementalSnapshotArchiveInfo::new(
         full_snapshot_slot,
