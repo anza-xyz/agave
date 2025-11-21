@@ -74,16 +74,14 @@ pub fn last_root_in_tower(tower_path: &Path, node_pubkey: &Pubkey) -> Option<Slo
 pub fn restore_tower(tower_path: &Path, node_pubkey: &Pubkey) -> Option<Tower> {
     let file_tower_storage = FileTowerStorage::new(tower_path.to_path_buf());
 
-    let tower = Tower::restore(&file_tower_storage, node_pubkey);
-    if let Err(tower_err) = tower {
-        if tower_err.is_file_missing() {
-            return None;
-        } else {
-            panic!("tower restore failed...: {tower_err:?}");
+    match Tower::restore(&file_tower_storage, node_pubkey) {
+        Ok(tower) => {
+            // actually saved tower must have at least one vote.
+            Some(tower)
         }
+        Err(tower_err) if tower_err.is_file_missing() => None,
+        Err(tower_err) => panic!("tower restore failed...: {tower_err:?}"),
     }
-    // actually saved tower must have at least one vote.
-    Tower::restore(&file_tower_storage, node_pubkey).ok()
 }
 
 pub fn remove_tower_if_exists(tower_path: &Path, node_pubkey: &Pubkey) {
