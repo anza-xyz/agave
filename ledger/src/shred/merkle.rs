@@ -798,12 +798,12 @@ pub(super) fn recover(
     let set_merkle_proof = move |(index, (mut shred, mask)): (_, (Shred, _))| {
         if mask {
             debug_assert!({
-                let proof = make_merkle_proof(index, num_shards, &tree);
+                let proof = tree.make_merkle_proof(index, num_shards);
                 shred.merkle_proof()?.map(Some).eq(proof.map(Result::ok))
             });
             Ok(None)
         } else {
-            let proof = make_merkle_proof(index, num_shards, &tree);
+            let proof = tree.make_merkle_proof(index, num_shards);
             shred.set_merkle_proof(proof)?;
             // Already sanitized after reconstruct.
             debug_assert_matches!(shred.sanitize(), Ok(()));
@@ -1279,7 +1279,7 @@ fn finish_erasure_batch(
     let signature = keypair.sign_message(tree.root().as_ref());
     // Populate merkle proof for all shreds and attach signature.
     for (index, shred) in shreds.iter_mut().enumerate() {
-        let proof = make_merkle_proof(index, erasure_batch_size, &tree);
+        let proof = tree.make_merkle_proof(index, erasure_batch_size);
         shred.set_merkle_proof(proof)?;
         shred.set_signature(signature);
         debug_assert!(shred.verify(&keypair.pubkey()));
@@ -1389,7 +1389,7 @@ mod test {
         let tree = MerkleTree::try_new(nodes.into_iter().map(Ok)).unwrap();
         for index in size..size + 3 {
             assert_matches!(
-                make_merkle_proof(index, size, &tree).next(),
+                tree.make_merkle_proof(index, size).next(),
                 Some(Err(Error::InvalidMerkleProof))
             );
         }
@@ -1518,7 +1518,7 @@ mod test {
         let nodes = shreds.iter().map(Shred::merkle_node);
         let tree = MerkleTree::try_new(nodes).unwrap();
         for (index, shred) in shreds.iter_mut().enumerate() {
-            let proof = make_merkle_proof(index, num_shreds, &tree);
+            let proof = tree.make_merkle_proof(index, num_shreds);
             shred.set_merkle_proof(proof).unwrap();
             let data = shred.signed_data().unwrap();
             let signature = keypair.sign_message(data.as_ref());
