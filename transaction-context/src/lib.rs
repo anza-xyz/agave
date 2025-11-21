@@ -266,7 +266,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         instruction_accounts: Vec<InstructionAccount>,
         instruction_data: Vec<u8>,
     ) -> Result<(), InstructionError> {
-        debug_assert!(instruction_accounts.len() <= u8::MAX as usize);
+        debug_assert!(instruction_accounts.len() <= u16::MAX as usize);
         let mut dedup_map = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
         for (idx, account) in instruction_accounts.iter().enumerate() {
             let index_in_instruction = dedup_map
