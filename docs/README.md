@@ -4,11 +4,10 @@ This validator's documentation is built using [Docusaurus v2](https://v2.docusau
 Static content delivery is handled using `vercel`.
 
 > Note: The documentation within this repo is specifically focused on the
-> Solana validator client maintained by Solana Labs. The more "common"
-> documentation, which is generalized to the Solana protocol as a whole and applies
+> Agave validator client maintained by Anza. Solana protocol documentation, which applies
 > to all Solana validator implementations, is maintained within the
 > [`developer-content`](https://github.com/solana-foundation/developer-content/)
-> repo. Those "common docs" are managed by the Solana Foundation within their
+> repo. Those protocol docs are managed by the Solana Foundation within their
 > GitHub organization and are publicly accessible via
 > [solana.com/docs](https://solana.com/docs)
 
