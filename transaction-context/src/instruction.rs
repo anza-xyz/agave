@@ -16,12 +16,24 @@ use {
 
 /// Instruction shared between runtime and programs.
 #[repr(C)]
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct InstructionFrame {
     pub nesting_level: usize,
     pub program_account_index_in_tx: IndexOfAccount,
     pub instruction_accounts: VmSlice<InstructionAccount>,
     pub instruction_data: VmSlice<u8>,
+}
+
+impl Default for InstructionFrame {
+    fn default() -> Self {
+        InstructionFrame {
+            nesting_level: 0,
+            program_account_index_in_tx: 0,
+            // Using u64::MAX as the default pointer value, since it shall never be accessible.
+            instruction_accounts: VmSlice::new(u64::MAX, 0),
+            instruction_data: VmSlice::new(u64::MAX, 0),
+        }
+    }
 }
 
 impl InstructionFrame {
