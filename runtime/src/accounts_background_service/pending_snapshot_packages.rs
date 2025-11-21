@@ -1,5 +1,7 @@
 use {
-    crate::snapshot_package::{cmp_snapshot_packages_by_priority, SnapshotPackage},
+    crate::snapshot_package::{
+        are_snapshots_the_same_kind, cmp_snapshot_packages_by_priority, SnapshotPackage,
+    },
     agave_snapshots::{SnapshotArchiveKind, SnapshotKind},
     log::*,
     std::cmp::Ordering::Greater,
@@ -30,7 +32,7 @@ impl PendingSnapshotPackages {
         if let Some(pending_snapshot_package) = pending_package.as_ref() {
             // snapshots are monotonically increasing; only overwrite *old* packages
             assert!(
-                pending_snapshot_package.snapshot_kind == snapshot_package.snapshot_kind,
+                are_snapshots_the_same_kind(&snapshot_package, pending_snapshot_package),
                 "mismatched snapshot kinds: pending: {pending_snapshot_package:?}, new: \
                  {snapshot_package:?}",
             );
@@ -167,6 +169,20 @@ mod tests {
         assert_eq!(
             pending_snapshot_packages.incremental.as_ref().unwrap().slot,
             incremental_slot,
+        );
+
+        // ensure we can overwrite incremental packages with incremental packages
+        // with a new full slot
+        let full_slot = slot;
+        let slot = slot + 10;
+        pending_snapshot_packages.push(new_incr(slot, full_slot));
+        assert_eq!(
+            pending_snapshot_packages.full.as_ref().unwrap().slot,
+            full_slot,
+        );
+        assert_eq!(
+            pending_snapshot_packages.incremental.as_ref().unwrap().slot,
+            slot,
         );
     }
 
