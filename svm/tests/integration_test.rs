@@ -513,16 +513,18 @@ impl SvmTestEntry {
                         .saturating_add(message.num_secp256k1_signatures())
                         .saturating_add(message.num_secp256r1_signatures());
 
-                    let compute_budget = compute_budget_limits.map(|v| {
-                        v.get_compute_budget_and_limits(
-                            v.loaded_accounts_bytes,
-                            FeeDetails::new(
-                                signature_count.saturating_mul(LAMPORTS_PER_SIGNATURE),
-                                v.get_prioritization_fee(),
-                            ),
-                            self.feature_set.raise_cpi_nesting_limit_to_8,
-                        )
-                    });
+                    let compute_budget = compute_budget_limits
+                        .map(|v| {
+                            v.get_compute_budget_and_limits(
+                                v.loaded_accounts_bytes,
+                                FeeDetails::new(
+                                    signature_count.saturating_mul(LAMPORTS_PER_SIGNATURE),
+                                    v.get_prioritization_fee(),
+                                ),
+                                self.feature_set.raise_cpi_nesting_limit_to_8,
+                            )
+                        })
+                        .unwrap();
                     CheckedTransactionDetails::new(tx_details.nonce, compute_budget)
                 });
 
@@ -554,7 +556,7 @@ impl TransactionBatchItem {
         Self {
             check_result: Ok(CheckedTransactionDetails::new(
                 Some(nonce_info),
-                Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
+                SVMTransactionExecutionAndFeeBudgetLimits::default(),
             )),
             ..Self::default()
         }
@@ -567,7 +569,7 @@ impl Default for TransactionBatchItem {
             transaction: Transaction::default(),
             check_result: Ok(CheckedTransactionDetails::new(
                 None,
-                Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
+                SVMTransactionExecutionAndFeeBudgetLimits::default(),
             )),
             asserts: TransactionBatchItemAsserts::default(),
         }
