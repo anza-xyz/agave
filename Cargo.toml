@@ -77,6 +77,7 @@ members = [
     "programs/zk-token-proof",
     "pubsub-client",
     "quic-client",
+    "random",
     "rayon-threadlimit",
     "rbpf-cli",
     "remote-wallet",
@@ -205,6 +206,7 @@ agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=
 agave-io-uring = { path = "io-uring", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-logger = { path = "logger", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-precompiles = { path = "precompiles", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
+agave-random = { path = "random", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-scheduler-bindings = { path = "scheduler-bindings", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-scheduling-utils = { path = "scheduling-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
