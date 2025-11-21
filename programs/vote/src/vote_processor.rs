@@ -137,6 +137,12 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         VoteInstruction::UpdateCommission(commission) => {
             let sysvar_cache = invoke_context.get_sysvar_cache();
 
+            // Disable the commission update rule after the "delay commission
+            // update" feature is activated because it imposes a minimum delay
+            // of one full epoch before the new commission rate takes effect.
+            let disable_commission_update_rule =
+                invoke_context.get_feature_set().delay_commission_updates;
+
             vote_state::update_commission(
                 &mut me,
                 target_version,
@@ -144,6 +150,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &signers,
                 sysvar_cache.get_epoch_schedule()?.as_ref(),
                 sysvar_cache.get_clock()?.as_ref(),
+                disable_commission_update_rule,
             )
         }
         VoteInstruction::Vote(vote) | VoteInstruction::VoteSwitch(vote, _) => {

@@ -272,11 +272,27 @@ impl<'a> FilteredStakeDelegations<'a> {
     }
 }
 
+pub(super) struct CachedVoteAccounts<'a> {
+    /// Snapshot of vote account state from the beginning of the epoch prior to
+    /// the rewarded epoch. This snapshot state is saved a full epoch before
+    /// being used to prevent last minute commission rugs.
+    ///
+    /// Developer note: This field is `Option` to handle large bank warps
+    pub(super) snapshot_epoch_vote_accounts: Option<&'a VoteAccounts>,
+    /// Vote account state from the beginning of the rewarded epoch.
+    ///
+    /// Developer note: This field is `Option` to handle large bank warps
+    pub(super) rewarded_epoch_vote_accounts: Option<&'a VoteAccounts>,
+    /// Vote account state from the end of the rewarded epoch / beginning of the
+    /// distribution epoch.
+    pub(super) distribution_epoch_vote_accounts: &'a VoteAccounts,
+}
+
 /// hold reward calc info to avoid recalculation across functions
 pub(super) struct EpochRewardCalculateParamInfo<'a> {
     pub(super) stake_history: StakeHistory,
     pub(super) stake_delegations: FilteredStakeDelegations<'a>,
-    pub(super) cached_vote_accounts: &'a VoteAccounts,
+    pub(super) cached_vote_accounts: CachedVoteAccounts<'a>,
 }
 
 /// Hold all results from calculating the rewards for partitioned distribution.

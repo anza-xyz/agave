@@ -32,6 +32,7 @@ struct CalculatedStakeRewards {
 pub fn redeem_rewards(
     rewarded_epoch: Epoch,
     stake_state: &StakeStateV2,
+    voter_commission: u8,
     vote_state: &VoteStateView,
     point_value: &PointValue,
     stake_history: &StakeHistory,
@@ -51,7 +52,7 @@ pub fn redeem_rewards(
                 meta.rent_exempt_reserve,
             ));
             inflation_point_calc_tracer(&InflationPointCalculationEvent::Commission(
-                vote_state.commission(),
+                voter_commission,
             ));
         }
 
@@ -60,6 +61,7 @@ pub fn redeem_rewards(
             rewarded_epoch,
             &mut stake,
             point_value,
+            voter_commission,
             vote_state,
             stake_history,
             inflation_point_calc_tracer,
@@ -78,6 +80,7 @@ fn redeem_stake_rewards(
     rewarded_epoch: Epoch,
     stake: &mut Stake,
     point_value: &PointValue,
+    voter_commission: u8,
     vote_state: &VoteStateView,
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
@@ -93,6 +96,7 @@ fn redeem_stake_rewards(
         rewarded_epoch,
         stake,
         point_value,
+        voter_commission,
         vote_state,
         stake_history,
         inflation_point_calc_tracer.as_ref(),
@@ -125,6 +129,7 @@ fn calculate_stake_rewards(
     rewarded_epoch: Epoch,
     stake: &Stake,
     point_value: &PointValue,
+    voter_commission: u8,
     vote_state: &VoteStateView,
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
@@ -195,8 +200,7 @@ fn calculate_stake_rewards(
         }
         return None;
     }
-    let (voter_rewards, staker_rewards, is_split) =
-        commission_split(vote_state.commission(), rewards);
+    let (voter_rewards, staker_rewards, is_split) = commission_split(voter_commission, rewards);
     if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
         inflation_point_calc_tracer(&InflationPointCalculationEvent::SplitRewards(
             rewards,
@@ -300,6 +304,7 @@ mod tests {
                     rewards: 1_000_000_000,
                     points: 1
                 },
+                0, // voter_commission
                 &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -321,6 +326,7 @@ mod tests {
                     rewards: 1,
                     points: 1
                 },
+                0, // voter_commission
                 &VoteStateView::from(vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -352,6 +358,7 @@ mod tests {
                     rewards: 1_000_000_000,
                     points: 1
                 },
+                0, // voter_commission
                 &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -377,6 +384,7 @@ mod tests {
                     rewards: 2,
                     points: 2 // all his
                 },
+                0, // voter_commission
                 &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -399,6 +407,7 @@ mod tests {
                     rewards: 1,
                     points: 1
                 },
+                0, // voter_commission
                 &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -424,6 +433,7 @@ mod tests {
                     rewards: 2,
                     points: 2
                 },
+                0, // voter_commission
                 &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -447,6 +457,7 @@ mod tests {
                     rewards: 2,
                     points: 2
                 },
+                0, // voter_commission
                 &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -472,6 +483,7 @@ mod tests {
                     rewards: 4,
                     points: 4
                 },
+                0, // voter_commission
                 &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -491,6 +503,7 @@ mod tests {
                     rewards: 4,
                     points: 4
                 },
+                1, // voter_commission
                 &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -507,6 +520,7 @@ mod tests {
                     rewards: 4,
                     points: 4
                 },
+                99, // voter_commission
                 &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -530,6 +544,7 @@ mod tests {
                     rewards: 0,
                     points: 4
                 },
+                99, // voter_commission
                 &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -553,6 +568,7 @@ mod tests {
                     rewards: 0,
                     points: 4
                 },
+                99, // voter_commission
                 &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -627,6 +643,7 @@ mod tests {
                     rewards: 1,
                     points: 1
                 },
+                0, // voter_commission
                 &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -651,6 +668,7 @@ mod tests {
                     rewards: 1,
                     points: 1
                 },
+                0, // voter_commission
                 &VoteStateView::from(vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
@@ -668,10 +686,12 @@ mod tests {
 
         vote_state.increment_credits(0, credits);
 
+        let voter_commission = 0;
         calculate_stake_rewards(
             0,
             &stake,
             &PointValue { rewards, points: 1 },
+            voter_commission,
             &VoteStateView::from(vote_state.clone()),
             &StakeHistory::default(),
             null_tracer(),
@@ -693,6 +713,7 @@ mod tests {
         );
 
         // this one can't collect now, credits_observed == vote_state.credits()
+        let voter_commission = 0;
         assert_eq!(
             None,
             calculate_stake_rewards(
@@ -702,6 +723,7 @@ mod tests {
                     rewards: 1_000_000_000,
                     points: 1
                 },
+                voter_commission,
                 &VoteStateView::from(vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
