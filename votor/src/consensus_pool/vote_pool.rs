@@ -42,7 +42,7 @@ pub(crate) enum BuildCertError {
     Encode(EncodeError),
 }
 
-fn build_sig_bitmap(
+fn build_cert(
     cert_type: CertificateType,
     signature: &SignatureProjective,
     mut bitmap: BitVec<u8, Lsb0>,
@@ -281,17 +281,31 @@ impl VotePool {
         let total_stake = total_stake as f64;
         match cert_type {
             CertificateType::Finalize(_) => (self.finalize.stake as f64 / total_stake >= 0.6)
-                .then_some(build_sig_bitmap(
+                .then_some(build_cert(
                     cert_type,
                     &self.finalize.signature,
                     self.finalize.bitmap.clone(),
                     None,
                 )),
             CertificateType::FinalizeFast(_, block_id) => {
-                self.build_from_notar_votes(cert_type, &block_id, total_stake, 0.8)
+                self.notar.entries.get(&block_id).and_then(|e| {
+                    (e.stake as f64 / total_stake >= 0.8).then_some(build_cert(
+                        cert_type,
+                        &e.signature,
+                        e.bitmap.clone(),
+                        None,
+                    ))
+                })
             }
             CertificateType::Notarize(_, block_id) => {
-                self.build_from_notar_votes(cert_type, &block_id, total_stake, 0.6)
+                self.notar.entries.get(&block_id).and_then(|e| {
+                    (e.stake as f64 / total_stake >= 0.6).then_some(build_cert(
+                        cert_type,
+                        &e.signature,
+                        e.bitmap.clone(),
+                        None,
+                    ))
+                })
             }
             CertificateType::NotarizeFallback(_, block_id) => {
                 let (notar_stake, notar_sig_bitmap) = match self.notar.entries.get(&block_id) {
@@ -308,7 +322,7 @@ impl VotePool {
                         None => (&SignatureProjective::identity(), default_bitvec()),
                         Some((sig, bitmap)) => (sig, bitmap.clone()),
                     };
-                    build_sig_bitmap(
+                    build_cert(
                         cert_type,
                         signature,
                         bitmap,
@@ -323,7 +337,7 @@ impl VotePool {
                     &self.skip_fallback.signature,
                     self.skip_fallback.bitmap.clone(),
                 ));
-                (accumulated_stake / total_stake >= 0.6).then_some(build_sig_bitmap(
+                (accumulated_stake / total_stake >= 0.6).then_some(build_cert(
                     cert_type,
                     &self.skip.signature,
                     self.skip.bitmap.clone(),
@@ -331,23 +345,6 @@ impl VotePool {
                 ))
             }
         }
-    }
-
-    fn build_from_notar_votes(
-        &self,
-        cert_type: CertificateType,
-        block_id: &Hash,
-        total_stake: f64,
-        threshold: f64,
-    ) -> Option<Result<Certificate, BuildCertError>> {
-        self.notar.entries.get(block_id).and_then(|pool_entry| {
-            (pool_entry.stake as f64 / total_stake >= threshold).then_some(build_sig_bitmap(
-                cert_type,
-                &pool_entry.signature,
-                pool_entry.bitmap.clone(),
-                None,
-            ))
-        })
     }
 }
 
