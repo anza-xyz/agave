@@ -6537,7 +6537,7 @@ impl AccountsDb {
                             let mut thread_accum = IndexGenerationAccumulator::new();
                             let mut reader = append_vec::new_scan_accounts_reader();
                             while let Some(next_item) = storages_orderer.next() {
-                                self.maybe_throttle_index_generation();
+                                //self.maybe_throttle_index_generation();
                                 let storage = next_item.storage;
                                 let store_id = storage.id();
                                 let slot = storage.slot();
@@ -6892,6 +6892,7 @@ impl AccountsDb {
 
     /// Startup processes can consume large amounts of memory while inserting accounts into the index as fast as possible.
     /// Calling this can slow down the insertion process to allow flushing to disk to keep pace.
+    #[allow(dead_code)]
     fn maybe_throttle_index_generation(&self) {
         // Only throttle if we are generating on-disk index. Throttling is not needed for in-mem index.
         if !self.accounts_index.is_disk_index_enabled() {
