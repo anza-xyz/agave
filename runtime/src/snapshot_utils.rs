@@ -444,7 +444,6 @@ pub fn serialize_and_archive_snapshot_package(
     let SnapshotPackage {
         snapshot_kind,
         slot: snapshot_slot,
-        block_height: _,
         hash: snapshot_hash,
         mut snapshot_storages,
         bank_snapshot_package,
