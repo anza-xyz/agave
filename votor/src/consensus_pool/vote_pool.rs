@@ -280,7 +280,7 @@ impl VotePool {
     ) -> Option<Result<Certificate, BuildCertError>> {
         let total_stake = total_stake as f64;
         match cert_type {
-            CertificateType::Finalize(_) => (self.finalize.stake as f64 / total_stake > 0.6)
+            CertificateType::Finalize(_) => (self.finalize.stake as f64 / total_stake >= 0.6)
                 .then_some(build_sig_bitmap(
                     cert_type,
                     &self.finalize.signature,
@@ -303,7 +303,7 @@ impl VotePool {
                     Some(e) => (e.stake, Some((&e.signature, &e.bitmap))),
                 };
                 let accumulated_stake = notar_stake.saturating_add(nf_stake);
-                (accumulated_stake as f64 / total_stake > 0.6).then_some({
+                (accumulated_stake as f64 / total_stake >= 0.6).then_some({
                     let (signature, bitmap) = match notar_sig_bitmap {
                         None => (&SignatureProjective::identity(), default_bitvec()),
                         Some((sig, bitmap)) => (sig, bitmap.clone()),
@@ -323,7 +323,7 @@ impl VotePool {
                     &self.skip_fallback.signature,
                     self.skip_fallback.bitmap.clone(),
                 ));
-                (accumulated_stake / total_stake > 0.6).then_some(build_sig_bitmap(
+                (accumulated_stake / total_stake >= 0.6).then_some(build_sig_bitmap(
                     cert_type,
                     &self.skip.signature,
                     self.skip.bitmap.clone(),
@@ -341,7 +341,7 @@ impl VotePool {
         threshold: f64,
     ) -> Option<Result<Certificate, BuildCertError>> {
         self.notar.entries.get(block_id).and_then(|pool_entry| {
-            (pool_entry.stake as f64 / total_stake > threshold).then_some(build_sig_bitmap(
+            (pool_entry.stake as f64 / total_stake >= threshold).then_some(build_sig_bitmap(
                 cert_type,
                 &pool_entry.signature,
                 pool_entry.bitmap.clone(),
