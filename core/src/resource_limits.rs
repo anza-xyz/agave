@@ -1,5 +1,10 @@
 use {std::io, thiserror::Error};
 
+#[cfg(not(unix))]
+#[derive(Error, Debug)]
+pub enum ResourceLimitError {}
+
+#[cfg(unix)]
 #[derive(Error, Debug)]
 pub enum ResourceLimitError {
     #[error(
