@@ -142,6 +142,9 @@ impl Bank {
                                     raise_cpi_limit,
                                 )
                             }
+                        })
+                        .inspect_err(|_err| {
+                            error_counters.invalid_compute_budget += 1;
                         })?;
                     self.check_transaction_age(
                         tx.borrow(),
