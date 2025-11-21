@@ -89,7 +89,7 @@ pub struct TransactionContext<'ix_data> {
     /// Usage: dedup_map[index_in_transaction] = index_in_instruction
     /// This is a vector of u8s to save memory, since many entries may be unused.
     /// Each deduplication map contains 256 entries and is concatenated to `deduplication_maps`.
-    deduplication_maps: Vec<u8>,
+    deduplication_maps: Vec<u16>,
     /// The instruction accounts for all accounts are concatenated in `instruction_accounts`
     instruction_accounts: Vec<InstructionAccount>,
     /// Each entry in `instruction_data` represents the data for instruction at the corresponding
@@ -689,7 +689,7 @@ mod tests {
                     .dedup_map
                     .get(acc.index_in_transaction as usize)
                     .unwrap(),
-                idx_in_ix as u8
+                idx_in_ix as u16
             );
         }
 
@@ -710,7 +710,7 @@ mod tests {
                     .dedup_map
                     .get(acc.index_in_transaction as usize)
                     .unwrap(),
-                idx_in_ix as u8
+                idx_in_ix as u16
             );
         }
 
@@ -740,7 +740,7 @@ mod tests {
                         .dedup_map
                         .get(acc.index_in_transaction as usize)
                         .unwrap(),
-                    idx_in_ix as u8
+                    idx_in_ix as u16
                 );
             }
         }
