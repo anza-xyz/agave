@@ -2363,40 +2363,40 @@ impl ClusterInfo {
 
 #[derive(Debug)]
 pub struct Sockets {
-    pub gossip: Arc<[UdpSocket]>,
-    pub ip_echo: Option<TcpListener>,
-    pub tvu: Vec<UdpSocket>,
-    pub tpu_vote: Vec<UdpSocket>,
-    pub broadcast: Vec<UdpSocket>,
+    pub gossip: Arc<[UdpSocket]>,     // udp read/write
+    pub ip_echo: Option<TcpListener>, // read/write (tcp)
+    pub tvu: Vec<UdpSocket>,          // udp read only
+    pub tpu_vote: Vec<UdpSocket>,     // udp read only
+    pub broadcast: Vec<UdpSocket>,    // udp write only
     // Socket sending out local repair requests,
     // and receiving repair responses from the cluster.
-    pub repair: UdpSocket,
-    pub repair_quic: UdpSocket,
-    pub retransmit_sockets: Vec<UdpSocket>,
+    pub repair: UdpSocket,                  // udp read/write
+    pub repair_quic: UdpSocket,             // quic read/write
+    pub retransmit_sockets: Vec<UdpSocket>, // udp write only
     // Socket receiving remote repair requests from the cluster,
     // and sending back repair responses.
-    pub serve_repair: UdpSocket,
-    pub serve_repair_quic: UdpSocket,
+    pub serve_repair: UdpSocket,      // udp read/write
+    pub serve_repair_quic: UdpSocket, // quic read/write
     // Socket sending out local RepairProtocol::AncestorHashes,
     // and receiving AncestorHashesResponse from the cluster.
-    pub ancestor_hashes_requests: UdpSocket,
-    pub ancestor_hashes_requests_quic: UdpSocket,
-    pub tpu_quic: Vec<UdpSocket>,
-    pub tpu_forwards_quic: Vec<UdpSocket>,
-    pub tpu_vote_quic: Vec<UdpSocket>,
+    pub ancestor_hashes_requests: UdpSocket, // udp read/write
+    pub ancestor_hashes_requests_quic: UdpSocket, // quic read/write
+    pub tpu_quic: Vec<UdpSocket>,            // quic read only
+    pub tpu_forwards_quic: Vec<UdpSocket>,   // quic read only
+    pub tpu_vote_quic: Vec<UdpSocket>,       // quic read only
 
     /// Client-side socket for ForwardingStage vote transactions
-    pub tpu_vote_forwarding_client: UdpSocket,
+    pub tpu_vote_forwarding_client: UdpSocket, // udp write only
     /// Client-side socket for ForwardingStage non-vote transactions
-    pub tpu_transaction_forwarding_clients: Box<[UdpSocket]>,
+    pub tpu_transaction_forwarding_clients: Box<[UdpSocket]>, // quic write only
     /// Socket for alpenglow consensus logic
-    pub alpenglow: Option<UdpSocket>,
+    pub alpenglow: Option<UdpSocket>, // udp read/write
     /// Connection cache endpoint for QUIC-based Vote
-    pub quic_vote_client: UdpSocket,
+    pub quic_vote_client: UdpSocket, // quic write only
     /// Connection cache endpoint for QUIC-based Alpenglow messages
-    pub quic_alpenglow_client: UdpSocket,
+    pub quic_alpenglow_client: UdpSocket, // quic write only
     /// Client-side socket for RPC/SendTransactionService.
-    pub rpc_sts_client: UdpSocket,
+    pub rpc_sts_client: UdpSocket, // quic write only
 }
 
 pub struct NodeConfig {
