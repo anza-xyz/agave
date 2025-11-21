@@ -39,7 +39,7 @@ use {
 };
 
 thread_local! {
-    static THREAD_LOCAL_WEIGHTED_SHUFFLE: RefCell<WeightedShuffle<u64>> = RefCell::new(
+    static THREAD_LOCAL_WEIGHTED_SHUFFLE: RefCell<WeightedShuffle> = RefCell::new(
         WeightedShuffle::new::<[u64; 0]>("get_retransmit_addrs", []),
     );
 }
@@ -84,7 +84,8 @@ pub struct ClusterNodes<T> {
     nodes: Vec<Node>,
     // Reverse index from nodes pubkey to their index in self.nodes.
     index: HashMap<Pubkey, /*index:*/ usize>,
-    weighted_shuffle: WeightedShuffle</*stake:*/ u64>,
+    // Shuffles by weights = stakes
+    weighted_shuffle: WeightedShuffle,
     use_cha_cha_8: bool,
     _phantom: PhantomData<T>,
 }

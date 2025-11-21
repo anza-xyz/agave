@@ -92,7 +92,7 @@ impl Payload {
         let mut buffer = BytesMut::with_capacity(cap);
         buffer.put_slice(&self[..]);
         if let Some(nonce) = nonce {
-            buffer.put_u32(nonce);
+            buffer.put_u32_le(nonce);
         }
         BytesPacket::new(buffer.freeze(), Meta::default())
     }
@@ -258,7 +258,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use super::Payload;
+    use {super::Payload, crate::shred::wire};
 
     #[test]
     fn test_guard_write_back() {
@@ -274,5 +274,46 @@ mod test {
         }
 
         assert_eq!(payload.bytes[..], vec![10, 20, 3, 4, 5]);
+    }
+
+    #[test]
+    fn test_to_bytes_packet_nonce_endianness() {
+        use {
+            crate::shredder::{ReedSolomonCache, Shredder},
+            solana_entry::entry::Entry,
+            solana_hash::Hash,
+            solana_keypair::Keypair,
+            solana_perf::packet::PacketFlags,
+        };
+
+        // Build a valid shred payload using the shredder helper.
+        let keypair = Keypair::new();
+        let shredder = Shredder::new(1, 0, 0, 0).unwrap();
+        let entries = vec![Entry::new(&Hash::default(), 0, vec![])];
+        let mut stats = crate::shred::ProcessShredsStats::default();
+        let shreds: Vec<_> = shredder
+            .make_merkle_shreds_from_entries(
+                &keypair,
+                &entries,
+                /*is_last_in_slot:*/ false,
+                Hash::default(),
+                0,
+                0,
+                &ReedSolomonCache::default(),
+                &mut stats,
+            )
+            .collect();
+        let shred = &shreds[0];
+
+        // Create a BytesPacket with a trailing nonce and mark it as REPAIR.
+        let nonce: super::Nonce = 0x0A0B_0C0D;
+        let mut bytes_packet = shred.payload().to_bytes_packet(Some(nonce));
+        bytes_packet.meta_mut().flags |= PacketFlags::REPAIR;
+
+        // Ensure wire::get_shred_and_repair_nonce reads the same nonce (LE).
+        let (bytes, got) = wire::get_shred_and_repair_nonce(bytes_packet.as_ref())
+            .expect("valid packet and nonce");
+        assert_eq!(bytes, shred.payload().as_ref());
+        assert_eq!(got, Some(nonce));
     }
 }

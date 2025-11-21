@@ -19,6 +19,12 @@ impl TransactionData for TransactionPtr {
     }
 }
 
+impl TransactionData for &TransactionPtr {
+    fn data(&self) -> &[u8] {
+        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+}
+
 impl TransactionPtr {
     /// # Safety
     /// - `sharable_transaction_region` must reference a valid offset and length
@@ -131,12 +137,17 @@ impl<'a, M> TransactionPtrBatch<'a, M> {
         })
     }
 
-    /// Free all transactions in the batch, then free the batch itself.
-    pub fn free(self) {
-        for (transaction_ptr, _) in self.iter() {
-            unsafe { transaction_ptr.free(self.allocator) }
-        }
-
+    /// Free the transaction batch container.
+    ///
+    /// # Safety
+    ///
+    /// - [`SharableTransactionBatchRegion`] must be exclusively owned by this pointer.
+    ///
+    /// # Note
+    ///
+    /// This will not free the underlying transactions as their lifetimes may be differ from that of
+    /// the batch.
+    pub unsafe fn free(self) {
         unsafe { self.allocator.free(self.tx_ptr.cast()) }
     }
 }

@@ -39,7 +39,7 @@ fn is_simple_vote_transaction<D: TransactionData>(
 }
 
 impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
-    pub fn try_from(
+    pub fn try_new(
         transaction: SanitizedTransactionView<D>,
         message_hash: MessageHash,
         is_simple_vote_tx: Option<bool>,
@@ -82,7 +82,7 @@ impl<D: TransactionData> RuntimeTransaction<ResolvedTransactionView<D>> {
     /// Create a new `RuntimeTransaction<ResolvedTransactionView>` from a
     /// `RuntimeTransaction<SanitizedTransactionView>` that already has
     /// static metadata loaded.
-    pub fn try_from(
+    pub fn try_new(
         statically_loaded_runtime_tx: RuntimeTransaction<SanitizedTransactionView<D>>,
         loaded_addresses: Option<LoadedAddresses>,
         reserved_account_keys: &HashSet<Pubkey>,
@@ -222,7 +222,7 @@ mod tests {
         let transaction =
             SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..], true).unwrap();
         let static_runtime_transaction =
-            RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+            RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction,
                 MessageHash::Precomputed(hash),
                 None,
@@ -233,7 +233,7 @@ mod tests {
         assert!(!static_runtime_transaction.is_simple_vote_transaction());
 
         let dynamic_runtime_transaction =
-            RuntimeTransaction::<ResolvedTransactionView<_>>::try_from(
+            RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
                 static_runtime_transaction,
                 None,
                 &ReservedAccountKeys::empty_key_set(),
@@ -254,13 +254,13 @@ mod tests {
             let bytes = bincode::serialize(&original_transaction).unwrap();
             let transaction_view =
                 SanitizedTransactionView::try_new_sanitized(&bytes[..], true).unwrap();
-            let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+            let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,
                 None,
             )
             .unwrap();
-            let runtime_transaction = RuntimeTransaction::<ResolvedTransactionView<_>>::try_from(
+            let runtime_transaction = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
                 runtime_transaction,
                 loaded_addresses,
                 reserved_account_keys,
@@ -321,13 +321,13 @@ mod tests {
                 bincode::serialize(&original_transaction.to_versioned_transaction()).unwrap();
             let transaction_view =
                 SanitizedTransactionView::try_new_sanitized(&bytes[..], true).unwrap();
-            let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+            let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,
                 None,
             )
             .unwrap();
-            let runtime_transaction = RuntimeTransaction::<ResolvedTransactionView<_>>::try_from(
+            let runtime_transaction = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
                 runtime_transaction,
                 loaded_addresses,
                 reserved_account_keys,

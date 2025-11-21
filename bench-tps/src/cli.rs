@@ -10,7 +10,7 @@ use {
     solana_keypair::{read_keypair_file, Keypair},
     solana_pubkey::Pubkey,
     solana_streamer::quic::DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
-    solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC},
+    solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
     std::{
         net::{IpAddr, Ipv4Addr},
         time::Duration,
@@ -65,7 +65,6 @@ pub struct Config {
     pub num_lamports_per_account: u64,
     pub target_slots_per_epoch: u64,
     pub external_client_type: ExternalClientType,
-    pub use_quic: bool,
     pub tpu_connection_pool_size: usize,
     pub tpu_max_connections_per_ipaddr_per_minute: u64,
     pub compute_unit_price: Option<ComputeUnitPrice>,
@@ -101,7 +100,6 @@ impl Default for Config {
             num_lamports_per_account: NUM_LAMPORTS_PER_ACCOUNT_DEFAULT,
             target_slots_per_epoch: 0,
             external_client_type: ExternalClientType::default(),
-            use_quic: DEFAULT_TPU_USE_QUIC,
             tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
             tpu_max_connections_per_ipaddr_per_minute:
                 DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
@@ -283,15 +281,6 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .help("Submit transactions with a TpuClient"),
         )
         .arg(
-            Arg::with_name("tpu_disable_quic")
-                .long("tpu-disable-quic")
-                .takes_value(false)
-                .help(
-                    "DEPRECATED: Do not submit transactions via QUIC; only affects TpuClient \
-                     (default) sends",
-                ),
-        )
-        .arg(
             Arg::with_name("tpu_connection_pool_size")
                 .long("tpu-connection-pool-size")
                 .takes_value(true)
@@ -446,11 +435,6 @@ pub fn parse_args(matches: &ArgMatches) -> Result<Config, &'static str> {
 
     if matches.is_present("rpc_client") {
         args.external_client_type = ExternalClientType::RpcClient;
-    }
-
-    if matches.is_present("tpu_disable_quic") {
-        eprintln!("Warning: TPU over UDP is deprecated");
-        args.use_quic = false;
     }
 
     if let Some(v) = matches.value_of("tpu_connection_pool_size") {

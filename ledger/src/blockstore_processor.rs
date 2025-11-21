@@ -2324,7 +2324,7 @@ pub mod tests {
             },
         },
         assert_matches::assert_matches,
-        rand::{thread_rng, Rng},
+        rand::{rng, Rng},
         solana_account::{AccountSharedData, WritableAccount},
         solana_cost_model::transaction_cost::TransactionCost,
         solana_entry::entry::{create_ticks, next_entry, next_entry_mut},
@@ -4379,7 +4379,7 @@ pub mod tests {
             }
             i += 1;
 
-            let slot = bank.slot() + thread_rng().gen_range(1..3);
+            let slot = bank.slot() + rng().random_range(1..3);
             bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), slot));
         }
     }

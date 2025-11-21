@@ -48,7 +48,7 @@ use {
     solana_system_transaction as system_transaction,
     solana_tpu_client::tpu_client::{
         TpuClient, TpuClientConfig, DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP,
-        DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
+        DEFAULT_VOTE_USE_QUIC,
     },
     solana_transaction::Transaction,
     solana_transaction_error::TransportError,
@@ -94,7 +94,6 @@ pub struct ClusterConfig {
     pub cluster_type: ClusterType,
     pub poh_config: PohConfig,
     pub additional_accounts: Vec<(Pubkey, AccountSharedData)>,
-    pub tpu_use_quic: bool,
     pub tpu_connection_pool_size: usize,
     pub vote_use_quic: bool,
 }
@@ -133,7 +132,6 @@ impl Default for ClusterConfig {
             poh_config: PohConfig::default(),
             skip_warmup_slots: false,
             additional_accounts: vec![],
-            tpu_use_quic: DEFAULT_TPU_USE_QUIC,
             tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
             vote_use_quic: DEFAULT_VOTE_USE_QUIC,
         }
@@ -153,7 +151,7 @@ pub struct LocalCluster {
     pub validators: HashMap<Pubkey, ClusterValidatorInfo>,
     pub genesis_config: GenesisConfig,
     pub connection_cache: Arc<ConnectionCache>,
-    quic_connection_cache_config: Option<QuicConnectionCacheConfig>,
+    quic_connection_cache_config: QuicConnectionCacheConfig,
     tpu_connection_pool_size: usize,
     shred_version: u16,
 }
@@ -195,7 +193,7 @@ impl LocalCluster {
     pub fn new(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
         assert_eq!(config.validator_configs.len(), config.node_stakes.len());
 
-        let quic_connection_cache_config = config.tpu_use_quic.then(|| {
+        let quic_connection_cache_config = {
             let client_keypair = Keypair::new();
             let stake = DEFAULT_NODE_STAKE;
 
@@ -219,7 +217,7 @@ impl LocalCluster {
                 client_keypair,
                 staked_nodes,
             }
-        });
+        };
 
         let connection_cache = create_connection_cache(
             &quic_connection_cache_config,
@@ -1180,26 +1178,19 @@ impl LocalCluster {
 }
 
 fn create_connection_cache(
-    quic_connection_cache_config: &Option<QuicConnectionCacheConfig>,
+    config: &QuicConnectionCacheConfig,
     tpu_connection_pool_size: usize,
 ) -> Arc<ConnectionCache> {
-    if let Some(config) = quic_connection_cache_config {
-        Arc::new(ConnectionCache::new_with_client_options(
-            "connection_cache_local_cluster_quic_staked",
-            tpu_connection_pool_size,
-            Some(solana_net_utils::sockets::bind_to_localhost_unique().unwrap()),
-            Some((
-                &config.client_keypair,
-                IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-            )),
-            Some((&config.staked_nodes, &config.client_keypair.pubkey())),
-        ))
-    } else {
-        Arc::new(ConnectionCache::with_udp(
-            "connection_cache_local_cluster_udp",
-            tpu_connection_pool_size,
-        ))
-    }
+    Arc::new(ConnectionCache::new_with_client_options(
+        "connection_cache_local_cluster_quic_staked",
+        tpu_connection_pool_size,
+        Some(solana_net_utils::sockets::bind_to_localhost_unique().unwrap()),
+        Some((
+            &config.client_keypair,
+            IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+        )),
+        Some((&config.staked_nodes, &config.client_keypair.pubkey())),
+    ))
 }
 
 impl Cluster for LocalCluster {

@@ -280,28 +280,28 @@ mod tests {
     }
 
     fn make_transaction<R: Rng>(rng: &mut R) -> Transaction {
-        let block = rng.gen::<[u8; 32]>();
+        let block = rng.random::<[u8; 32]>();
         let recent_blockhash = solana_sha256_hasher::hashv(&[&block]);
         system_transaction::transfer(
             &Keypair::new(),       // from
             &Pubkey::new_unique(), // to
-            rng.gen(),             // lamports
+            rng.random(),          // lamports
             recent_blockhash,
         )
     }
 
     fn make_entry<R: Rng>(rng: &mut R, prev_hash: &Hash) -> Entry {
-        let size = rng.gen_range(16..32);
+        let size = rng.random_range(16..32);
         let txs = repeat_with(|| make_transaction(rng)).take(size).collect();
         Entry::new(
             prev_hash,
-            rng.gen_range(1..64), // num_hashes
+            rng.random_range(1..64), // num_hashes
             txs,
         )
     }
 
     fn make_entries<R: Rng>(rng: &mut R, num_entries: usize) -> Vec<Entry> {
-        let prev_hash = solana_sha256_hasher::hashv(&[&rng.gen::<[u8; 32]>()]);
+        let prev_hash = solana_sha256_hasher::hashv(&[&rng.random::<[u8; 32]>()]);
         let entry = make_entry(rng, &prev_hash);
         std::iter::successors(Some(entry), |entry| Some(make_entry(rng, &entry.hash)))
             .take(num_entries)
@@ -317,22 +317,22 @@ mod tests {
         let mut shreds: Vec<_> = keypairs
             .iter()
             .flat_map(|(&slot, keypair)| {
-                let parent_slot = slot - rng.gen::<u16>().max(1) as Slot;
-                let num_entries = rng.gen_range(64..128);
+                let parent_slot = slot - rng.random::<u16>().max(1) as Slot;
+                let num_entries = rng.random_range(64..128);
                 Shredder::new(
                     slot,
                     parent_slot,
-                    rng.gen_range(0..0x40), // reference_tick
-                    rng.gen(),              // version
+                    rng.random_range(0..0x40), // reference_tick
+                    rng.random(),              // version
                 )
                 .unwrap()
                 .make_merkle_shreds_from_entries(
                     keypair,
                     &make_entries(rng, num_entries),
                     is_last_in_slot,
-                    Hash::new_from_array(rng.gen()), // chained_merkle_root
-                    rng.gen_range(0..2671),          // next_shred_index
-                    rng.gen_range(0..2781),          // next_code_index
+                    Hash::new_from_array(rng.random()), // chained_merkle_root
+                    rng.random_range(0..2671),          // next_shred_index
+                    rng.random_range(0..2781),          // next_code_index
                     &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 )
@@ -364,7 +364,7 @@ mod tests {
             packet
         });
         let packets: Vec<PacketBatch> = repeat_with(|| {
-            let size = rng.gen_range(0..16);
+            let size = rng.random_range(0..16);
             let packets = packets.by_ref().take(size).collect();
             let batch = RecycledPacketBatch::new(packets);
             (size == 0 || !batch.is_empty()).then_some(batch.into())
@@ -381,10 +381,10 @@ mod tests {
     #[test_case(true)]
     #[test_case(false)]
     fn test_verify_shreds_fuzz(is_last_in_slot: bool) {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let thread_pool = ThreadPoolBuilder::new().num_threads(3).build().unwrap();
-        let keypairs = repeat_with(|| rng.gen_range(169_367_809..169_906_789))
+        let keypairs = repeat_with(|| rng.random_range(169_367_809..169_906_789))
             .map(|slot| (slot, Keypair::new()))
             .take(3)
             .collect();
@@ -412,7 +412,7 @@ mod tests {
                 packets
                     .iter_mut()
                     .map(|packet| {
-                        let coin_flip: bool = rng.gen();
+                        let coin_flip: bool = rng.random();
                         if !coin_flip {
                             shred::layout::corrupt_packet(&mut rng, packet, &keypairs);
                         }
@@ -427,11 +427,11 @@ mod tests {
     #[test_case(true)]
     #[test_case(false)]
     fn test_sign_shreds(is_last_in_slot: bool) {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let thread_pool = ThreadPoolBuilder::new().num_threads(3).build().unwrap();
         let shreds = {
-            let keypairs = repeat_with(|| rng.gen_range(169_367_809..169_906_789))
+            let keypairs = repeat_with(|| rng.random_range(169_367_809..169_906_789))
                 .map(|slot| (slot, Keypair::new()))
                 .take(3)
                 .collect();

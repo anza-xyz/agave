@@ -18,7 +18,7 @@ use {
 };
 #[cfg(test)]
 use {
-    rand::{seq::SliceRandom, Rng},
+    rand::{prelude::IndexedMutRandom as _, Rng},
     solana_perf::packet::Packet,
     std::collections::HashMap,
     std::ops::Range,
@@ -370,7 +370,7 @@ pub(crate) fn corrupt_packet<R: Rng>(
     fn modify_packet<R: Rng>(rng: &mut R, packet: &mut Packet, offsets: Range<usize>) {
         let buffer = packet.buffer_mut();
         let byte = buffer[offsets].choose_mut(rng).unwrap();
-        *byte = rng.gen::<u8>().max(1u8).wrapping_add(*byte);
+        *byte = rng.random::<u8>().max(1u8).wrapping_add(*byte);
     }
     // We need to re-borrow the `packet` here, otherwise compiler considers it
     // as moved.
@@ -387,7 +387,7 @@ pub(crate) fn corrupt_packet<R: Rng>(
             ..
         } => Some((proof_size, resigned)),
     };
-    let coin_flip: bool = rng.gen();
+    let coin_flip: bool = rng.random();
     if coin_flip {
         // Corrupt one byte within the signature offsets.
         modify_packet(rng, packet, 0..SIGNATURE_BYTES);
@@ -445,9 +445,9 @@ mod tests {
         [true, false]
     )]
     fn test_resign_packet(repaired: bool, is_last_in_slot: bool) {
-        let mut rng = rand::thread_rng();
-        let slot = 318_230_963 + rng.gen_range(0..318_230_963);
-        let data_size = 1200 * rng.gen_range(32..64);
+        let mut rng = rand::rng();
+        let slot = 318_230_963 + rng.random_range(0..318_230_963);
+        let data_size = 1200 * rng.random_range(32..64);
         let mut shreds =
             make_merkle_shreds_for_tests(&mut rng, slot, data_size, is_last_in_slot).unwrap();
         // enumerate the shreds so that I have index of each shred
@@ -455,7 +455,7 @@ mod tests {
         for (index, shred) in shreds.iter_mut().enumerate() {
             let keypair = Keypair::new();
             let signature = make_dummy_signature(&mut rng);
-            let nonce = repaired.then(|| rng.gen::<Nonce>());
+            let nonce = repaired.then(|| rng.random::<Nonce>());
             let is_last_batch = index >= shreds_len - SHREDS_PER_FEC_BLOCK;
             if is_last_in_slot && is_last_batch {
                 shred.set_retransmitter_signature(&signature).unwrap();
@@ -503,9 +503,9 @@ mod tests {
         [true, false]
     )]
     fn test_merkle_shred_wire_layout(repaired: bool, is_last_in_slot: bool) {
-        let mut rng = rand::thread_rng();
-        let slot = 318_230_963 + rng.gen_range(0..318_230_963);
-        let data_size = 1200 * rng.gen_range(32..64);
+        let mut rng = rand::rng();
+        let slot = 318_230_963 + rng.random_range(0..318_230_963);
+        let data_size = 1200 * rng.random_range(32..64);
         let mut shreds =
             make_merkle_shreds_for_tests(&mut rng, slot, data_size, is_last_in_slot).unwrap();
         let shreds_len = shreds.len();
@@ -523,7 +523,7 @@ mod tests {
         }
 
         for (index, shred) in shreds.iter().enumerate() {
-            let nonce = repaired.then(|| rng.gen::<Nonce>());
+            let nonce = repaired.then(|| rng.random::<Nonce>());
             let is_last_batch = index >= shreds_len - SHREDS_PER_FEC_BLOCK;
             let mut packet = shred.payload().to_packet(nonce);
             if repaired {

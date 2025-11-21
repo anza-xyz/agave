@@ -2,7 +2,7 @@ use {
     super::{
         in_mem_accounts_index::{InMemAccountsIndex, StartupStats},
         stats::Stats,
-        AccountsIndexConfig, DiskIndexValue, IndexLimitMb, IndexValue,
+        AccountsIndexConfig, DiskIndexValue, IndexLimit, IndexValue,
     },
     crate::waitable_condvar::WaitableCondvar,
     solana_bucket_map::bucket_map::{BucketMap, BucketMapConfig},
@@ -207,9 +207,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
             .and_then(|drives| drives.first())
             .map(|drive| drive.join("accounts_index_restart"));
 
-        let disk = match config.index_limit_mb {
-            IndexLimitMb::InMemOnly => None,
-            IndexLimitMb::Minimal => Some(BucketMap::new(bucket_config)),
+        let disk = match config.index_limit {
+            IndexLimit::InMemOnly => None,
+            IndexLimit::Minimal => Some(BucketMap::new(bucket_config)),
         };
 
         Self {
@@ -476,7 +476,7 @@ pub mod tests {
     fn test_disk_index_enabled() {
         let bins = 1;
         let config = AccountsIndexConfig {
-            index_limit_mb: IndexLimitMb::Minimal,
+            index_limit: IndexLimit::Minimal,
             ..Default::default()
         };
         let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
