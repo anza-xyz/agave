@@ -115,7 +115,7 @@ serde_json = "1.0.56"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
 solana-account-decoder = { path = "../../account-decoder", version = "=4.0.0-alpha.0" }
-solana-account-info = "=3.0.0"
+solana-account-info = "=3.1.0"
 solana-accounts-db = { path = "../../accounts-db", version = "=4.0.0-alpha.0" }
 solana-big-mod-exp = "=3.0.0"
 solana-blake3-hasher = { version = "=3.1.0", features = ["blake3"] }
@@ -200,7 +200,7 @@ miow = { workspace = true }
 net2 = { workspace = true }
 solana-account = "3.2.0"
 solana-account-decoder = { workspace = true }
-solana-account-info = "3.0.0"
+solana-account-info = "3.1.0"
 solana-accounts-db = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-cli-output = { workspace = true }
