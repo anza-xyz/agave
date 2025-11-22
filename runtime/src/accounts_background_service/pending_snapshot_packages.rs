@@ -1,6 +1,6 @@
 use {
     crate::snapshot_package::{
-        are_snapshots_the_same_kind, cmp_snapshot_packages_by_priority, SnapshotPackage,
+        are_snapshot_packages_the_same_kind, cmp_snapshot_packages_by_priority, SnapshotPackage,
     },
     agave_snapshots::{SnapshotArchiveKind, SnapshotKind},
     log::*,
@@ -32,7 +32,7 @@ impl PendingSnapshotPackages {
         if let Some(pending_snapshot_package) = pending_package.as_ref() {
             // snapshots are monotonically increasing; only overwrite *old* packages
             assert!(
-                are_snapshots_the_same_kind(&snapshot_package, pending_snapshot_package),
+                are_snapshot_packages_the_same_kind(&snapshot_package, pending_snapshot_package),
                 "mismatched snapshot kinds: pending: {pending_snapshot_package:?}, new: \
                  {snapshot_package:?}",
             );

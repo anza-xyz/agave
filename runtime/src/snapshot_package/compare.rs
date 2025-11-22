@@ -40,27 +40,28 @@ pub fn cmp_snapshot_archive_kinds_by_priority(
     }
 }
 
-/// Check if two snapshots are the same kind
+/// Check if two snapshots packages are the same kind
 #[must_use]
-pub fn are_snapshots_the_same_kind(a: &SnapshotPackage, b: &SnapshotPackage) -> bool {
-    are_snapshots_kinds_the_same_kind(&a.snapshot_kind, &b.snapshot_kind)
+pub fn are_snapshot_packages_the_same_kind(a: &SnapshotPackage, b: &SnapshotPackage) -> bool {
+    are_snapshot_kinds_the_same_kind(&a.snapshot_kind, &b.snapshot_kind)
 }
 
-/// Check if two snapshot kinds are the same kind.
+/// Check if two snapshot kinds are the same kind
 #[must_use]
-pub fn are_snapshots_kinds_the_same_kind(a: &SnapshotKind, b: &SnapshotKind) -> bool {
+pub fn are_snapshot_kinds_the_same_kind(a: &SnapshotKind, b: &SnapshotKind) -> bool {
     use SnapshotKind as Kind;
     match (a, b) {
         (Kind::Archive(archive_a), Kind::Archive(archive_b)) => {
-            are_snapshot_archives_kinds_the_same_kind(archive_a, archive_b)
+            are_snapshot_archive_kinds_the_same_kind(archive_a, archive_b)
         }
     }
 }
 
-// Check if two snapshot archives are the same kind. Incremental snapshot archives with different
-// base slots are considered the same kind.
+/// Check if two snapshot archives are the same kind
+///
+/// Incremental snapshot archives with different base slots are considered the same kind
 #[must_use]
-pub fn are_snapshot_archives_kinds_the_same_kind(
+pub fn are_snapshot_archive_kinds_the_same_kind(
     a: &SnapshotArchiveKind,
     b: &SnapshotArchiveKind,
 ) -> bool {
@@ -68,8 +69,8 @@ pub fn are_snapshot_archives_kinds_the_same_kind(
     match (a, b) {
         (Kind::Full, Kind::Full) => true,
         (Kind::Full, Kind::Incremental(_)) => false,
-        (Kind::Incremental(_), Kind::Incremental(_)) => true,
         (Kind::Incremental(_), Kind::Full) => false,
+        (Kind::Incremental(_), Kind::Incremental(_)) => true,
     }
 }
 
@@ -262,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn test_are_snapshots_the_same_kind_function() {
+    fn test_are_snapshot_packages_the_same_kind() {
         for (snapshot_package_a, snapshot_package_b, expected_result) in [
             (
                 new(SnapshotKind::Archive(SnapshotArchiveKind::Full), 11),
@@ -309,12 +310,12 @@ mod tests {
             ),
         ] {
             let actual_result =
-                are_snapshots_the_same_kind(&snapshot_package_a, &snapshot_package_b);
+                are_snapshot_packages_the_same_kind(&snapshot_package_a, &snapshot_package_b);
             assert_eq!(expected_result, actual_result);
         }
     }
     #[test]
-    fn test_are_snapshots_the_same_kind() {
+    fn test_are_snapshot_kinds_the_same_kind() {
         for (snapshot_kind_a, snapshot_kind_b, expected_result) in [
             (
                 SnapshotKind::Archive(SnapshotArchiveKind::Full),
@@ -343,7 +344,7 @@ mod tests {
             ),
         ] {
             let actual_result =
-                are_snapshots_kinds_the_same_kind(&snapshot_kind_a, &snapshot_kind_b);
+                are_snapshot_kinds_the_same_kind(&snapshot_kind_a, &snapshot_kind_b);
             assert_eq!(expected_result, actual_result);
         }
     }
