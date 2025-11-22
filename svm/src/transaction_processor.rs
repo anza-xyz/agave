@@ -2,8 +2,9 @@ use {
     crate::{
         account_loader::{
             load_transaction, update_rent_exempt_status_for_account, validate_fee_payer,
-            AccountLoader, CheckedTransactionDetails, LoadedTransaction, TransactionCheckResult,
-            TransactionLoadResult, ValidatedTransactionDetails,
+            AccountLoader, CheckedTransactionDetails, FeesOnlyTransaction, LoadedTransaction,
+            TransactionCheckResult, TransactionLoadResult, TransactionValidationResult,
+            ValidatedTransactionDetails,
         },
         account_overrides::AccountOverrides,
         message_processor::process_message,
@@ -66,6 +67,8 @@ use {
     },
     std::sync::Weak,
 };
+
+const HANA_FEATURE_PLACEHOLDER: bool = true;
 
 /// A list of log messages emitted during a transaction
 pub type TransactionLogMessages = Vec<String>;
@@ -438,17 +441,17 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // in the same batch may modify the same accounts. Transaction order is
         // preserved within entries written to the ledger.
         for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
-            let (validate_result, validate_fees_us) =
-                measure_us!(check_result.and_then(|tx_details| {
-                    Self::validate_transaction_nonce_and_fee_payer(
-                        &mut account_loader,
-                        tx,
-                        tx_details,
-                        &environment.blockhash,
-                        &environment.rent,
-                        &mut error_metrics,
-                    )
-                }));
+            let (validate_result, validate_fees_us) = measure_us!(match check_result {
+                Ok(tx_details) => Self::validate_transaction_nonce_and_fee_payer(
+                    &mut account_loader,
+                    tx,
+                    tx_details,
+                    &environment.blockhash,
+                    &environment.rent,
+                    &mut error_metrics,
+                ),
+                Err(e) => TransactionValidationResult::Unprocessable(e),
+            });
             execute_timings
                 .saturating_add_in_place(ExecuteTimingType::ValidateFeesUs, validate_fees_us);
 
@@ -466,103 +469,119 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             execute_timings
                 .saturating_add_in_place(ExecuteTimingType::CollectBalancesUs, collect_balances_us);
 
-            let (processing_result, single_execution_us) = measure_us!(match load_result {
-                TransactionLoadResult::NotLoaded(err) => Err(err),
-                TransactionLoadResult::FeesOnly(fees_only_tx) => match config.drop_on_failure {
-                    true => Err(fees_only_tx.load_error),
-                    false => {
+            let (processing_result, single_execution_us) =
+                measure_us!(match (load_result, config.drop_on_failure) {
+                    // Unprocessable transactions always result in an error
+                    (TransactionLoadResult::Unprocessable(e), _) => Err(e),
+
+                    // Pre-execution failures become an error here with drop_on_failure
+                    (TransactionLoadResult::NoOp(e), true)
+                    | (
+                        TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
+                            load_error: e, ..
+                        }),
+                        true,
+                    ) => Err(e),
+
+                    // SIMD-0290 fee-payer or SIMD-0297 nonce failure is signalled as a non-error no-op
+                    (TransactionLoadResult::NoOp(e), false) => Err(e), // HANA TODO ProcessedTransaction variant
+
+                    // Transactions that fail at loading charge fees and roll nonces
+                    (TransactionLoadResult::FeesOnly(fees_only_tx), false) => {
                         // Update loaded accounts cache with nonce and fee-payer
                         account_loader
                             .update_accounts_for_failed_tx(&fees_only_tx.rollback_accounts);
 
                         Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
                     }
-                },
-                TransactionLoadResult::Loaded(loaded_transaction) => {
-                    let (program_accounts_set, filter_executable_us) = measure_us!(self
-                        .filter_executable_program_accounts(
-                            &account_loader,
-                            &mut program_cache_for_tx_batch,
-                            tx,
-                        ));
-                    execute_timings.saturating_add_in_place(
-                        ExecuteTimingType::FilterExecutableUs,
-                        filter_executable_us,
-                    );
 
-                    let ((), program_cache_us) = measure_us!({
-                        self.replenish_program_cache(
-                            &account_loader,
-                            &program_accounts_set,
-                            &environment.program_runtime_environments_for_execution,
-                            &mut program_cache_for_tx_batch,
-                            &mut execute_timings,
-                            config.check_program_modification_slot,
-                            config.limit_to_load_programs,
-                            true, // increment_usage_counter
-                        );
-                    });
-                    execute_timings.saturating_add_in_place(
-                        ExecuteTimingType::ProgramCacheUs,
-                        program_cache_us,
-                    );
-
-                    if program_cache_for_tx_batch.hit_max_limit {
-                        return LoadAndExecuteSanitizedTransactionsOutput {
-                            error_metrics,
-                            execute_timings,
-                            processing_results: (0..sanitized_txs.len())
-                                .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
-                                .collect(),
-                            // If we abort the batch and balance recording is enabled, no balances should be
-                            // collected. If this is a leader thread, no batch will be committed.
-                            balance_collector: None,
-                        };
-                    }
-
-                    let executed_tx = self.execute_loaded_transaction(
-                        callbacks,
-                        tx,
-                        loaded_transaction,
-                        &mut execute_timings,
-                        &mut error_metrics,
-                        &mut program_cache_for_tx_batch,
-                        environment,
-                        config,
-                    );
-
-                    match (
-                        &executed_tx.execution_details.status,
-                        config.drop_on_failure,
-                    ) {
-                        // Successful transactions need to update the account loader cache as future
-                        // transactions in the batch may depend on them.
-                        (Ok(_), _) => {
-                            account_loader.update_accounts_for_successful_tx(
+                    // Transaction is able to be executed
+                    (TransactionLoadResult::Loaded(loaded_transaction), _) => {
+                        let (program_accounts_set, filter_executable_us) = measure_us!(self
+                            .filter_executable_program_accounts(
+                                &account_loader,
+                                &mut program_cache_for_tx_batch,
                                 tx,
-                                &executed_tx.loaded_transaction.accounts,
-                            );
-                            // Also update local program cache with modifications made by the
-                            // transaction, if it executed successfully.
-                            program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
+                            ));
+                        execute_timings.saturating_add_in_place(
+                            ExecuteTimingType::FilterExecutableUs,
+                            filter_executable_us,
+                        );
 
-                            Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
+                        let ((), program_cache_us) = measure_us!({
+                            self.replenish_program_cache(
+                                &account_loader,
+                                &program_accounts_set,
+                                &environment.program_runtime_environments_for_execution,
+                                &mut program_cache_for_tx_batch,
+                                &mut execute_timings,
+                                config.check_program_modification_slot,
+                                config.limit_to_load_programs,
+                                true, // increment_usage_counter
+                            );
+                        });
+                        execute_timings.saturating_add_in_place(
+                            ExecuteTimingType::ProgramCacheUs,
+                            program_cache_us,
+                        );
+
+                        if program_cache_for_tx_batch.hit_max_limit {
+                            return LoadAndExecuteSanitizedTransactionsOutput {
+                                error_metrics,
+                                execute_timings,
+                                processing_results: (0..sanitized_txs.len())
+                                    .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
+                                    .collect(),
+                                // If we abort the batch and balance recording is enabled, no balances should be
+                                // collected. If this is a leader thread, no batch will be committed.
+                                balance_collector: None,
+                            };
                         }
-                        // If the transaction failed & drop on failure is set then we don't want to
-                        // update the accounts as this transaction will be dropped from the batch.
-                        (Err(err), true) => Err(err.clone()),
-                        // Unsuccessful transactions will still update rollback accounts (fee payer,
-                        // nonce, etc).
-                        (Err(_), false) => {
-                            account_loader.update_accounts_for_failed_tx(
-                                &executed_tx.loaded_transaction.rollback_accounts,
-                            );
 
-                            Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
+                        let executed_tx = self.execute_loaded_transaction(
+                            callbacks,
+                            tx,
+                            loaded_transaction,
+                            &mut execute_timings,
+                            &mut error_metrics,
+                            &mut program_cache_for_tx_batch,
+                            environment,
+                            config,
+                        );
+
+                        match (
+                            &executed_tx.execution_details.status,
+                            config.drop_on_failure,
+                        ) {
+                            // Successful transactions need to update the account loader cache as future
+                            // transactions in the batch may depend on them.
+                            (Ok(_), _) => {
+                                account_loader.update_accounts_for_successful_tx(
+                                    tx,
+                                    &executed_tx.loaded_transaction.accounts,
+                                );
+                                // Also update local program cache with modifications made by the
+                                // transaction, if it executed successfully.
+                                program_cache_for_tx_batch
+                                    .merge(&executed_tx.programs_modified_by_tx);
+
+                                Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
+                            }
+                            // If the transaction failed & drop on failure is set then we don't want to
+                            // update the accounts as this transaction will be dropped from the batch.
+                            (Err(err), true) => Err(err.clone()),
+                            // Unsuccessful transactions will still update rollback accounts (fee payer,
+                            // nonce, etc).
+                            (Err(_), false) => {
+                                account_loader.update_accounts_for_failed_tx(
+                                    &executed_tx.loaded_transaction.rollback_accounts,
+                                );
+
+                                Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
+                            }
                         }
                     }
-                }
-            });
+                });
             execution_us = execution_us.saturating_add(single_execution_us);
 
             let ((), collect_balances_us) =
@@ -643,7 +662,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         environment_blockhash: &Hash,
         rent: &Rent,
         error_counters: &mut TransactionErrorMetrics,
-    ) -> TransactionResult<ValidatedTransactionDetails> {
+    ) -> TransactionValidationResult {
         // If this is a nonce transaction, validate the nonce info.
         // This must be done for every transaction to support SIMD83 because
         // it may have changed due to use, authorization, or deallocation.
@@ -654,23 +673,34 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         } = checked_details
         {
             let next_durable_nonce = DurableNonce::from_blockhash(environment_blockhash);
-            Self::validate_transaction_nonce(
+            let nonce_result = Self::validate_transaction_nonce(
                 account_loader,
                 message,
                 nonce_info,
                 &next_durable_nonce,
                 error_counters,
-            )?;
+            );
+
+            match nonce_result {
+                Ok(()) => (),
+                Err(e) => return TransactionValidationResult::Unprocessable(e),
+            }
         }
 
         // Now validate the fee-payer for the transaction unconditionally.
-        Self::validate_transaction_fee_payer(
+        let fee_payer_result = Self::validate_transaction_fee_payer(
             account_loader,
             message,
             checked_details,
             rent,
             error_counters,
-        )
+        );
+
+        match fee_payer_result {
+            Ok(details) => TransactionValidationResult::Loadable(details),
+            Err(e) if HANA_FEATURE_PLACEHOLDER => TransactionValidationResult::NoOp(e),
+            Err(e) => TransactionValidationResult::Unprocessable(e),
+        }
     }
 
     // Loads transaction fee payer, collects rent if necessary, then calculates
