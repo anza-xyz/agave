@@ -118,7 +118,7 @@ solana-account-decoder = { path = "../../account-decoder", version = "=4.0.0-alp
 solana-account-info = "=3.0.0"
 solana-accounts-db = { path = "../../accounts-db", version = "=4.0.0-alpha.0" }
 solana-big-mod-exp = "=3.0.0"
-solana-blake3-hasher = { version = "=3.0.0", features = ["blake3"] }
+solana-blake3-hasher = { version = "=3.1.0", features = ["blake3"] }
 solana-bn254 = "=3.1.2"
 solana-bpf-loader-program = { path = "../bpf_loader", version = "=4.0.0-alpha.0" }
 solana-cli-output = { path = "../../cli-output", version = "=4.0.0-alpha.0" }
