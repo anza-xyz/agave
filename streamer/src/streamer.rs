@@ -27,7 +27,7 @@ use {
         net::{IpAddr, UdpSocket},
         sync::{
             atomic::{AtomicBool, AtomicUsize, Ordering},
-            Arc,
+            Arc, RwLock,
         },
         thread::{sleep, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -80,11 +80,31 @@ pub(crate) const SOCKET_READ_TIMEOUT: Duration = Duration::from_secs(1);
 // Total stake and nodes => stake map
 #[derive(Default)]
 pub struct StakedNodes {
-    stakes: Arc<HashMap<Pubkey, u64>>,
-    overrides: HashMap<Pubkey, u64>,
+    pub stakes: Arc<HashMap<Pubkey, u64>>,
+    pub overrides: HashMap<Pubkey, u64>,
     total_stake: u64,
     max_stake: u64,
     min_stake: u64,
+}
+
+#[derive(Clone)]
+pub struct VersionedStakedNodes {
+    pub staked_nodes: Arc<RwLock<StakedNodes>>,
+    pub version: Arc<AtomicUsize>,
+}
+
+impl VersionedStakedNodes {
+    pub fn new(staked_nodes: Arc<RwLock<StakedNodes>>) -> Self {
+        Self {
+            staked_nodes,
+            version: Arc::new(AtomicUsize::new(1)),
+        }
+    }
+
+    pub fn update(&self, new_stakes: StakedNodes) {
+        *self.staked_nodes.write().unwrap() = new_stakes;
+        self.version.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 pub type PacketBatchReceiver = Receiver<PacketBatch>;

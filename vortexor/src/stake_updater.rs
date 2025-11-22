@@ -6,13 +6,13 @@ use {
     log::{info, warn},
     solana_client::client_error,
     solana_pubkey::Pubkey,
-    solana_streamer::streamer::StakedNodes,
+    solana_streamer::streamer::VersionedStakedNodes,
     std::{
         collections::HashMap,
         str::FromStr,
         sync::{
             atomic::{AtomicBool, Ordering},
-            Arc, RwLock,
+            Arc,
         },
         thread::{self, sleep, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -37,7 +37,7 @@ impl StakeUpdater {
     pub fn new(
         exit: Arc<AtomicBool>,
         rpc_load_balancer: Arc<RpcLoadBalancer>,
-        shared_staked_nodes: Arc<RwLock<StakedNodes>>,
+        shared_staked_nodes: VersionedStakedNodes,
         refresh_sleep_duration: Duration,
     ) -> Self {
         info!("Starting stake updater thread");
@@ -66,7 +66,7 @@ impl StakeUpdater {
     /// STAKE_REFRESH_INTERVAL since the last time it was refreshed.
     fn try_refresh_stake_info(
         last_refresh: &mut Option<Instant>,
-        shared_staked_nodes: &Arc<RwLock<StakedNodes>>,
+        shared_staked_nodes: &VersionedStakedNodes,
         rpc_load_balancer: &Arc<RpcLoadBalancer>,
         refresh_sleep_duration: &Duration,
     ) -> client_error::Result<()> {
@@ -90,8 +90,10 @@ impl StakeUpdater {
 
             *last_refresh = Some(Instant::now());
             shared_staked_nodes
+                .staked_nodes
                 .write()
                 .unwrap()
+                // TODO(klykov): use update to increment version instead:
                 .update_stake_map(stake_map);
         } else {
             sleep(*refresh_sleep_duration);

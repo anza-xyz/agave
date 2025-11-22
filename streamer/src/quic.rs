@@ -6,7 +6,7 @@ use {
             simple_qos::{SimpleQos, SimpleQosConfig},
             swqos::{SwQos, SwQosConfig},
         },
-        streamer::StakedNodes,
+        streamer::VersionedStakedNodes,
     },
     crossbeam_channel::Sender,
     pem::Pem,
@@ -27,7 +27,7 @@ use {
         num::NonZeroUsize,
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering},
-            Arc, Mutex, RwLock,
+            Arc, Mutex,
         },
         thread::{self},
         time::Duration,
@@ -610,7 +610,7 @@ fn spawn_runtime_and_server<Q, C>(
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     quic_server_params: QuicStreamerConfig,
-    qos: Arc<Q>,
+    qos: Q,
     cancel: CancellationToken,
 ) -> Result<SpawnServerResult, QuicServerError>
 where
@@ -657,18 +657,13 @@ pub fn spawn_stake_wighted_qos_server(
     sockets: impl IntoIterator<Item = UdpSocket>,
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
-    staked_nodes: Arc<RwLock<StakedNodes>>,
+    staked_nodes: VersionedStakedNodes,
     quic_server_params: QuicStreamerConfig,
     qos_config: SwQosConfig,
     cancel: CancellationToken,
 ) -> Result<SpawnServerResult, QuicServerError> {
     let stats = Arc::<StreamerStats>::default();
-    let swqos = Arc::new(SwQos::new(
-        qos_config,
-        stats.clone(),
-        staked_nodes,
-        cancel.clone(),
-    ));
+    let swqos = SwQos::new(qos_config, stats.clone(), staked_nodes, cancel.clone());
     spawn_runtime_and_server(
         thread_name,
         metrics_name,
@@ -689,18 +684,19 @@ pub fn spawn_simple_qos_server(
     sockets: impl IntoIterator<Item = UdpSocket>,
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
-    staked_nodes: Arc<RwLock<StakedNodes>>,
+    staked_nodes: VersionedStakedNodes,
     quic_server_params: QuicStreamerConfig,
     qos_config: SimpleQosConfig,
     cancel: CancellationToken,
 ) -> Result<SpawnServerResult, QuicServerError> {
     let stats = Arc::<StreamerStats>::default();
-    let simple_qos = Arc::new(SimpleQos::new(
+
+    let simple_qos = SimpleQos::new(
         qos_config,
         stats.clone(),
-        staked_nodes,
+        staked_nodes.staked_nodes,
         cancel.clone(),
-    ));
+    );
 
     spawn_runtime_and_server(
         thread_name,
@@ -719,15 +715,18 @@ pub fn spawn_simple_qos_server(
 mod test {
     use {
         super::*,
-        crate::nonblocking::{
-            quic::test::*,
-            testing_utilities::{check_multiple_streams, make_client_endpoint},
+        crate::{
+            nonblocking::{
+                quic::test::*,
+                testing_utilities::{check_multiple_streams, make_client_endpoint},
+            },
+            streamer::StakedNodes,
         },
         crossbeam_channel::{unbounded, Receiver},
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_pubkey::Pubkey,
         solana_signer::Signer,
-        std::{collections::HashMap, net::SocketAddr, time::Instant},
+        std::{collections::HashMap, net::SocketAddr, sync::RwLock, time::Instant},
         tokio::time::sleep,
     };
 
@@ -740,7 +739,7 @@ mod test {
 
     fn setup_simple_qos_quic_server(
         server_params: SimpleQosQuicStreamerConfig,
-        staked_nodes: Arc<RwLock<StakedNodes>>,
+        staked_nodes: VersionedStakedNodes,
     ) -> (
         std::thread::JoinHandle<()>,
         crossbeam_channel::Receiver<PacketBatch>,
@@ -777,7 +776,7 @@ mod test {
         SocketAddr,
         CancellationToken,
     ) {
-        let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        let staked_nodes = VersionedStakedNodes::new(Arc::new(RwLock::new(StakedNodes::default())));
 
         let server_params = QuicStreamerConfig::default_for_tests();
         let s = bind_to_localhost_unique().expect("should bind");
@@ -839,7 +838,10 @@ mod test {
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
-        let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        let staked_nodes = VersionedStakedNodes {
+            staked_nodes: Arc::new(RwLock::new(StakedNodes::default())),
+            version: Arc::new(AtomicUsize::new(0)),
+        };
         let cancel = CancellationToken::new();
         let SpawnServerResult {
             endpoints: _,
@@ -907,8 +909,12 @@ mod test {
             quic_streamer_config: server_params,
             qos_config,
         };
+        let staked_nodes = VersionedStakedNodes {
+            staked_nodes: Arc::new(RwLock::new(staked_nodes)),
+            version: Arc::new(AtomicUsize::new(0)),
+        };
         let (t, receiver, server_address, cancel) =
-            setup_simple_qos_quic_server(server_params, Arc::new(RwLock::new(staked_nodes)));
+            setup_simple_qos_quic_server(server_params, staked_nodes);
 
         let runtime = rt_for_test();
         let num_expected_packets = 20;
@@ -931,7 +937,10 @@ mod test {
         let (sender, _) = unbounded();
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
-        let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        let staked_nodes = VersionedStakedNodes {
+            staked_nodes: Arc::new(RwLock::new(StakedNodes::default())),
+            version: Arc::new(AtomicUsize::new(0)),
+        };
         let cancel = CancellationToken::new();
         let SpawnServerResult {
             endpoints: _,

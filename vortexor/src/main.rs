@@ -7,7 +7,7 @@ use {
     solana_keypair::read_keypair_file,
     solana_net_utils::sockets::{bind_in_range_with_config, SocketConfiguration as SocketConfig},
     solana_signer::Signer,
-    solana_streamer::streamer::StakedNodes,
+    solana_streamer::streamer::{StakedNodes, VersionedStakedNodes},
     solana_vortexor::{
         cli::Cli,
         rpc_load_balancer::RpcLoadBalancer,
@@ -23,7 +23,10 @@ use {
         env,
         net::IpAddr,
         path::PathBuf,
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        sync::{
+            atomic::{AtomicBool, AtomicUsize},
+            Arc, RwLock,
+        },
     },
     tokio_util::sync::CancellationToken,
 };
@@ -147,10 +150,13 @@ pub fn main() {
     let stake_map = Arc::new(HashMap::new());
     let staked_nodes_overrides = HashMap::new();
 
-    let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(
-        stake_map,
-        staked_nodes_overrides,
-    )));
+    let staked_nodes = VersionedStakedNodes {
+        staked_nodes: Arc::new(RwLock::new(StakedNodes::new(
+            stake_map,
+            staked_nodes_overrides,
+        ))),
+        version: Arc::new(AtomicUsize::new(0)),
+    };
 
     let (rpc_load_balancer, _slot_receiver) = RpcLoadBalancer::new(&servers, &exit);
     let rpc_load_balancer = Arc::new(rpc_load_balancer);

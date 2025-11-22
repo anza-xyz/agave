@@ -16,11 +16,11 @@ use {
             spawn_stake_wighted_qos_server, EndpointKeyUpdater, QuicStreamerConfig,
             SwQosQuicStreamerConfig,
         },
-        streamer::StakedNodes,
+        streamer::VersionedStakedNodes,
     },
     std::{
         net::{SocketAddr, UdpSocket},
-        sync::{Arc, Mutex, RwLock},
+        sync::{Arc, Mutex},
         thread::{self, JoinHandle},
     },
     tokio_util::sync::CancellationToken,
@@ -106,7 +106,7 @@ impl Vortexor {
     #[allow(clippy::too_many_arguments)]
     pub fn create_vortexor(
         tpu_sockets: TpuSockets,
-        staked_nodes: Arc<RwLock<StakedNodes>>,
+        staked_nodes: VersionedStakedNodes,
         tpu_sender: Sender<PacketBatch>,
         tpu_fwd_sender: Sender<PacketBatch>,
         max_connections_per_peer: usize,
