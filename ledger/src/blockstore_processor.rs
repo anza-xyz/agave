@@ -2621,6 +2621,7 @@ pub mod tests {
             sync::{Arc, Barrier, RwLock, atomic::Ordering},
             thread,
         },
+        test_case::{test_case, test_matrix},
         trees::tr,
     };
 
@@ -4260,14 +4261,19 @@ pub mod tests {
         }
     }
 
-    #[test]
-    fn test_process_entries_2_entries_tick() {
+    #[test_case(false; "strict_fee_payer")]
+    #[test_case(true; "relaxed_fee_payer")]
+    fn test_process_entries_2_entries_tick(relax_fee_payer_constraint: bool) {
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
             ..
         } = create_genesis_config(1000);
-        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        if !relax_fee_payer_constraint {
+            bank.deactivate_feature(&agave_feature_set::relax_fee_payer_constraint::id());
+        }
+        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
         let keypair3 = Keypair::new();
@@ -4311,13 +4317,17 @@ pub mod tests {
         assert_eq!(bank.get_balance(&keypair3.pubkey()), 1);
         assert_eq!(bank.get_balance(&keypair4.pubkey()), 1);
 
-        // ensure that an error is returned for an empty account (keypair2)
+        // an error is returned for an empty fee-payer unless `relax_fee_payer_constraint` is enabled
         let tx =
             system_transaction::transfer(&keypair2, &keypair3.pubkey(), 1, bank.last_blockhash());
         let entry_3 = next_entry(&entry_2.hash, 1, vec![tx]);
         assert_eq!(
             process_entries_for_tests_without_scheduler(&bank, vec![entry_3]),
-            Err(TransactionError::AccountNotFound)
+            if relax_fee_payer_constraint {
+                Ok(())
+            } else {
+                Err(TransactionError::AccountNotFound)
+            }
         );
     }
 

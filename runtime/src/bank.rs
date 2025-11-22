@@ -3829,6 +3829,7 @@ impl Bank {
                 drop_on_failure: false,
                 all_or_nothing: false,
                 strict_nonce_size_check: true,
+                skip_record_noops: true,
             },
         );
 
@@ -3875,6 +3876,16 @@ impl Bank {
                         vec![],
                         Err(fees_only_tx.load_error),
                         Some(fees_only_tx.fee_details.total_fee()),
+                        None,
+                        None,
+                        None,
+                        executed_units,
+                        loaded_accounts_data_size,
+                    ),
+                    ProcessedTransaction::NoOp(no_op_tx) => (
+                        vec![],
+                        Err(no_op_tx.validation_error),
+                        None,
                         None,
                         None,
                         None,
@@ -4465,6 +4476,19 @@ impl Bank {
                             .1
                             .lamports(),
                     }),
+                    ProcessedTransaction::NoOp(no_op_tx) => Ok(CommittedTransaction {
+                        status: Err(no_op_tx.validation_error),
+                        log_messages: None,
+                        inner_instructions: None,
+                        return_data: None,
+                        executed_units,
+                        fee_details: FeeDetails::default(),
+                        loaded_account_stats: TransactionLoadedAccountsStats {
+                            loaded_accounts_count: 0,
+                            loaded_accounts_data_size,
+                        },
+                        fee_payer_post_balance: no_op_tx.fee_payer_balance.unwrap_or(0),
+                    }),
                 }
             })
             .collect()
@@ -4560,6 +4584,7 @@ impl Bank {
                 drop_on_failure: false,
                 all_or_nothing: false,
                 strict_nonce_size_check: false,
+                skip_record_noops: false,
             },
         );
 

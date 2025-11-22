@@ -62,7 +62,7 @@ use {
     solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::TransactionError,
     std::{collections::HashMap, num::NonZeroU32, slice, sync::atomic::Ordering},
-    test_case::test_case,
+    test_case::{test_case, test_matrix},
 };
 
 // This module contains the implementation of TransactionProcessingCallback
@@ -162,6 +162,7 @@ impl SvmTestEnvironment<'_> {
             },
             drop_on_failure: test_entry.drop_on_failure,
             all_or_nothing: test_entry.all_or_nothing,
+            skip_record_noops: test_entry.skip_record_noops,
             ..Default::default()
         };
 
@@ -256,7 +257,7 @@ impl SvmTestEnvironment<'_> {
                         );
                     }
                 }
-                Err(_) => {}
+                Ok(ProcessedTransaction::NoOp(_)) | Err(_) => {}
             }
         }
 
@@ -287,6 +288,9 @@ impl SvmTestEnvironment<'_> {
                     Ok(ProcessedTransaction::FeesOnly(fee_only)) => {
                         format!("{} (fee-only): {:?}", i, fee_only.load_error)
                     }
+                    Ok(ProcessedTransaction::NoOp(e)) => {
+                        format!("{i} (no-op): {e:?}")
+                    }
                     Err(e) => format!("{i} (discarded): {e:?}"),
                 })
                 .collect::<Vec<_>>()
@@ -312,7 +316,7 @@ impl SvmTestEnvironment<'_> {
             match processing_result {
                 Ok(ProcessedTransaction::Executed(executed_transaction)) => test_item_asserts
                     .check_executed_transaction(&executed_transaction.execution_details),
-                Ok(ProcessedTransaction::FeesOnly(_)) => {
+                Ok(ProcessedTransaction::FeesOnly(_)) | Ok(ProcessedTransaction::NoOp(_)) => {
                     assert!(test_item_asserts.processed());
                     assert!(!test_item_asserts.executed());
                 }
@@ -379,6 +383,9 @@ pub struct SvmTestEntry {
     // enables all or nothing processing (if not all transactions can be committed then none are)
     pub all_or_nothing: bool,
 
+    // enables transformation of no-op result into error. false in replay, true in block production
+    pub skip_record_noops: bool,
+
     // programs to deploy to the new svm
     pub initial_programs: Vec<(String, Slot, Option<Pubkey>)>,
 
@@ -401,6 +408,7 @@ impl Default for SvmTestEntry {
             feature_set: SVMFeatureSet::all_enabled(),
             all_or_nothing: false,
             drop_on_failure: false,
+            skip_record_noops: false,
             initial_programs: Vec::new(),
             initial_accounts: HashMap::new(),
             transaction_batch: Vec::new(),
@@ -662,13 +670,15 @@ impl From<ExecutionStatus> for TransactionBatchItemAsserts {
 }
 
 // states a transaction can end in after a trip through the batch processor:
-// * discarded: no-op. not even processed. a flawed transaction excluded from the entry
-// * processed-failed: aka fee (and nonce) only. charged and added to an entry but not executed, would have failed invariably
-// * executed-failed: failed during execution. as above, fees charged and nonce advanced
-// * succeeded: what we all aspire to be in our transaction processing lifecycles
+// * Discarded: not processed. an invalid transaction excluded from the entry entirely
+// * ProcessedNoOp: an invalid transaction processed and added to the entry with no effect on any account state
+// * ProcessedFailed: passed fee-payer and nonce validation but not executable. fees/nonce handled and added to entry
+// * ExecutedFailed: failed during execution. fees/nonce handled and added to entry
+// * Succeeded: what we all aspire to be in our transaction processing lifecycles
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ExecutionStatus {
     Discarded,
+    ProcessedNoOp,
     ProcessedFailed,
     ExecutedFailed,
     #[default]
@@ -684,11 +694,11 @@ impl ExecutionStatus {
     }
 
     pub fn executed(self) -> bool {
-        self > Self::ProcessedFailed
+        self >= Self::ExecutedFailed
     }
 
     pub fn processed(self) -> bool {
-        self != Self::Discarded
+        self >= Self::ProcessedNoOp
     }
 
     pub fn discarded(self) -> bool {
@@ -707,6 +717,7 @@ impl From<&TransactionProcessingResult> for ExecutionStatus {
                 }
             }
             Ok(ProcessedTransaction::FeesOnly(_)) => ExecutionStatus::ProcessedFailed,
+            Ok(ProcessedTransaction::NoOp(_)) => ExecutionStatus::ProcessedNoOp,
             Err(_) => ExecutionStatus::Discarded,
         }
     }
@@ -933,16 +944,38 @@ fn program_medley(drop_on_failure: bool) -> Vec<SvmTestEntry> {
     vec![test_entry]
 }
 
-fn simple_transfer(drop_on_failure: bool) -> Vec<SvmTestEntry> {
+#[test_matrix([false, true], [false, true], [false, true])]
+fn simple_transfer(
+    relax_fee_payer_constraint: bool,
+    skip_record_noops: bool,
+    drop_on_failure: bool,
+) {
     let mut test_entry = SvmTestEntry {
+        skip_record_noops,
         drop_on_failure,
         ..Default::default()
     };
+    test_entry.feature_set.relax_fee_payer_constraint = relax_fee_payer_constraint;
+
     let transfer_amount = LAMPORTS_PER_SOL;
-    let drop_on_failure_status = |status: ExecutionStatus| match (drop_on_failure, status) {
-        (true, ExecutionStatus::Succeeded) => ExecutionStatus::Succeeded,
-        (true, _) => ExecutionStatus::Discarded,
-        (false, status) => status,
+
+    let ultimate_status = |status: ExecutionStatus| match (
+        relax_fee_payer_constraint,
+        skip_record_noops,
+        drop_on_failure,
+        status,
+    ) {
+        // success is always success
+        (_, _, _, ExecutionStatus::Succeeded) => ExecutionStatus::Succeeded,
+
+        // drop transforms all other statuses into discard
+        (_, _, true, _) => ExecutionStatus::Discarded,
+
+        // relax turns discards into noops as long as skip is false
+        (true, false, false, ExecutionStatus::Discarded) => ExecutionStatus::ProcessedNoOp,
+
+        // otherwise status is left alone
+        _ => status,
     };
 
     // 0: a transfer that succeeds
@@ -993,7 +1026,7 @@ fn simple_transfer(drop_on_failure: bool) -> Vec<SvmTestEntry> {
                 transfer_amount,
                 Hash::default(),
             ),
-            drop_on_failure_status(ExecutionStatus::ExecutedFailed),
+            ultimate_status(ExecutionStatus::ExecutedFailed),
         );
 
         if !drop_on_failure {
@@ -1001,7 +1034,7 @@ fn simple_transfer(drop_on_failure: bool) -> Vec<SvmTestEntry> {
         }
     }
 
-    // 2: a non-processable transfer that fails before loading
+    // 2: a non-processable transfer that fails before reaching svm
     {
         test_entry.transaction_batch.push(TransactionBatchItem {
             transaction: system_transaction::transfer(
@@ -1011,11 +1044,12 @@ fn simple_transfer(drop_on_failure: bool) -> Vec<SvmTestEntry> {
                 Hash::default(),
             ),
             check_result: Err(TransactionError::BlockhashNotFound),
+            // pre-svm errors are never transformed by svm
             asserts: ExecutionStatus::Discarded.into(),
         });
     }
 
-    // 3: a non-processable transfer that fails loading the fee-payer
+    // 3: a non-processable transfer that fails validating the fee-payer
     {
         test_entry.push_transaction_with_status(
             system_transaction::transfer(
@@ -1024,7 +1058,7 @@ fn simple_transfer(drop_on_failure: bool) -> Vec<SvmTestEntry> {
                 transfer_amount,
                 Hash::default(),
             ),
-            ExecutionStatus::Discarded,
+            ultimate_status(ExecutionStatus::Discarded),
         );
     }
 
@@ -1056,11 +1090,12 @@ fn simple_transfer(drop_on_failure: bool) -> Vec<SvmTestEntry> {
                 &[&source_keypair],
                 Hash::default(),
             ),
-            drop_on_failure_status(ExecutionStatus::ProcessedFailed),
+            ultimate_status(ExecutionStatus::ProcessedFailed),
         );
     }
 
-    vec![test_entry]
+    let env = SvmTestEnvironment::create(test_entry);
+    env.execute();
 }
 
 fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
@@ -1259,10 +1294,16 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
     vec![test_entry]
 }
 
-fn simd83_intrabatch_account_reuse() -> Vec<SvmTestEntry> {
+fn simd83_intrabatch_account_reuse(relax_fee_payer_constraint: bool) -> Vec<SvmTestEntry> {
     let mut test_entries = vec![];
     let transfer_amount = LAMPORTS_PER_SOL;
     let wallet_rent = Rent::default().minimum_balance(0);
+
+    let unprocessable_status = if relax_fee_payer_constraint {
+        ExecutionStatus::ProcessedNoOp
+    } else {
+        ExecutionStatus::Discarded
+    };
 
     // batch 0: two successful transfers from the same source
     {
@@ -1340,7 +1381,7 @@ fn simd83_intrabatch_account_reuse() -> Vec<SvmTestEntry> {
                 transfer_amount,
                 Hash::default(),
             ),
-            ExecutionStatus::Discarded,
+            unprocessable_status,
         );
 
         test_entries.push(test_entry);
@@ -1435,7 +1476,7 @@ fn simd83_intrabatch_account_reuse() -> Vec<SvmTestEntry> {
                 &[&feepayer_keypair, &separate_source_keypair],
                 Hash::default(),
             ),
-            ExecutionStatus::Discarded,
+            unprocessable_status,
         );
 
         test_entry.push_transaction(system_transaction::transfer(
@@ -1498,6 +1539,12 @@ fn simd83_intrabatch_account_reuse() -> Vec<SvmTestEntry> {
             .decrease_expected_lamports(&source, transfer_amount + LAMPORTS_PER_SIGNATURE * 2);
 
         test_entries.push(test_entry);
+    }
+
+    if !relax_fee_payer_constraint {
+        for test_entry in &mut test_entries {
+            test_entry.feature_set.relax_fee_payer_constraint = false;
+        }
     }
 
     test_entries
@@ -2703,11 +2750,10 @@ fn drop_on_failure_batch(statuses: &[bool]) -> Vec<SvmTestEntry> {
 
 #[test_case(program_medley(false))]
 #[test_case(program_medley(true))]
-#[test_case(simple_transfer(false))]
-#[test_case(simple_transfer(true))]
 #[test_case(simple_nonce(false))]
 #[test_case(simple_nonce(true))]
-#[test_case(simd83_intrabatch_account_reuse())]
+#[test_case(simd83_intrabatch_account_reuse(false))]
+#[test_case(simd83_intrabatch_account_reuse(true))]
 #[test_case(simd83_nonce_reuse(false))]
 #[test_case(simd83_nonce_reuse(true))]
 #[test_case(simd83_account_deallocate())]
@@ -3906,7 +3952,11 @@ mod balance_collector {
         let (program_data_key, program_data) = program_accounts.swap_remove(0);
 
         for _ in 0..100 {
-            let mut test_entry = SvmTestEntry::default();
+            let mut test_entry = SvmTestEntry {
+                skip_record_noops: true,
+                ..Default::default()
+            };
+
             test_entry.add_initial_account(fee_payer, &native_state.clone());
 
             if use_tokens {
@@ -3993,6 +4043,8 @@ mod balance_collector {
 
                         vec![instruction]
                     }
+                    // we run `skip_record_noops` which prevents this from happening
+                    ExecutionStatus::ProcessedNoOp => unreachable!(),
                 };
 
                 let transaction = if expected_status.discarded() {

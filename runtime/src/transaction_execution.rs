@@ -287,12 +287,17 @@ mod tests {
         },
         crossbeam_channel::bounded,
         solana_account::AccountSharedData,
-        solana_cost_model::cost_tracker::CostTrackerLimits,
+        solana_compute_budget::compute_budget_limits::MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+        solana_cost_model::{
+            block_cost_limits::{INSTRUCTION_DATA_BYTES_COST, SIGNATURE_COST, WRITE_LOCK_UNITS},
+            cost_tracker::CostTrackerLimits,
+        },
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_pubkey::Pubkey,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer as _,
+        solana_system_transaction as system_transaction,
         solana_transaction_error::TransactionError,
         std::{assert_matches, slice},
         test_case::test_matrix,
@@ -356,33 +361,37 @@ mod tests {
         let present_account = AccountSharedData::new(1, 10, &Pubkey::default());
         bank.store_account(&present_account_key.pubkey(), &present_account);
 
-        let keypair = Keypair::new();
-
         // Create array of two transactions which throw different errors
-        let account_not_found_tx = solana_system_transaction::transfer(
-            &keypair,
+        let already_processed_tx = solana_system_transaction::transfer(
+            &mint_keypair,
             &solana_pubkey::new_rand(),
             42,
             bank.last_blockhash(),
         );
-        let account_not_found_sig = account_not_found_tx.signatures[0];
+        let _ = bank.load_execute_and_commit_transactions(
+            &bank.prepare_batch_for_tests(vec![already_processed_tx.clone()]),
+            ExecutionRecordingConfig::new_single_setting(false),
+            &mut ExecuteTimings::default(),
+            None,
+        );
+        let already_processed_sig = already_processed_tx.signatures[0];
         let invalid_blockhash_tx = solana_system_transaction::transfer(
             &mint_keypair,
             &solana_pubkey::new_rand(),
             42,
             Hash::default(),
         );
-        let txs = vec![account_not_found_tx, invalid_blockhash_tx];
+        let txs = vec![already_processed_tx, invalid_blockhash_tx];
         let batch = bank.prepare_batch_for_tests(txs);
-        let (commit_results, _) = batch.bank().load_execute_and_commit_transactions(
+        let (commit_results, _) = bank.load_execute_and_commit_transactions(
             &batch,
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,
         );
         let (err, signature) = do_get_first_error(&batch, &commit_results).unwrap();
-        assert_eq!(err.unwrap_err(), TransactionError::AccountNotFound);
-        assert_eq!(signature, account_not_found_sig);
+        assert_eq!(err.unwrap_err(), TransactionError::AlreadyProcessed);
+        assert_eq!(signature, already_processed_sig);
     }
 
     enum TxResult {
@@ -485,5 +494,71 @@ mod tests {
             assert_eq!(bank.transaction_count(), 0);
             assert_matches!(receiver.try_recv(), Err(_));
         }
+    }
+
+    #[test]
+    fn test_check_noop_cost_units_and_replay() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+        let tx = system_transaction::transfer(
+            &Keypair::new(),
+            &Pubkey::new_unique(),
+            1,
+            bank.last_blockhash(),
+        );
+
+        // one signature, two locks, instruction data
+        let sig = SIGNATURE_COST;
+        let locks = 2 * WRITE_LOCK_UNITS;
+        let data = tx.message.instructions[0].data.len() as u64 / INSTRUCTION_DATA_BYTES_COST;
+
+        let batch = bank.prepare_batch_for_tests(vec![tx.clone()]);
+
+        // 3k compute for calling a builtin
+        let compute =
+            CostModel::calculate_cost(&batch.sanitized_transactions()[0], &bank.feature_set)
+                .programs_execution_cost();
+
+        // 64mb default loaded transaction data size limit
+        let size = CostModel::calculate_loaded_accounts_data_size_cost(
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get(),
+            &bank.feature_set,
+        );
+
+        let (commit_results, _) = bank.load_execute_and_commit_transactions(
+            &batch,
+            ExecutionRecordingConfig::new_single_setting(false),
+            &mut ExecuteTimings::default(),
+            None,
+        );
+
+        let committed = commit_results[0].as_ref().unwrap();
+        assert_eq!(committed.status, Err(TransactionError::AccountNotFound));
+        assert_eq!(committed.executed_units, compute);
+
+        let tx_costs =
+            get_transaction_costs(&bank, &commit_results, batch.sanitized_transactions());
+
+        let noop_cost = tx_costs[0].as_ref().unwrap().sum();
+        assert_eq!(noop_cost, sig + locks + data + compute + size);
+
+        check_block_cost_limits(&bank, &tx_costs).unwrap();
+        assert_eq!(bank.read_cost_tracker().unwrap().block_cost(), noop_cost);
+
+        drop(batch);
+
+        let (commit_results, _) = bank.load_execute_and_commit_transactions(
+            &bank.prepare_batch_for_tests(vec![tx]),
+            ExecutionRecordingConfig::new_single_setting(false),
+            &mut ExecuteTimings::default(),
+            None,
+        );
+
+        // no-ops are added to StatusCache and cannot be re-executed
+        assert_eq!(
+            commit_results,
+            vec![Err(TransactionError::AlreadyProcessed)]
+        );
     }
 }
