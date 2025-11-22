@@ -18,6 +18,7 @@ fi
 declare skip_patterns=(
   "Cargo.toml"
   "programs/sbf"
+  "ci/xtask/tests/dummy-workspace"
 )
 
 declare -A verified_crate_owners=(

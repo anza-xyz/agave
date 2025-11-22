@@ -1,0 +1,6 @@
+[package]
+name = "c"
+version = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
