@@ -3195,6 +3195,16 @@ impl Bank {
                         executed_units,
                         loaded_accounts_data_size,
                     ),
+                    ProcessedTransaction::NoOp(err) => (
+                        vec![],
+                        Err(err),
+                        None, // HANA fee: Some(0) ?
+                        None,
+                        None,
+                        None,
+                        executed_units,
+                        loaded_accounts_data_size,
+                    ),
                 }
             }
             Err(error) => (vec![], Err(error), None, None, None, None, 0, 0),
@@ -3775,6 +3785,8 @@ impl Bank {
                             .1
                             .lamports(),
                     }),
+                    // HANA need to research how commit handles this; we want replay to be happy but banking ignore it
+                    ProcessedTransaction::NoOp(_) => todo!(),
                 }
             })
             .collect()

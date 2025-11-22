@@ -172,7 +172,6 @@ pub fn execute_batch<'a>(
     let pre_commit_callback = |_timings: &mut _, processing_results: &_| -> PreCommitResult {
         match extra_pre_commit_callback {
             None => {
-                // We're entering into one of the block-verification methods.
                 get_first_error(batch, processing_results)?;
                 Ok(None)
             }

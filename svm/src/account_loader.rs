@@ -48,21 +48,30 @@ pub(crate) const TRANSACTION_ACCOUNT_BASE_SIZE: usize = 64;
 // bytes: 8192 bytes for the maximum table size plus 56 bytes for metadata.
 const ADDRESS_LOOKUP_TABLE_BASE_SIZE: usize = 8248;
 
-// for the load instructions
+// Result of pre-SVM (runtime) transaction checks.
 pub type TransactionCheckResult = Result<CheckedTransactionDetails>;
-type TransactionValidationResult = Result<ValidatedTransactionDetails>;
+
+// Combined result of runtime, fee-payer, and nonce checks.
+pub(crate) enum TransactionValidationResult {
+    Loadable(ValidatedTransactionDetails),
+    NoOp(TransactionError),
+    Unprocessable(TransactionError),
+}
 
 #[derive(PartialEq, Eq, Debug)]
 pub(crate) enum TransactionLoadResult {
-    /// All transaction accounts were loaded successfully
+    /// All transaction accounts were loaded successfully.
     Loaded(LoadedTransaction),
     /// Some transaction accounts needed for execution were unable to be loaded
     /// but the fee payer and any nonce account needed for fee collection were
-    /// loaded successfully
+    /// loaded successfully.
     FeesOnly(FeesOnlyTransaction),
-    /// Some transaction accounts needed for fee collection were unable to be
-    /// loaded
-    NotLoaded(TransactionError),
+    /// This transaction will be processed but entail no account state changes.
+    /// If SIMD-0290 is enabled, invalid fee-payers are processable.
+    /// If SIMD-0297 is enabled, invalid nonce accounts are processable.
+    NoOp(TransactionError),
+    /// Mandatory checks failed; this transaction will be discarded as unprocessable.
+    Unprocessable(TransactionError),
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -407,8 +416,9 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
     rent: &Rent,
 ) -> TransactionLoadResult {
     match validation_result {
-        Err(e) => TransactionLoadResult::NotLoaded(e),
-        Ok(tx_details) => {
+        TransactionValidationResult::Unprocessable(e) => TransactionLoadResult::Unprocessable(e),
+        TransactionValidationResult::NoOp(e) => TransactionLoadResult::NoOp(e),
+        TransactionValidationResult::Loadable(tx_details) => {
             let load_result = load_transaction_accounts(
                 account_loader,
                 message,
