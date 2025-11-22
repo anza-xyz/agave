@@ -7,8 +7,6 @@ use {
     log::*,
     solana_clock::Slot,
     solana_hash::Hash,
-    solana_measure::measure::Measure,
-    solana_metrics::*,
     solana_rpc::transaction_notifier_interface::TransactionNotifier,
     solana_signature::Signature,
     solana_transaction::versioned::VersionedTransaction,
@@ -35,7 +33,6 @@ impl TransactionNotifier for TransactionNotifierImpl {
         transaction_status_meta: &TransactionStatusMeta,
         transaction: &VersionedTransaction,
     ) {
-        let mut measure = Measure::start("geyser-plugin-notify_plugins_of_transaction_info");
         let transaction_log_info = Self::build_replica_transaction_info(
             index,
             signature,
@@ -74,13 +71,6 @@ impl TransactionNotifier for TransactionNotifierImpl {
                 }
             }
         }
-        measure.stop();
-        inc_new_counter_debug!(
-            "geyser-plugin-notify_plugins_of_transaction_info-us",
-            measure.as_us() as usize,
-            10000,
-            10000
-        );
     }
 }
 

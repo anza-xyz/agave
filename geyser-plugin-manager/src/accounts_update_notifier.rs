@@ -14,10 +14,7 @@ use {
     solana_metrics::*,
     solana_pubkey::Pubkey,
     solana_transaction::sanitized::SanitizedTransaction,
-    std::{
-        sync::{Arc, RwLock},
-        time::Instant,
-    },
+    std::sync::{Arc, RwLock},
 };
 #[derive(Debug)]
 pub(crate) struct AccountsUpdateNotifierImpl {
@@ -49,32 +46,9 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
         write_version: u64,
         account: &AccountForGeyser<'_>,
     ) {
-        // Since the counter increment calls (below) are at Debug log level,
-        // do not get the time (Instant::now()) unless logging is at Debug level.
-        // With ~1 billion accounts on mnb, this is a non-negligible amount of work.
-        let start = log_enabled!(Level::Debug).then(Instant::now);
-
         let mut account = self.accountinfo_from_account_for_geyser(account);
         account.write_version = write_version;
-        let time_copy = log_enabled!(Level::Debug).then(|| start.unwrap().elapsed());
-
         self.notify_plugins_of_account_update(account, slot, true);
-
-        let time_all = log_enabled!(Level::Debug).then(|| start.unwrap().elapsed());
-
-        inc_new_counter_debug!(
-            "geyser-plugin-copy-stored-account-info-us",
-            time_copy.unwrap().as_micros() as usize,
-            100000,
-            100000
-        );
-
-        inc_new_counter_debug!(
-            "geyser-plugin-notify-account-restore-all-us",
-            time_all.unwrap().as_micros() as usize,
-            100000,
-            100000
-        );
     }
 
     fn notify_end_of_restore_from_snapshot(&self) {
@@ -161,14 +135,12 @@ impl AccountsUpdateNotifierImpl {
         slot: Slot,
         is_startup: bool,
     ) {
-        let mut measure2 = Measure::start("geyser-plugin-notify_plugins_of_account_update");
         let plugin_manager = self.plugin_manager.read().unwrap();
 
         if plugin_manager.plugins.is_empty() {
             return;
         }
         for plugin in plugin_manager.plugins.iter() {
-            let mut measure = Measure::start("geyser-plugin-update-account");
             match plugin.update_account(
                 ReplicaAccountInfoVersions::V0_0_3(&account),
                 slot,
@@ -192,20 +164,6 @@ impl AccountsUpdateNotifierImpl {
                     );
                 }
             }
-            measure.stop();
-            inc_new_counter_debug!(
-                "geyser-plugin-update-account-us",
-                measure.as_us() as usize,
-                100000,
-                100000
-            );
         }
-        measure2.stop();
-        inc_new_counter_debug!(
-            "geyser-plugin-notify_plugins_of_account_update-us",
-            measure2.as_us() as usize,
-            100000,
-            100000
-        );
     }
 }

@@ -3,8 +3,6 @@ use {
     agave_geyser_plugin_interface::geyser_plugin_interface::SlotStatus,
     log::*,
     solana_clock::Slot,
-    solana_measure::measure::Measure,
-    solana_metrics::*,
     solana_rpc::slot_status_notifier::SlotStatusNotifierInterface,
     std::sync::{Arc, RwLock},
 };
@@ -55,7 +53,6 @@ impl SlotStatusNotifierImpl {
         }
 
         for plugin in plugin_manager.plugins.iter() {
-            let mut measure = Measure::start("geyser-plugin-update-slot");
             match plugin.update_slot_status(slot, parent, &slot_status) {
                 Err(err) => {
                     error!(
@@ -73,13 +70,6 @@ impl SlotStatusNotifierImpl {
                     );
                 }
             }
-            measure.stop();
-            inc_new_counter_debug!(
-                "geyser-plugin-update-slot-us",
-                measure.as_us() as usize,
-                1000,
-                1000
-            );
         }
     }
 }
