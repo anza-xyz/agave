@@ -4,6 +4,7 @@
 // we can remove create_leader_updater function.
 use solana_tpu_client_next::leader_updater::create_leader_updater;
 use {
+    async_trait::async_trait,
     crossbeam_channel::Receiver as CrossbeamReceiver,
     futures::future::BoxFuture,
     solana_cli_config::ConfigInput,
@@ -26,11 +27,11 @@ use {
     },
     solana_tpu_client_next::{
         connection_workers_scheduler::{
-            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, NonblockingBroadcaster,
-            StakeIdentity,
+            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity, WorkersBroadcaster,
         },
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
+        workers_cache::{shutdown_worker, WorkersCache, WorkersCacheError},
         ClientBuilder, ConnectionWorkersScheduler, ConnectionWorkersSchedulerError,
         SendTransactionStats,
     },
@@ -872,6 +873,37 @@ async fn test_proactive_connection_close_detection() {
     );
 }
 
+pub struct BroadcasterWithBlacklist {
+    blacklist: Vec<SocketAddr>,
+}
+
+#[async_trait]
+impl WorkersBroadcaster for BroadcasterWithBlacklist {
+    async fn send_to_workers(
+        &self,
+        workers: &mut WorkersCache,
+        leaders: &[SocketAddr],
+        transaction_batch: TransactionBatch,
+    ) -> Result<(), ConnectionWorkersSchedulerError> {
+        for new_leader in leaders {
+            if self.blacklist.contains(new_leader) {
+                continue;
+            }
+
+            let send_res =
+                workers.try_send_transactions_to_address(new_leader, transaction_batch.clone());
+            if let Err(err) = send_res {
+                if err == WorkersCacheError::ReceiverDropped {
+                    if let Some(pop_worker) = workers.pop(*new_leader) {
+                        shutdown_worker(pop_worker)
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[tokio::test]
 async fn test_client_builder() {
     let SpawnTestServerResult {
@@ -905,6 +937,8 @@ async fn test_client_builder() {
     let leader_updater = create_leader_updater(rpc_client, websocket_url, Some(server_address))
         .await
         .unwrap();
+
+    let broadcaster = BroadcasterWithBlacklist { blacklist: vec![] };
     let builder = ClientBuilder::new(leader_updater)
         .cancel_token(cancel.child_token())
         .bind_socket(socket)
@@ -912,6 +946,7 @@ async fn test_client_builder() {
         .identity(None)
         .max_cache_size(1)
         .worker_channel_size(100)
+        .broadcaster(broadcaster)
         .metric_reporter({
             let successfully_sent = successfully_sent.clone();
             |stats: Arc<SendTransactionStats>, cancel: CancellationToken| async move {
@@ -929,7 +964,7 @@ async fn test_client_builder() {
         });
 
     let (tx_sender, client) = builder
-        .build::<NonblockingBroadcaster>()
+        .build()
         .expect("Client should be built successfully.");
 
     // Setup sending txs
