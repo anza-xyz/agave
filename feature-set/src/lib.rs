@@ -2128,7 +2128,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             create_account_allow_prefund::id(),
-            "SIMD-0327: Enable CreateAccountAllowPrefund system program instruction",
+            "SIMD-0312: Enable CreateAccountAllowPrefund system program instruction",
         ),
         (
             static_instruction_limit::id(),
