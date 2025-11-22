@@ -1,6 +1,6 @@
 [package]
 name = "solana-svm-feature-set"
-version = "3.0.11"
+version = "3.0.12"
 description = "Solana SVM Feature Set"
 authors = { workspace = true }
 repository = { workspace = true }
