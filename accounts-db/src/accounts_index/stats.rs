@@ -17,6 +17,8 @@ const STATS_INTERVAL_MS: u64 = 10_000;
 
 #[derive(Debug, Default)]
 pub struct HeldInMemStats {
+    pub clean: AtomicU64,
+    pub age: AtomicU64,
     pub ref_count: AtomicU64,
     pub slot_list_len: AtomicU64,
     pub slot_list_cached: AtomicU64,
@@ -185,7 +187,9 @@ impl Stats {
         let in_mem = self.count_in_mem.load(Ordering::Relaxed) as u64;
         let held_in_mem = self.held_in_mem.slot_list_cached.load(Ordering::Relaxed)
             + self.held_in_mem.slot_list_len.load(Ordering::Relaxed)
-            + self.held_in_mem.ref_count.load(Ordering::Relaxed);
+            + self.held_in_mem.ref_count.load(Ordering::Relaxed)
+            + self.held_in_mem.age.load(Ordering::Relaxed)
+            + self.held_in_mem.clean.load(Ordering::Relaxed);
         in_mem.saturating_sub(held_in_mem) as usize
     }
 
