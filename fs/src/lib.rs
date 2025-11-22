@@ -17,5 +17,8 @@
 
 pub mod buffered_reader;
 pub mod dirs;
+mod file_info;
 pub mod file_io;
 mod io_uring;
+
+pub use file_info::FileInfo;

@@ -43,14 +43,15 @@ pub fn streaming_unarchive_snapshot(
         let decompressor = decompressed_tar_reader(archive_format, archive_path, read_buf_size)?;
 
         let write_buf_size = MAX_UNPACK_WRITE_BUF_SIZE.min(read_write_budget_size);
-        let file_creator = file_creator(write_buf_size, move |file_path| {
-            let result = file_sender.send(file_path);
+        let file_creator = file_creator(write_buf_size, move |file_info| {
+            let result = file_sender.send(file_info.path);
             if let Err(err) = result {
                 panic!(
                     "failed to send path '{}' from unpacker to rebuilder: {err}",
                     err.0.display(),
                 );
             }
+            Some(file_info.file)
         })?;
 
         hardened_unpack::streaming_unpack_snapshot(
@@ -83,7 +84,7 @@ pub fn unpack_genesis_archive(
     let tar = BzDecoder::new(BufReader::new(tar_bz2));
     let file_creator = file_creator(
         0, /* don't provide memlock budget (forces sync IO), since genesis archives are small */
-        |_| {},
+        |file_info| Some(file_info.file),
     )?;
     hardened_unpack::unpack_genesis(
         tar,
