@@ -47,7 +47,7 @@ pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<
     flushing_active: AtomicBool,
 
     /// info to streamline initial index generation
-    startup_info: StartupInfo<T, U>,
+    startup_info: StartupInfo<T>,
 
     /// how many more ages to skip before this bucket is flushed (as opposed to being skipped).
     /// When this reaches 0, this bucket is flushed.
@@ -100,9 +100,7 @@ struct StartupInfoDuplicates<T: IndexValue> {
 }
 
 #[derive(Default, Debug)]
-struct StartupInfo<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
-    /// entries to add next time we are flushing to disk
-    insert: Mutex<Vec<(Pubkey, (Slot, U))>>,
+struct StartupInfo<T: IndexValue> {
     /// pubkeys with more than 1 entry
     duplicates: Mutex<StartupInfoDuplicates<T>>,
 }
@@ -674,22 +672,22 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         )
     }
 
-    /// Queue up these insertions for when the flush thread is dealing with this bin.
-    /// This is very fast and requires no lookups or disk access.
-    pub fn startup_insert_only(
+    /// Write drained startup items for this bin directly to disk.
+    pub fn write_startup_items_to_disk(
         &self,
         slot: Slot,
-        items: impl ExactSizeIterator<Item = (Pubkey, T)>,
+        items: impl Iterator<Item = (Pubkey, T)>,
     ) {
         assert!(self.storage.get_startup());
         assert!(self.bucket.is_some());
 
-        let mut insert = self.startup_info.insert.lock().unwrap();
         let m = Measure::start("copy");
-        insert.extend(items.map(|(k, v)| (k, (slot, v.into()))));
+        let insert: Vec<_> = items.map(|(k, v)| (k, (slot, v.into()))).collect();
         self.startup_stats
             .copy_data_us
             .fetch_add(m.end_as_us(), Ordering::Relaxed);
+
+        self.write_startup_info_to_disk(insert);
     }
 
     pub fn startup_update_duplicates_from_in_memory_only(&self, items: Vec<(Slot, Pubkey)>) {
@@ -962,8 +960,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         possible_evictions
     }
 
-    fn write_startup_info_to_disk(&self) {
-        let insert = std::mem::take(&mut *self.startup_info.insert.lock().unwrap());
+    fn write_startup_info_to_disk(&self, insert: Vec<(Pubkey, (Slot, U))>) {
         if insert.is_empty() {
             // nothing to insert for this bin
             return;
@@ -1005,9 +1002,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// These were collected for this bin when we did batch inserts in the bg flush threads.
     /// Insert these into the in-mem index, then return the duplicate (Slot, Pubkey)
     pub fn populate_and_retrieve_duplicate_keys_from_startup(&self) -> Vec<(Slot, Pubkey)> {
-        // in order to return accurate and complete duplicates, we must have nothing left remaining to insert
-        assert!(self.startup_info.insert.lock().unwrap().is_empty());
-
         let mut duplicate_items = self.startup_info.duplicates.lock().unwrap();
         let duplicates = std::mem::take(&mut duplicate_items.duplicates);
         let duplicates_put_on_disk = std::mem::take(&mut duplicate_items.duplicates_put_on_disk);
@@ -1078,25 +1072,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     fn flush_internal(&self, flush_guard: &FlushGuard, can_advance_age: bool) {
         let current_age = self.storage.current_age();
         let iterate_for_age = self.get_should_age(current_age);
-        let startup = self.storage.get_startup();
-
-        if startup {
-            // At startup we do not insert index entries into the normal in-mem index.
-            // Instead, they are written to a startup-only struct.  Thus, at startup
-            // we only need to flush that startup struct and then can return early.
-            self.write_startup_info_to_disk();
-            if iterate_for_age {
-                // Note we still have to iterate ages too, since it is checked when
-                // transitioning from startup back to normal/steady state.
-                assert_eq!(current_age, self.storage.current_age());
-                self.set_has_aged(current_age, can_advance_age);
-            }
-            return;
-        }
-
-        // from this point forward, we know startup == false
-        debug_assert!(!startup);
-
         if !iterate_for_age {
             // no need to age, so no need to flush this bucket
             return;
