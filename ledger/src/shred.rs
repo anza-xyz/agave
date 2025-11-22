@@ -203,6 +203,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("Unknown proof size")]
     UnknownProofSize,
+    #[error("Empty shreds list")]
+    EmptyIterator,
 }
 
 #[repr(u8)]
