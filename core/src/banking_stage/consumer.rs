@@ -342,6 +342,10 @@ impl Consumer {
             balance_collector,
         } = load_and_execute_transactions_output;
 
+        // HANA TODO i think we can safely transform ProcessedTransaction::NoOp into Err here
+        // this *should* let us avoid committing them when building blocks, but handle them gracefully in replay
+        // until we actually *do* async execution there is no reason to write garbage to chain
+
         let transaction_counts = LeaderProcessedTransactionCounts {
             processed_count: processed_counts.processed_transactions_count,
             processed_with_successful_result_count: processed_counts
