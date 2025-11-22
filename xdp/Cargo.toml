@@ -19,5 +19,8 @@ thiserror = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 agave-xdp-ebpf = { workspace = true }
+agave-xdp-dispatcher-ebpf = { workspace = true }
 aya = { workspace = true }
 caps = { workspace = true }
+named-lock = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
