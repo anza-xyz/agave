@@ -36,8 +36,10 @@ solana-pubkey = { workspace = true, features = ["std"] }
 solana-signature = { workspace = true, features = ["std"] }
 solana-signer = { workspace = true }
 thiserror = { workspace = true }
+trezor-client = { workspace = true }
 uriparse = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+serial_test = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
