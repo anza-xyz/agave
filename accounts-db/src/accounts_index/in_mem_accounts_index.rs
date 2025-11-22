@@ -1128,7 +1128,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             self.flush_scan(current_age, flush_guard, ages_flushing_now);
 
         // write to disk outside in-mem map read lock
-        let disk = self.bucket.as_ref().unwrap();
         let mut flush_stats = DiskFlushStats::new();
 
         // Process each candidate to flush
@@ -1154,26 +1153,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 let ShouldFlush::Yes((slot, account_info)) = maybe_entry_for_flush else {
                     return None;
                 };
-                let disk_entry = [(slot, account_info.into())];
 
                 // Now write to disk WITHOUT holding any locks
-                // may have to loop if disk has to grow and we have to retry the write
-                loop {
-                    let disk_resize = disk.try_write(&key, (&disk_entry, /*ref count*/ 1));
-                    match disk_resize {
-                        Ok(_) => {
-                            // successfully written to disk
-                            flush_stats.flush_entries_updated_on_disk += 1;
-                            break;
-                        }
-                        Err(err) => {
-                            // disk needs to resize. This item did not get written. Resize and try again.
-                            let m = Measure::start("flush_grow");
-                            disk.grow(err);
-                            flush_stats.flush_grow_us += m.end_as_us();
-                        }
-                    }
-                }
+                self.write_entry_to_disk(&key, slot, account_info, &mut flush_stats);
 
                 Some(key)
             })
@@ -1231,6 +1213,34 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         stats.sub_mem_count(evicted);
         Self::update_stat(&stats.flush_entries_evicted_from_mem, evicted as u64);
         Self::update_stat(&stats.failed_to_evict, failed as u64);
+    }
+
+    fn write_entry_to_disk(
+        &self,
+        key: &Pubkey,
+        slot: Slot,
+        account_info: T,
+        flush_stats: &mut DiskFlushStats,
+    ) {
+        let disk_entry = [(slot, account_info.into())];
+        let disk = self.bucket.as_ref().unwrap();
+        // may have to loop if disk has to grow and we have to retry the write
+        loop {
+            let disk_resize = disk.try_write(key, (&disk_entry, /*ref count*/ 1));
+            match disk_resize {
+                Ok(_) => {
+                    // successfully written to disk
+                    flush_stats.flush_entries_updated_on_disk += 1;
+                    break;
+                }
+                Err(err) => {
+                    // disk needs to resize. This item did not get written. Resize and try again.
+                    let m = Measure::start("flush_grow");
+                    disk.grow(err);
+                    flush_stats.flush_grow_us += m.end_as_us();
+                }
+            }
+        }
     }
 
     pub fn stats(&self) -> &Stats {
