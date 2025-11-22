@@ -4,12 +4,8 @@ use {
     rayon::{prelude::*, ThreadPool},
     solana_clock::Slot,
     solana_hash::Hash,
-    solana_metrics::inc_new_counter_debug,
     solana_nohash_hasher::BuildNoHashHasher,
-    solana_perf::{
-        packet::{PacketBatch, PacketRef},
-        sigverify::count_packets_in_batches,
-    },
+    solana_perf::packet::{PacketBatch, PacketRef},
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     std::{collections::HashMap, sync::RwLock},
@@ -65,9 +61,7 @@ pub fn verify_shreds(
     slot_leaders: &SlotPubkeys,
     cache: &RwLock<LruCache>,
 ) -> Vec<Vec<u8>> {
-    let packet_count = count_packets_in_batches(batches);
-    debug!("CPU SHRED ECDSA for {packet_count}");
-    let rv = thread_pool.install(|| {
+    thread_pool.install(|| {
         batches
             .into_par_iter()
             .map(|batch| {
@@ -77,9 +71,7 @@ pub fn verify_shreds(
                     .collect()
             })
             .collect()
-    });
-    inc_new_counter_debug!("ed25519_shred_verify_cpu", packet_count);
-    rv
+    })
 }
 
 #[cfg(test)]
@@ -100,20 +92,6 @@ fn sign_shred_cpu(keypair: &Keypair, packet: &mut PacketRefMut) {
         .to_vec();
     buffer[sig].copy_from_slice(signature.as_ref());
     packet.copy_from_slice(&buffer);
-}
-
-#[cfg(test)]
-fn sign_shreds(thread_pool: &ThreadPool, keypair: &Keypair, batches: &mut [PacketBatch]) {
-    let packet_count = count_packets_in_batches(batches);
-    debug!("CPU SHRED ECDSA for {packet_count}");
-    thread_pool.install(|| {
-        batches.par_iter_mut().for_each(|batch| {
-            batch
-                .par_iter_mut()
-                .for_each(|mut p| sign_shred_cpu(keypair, &mut p));
-        });
-    });
-    inc_new_counter_debug!("ed25519_shred_sign_cpu", packet_count);
 }
 
 #[cfg(test)]
@@ -139,6 +117,16 @@ mod tests {
         std::iter::{once, repeat_with},
         test_case::test_case,
     };
+
+    fn sign_shreds(thread_pool: &ThreadPool, keypair: &Keypair, batches: &mut [PacketBatch]) {
+        thread_pool.install(|| {
+            batches.par_iter_mut().for_each(|batch| {
+                batch
+                    .par_iter_mut()
+                    .for_each(|mut p| sign_shred_cpu(keypair, &mut p));
+            });
+        });
+    }
 
     fn run_test_sigverify_shred_cpu(slot: Slot) {
         agave_logger::setup();
