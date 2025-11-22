@@ -137,6 +137,16 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         usage_warning: "CUDA support will be dropped"
     );
     add_arg!(
+        // deprecated in v3.1.3
+        Arg::with_name("dev_halt_at_slot")
+            .long("dev-halt-at-slot")
+            .value_name("SLOT")
+            .validator(is_slot)
+            .takes_value(true)
+            .help("Halt the validator when it reaches the given slot"),
+        usage_warning: "--dev-halt-at-slot will be removed in the future"
+    );
+    add_arg!(
         // deprecated in v3.1.0
         Arg::with_name("tpu_coalesce_ms")
             .long("tpu-coalesce-ms")
