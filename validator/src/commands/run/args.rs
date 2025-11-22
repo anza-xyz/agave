@@ -241,14 +241,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("dev_halt_at_slot")
-            .long("dev-halt-at-slot")
-            .value_name("SLOT")
-            .validator(is_slot)
-            .takes_value(true)
-            .help("Halt the validator when it reaches the given slot"),
-    )
-    .arg(
         Arg::with_name("rpc_port")
             .long("rpc-port")
             .value_name("PORT")
