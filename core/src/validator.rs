@@ -47,10 +47,7 @@ use {
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         utils::move_and_async_delete_path_contents,
     },
-    solana_client::{
-        client_option::ClientOption,
-        connection_cache::{ConnectionCache, Protocol},
-    },
+    solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_clock::Slot,
     solana_cluster_type::ClusterType,
     solana_entry::poh::compute_hash_time,
@@ -111,7 +108,7 @@ use {
         rpc::JsonRpcConfig,
         rpc_completed_slots_service::RpcCompletedSlotsService,
         rpc_pubsub_service::{PubSubConfig, PubSubService},
-        rpc_service::{JsonRpcService, JsonRpcServiceConfig},
+        rpc_service::{JsonRpcService, JsonRpcServiceConfig, RpcTpuClientArgs},
         rpc_subscriptions::RpcSubscriptions,
         transaction_notifier_interface::TransactionNotifierArc,
         transaction_status_service::TransactionStatusService,
@@ -1187,12 +1184,13 @@ impl Validator {
                 None
             };
 
-            let client_option = {
+            let rpc_tpu_client_args = {
                 let runtime_handle = tpu_client_next_runtime
                     .as_ref()
                     .map(TokioRuntime::handle)
                     .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
-                ClientOption::TpuClientNext(
+
+                RpcTpuClientArgs(
                     Arc::as_ref(&identity_keypair),
                     node.sockets.rpc_sts_client,
                     runtime_handle.clone(),
@@ -1219,7 +1217,7 @@ impl Validator {
                 leader_schedule_cache: leader_schedule_cache.clone(),
                 max_complete_transaction_status_slot: max_complete_transaction_status_slot.clone(),
                 prioritization_fee_cache: prioritization_fee_cache.clone(),
-                client_option,
+                rpc_tpu_client_args,
             };
             let json_rpc_service =
                 JsonRpcService::new_with_config(rpc_svc_config).map_err(ValidatorError::Other)?;
