@@ -1,9 +1,10 @@
 use {
     crate::{
         account_loader::{
-            AccountLoader, CheckedTransactionDetails, LoadedTransaction, TransactionCheckResult,
-            TransactionLoadResult, ValidatedTransactionDetails, load_transaction,
-            update_rent_exempt_status_for_account, validate_fee_payer,
+            AccountLoader, CheckedTransactionDetails, FeesOnlyTransaction, LoadedTransaction,
+            TransactionCheckResult, TransactionLoadResult, TransactionValidationResult,
+            ValidatedTransactionDetails, load_transaction, update_rent_exempt_status_for_account,
+            validate_fee_payer,
         },
         account_overrides::AccountOverrides,
         message_processor::process_message,
@@ -447,18 +448,18 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // in the same batch may modify the same accounts. Transaction order is
         // preserved within entries written to the ledger.
         for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
-            let (validate_result, validate_fees_us) =
-                measure_us!(check_result.and_then(|tx_details| {
-                    Self::validate_transaction_nonce_and_fee_payer(
-                        &mut account_loader,
-                        tx,
-                        tx_details,
-                        &environment.blockhash,
-                        environment.blockhash_lamports_per_signature,
-                        &environment.rent,
-                        &mut error_metrics,
-                    )
-                }));
+            let (validate_result, validate_fees_us) = measure_us!(match check_result {
+                Ok(tx_details) => Self::validate_transaction_nonce_and_fee_payer(
+                    &mut account_loader,
+                    tx,
+                    tx_details,
+                    &environment.blockhash,
+                    environment.blockhash_lamports_per_signature,
+                    &environment.rent,
+                    &mut error_metrics,
+                ),
+                Err(e) => TransactionValidationResult::Unprocessable(e),
+            });
             execute_timings
                 .saturating_add_in_place(ExecuteTimingType::ValidateFeesUs, validate_fees_us);
 
@@ -477,19 +478,26 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 .saturating_add_in_place(ExecuteTimingType::CollectBalancesUs, collect_balances_us);
 
             let (processing_result, single_execution_us) = measure_us!(match load_result {
-                TransactionLoadResult::NotLoaded(err) => Err(err),
-                TransactionLoadResult::FeesOnly(fees_only_tx) => match config.drop_on_failure {
-                    true => Err(fees_only_tx.load_error),
-                    false => {
-                        // Update loaded accounts cache with nonce and fee-payer
-                        account_loader.update_accounts_for_failed_tx(
-                            &fees_only_tx.rollback_accounts,
-                            self.slot,
-                        );
+                // Unprocessable transactions always result in an error
+                TransactionLoadResult::Unprocessable(e) => Err(e),
 
-                        Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
-                    }
-                },
+                // Pre-execution failures become an error here with drop_on_failure
+                TransactionLoadResult::NoOp(e)
+                | TransactionLoadResult::FeesOnly(FeesOnlyTransaction { load_error: e, .. })
+                    if config.drop_on_failure =>
+                    Err(e),
+
+                // SIMD-0290 fee-payer or SIMD-0297 nonce failure is signalled as a non-error no-op
+                TransactionLoadResult::NoOp(e) => Ok(ProcessedTransaction::NoOp(e)),
+
+                // Transactions that fail at account loading charge fees and roll nonces
+                TransactionLoadResult::FeesOnly(fees_only_tx) => {
+                    account_loader
+                        .update_accounts_for_failed_tx(&fees_only_tx.rollback_accounts, self.slot);
+                    Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
+                }
+
+                // Transaction is able to be executed
                 TransactionLoadResult::Loaded(loaded_transaction) => {
                     let (program_accounts_set, filter_executable_us) =
                         measure_us!(self.filter_executable_program_accounts(
@@ -658,7 +666,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         next_lamports_per_signature: u64,
         rent: &Rent,
         error_counters: &mut TransactionErrorMetrics,
-    ) -> TransactionResult<ValidatedTransactionDetails> {
+    ) -> TransactionValidationResult {
         let CheckedTransactionDetails {
             nonce_address,
             compute_budget_and_limits,
@@ -669,27 +677,48 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // it may have changed due to use, authorization, or deallocation.
         let nonce_info = if let Some(ref nonce_address) = nonce_address {
             let next_durable_nonce = DurableNonce::from_blockhash(environment_blockhash);
-            Some(Self::validate_transaction_nonce(
+            let nonce_result = Self::validate_transaction_nonce(
                 account_loader,
                 message,
                 nonce_address,
                 &next_durable_nonce,
                 next_lamports_per_signature,
                 error_counters,
-            )?)
+            );
+
+            match nonce_result {
+                Ok(nonce_info) => Some(nonce_info),
+                Err(e) => return TransactionValidationResult::Unprocessable(e),
+            }
         } else {
             None
         };
 
+        let is_blockhash_transaction = nonce_info.is_none();
+
         // Now validate the fee-payer for the transaction unconditionally.
-        Self::validate_transaction_fee_payer(
+        let fee_payer_result = Self::validate_transaction_fee_payer(
             account_loader,
             message,
             nonce_info,
             compute_budget_and_limits,
             rent,
             error_counters,
-        )
+        );
+
+        // With SIMD-0290 enabled, an invalid fee-payer can be processed as a no-op.
+        // However, this can ONLY be done for blockhash transactions; nonce transactions
+        // must always be discarded, regardless of whether they use a standard or nonce-based
+        // fee-payer. Fee-payer failure for nonces will be handled the same as nonce failures
+        // themselves when we implement SIMD-0297.
+        let allow_noop =
+            account_loader.feature_set.relax_fee_payer_constraint && is_blockhash_transaction;
+
+        match fee_payer_result {
+            Ok(details) => TransactionValidationResult::Loadable(details),
+            Err(e) if allow_noop => TransactionValidationResult::NoOp(e),
+            Err(e) => TransactionValidationResult::Unprocessable(e),
+        }
     }
 
     // Loads transaction fee payer, collects rent if necessary, then calculates
@@ -2073,7 +2102,7 @@ mod tests {
 
         assert_eq!(
             result,
-            Ok(ValidatedTransactionDetails {
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails {
                 rollback_accounts: RollbackAccounts::new(
                     None, // nonce
                     *fee_payer_address,
@@ -2092,16 +2121,26 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_validate_transaction_fee_payer_not_found() {
+    #[test_case(false; "strict_fee_payer")]
+    #[test_case(true; "relaxed_fee_payer")]
+    fn test_validate_transaction_fee_payer_not_found(relax_fee_payer_constraint: bool) {
         let lamports_per_signature = 5000;
         let message =
             new_unchecked_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique())));
 
-        let mock_bank = MockBankCallback::default();
+        let mut mock_bank = MockBankCallback::default();
+        mock_bank.feature_set.relax_fee_payer_constraint = relax_fee_payer_constraint;
         let mut account_loader = (&mock_bank).into();
         let mut error_counters = TransactionErrorMetrics::default();
-        let result =
+
+        let expected_error = TransactionError::AccountNotFound;
+        let expected_result = if relax_fee_payer_constraint {
+            TransactionValidationResult::NoOp(expected_error)
+        } else {
+            TransactionValidationResult::Unprocessable(expected_error)
+        };
+
+        let actual_result =
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
@@ -2116,11 +2155,12 @@ mod tests {
             );
 
         assert_eq!(error_counters.account_not_found.0, 1);
-        assert_eq!(result, Err(TransactionError::AccountNotFound));
+        assert_eq!(actual_result, expected_result);
     }
 
-    #[test]
-    fn test_validate_transaction_fee_payer_insufficient_funds() {
+    #[test_case(false; "strict_fee_payer")]
+    #[test_case(true; "relaxed_fee_payer")]
+    fn test_validate_transaction_fee_payer_insufficient_funds(relax_fee_payer_constraint: bool) {
         let lamports_per_signature = 5000;
         let message =
             new_unchecked_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique())));
@@ -2128,14 +2168,23 @@ mod tests {
         let fee_payer_account = AccountSharedData::new(1, 0, &Pubkey::default());
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
-        let mock_bank = MockBankCallback {
+        let mut mock_bank = MockBankCallback {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
         };
+        mock_bank.feature_set.relax_fee_payer_constraint = relax_fee_payer_constraint;
         let mut account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
-        let result =
+
+        let expected_error = TransactionError::InsufficientFundsForFee;
+        let expected_result = if relax_fee_payer_constraint {
+            TransactionValidationResult::NoOp(expected_error)
+        } else {
+            TransactionValidationResult::Unprocessable(expected_error)
+        };
+
+        let actual_result =
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
@@ -2156,11 +2205,12 @@ mod tests {
             );
 
         assert_eq!(error_counters.insufficient_funds.0, 1);
-        assert_eq!(result, Err(TransactionError::InsufficientFundsForFee));
+        assert_eq!(actual_result, expected_result);
     }
 
-    #[test]
-    fn test_validate_transaction_fee_payer_insufficient_rent() {
+    #[test_case(false; "strict_fee_payer")]
+    #[test_case(true; "relaxed_fee_payer")]
+    fn test_validate_transaction_fee_payer_insufficient_rent(relax_fee_payer_constraint: bool) {
         let lamports_per_signature = 5000;
         let message =
             new_unchecked_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique())));
@@ -2172,14 +2222,23 @@ mod tests {
         let fee_payer_account = AccountSharedData::new(starting_balance, 0, &Pubkey::default());
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
-        let mock_bank = MockBankCallback {
+        let mut mock_bank = MockBankCallback {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
         };
+        mock_bank.feature_set.relax_fee_payer_constraint = relax_fee_payer_constraint;
         let mut account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
-        let result =
+
+        let expected_error = TransactionError::InsufficientFundsForRent { account_index: 0 };
+        let expected_result = if relax_fee_payer_constraint {
+            TransactionValidationResult::NoOp(expected_error)
+        } else {
+            TransactionValidationResult::Unprocessable(expected_error)
+        };
+
+        let actual_result =
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
@@ -2199,14 +2258,12 @@ mod tests {
                 &mut error_counters,
             );
 
-        assert_eq!(
-            result,
-            Err(TransactionError::InsufficientFundsForRent { account_index: 0 })
-        );
+        assert_eq!(actual_result, expected_result);
     }
 
-    #[test]
-    fn test_validate_transaction_fee_payer_invalid() {
+    #[test_case(false; "strict_fee_payer")]
+    #[test_case(true; "relaxed_fee_payer")]
+    fn test_validate_transaction_fee_payer_invalid(relax_fee_payer_constraint: bool) {
         let lamports_per_signature = 5000;
         let message =
             new_unchecked_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique())));
@@ -2214,14 +2271,23 @@ mod tests {
         let fee_payer_account = AccountSharedData::new(1_000_000, 0, &Pubkey::new_unique());
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
-        let mock_bank = MockBankCallback {
+        let mut mock_bank = MockBankCallback {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
         };
+        mock_bank.feature_set.relax_fee_payer_constraint = relax_fee_payer_constraint;
         let mut account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
-        let result =
+
+        let expected_error = TransactionError::InvalidAccountForFee;
+        let expected_result = if relax_fee_payer_constraint {
+            TransactionValidationResult::NoOp(expected_error)
+        } else {
+            TransactionValidationResult::Unprocessable(expected_error)
+        };
+
+        let actual_result =
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
@@ -2242,7 +2308,7 @@ mod tests {
             );
 
         assert_eq!(error_counters.invalid_account_for_fee.0, 1);
-        assert_eq!(result, Err(TransactionError::InvalidAccountForFee));
+        assert_eq!(actual_result, expected_result);
     }
 
     #[derive(Debug, PartialEq, Eq)]
@@ -2355,8 +2421,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_validate_transaction_fee_payer_is_nonce() {
+    #[test_case(false; "strict_fee_payer")]
+    #[test_case(true; "relaxed_fee_payer")]
+    fn test_validate_transaction_fee_payer_is_nonce(relax_fee_payer_constraint: bool) {
         let lamports_per_signature = 5000;
         let rent = Rent::default();
         let compute_unit_limit = 1000u64;
@@ -2406,10 +2473,11 @@ mod tests {
 
             let mut mock_accounts = HashMap::new();
             mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
-            let mock_bank = MockBankCallback {
+            let mut mock_bank = MockBankCallback {
                 account_shared_data: Arc::new(RwLock::new(mock_accounts)),
                 ..Default::default()
             };
+            mock_bank.feature_set.relax_fee_payer_constraint = relax_fee_payer_constraint;
             let mut account_loader = (&mock_bank).into();
 
             let mut error_counters = TransactionErrorMetrics::default();
@@ -2436,7 +2504,7 @@ mod tests {
 
             assert_eq!(
                 result,
-                Ok(ValidatedTransactionDetails {
+                TransactionValidationResult::Loadable(ValidatedTransactionDetails {
                     rollback_accounts: RollbackAccounts::new(
                         Some(future_nonce),
                         *fee_payer_address,
@@ -2466,10 +2534,11 @@ mod tests {
 
             let mut mock_accounts = HashMap::new();
             mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
-            let mock_bank = MockBankCallback {
+            let mut mock_bank = MockBankCallback {
                 account_shared_data: Arc::new(RwLock::new(mock_accounts)),
                 ..Default::default()
             };
+            mock_bank.feature_set.relax_fee_payer_constraint = relax_fee_payer_constraint;
             let mut account_loader = (&mock_bank).into();
 
             let mut error_counters = TransactionErrorMetrics::default();
@@ -2487,8 +2556,14 @@ mod tests {
                 &mut error_counters,
             );
 
+            // nonce transactions are never processable under SIMD-0290 rules
             assert_eq!(error_counters.insufficient_funds.0, 1);
-            assert_eq!(result, Err(TransactionError::InsufficientFundsForFee));
+            assert_eq!(
+                result,
+                TransactionValidationResult::Unprocessable(
+                    TransactionError::InsufficientFundsForFee
+                )
+            );
         }
     }
 
@@ -2520,21 +2595,24 @@ mod tests {
             Some(&fee_payer_address),
             &Hash::new_unique(),
         ));
-        TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
-            &mut account_loader,
-            &message,
-            CheckedTransactionDetails::new(
-                None,
-                SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
-                    MockBankCallback::calculate_fee_details(&message, 5000, 0),
+
+        assert!(matches!(
+            TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
+                &mut account_loader,
+                &message,
+                CheckedTransactionDetails::new(
+                    None,
+                    SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
+                        MockBankCallback::calculate_fee_details(&message, 5000, 0),
+                    ),
                 ),
+                &Hash::default(),
+                lamports_per_signature,
+                &Rent::default(),
+                &mut TransactionErrorMetrics::default(),
             ),
-            &Hash::default(),
-            lamports_per_signature,
-            &Rent::default(),
-            &mut TransactionErrorMetrics::default(),
-        )
-        .unwrap();
+            TransactionValidationResult::Loadable(_)
+        ));
 
         // ensure the fee payer is an inspected account
         let actual_inspected_accounts: Vec<_> = mock_bank
