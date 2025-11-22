@@ -59,7 +59,7 @@ agave-logger = { workspace = true }
 arbitrary = { workspace = true }
 bencher = { workspace = true }
 bincode = { workspace = true }
-rand = "0.9.2"
+rand = { workspace = true }
 solana-keypair = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-signer = { workspace = true }

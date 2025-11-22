@@ -414,8 +414,8 @@ mod tests {
     #[inline(always)]
     fn rand_bytes<const N: usize>() -> [u8; N] {
         use rand::Rng;
-        let mut rng = rand::thread_rng();
-        std::array::from_fn(|_| rng.r#gen::<u8>())
+        let mut rng = rand::rng();
+        std::array::from_fn(|_| rng.random::<u8>())
     }
 
     #[test]

@@ -11,7 +11,7 @@ use {
 // https://docs.rs/ed25519-dalek/1.0.1/src/ed25519_dalek/secret.rs.html#167
 fn generate_keypair() -> ed25519_dalek::Keypair {
     use rand::RngCore;
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut seed = [0u8; ed25519_dalek::SECRET_KEY_LENGTH];
     rng.fill_bytes(&mut seed);
     let secret =

@@ -43,7 +43,7 @@ curve25519-dalek = { workspace = true }
 dlopen2 = { workspace = true }
 fnv = { workspace = true }
 log = { workspace = true }
-rand = { workspace = true }
+rand = "0.8.5"
 rayon = { workspace = true }
 serde = { workspace = true }
 solana-clock = { workspace = true, optional = true }
@@ -81,7 +81,7 @@ nix = { workspace = true, features = ["user"] }
 agave-logger = { workspace = true }
 assert_matches = { workspace = true }
 bencher = { workspace = true }
-rand_chacha = { workspace = true }
+rand_chacha = "0.3.1"
 solana-perf = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
 

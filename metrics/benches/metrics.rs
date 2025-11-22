@@ -1,7 +1,7 @@
 use {
     bencher::{benchmark_group, benchmark_main, Bencher},
     log::*,
-    rand::distributions::{Distribution, Uniform},
+    rand::distr::{Distribution, Uniform},
     solana_metrics::{
         counter::CounterPoint,
         datapoint::DataPoint,
@@ -60,8 +60,8 @@ fn bench_counter_submission(b: &mut Bencher) {
 fn bench_random_submission(b: &mut Bencher) {
     let writer = Arc::new(MockMetricsWriter::new());
     let agent = MetricsAgent::new(writer, Duration::from_secs(10), 1000);
-    let mut rng = rand::thread_rng();
-    let die = Uniform::<i32>::from(1..7);
+    let mut rng = rand::rng();
+    let die = Uniform::<i32>::try_from(1..7).expect("ok for non-empty range");
 
     b.iter(|| {
         for i in 0..1000 {
