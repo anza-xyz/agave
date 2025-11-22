@@ -2,10 +2,8 @@
 
 use {
     num_traits::CheckedAdd,
-    rand::{
-        distributions::uniform::{SampleUniform, UniformSampler},
-        Rng,
-    },
+    rand::Rng,
+    solana_ledger::rand_compat::UniformU64Sampler,
     std::{
         borrow::Borrow,
         ops::{AddAssign, SubAssign},
@@ -175,14 +173,14 @@ impl WeightedShuffle {
     // Equivalent to weighted_shuffle.shuffle(&mut rng).next()
     pub fn first<R: Rng>(&self, rng: &mut R) -> Option<usize> {
         if self.weight > 0 {
-            let sample = <u64 as SampleUniform>::Sampler::sample_single(0, self.weight, rng);
+            let sample = UniformU64Sampler::new_like_trait_sample(self.weight).sample(rng);
             let (index, _) = self.search(sample);
             return Some(index);
         }
         if self.zeros.is_empty() {
             return None;
         }
-        let index = <u64 as SampleUniform>::Sampler::sample_single(0, self.zeros.len() as u64, rng);
+        let index = UniformU64Sampler::new_like_trait_sample(self.zeros.len() as u64).sample(rng);
         self.zeros.get(index as usize).copied()
     }
 }
@@ -191,7 +189,7 @@ impl WeightedShuffle {
     pub fn shuffle<'a, R: Rng>(&'a mut self, rng: &'a mut R) -> impl Iterator<Item = usize> + 'a {
         std::iter::from_fn(move || {
             if self.weight > 0 {
-                let sample = <u64 as SampleUniform>::Sampler::sample_single(0, self.weight, rng);
+                let sample = UniformU64Sampler::new_like_trait_sample(self.weight).sample(rng);
                 let (index, weight) = self.search(sample);
                 self.remove(index, weight);
                 return Some(index);
@@ -200,7 +198,7 @@ impl WeightedShuffle {
                 return None;
             }
             let index =
-                <u64 as SampleUniform>::Sampler::sample_single(0, self.zeros.len() as u64, rng);
+                UniformU64Sampler::new_like_trait_sample(self.zeros.len() as u64).sample(rng);
             Some(self.zeros.swap_remove(index as usize))
         })
     }
@@ -310,7 +308,7 @@ mod tests {
             weights[index] = 0;
         }
         while !zeros.is_empty() {
-            let index = <u64 as SampleUniform>::Sampler::sample_single(0, zeros.len() as u64, rng);
+            let index = UniformU64Sampler::new_like_trait_sample(zeros.len() as u64).sample(rng);
             shuffle.push(zeros.swap_remove(index as usize));
         }
         shuffle
