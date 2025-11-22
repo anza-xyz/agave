@@ -10,7 +10,7 @@
 //!    ALT, RuntimeTransaction<SanitizedMessage> transits into Dynamically Loaded state,
 //!    with its dynamic metadata loaded.
 use {
-    crate::transaction_meta::{DynamicMeta, StaticMeta, TransactionMeta},
+    crate::transaction_meta::{StaticMeta, TransactionMeta},
     core::ops::Deref,
     solana_compute_budget_instruction::compute_budget_instruction_details::*,
     solana_hash::Hash,
@@ -61,7 +61,7 @@ impl<T> StaticMeta for RuntimeTransaction<T> {
     }
 }
 
-impl<T: SVMMessage> DynamicMeta for RuntimeTransaction<T> {}
+
 
 impl<T> Deref for RuntimeTransaction<T> {
     type Target = T;
