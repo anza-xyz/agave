@@ -42,6 +42,10 @@ pub(crate) enum BuildCertError {
     Encode(EncodeError),
 }
 
+/// Builds a [`Certificate`].
+///
+/// If [`fallback`] is `None`, uses base-2 encoding.
+/// If [`fallback`] is not `None`, then uses base-3 encoding.
 fn build_cert(
     cert_type: CertificateType,
     signature: &SignatureProjective,
@@ -333,16 +337,18 @@ impl VotePool {
             CertificateType::Skip(_) => {
                 let accumulated_stake =
                     self.skip.stake.saturating_add(self.skip_fallback.stake) as f64;
-                let fallback = (self.skip_fallback.stake != 0).then_some((
-                    &self.skip_fallback.signature,
-                    self.skip_fallback.bitmap.clone(),
-                ));
-                (accumulated_stake / total_stake >= 0.6).then_some(build_cert(
-                    cert_type,
-                    &self.skip.signature,
-                    self.skip.bitmap.clone(),
-                    fallback,
-                ))
+                (accumulated_stake / total_stake >= 0.6).then_some({
+                    let fallback = (self.skip_fallback.stake != 0).then_some((
+                        &self.skip_fallback.signature,
+                        self.skip_fallback.bitmap.clone(),
+                    ));
+                    build_cert(
+                        cert_type,
+                        &self.skip.signature,
+                        self.skip.bitmap.clone(),
+                        fallback,
+                    )
+                })
             }
         }
     }
