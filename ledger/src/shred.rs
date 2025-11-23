@@ -60,6 +60,7 @@ pub use {
         stats::{ProcessShredsStats, ShredFetchStats},
     },
     crate::shredder::{ReedSolomonCache, Shredder},
+    merkle::ShredData,
 };
 use {
     self::{
