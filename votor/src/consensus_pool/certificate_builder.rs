@@ -1,5 +1,5 @@
 use {
-    crate::common::{certificate_limits_and_vote_types, VoteType},
+    crate::common::certificate_limits_and_votes,
     agave_votor_messages::consensus_message::{Certificate, CertificateType, VoteMessage},
     bitvec::prelude::*,
     solana_bls_signatures::{BlsError, SignatureProjective},
@@ -146,24 +146,23 @@ impl BuilderType {
         cert_type: &CertificateType,
         msgs: &[VoteMessage],
     ) -> Result<(), AggregateError> {
-        let vote_types = certificate_limits_and_vote_types(cert_type).1;
+        let (_, vote, fallback_vote) = certificate_limits_and_votes(cert_type);
         match self {
             Self::DoubleVote {
                 signature,
                 bitmap0,
                 bitmap1,
             } => {
-                debug_assert_eq!(vote_types.len(), 2);
-                if vote_types.len() != 2 {
+                debug_assert!(fallback_vote.is_some());
+                let Some(fallback_vote) = fallback_vote else {
                     return Err(AggregateError::InvalidVoteTypes);
-                }
+                };
                 for msg in msgs {
-                    let vote_type = VoteType::get_type(&msg.vote);
-                    if vote_type == vote_types[0] {
+                    if msg.vote == vote {
                         try_set_bitmap(bitmap0, msg.rank)?;
                     } else {
-                        debug_assert_eq!(vote_type, vote_types[1]);
-                        if vote_type != vote_types[1] {
+                        debug_assert_eq!(msg.vote, fallback_vote);
+                        if msg.vote != fallback_vote {
                             return Err(AggregateError::InvalidVoteTypes);
                         }
                         match bitmap1 {
@@ -180,14 +179,13 @@ impl BuilderType {
             }
 
             Self::SingleVote { signature, bitmap } => {
-                debug_assert_eq!(vote_types.len(), 1);
-                if vote_types.len() != 1 {
+                debug_assert!(fallback_vote.is_none());
+                if fallback_vote.is_some() {
                     return Err(AggregateError::InvalidVoteTypes);
                 }
                 for msg in msgs {
-                    let vote_type = VoteType::get_type(&msg.vote);
-                    debug_assert_eq!(vote_type, vote_types[0]);
-                    if vote_type != vote_types[0] {
+                    debug_assert_eq!(msg.vote, vote);
+                    if msg.vote != vote {
                         return Err(AggregateError::InvalidVoteTypes);
                     }
                     try_set_bitmap(bitmap, msg.rank)?;

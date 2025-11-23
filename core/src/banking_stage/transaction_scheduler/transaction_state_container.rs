@@ -246,7 +246,7 @@ pub type SharedBytes = Arc<Vec<u8>>;
 pub(crate) type RuntimeTransactionView = RuntimeTransaction<ResolvedTransactionView<SharedBytes>>;
 pub(crate) type TransactionViewState = TransactionState<RuntimeTransactionView>;
 
-/// A wrapper around `TransactionStateContainer` that allows re-uses
+/// A wrapper around `TransactionStateContainer` that allows reuse of
 /// pre-allocated `Bytes` to copy packet data into and use for serialization.
 /// This is used to avoid allocations in parsing transactions.
 pub struct TransactionViewStateContainer {
@@ -475,13 +475,13 @@ mod tests {
         let reserved_addresses = HashSet::default();
         let packet_parser = |data, priority, cost| {
             let view = SanitizedTransactionView::try_new_sanitized(data, true).unwrap();
-            let view = RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+            let view = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 view,
                 MessageHash::Compute,
                 None,
             )
             .unwrap();
-            let view = RuntimeTransaction::<ResolvedTransactionView<_>>::try_from(
+            let view = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
                 view,
                 None,
                 &reserved_addresses,

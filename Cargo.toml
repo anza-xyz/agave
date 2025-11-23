@@ -248,9 +248,9 @@ bv = "0.11.1"
 byte-unit = "4.0.19"
 bytemuck = "1.24.0"
 bytemuck_derive = "1.10.2"
-bytes = "1.10"
+bytes = "1.11"
 bzip2 = "0.4.4"
-caps = "0.5.5"
+caps = "0.5.6"
 cargo_metadata = "0.15.4"
 cfg-if = "1.0.4"
 cfg_eval = "0.1.2"
@@ -261,7 +261,7 @@ console = "0.16.1"
 console_error_panic_hook = "0.1.7"
 console_log = "0.2.2"
 const_format = "0.2.35"
-core_affinity = "0.5.10"
+core_affinity = "0.8.3"
 criterion = "0.5.1"
 criterion-stats = "0.3.0"
 crossbeam-channel = "0.5.15"
@@ -305,14 +305,14 @@ humantime = "2.3.0"
 hyper = "0.14.32"
 hyper-proxy = "0.9.1"
 im = "15.1.0"
-indexmap = "2.11.4"
+indexmap = "2.12.0"
 indicatif = "0.18.3"
 io-uring = "0.7.11"
 itertools = "0.13.0"
 jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
     "unprefixed_malloc_on_supported_platforms",
 ] }
-js-sys = "0.3.81"
+js-sys = "0.3.82"
 json5 = "0.4.1"
 jsonrpc-core = "18.0.0"
 jsonrpc-core-client = "18.0.0"
@@ -332,7 +332,7 @@ light-poseidon-0-2 = { package = "light-poseidon", version = "0.2.0" }
 log = "0.4.28"
 lru = "0.7.7"
 lz4 = "1.28.1"
-memmap2 = "0.9.8"
+memmap2 = "0.9.9"
 memoffset = "0.9"
 merlin = { version = "3", default-features = false }
 min-max-heap = "1.3.0"
@@ -378,7 +378,7 @@ reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.4"
 rts-alloc = { version = "1.0.0" }
-rustls = { version = "0.23.34", features = ["std"], default-features = false }
+rustls = { version = "0.23.35", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.27"
 seqlock = "0.2.0"
@@ -405,7 +405,7 @@ solana-account-decoder = { path = "account-decoder", version = "=4.0.0-alpha.0",
 solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-account-info = "3.0.0"
 solana-accounts-db = { path = "accounts-db", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-address = "1.0.0"
+solana-address = "1.1.0"
 solana-address-lookup-table-interface = "3.0.0"
 solana-atomic-u64 = "3.0.0"
 solana-banks-client = { path = "banks-client", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
@@ -413,7 +413,7 @@ solana-banks-interface = { path = "banks-interface", version = "=4.0.0-alpha.0",
 solana-banks-server = { path = "banks-server", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-big-mod-exp = "3.0.0"
 solana-bincode = "3.0.0"
-solana-blake3-hasher = "3.0.0"
+solana-blake3-hasher = "3.1.0"
 solana-bloom = { path = "bloom", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-bls-signatures = { version = "1.0.0", features = ["serde"] }
 solana-bn254 = "3.1.2"
@@ -466,12 +466,12 @@ solana-genesis-utils = { path = "genesis-utils", version = "=4.0.0-alpha.0", fea
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-gossip = { path = "gossip", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-hard-forks = "3.0.0"
-solana-hash = "3.0.0"
+solana-hash = "3.1.0"
 solana-inflation = "3.0.0"
 solana-instruction = "3.0.0"
-solana-instruction-error = "2.0.0"
+solana-instruction-error = "2.1.0"
 solana-instructions-sysvar = "3.0.0"
-solana-keccak-hasher = "3.0.0"
+solana-keccak-hasher = "3.1.0"
 solana-keypair = "3.0.1"
 solana-last-restart-slot = "3.0.0"
 solana-lattice-hash = { path = "lattice-hash", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
@@ -493,7 +493,7 @@ solana-nonce = "3.0.0"
 solana-nonce-account = "3.0.0"
 solana-notifier = { path = "notifier", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-offchain-message = "3.0.0"
-solana-packet = "3.0.0"
+solana-packet = "4.0.0"
 solana-perf = { path = "perf", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-poh = { path = "poh", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-poh-config = "3.0.0"
@@ -536,7 +536,7 @@ solana-send-transaction-service = { path = "send-transaction-service", version =
 solana-serde = "3.0.0"
 solana-serde-varint = "3.0.0"
 solana-serialize-utils = "3.1.0"
-solana-sha256-hasher = "3.0.1"
+solana-sha256-hasher = "3.1.0"
 solana-short-vec = "3.0.0"
 solana-shred-version = "3.0.0"
 solana-signature = { version = "3.1.0", default-features = false }
@@ -569,7 +569,7 @@ solana-tls-utils = { path = "tls-utils", version = "=4.0.0-alpha.0", features = 
 solana-tps-client = { path = "tps-client", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-tpu-client = { path = "tpu-client", version = "=4.0.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-tpu-client-next = { path = "tpu-client-next", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-transaction = "3.0.1"
+solana-transaction = "3.0.2"
 solana-transaction-context = { path = "transaction-context", version = "=4.0.0-alpha.0", features = ["agave-unstable-api", "bincode"] }
 solana-transaction-error = "3.0.0"
 solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }

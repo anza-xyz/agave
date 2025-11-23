@@ -7,7 +7,6 @@ use {
     crossbeam_channel::{Receiver, Sender},
     dlopen2::symbor::{Container, SymBorApi, Symbol},
     log::*,
-    rand::{thread_rng, Rng},
     rayon::{prelude::*, ThreadPool},
     serde::{Deserialize, Serialize},
     solana_hash::Hash,
@@ -549,15 +548,6 @@ pub fn create_ticks(num_ticks: u64, hashes_per_tick: u64, mut hash: Hash) -> Vec
         .collect()
 }
 
-pub fn create_random_ticks(num_ticks: u64, max_hashes_per_tick: u64, mut hash: Hash) -> Vec<Entry> {
-    repeat_with(|| {
-        let hashes_per_tick = thread_rng().gen_range(1..max_hashes_per_tick);
-        next_entry_mut(&mut hash, hashes_per_tick, vec![])
-    })
-    .take(num_ticks as usize)
-    .collect()
-}
-
 /// Creates the next Tick or Transaction Entry `num_hashes` after `start_hash`.
 pub fn next_entry(prev_hash: &Hash, num_hashes: u64, transactions: Vec<Transaction>) -> Entry {
     let transactions = transactions.into_iter().map(Into::into).collect::<Vec<_>>();
@@ -604,6 +594,7 @@ mod tests {
     use {
         super::*,
         agave_reserved_account_keys::ReservedAccountKeys,
+        rand::{thread_rng, Rng},
         rayon::ThreadPoolBuilder,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -621,6 +612,15 @@ mod tests {
         },
         solana_transaction_error::TransactionResult as Result,
     };
+
+    fn create_random_ticks(num_ticks: u64, max_hashes_per_tick: u64, mut hash: Hash) -> Vec<Entry> {
+        repeat_with(|| {
+            let hashes_per_tick = thread_rng().gen_range(1..max_hashes_per_tick);
+            next_entry_mut(&mut hash, hashes_per_tick, vec![])
+        })
+        .take(num_ticks as usize)
+        .collect()
+    }
 
     #[test]
     fn test_entry_verify() {

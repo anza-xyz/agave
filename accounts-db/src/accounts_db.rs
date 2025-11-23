@@ -2593,8 +2593,8 @@ impl AccountsDb {
     /// pubkeys_removed_from_accounts_index - These keys have already been removed from the accounts index
     ///    and should not be unref'd. If they exist in the accounts index, they are NEW.
     /// clean_stored_dead_slots - clean_stored_dead_slots iterates through all the pubkeys in the dead
-    ///    slots and unrefs them in the acocunts index if they are not present in
-    ///    pubkeys_removed_from_accounts_index. Skipping clean is the equivilent to
+    ///    slots and unrefs them in the accounts index if they are not present in
+    ///    pubkeys_removed_from_accounts_index. Skipping clean is the equivalent to
     ///    pubkeys_removed_from_accounts_index containing all the pubkeys in the dead slots
     fn process_dead_slots(
         &self,
@@ -5616,10 +5616,7 @@ impl AccountsDb {
     }
 
     fn remove_dead_slots_metadata<'a>(&'a self, dead_slots_iter: impl Iterator<Item = &'a Slot>) {
-        let mut measure = Measure::start("remove_dead_slots_metadata-ms");
         self.clean_dead_slots_from_accounts_index(dead_slots_iter);
-        measure.stop();
-        inc_new_counter_info!("remove_dead_slots_metadata-ms", measure.as_ms() as usize);
     }
 
     /// lookup each pubkey in 'pubkeys' and unref it in the accounts index
@@ -6839,7 +6836,7 @@ impl AccountsDb {
 
         // Now that the index is generated, get the total capacity of the in-mem maps
         // across all the bins and set the initial value for the stat.
-        // We do this all at once, at the end, since getting the capacity requries iterating all
+        // We do this all at once, at the end, since getting the capacity requires iterating all
         // the bins and grabbing a read lock, which we try to avoid whenever possible.
         let index_capacity = self
             .accounts_index

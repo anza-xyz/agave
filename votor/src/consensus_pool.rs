@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        common::{certificate_limits_and_vote_types, vote_to_certificate_ids, Stake},
+        common::{certificate_limits_and_votes, vote_to_certificate_ids, Stake},
         consensus_pool::{
             certificate_builder::{BuildError as CertificateBuilderError, CertificateBuilder},
             parent_ready_tracker::ParentReadyTracker,
@@ -147,7 +147,9 @@ impl ConsensusPool {
         events: &mut Vec<VotorEvent>,
         total_stake: Stake,
     ) -> Result<Vec<Arc<Certificate>>, AddVoteError> {
-        let slot = vote.slot();
+        let Some(vote_pool) = self.vote_pools.get(&vote.slot()) else {
+            return Ok(vec![]);
+        };
         let mut new_certificates_to_send = Vec::new();
         for cert_type in vote_to_certificate_ids(vote) {
             // If the certificate is already complete, skip it
@@ -155,31 +157,25 @@ impl ConsensusPool {
                 continue;
             }
             // Otherwise check whether the certificate is complete
-            let (limit, vote_types) = certificate_limits_and_vote_types(&cert_type);
-            let accumulated_stake = vote_types
-                .iter()
-                .map(|vote_type| {
-                    self.vote_pools
-                        .get(&slot)
-                        .map_or(0, |p| p.get_stake(vote_type, vote.block_id()))
-                })
-                .sum::<Stake>();
+            let (limit, vote, fallback_vote) = certificate_limits_and_votes(&cert_type);
+            let accumulated_stake = vote_pool
+                .get_stake(&vote)
+                .saturating_add(fallback_vote.map_or(0, |v| vote_pool.get_stake(&v)));
 
             if accumulated_stake as f64 / (total_stake as f64) < limit {
                 continue;
             }
             let mut cert_builder = CertificateBuilder::new(cert_type);
-            for vote_type in vote_types {
-                if let Some(vote_pool) = self.vote_pools.get(&slot) {
-                    cert_builder
-                        .aggregate(&vote_pool.get_votes(vote_type, vote.block_id()))
-                        .unwrap();
-                }
+            cert_builder.aggregate(&vote_pool.get_votes(&vote)).unwrap();
+            if let Some(v) = fallback_vote {
+                cert_builder.aggregate(&vote_pool.get_votes(&v)).unwrap();
             }
             let new_cert = Arc::new(cert_builder.build()?);
-            self.insert_certificate(cert_type, new_cert.clone(), events);
             self.stats.incr_cert_type(&new_cert.cert_type, true);
             new_certificates_to_send.push(new_cert);
+        }
+        for cert in &new_certificates_to_send {
+            self.insert_certificate(cert.cert_type, cert.clone(), events);
         }
         Ok(new_certificates_to_send)
     }

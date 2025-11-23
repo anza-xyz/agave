@@ -244,7 +244,7 @@ pub fn execute_batch<'a>(
             batch.sanitized_transactions(),
         ))
     } else {
-        // Unified scheduler block production wihout metadata recording
+        // Unified scheduler block production without metadata recording
         Ok(vec![])
     };
     check_block_costs_elapsed.stop();
@@ -829,7 +829,7 @@ pub type ProcessSlotCallback = Arc<dyn Fn(&Bank) + Sync + Send>;
 
 #[derive(Default, Clone)]
 pub struct ProcessOptions {
-    /// Run PoH, transaction signature and other transaction verifications on the entries.
+    /// Run PoH, transaction signature and other transaction verification on the entries.
     pub run_verification: bool,
     pub full_leader_cache: bool,
     pub halt_at_slot: Option<Slot>,
@@ -1092,7 +1092,7 @@ fn verify_ticks(
 
         // If the bank is in the alpenglow epoch, but the parent is from an epoch
         // where the feature flag is not active, we must verify ticks that correspond
-        // to the epoch in which PoH is active. This verification is criticial, as otherwise
+        // to the epoch in which PoH is active. This verification is critical, as otherwise
         // a leader could jump the gun and publish a block in the alpenglow epoch without waiting
         // the appropriate time as determined by PoH in the prior epoch.
         if bank.slot() >= first_alpenglow_slot && next_bank_tick_height == max_bank_tick_height {
@@ -2324,7 +2324,7 @@ pub mod tests {
             },
         },
         assert_matches::assert_matches,
-        rand::{thread_rng, Rng},
+        rand::{rng, Rng},
         solana_account::{AccountSharedData, WritableAccount},
         solana_cost_model::transaction_cost::TransactionCost,
         solana_entry::entry::{create_ticks, next_entry, next_entry_mut},
@@ -3455,6 +3455,7 @@ pub mod tests {
                 InstructionError::DuplicateAccountIndex,
                 InstructionError::ExecutableModified,
                 InstructionError::RentEpochModified,
+                #[allow(deprecated)]
                 InstructionError::NotEnoughAccountKeys,
                 InstructionError::AccountDataSizeChanged,
                 InstructionError::AccountNotExecutable,
@@ -4378,7 +4379,7 @@ pub mod tests {
             }
             i += 1;
 
-            let slot = bank.slot() + thread_rng().gen_range(1..3);
+            let slot = bank.slot() + rng().random_range(1..3);
             bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), slot));
         }
     }
@@ -5198,7 +5199,7 @@ pub mod tests {
             }),
         );
 
-        // pre_commit_callback() should alwasy be called regardless of tx_result
+        // pre_commit_callback() should always be called regardless of tx_result
         assert!(is_called);
 
         if should_commit {

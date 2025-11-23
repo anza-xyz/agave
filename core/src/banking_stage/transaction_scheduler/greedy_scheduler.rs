@@ -627,7 +627,7 @@ mod test {
         let pubkey2 = Pubkey::new_unique();
         let pubkey3 = Pubkey::new_unique();
 
-        // Dependecy graph:
+        // Dependency graph:
         // 3 --
         //     \
         //       -> 1 -> 0

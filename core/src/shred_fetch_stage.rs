@@ -436,12 +436,11 @@ pub(crate) fn receive_quic_datagrams(
         let packet_batch: BytesPacketBatch = entries
             .filter(|(_, _, bytes)| bytes.len() <= PACKET_DATA_SIZE)
             .map(|(_pubkey, addr, bytes)| {
-                let meta = Meta {
-                    size: bytes.len(),
-                    addr: addr.ip(),
-                    port: addr.port(),
-                    flags,
-                };
+                let mut meta = Meta::default();
+                meta.size = bytes.len();
+                meta.addr = addr.ip();
+                meta.port = addr.port();
+                meta.flags = flags;
                 BytesPacket::new(bytes, meta)
             })
             .collect();

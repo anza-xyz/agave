@@ -309,7 +309,7 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            SliceRoot(Hash::new_from_array(rand::thread_rng().gen())),
+            SliceRoot(Hash::new_from_array(rand::rng().random())),
             start_index, // next_shred_index
             start_index, // next_code_index
             &ReedSolomonCache::default(),
@@ -395,7 +395,7 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            SliceRoot(Hash::new_from_array(rand::thread_rng().gen())),
+            SliceRoot(Hash::new_from_array(rand::rng().random())),
             369, // next_shred_index
             776, // next_code_index
             &ReedSolomonCache::default(),
@@ -427,7 +427,7 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            SliceRoot(Hash::new_from_array(rand::thread_rng().gen())),
+            SliceRoot(Hash::new_from_array(rand::rng().random())),
             0, // next_shred_index
             0, // next_code_index
             &ReedSolomonCache::default(),
@@ -464,7 +464,7 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            SliceRoot(Hash::new_from_array(rand::thread_rng().gen())),
+            SliceRoot(Hash::new_from_array(rand::rng().random())),
             0, // next_shred_index
             0, // next_code_index
             &ReedSolomonCache::default(),
@@ -511,7 +511,7 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            SliceRoot(Hash::new_from_array(rand::thread_rng().gen())),
+            SliceRoot(Hash::new_from_array(rand::rng().random())),
             0, // next_shred_index
             0, // next_code_index
             &ReedSolomonCache::default(),
@@ -561,7 +561,7 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            SliceRoot(Hash::new_from_array(rand::thread_rng().gen())),
+            SliceRoot(Hash::new_from_array(rand::rng().random())),
             0, // next_shred_index
             0, // next_code_index
             &ReedSolomonCache::default(),
@@ -595,7 +595,7 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            SliceRoot(Hash::new_from_array(rand::thread_rng().gen())),
+            SliceRoot(Hash::new_from_array(rand::rng().random())),
             start_index, // next_shred_index
             start_index, // next_code_index
             &ReedSolomonCache::default(),

@@ -647,7 +647,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .help(
                     "Use when running a validator behind a NAT. DNS name or IP address for this \
                      validator to advertise in gossip. This address will be used as the target \
-                     desination address for peers trying to contact this node. [default: the \
+                     destination address for peers trying to contact this node. [default: the \
                      first --bind-address, or ask --entrypoint when --bind-address is not \
                      provided, or 127.0.0.1 when --entrypoint is not provided]. Note: this \
                      argument cannot be used in a multihoming context (when multiple \

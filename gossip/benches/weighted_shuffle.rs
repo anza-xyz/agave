@@ -17,7 +17,7 @@ fn bench_weighted_shuffle_new(c: &mut Criterion) {
     c.bench_function("bench_weighted_shuffle_new", |b| {
         b.iter(|| {
             let weights = make_weights(&mut rng);
-            black_box(WeightedShuffle::<u64>::new("", &weights));
+            black_box(WeightedShuffle::new("", &weights));
         })
     });
 }

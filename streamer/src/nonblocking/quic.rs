@@ -2,8 +2,7 @@ use {
     crate::{
         nonblocking::{
             connection_rate_limiter::ConnectionRateLimiter,
-            qos::{ConnectionContext, QosController},
-            stream_throttle::ConnectionStreamCounter,
+            qos::{ConnectionContext, OpaqueStreamerCounter, QosController},
         },
         quic::{configure_server, QuicServerError, QuicStreamerConfig, StreamerStats},
         streamer::StakedNodes,
@@ -83,6 +82,13 @@ const MAX_CONNECTION_BURST: u64 = 1000;
 /// Timeout for connection handshake. Timer starts once we get Initial from the
 /// peer, and is canceled when we get a Handshake packet from them.
 const QUIC_CONNECTION_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Absolute max RTT to allow for a legitimate connection.
+/// Enough to cover any non-malicious link on Earth.
+pub(crate) const MAX_RTT: Duration = Duration::from_millis(320);
+/// Prevent connections from having 0 RTT when RTT is too small,
+/// as this would break some BDP calculations and assign zero bandwidth
+pub(crate) const MIN_RTT: Duration = Duration::from_millis(2);
 
 // A struct to accumulate the bytes making up
 // a packet, along with their offsets, and the
@@ -392,7 +398,7 @@ pub fn get_remote_pubkey(connection: &Connection) -> Option<Pubkey> {
 pub fn get_connection_stake(
     connection: &Connection,
     staked_nodes: &RwLock<StakedNodes>,
-) -> Option<(Pubkey, u64, u64, u64, u64)> {
+) -> Option<(Pubkey, u64, u64)> {
     let pubkey = get_remote_pubkey(connection)?;
     debug!("Peer public key is {pubkey:?}");
     let staked_nodes = staked_nodes.read().unwrap();
@@ -400,8 +406,6 @@ pub fn get_connection_stake(
         pubkey,
         staked_nodes.get_node_stake(&pubkey)?,
         staked_nodes.total_stake(),
-        staked_nodes.max_stake(),
-        staked_nodes.min_stake(),
     ))
 }
 
@@ -411,9 +415,9 @@ pub(crate) enum ConnectionHandlerError {
     MaxStreamError,
 }
 
-pub(crate) fn update_open_connections_stat(
+pub(crate) fn update_open_connections_stat<S: OpaqueStreamerCounter>(
     stats: &StreamerStats,
-    connection_table: &ConnectionTable,
+    connection_table: &ConnectionTable<S>,
 ) {
     if connection_table.is_staked() {
         stats
@@ -630,8 +634,11 @@ async fn handle_connection<Q, C>(
         let mut meta = Meta::default();
         meta.set_socket_addr(&remote_addr);
         meta.set_from_staked_node(matches!(peer_type, ConnectionPeerType::Staked(_)));
-        let mut accum = PacketAccumulator::new(meta);
+        if let Some(pubkey) = context.remote_pubkey() {
+            meta.set_remote_pubkey(pubkey);
+        }
 
+        let mut accum = PacketAccumulator::new(meta);
         // Virtually all small transactions will fit in 1 chunk. Larger transactions will fit in 1
         // or 2 chunks if the first chunk starts towards the end of a datagram. A small number of
         // transaction will have other protocol frames inserted in the middle. Empirically it's been
@@ -855,8 +862,7 @@ fn handle_chunks(
     Ok(StreamState::Finished)
 }
 
-#[derive(Debug)]
-struct ConnectionEntry {
+struct ConnectionEntry<S: OpaqueStreamerCounter> {
     cancel: CancellationToken,
     peer_type: ConnectionPeerType,
     last_update: Arc<AtomicU64>,
@@ -864,10 +870,10 @@ struct ConnectionEntry {
     // We do not explicitly use it, but its drop is triggered when ConnectionEntry is dropped.
     _client_connection_tracker: ClientConnectionTracker,
     connection: Option<Connection>,
-    stream_counter: Arc<ConnectionStreamCounter>,
+    stream_counter: Arc<S>,
 }
 
-impl ConnectionEntry {
+impl<S: OpaqueStreamerCounter> ConnectionEntry<S> {
     fn new(
         cancel: CancellationToken,
         peer_type: ConnectionPeerType,
@@ -875,7 +881,7 @@ impl ConnectionEntry {
         port: u16,
         client_connection_tracker: ClientConnectionTracker,
         connection: Option<Connection>,
-        stream_counter: Arc<ConnectionStreamCounter>,
+        stream_counter: Arc<S>,
     ) -> Self {
         Self {
             cancel,
@@ -900,7 +906,7 @@ impl ConnectionEntry {
     }
 }
 
-impl Drop for ConnectionEntry {
+impl<S: OpaqueStreamerCounter> Drop for ConnectionEntry<S> {
     fn drop(&mut self) {
         if let Some(conn) = self.connection.take() {
             conn.close(
@@ -932,8 +938,8 @@ pub(crate) enum ConnectionTableType {
 }
 
 // Map of IP to list of connection entries
-pub(crate) struct ConnectionTable {
-    table: IndexMap<ConnectionTableKey, Vec<ConnectionEntry>>,
+pub(crate) struct ConnectionTable<S: OpaqueStreamerCounter> {
+    table: IndexMap<ConnectionTableKey, Vec<ConnectionEntry<S>>>,
     pub(crate) total_size: usize,
     table_type: ConnectionTableType,
     cancel: CancellationToken,
@@ -942,7 +948,7 @@ pub(crate) struct ConnectionTable {
 /// Prune the connection which has the oldest update
 ///
 /// Return number pruned
-impl ConnectionTable {
+impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
     pub(crate) fn new(table_type: ConnectionTableType, cancel: CancellationToken) -> Self {
         Self {
             table: IndexMap::default(),
@@ -991,7 +997,7 @@ impl ConnectionTable {
             })
             .map(|index| {
                 let connection = self.table[index].first();
-                let stake = connection.map(|connection: &ConnectionEntry| connection.stake());
+                let stake = connection.map(|connection: &ConnectionEntry<S>| connection.stake());
                 (index, stake)
             })
             .take(sample_size)
@@ -1004,7 +1010,7 @@ impl ConnectionTable {
         num_pruned
     }
 
-    pub(crate) fn try_add_connection(
+    pub(crate) fn try_add_connection<F: FnOnce() -> Arc<S>>(
         &mut self,
         key: ConnectionTableKey,
         port: u16,
@@ -1013,11 +1019,8 @@ impl ConnectionTable {
         peer_type: ConnectionPeerType,
         last_update: Arc<AtomicU64>,
         max_connections_per_peer: usize,
-    ) -> Option<(
-        Arc<AtomicU64>,
-        CancellationToken,
-        Arc<ConnectionStreamCounter>,
-    )> {
+        stream_counter_factory: F,
+    ) -> Option<(Arc<AtomicU64>, CancellationToken, Arc<S>)> {
         let connection_entry = self.table.entry(key).or_default();
         let has_connection_capacity = connection_entry
             .len()
@@ -1029,7 +1032,7 @@ impl ConnectionTable {
             let stream_counter = connection_entry
                 .first()
                 .map(|entry| entry.stream_counter.clone())
-                .unwrap_or(Arc::new(ConnectionStreamCounter::new()));
+                .unwrap_or_else(stream_counter_factory);
             connection_entry.push(ConnectionEntry::new(
                 cancel.clone(),
                 peer_type,
@@ -1113,6 +1116,7 @@ pub mod test {
     use {
         super::*,
         crate::nonblocking::{
+            qos::NullStreamerCounter,
             swqos::SwQosConfig,
             testing_utilities::{
                 check_multiple_streams, get_client_config, make_client_endpoint, setup_quic_server,
@@ -1663,6 +1667,7 @@ pub mod test {
                     ConnectionPeerType::Unstaked,
                     Arc::new(AtomicU64::new(i as u64)),
                     max_connections_per_peer,
+                    || Arc::new(NullStreamerCounter {}),
                 )
                 .unwrap();
         }
@@ -1676,6 +1681,7 @@ pub mod test {
                 ConnectionPeerType::Unstaked,
                 Arc::new(AtomicU64::new(5)),
                 max_connections_per_peer,
+                || Arc::new(NullStreamerCounter {}),
             )
             .unwrap();
 
@@ -1719,6 +1725,7 @@ pub mod test {
                     ConnectionPeerType::Unstaked,
                     Arc::new(AtomicU64::new(i as u64)),
                     max_connections_per_peer,
+                    || Arc::new(NullStreamerCounter {}),
                 )
                 .unwrap();
         }
@@ -1755,6 +1762,7 @@ pub mod test {
                     ConnectionPeerType::Unstaked,
                     Arc::new(AtomicU64::new(i as u64)),
                     max_connections_per_peer,
+                    || Arc::new(NullStreamerCounter {}),
                 )
                 .unwrap();
         });
@@ -1770,6 +1778,7 @@ pub mod test {
                 ConnectionPeerType::Unstaked,
                 Arc::new(AtomicU64::new(10)),
                 max_connections_per_peer,
+                || Arc::new(NullStreamerCounter {})
             )
             .is_none());
 
@@ -1785,6 +1794,7 @@ pub mod test {
                 ConnectionPeerType::Unstaked,
                 Arc::new(AtomicU64::new(10)),
                 max_connections_per_peer,
+                || Arc::new(NullStreamerCounter {})
             )
             .is_some());
 
@@ -1825,6 +1835,7 @@ pub mod test {
                     ConnectionPeerType::Staked((i + 1) as u64),
                     Arc::new(AtomicU64::new(i as u64)),
                     max_connections_per_peer,
+                    || Arc::new(NullStreamerCounter {}),
                 )
                 .unwrap();
         }
@@ -1869,6 +1880,7 @@ pub mod test {
                     ConnectionPeerType::Unstaked,
                     Arc::new(AtomicU64::new((i * 2) as u64)),
                     max_connections_per_peer,
+                    || Arc::new(NullStreamerCounter {}),
                 )
                 .unwrap();
 
@@ -1881,6 +1893,7 @@ pub mod test {
                     ConnectionPeerType::Unstaked,
                     Arc::new(AtomicU64::new((i * 2 + 1) as u64)),
                     max_connections_per_peer,
+                    || Arc::new(NullStreamerCounter {}),
                 )
                 .unwrap();
         }
@@ -1896,6 +1909,7 @@ pub mod test {
                 ConnectionPeerType::Unstaked,
                 Arc::new(AtomicU64::new((num_ips * 2) as u64)),
                 max_connections_per_peer,
+                || Arc::new(NullStreamerCounter {}),
             )
             .unwrap();
 

@@ -355,7 +355,7 @@ impl BankForks {
         self.dumped_slot_subscribers.push(notifier);
     }
 
-    /// Clears associated banks from BankForks and notifies subscribers that a dump has occured.
+    /// Clears associated banks from BankForks and notifies subscribers that a dump has occurred.
     pub fn dump_slots<'a, I>(&mut self, slots: I) -> (Vec<(Slot, BankId)>, Vec<BankWithScheduler>)
     where
         I: Iterator<Item = &'a Slot>,

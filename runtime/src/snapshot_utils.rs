@@ -2,13 +2,13 @@
 use solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs;
 use {
     crate::{
-        bank::{BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
+        bank::BankFieldsToDeserialize,
         serde_snapshot::{
             self, AccountsDbFields, ExtraFieldsToSerialize, SerdeObsoleteAccountsMap,
             SerializableAccountStorageEntry, SnapshotAccountsDbFields, SnapshotBankFields,
             SnapshotStreams,
         },
-        snapshot_package::SnapshotPackage,
+        snapshot_package::{BankSnapshotPackage, SnapshotPackage},
         snapshot_utils::snapshot_storage_rebuilder::{
             get_slot_and_append_vec_id, SnapshotStorageRebuilder,
         },
@@ -444,24 +444,17 @@ pub fn serialize_and_archive_snapshot_package(
     let SnapshotPackage {
         snapshot_kind,
         slot: snapshot_slot,
-        block_height: _,
         hash: snapshot_hash,
         mut snapshot_storages,
-        status_cache_slot_deltas,
-        bank_fields_to_serialize,
-        bank_hash_stats,
-        write_version,
+        bank_snapshot_package,
         enqueued: _,
     } = snapshot_package;
 
     let bank_snapshot_info = serialize_snapshot(
         &snapshot_config.bank_snapshots_dir,
         snapshot_config.snapshot_version,
-        snapshot_storages.as_slice(),
-        status_cache_slot_deltas.as_slice(),
-        bank_fields_to_serialize,
-        bank_hash_stats,
-        write_version,
+        bank_snapshot_package,
+        &snapshot_storages,
         should_flush_and_hard_link_storages,
     )?;
 
@@ -502,17 +495,20 @@ pub fn serialize_and_archive_snapshot_package(
 }
 
 /// Serializes a snapshot into `bank_snapshots_dir`
-#[allow(clippy::too_many_arguments)]
 fn serialize_snapshot(
     bank_snapshots_dir: impl AsRef<Path>,
     snapshot_version: SnapshotVersion,
+    bank_snapshot_package: BankSnapshotPackage,
     snapshot_storages: &[Arc<AccountStorageEntry>],
-    slot_deltas: &[BankSlotDelta],
-    mut bank_fields: BankFieldsToSerialize,
-    bank_hash_stats: BankHashStats,
-    write_version: u64,
     should_flush_and_hard_link_storages: bool,
 ) -> Result<BankSnapshotInfo> {
+    let BankSnapshotPackage {
+        mut bank_fields,
+        bank_hash_stats,
+        status_cache_slot_deltas,
+        write_version,
+    } = bank_snapshot_package;
+    let status_cache_slot_deltas = status_cache_slot_deltas.as_slice();
     let slot = bank_fields.slot;
 
     // this lambda function is to facilitate converting between
@@ -565,7 +561,7 @@ fn serialize_snapshot(
         let status_cache_path =
             bank_snapshot_dir.join(snapshot_paths::SNAPSHOT_STATUS_CACHE_FILENAME);
         let (status_cache_consumed_size, status_cache_serialize_us) = measure_us!(
-            serde_snapshot::serialize_status_cache(slot_deltas, &status_cache_path)
+            serde_snapshot::serialize_status_cache(status_cache_slot_deltas, &status_cache_path)
                 .map_err(|err| AddBankSnapshotError::SerializeStatusCache(Box::new(err)))?
         );
 
@@ -1426,7 +1422,7 @@ pub fn rebuild_storages_from_snapshot_dir(
             .join(ACCOUNTS_RUN_DIR);
         if !account_run_paths.contains(&account_run_path) {
             // The appendvec from the bank snapshot storage does not match any of the provided account_paths set.
-            // The accout paths have changed so the snapshot is no longer usable.
+            // The account paths have changed so the snapshot is no longer usable.
             return Err(SnapshotError::AccountPathsMismatch);
         }
         // Generate hard-links to make the account files available in the main accounts/, and let the new appendvec

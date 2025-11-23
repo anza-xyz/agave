@@ -18,7 +18,7 @@ pub struct InstructionFrame<'ix_data> {
     /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
     /// Usage: dedup_map[index_in_transaction] = index_in_instruction
     /// This is a vector of u8s to save memory, since many entries may be unused.
-    pub(crate) dedup_map: Vec<u8>,
+    pub(crate) dedup_map: Vec<u16>,
     pub instruction_data: Cow<'ix_data, [u8]>,
 }
 
@@ -31,7 +31,7 @@ pub struct InstructionContext<'a, 'ix_data> {
     pub(crate) nesting_level: usize,
     pub(crate) program_account_index_in_tx: IndexOfAccount,
     pub(crate) instruction_accounts: &'a [InstructionAccount],
-    pub(crate) dedup_map: &'a [u8],
+    pub(crate) dedup_map: &'a [u16],
     pub(crate) instruction_data: &'ix_data [u8],
 }
 

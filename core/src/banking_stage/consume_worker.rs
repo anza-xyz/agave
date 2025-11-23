@@ -1367,8 +1367,8 @@ pub(crate) mod external {
             fn to_resolved_view(
                 tx: &'_ [u8],
             ) -> RuntimeTransaction<ResolvedTransactionView<&'_ [u8]>> {
-                RuntimeTransaction::<ResolvedTransactionView<_>>::try_from(
-                    RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+                RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
+                    RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                         SanitizedTransactionView::try_new_sanitized(tx, true).unwrap(),
                         solana_transaction::sanitized::MessageHash::Compute,
                         Some(false),
@@ -1501,7 +1501,7 @@ fn active_leader_state_with_timeout(
     // If the initial check above didn't find a bank, we will
     // spin up to some timeout to wait for a bank to execute on.
     // This is conservatively long because transitions between slots
-    // can occassionally be slow.
+    // can occasionally be slow.
     const TIMEOUT: Duration = Duration::from_millis(50);
     let now = Instant::now();
     while now.elapsed() < TIMEOUT {
@@ -1514,7 +1514,7 @@ fn active_leader_state_with_timeout(
     None
 }
 
-/// Returns an active leader state if avaiable, otherwise None.
+/// Returns an active leader state if available, otherwise None.
 fn active_leader_state(
     shared_leader_state: &SharedLeaderState,
 ) -> Option<arc_swap::Guard<Arc<LeaderState>>> {

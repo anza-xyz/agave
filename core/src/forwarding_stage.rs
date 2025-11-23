@@ -320,7 +320,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                 )
                 .map_err(|_| ())
                 .and_then(|transaction| {
-                    RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+                    RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                         transaction,
                         MessageHash::Compute,
                         Some(packet.meta().is_simple_vote_tx()),
@@ -885,10 +885,9 @@ mod tests {
     }
 
     fn meta_with_flags(packet_flags: PacketFlags) -> packet::Meta {
-        packet::Meta {
-            flags: packet_flags,
-            ..packet::Meta::default()
-        }
+        let mut meta = packet::Meta::default();
+        meta.flags = packet_flags;
+        meta
     }
 
     fn simple_transfer_with_flags(packet_flags: PacketFlags) -> Packet {

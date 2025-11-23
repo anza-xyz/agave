@@ -1,6 +1,6 @@
 use {
-    rand::distributions::{Distribution, WeightedIndex},
-    rand_chacha::{rand_core::SeedableRng, ChaChaRng},
+    rand0_8_5::distributions::{Distribution, WeightedIndex},
+    rand_chacha0_3_1::{rand_core::SeedableRng, ChaChaRng},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     std::{collections::HashMap, convert::identity, ops::Index, sync::Arc},
@@ -118,9 +118,9 @@ mod tests {
     #[test]
     fn test_get_leader_upcoming_slots() {
         const NUM_SLOTS: usize = 97;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let pubkeys: Vec<_> = repeat_with(Pubkey::new_unique).take(4).collect();
-        let schedule: Vec<_> = repeat_with(|| pubkeys[rng.gen_range(0..3)])
+        let schedule: Vec<_> = repeat_with(|| pubkeys[rng.random_range(0..3)])
             .take(19)
             .collect();
         let schedule = IdentityKeyedLeaderSchedule::new_from_schedule(schedule);

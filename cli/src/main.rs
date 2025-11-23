@@ -229,7 +229,8 @@ pub fn parse_args<'a>(
     ))
 }
 
-fn main() -> Result<(), Box<dyn error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn error::Error>> {
     agave_logger::setup_with_default("off");
     let matches = get_clap_app(
         crate_name!(),
@@ -238,16 +239,18 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     )
     .get_matches();
 
-    do_main(&matches).map_err(|err| DisplayError::new_as_boxed(err).into())
+    do_main(&matches)
+        .await
+        .map_err(|err| DisplayError::new_as_boxed(err).into())
 }
 
-fn do_main(matches: &ArgMatches<'_>) -> Result<(), Box<dyn error::Error>> {
+async fn do_main(matches: &ArgMatches<'_>) -> Result<(), Box<dyn error::Error>> {
     if parse_settings(matches)? {
         let mut wallet_manager = None;
 
         let (mut config, signers) = parse_args(matches, &mut wallet_manager)?;
         config.signers = signers.iter().map(|s| s.as_ref()).collect();
-        let result = process_command(&config)?;
+        let result = process_command(&config).await?;
         println!("{result}");
     };
     Ok(())

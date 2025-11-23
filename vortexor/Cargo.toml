@@ -42,7 +42,6 @@ pem = { workspace = true }
 percentage = { workspace = true }
 quinn = { workspace = true }
 quinn-proto = { workspace = true }
-rand = { workspace = true }
 rustls = { workspace = true }
 signal-hook = { workspace = true }
 smallvec = { workspace = true }

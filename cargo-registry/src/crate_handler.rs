@@ -1,3 +1,5 @@
+#[allow(deprecated)]
+use solana_cli::program_v4::{process_deploy_program_sync, process_dump_sync};
 use {
     crate::{
         client::Client,
@@ -12,7 +14,7 @@ use {
     serde::{Deserialize, Serialize},
     serde_json::from_slice,
     sha2::{Digest, Sha256},
-    solana_cli::program_v4::{process_deploy_program, process_dump, AdditionalCliConfig},
+    solana_cli::program_v4::AdditionalCliConfig,
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_signer::{EncodableKey, Signer},
@@ -103,6 +105,7 @@ pub(crate) struct Program {
 }
 
 impl Program {
+    #[allow(deprecated)] // Using sync wrapper for now, should migrate to async
     fn deploy(&self, client: Arc<Client>, signer: &dyn Signer) -> Result<(), Error> {
         if self.id != signer.pubkey() {
             return Err("Signer doesn't match program ID".into());
@@ -125,7 +128,7 @@ impl Program {
             program_data.extend_from_slice(&crate_len);
         }
 
-        process_deploy_program(
+        process_deploy_program_sync(
             client.rpc_client.clone(),
             &cli_config,
             &AdditionalCliConfig::default(),
@@ -144,10 +147,11 @@ impl Program {
         Ok(())
     }
 
+    #[allow(deprecated)] // Using sync wrapper for now, should migrate to async
     fn dump(&mut self, client: Arc<Client>) -> Result<(), Error> {
         info!("Fetching program {:?}", self.id);
 
-        process_dump(
+        process_dump_sync(
             client.rpc_client.clone(),
             &client.get_cli_config(),
             Some(self.id),

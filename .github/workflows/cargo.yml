@@ -54,7 +54,7 @@ jobs:
           apk update
           apk add bash git
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: mozilla-actions/sccache-action@v0.0.9
         with:

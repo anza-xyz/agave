@@ -355,7 +355,7 @@ pub struct SvmTestEntry {
     // enables drop on failure processing (transactions without Ok status have no state effect)
     pub drop_on_failure: bool,
 
-    // enables all or nothing processing (if not all transactions can be commited then none are)
+    // enables all or nothing processing (if not all transactions can be committed then none are)
     pub all_or_nothing: bool,
 
     // programs to deploy to the new svm
@@ -526,16 +526,18 @@ impl SvmTestEntry {
                         .saturating_add(message.num_secp256k1_signatures())
                         .saturating_add(message.num_secp256r1_signatures());
 
-                    let compute_budget = compute_budget_limits.map(|v| {
-                        v.get_compute_budget_and_limits(
-                            v.loaded_accounts_bytes,
-                            FeeDetails::new(
-                                signature_count.saturating_mul(LAMPORTS_PER_SIGNATURE),
-                                v.get_prioritization_fee(),
-                            ),
-                            self.feature_set.raise_cpi_nesting_limit_to_8,
-                        )
-                    });
+                    let compute_budget = compute_budget_limits
+                        .map(|v| {
+                            v.get_compute_budget_and_limits(
+                                v.loaded_accounts_bytes,
+                                FeeDetails::new(
+                                    signature_count.saturating_mul(LAMPORTS_PER_SIGNATURE),
+                                    v.get_prioritization_fee(),
+                                ),
+                                self.feature_set.raise_cpi_nesting_limit_to_8,
+                            )
+                        })
+                        .unwrap();
                     CheckedTransactionDetails::new(tx_details.nonce, compute_budget)
                 });
 
@@ -567,7 +569,7 @@ impl TransactionBatchItem {
         Self {
             check_result: Ok(CheckedTransactionDetails::new(
                 Some(nonce_info),
-                Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
+                SVMTransactionExecutionAndFeeBudgetLimits::default(),
             )),
             ..Self::default()
         }
@@ -580,7 +582,7 @@ impl Default for TransactionBatchItem {
             transaction: Transaction::default(),
             check_result: Ok(CheckedTransactionDetails::new(
                 None,
-                Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
+                SVMTransactionExecutionAndFeeBudgetLimits::default(),
             )),
             asserts: TransactionBatchItemAsserts::default(),
         }
@@ -1053,7 +1055,7 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
     // there are four cases of fee_paying_nonce and fake_fee_payer:
     // * false/false: normal nonce account with rent minimum, normal fee payer account with 1sol
     // * true/false: normal nonce account used to pay fees with rent minimum plus 1sol
-    // * false/true: normal nonce account with rent minimum, fee payer doesnt exist
+    // * false/true: normal nonce account with rent minimum, fee payer doesn't exist
     // * true/true: same account for both which does not exist
     // we also provide a side door to bring a fee-paying nonce account below rent-exemption
     let mk_nonce_transaction = |test_entry: &mut SvmTestEntry,
@@ -1137,7 +1139,7 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
             .copy_from_slice(nonce_info.account().data());
     }
 
-    // 1: non-executing nonce transaction (fee payer doesnt exist) regardless of features
+    // 1: non-executing nonce transaction (fee payer doesn't exist) regardless of features
     {
         let (transaction, _fee_payer, nonce_info) =
             mk_nonce_transaction(&mut test_entry, real_program_id, true, false);
