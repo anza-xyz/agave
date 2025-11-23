@@ -21,7 +21,7 @@ use {
 /// As per the Alpenglow paper, a validator is allowed to vote notar fallback on at most 3 different block id for a given slot.
 const MAX_NOTAR_FALLBACK_PER_VALIDATOR: usize = 3;
 
-/// Different types of error that can happen when adding a vote to the pool.
+/// Different types of errors that can happen when adding a vote to the pool.
 #[derive(Debug, PartialEq, Eq, Error)]
 pub(crate) enum AddVoteError {
     #[error("duplicate vote")]
