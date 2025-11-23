@@ -5061,36 +5061,35 @@ impl Bank {
         &self.epoch_stakes
     }
 
-    /// Get the staked nodes map for the current Bank::epoch
+    /// Returns a mapping from validator [`Pubkey`] to stake in Lamports for the current epoch.
     pub fn current_epoch_staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
         self.current_epoch_stakes().stakes().staked_nodes()
     }
 
+    /// Returns a mapping from validator [`Pubkey`] to stake in Lamports for the given epoch.
     pub fn epoch_staked_nodes(&self, epoch: Epoch) -> Option<Arc<HashMap<Pubkey, u64>>> {
         Some(self.epoch_stakes.get(&epoch)?.stakes().staked_nodes())
     }
 
-    /// Get the total epoch stake for the given epoch.
+    /// Returns the total stake in Lamports for the given epoch.
     pub fn epoch_total_stake(&self, epoch: Epoch) -> Option<u64> {
         self.epoch_stakes
             .get(&epoch)
             .map(|epoch_stakes| epoch_stakes.total_stake())
     }
 
-    /// Get the total epoch stake for the current Bank::epoch
+    /// Returns the total stake in Lamports for the current epoch
     pub fn get_current_epoch_total_stake(&self) -> u64 {
         self.current_epoch_stakes().total_stake()
     }
 
-    /// vote accounts for the specific epoch along with the stake
-    ///   attributed to each account
+    /// Returns a mapping from stake in Lamports to [`VoteAccount`] for the given epoch.
     pub fn epoch_vote_accounts(&self, epoch: Epoch) -> Option<&VoteAccountsHashMap> {
         let epoch_stakes = self.epoch_stakes.get(&epoch)?.stakes();
         Some(epoch_stakes.vote_accounts().as_ref())
     }
 
-    /// Get the vote accounts along with the stake attributed to each account
-    /// for the current Bank::epoch
+    /// Returns a mapping from stake in Lamports to [`VoteAccount`] for the current epoch.
     pub fn get_current_epoch_vote_accounts(&self) -> &VoteAccountsHashMap {
         self.current_epoch_stakes()
             .stakes()
@@ -5118,14 +5117,13 @@ impl Bank {
             .get(node_id)
     }
 
-    /// Get the total stake belonging to vote accounts associated with the given node id for the
-    /// given epoch.
+    /// Returns the stake in Lamports for the given node_id in the given epoch.
     pub fn epoch_node_id_to_stake(&self, epoch: Epoch, node_id: &Pubkey) -> Option<u64> {
         self.epoch_stakes(epoch)
             .and_then(|epoch_stakes| epoch_stakes.node_id_to_stake(node_id))
     }
 
-    /// Get the fixed total stake of all vote accounts for current epoch
+    /// Returns the total stake in Lamports of all vote accounts for current epoch
     pub fn total_epoch_stake(&self) -> u64 {
         self.epoch_stakes
             .get(&self.epoch)
