@@ -1640,7 +1640,7 @@ mod test {
     ) {
         let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
         let keypair = Keypair::new();
-        let chained_merkle_root = SliceRoot(Hash::new_from_array(rng.random()));
+        let chained_merkle_root = SliceRoot::new_random();
         let slot = 149_745_689;
         let parent_slot = slot - rng.random_range(1..65536);
         let shred_version = rng.random();

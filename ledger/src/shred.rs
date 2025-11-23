@@ -968,7 +968,7 @@ mod tests {
         is_last_in_slot: bool,
     ) -> Result<Vec<merkle::Shred>, Error> {
         let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
-        let chained_merkle_root = SliceRoot(Hash::new_from_array(rng.random()));
+        let chained_merkle_root = SliceRoot::new_random();
         let parent_offset = rng.random_range(1..=u16::try_from(slot).unwrap_or(u16::MAX));
         let parent_slot = slot.checked_sub(u64::from(parent_offset)).unwrap();
         let mut data = vec![0u8; data_size];

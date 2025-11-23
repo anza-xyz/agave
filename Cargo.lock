@@ -572,6 +572,7 @@ name = "agave-votor-messages"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
+ "rand 0.8.5",
  "serde",
  "solana-bls-signatures",
  "solana-clock",

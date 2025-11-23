@@ -945,7 +945,7 @@ mod tests {
                 &keypair,
                 &entries,
                 true,
-                SliceRoot(Hash::new_from_array(rand::thread_rng().gen())),
+                SliceRoot::new_random(),
                 0,
                 code_index,
                 &rsc,

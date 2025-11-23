@@ -628,7 +628,7 @@ pub mod test {
             &Keypair::new(),
             &entries,
             true, // is_last_in_slot
-            SliceRoot(Hash::new_from_array(rand::thread_rng().gen())),
+            SliceRoot::new_random(),
             0, // next_shred_index,
             0, // next_code_index
             &ReedSolomonCache::default(),

@@ -1,6 +1,7 @@
 //! Module to define [`SliceRoot`].
 
 use {
+    rand::Rng,
     serde::{Deserialize, Serialize},
     solana_hash::Hash,
     std::fmt::Display,
@@ -22,7 +23,12 @@ pub struct SliceRoot(pub Hash);
 impl SliceRoot {
     /// Generates a unique [`SliceRoot`].
     pub fn new_unique() -> Self {
-        SliceRoot(Hash::new_unique())
+        Self(Hash::new_unique())
+    }
+
+    /// Generates a random [`SliceRoot`].
+    pub fn new_random() -> Self {
+        Self(Hash::new_from_array(rand::thread_rng().gen()))
     }
 }
 

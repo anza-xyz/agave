@@ -20,6 +20,7 @@ frozen-abi = [
 
 [dependencies]
 agave-logger = { workspace = true }
+rand = { workspace = true }
 serde = { workspace = true }
 solana-bls-signatures = { workspace = true, features = [
     "bytemuck", "solana-signer-derive",

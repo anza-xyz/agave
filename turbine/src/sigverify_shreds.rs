@@ -656,7 +656,7 @@ mod tests {
             let bank_forks = bank_forks.read().unwrap();
             (bank_forks.working_bank(), bank_forks.root_bank())
         };
-        let chained_merkle_root = SliceRoot(Hash::new_from_array(rng.gen()));
+        let chained_merkle_root = SliceRoot::new_random();
 
         let shredder = Shredder::new(root_bank.slot(), root_bank.parent_slot(), 0, 0).unwrap();
         let entries = vec![Entry::new(&Hash::default(), 0, vec![])];
