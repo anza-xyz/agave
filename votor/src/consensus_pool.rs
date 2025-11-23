@@ -347,21 +347,19 @@ impl ConsensusPool {
         cert: Certificate,
         events: &mut Vec<VotorEvent>,
     ) -> Result<Vec<Arc<Certificate>>, AddCertError> {
-        let cert_type = cert.cert_type;
+        let cert_type = &cert.cert_type;
         self.stats.incoming_certs = self.stats.incoming_certs.saturating_add(1);
         if cert_type.slot() < root_slot {
             self.stats.out_of_range_certs = self.stats.out_of_range_certs.saturating_add(1);
             return Err(AddCertError::UnrootedSlot);
         }
-        if self.completed_certificates.contains_key(&cert_type) {
+        if self.completed_certificates.contains_key(cert_type) {
             self.stats.exist_certs = self.stats.exist_certs.saturating_add(1);
             return Ok(vec![]);
         }
+        self.stats.incr_cert_type(cert_type, false);
         let cert = Arc::new(cert);
         self.insert_certificate(cert.clone(), events);
-
-        self.stats.incr_cert_type(&cert_type, false);
-
         Ok(vec![cert])
     }
 
