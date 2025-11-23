@@ -5,8 +5,8 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{
-        self, max_entries_per_n_shred, max_entries_per_n_shred_last_or_not, recover,
-        verify_test_data_shred, ProcessShredsStats, ReedSolomonCache, Shred, ShredData, Shredder,
+        self, max_entries_per_n_shred, max_entries_per_n_shred_last_or_not, merkle, recover,
+        verify_test_data_shred, ProcessShredsStats, ReedSolomonCache, Shred, Shredder,
         DATA_SHREDS_PER_FEC_BLOCK,
     },
     solana_signer::Signer,
@@ -200,7 +200,8 @@ fn setup_different_sized_fec_blocks(
     let keypair1 = Keypair::new();
     let tx0 = system_transaction::transfer(&keypair0, &keypair1.pubkey(), 1, Hash::default());
     let entry = Entry::new(&Hash::default(), 1, vec![tx0]);
-    let merkle_capacity = ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ true).unwrap();
+    let merkle_capacity =
+        merkle::ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ true).unwrap();
     let chained_merkle_root = Hash::default();
 
     assert!(DATA_SHREDS_PER_FEC_BLOCK > 2);

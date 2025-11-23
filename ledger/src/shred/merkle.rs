@@ -214,6 +214,26 @@ impl ShredData {
             None => Err(proof_size),
         }
     }
+
+    pub(super) fn last_in_slot(&self) -> bool {
+        self.data_header
+            .flags
+            .contains(ShredFlags::LAST_SHRED_IN_SLOT)
+    }
+
+    pub(super) fn data_complete(&self) -> bool {
+        self.data_header
+            .flags
+            .contains(ShredFlags::DATA_COMPLETE_SHRED)
+    }
+
+    pub(super) fn reference_tick(&self) -> u8 {
+        (self.data_header.flags & ShredFlags::SHRED_TICK_REFERENCE_MASK).bits()
+    }
+
+    pub(super) fn bytes_to_store(&self) -> &[u8] {
+        &self.payload
+    }
 }
 
 impl ShredCode {
@@ -266,7 +286,7 @@ macro_rules! impl_merkle_shred {
         //   ShredCode::capacity(proof_size, chained, resigned).unwrap()
         //       - ShredData::SIZE_OF_HEADERS
         //       + SIZE_OF_SIGNATURE
-        pub(super) fn capacity(proof_size: u8, resigned: bool) -> Result<usize, Error> {
+        pub fn capacity(proof_size: u8, resigned: bool) -> Result<usize, Error> {
             // Merkle proof is generated and signed after coding shreds are
             // generated. Coding shred headers cannot be erasure coded either.
             Self::SIZE_OF_PAYLOAD
