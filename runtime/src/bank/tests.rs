@@ -11611,7 +11611,8 @@ fn test_failed_simulation_load_error() {
     let transaction = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
 
     bank.freeze();
-    let mint_balance = bank.get_account(&mint_keypair.pubkey()).unwrap().lamports();
+    let mint_account = bank.get_account(&mint_keypair.pubkey()).unwrap();
+    let mint_balance = mint_account.lamports();
     let sanitized = RuntimeTransaction::from_transaction_for_tests(transaction);
     let simulation = bank.simulate_transaction(&sanitized, false);
     assert_eq!(
@@ -11619,7 +11620,7 @@ fn test_failed_simulation_load_error() {
         TransactionSimulationResult {
             result: Err(TransactionError::ProgramAccountNotFound),
             logs: vec![],
-            post_simulation_accounts: vec![],
+            post_simulation_accounts: vec![(mint_keypair.pubkey(), mint_account)],
             units_consumed: 0,
             loaded_accounts_data_size: 0,
             return_data: None,
