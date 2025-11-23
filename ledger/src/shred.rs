@@ -396,7 +396,7 @@ impl Shred {
         Ok(match layout::get_shred_variant(shred.as_ref())? {
             ShredVariant::MerkleCode { .. } => {
                 let shred = merkle::ShredCode::from_payload(shred)?;
-                Self::from(ShredCode::from(shred))
+                Self::from(shred)
             }
             ShredVariant::MerkleData { .. } => {
                 let shred = merkle::ShredData::from_payload(shred)?;
