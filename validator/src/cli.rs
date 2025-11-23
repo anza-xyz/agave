@@ -187,6 +187,16 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .help("Use CUDA"),
         usage_warning: "CUDA support will be dropped"
     );
+    add_arg!(
+        // deprecated in v3.1.3
+        Arg::with_name("dev_halt_at_slot")
+            .long("dev-halt-at-slot")
+            .value_name("SLOT")
+            .validator(is_slot)
+            .takes_value(true)
+            .help("Halt the validator when it reaches the given slot"),
+        usage_warning: "--dev-halt-at-slot will be removed in the future"
+    );
     add_arg!(Arg::with_name("disable_accounts_disk_index")
         // (actually) deprecated in v3.1.0
         .long("disable-accounts-disk-index")
@@ -203,16 +213,6 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .validator(solana_net_utils::is_host),
             replaced_by : "bind-address",
             usage_warning:"Use --bind-address instead",
-    );
-    add_arg!(
-        // deprecated in v3.1.3
-        Arg::with_name("dev_halt_at_slot")
-            .long("dev-halt-at-slot")
-            .value_name("SLOT")
-            .validator(is_slot)
-            .takes_value(true)
-            .help("Halt the validator when it reaches the given slot"),
-        usage_warning: "--dev-halt-at-slot will be removed in the future"
     );
     add_arg!(
         // deprecated in v3.1.0
