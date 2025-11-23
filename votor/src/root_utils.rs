@@ -25,6 +25,29 @@ use {
     thiserror::Error,
 };
 
+/// Helper function to extract dependency work from bank notification sender config.
+#[inline]
+fn get_dependency_work(config: &BankNotificationSenderConfig) -> Option<u64> {
+    config
+        .dependency_tracker
+        .as_ref()
+        .map(|s| s.get_current_declared_work())
+}
+
+/// Helper function to send bank notification with automatic error logging.
+/// This function swallows errors and logs them as warnings.
+#[inline]
+fn send_bank_notification_or_warn(
+    config: &BankNotificationSenderConfig,
+    notification: BankNotification,
+) {
+    let dependency_work = get_dependency_work(config);
+    config
+        .sender
+        .send((notification, dependency_work))
+        .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
+}
+
 #[allow(dead_code)]
 /// Structures that are not used in the event loop, but need to be updated
 /// or notified when setting root
@@ -87,10 +110,7 @@ pub(crate) fn set_root(
     // in order to perform cleanup. In the future we will look to deprecate OC and remove
     // these code paths.
     if let Some(config) = &rctx.bank_notification_sender {
-        let dependency_work = config
-            .dependency_tracker
-            .as_ref()
-            .map(|s| s.get_current_declared_work());
+        let dependency_work = get_dependency_work(config);
         config
             .sender
             .send((
@@ -171,24 +191,10 @@ where
         rpc_subscriptions.notify_roots(rooted_slots);
     }
     if let Some(sender) = bank_notification_sender {
-        let dependency_work = sender
-            .dependency_tracker
-            .as_ref()
-            .map(|s| s.get_current_declared_work());
-        sender
-            .sender
-            .send((BankNotification::NewRootBank(root_bank), dependency_work))
-            .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
+        send_bank_notification_or_warn(sender, BankNotification::NewRootBank(root_bank));
 
         if let Some(new_chain) = rooted_slots_with_parents {
-            let dependency_work = sender
-                .dependency_tracker
-                .as_ref()
-                .map(|s| s.get_current_declared_work());
-            sender
-                .sender
-                .send((BankNotification::NewRootedChain(new_chain), dependency_work))
-                .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
+            send_bank_notification_or_warn(sender, BankNotification::NewRootedChain(new_chain));
         }
     }
     info!("{my_pubkey}: new root {new_root}");
