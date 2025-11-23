@@ -587,7 +587,6 @@ pub mod test {
         super::*,
         agave_votor_messages::slice_root::SliceRoot,
         crossbeam_channel::unbounded,
-        rand::Rng,
         solana_entry::entry::create_ticks,
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
         solana_hash::Hash,

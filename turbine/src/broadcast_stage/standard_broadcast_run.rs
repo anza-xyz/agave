@@ -497,11 +497,9 @@ impl BroadcastRun for StandardBroadcastRun {
 mod test {
     use {
         super::*,
-        rand::Rng,
         solana_entry::entry::create_ticks,
         solana_genesis_config::GenesisConfig,
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::Blockstore,

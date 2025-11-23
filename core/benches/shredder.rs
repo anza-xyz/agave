@@ -3,7 +3,6 @@
 use {
     agave_votor_messages::slice_root::SliceRoot,
     bencher::{benchmark_group, benchmark_main, Bencher},
-    rand::Rng,
     solana_entry::entry::{create_ticks, Entry},
     solana_hash::Hash,
     solana_keypair::Keypair,

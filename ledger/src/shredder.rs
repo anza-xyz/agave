@@ -258,7 +258,6 @@ mod tests {
         },
         assert_matches::assert_matches,
         itertools::Itertools,
-        rand::Rng,
         solana_hash::Hash,
         solana_pubkey::Pubkey,
         solana_sha256_hasher::hash,

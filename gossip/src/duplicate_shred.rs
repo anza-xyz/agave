@@ -459,7 +459,7 @@ pub(crate) mod tests {
             &entries,
             is_last_in_slot,
             // chained_merkle_root
-            SliceRoot(Hash::new_from_array(rng.gen())),
+            SliceRoot::new_random(),
             next_shred_index,
             next_code_index, // next_code_index
             &ReedSolomonCache::default(),

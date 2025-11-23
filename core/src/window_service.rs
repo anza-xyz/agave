@@ -458,7 +458,6 @@ mod test {
     use {
         super::*,
         agave_votor_messages::slice_root::SliceRoot,
-        rand::Rng,
         solana_entry::entry::{create_ticks, Entry},
         solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,
