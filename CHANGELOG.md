@@ -25,6 +25,7 @@ deprecated, signaling their inclusion in the Agave Unstable API. Enable the
 `agave-unstable-api` crate feature to acknowledge use of an interface that may break
 without warning. From v4.0.0 onward, symbols in these crates will be unavailable without
 `agave-unstable-api` enabled.
+* The `--dev-halt-at-slot` flag is now deprecated.
 
 #### Changes
 * The accounts index is now kept entirely in memory by default.
