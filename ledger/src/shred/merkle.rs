@@ -1159,7 +1159,6 @@ pub(crate) fn make_shreds_from_data(
                 chained_merkle_root,
                 reed_solomon_cache,
             )
-            .map(|tree| *tree.root())
         })?;
     stats.gen_coding_elapsed += now.elapsed().as_micros() as u64;
     Ok(shreds)
@@ -1204,7 +1203,7 @@ fn shred_leftover_data(
 // - Computes the Merkle tree for the erasure batch.
 // - Signs the root of the Merkle tree.
 // - Populates Merkle proof for each shred and attaches the signature.
-// Returns the Merkle tree.
+// Returns the root of the Merkle tree.
 fn finish_erasure_batch(
     thread_pool: Option<&ThreadPool>,
     keypair: &Keypair,
@@ -1212,7 +1211,7 @@ fn finish_erasure_batch(
     // The Merkle root of the previous erasure batch if chained.
     chained_merkle_root: Hash,
     reed_solomon_cache: &ReedSolomonCache,
-) -> Result<MerkleTree, Error> {
+) -> Result<Hash, Error> {
     debug_assert_eq!(shreds.iter().map(Shred::fec_set_index).dedup().count(), 1);
     // Write common and {data,coding} headers into shreds' payload.
     fn write_headers(shred: &mut Shred) -> Result<(), bincode::Error> {
@@ -1290,7 +1289,7 @@ fn finish_erasure_batch(
             &Shred::from_payload(shred).unwrap()
         });
     }
-    Ok(tree)
+    Ok(*tree.root())
 }
 
 #[cfg(test)]
