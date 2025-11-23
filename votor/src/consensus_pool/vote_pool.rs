@@ -92,8 +92,8 @@ fn default_bitvec() -> BitVec<u8, Lsb0> {
     BitVec::repeat(false, MAXIMUM_VALIDATORS)
 }
 
-/// A container for storing various per slot and maybe per block id data.
-struct PoolEntry {
+/// Stores partially aggregated votes all of the same [`Vote`] which may appear in a [`Certificate`].
+struct PartialCertificate {
     /// In progress signature aggregate
     signature: SignatureProjective,
     /// In progress bitvec of ranks
@@ -104,7 +104,7 @@ struct PoolEntry {
     stake: Stake,
 }
 
-impl PoolEntry {
+impl PartialCertificate {
     /// Adds the given vote checking for duplicates and returning the accumulated stake on success.
     fn add_vote(
         &mut self,
@@ -126,7 +126,7 @@ impl PoolEntry {
     }
 }
 
-impl Default for PoolEntry {
+impl Default for PartialCertificate {
     fn default() -> Self {
         Self {
             signature: SignatureProjective::identity(),
@@ -137,16 +137,16 @@ impl Default for PoolEntry {
     }
 }
 
-/// Special pool entry for notar fallback votes.
+/// Partial certificate for notar fallback votes.
 #[derive(Default)]
-struct NotarFallbackPoolEntry {
+struct NotarFallbackPartial {
     /// In a given slot, we can see multiple block ids, stores per block id entries.
-    entries: BTreeMap<Hash, PoolEntry>,
+    partials: BTreeMap<Hash, PartialCertificate>,
     /// Additionally stores how many times voters have voted to enforce checks.
     voted: BTreeMap<Pubkey, usize>,
 }
 
-impl NotarFallbackPoolEntry {
+impl NotarFallbackPartial {
     /// Adds vote checking for duplicate or invalid votes, returning accumulated stake for the given block id on success.
     fn add_vote(
         &mut self,
@@ -157,7 +157,7 @@ impl NotarFallbackPoolEntry {
     ) -> Result<Stake, AddVoteError> {
         match self.voted.entry(voter) {
             Entry::Vacant(e) => self
-                .entries
+                .partials
                 .entry(block_id)
                 .or_default()
                 .add_vote(voter, stake, vote)
@@ -166,7 +166,7 @@ impl NotarFallbackPoolEntry {
                 }),
             Entry::Occupied(mut e) => {
                 if e.get() < &MAX_NOTAR_FALLBACK_PER_VALIDATOR {
-                    self.entries
+                    self.partials
                         .entry(block_id)
                         .or_default()
                         .add_vote(voter, stake, vote)
@@ -174,7 +174,7 @@ impl NotarFallbackPoolEntry {
                             let cnt = e.get_mut();
                             *cnt = (*cnt).saturating_add(1);
                         })
-                } else if self.entries.contains_key(&block_id) {
+                } else if self.partials.contains_key(&block_id) {
                     Err(AddVoteError::Duplicate)
                 } else {
                     Err(AddVoteError::Invalid)
@@ -184,16 +184,16 @@ impl NotarFallbackPoolEntry {
     }
 }
 
-/// Specical pool entry for notar votes.
+/// Partial certificate for notar votes.
 #[derive(Default)]
-struct NotarPoolEntry {
+struct NotarPartial {
     /// Different votes may vote for different block ids, store per block id entries.
-    entries: BTreeMap<Hash, PoolEntry>,
+    entries: BTreeMap<Hash, PartialCertificate>,
     /// Stores which voters have voted already.
     voted: BTreeSet<Pubkey>,
 }
 
-impl NotarPoolEntry {
+impl NotarPartial {
     /// Adds vote checking for duplicate and invalid votes, returning accumulated stake for the block id on success.
     fn add_vote(
         &mut self,
@@ -221,11 +221,11 @@ impl NotarPoolEntry {
 /// Container to store per slot votes.
 #[derive(Default)]
 pub(super) struct VotePool {
-    skip: PoolEntry,
-    skip_fallback: PoolEntry,
-    finalize: PoolEntry,
-    notar: NotarPoolEntry,
-    notar_fallback: NotarFallbackPoolEntry,
+    skip: PartialCertificate,
+    skip_fallback: PartialCertificate,
+    finalize: PartialCertificate,
+    notar: NotarPartial,
+    notar_fallback: NotarFallbackPartial,
 }
 
 impl VotePool {
@@ -283,7 +283,7 @@ impl VotePool {
         total_stake: Stake,
     ) -> Option<Result<Certificate, BuildCertError>> {
         let total_stake = total_stake as f64;
-        match cert_type {
+        match &cert_type {
             CertificateType::Finalize(_) => (self.finalize.stake as f64 / total_stake >= 0.6)
                 .then_some(build_cert(
                     cert_type,
@@ -292,33 +292,33 @@ impl VotePool {
                     None,
                 )),
             CertificateType::FinalizeFast(_, block_id) => {
-                self.notar.entries.get(&block_id).and_then(|e| {
-                    (e.stake as f64 / total_stake >= 0.8).then_some(build_cert(
+                self.notar.entries.get(block_id).and_then(|p| {
+                    (p.stake as f64 / total_stake >= 0.8).then_some(build_cert(
                         cert_type,
-                        &e.signature,
-                        e.bitmap.clone(),
+                        &p.signature,
+                        p.bitmap.clone(),
                         None,
                     ))
                 })
             }
             CertificateType::Notarize(_, block_id) => {
-                self.notar.entries.get(&block_id).and_then(|e| {
-                    (e.stake as f64 / total_stake >= 0.6).then_some(build_cert(
+                self.notar.entries.get(block_id).and_then(|p| {
+                    (p.stake as f64 / total_stake >= 0.6).then_some(build_cert(
                         cert_type,
-                        &e.signature,
-                        e.bitmap.clone(),
+                        &p.signature,
+                        p.bitmap.clone(),
                         None,
                     ))
                 })
             }
             CertificateType::NotarizeFallback(_, block_id) => {
-                let (notar_stake, notar_sig_bitmap) = match self.notar.entries.get(&block_id) {
+                let (notar_stake, notar_sig_bitmap) = match self.notar.entries.get(block_id) {
                     None => (0, None),
-                    Some(e) => (e.stake, Some((&e.signature, &e.bitmap))),
+                    Some(p) => (p.stake, Some((&p.signature, &p.bitmap))),
                 };
-                let (nf_stake, nf_sig_bitmap) = match self.notar_fallback.entries.get(&block_id) {
+                let (nf_stake, nf_sig_bitmap) = match self.notar_fallback.partials.get(block_id) {
                     None => (0, None),
-                    Some(e) => (e.stake, Some((&e.signature, &e.bitmap))),
+                    Some(p) => (p.stake, Some((&p.signature, &p.bitmap))),
                 };
                 let accumulated_stake = notar_stake.saturating_add(nf_stake);
                 (accumulated_stake as f64 / total_stake >= 0.6).then_some({
