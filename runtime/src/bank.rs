@@ -5078,7 +5078,7 @@ impl Bank {
             .map(|epoch_stakes| epoch_stakes.total_stake())
     }
 
-    /// Returns the total stake in Lamports for the current epoch
+    /// Returns the total stake in Lamports for the current Bank::epoch.
     pub fn get_current_epoch_total_stake(&self) -> u64 {
         self.current_epoch_stakes().total_stake()
     }
@@ -5089,7 +5089,7 @@ impl Bank {
         Some(epoch_stakes.vote_accounts().as_ref())
     }
 
-    /// Returns a mapping from [`Pubkey`] to (stake in Lamports and [`VoteAccount`]) for the current epoch.
+    /// Returns a mapping from [`Pubkey`] to (stake in Lamports and [`VoteAccount`]) for the current Bank::epoch.
     pub fn get_current_epoch_vote_accounts(&self) -> &VoteAccountsHashMap {
         self.current_epoch_stakes()
             .stakes()
@@ -5123,7 +5123,7 @@ impl Bank {
             .and_then(|epoch_stakes| epoch_stakes.node_id_to_stake(node_id))
     }
 
-    /// Returns the total stake in Lamports of all vote accounts for current epoch
+    /// Returns the total stake in Lamports of all vote accounts for current Bank::epoch.
     pub fn total_epoch_stake(&self) -> u64 {
         self.epoch_stakes
             .get(&self.epoch)
