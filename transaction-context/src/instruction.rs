@@ -30,8 +30,8 @@ impl Default for InstructionFrame {
             nesting_level: 0,
             program_account_index_in_tx: 0,
             // Using u64::MAX as the default pointer value, since it shall never be accessible.
-            instruction_accounts: VmSlice::new(u64::MAX, 0),
-            instruction_data: VmSlice::new(u64::MAX, 0),
+            instruction_accounts: VmSlice::new(0, 0),
+            instruction_data: VmSlice::new(0, 0),
         }
     }
 }
