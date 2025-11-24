@@ -500,8 +500,8 @@ impl GenerateIndexTimings {
         datapoint_info!(
             "generate_index",
             ("overall_us", self.total_time_us, i64),
+            ("index_time_us", self.index_time, i64),
             // we cannot accurately measure index insertion time because of many threads and lock contention
-            ("total_us", self.index_time, i64),
             ("insertion_time_us", self.insertion_time_us, i64),
             (
                 "storage_size_storages_us",
