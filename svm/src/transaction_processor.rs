@@ -659,7 +659,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // This must be done for every transaction to support SIMD83 because
         // it may have changed due to use, authorization, or deallocation.
         // This function is a successful no-op if given a blockhash transaction.
-        if let CheckedTransactionDetails {
+        let is_nonce_transaction = if let CheckedTransactionDetails {
             nonce: Some(ref nonce_info),
             compute_budget_and_limits: _,
         } = checked_details
@@ -674,10 +674,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             );
 
             match nonce_result {
-                Ok(()) => (),
+                Ok(()) => true,
                 Err(e) => return TransactionValidationResult::Unprocessable(e),
             }
-        }
+        } else {
+            false
+        };
 
         // Now validate the fee-payer for the transaction unconditionally.
         let fee_payer_result = Self::validate_transaction_fee_payer(
@@ -688,11 +690,17 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             error_counters,
         );
 
+        // With SIMD-0290 enabled, an invalid fee-payer can be processed as a no-op.
+        // However, this can ONLY be done for blockhash transactions; nonce transactions
+        // must always be discarded, regardless of whether they use a standard or nonce-based
+        // fee-payer. Fee-payer failure for nonces will be handled the same as nonce failures
+        // themselves when we implement SIMD-0297.
+        let allow_noop =
+            account_loader.feature_set.relax_fee_payer_constraint && !is_nonce_transaction;
+
         match fee_payer_result {
             Ok(details) => TransactionValidationResult::Loadable(details),
-            Err(e) if account_loader.feature_set.relax_fee_payer_constraint => {
-                TransactionValidationResult::NoOp(e)
-            }
+            Err(e) if allow_noop => TransactionValidationResult::NoOp(e),
             Err(e) => TransactionValidationResult::Unprocessable(e),
         }
     }
