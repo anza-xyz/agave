@@ -6292,6 +6292,7 @@ dependencies = [
  "solana-commitment-config",
  "solana-hash 3.1.0",
  "solana-message",
+ "solana-net-utils",
  "solana-pubkey 3.0.0",
  "solana-runtime",
  "solana-runtime-transaction",
@@ -6303,6 +6304,7 @@ dependencies = [
  "tarpc",
  "tokio",
  "tokio-serde",
+ "tokio-util 0.7.17",
 ]
 
 [[package]]
@@ -8840,7 +8842,6 @@ dependencies = [
  "log",
  "solana-client",
  "solana-clock",
- "solana-connection-cache",
  "solana-hash 3.1.0",
  "solana-keypair",
  "solana-measure",
