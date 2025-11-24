@@ -200,8 +200,9 @@ fn invoke_cargo(config: &Config, validated_toolchain_version: String) {
         ));
     }
     if config.debug {
-        // Replace with -Zsplit-debuginfo=packed when stabilized.
-        target_rustflags = Cow::Owned(format!("{} -g", &target_rustflags));
+        // Passing 'opt-level=3' without '--release' allows us to have debug information
+        // in an optimized binary.
+        target_rustflags = Cow::Owned(format!("{} -C opt-level=3", &target_rustflags));
     }
     if let Cow::Owned(flags) = target_rustflags {
         env::set_var(&cargo_target, flags);
@@ -224,7 +225,10 @@ fn invoke_cargo(config: &Config, validated_toolchain_version: String) {
         cargo_build_args.push(toolchain_name.as_str());
     };
 
-    cargo_build_args.append(&mut vec!["build", "--release", "--target", &target_triple]);
+    cargo_build_args.append(&mut vec!["build", "--target", &target_triple]);
+    if !config.debug {
+        cargo_build_args.push("--release");
+    }
     if config.no_default_features {
         cargo_build_args.push("--no-default-features");
     }
@@ -411,12 +415,9 @@ fn main() {
                 .takes_value(false)
                 .help("Disable remap of cwd prefix and preserve full path strings in binaries"),
         )
-        .arg(
-            Arg::new("debug")
-                .long("debug")
-                .takes_value(false)
-                .help("Enable debug symbols"),
-        )
+        .arg(Arg::new("debug").long("debug").takes_value(false).help(
+            "Enable debug symbols in a file available in target/deploy/<program-name>__debug__.so",
+        ))
         .arg(
             Arg::new("dump")
                 .long("dump")
