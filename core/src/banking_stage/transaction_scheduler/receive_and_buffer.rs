@@ -692,6 +692,7 @@ impl TransactionViewReceiveAndBuffer {
         sanitized_epoch: Epoch,
         transaction_account_lock_limit: usize,
     ) -> Result<TransactionViewState, PacketHandlingError> {
+<<<<<<< HEAD
         // Parsing and basic sanitization checks
         let Ok(view) = SanitizedTransactionView::try_new_sanitized(bytes) else {
             return Err(PacketHandlingError::Sanitization);
@@ -736,6 +737,21 @@ impl TransactionViewReceiveAndBuffer {
         };
 
         if validate_account_locks(view.account_keys(), transaction_account_lock_limit).is_err() {
+=======
+        let (view, deactivation_slot) = translate_to_runtime_view(
+            bytes,
+            working_bank,
+            root_bank,
+            enable_static_instruction_limit,
+            transaction_account_lock_limit,
+        )?;
+        if validate_account_locks(
+            view.account_keys(),
+            root_bank.get_transaction_account_lock_limit(),
+        )
+        .is_err()
+        {
+>>>>>>> f3a5a32d1 (receive_and_buffer with external_worker (#9212))
             return Err(PacketHandlingError::LockValidation);
         }
 
@@ -754,6 +770,73 @@ impl TransactionViewReceiveAndBuffer {
     }
 }
 
+<<<<<<< HEAD
+=======
+/// Perform sanitization checks and transition from data to an executable
+/// [`RuntimeTransaction`]. This additionally returns the minimum slot for
+/// ALT deactivation, if any. If no minimum slot, Slot::MAX is returned.
+pub(crate) fn translate_to_runtime_view<D: TransactionData>(
+    data: D,
+    working_bank: &Bank,
+    root_bank: &Bank,
+    enable_static_instruction_limit: bool,
+    transaction_account_lock_limit: usize,
+) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, u64), PacketHandlingError> {
+    // Parsing and basic sanitization checks
+    let Ok(view) =
+        SanitizedTransactionView::try_new_sanitized(data, enable_static_instruction_limit)
+    else {
+        return Err(PacketHandlingError::Sanitization);
+    };
+
+    let Ok(view) = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
+        view,
+        MessageHash::Compute,
+        None,
+    ) else {
+        return Err(PacketHandlingError::Sanitization);
+    };
+
+    // Discard non-vote packets if in vote-only mode.
+    if working_bank.vote_only_bank() && !view.is_simple_vote_transaction() {
+        return Err(PacketHandlingError::Sanitization);
+    }
+
+    if usize::from(view.total_num_accounts()) > transaction_account_lock_limit {
+        return Err(PacketHandlingError::LockValidation);
+    }
+
+    let (loaded_addresses, deactivation_slot) = load_addresses_for_view(&view, root_bank)?;
+
+    let Ok(view) = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
+        view,
+        loaded_addresses,
+        root_bank.get_reserved_account_keys(),
+    ) else {
+        return Err(PacketHandlingError::Sanitization);
+    };
+
+    Ok((view, deactivation_slot))
+}
+
+/// Load addresses from ALTs (if necessary) and return the
+/// [`LoadedAddresses`] with the minimum deactivation slot.
+pub(crate) fn load_addresses_for_view<D: TransactionData>(
+    view: &SanitizedTransactionView<D>,
+    bank: &Bank,
+) -> Result<(Option<LoadedAddresses>, Slot), PacketHandlingError> {
+    match view.version() {
+        TransactionVersion::Legacy => Ok((None, u64::MAX)),
+        TransactionVersion::V0 => bank
+            .load_addresses_from_ref(view.address_table_lookup_iter())
+            .map(|(loaded_addresses, deactivation_slot)| {
+                (Some(loaded_addresses), deactivation_slot)
+            })
+            .map_err(|_| PacketHandlingError::ALTResolution),
+    }
+}
+
+>>>>>>> f3a5a32d1 (receive_and_buffer with external_worker (#9212))
 /// Calculate priority and cost for a transaction:
 ///
 /// Cost is calculated through the `CostModel`,
