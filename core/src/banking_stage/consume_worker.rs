@@ -316,7 +316,26 @@ pub(crate) mod external {
         fn execute_batch(
             &mut self,
             message: &PackToWorkerMessage,
+<<<<<<< HEAD
         ) -> Result<(), ExternalConsumeWorkerError> {
+=======
+            should_drain_executes: bool,
+        ) -> Result<bool, ExternalConsumeWorkerError> {
+            if should_drain_executes {
+                return self
+                    .return_not_included_with_reason(
+                        message,
+                        not_included_reasons::BANK_NOT_AVAILABLE,
+                    )
+                    .map(|()| true);
+            }
+
+            let BankPair {
+                root_bank,
+                working_bank: _,
+            } = self.sharable_banks.load();
+
+>>>>>>> f3a5a32d1 (receive_and_buffer with external_worker (#9212))
             // Loop here to avoid exposing internal error to external scheduler.
             // In the vast majority of cases, this will iterate a single time;
             // If we began execution when a slot was still in process, and could
@@ -351,7 +370,7 @@ pub(crate) mod external {
                     )
                 };
                 let (translation_results, transactions, max_ages) =
-                    Self::translate_transaction_batch(&batch, bank);
+                    Self::translate_transaction_batch(&batch, bank, &root_bank);
 
                 let output = self.consumer.process_and_record_aged_transactions(
                     bank,
@@ -426,6 +445,53 @@ pub(crate) mod external {
             )
             .ok_or(ExternalConsumeWorkerError::AllocationFailure)?;
 
+<<<<<<< HEAD
+=======
+            // SAFETY: responses_ptr is sufficiently sized and aligned.
+            let (parsing_results, parsed_transactions, response_slice) = unsafe {
+                Self::parse_transactions_and_populate_initial_check_responses(
+                    message,
+                    &batch,
+                    &root_bank,
+                    responses_ptr,
+                )
+            };
+
+            // Check fee-payer if requested.
+            if message.flags & check_flags::LOAD_FEE_PAYER_BALANCE != 0 {
+                Self::check_load_fee_payer_balance(
+                    &parsing_results,
+                    &parsed_transactions,
+                    response_slice,
+                    &working_bank,
+                );
+            }
+
+            // Do resolving next since we (currently) need resolved transactions for status checks.
+            let (parsing_and_resolve_results, txs, max_ages) =
+                Self::translate_transaction_batch(&batch, &working_bank, &root_bank);
+
+            if message.flags & check_flags::LOAD_ADDRESS_LOOKUP_TABLES != 0 {
+                self.check_resolve_pubkeys(
+                    &parsing_results,
+                    &parsing_and_resolve_results,
+                    &txs,
+                    &max_ages,
+                    response_slice,
+                    root_bank.slot(),
+                )?;
+            }
+
+            if message.flags & check_flags::STATUS_CHECKS != 0 {
+                Self::check_status_checks(
+                    &parsing_and_resolve_results,
+                    &txs,
+                    response_slice,
+                    &working_bank,
+                );
+            }
+
+>>>>>>> f3a5a32d1 (receive_and_buffer with external_worker (#9212))
             let response = WorkerToPackMessage {
                 batch: message.batch,
                 processed: agave_scheduler_bindings::PROCESSED,
@@ -619,12 +685,13 @@ pub(crate) mod external {
         /// Translate batch of transactions into usable
         fn translate_transaction_batch(
             batch: &TransactionPtrBatch,
-            bank: &Bank,
+            working_bank: &Bank,
+            root_bank: &Bank,
         ) -> (Vec<Result<(), PacketHandlingError>>, Vec<Tx>, Vec<MaxAge>) {
-            let enable_static_instruction_limit = bank
+            let enable_static_instruction_limit = root_bank
                 .feature_set
                 .is_active(&agave_feature_set::static_instruction_limit::ID);
-            let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
+            let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
 
             let mut translation_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             let mut transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
@@ -632,7 +699,8 @@ pub(crate) mod external {
             for transaction_ptr in batch.iter() {
                 match Self::translate_transaction(
                     transaction_ptr,
-                    bank,
+                    working_bank,
+                    root_bank,
                     enable_static_instruction_limit,
                     transaction_account_lock_limit,
                 ) {
@@ -650,13 +718,15 @@ pub(crate) mod external {
 
         fn translate_transaction(
             transaction_ptr: TransactionPtr,
-            bank: &Bank,
+            working_bank: &Bank,
+            root_bank: &Bank,
             enable_static_instruction_limit: bool,
             transaction_account_lock_limit: usize,
         ) -> Result<(Tx, MaxAge), PacketHandlingError> {
             translate_to_runtime_view(
                 transaction_ptr,
-                bank,
+                working_bank,
+                root_bank,
                 enable_static_instruction_limit,
                 transaction_account_lock_limit,
             )
@@ -664,7 +734,7 @@ pub(crate) mod external {
                 (
                     view,
                     MaxAge {
-                        sanitized_epoch: bank.epoch(),
+                        sanitized_epoch: root_bank.epoch(),
                         alt_invalidation_slot: deactivation_slot,
                     },
                 )
@@ -826,6 +896,7 @@ pub(crate) mod external {
                 .map(|_| {
                     translate_to_runtime_view(
                         &simple_tx[..],
+                        &bank,
                         &bank,
                         true,
                         bank.get_transaction_account_lock_limit(),
