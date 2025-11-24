@@ -52,6 +52,8 @@ const ADDRESS_LOOKUP_TABLE_BASE_SIZE: usize = 8248;
 pub type TransactionCheckResult = Result<CheckedTransactionDetails>;
 
 // Combined result of runtime, fee-payer, and nonce checks.
+// HANA box Loadable later, i dont want to change all the tests again until i know this all works
+#[allow(clippy::large_enum_variant)]
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub(crate) enum TransactionValidationResult {
     Loadable(ValidatedTransactionDetails),
