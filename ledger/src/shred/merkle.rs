@@ -1142,24 +1142,20 @@ pub(crate) fn make_shreds_from_data(
     // Generate Merkle for all erasure batches.
     let now = Instant::now();
     // Group shreds by their respective erasure-batch.
-    let batches: Vec<&mut [Shred]> = shreds
-        .chunk_by_mut(|a, b| a.fec_set_index() == b.fec_set_index())
-        .collect();
+    let mut batches = shreds.chunk_by_mut(|a, b| a.fec_set_index() == b.fec_set_index());
 
     // We have to process erasure batches serially because the Merkle tree
     // (and so the signature) cannot be computed without the Merkle root of
     // the previous erasure batch.
-    batches
-        .into_iter()
-        .try_fold(chained_merkle_root, |chained_merkle_root, batch| {
-            finish_erasure_batch(
-                Some(thread_pool),
-                keypair,
-                batch,
-                chained_merkle_root,
-                reed_solomon_cache,
-            )
-        })?;
+    batches.try_fold(chained_merkle_root, |chained_merkle_root, batch| {
+        finish_erasure_batch(
+            Some(thread_pool),
+            keypair,
+            batch,
+            chained_merkle_root,
+            reed_solomon_cache,
+        )
+    })?;
     stats.gen_coding_elapsed += now.elapsed().as_micros() as u64;
     Ok(shreds)
 }
