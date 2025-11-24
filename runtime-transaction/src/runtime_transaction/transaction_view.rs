@@ -115,14 +115,9 @@ impl<D: TransactionData> RuntimeTransaction<ResolvedTransactionView<D>> {
         let transaction =
             ResolvedTransactionView::try_new(transaction, loaded_addresses, reserved_account_keys)
                 .map_err(|_| TransactionError::SanitizeFailure)?;
-        let mut tx = Self { transaction, meta };
-        tx.load_dynamic_metadata()?;
+        let tx = Self { transaction, meta };
 
         Ok(tx)
-    }
-
-    fn load_dynamic_metadata(&mut self) -> Result<()> {
-        Ok(())
     }
 }
 
