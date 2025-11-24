@@ -90,14 +90,15 @@ impl TestSetup {
     }
 
     fn prep_create_account_allow_prefund(&mut self) {
+        // order is reversed from CreateAccount, since the funding account is optional
         self.instruction_accounts = vec![
             AccountMeta {
-                pubkey: self.funding_address,
+                pubkey: self.derived_address,
                 is_signer: true,
                 is_writable: true,
             },
             AccountMeta {
-                pubkey: self.derived_address,
+                pubkey: self.funding_address,
                 is_signer: true,
                 is_writable: true,
             },

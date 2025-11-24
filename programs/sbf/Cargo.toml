@@ -167,7 +167,7 @@ solana-svm-test-harness = { path = "../../svm-test-harness", version = "=4.0.0-a
 solana-svm-timings = { path = "../../svm-timings", version = "=4.0.0-alpha.0" }
 solana-svm-transaction = { path = "../../svm-transaction", version = "=4.0.0-alpha.0" }
 solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=4.0.0-alpha.0" }
-solana-system-interface = { version = "=2.0", features = ["bincode"] }
+solana-system-interface = { version = "=3.0.0", features = ["bincode"] }
 solana-sysvar = "=3.0.0"
 solana-transaction-context = { path = "../../transaction-context", version = "=4.0.0-alpha.0" }
 solana-transaction-status = { path = "../../transaction-status", version = "=4.0.0-alpha.0" }
@@ -248,7 +248,7 @@ solana-svm-test-harness = { workspace = true }
 solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
-solana-system-interface = "2.0"
+solana-system-interface = "3.0"
 solana-sysvar = "3.0.0"
 solana-transaction = "3.0.2"
 solana-transaction-context = { workspace = true, features = [

@@ -186,10 +186,9 @@ fn create_account(
 /// before creation.
 #[allow(clippy::too_many_arguments)]
 fn create_account_allow_prefund(
-    from_account_index: IndexOfAccount,
     to_account_index: IndexOfAccount,
     to_address: &Address,
-    lamports: u64,
+    payer_and_lamports: Option<(IndexOfAccount, u64)>,
     space: u64,
     owner: &Pubkey,
     signers: &HashSet<Pubkey>,
@@ -200,14 +199,16 @@ fn create_account_allow_prefund(
         let mut to = instruction_context.try_borrow_instruction_account(to_account_index)?;
         allocate_and_assign(&mut to, to_address, space, owner, signers, invoke_context)?;
     }
-    if lamports > 0 {
-        transfer(
-            from_account_index,
-            to_account_index,
-            lamports,
-            invoke_context,
-            instruction_context,
-        )?;
+    if let Some((from_account_index, lamports)) = payer_and_lamports {
+        if lamports > 0 {
+            transfer(
+                from_account_index,
+                to_account_index,
+                lamports,
+                invoke_context,
+                instruction_context,
+            )?;
+        }
     }
     Ok(())
 }
@@ -360,17 +361,22 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             {
                 return Err(InstructionError::InvalidInstructionData);
             }
-            instruction_context.check_number_of_instruction_accounts(2)?;
+            let payer_and_lamports = if lamports > 0 {
+                instruction_context.check_number_of_instruction_accounts(2)?;
+                Some((1, lamports))
+            } else {
+                instruction_context.check_number_of_instruction_accounts(1)?;
+                None
+            };
             let to_address = Address::create(
-                instruction_context.get_key_of_instruction_account(1)?,
+                instruction_context.get_key_of_instruction_account(0)?,
                 None,
                 invoke_context,
             )?;
             create_account_allow_prefund(
                 0,
-                1,
                 &to_address,
-                lamports,
+                payer_and_lamports,
                 space,
                 &owner,
                 &signers,
@@ -1229,10 +1235,10 @@ mod tests {
     #[test]
     fn test_create_account_allow_prefund_nonzero_lamports() {
         let new_owner = Pubkey::from([9; 32]);
-        let from = Pubkey::new_unique();
         let to = Pubkey::new_unique();
-        let from_account = AccountSharedData::new(100, 0, &system_program::id());
+        let from = Pubkey::new_unique();
         let to_account = AccountSharedData::new(100, 0, &Pubkey::default());
+        let from_account = AccountSharedData::new(100, 0, &system_program::id());
 
         let accounts = process_instruction(
             &bincode::serialize(&SystemInstruction::CreateAccountAllowPrefund {
@@ -1241,33 +1247,60 @@ mod tests {
                 owner: new_owner,
             })
             .unwrap(),
-            vec![(from, from_account), (to, to_account)],
+            vec![(to, to_account), (from, from_account)],
             vec![
                 AccountMeta {
-                    pubkey: from,
+                    pubkey: to,
                     is_signer: true,
                     is_writable: true,
                 },
                 AccountMeta {
-                    pubkey: to,
+                    pubkey: from,
                     is_signer: true,
                     is_writable: true,
                 },
             ],
             Ok(()),
         );
-        assert_eq!(accounts[0].lamports(), 50);
-        assert_eq!(accounts[1].lamports(), 150);
-        assert_eq!(accounts[1].owner(), &new_owner);
-        assert_eq!(accounts[1].data(), &[0, 0]);
+        assert_eq!(accounts[0].lamports(), 150);
+        assert_eq!(accounts[0].owner(), &new_owner);
+        assert_eq!(accounts[0].data(), &[0, 0]);
+        assert_eq!(accounts[1].lamports(), 50);
+    }
+
+    #[test]
+    fn test_create_account_allow_prefund_zero_lamports() {
+        let new_owner = Pubkey::from([9; 32]);
+        let to = Pubkey::new_unique();
+        let to_account = AccountSharedData::new(0, 0, &Pubkey::default());
+
+        // Create account with zero lamports - only need the new account, no payer
+        let accounts = process_instruction(
+            &bincode::serialize(&SystemInstruction::CreateAccountAllowPrefund {
+                lamports: 0,
+                space: 2,
+                owner: new_owner,
+            })
+            .unwrap(),
+            vec![(to, to_account)],
+            vec![AccountMeta {
+                pubkey: to,
+                is_signer: true,
+                is_writable: true,
+            }],
+            Ok(()),
+        );
+        assert_eq!(accounts[0].lamports(), 0);
+        assert_eq!(accounts[0].owner(), &new_owner);
+        assert_eq!(accounts[0].data(), &[0, 0]);
     }
 
     #[test]
     fn test_create_account_allow_prefund_data_populated_fail() {
         let new_owner = Pubkey::from([9; 32]);
+        let owned_key = Pubkey::new_unique();
         let from = Pubkey::new_unique();
         let from_account = AccountSharedData::new(100, 0, &system_program::id());
-        let owned_key = Pubkey::new_unique();
 
         // Attempt to create system account in account that already has data
         let owned_account = AccountSharedData::new(0, 1, &Pubkey::default());
@@ -1279,31 +1312,31 @@ mod tests {
                 owner: new_owner,
             })
             .unwrap(),
-            vec![(from, from_account), (owned_key, owned_account)],
+            vec![(owned_key, owned_account), (from, from_account)],
             vec![
                 AccountMeta {
-                    pubkey: from,
+                    pubkey: owned_key,
                     is_signer: true,
                     is_writable: true,
                 },
                 AccountMeta {
-                    pubkey: owned_key,
+                    pubkey: from,
                     is_signer: true,
                     is_writable: true,
                 },
             ],
             Err(SystemError::AccountAlreadyInUse.into()),
         );
-        assert_eq!(accounts[0].lamports(), 100);
-        assert_eq!(accounts[1], unchanged_account);
+        assert_eq!(accounts[0], unchanged_account);
+        assert_eq!(accounts[1].lamports(), 100);
     }
 
     #[test]
     fn test_create_account_allow_prefund_wrong_owner_fail() {
         let new_owner = Pubkey::from([9; 32]);
+        let owned_key = Pubkey::new_unique();
         let from = Pubkey::new_unique();
         let from_account = AccountSharedData::new(100, 0, &system_program::id());
-        let owned_key = Pubkey::new_unique();
 
         // Attempt to create system account in account already owned by another program
         let original_program_owner = Pubkey::from([5; 32]);
@@ -1316,34 +1349,34 @@ mod tests {
                 owner: new_owner,
             })
             .unwrap(),
-            vec![(from, from_account), (owned_key, owned_account)],
+            vec![(owned_key, owned_account), (from, from_account)],
             vec![
                 AccountMeta {
-                    pubkey: from,
+                    pubkey: owned_key,
                     is_signer: true,
                     is_writable: true,
                 },
                 AccountMeta {
-                    pubkey: owned_key,
+                    pubkey: from,
                     is_signer: true,
                     is_writable: true,
                 },
             ],
             Err(SystemError::AccountAlreadyInUse.into()),
         );
-        assert_eq!(accounts[0].lamports(), 100);
-        assert_eq!(accounts[1], unchanged_account);
+        assert_eq!(accounts[0], unchanged_account);
+        assert_eq!(accounts[1].lamports(), 100);
     }
 
     #[test]
     fn test_create_account_allow_prefund_missing_signer_fail() {
         let new_owner = Pubkey::from([9; 32]);
-        let from = Pubkey::new_unique();
-        let from_account = AccountSharedData::new(100, 0, &system_program::id());
         let owned_key = Pubkey::new_unique();
+        let from = Pubkey::new_unique();
         let owned_account = AccountSharedData::new(0, 0, &Pubkey::default());
+        let from_account = AccountSharedData::new(100, 0, &system_program::id());
 
-        // Haven't signed from account
+        // Haven't signed payer account
         process_instruction(
             &bincode::serialize(&SystemInstruction::CreateAccountAllowPrefund {
                 lamports: 50,
@@ -1352,25 +1385,25 @@ mod tests {
             })
             .unwrap(),
             vec![
-                (from, from_account.clone()),
                 (owned_key, owned_account.clone()),
+                (from, from_account.clone()),
             ],
             vec![
                 AccountMeta {
-                    pubkey: from,
-                    is_signer: false,
+                    pubkey: owned_key,
+                    is_signer: true,
                     is_writable: true,
                 },
                 AccountMeta {
-                    pubkey: owned_key,
-                    is_signer: true,
+                    pubkey: from,
+                    is_signer: false,
                     is_writable: true,
                 },
             ],
             Err(InstructionError::MissingRequiredSignature),
         );
 
-        // Haven't signed to account
+        // Haven't signed new account
         process_instruction(
             &bincode::serialize(&SystemInstruction::CreateAccountAllowPrefund {
                 lamports: 50,
@@ -1378,16 +1411,16 @@ mod tests {
                 owner: new_owner,
             })
             .unwrap(),
-            vec![(from, from_account), (owned_key, owned_account)],
+            vec![(owned_key, owned_account), (from, from_account)],
             vec![
-                AccountMeta {
-                    pubkey: from,
-                    is_signer: true,
-                    is_writable: true,
-                },
                 AccountMeta {
                     pubkey: owned_key,
                     is_signer: false,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: from,
+                    is_signer: true,
                     is_writable: true,
                 },
             ],
@@ -1397,18 +1430,18 @@ mod tests {
 
     #[test]
     fn test_create_account_allow_prefund_oversize_space_fail() {
-        let from = Pubkey::new_unique();
-        let from_account = AccountSharedData::new(100, 0, &system_program::id());
         let to = Pubkey::new_unique();
+        let from = Pubkey::new_unique();
         let to_account = AccountSharedData::new(0, 0, &Pubkey::default());
+        let from_account = AccountSharedData::new(100, 0, &system_program::id());
         let instruction_accounts = vec![
             AccountMeta {
-                pubkey: from,
+                pubkey: to,
                 is_signer: true,
                 is_writable: true,
             },
             AccountMeta {
-                pubkey: to,
+                pubkey: from,
                 is_signer: true,
                 is_writable: true,
             },
@@ -1422,7 +1455,7 @@ mod tests {
                 owner: system_program::id(),
             })
             .unwrap(),
-            vec![(from, from_account.clone()), (to, to_account.clone())],
+            vec![(to, to_account.clone()), (from, from_account.clone())],
             instruction_accounts.clone(),
             Err(SystemError::InvalidAccountDataLength.into()),
         );
@@ -1435,12 +1468,12 @@ mod tests {
                 owner: system_program::id(),
             })
             .unwrap(),
-            vec![(from, from_account), (to, to_account)],
+            vec![(to, to_account), (from, from_account)],
             instruction_accounts,
             Ok(()),
         );
-        assert_eq!(accounts[1].lamports(), 50);
-        assert_eq!(accounts[1].data().len() as u64, MAX_PERMITTED_DATA_LENGTH);
+        assert_eq!(accounts[0].lamports(), 50);
+        assert_eq!(accounts[0].data().len() as u64, MAX_PERMITTED_DATA_LENGTH);
     }
 
     #[test]
@@ -1454,10 +1487,10 @@ mod tests {
         let feature_set = SVMFeatureSet::default();
 
         let new_owner = Pubkey::new_unique();
-        let from = Pubkey::new_unique();
         let to = Pubkey::new_unique();
-        let from_account = AccountSharedData::new(100, 0, &system_program::id());
+        let from = Pubkey::new_unique();
         let to_account = AccountSharedData::new(0, 0, &Pubkey::default());
+        let from_account = AccountSharedData::new(100, 0, &system_program::id());
 
         // Build the instruction data for CreateAccountAllowPrefund
         let ix_data = bincode::serialize(&SystemInstruction::CreateAccountAllowPrefund {
@@ -1468,15 +1501,15 @@ mod tests {
         .unwrap();
 
         // Prepare accounts vectors
-        let tx_accounts = vec![(from, from_account), (to, to_account)];
+        let tx_accounts = vec![(to, to_account), (from, from_account)];
         let ix_accounts = vec![
             AccountMeta {
-                pubkey: from,
+                pubkey: to,
                 is_signer: true,
                 is_writable: true,
             },
             AccountMeta {
-                pubkey: to,
+                pubkey: from,
                 is_signer: true,
                 is_writable: true,
             },
