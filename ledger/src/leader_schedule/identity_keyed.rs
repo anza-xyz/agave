@@ -29,6 +29,7 @@ impl LeaderSchedule {
         Self::new_from_schedule(slot_leaders)
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn new_from_schedule(slot_leaders: Vec<Pubkey>) -> Self {
         Self {
             leader_slots_map: Self::invert_slot_leaders(&slot_leaders),
