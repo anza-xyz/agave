@@ -6,10 +6,7 @@ use {
     solana_clock::{DEFAULT_TICKS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
     solana_metrics::{inc_new_counter_debug, inc_new_counter_info},
     solana_packet::PacketFlags,
-    solana_perf::{
-        packet::{PacketBatchRecycler, PacketRefMut},
-        recycler::Recycler,
-    },
+    solana_perf::packet::PacketRefMut,
     solana_poh::poh_recorder::PohRecorder,
     solana_streamer::streamer::{
         self, PacketBatchReceiver, PacketBatchSender, StreamerReceiveStats,
@@ -153,8 +150,6 @@ impl FetchStage {
         in_vote_only_mode: Option<Arc<AtomicBool>>,
         tpu_enable_udp: bool,
     ) -> Self {
-        let recycler: PacketBatchRecycler = Recycler::warmed(1000, 1024);
-
         let tpu_stats = Arc::new(StreamerReceiveStats::new("tpu_receiver"));
 
         let tpu_threads: Vec<_> = if tpu_enable_udp {
@@ -167,10 +162,8 @@ impl FetchStage {
                         socket,
                         exit.clone(),
                         sender.clone(),
-                        recycler.clone(),
                         tpu_stats.clone(),
                         coalesce,
-                        true,
                         in_vote_only_mode.clone(),
                         false, // unstaked connections
                     )
@@ -191,10 +184,8 @@ impl FetchStage {
                         socket,
                         exit.clone(),
                         forward_sender.clone(),
-                        recycler.clone(),
                         tpu_forward_stats.clone(),
                         coalesce,
-                        true,
                         in_vote_only_mode.clone(),
                         false, // unstaked connections
                     )
@@ -214,10 +205,8 @@ impl FetchStage {
                     socket,
                     exit.clone(),
                     vote_sender.clone(),
-                    recycler.clone(),
                     tpu_vote_stats.clone(),
                     coalesce,
-                    true,
                     None,
                     true, // only staked connections should be voting
                 )

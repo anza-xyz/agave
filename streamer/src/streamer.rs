@@ -3,10 +3,7 @@
 
 use {
     crate::{
-        packet::{
-            self, Packet, PacketBatch, PacketBatchRecycler, PacketRef, RecycledPacketBatch,
-            PACKETS_PER_BATCH,
-        },
+        packet::{self, PacketBatch, PacketRef, RecvBuffer, PACKETS_PER_BATCH},
         sendmmsg::{batch_send, SendPktsError},
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
@@ -18,6 +15,7 @@ use {
         },
         SocketAddrSpace,
     },
+    solana_perf::packet::BytesPacketBatch,
     solana_pubkey::Pubkey,
     solana_time_utils::timestamp,
     std::{
@@ -161,10 +159,8 @@ fn recv_loop<P: SocketProvider>(
     provider: &mut P,
     exit: &AtomicBool,
     packet_batch_sender: &impl ChannelSend<PacketBatch>,
-    recycler: &PacketBatchRecycler,
     stats: &StreamerReceiveStats,
     coalesce: Option<Duration>,
-    use_pinned_memory: bool,
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> Result<()> {
@@ -180,18 +176,15 @@ fn recv_loop<P: SocketProvider>(
         Ok(())
     }
 
+    let mut buffer = RecvBuffer::new(PACKETS_PER_BATCH);
+
     let mut socket = provider.current_socket_ref();
     setup_socket(socket)?;
     #[cfg(unix)]
     let mut poll_fd = [PollFd::new(socket.as_fd(), PollFlags::POLLIN)];
 
     loop {
-        let mut packet_batch = if use_pinned_memory {
-            RecycledPacketBatch::new_with_recycler(recycler, PACKETS_PER_BATCH, stats.name)
-        } else {
-            RecycledPacketBatch::with_capacity(PACKETS_PER_BATCH)
-        };
-        packet_batch.resize(PACKETS_PER_BATCH, Packet::default());
+        let mut packet_batch = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);
 
         loop {
             // Check for exit signal, even if socket is busy
@@ -208,9 +201,22 @@ fn recv_loop<P: SocketProvider>(
             }
 
             #[cfg(unix)]
-            let result = packet::recv_from(&mut packet_batch, socket, coalesce, &mut poll_fd);
+            let result = packet::recv_from(
+                &mut packet_batch,
+                &mut buffer,
+                socket,
+                coalesce,
+                &mut poll_fd,
+                is_staked_service,
+            );
             #[cfg(not(unix))]
-            let result = packet::recv_from(&mut packet_batch, socket, coalesce);
+            let result = packet::recv_from(
+                &mut packet_batch,
+                &mut buffer,
+                socket,
+                coalesce,
+                is_staked_service,
+            );
 
             if let Ok(len) = result {
                 if len > 0 {
@@ -254,6 +260,8 @@ fn recv_loop<P: SocketProvider>(
                 poll_fd = [PollFd::new(socket.as_fd(), PollFlags::POLLIN)];
             }
         }
+
+        buffer.reserve_packets(PACKETS_PER_BATCH);
     }
 }
 
@@ -263,10 +271,8 @@ pub fn receiver(
     socket: Arc<UdpSocket>,
     exit: Arc<AtomicBool>,
     packet_batch_sender: impl ChannelSend<PacketBatch>,
-    recycler: PacketBatchRecycler,
     stats: Arc<StreamerReceiveStats>,
     coalesce: Option<Duration>,
-    use_pinned_memory: bool,
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> JoinHandle<()> {
@@ -278,10 +284,8 @@ pub fn receiver(
                 &mut provider,
                 &exit,
                 &packet_batch_sender,
-                &recycler,
                 &stats,
                 coalesce,
-                use_pinned_memory,
                 in_vote_only_mode,
                 is_staked_service,
             );
@@ -296,10 +300,8 @@ pub fn receiver_atomic(
     bind_ip_addrs: Arc<BindIpAddrs>,
     exit: Arc<AtomicBool>,
     packet_batch_sender: impl ChannelSend<PacketBatch>,
-    recycler: PacketBatchRecycler,
     stats: Arc<StreamerReceiveStats>,
     coalesce: Option<Duration>,
-    use_pinned_memory: bool,
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> JoinHandle<()> {
@@ -311,10 +313,8 @@ pub fn receiver_atomic(
                 &mut provider,
                 &exit,
                 &packet_batch_sender,
-                &recycler,
                 &stats,
                 coalesce,
-                use_pinned_memory,
                 in_vote_only_mode,
                 is_staked_service,
             );
@@ -610,7 +610,6 @@ mod test {
         },
         crossbeam_channel::unbounded,
         solana_net_utils::sockets::bind_to_localhost_unique,
-        solana_perf::recycler::Recycler,
         std::{
             io::{self, Write},
             sync::{
@@ -655,10 +654,8 @@ mod test {
             Arc::new(read),
             exit.clone(),
             s_reader,
-            Recycler::default(),
             stats.clone(),
             Some(Duration::from_millis(1)), // coalesce
-            true,
             None,
             false,
         );
