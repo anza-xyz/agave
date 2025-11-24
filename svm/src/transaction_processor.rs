@@ -68,7 +68,7 @@ use {
     std::sync::Weak,
 };
 
-const HANA_FEATURE_PLACEHOLDER: bool = true;
+const HANA_FEATURE_PLACEHOLDER: bool = false;
 
 /// A list of log messages emitted during a transaction
 pub type TransactionLogMessages = Vec<String>;
@@ -480,9 +480,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     Err(e),
 
                 // SIMD-0290 fee-payer or SIMD-0297 nonce failure is signalled as a non-error no-op
-                TransactionLoadResult::NoOp(e) => Err(e), // HANA TODO ProcessedTransaction variant
+                TransactionLoadResult::NoOp(e) => Ok(ProcessedTransaction::NoOp(e)),
 
-                // Transactions that fail at loading charge fees and roll nonces
+                // Transactions that fail at account loading charge fees and roll nonces
                 TransactionLoadResult::FeesOnly(fees_only_tx) => {
                     // Update loaded accounts cache with nonce and fee-payer
                     account_loader.update_accounts_for_failed_tx(&fees_only_tx.rollback_accounts);
