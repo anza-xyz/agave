@@ -236,7 +236,7 @@ impl SvmTestEnvironment<'_> {
                         );
                     }
                 }
-                Err(_) => {}
+                Ok(ProcessedTransaction::NoOp(_)) | Err(_) => {}
             }
         }
 
@@ -267,6 +267,9 @@ impl SvmTestEnvironment<'_> {
                     Ok(ProcessedTransaction::FeesOnly(fee_only)) => {
                         format!("{} (fee-only): {:?}", i, fee_only.load_error)
                     }
+                    Ok(ProcessedTransaction::NoOp(err)) => {
+                        format!("{} (no-op): {:?}", i, err)
+                    }
                     Err(e) => format!("{i} (discarded): {e:?}"),
                 })
                 .collect::<Vec<_>>()
@@ -292,7 +295,7 @@ impl SvmTestEnvironment<'_> {
             match processing_result {
                 Ok(ProcessedTransaction::Executed(executed_transaction)) => test_item_asserts
                     .check_executed_transaction(&executed_transaction.execution_details),
-                Ok(ProcessedTransaction::FeesOnly(_)) => {
+                Ok(ProcessedTransaction::FeesOnly(_)) | Ok(ProcessedTransaction::NoOp(_)) => {
                     assert!(test_item_asserts.processed());
                     assert!(!test_item_asserts.executed());
                 }
@@ -691,6 +694,8 @@ impl From<&TransactionProcessingResult> for ExecutionStatus {
                 }
             }
             Ok(ProcessedTransaction::FeesOnly(_)) => ExecutionStatus::ProcessedFailed,
+            // HANA i probably want to add a new ExecutionStatus and distinguish these
+            Ok(ProcessedTransaction::NoOp(_)) => ExecutionStatus::ProcessedFailed,
             Err(_) => ExecutionStatus::Discarded,
         }
     }
