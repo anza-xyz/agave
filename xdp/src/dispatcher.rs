@@ -1,20 +1,20 @@
-use agave_xdp_dispatcher_ebpf::{XdpDispatcherConfig, AGAVE_XDP_DISPATCHER_EBPF_PROGRAM};
-use named_lock::NamedLock;
-use uuid::Uuid;
-
-use std::{
-    borrow::BorrowMut,
-    collections::{BTreeMap, HashMap},
-    error::Error,
-    fs::{self},
-};
-
-use aya::{
-    programs::{
-        links::{FdLink, PinnedLink},
-        Extension, Xdp, XdpFlags,
+use {
+    agave_xdp_dispatcher_ebpf::{XdpDispatcherConfig, AGAVE_XDP_DISPATCHER_EBPF_PROGRAM},
+    aya::{
+        programs::{
+            links::{FdLink, PinnedLink},
+            Extension, Xdp, XdpFlags,
+        },
+        Ebpf, EbpfLoader,
     },
-    Ebpf, EbpfLoader,
+    named_lock::NamedLock,
+    std::{
+        borrow::BorrowMut,
+        collections::{BTreeMap, HashMap},
+        error::Error,
+        fs,
+    },
+    uuid::Uuid,
 };
 
 const RTDIR_FS_XDP: &str = "/sys/fs/bpf/xdp-dispatcher";
@@ -34,7 +34,7 @@ fn default_proceed_on_mask() -> u32 {
 pub struct EbpfPrograms<'a> {
     pub ebpf_id: Uuid,
     pub loader: EbpfLoader<'a>,
-    programs: Vec<(String, u8)>,
+    programs: Vec<(&'a str, u8)>,
     bpf_bytes: &'a [u8],
 }
 
@@ -48,8 +48,8 @@ impl<'a> EbpfPrograms<'a> {
         }
     }
 
-    pub fn set_priority(mut self, program: impl AsRef<str>, priority: u8) -> Self {
-        self.programs.push((program.as_ref().to_owned(), priority));
+    pub fn set_priority(mut self, program: &'a str, priority: u8) -> Self {
+        self.programs.push((program, priority));
         self
     }
 }
@@ -205,10 +205,10 @@ impl XdpDispatcher {
         ))?)
     }
 
-    pub fn new_with_programs<'a>(
+    pub fn new_with_programs<'a: 'b, 'b>(
         if_index: u32,
         xdp_flags: XdpFlags,
-        bpfs: Vec<&'a mut EbpfPrograms<'a>>,
+        bpfs: Vec<&'b mut EbpfPrograms<'a>>,
     ) -> Result<Self> {
         let dispatcher_dir = format!("{RTDIR_FS_XDP}/dispatcher_{if_index}");
         fs::create_dir_all(&dispatcher_dir)?;
@@ -244,6 +244,7 @@ impl XdpDispatcher {
 
         let mut owned_ebpfs = HashMap::new();
         let mut owned_extension_priorities = HashMap::new();
+
         for bpf in bpfs {
             for (program, _) in &bpf.programs {
                 bpf.loader.extension(program);
@@ -251,7 +252,7 @@ impl XdpDispatcher {
             let ebpf = bpf.loader.load(bpf.bpf_bytes)?;
             owned_ebpfs.insert(bpf.ebpf_id, ebpf);
             for (program, priority) in &bpf.programs {
-                owned_extension_priorities.insert((bpf.ebpf_id, program.clone()), *priority);
+                owned_extension_priorities.insert((bpf.ebpf_id, program.to_string()), *priority);
             }
         }
         for (ebpf_id, ebpf) in owned_ebpfs.iter_mut() {
