@@ -316,11 +316,19 @@ impl Stats {
                     ),
                     f64
                 ),
-                ("slot_list_len", held_in_mem_slot_list_len, i64),
-                ("ref_count", held_in_mem_ref_count, i64),
-                ("slot_list_cached", held_in_mem_slot_list_cached, i64),
                 ("num_not_flushed_clean", held_in_mem_clean, i64),
                 ("num_not_flushed_age", held_in_mem_age, i64),
+                ("num_not_flushed_ref_count", held_in_mem_ref_count, i64),
+                (
+                    "num_not_flushed_slot_list_len",
+                    held_in_mem_slot_list_len,
+                    i64
+                ),
+                (
+                    "num_not_flushed_slot_list_cached",
+                    held_in_mem_slot_list_cached,
+                    i64
+                ),
                 ("min_in_bin_disk", disk_stats.0, i64),
                 ("max_in_bin_disk", disk_stats.1, i64),
                 ("count_from_bins_disk", disk_stats.2, i64),
