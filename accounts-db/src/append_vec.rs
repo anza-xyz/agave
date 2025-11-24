@@ -239,12 +239,11 @@ impl Drop for AppendVec {
         if self.remove_file_on_drop.load(Ordering::Acquire) {
             // If we're reopening in readonly mode, we don't delete the file. See
             // AppendVec::reopen_as_readonly.
-            if let Err(_err) = remove_file(&self.path) {
+            if let Err(err) = remove_file(&self.path) {
                 // promote this to panic soon.
                 // disabled due to many false positive warnings while running tests.
                 // blocked by rpc's upgrade to jsonrpc v17
-                //error!("AppendVec failed to remove {}: {err}", &self.path.display());
-                inc_new_counter_info!("append_vec_drop_fail", 1);
+                warn!("AppendVec failed to remove {}: {err}", &self.path.display());
             }
         }
     }
