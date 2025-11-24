@@ -2086,7 +2086,7 @@ mod tests {
 
         assert_eq!(
             result,
-            Ok(ValidatedTransactionDetails {
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails {
                 rollback_accounts: RollbackAccounts::new(
                     None, // nonce
                     *fee_payer_address,
@@ -2164,7 +2164,7 @@ mod tests {
 
         assert_eq!(
             result,
-            Ok(ValidatedTransactionDetails {
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails {
                 rollback_accounts: RollbackAccounts::new(
                     None, // nonce
                     *fee_payer_address,
@@ -2510,20 +2510,23 @@ mod tests {
             Some(&fee_payer_address),
             &Hash::new_unique(),
         ));
-        TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
-            &mut account_loader,
-            &message,
-            CheckedTransactionDetails::new(
-                None,
-                SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
-                    MockBankCallback::calculate_fee_details(&message, 5000, 0),
+
+        assert!(matches!(
+            TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
+                &mut account_loader,
+                &message,
+                CheckedTransactionDetails::new(
+                    None,
+                    SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
+                        MockBankCallback::calculate_fee_details(&message, 5000, 0),
+                    ),
                 ),
+                &Hash::default(),
+                &Rent::default(),
+                &mut TransactionErrorMetrics::default(),
             ),
-            &Hash::default(),
-            &Rent::default(),
-            &mut TransactionErrorMetrics::default(),
-        )
-        .unwrap();
+            TransactionValidationResult::Loadable(_)
+        ));
 
         // ensure the fee payer is an inspected account
         let actual_inspected_accounts: Vec<_> = mock_bank
