@@ -376,8 +376,12 @@ pub struct SvmTestEntry {
 
 impl Default for SvmTestEntry {
     fn default() -> Self {
+        // HANA not ready to test this here yet
+        let mut feature_set = SVMFeatureSet::all_enabled();
+        feature_set.relax_fee_payer_constraint = false;
+
         Self {
-            feature_set: SVMFeatureSet::all_enabled(),
+            feature_set,
             with_loader_v4: false,
             all_or_nothing: false,
             drop_on_failure: false,

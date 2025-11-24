@@ -68,8 +68,6 @@ use {
     std::sync::Weak,
 };
 
-const HANA_FEATURE_PLACEHOLDER: bool = false;
-
 /// A list of log messages emitted during a transaction
 pub type TransactionLogMessages = Vec<String>;
 
@@ -692,7 +690,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         match fee_payer_result {
             Ok(details) => TransactionValidationResult::Loadable(details),
-            Err(e) if HANA_FEATURE_PLACEHOLDER => TransactionValidationResult::NoOp(e),
+            Err(e) if account_loader.feature_set.relax_fee_payer_constraint => {
+                TransactionValidationResult::NoOp(e)
+            }
             Err(e) => TransactionValidationResult::Unprocessable(e),
         }
     }
