@@ -286,7 +286,7 @@ impl<'ix_data> TransactionContext<'ix_data> {
         let instruction_index = trace_len.saturating_sub(1);
         let penultimate_instruction_accounts = self
             .instruction_trace
-            .get(trace_len.overflowing_sub(2).0)
+            .get(trace_len.wrapping_sub(2))
             .map(|item| item.instruction_accounts);
 
         let instruction = self
