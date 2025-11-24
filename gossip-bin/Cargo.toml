@@ -24,5 +24,5 @@ log = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-gossip = { workspace = true, features = ["agave-unstable-api"] }
 solana-net-utils = { workspace = true, features = ["agave-unstable-api"] }
-solana-pubkey = { version = "=3.0.0", features = ["rand"] }
+solana-pubkey = { version = "=4.0.0", features = ["rand"] }
 solana-version = { workspace = true }
