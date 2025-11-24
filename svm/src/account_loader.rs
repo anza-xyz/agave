@@ -52,6 +52,7 @@ const ADDRESS_LOOKUP_TABLE_BASE_SIZE: usize = 8248;
 pub type TransactionCheckResult = Result<CheckedTransactionDetails>;
 
 // Combined result of runtime, fee-payer, and nonce checks.
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub(crate) enum TransactionValidationResult {
     Loadable(ValidatedTransactionDetails),
     NoOp(TransactionError),
@@ -931,7 +932,7 @@ mod tests {
         load_transaction(
             &mut account_loader,
             &sanitized_tx,
-            Ok(ValidatedTransactionDetails {
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails {
                 loaded_fee_payer_account: LoadedTransactionAccount {
                     account: fee_payer_account,
                     ..LoadedTransactionAccount::default()
@@ -1158,7 +1159,9 @@ mod tests {
                 assert_eq!(loaded_transaction.program_indices[0], 1);
             }
             TransactionLoadResult::FeesOnly(fees_only_tx) => panic!("{}", fees_only_tx.load_error),
-            TransactionLoadResult::NotLoaded(e) => panic!("{e}"),
+            TransactionLoadResult::NoOp(e) | TransactionLoadResult::Unprocessable(e) => {
+                panic!("{e}")
+            }
         }
     }
 
@@ -1222,7 +1225,9 @@ mod tests {
                 assert_eq!(loaded_transaction.program_indices[1], 2);
             }
             TransactionLoadResult::FeesOnly(fees_only_tx) => panic!("{}", fees_only_tx.load_error),
-            TransactionLoadResult::NotLoaded(e) => panic!("{e}"),
+            TransactionLoadResult::NoOp(e) | TransactionLoadResult::Unprocessable(e) => {
+                panic!("{e}")
+            }
         }
     }
 
@@ -1252,7 +1257,7 @@ mod tests {
         load_transaction(
             &mut account_loader,
             &tx,
-            Ok(ValidatedTransactionDetails::default()),
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails::default()),
             &mut error_metrics,
             &Rent::default(),
         )
@@ -1322,7 +1327,9 @@ mod tests {
                 assert_eq!(loaded_transaction.accounts[1].1.lamports(), 42);
             }
             TransactionLoadResult::FeesOnly(fees_only_tx) => panic!("{}", fees_only_tx.load_error),
-            TransactionLoadResult::NotLoaded(e) => panic!("{e}"),
+            TransactionLoadResult::NoOp(e) | TransactionLoadResult::Unprocessable(e) => {
+                panic!("{e}")
+            }
         }
     }
 
@@ -2114,7 +2121,7 @@ mod tests {
         let load_result = load_transaction(
             &mut account_loader,
             &sanitized_tx.clone(),
-            Ok(ValidatedTransactionDetails::default()),
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails::default()),
             &mut error_metrics,
             &Rent::default(),
         );
@@ -2206,13 +2213,14 @@ mod tests {
             0
         };
 
-        let validation_result = Ok(ValidatedTransactionDetails {
-            loaded_fee_payer_account: LoadedTransactionAccount {
-                account: fee_payer_account,
-                loaded_size: base_account_size,
-            },
-            ..ValidatedTransactionDetails::default()
-        });
+        let validation_result =
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails {
+                loaded_fee_payer_account: LoadedTransactionAccount {
+                    account: fee_payer_account,
+                    loaded_size: base_account_size,
+                },
+                ..ValidatedTransactionDetails::default()
+            });
 
         let load_result = load_transaction(
             &mut account_loader,
@@ -2277,7 +2285,9 @@ mod tests {
             false,
         );
 
-        let validation_result = Ok(ValidatedTransactionDetails::default());
+        let validation_result =
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails::default());
+
         let load_result = load_transaction(
             &mut account_loader,
             &sanitized_transaction,
@@ -2294,7 +2304,8 @@ mod tests {
             }),
         ));
 
-        let validation_result = Err(TransactionError::InvalidWritableAccount);
+        let validation_result =
+            TransactionValidationResult::Unprocessable(TransactionError::InvalidWritableAccount);
 
         let load_result = load_transaction(
             &mut account_loader,
@@ -2306,7 +2317,7 @@ mod tests {
 
         assert!(matches!(
             load_result,
-            TransactionLoadResult::NotLoaded(TransactionError::InvalidWritableAccount),
+            TransactionLoadResult::Unprocessable(TransactionError::InvalidWritableAccount),
         ));
     }
 
@@ -2394,13 +2405,14 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
-        let validation_result = Ok(ValidatedTransactionDetails {
-            loaded_fee_payer_account: LoadedTransactionAccount {
-                account: account0.clone(),
-                ..LoadedTransactionAccount::default()
-            },
-            ..ValidatedTransactionDetails::default()
-        });
+        let validation_result =
+            TransactionValidationResult::Loadable(ValidatedTransactionDetails {
+                loaded_fee_payer_account: LoadedTransactionAccount {
+                    account: account0.clone(),
+                    ..LoadedTransactionAccount::default()
+                },
+                ..ValidatedTransactionDetails::default()
+            });
         let _load_results = load_transaction(
             &mut account_loader,
             &sanitized_transaction,
