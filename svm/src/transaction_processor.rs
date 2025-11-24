@@ -2268,20 +2268,30 @@ mod tests {
         let min_balance = Rent::default().minimum_balance(nonce::state::State::size());
         let priority_fee = compute_unit_limit;
 
+        let nonce_versions = nonce::versions::Versions::new(nonce::state::State::Initialized(
+            nonce::state::Data::new(
+                *fee_payer_address,
+                DurableNonce::default(),
+                lamports_per_signature,
+            ),
+        ));
+
+        let environment_blockhash = Hash::new_unique();
+        let next_durable_nonce = DurableNonce::from_blockhash(&environment_blockhash);
+
         // Sufficient Fees
         {
             let fee_payer_account = AccountSharedData::new_data(
                 min_balance + transaction_fee + priority_fee,
-                &nonce::versions::Versions::new(nonce::state::State::Initialized(
-                    nonce::state::Data::new(
-                        *fee_payer_address,
-                        DurableNonce::default(),
-                        lamports_per_signature,
-                    ),
-                )),
+                &nonce_versions,
                 &system_program::id(),
             )
             .unwrap();
+
+            let mut future_nonce = NonceInfo::new(*fee_payer_address, fee_payer_account.clone());
+            future_nonce
+                .try_advance_nonce(next_durable_nonce, lamports_per_signature)
+                .unwrap();
 
             let mut mock_accounts = HashMap::new();
             mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
@@ -2294,13 +2304,6 @@ mod tests {
             let mut account_loader = (&mock_bank).into();
 
             let mut error_counters = TransactionErrorMetrics::default();
-
-            let environment_blockhash = Hash::new_unique();
-            let next_durable_nonce = DurableNonce::from_blockhash(&environment_blockhash);
-            let mut future_nonce = NonceInfo::new(*fee_payer_address, fee_payer_account.clone());
-            future_nonce
-                .try_advance_nonce(next_durable_nonce, lamports_per_signature)
-                .unwrap();
 
             let tx_details = CheckedTransactionDetails::new(
                 Some(future_nonce.clone()),
@@ -2354,12 +2357,15 @@ mod tests {
         {
             let fee_payer_account = AccountSharedData::new_data(
                 transaction_fee + priority_fee, // no min_balance this time
-                &nonce::versions::Versions::new(nonce::state::State::Initialized(
-                    nonce::state::Data::default(),
-                )),
+                &nonce_versions,
                 &system_program::id(),
             )
             .unwrap();
+
+            let mut future_nonce = NonceInfo::new(*fee_payer_address, fee_payer_account.clone());
+            future_nonce
+                .try_advance_nonce(next_durable_nonce, lamports_per_signature)
+                .unwrap();
 
             let mut mock_accounts = HashMap::new();
             mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
@@ -2370,11 +2376,17 @@ mod tests {
             let mut account_loader = (&mock_bank).into();
 
             let mut error_counters = TransactionErrorMetrics::default();
+
+            let tx_details = CheckedTransactionDetails::new(
+                Some(future_nonce.clone()),
+                compute_budget_and_limits,
+            );
+
             let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails::new(None, compute_budget_and_limits),
-                &Hash::default(),
+                tx_details,
+                &environment_blockhash,
                 &rent,
                 &mut error_counters,
                );
