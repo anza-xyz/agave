@@ -24,7 +24,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-hash = { workspace = true }
 solana-pubkey = { workspace = true, default-features = false }
-solana-sha256-hasher = { workspace = true }
+solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-svm-feature-set = { workspace = true }
 
 [lints]
