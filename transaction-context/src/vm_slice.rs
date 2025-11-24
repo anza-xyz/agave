@@ -40,6 +40,11 @@ impl<T> VmSlice<T> {
         self.len == 0
     }
 
+    pub fn end(&self) -> u64 {
+        self.ptr()
+            .saturating_add(self.len().saturating_mul(size_of::<T>() as u64))
+    }
+
     /// # Safety
     /// Set a new length for the mapped account.
     /// This function is not safe to use if not coupled with the respective change in

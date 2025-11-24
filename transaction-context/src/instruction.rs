@@ -74,11 +74,7 @@ impl InstructionFrame {
         // Instruction accounts slice
         let instruction_accounts_start_address = if let Some(penultimate_slice) = penultimate_slice
         {
-            penultimate_slice.ptr().saturating_add(
-                penultimate_slice
-                    .len()
-                    .saturating_mul(size_of::<InstructionAccount>() as u64),
-            )
+            penultimate_slice.end()
         } else {
             GUEST_INSTRUCTION_ACCOUNTS_ADDRESS
         };
