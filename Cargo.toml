@@ -308,7 +308,7 @@ im = "15.1.0"
 indexmap = "2.12.0"
 indicatif = "0.18.3"
 io-uring = "0.7.11"
-itertools = "0.13.0"
+itertools = "0.14.0"
 jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
     "unprefixed_malloc_on_supported_platforms",
 ] }
