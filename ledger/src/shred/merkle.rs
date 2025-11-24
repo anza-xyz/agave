@@ -802,22 +802,22 @@ pub(super) fn recover(
             }
             shred.merkle_node()
         });
-    let tree = make_merkle_tree(nodes)?;
+    let tree = MerkleTree::try_new(nodes)?;
     // The attached signature verifies only if we obtain the same Merkle root.
     // Because shreds obtained from turbine or repair are sig-verified, this
     // also means that we don't need to verify signatures for recovered shreds.
-    if tree.last() != Some(&merkle_root.0) {
+    if tree.root() != merkle_root {
         return Err(Error::InvalidMerkleRoot);
     }
     let set_merkle_proof = move |(index, (mut shred, mask)): (_, (Shred, _))| {
         if mask {
             debug_assert!({
-                let proof = make_merkle_proof(index, num_shards, &tree);
+                let proof = tree.make_merkle_proof(index, num_shards);
                 shred.merkle_proof()?.map(Some).eq(proof.map(Result::ok))
             });
             Ok(None)
         } else {
-            let proof = make_merkle_proof(index, num_shards, &tree);
+            let proof = tree.make_merkle_proof(index, num_shards);
             shred.set_merkle_proof(proof)?;
             // Already sanitized after reconstruct.
             debug_assert_matches!(shred.sanitize(), Ok(()));
@@ -1217,7 +1217,7 @@ fn shred_leftover_data(
 // - Computes the Merkle tree for the erasure batch.
 // - Signs the root of the Merkle tree.
 // - Populates Merkle proof for each shred and attaches the signature.
-// Returns the root of the Merkle tree (for chaining Merkle roots).
+// Returns the root of the Merkle tree.
 fn finish_erasure_batch(
     thread_pool: Option<&ThreadPool>,
     keypair: &Keypair,
@@ -1278,21 +1278,21 @@ fn finish_erasure_batch(
     let tree = match thread_pool {
         None => {
             let nodes = shreds.iter().map(Shred::merkle_node);
-            make_merkle_tree(nodes)
+            MerkleTree::try_new(nodes)
         }
-        Some(thread_pool) => make_merkle_tree(thread_pool.install(|| {
+        Some(thread_pool) => MerkleTree::try_new(thread_pool.install(|| {
             shreds
                 .par_iter()
                 .map(Shred::merkle_node)
                 .collect::<Vec<_>>()
+                .into_iter()
         })),
     }?;
     // Sign the root of the Merkle tree.
-    let root = SliceRoot(tree.last().copied().ok_or(Error::InvalidMerkleProof)?);
-    let signature = keypair.sign_message(root.0.as_ref());
+    let signature = keypair.sign_message(tree.root().0.as_ref());
     // Populate merkle proof for all shreds and attach signature.
     for (index, shred) in shreds.iter_mut().enumerate() {
-        let proof = make_merkle_proof(index, erasure_batch_size, &tree);
+        let proof = tree.make_merkle_proof(index, erasure_batch_size);
         shred.set_merkle_proof(proof)?;
         shred.set_signature(signature);
         debug_assert!(shred.verify(&keypair.pubkey()));
@@ -1303,7 +1303,7 @@ fn finish_erasure_batch(
             &Shred::from_payload(shred).unwrap()
         });
     }
-    Ok(root)
+    Ok(tree.root())
 }
 
 #[cfg(test)]
@@ -1399,10 +1399,10 @@ mod test {
         let nodes = repeat_with(|| rng.random::<[u8; 32]>()).map(Hash::from);
         let nodes: Vec<_> = nodes.take(5).collect();
         let size = nodes.len();
-        let tree = make_merkle_tree(nodes.into_iter().map(Ok)).unwrap();
+        let tree = MerkleTree::try_new(nodes.into_iter().map(Ok)).unwrap();
         for index in size..size + 3 {
             assert_matches!(
-                make_merkle_proof(index, size, &tree).next(),
+                tree.make_merkle_proof(index, size).next(),
                 Some(Err(Error::InvalidMerkleProof))
             );
         }
@@ -1529,9 +1529,9 @@ mod test {
             shreds.push(Shred::ShredCode(shred));
         }
         let nodes = shreds.iter().map(Shred::merkle_node);
-        let tree = make_merkle_tree(nodes).unwrap();
+        let tree = MerkleTree::try_new(nodes).unwrap();
         for (index, shred) in shreds.iter_mut().enumerate() {
-            let proof = make_merkle_proof(index, num_shreds, &tree);
+            let proof = tree.make_merkle_proof(index, num_shreds);
             shred.set_merkle_proof(proof).unwrap();
             let data = shred.signed_data().unwrap();
             let signature = keypair.sign_message(data.as_ref());
