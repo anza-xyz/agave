@@ -768,11 +768,11 @@ pub mod apply_cost_tracker_during_replay {
 }
 
 pub mod stricter_abi_and_runtime_constraints {
-    solana_pubkey::declare_id!("sD3uVpaavUXQRvDXrMFCQ2CqLqnbz5mK8ttWNXbtD3r");
+    solana_pubkey::declare_id!("Eoh7e1sDqtyPtuiWAhBNSJinvtJWTTDgeUMRi3RF8zWS");
 }
 
 pub mod account_data_direct_mapping {
-    solana_pubkey::declare_id!("DFN8MyKpQqFW31qczcahgnnxcAHQc6P94wtTEX5EP1RA");
+    solana_pubkey::declare_id!("6f2qai82RU7Dutj1WJfRzLJKYA36QWvTa89CR1imgj7N");
 }
 
 pub mod add_set_tx_loaded_accounts_data_size_instruction {

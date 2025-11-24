@@ -3547,6 +3547,40 @@ fn test_program_sbf_realloc_invoke() {
         }
     }
 
+    // Realloc shrink, then CPI, then realloc extend
+    let mut invoke_account = AccountSharedData::new(100_000_000, 10, &realloc_invoke_program_id);
+    invoke_account.set_data(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    bank.store_account(&invoke_pubkey, &invoke_account);
+    let mut instruction_data = vec![];
+    instruction_data.extend_from_slice(&[INVOKE_REALLOC_SHRINK_THEN_CPI_THEN_REALLOC_EXTEND, 1]);
+    instruction_data.extend_from_slice(&5_u64.to_le_bytes());
+    instruction_data.extend_from_slice(&10_u64.to_le_bytes());
+    let result = bank_client.send_and_confirm_message(
+        signer,
+        Message::new(
+            &[
+                Instruction::new_with_bytes(
+                    realloc_invoke_program_id,
+                    &instruction_data,
+                    vec![
+                        AccountMeta::new(invoke_pubkey, false),
+                        AccountMeta::new_readonly(realloc_invoke_program_id, false),
+                    ],
+                ),
+                ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
+                    LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST,
+                ),
+            ],
+            Some(&mint_pubkey),
+        ),
+    );
+    assert!(result.is_ok());
+    let data = bank_client
+        .get_account_data(&invoke_pubkey)
+        .unwrap()
+        .unwrap();
+    assert_eq!(data, &[0, 1, 2, 3, 4, 0, 0, 0, 0, 0]);
+
     // Realloc invoke max twice
     let invoke_account = AccountSharedData::new(42, 0, &realloc_program_id);
     bank.store_account(&invoke_pubkey, &invoke_account);
