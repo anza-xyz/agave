@@ -105,11 +105,11 @@ impl SnapshotPackagerService {
                     );
 
                     let Ok(bank_snapshot_info) = bank_snapshot_info else {
+                        let err = bank_snapshot_info.unwrap_err();
                         error!(
-                            "Stopping {}! Fatal error while serializing snapshot for slot {}: \
-                             {bank_snapshot_info:?}",
+                            "Stopping {}! Fatal error while serializing snapshot for slot \
+                             {snapshot_slot}: {err}",
                             Self::NAME,
-                            snapshot_slot,
                         );
                         exit.store(true, Ordering::Relaxed);
                         break;

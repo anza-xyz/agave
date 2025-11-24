@@ -785,6 +785,7 @@ pub fn bank_to_incremental_snapshot_archive(
     };
 
     let snapshot_storages = snapshot_package.snapshot_storages;
+
     let bank_snapshot_info = snapshot_utils::serialize_snapshot(
         &snapshot_config.bank_snapshots_dir,
         snapshot_config.snapshot_version,
