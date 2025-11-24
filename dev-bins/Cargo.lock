@@ -8276,7 +8276,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "crossbeam-channel",
  "futures-util",
- "http 0.2.12",
+ "http 1.3.1",
  "log",
  "semver",
  "serde",
@@ -9013,7 +9013,7 @@ dependencies = [
  "flate2",
  "futures 0.3.31",
  "goauth",
- "http 0.2.12",
+ "http 1.3.1",
  "hyper 0.14.32",
  "hyper-proxy",
  "log",
