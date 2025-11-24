@@ -355,7 +355,7 @@ impl Consumer {
             balance_collector,
         } = load_and_execute_transactions_output;
 
-        // HANA TODO i think we can safely tranform ProcessedTransaction::NoOp into Err here
+        // HANA TODO i think we can safely transform ProcessedTransaction::NoOp into Err here
         // this *should* let us avoid committing them when building blocks, but handle them gracefully in replay
         // until we actually *do* async execution there is no reason to write garbage to chain
 

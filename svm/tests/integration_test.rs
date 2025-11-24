@@ -267,8 +267,8 @@ impl SvmTestEnvironment<'_> {
                     Ok(ProcessedTransaction::FeesOnly(fee_only)) => {
                         format!("{} (fee-only): {:?}", i, fee_only.load_error)
                     }
-                    Ok(ProcessedTransaction::NoOp(err)) => {
-                        format!("{} (no-op): {:?}", i, err)
+                    Ok(ProcessedTransaction::NoOp(e)) => {
+                        format!("{i} (no-op): {e:?}")
                     }
                     Err(e) => format!("{i} (discarded): {e:?}"),
                 })
