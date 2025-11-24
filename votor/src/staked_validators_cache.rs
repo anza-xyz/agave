@@ -312,7 +312,7 @@ mod tests {
         num_zero_stake_nodes: usize,
         base_slot: u64,
     ) -> (Arc<RwLock<BankForks>>, ClusterInfo, Vec<Pubkey>) {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let validator_keypairs = (0..num_nodes)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
             .collect::<Vec<ValidatorVoteKeypairs>>();
@@ -332,7 +332,7 @@ mod tests {
                 if node_ix < num_zero_stake_nodes {
                     0
                 } else {
-                    rng.gen_range(1..997)
+                    rng.random_range(1..997)
                 }
             })
             .collect();

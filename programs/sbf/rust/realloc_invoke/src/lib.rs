@@ -94,6 +94,46 @@ fn process_instruction(
             account.resize(new_len.saturating_add(extend_len))?;
             assert_eq!(new_len.saturating_add(extend_len), account.data_len());
         }
+        INVOKE_REALLOC_SHRINK_THEN_CPI_THEN_REALLOC_EXTEND => {
+            let (bytes, remaining_data) =
+                instruction_data[2..].split_at(std::mem::size_of::<usize>());
+            let cpi_len = usize::from_le_bytes(bytes.try_into().unwrap());
+            msg!("realloc to {} byte(s)", cpi_len);
+            account.resize(cpi_len)?;
+            msg!("invoke");
+            let realloc_to_ix = {
+                let mut instruction_data = vec![INVOKE_REALLOC_TO, 1];
+                instruction_data.extend_from_slice(&cpi_len.to_le_bytes());
+
+                Instruction::new_with_bytes(
+                    *invoke_program_id,
+                    &instruction_data,
+                    vec![
+                        AccountMeta::new(*account.key, false),
+                        AccountMeta::new_readonly(*invoke_program_id, false),
+                    ],
+                )
+            };
+            invoke(&realloc_to_ix, accounts)?;
+            assert_eq!(cpi_len, account.data_len());
+            let (bytes, _) = remaining_data.split_at(std::mem::size_of::<usize>());
+            let final_len = usize::from_le_bytes(bytes.try_into().unwrap());
+            msg!("realloc to {} byte(s)", final_len.saturating_add(1));
+            unsafe {
+                *account
+                    .try_borrow_mut_data()?
+                    .as_mut_ptr()
+                    .add(final_len.saturating_add(1)) = 0xAA;
+            }
+            msg!("realloc to {} byte(s)", final_len);
+            // We want to see the program runtime handling the zeroing of the extension.
+            // Thus we manually overwrite the length instead of calling account.resize()
+            // which would zero extend inside the program.
+            unsafe {
+                *(account.try_borrow_mut_data()?.as_mut_ptr().offset(-8) as *mut u64) =
+                    final_len as u64;
+            }
+        }
         INVOKE_REALLOC_MAX_TWICE => {
             msg!("invoke realloc max twice");
             invoke(

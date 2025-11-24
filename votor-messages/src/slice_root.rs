@@ -1,7 +1,6 @@
 //! Module to define [`SliceRoot`].
 
 use {
-    rand::Rng,
     serde::{Deserialize, Serialize},
     solana_hash::Hash,
     std::fmt::Display,
@@ -28,7 +27,7 @@ impl SliceRoot {
 
     /// Generates a random [`SliceRoot`].
     pub fn new_random() -> Self {
-        Self(Hash::new_from_array(rand::thread_rng().gen()))
+        Self(Hash::new_from_array(rand::random()))
     }
 }
 

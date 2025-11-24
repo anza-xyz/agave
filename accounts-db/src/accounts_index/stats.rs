@@ -17,6 +17,8 @@ const STATS_INTERVAL_MS: u64 = 10_000;
 
 #[derive(Debug, Default)]
 pub struct HeldInMemStats {
+    pub clean: AtomicU64,
+    pub age: AtomicU64,
     pub ref_count: AtomicU64,
     pub slot_list_len: AtomicU64,
     pub slot_list_cached: AtomicU64,
@@ -183,9 +185,12 @@ impl Stats {
     /// The result is also an estimate because 'held_in_mem' is based on a stat that is swapped out when stats are reported.
     pub fn get_remaining_items_to_flush_estimate(&self) -> usize {
         let in_mem = self.count_in_mem.load(Ordering::Relaxed) as u64;
+        // Note, `held_in_mem.clean` is purposely not included in this
+        // summation because clean items do not need to be flushed.
         let held_in_mem = self.held_in_mem.slot_list_cached.load(Ordering::Relaxed)
             + self.held_in_mem.slot_list_len.load(Ordering::Relaxed)
-            + self.held_in_mem.ref_count.load(Ordering::Relaxed);
+            + self.held_in_mem.ref_count.load(Ordering::Relaxed)
+            + self.held_in_mem.age.load(Ordering::Relaxed);
         in_mem.saturating_sub(held_in_mem) as usize
     }
 
@@ -260,9 +265,13 @@ impl Stats {
                     ),
                 );
             }
+            let held_in_mem_clean = self.held_in_mem.clean.swap(0, Ordering::Relaxed);
+            let held_in_mem_age = self.held_in_mem.age.swap(0, Ordering::Relaxed);
             let held_in_mem_ref_count = self.held_in_mem.ref_count.swap(0, Ordering::Relaxed);
             let held_in_mem_slot_list_len =
                 self.held_in_mem.slot_list_len.swap(0, Ordering::Relaxed);
+            let held_in_mem_slot_list_cached =
+                self.held_in_mem.slot_list_cached.swap(0, Ordering::Relaxed);
             // If an entry is held in-mem due to ref count or slot list length,
             // then assume it has two slot list entries.
             // Since `approx_size_of_one_entry()` assumes 'regular' entries
@@ -309,11 +318,9 @@ impl Stats {
                 ),
                 ("slot_list_len", held_in_mem_slot_list_len, i64),
                 ("ref_count", held_in_mem_ref_count, i64),
-                (
-                    "slot_list_cached",
-                    self.held_in_mem.slot_list_cached.swap(0, Ordering::Relaxed),
-                    i64
-                ),
+                ("slot_list_cached", held_in_mem_slot_list_cached, i64),
+                ("num_not_flushed_clean", held_in_mem_clean, i64),
+                ("num_not_flushed_age", held_in_mem_age, i64),
                 ("min_in_bin_disk", disk_stats.0, i64),
                 ("max_in_bin_disk", disk_stats.1, i64),
                 ("count_from_bins_disk", disk_stats.2, i64),
