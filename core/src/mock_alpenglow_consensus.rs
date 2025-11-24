@@ -7,12 +7,13 @@ use {
     solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
     solana_gossip::{cluster_info::ClusterInfo, epoch_specs::EpochSpecs},
     solana_keypair::Keypair,
-    solana_packet::{Meta, Packet},
+    solana_packet::Meta,
+    solana_perf::packet::BytesPacketBatch,
     solana_pubkey::{Pubkey, PUBKEY_BYTES},
     solana_runtime::bank::Bank,
     solana_signature::SIGNATURE_BYTES,
     solana_signer::Signer,
-    solana_streamer::{recvmmsg::recv_mmsg, sendmmsg::batch_send},
+    solana_streamer::{packet::RecvBuffer, recvmmsg::recv_mmsg, sendmmsg::batch_send},
     std::{
         collections::HashMap,
         iter::once,
@@ -301,7 +302,8 @@ impl MockAlpenglowConsensus {
             .unwrap();
         trace!("Listener thread started");
         // Set aside enough space to fetch multiple packets from the kernel per syscall
-        let mut packets: Vec<Packet> = vec![Packet::default(); 1024];
+        let mut packets = BytesPacketBatch::with_capacity(1024);
+        let mut buffer = RecvBuffer::new(1024);
         loop {
             // must wipe all Meta records to reuse the buffer
             for p in packets.iter_mut() {
@@ -312,7 +314,7 @@ impl MockAlpenglowConsensus {
                 return;
             }
             // recv_mmsg should timeout in 1 second
-            let n = match recv_mmsg(&socket, &mut packets) {
+            let n = match recv_mmsg(&socket, &mut packets, &mut buffer, false) {
                 // we may have received no packets, in this case we can safely skip the rest
                 Ok(0) => continue,
                 Ok(n) => n,

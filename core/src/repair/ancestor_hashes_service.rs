@@ -24,10 +24,7 @@ use {
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, ping_pong::Pong},
     solana_keypair::{signable::Signable, Keypair, Signer},
     solana_ledger::blockstore::Blockstore,
-    solana_perf::{
-        packet::{deserialize_from_with_limit, PacketBatch, PacketFlags, PacketRef},
-        recycler::Recycler,
-    },
+    solana_perf::packet::{deserialize_from_with_limit, PacketBatch, PacketFlags, PacketRef},
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_streamer::streamer::{self, PacketBatchReceiver, StreamerReceiveStats},
@@ -165,12 +162,10 @@ impl AncestorHashesService {
             ancestor_hashes_request_socket.clone(),
             exit.clone(),
             response_sender.clone(),
-            Recycler::default(),
             Arc::new(StreamerReceiveStats::new(
                 "ancestor_hashes_response_receiver",
             )),
             Some(Duration::from_millis(1)), // coalesce
-            false,                          // use_pinned_memory
             None,                           // in_vote_only_mode
             false,                          // is_staked_service
         );
@@ -1306,10 +1301,8 @@ mod test {
                 Arc::new(responder_node.sockets.serve_repair),
                 exit.clone(),
                 requests_sender,
-                Recycler::default(),
                 Arc::new(StreamerReceiveStats::new("repair_request_receiver")),
                 Some(Duration::from_millis(1)), // coalesce
-                false,
                 None,
                 false,
             );
