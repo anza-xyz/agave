@@ -41,6 +41,7 @@ use {
 };
 
 const_assert_eq!(ShredData::SIZE_OF_PAYLOAD, 1203);
+const_assert_eq!(ShredCode::SIZE_OF_PAYLOAD, 1228);
 
 // Layout: {common, data} headers | data buffer
 //     | [Merkle root of the previous erasure batch if chained]
@@ -270,6 +271,9 @@ impl ShredCode {
         num_coding_shreds != &other.coding_header.num_coding_shreds
             || num_data_shreds != &other.coding_header.num_data_shreds
             || self.first_coding_index() != other.first_coding_index()
+            // Merkle shreds within the same erasure batch have the same merkle root.
+            // The root of the merkle tree is signed. So either the signatures match or one fails sigverify.
+            || self.common_header.signature != other.common_header.signature
     }
 }
 
