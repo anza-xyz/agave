@@ -213,6 +213,15 @@ impl XdpDispatcher {
         let dispatcher_dir = format!("{RTDIR_FS_XDP}/dispatcher_{if_index}");
         fs::create_dir_all(&dispatcher_dir)?;
 
+        // implicit: drop order is important here! _lock_guard must be dropped before `this`
+        // else it will cause a deadlock if `new_with_programs` fails
+        let mut this = Self {
+            if_index,
+            owned_ebpfs: HashMap::new(),
+            owned_extension_priorities: HashMap::new(),
+            xdp_flags,
+        };
+
         let lock = Self::dispatcher_lock(if_index)?;
         let _lock_guard = lock.lock()?;
 
@@ -242,26 +251,28 @@ impl XdpDispatcher {
             }
         }
 
-        let mut owned_ebpfs = HashMap::new();
-        let mut owned_extension_priorities = HashMap::new();
-
         for bpf in bpfs {
             for (program, _) in &bpf.programs {
                 bpf.loader.extension(program);
             }
             let ebpf = bpf.loader.load(bpf.bpf_bytes)?;
-            owned_ebpfs.insert(bpf.ebpf_id, ebpf);
+            this.owned_ebpfs.insert(bpf.ebpf_id, ebpf);
             for (program, priority) in &bpf.programs {
-                owned_extension_priorities.insert((bpf.ebpf_id, program.to_string()), *priority);
+                this.owned_extension_priorities
+                    .insert((bpf.ebpf_id, program.to_string()), *priority);
             }
         }
-        for (ebpf_id, ebpf) in owned_ebpfs.iter_mut() {
+        for (ebpf_id, ebpf) in this.owned_ebpfs.iter_mut() {
             for (program_name, program) in ebpf.programs_mut() {
-                if !owned_extension_priorities.contains_key(&(*ebpf_id, program_name.to_string())) {
+                if !this
+                    .owned_extension_priorities
+                    .contains_key(&(*ebpf_id, program_name.to_string()))
+                {
                     continue;
                 }
                 let ext: &mut Extension = program.try_into().unwrap();
-                let priority = *owned_extension_priorities
+                let priority = *this
+                    .owned_extension_priorities
                     .get(&(*ebpf_id, program_name.to_owned()))
                     .unwrap();
 
@@ -287,12 +298,7 @@ impl XdpDispatcher {
             xdp_flags,
         )?;
 
-        Ok(Self {
-            if_index,
-            owned_ebpfs,
-            owned_extension_priorities,
-            xdp_flags,
-        })
+        Ok(this)
     }
 
     pub fn ebpf_mut(&mut self, ebpf_id: Uuid) -> Option<&mut Ebpf> {
@@ -326,7 +332,9 @@ impl XdpDispatcher {
 
         if extensions.is_empty() {
             let dispatcher_link = format!("{dispatcher_dir}/dispatcher_link");
-            fs::remove_file(dispatcher_link)?;
+            if fs::exists(&dispatcher_link)? {
+                fs::remove_file(dispatcher_link)?;
+            }
             Self::cleanup_prev_revision(&current_ext_dir)?;
 
             return Ok(());
