@@ -164,16 +164,18 @@ impl RemoteWalletManager {
         for device in trezor_client::find_devices(false) {
             let mut trezor = device.connect().expect("connection error");
             trezor.init_device(None)?;
+            let wallet = TrezorWallet::new(trezor);
+            let pubkey = wallet.get_pubkey(&DerivationPath::default(), false).ok();
             let locator = Locator {
                 manufacturer: Manufacturer::Trezor,
-                pubkey: None,
+                pubkey,
             };
             let info = RemoteWalletInfo::parse_locator(locator);
             let path = info.get_pretty_path();
             detected_devices.push(Device {
                 path: path.clone(),
                 info,
-                wallet_type: RemoteWalletType::Trezor(Rc::new(TrezorWallet::new(trezor, path))),
+                wallet_type: RemoteWalletType::Trezor(Rc::new(wallet)),
             });
         }
         let num_curr_devices = detected_devices.len();

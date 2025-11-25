@@ -20,7 +20,6 @@ static CHECK_MARK: Emoji = Emoji("✅ ", "");
 /// Trezor Wallet device
 pub struct TrezorWallet {
     pub trezor_client: Rc<RefCell<Trezor>>,
-    pub pretty_path: String,
 }
 
 impl fmt::Debug for TrezorWallet {
@@ -30,10 +29,9 @@ impl fmt::Debug for TrezorWallet {
 }
 
 impl TrezorWallet {
-    pub fn new(trezor_client: Trezor, pretty_path: String) -> Self {
+    pub fn new(trezor_client: Trezor) -> Self {
         Self {
             trezor_client: Rc::new(RefCell::new(trezor_client)),
-            pretty_path,
         }
     }
 }
@@ -219,8 +217,7 @@ mod tests {
         let firmware_version = get_firmware_version(&emulator);
         assert!(firmware_version.is_ok());
 
-        let pretty_path = "usb://trezor?key=0/0".to_string();
-        let trezor_wallet = TrezorWallet::new(emulator, pretty_path);
+        let trezor_wallet = TrezorWallet::new(emulator);
         let expected_model = "T".to_string();
         assert_eq!(expected_model, model);
 
