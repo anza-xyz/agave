@@ -12,7 +12,7 @@ use {
     futures::{stream::FuturesUnordered, Future, StreamExt as _},
     indexmap::map::{Entry, IndexMap},
     quinn::{Accept, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime},
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     smallvec::SmallVec,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
@@ -992,8 +992,8 @@ impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
         let num_pruned = std::iter::once(self.table.len())
             .filter(|&size| size > 0)
             .flat_map(|size| {
-                let mut rng = thread_rng();
-                repeat_with(move || rng.gen_range(0..size))
+                let mut rng = rng();
+                repeat_with(move || rng.random_range(0..size))
             })
             .map(|index| {
                 let connection = self.table[index].first();

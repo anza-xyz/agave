@@ -27,6 +27,7 @@ Release channels have their own copy of this changelog:
   * `--accounts-db-read-cache-limit-mb`
   * `--accounts-hash-cache-path`
   * `--disable-accounts-disk-index`
+  * `--dev-halt-at-slot`
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
 

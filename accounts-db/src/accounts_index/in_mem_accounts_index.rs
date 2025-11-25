@@ -859,11 +859,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             return ShouldFlush::No(ReasonToNotFlush::Age);
         }
 
-        let stats = self.stats();
-
         if entry.ref_count() != 1 {
             // we only flush regular entries, i.e. ref count == 1
-            Self::update_stat(&stats.held_in_mem.ref_count, 1);
             return ShouldFlush::No(ReasonToNotFlush::RefCount);
         }
 
@@ -881,14 +878,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         // re-check the ref count after locking the slot list
         if entry.ref_count() != 1 {
             entry.set_dirty(true);
-            Self::update_stat(&stats.held_in_mem.ref_count, 1);
             return ShouldFlush::No(ReasonToNotFlush::RefCount);
         }
 
         if slot_list.len() != 1 {
             // we only flush regular entries, i.e. slot list len == 1
             entry.set_dirty(true);
-            Self::update_stat(&stats.held_in_mem.slot_list_len, 1);
             return ShouldFlush::No(ReasonToNotFlush::SlotListLen);
         }
 
@@ -898,7 +893,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         if slot_list_elem.1.is_cached() {
             // we only flush regular entries, i.e. slot list does not contain any cached entries
             entry.set_dirty(true);
-            Self::update_stat(&stats.held_in_mem.slot_list_cached, 1);
             return ShouldFlush::No(ReasonToNotFlush::SlotListCached);
         }
 
@@ -1151,8 +1145,24 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 drop(map_read_guard);
                 flush_stats.flush_read_lock_us += lock_measure.end_as_us();
 
-                let ShouldFlush::Yes((slot, account_info)) = maybe_entry_for_flush else {
-                    return None;
+                let (slot, account_info) = match maybe_entry_for_flush {
+                    ShouldFlush::Yes(entry_for_flush) => entry_for_flush,
+                    ShouldFlush::No(reason) => {
+                        match reason {
+                            ReasonToNotFlush::Clean => flush_stats.num_not_flushed_clean += 1,
+                            ReasonToNotFlush::Age => flush_stats.num_not_flushed_age += 1,
+                            ReasonToNotFlush::RefCount => {
+                                flush_stats.num_not_flushed_ref_count += 1
+                            }
+                            ReasonToNotFlush::SlotListLen => {
+                                flush_stats.num_not_flushed_slot_list_len += 1
+                            }
+                            ReasonToNotFlush::SlotListCached => {
+                                flush_stats.num_not_flushed_slot_list_cached += 1
+                            }
+                        }
+                        return None;
+                    }
                 };
                 let disk_entry = [(slot, account_info.into())];
 
@@ -1270,6 +1280,16 @@ struct DiskFlushStats {
     flush_grow_us: u64,
     /// Time spent holding map_internal read lock
     flush_read_lock_us: u64,
+    /// Number of entries not flushed because they were clean
+    num_not_flushed_clean: u64,
+    /// Number of entries not flushed because they weren't old enough
+    num_not_flushed_age: u64,
+    /// Number of entries not flushed because ref count != 1
+    num_not_flushed_ref_count: u64,
+    /// Number of entries not flushed because slot list len != 1
+    num_not_flushed_slot_list_len: u64,
+    /// Number of entries not flushed because slot list contained a cached entry
+    num_not_flushed_slot_list_cached: u64,
 }
 
 impl DiskFlushStats {
@@ -1286,6 +1306,17 @@ impl DiskFlushStats {
         );
         Self::update_stat(&stats.flush_grow_us, self.flush_grow_us);
         Self::update_stat(&stats.flush_read_lock_us, self.flush_read_lock_us);
+        Self::update_stat(&stats.held_in_mem.clean, self.num_not_flushed_clean);
+        Self::update_stat(&stats.held_in_mem.age, self.num_not_flushed_age);
+        Self::update_stat(&stats.held_in_mem.ref_count, self.num_not_flushed_ref_count);
+        Self::update_stat(
+            &stats.held_in_mem.slot_list_len,
+            self.num_not_flushed_slot_list_len,
+        );
+        Self::update_stat(
+            &stats.held_in_mem.slot_list_cached,
+            self.num_not_flushed_slot_list_cached,
+        );
     }
 
     fn update_stat(stat: &AtomicU64, value: u64) {
