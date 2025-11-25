@@ -199,11 +199,7 @@ fn invoke_cargo(config: &Config, validated_toolchain_version: String) {
             &target_rustflags
         ));
     }
-    if config.debug {
-        // Passing 'opt-level=3' without '--release' allows us to have debug information
-        // in an optimized binary.
-        target_rustflags = Cow::Owned(format!("{} -C opt-level=3", &target_rustflags));
-    }
+
     if let Cow::Owned(flags) = target_rustflags {
         env::set_var(&cargo_target, flags);
     }
