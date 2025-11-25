@@ -2374,9 +2374,14 @@ mod tests {
         assert_eq!(actual_result, expected_result);
     }
 
-    #[test_case(false; "informal_loaded_size")]
-    #[test_case(true; "simd186_loaded_size")]
-    fn test_validate_transaction_fee_payer_is_nonce(formalize_loaded_transaction_data_size: bool) {
+    #[test_case(false, false; "informal_size::strict_fee")]
+    #[test_case(false, true; "informal_size::loose_fee")]
+    #[test_case(true, false; "simd186_size::strict_fee")]
+    #[test_case(true, true; "simd186_size::loose_fee")]
+    fn test_validate_transaction_fee_payer_is_nonce(
+        formalize_loaded_transaction_data_size: bool,
+        relax_fee_payer_constraint: bool,
+    ) {
         let lamports_per_signature = 5000;
         let rent = Rent::default();
         let compute_unit_limit = 1000u64;
@@ -2431,6 +2436,7 @@ mod tests {
             };
             mock_bank.feature_set.formalize_loaded_transaction_data_size =
                 formalize_loaded_transaction_data_size;
+            mock_bank.feature_set.relax_fee_payer_constraint = relax_fee_payer_constraint;
             let mut account_loader = (&mock_bank).into();
 
             let mut error_counters = TransactionErrorMetrics::default();
@@ -2499,10 +2505,11 @@ mod tests {
 
             let mut mock_accounts = HashMap::new();
             mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
-            let mock_bank = MockBankCallback {
+            let mut mock_bank = MockBankCallback {
                 account_shared_data: Arc::new(RwLock::new(mock_accounts)),
                 ..Default::default()
             };
+            mock_bank.feature_set.relax_fee_payer_constraint = relax_fee_payer_constraint;
             let mut account_loader = (&mock_bank).into();
 
             let mut error_counters = TransactionErrorMetrics::default();
@@ -2512,7 +2519,7 @@ mod tests {
                 compute_budget_and_limits,
             );
 
-            let _result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
+            let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
                 tx_details,
@@ -2521,9 +2528,14 @@ mod tests {
                 &mut error_counters,
                );
 
+            // nonce transactions are never processable under SIMD-0290 rules
             assert_eq!(error_counters.insufficient_funds.0, 1);
-            // HANA broken, fixed in #9246. add test_case after that + simd186 removal
-            // assert_eq!(result, Err(TransactionError::InsufficientFundsForFee));
+            assert_eq!(
+                result,
+                TransactionValidationResult::Unprocessable(
+                    TransactionError::InsufficientFundsForFee
+                )
+            );
         }
     }
 
