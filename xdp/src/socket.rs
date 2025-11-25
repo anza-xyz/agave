@@ -22,6 +22,7 @@ use {
         sync::atomic::Ordering,
     },
 };
+use crate::umem::FrameOffset;
 
 pub struct Socket<U: Umem> {
     fd: OwnedFd,
@@ -368,5 +369,11 @@ impl RxRing {
 
     pub fn sync(&mut self, commit: bool) {
         self.consumer.sync(commit);
+    }
+
+    pub fn read(&mut self) -> Option<FrameOffset> {
+        let index = self.consumer.consume()? & self.size.saturating_sub(1);
+        let index = unsafe { *self.mmap.desc.add(index as usize) } as usize;
+        Some(FrameOffset(index))
     }
 }
