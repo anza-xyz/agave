@@ -11909,7 +11909,6 @@ dependencies = [
  "solana-hash 3.1.0",
  "solana-instruction",
  "solana-keypair",
- "solana-metrics",
  "solana-packet 4.0.0",
  "solana-program-runtime",
  "solana-pubkey 3.0.0",
