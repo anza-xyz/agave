@@ -4,17 +4,12 @@ use {
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 enum CompressionType {
+    #[default]
     Uncompressed,
     GZip,
     BZip2,
-}
-
-impl Default for CompressionType {
-    fn default() -> Self {
-        Self::Uncompressed
-    }
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]

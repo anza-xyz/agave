@@ -18,6 +18,7 @@ crate-type = ["lib"]
 name = "solana_builtins_default_costs"
 
 [features]
+agave-unstable-api = []
 frozen-abi = ["dep:solana-frozen-abi", "solana-vote-program/frozen-abi"]
 dev-context-only-utils = ["dep:qualifier_attr"]
 
@@ -34,7 +35,6 @@ solana-frozen-abi = { workspace = true, optional = true, features = [
 solana-loader-v4-program = { workspace = true, features = ["agave-unstable-api"] }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
-solana-stake-program = { workspace = true }
 solana-system-program = { workspace = true }
 solana-vote-program = { workspace = true }
 

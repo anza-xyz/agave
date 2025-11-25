@@ -4,18 +4,20 @@
 use {
     crate::{
         packet::{
-            self, PacketBatch, PacketBatchRecycler, PacketRef, PinnedPacketBatch, PACKETS_PER_BATCH,
+            self, Packet, PacketBatch, PacketBatchRecycler, PacketRef, RecycledPacketBatch,
+            PACKETS_PER_BATCH,
         },
         sendmmsg::{batch_send, SendPktsError},
-        socket::SocketAddrSpace,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
     histogram::Histogram,
-    itertools::Itertools,
-    solana_net_utils::multihomed_sockets::{
-        BindIpAddrs, CurrentSocket, FixedSocketProvider, MultihomedSocketProvider, SocketProvider,
+    solana_net_utils::{
+        multihomed_sockets::{
+            BindIpAddrs, CurrentSocket, FixedSocketProvider, MultihomedSocketProvider,
+            SocketProvider,
+        },
+        SocketAddrSpace,
     },
-    solana_packet::Packet,
     solana_pubkey::Pubkey,
     solana_time_utils::timestamp,
     std::{
@@ -80,8 +82,6 @@ pub struct StakedNodes {
     stakes: Arc<HashMap<Pubkey, u64>>,
     overrides: HashMap<Pubkey, u64>,
     total_stake: u64,
-    max_stake: u64,
-    min_stake: u64,
 }
 
 pub type PacketBatchReceiver = Receiver<PacketBatch>;
@@ -187,9 +187,9 @@ fn recv_loop<P: SocketProvider>(
 
     loop {
         let mut packet_batch = if use_pinned_memory {
-            PinnedPacketBatch::new_with_recycler(recycler, PACKETS_PER_BATCH, stats.name)
+            RecycledPacketBatch::new_with_recycler(recycler, PACKETS_PER_BATCH, stats.name)
         } else {
-            PinnedPacketBatch::with_capacity(PACKETS_PER_BATCH)
+            RecycledPacketBatch::with_capacity(PACKETS_PER_BATCH)
         };
         packet_batch.resize(PACKETS_PER_BATCH, Packet::default());
 
@@ -429,30 +429,24 @@ impl StreamerSendStats {
 }
 
 impl StakedNodes {
-    /// Calculate the stake stats: return the new (total_stake, min_stake and max_stake) tuple
-    fn calculate_stake_stats(
-        stakes: &Arc<HashMap<Pubkey, u64>>,
+    fn calculate_total_stake(
+        stakes: &HashMap<Pubkey, u64>,
         overrides: &HashMap<Pubkey, u64>,
-    ) -> (u64, u64, u64) {
-        let values = stakes
+    ) -> u64 {
+        stakes
             .iter()
             .filter(|(pubkey, _)| !overrides.contains_key(pubkey))
             .map(|(_, &stake)| stake)
             .chain(overrides.values().copied())
-            .filter(|&stake| stake > 0);
-        let total_stake = values.clone().sum();
-        let (min_stake, max_stake) = values.minmax().into_option().unwrap_or_default();
-        (total_stake, min_stake, max_stake)
+            .sum()
     }
 
     pub fn new(stakes: Arc<HashMap<Pubkey, u64>>, overrides: HashMap<Pubkey, u64>) -> Self {
-        let (total_stake, min_stake, max_stake) = Self::calculate_stake_stats(&stakes, &overrides);
+        let total_stake = Self::calculate_total_stake(&stakes, &overrides);
         Self {
             stakes,
             overrides,
             total_stake,
-            max_stake,
-            min_stake,
         }
     }
 
@@ -469,24 +463,10 @@ impl StakedNodes {
         self.total_stake
     }
 
-    #[inline]
-    pub(super) fn min_stake(&self) -> u64 {
-        self.min_stake
-    }
-
-    #[inline]
-    pub(super) fn max_stake(&self) -> u64 {
-        self.max_stake
-    }
-
     // Update the stake map given a new stakes map
     pub fn update_stake_map(&mut self, stakes: Arc<HashMap<Pubkey, u64>>) {
-        let (total_stake, min_stake, max_stake) =
-            Self::calculate_stake_stats(&stakes, &self.overrides);
-
+        let total_stake = Self::calculate_total_stake(&stakes, &self.overrides);
         self.total_stake = total_stake;
-        self.min_stake = min_stake;
-        self.max_stake = max_stake;
         self.stakes = stakes;
     }
 }
@@ -625,7 +605,7 @@ mod test {
     use {
         super::*,
         crate::{
-            packet::{Packet, PinnedPacketBatch, PACKET_DATA_SIZE},
+            packet::{Packet, RecycledPacketBatch, PACKET_DATA_SIZE},
             streamer::{receiver, responder},
         },
         crossbeam_channel::unbounded,
@@ -659,7 +639,7 @@ mod test {
     #[test]
     fn streamer_debug() {
         write!(io::sink(), "{:?}", Packet::default()).unwrap();
-        write!(io::sink(), "{:?}", PinnedPacketBatch::default()).unwrap();
+        write!(io::sink(), "{:?}", RecycledPacketBatch::default()).unwrap();
     }
     #[test]
     fn streamer_send_test() {
@@ -692,7 +672,7 @@ mod test {
                 SocketAddrSpace::Unspecified,
                 None,
             );
-            let mut packet_batch = PinnedPacketBatch::default();
+            let mut packet_batch = RecycledPacketBatch::default();
             for i in 0..NUM_PACKETS {
                 let mut p = Packet::default();
                 {

@@ -11,7 +11,7 @@ use {
     rand::{thread_rng, Rng},
     solana_client::{connection_cache::ConnectionCache, tpu_client::TpuClientWrapper},
     solana_keypair::Keypair,
-    solana_net_utils::DEFAULT_IP_ECHO_SERVER_THREADS,
+    solana_net_utils::{SocketAddrSpace, DEFAULT_IP_ECHO_SERVER_THREADS},
     solana_perf::recycler::Recycler,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
@@ -19,7 +19,6 @@ use {
     solana_signer::Signer,
     solana_streamer::{
         evicting_sender::EvictingSender,
-        socket::SocketAddrSpace,
         streamer::{self, StreamerReceiveStats},
     },
     solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig},
@@ -152,27 +151,27 @@ pub fn discover_validators(
     socket_addr_space: SocketAddrSpace,
 ) -> std::io::Result<Vec<ContactInfo>> {
     const DISCOVER_CLUSTER_TIMEOUT: Duration = Duration::from_secs(120);
-    let (_all_peers, validators) = discover(
-        None, // keypair
-        Some(entrypoint),
+    let (_all_peers, validators) = discover_peers(
+        None,
+        &vec![*entrypoint],
         Some(num_nodes),
         DISCOVER_CLUSTER_TIMEOUT,
-        None,             // find_nodes_by_pubkey
-        None,             // find_node_by_gossip_addr
-        None,             // my_gossip_addr
-        my_shred_version, // my_shred_version
+        None,
+        &[],
+        None,
+        my_shred_version,
         socket_addr_space,
     )?;
     Ok(validators)
 }
 
-pub fn discover(
+pub fn discover_peers(
     keypair: Option<Keypair>,
-    entrypoint: Option<&SocketAddr>,
+    entrypoints: &Vec<SocketAddr>,
     num_nodes: Option<usize>, // num_nodes only counts validators, excludes spy nodes
     timeout: Duration,
     find_nodes_by_pubkey: Option<&[Pubkey]>,
-    find_node_by_gossip_addr: Option<&SocketAddr>,
+    find_nodes_by_gossip_addr: &[SocketAddr],
     my_gossip_addr: Option<&SocketAddr>,
     my_shred_version: u16,
     socket_addr_space: SocketAddrSpace,
@@ -182,9 +181,9 @@ pub fn discover(
 )> {
     let keypair = keypair.unwrap_or_else(Keypair::new);
     let exit = Arc::new(AtomicBool::new(false));
-    let (gossip_service, ip_echo, spy_ref) = make_gossip_node(
+    let (gossip_service, ip_echo, spy_ref) = make_node(
         keypair,
-        entrypoint,
+        entrypoints,
         exit.clone(),
         my_gossip_addr,
         my_shred_version,
@@ -193,7 +192,7 @@ pub fn discover(
     );
 
     let id = spy_ref.id();
-    info!("Entrypoint: {entrypoint:?}");
+    info!("Entrypoints: {entrypoints:?}");
     info!("Node Id: {id:?}");
     if let Some(my_gossip_addr) = my_gossip_addr {
         info!("Gossip Address: {my_gossip_addr:?}");
@@ -211,7 +210,7 @@ pub fn discover(
         num_nodes,
         timeout,
         find_nodes_by_pubkey,
-        find_node_by_gossip_addr,
+        find_nodes_by_gossip_addr,
     );
 
     exit.store(true, Ordering::Relaxed);
@@ -279,7 +278,7 @@ fn spy(
     num_nodes: Option<usize>,
     timeout: Duration,
     find_nodes_by_pubkey: Option<&[Pubkey]>,
-    find_node_by_gossip_addr: Option<&SocketAddr>,
+    find_nodes_by_gossip_addr: &[SocketAddr],
 ) -> (
     bool,             // if found the specified nodes
     Duration,         // elapsed time until found the nodes or timed-out
@@ -307,13 +306,14 @@ fn spy(
             false
         };
 
-        let found_node_by_gossip_addr = if let Some(gossip_addr) = find_node_by_gossip_addr {
-            all_peers
-                .iter()
-                .any(|node| node.gossip() == Some(*gossip_addr))
-        } else {
-            false
-        };
+        // if find_nodes_by_gossip_addr is not empty and all_peers contain
+        // all the nodes from find_nodes_by_gossip_addr
+        let found_nodes_by_gossip_addr = !find_nodes_by_gossip_addr.is_empty()
+            && find_nodes_by_gossip_addr.iter().all(|node_addr| {
+                all_peers
+                    .iter()
+                    .any(|peer| (*peer).gossip() == Some(*node_addr))
+            });
 
         if let Some(num) = num_nodes {
             // Only consider validators and archives for `num_nodes`
@@ -322,15 +322,15 @@ fn spy(
             nodes.dedup();
 
             if nodes.len() >= num {
-                if found_nodes_by_pubkey || found_node_by_gossip_addr {
+                if found_nodes_by_pubkey || found_nodes_by_gossip_addr {
                     met_criteria = true;
                 }
 
-                if find_nodes_by_pubkey.is_none() && find_node_by_gossip_addr.is_none() {
+                if find_nodes_by_pubkey.is_none() && find_nodes_by_gossip_addr.is_empty() {
                     met_criteria = true;
                 }
             }
-        } else if found_nodes_by_pubkey || found_node_by_gossip_addr {
+        } else if found_nodes_by_pubkey || found_nodes_by_gossip_addr {
             met_criteria = true;
         }
         if i % 20 == 0 {
@@ -344,11 +344,9 @@ fn spy(
     (met_criteria, now.elapsed(), all_peers, tvu_peers)
 }
 
-/// Makes a spy or gossip node based on whether or not a gossip_addr was passed in
-/// Pass in a gossip addr to fully participate in gossip instead of relying on just pulls
-pub fn make_gossip_node(
+pub fn make_node(
     keypair: Keypair,
-    entrypoint: Option<&SocketAddr>,
+    entrypoints: &[SocketAddr],
     exit: Arc<AtomicBool>,
     gossip_addr: Option<&SocketAddr>,
     shred_version: u16,
@@ -361,9 +359,13 @@ pub fn make_gossip_node(
         ClusterInfo::spy_node(keypair.pubkey(), shred_version)
     };
     let cluster_info = ClusterInfo::new(node, Arc::new(keypair), socket_addr_space);
-    if let Some(entrypoint) = entrypoint {
-        cluster_info.set_entrypoint(ContactInfo::new_gossip_entry_point(entrypoint));
-    }
+
+    cluster_info.set_entrypoints(
+        entrypoints
+            .iter()
+            .map(ContactInfo::new_gossip_entry_point)
+            .collect::<Vec<_>>(),
+    );
     let gossip_sockets = Arc::new([gossip_socket]);
     let cluster_info = Arc::new(cluster_info);
     let gossip_service = GossipService::new(
@@ -427,40 +429,40 @@ mod tests {
 
         let spy_ref = Arc::new(cluster_info);
 
-        let (met_criteria, elapsed, _, tvu_peers) = spy(spy_ref.clone(), None, TIMEOUT, None, None);
+        let (met_criteria, elapsed, _, tvu_peers) = spy(spy_ref.clone(), None, TIMEOUT, None, &[]);
         assert!(!met_criteria);
         assert!((TIMEOUT..TIMEOUT + Duration::from_secs(1)).contains(&elapsed));
         assert_eq!(tvu_peers, spy_ref.tvu_peers(ContactInfo::clone));
 
         // Find num_nodes
-        let (met_criteria, _, _, _) = spy(spy_ref.clone(), Some(1), TIMEOUT, None, None);
+        let (met_criteria, _, _, _) = spy(spy_ref.clone(), Some(1), TIMEOUT, None, &[]);
         assert!(met_criteria);
-        let (met_criteria, _, _, _) = spy(spy_ref.clone(), Some(2), TIMEOUT, None, None);
+        let (met_criteria, _, _, _) = spy(spy_ref.clone(), Some(2), TIMEOUT, None, &[]);
         assert!(met_criteria);
 
         // Find specific node by pubkey
-        let (met_criteria, _, _, _) = spy(spy_ref.clone(), None, TIMEOUT, Some(&[peer0]), None);
+        let (met_criteria, _, _, _) = spy(spy_ref.clone(), None, TIMEOUT, Some(&[peer0]), &[]);
         assert!(met_criteria);
         let (met_criteria, _, _, _) = spy(
             spy_ref.clone(),
             None,
             TIMEOUT,
             Some(&[solana_pubkey::new_rand()]),
-            None,
+            &[],
         );
         assert!(!met_criteria);
 
         // Find num_nodes *and* specific node by pubkey
-        let (met_criteria, _, _, _) = spy(spy_ref.clone(), Some(1), TIMEOUT, Some(&[peer0]), None);
+        let (met_criteria, _, _, _) = spy(spy_ref.clone(), Some(1), TIMEOUT, Some(&[peer0]), &[]);
         assert!(met_criteria);
-        let (met_criteria, _, _, _) = spy(spy_ref.clone(), Some(3), TIMEOUT, Some(&[peer0]), None);
+        let (met_criteria, _, _, _) = spy(spy_ref.clone(), Some(3), TIMEOUT, Some(&[peer0]), &[]);
         assert!(!met_criteria);
         let (met_criteria, _, _, _) = spy(
             spy_ref.clone(),
             Some(1),
             TIMEOUT,
             Some(&[solana_pubkey::new_rand()]),
-            None,
+            &[],
         );
         assert!(!met_criteria);
 
@@ -470,7 +472,7 @@ mod tests {
             None,
             TIMEOUT,
             None,
-            Some(&peer0_info.gossip().unwrap()),
+            &[peer0_info.gossip().unwrap()],
         );
         assert!(met_criteria);
 
@@ -479,7 +481,7 @@ mod tests {
             None,
             TIMEOUT,
             None,
-            Some(&"1.1.1.1:1234".parse().unwrap()),
+            &["1.1.1.1:1234".parse().unwrap()],
         );
         assert!(!met_criteria);
     }

@@ -94,7 +94,7 @@ impl<const N: usize> Signable for Ping<N> {
     }
 
     #[inline]
-    fn signable_data(&self) -> Cow<[u8]> {
+    fn signable_data(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(&self.token)
     }
 
@@ -140,7 +140,7 @@ impl Signable for Pong {
         self.from
     }
 
-    fn signable_data(&self) -> Cow<[u8]> {
+    fn signable_data(&self) -> Cow<'static, [u8]> {
         Cow::Owned(self.hash.as_ref().into())
     }
 
@@ -227,7 +227,7 @@ impl<const N: usize> PingCache<N> {
     }
 
     /// Returns true if the remote node has responded to a ping message.
-    /// Removes expired pong messages. In order to extend verifications before
+    /// Removes expired pong messages. In order to extend verification before
     /// expiration, if the pong message is not too recent, and the node has not
     /// been pinged recently, calls the given function to generates a new ping
     /// message, records current timestamp and hash of ping token, and returns

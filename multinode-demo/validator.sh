@@ -104,9 +104,6 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --dev-no-sigverify ]]; then
       args+=("$1")
       shift
-    elif [[ $1 = --dev-halt-at-slot ]]; then
-      args+=("$1" "$2")
-      shift 2
     elif [[ $1 = --rpc-port ]]; then
       args+=("$1" "$2")
       shift 2
@@ -179,6 +176,9 @@ while [[ -n $1 ]]; do
     elif [[ $1 == --block-production-method ]]; then
       args+=("$1" "$2")
       shift 2
+    elif [[ $1 == --enable-scheduler-bindings ]]; then
+      args+=("$1")
+      shift
     elif [[ $1 == --transaction-structure ]]; then
       args+=("$1" "$2")
       shift 2
@@ -199,11 +199,6 @@ while [[ -n $1 ]]; do
     shift
   fi
 done
-
-if [[ "$SOLANA_GPU_MISSING" -eq 1 ]]; then
-  echo "Testnet requires GPUs, but none were found!  Aborting..."
-  exit 1
-fi
 
 if [[ ${#positional_args[@]} -gt 1 ]]; then
   usage "$@"
@@ -272,11 +267,8 @@ if [[ $maybeRequireTower = true ]]; then
   default_arg --require-tower
 fi
 
-if [[ -n $SOLANA_CUDA ]]; then
-  program=$agave_validator_cuda
-else
-  program=$agave_validator
-fi
+
+program=$agave_validator
 
 set -e
 PS4="$(basename "$0"): "

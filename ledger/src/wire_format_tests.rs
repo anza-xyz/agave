@@ -65,7 +65,7 @@ mod tests {
     /// Export the "TURBINE_WIRE_FORMAT_PACKETS" env variable to run this test.
     #[test]
     fn test_turbine_wire_format() {
-        solana_logger::setup();
+        agave_logger::setup();
         let path_base = match std::env::var_os("TURBINE_WIRE_FORMAT_PACKETS") {
             Some(p) => PathBuf::from(p),
             None => {

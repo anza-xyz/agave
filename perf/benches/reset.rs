@@ -16,7 +16,7 @@ const N: usize = 1_000_000;
 // test bench_reset2 ... bench:     274,007 ns/iter (+/- 129,552)
 
 fn bench_reset1(b: &mut Bencher) {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut v = Vec::with_capacity(N);
     v.resize_with(N, AtomicU64::default);
@@ -32,7 +32,7 @@ fn bench_reset1(b: &mut Bencher) {
 }
 
 fn bench_reset2(b: &mut Bencher) {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mut v = Vec::with_capacity(N);
     v.resize_with(N, AtomicU64::default);

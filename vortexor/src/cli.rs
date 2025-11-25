@@ -1,10 +1,9 @@
 use {
     clap::{builder::ValueParser, crate_description, crate_name, ArgAction, ColorChoice, Parser},
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
-    solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_streamer::quic::{
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STAKED_CONNECTIONS,
-        DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS, DEFAULT_TPU_COALESCE,
+        DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
     },
     std::{
         net::{IpAddr, SocketAddr},
@@ -24,8 +23,6 @@ fn parse_port_range(port_range: &str) -> Result<(u16, u16), String> {
                 start,
                 start.saturating_add(MINIMUM_VALIDATOR_PORT_RANGE_WIDTH)
             ))
-        } else if end.checked_add(QUIC_PORT_OFFSET).is_none() {
-            Err("Invalid dynamic_port_range.".to_string())
         } else {
             Ok((start, end))
         }
@@ -44,12 +41,6 @@ fn get_default_port_range() -> &'static str {
     let range = format!("{}-{}", VALIDATOR_PORT_RANGE.0, VALIDATOR_PORT_RANGE.1);
     let range: &'static str = Box::leak(range.into_boxed_str());
     range
-}
-
-fn get_default_tpu_coalesce_ms() -> &'static str {
-    let coalesce = DEFAULT_TPU_COALESCE.as_millis().to_string();
-    let coalesce: &'static str = Box::leak(coalesce.into_boxed_str());
-    coalesce
 }
 
 /// returns a parser which can validate input URL based on specified schemes.
@@ -137,10 +128,6 @@ pub struct Cli {
     /// Max streams per second for a streamer.
     #[arg(long, default_value_t = DEFAULT_MAX_STREAMS_PER_MS)]
     pub max_streams_per_ms: u64,
-
-    /// Milliseconds to wait in the TPU receiver for packet coalescing.
-    #[arg(long, default_value = get_default_tpu_coalesce_ms())]
-    pub tpu_coalesce_ms: u64,
 
     /// Redirect logging to the specified file, '-' for standard error. Sending the
     /// SIGUSR1 signal to the vortexor process will cause it to re-open the log file.

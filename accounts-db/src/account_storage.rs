@@ -329,7 +329,7 @@ impl<'a> AccountStoragesOrderer<'a> {
     /// Create randomizing orderer.
     pub fn with_random_order(storages: &'a [Arc<AccountStorageEntry>]) -> Self {
         let mut indices: Vec<usize> = (0..storages.len()).collect();
-        indices.shuffle(&mut rand::thread_rng());
+        indices.shuffle(&mut rand::rng());
         Self {
             storages,
             indices: indices.into_boxed_slice(),
@@ -457,7 +457,7 @@ pub(crate) mod tests {
         test_case::test_case,
     };
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_shrink_in_progress(storage_access: StorageAccess) {
         // test that we check in order map then shrink_in_progress_map
@@ -552,7 +552,7 @@ pub(crate) mod tests {
         }
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     #[should_panic(expected = "self.no_shrink_in_progress()")]
     fn test_get_slot_storage_entry_fail(storage_access: StorageAccess) {
@@ -565,7 +565,7 @@ pub(crate) mod tests {
         storage.get_slot_storage_entry(0);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     #[should_panic(expected = "self.no_shrink_in_progress()")]
     fn test_all_slots_fail(storage_access: StorageAccess) {
@@ -578,7 +578,7 @@ pub(crate) mod tests {
         storage.all_slots();
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     #[should_panic(expected = "self.no_shrink_in_progress()")]
     fn test_initialize_fail(storage_access: StorageAccess) {
@@ -591,7 +591,7 @@ pub(crate) mod tests {
         storage.initialize(AccountStorageMap::default());
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     #[should_panic(
         expected = "shrink_can_be_active || self.shrink_in_progress_map.read().unwrap().is_empty()"
@@ -606,7 +606,7 @@ pub(crate) mod tests {
         storage.remove(&0, false);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     #[should_panic(expected = "self.no_shrink_in_progress()")]
     fn test_iter_fail(storage_access: StorageAccess) {
@@ -619,7 +619,7 @@ pub(crate) mod tests {
         storage.iter();
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     #[should_panic(expected = "self.no_shrink_in_progress()")]
     fn test_insert_fail(storage_access: StorageAccess) {
@@ -633,7 +633,7 @@ pub(crate) mod tests {
         storage.insert(0, sample);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     #[should_panic(expected = "duplicate call")]
     fn test_shrinking_in_progress_fail3(storage_access: StorageAccess) {
@@ -649,7 +649,7 @@ pub(crate) mod tests {
         storage.shrinking_in_progress(0, sample);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     #[should_panic(expected = "duplicate call")]
     fn test_shrinking_in_progress_fail4(storage_access: StorageAccess) {
@@ -662,7 +662,7 @@ pub(crate) mod tests {
         storage.shrinking_in_progress(0, sample);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_shrinking_in_progress_second_call(storage_access: StorageAccess) {
         // already called 'shrink_in_progress' on this slot, but it finished, so we succeed
@@ -695,7 +695,7 @@ pub(crate) mod tests {
         storage.shrinking_in_progress(slot, sample);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     #[should_panic(expected = "no pre-existing storage for shrinking slot")]
     fn test_shrinking_in_progress_fail1(storage_access: StorageAccess) {
@@ -705,7 +705,7 @@ pub(crate) mod tests {
         storage.shrinking_in_progress(0, sample);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     #[should_panic(expected = "no pre-existing storage for shrinking slot")]
     fn test_shrinking_in_progress_fail2(storage_access: StorageAccess) {
@@ -715,7 +715,7 @@ pub(crate) mod tests {
         storage.shrinking_in_progress(0, sample);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_missing(storage_access: StorageAccess) {
         // already called 'shrink_in_progress' on this slot, but it finished, so we succeed
@@ -755,7 +755,7 @@ pub(crate) mod tests {
         assert!(storage.get_account_storage_entry(slot, id).is_some());
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_get_if(storage_access: StorageAccess) {
         let storage = AccountStorage::default();
@@ -789,7 +789,7 @@ pub(crate) mod tests {
         assert_eq!(storage.get_if(|_, _| true).len(), ids.len());
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     #[should_panic(expected = "self.no_shrink_in_progress()")]
     fn test_get_if_fail(storage_access: StorageAccess) {

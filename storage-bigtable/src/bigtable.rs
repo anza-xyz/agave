@@ -247,7 +247,7 @@ impl BigTableConnection {
     ///
     /// Clients require `&mut self`, due to `Tonic::transport::Channel` limitations, however
     /// creating new clients is cheap and thus can be used as a work around for ease of use.
-    pub fn client(&self) -> BigTable<impl FnMut(Request<()>) -> InterceptedRequestResult> {
+    pub fn client(&self) -> BigTable<impl FnMut(Request<()>) -> InterceptedRequestResult + use<>> {
         let access_token = self.access_token.clone();
         let client = bigtable_client::BigtableClient::with_interceptor(
             self.channel.clone(),
@@ -802,14 +802,15 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         deserialize_protobuf_or_bincode_cell_data(&row_data, table, key)
     }
 
-    pub async fn get_protobuf_or_bincode_cells<'a, B, P>(
+    pub async fn get_protobuf_or_bincode_cells<'a, B, P, R>(
         &mut self,
         table: &'a str,
-        row_keys: impl IntoIterator<Item = RowKey>,
-    ) -> Result<impl Iterator<Item = (RowKey, CellData<B, P>)> + 'a>
+        row_keys: R,
+    ) -> Result<impl Iterator<Item = (RowKey, CellData<B, P>)> + 'a + use<'a, F, B, P, R>>
     where
         B: serde::de::DeserializeOwned,
         P: prost::Message + Default,
+        R: IntoIterator<Item = RowKey>,
     {
         Ok(self
             .get_multi_row_data(

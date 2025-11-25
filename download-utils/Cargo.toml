@@ -16,6 +16,9 @@ targets = ["x86_64-unknown-linux-gnu"]
 crate-type = ["lib"]
 name = "solana_download_utils"
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 agave-snapshots = { workspace = true }
 log = { workspace = true }

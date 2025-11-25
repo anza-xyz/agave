@@ -606,7 +606,7 @@ mod tests {
 
     #[test]
     fn test_compute_transaction_costs() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         // make a vec of txs
         let keypair = Keypair::new();
@@ -623,7 +623,7 @@ mod tests {
                 None,
             ),
         );
-        let txs = vec![transfer_tx.clone(), vote_tx.clone(), vote_tx, transfer_tx];
+        let txs = [transfer_tx.clone(), vote_tx.clone(), vote_tx, transfer_tx];
 
         let qos_service = QosService::new(1);
         let txs_costs = qos_service.compute_transaction_costs(
@@ -648,7 +648,7 @@ mod tests {
 
     #[test]
     fn test_select_transactions_per_cost() {
-        solana_logger::setup();
+        agave_logger::setup();
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
@@ -670,7 +670,7 @@ mod tests {
             CostModel::calculate_cost(&transfer_tx, &FeatureSet::all_enabled()).sum();
         let vote_tx_cost = CostModel::calculate_cost(&vote_tx, &FeatureSet::all_enabled()).sum();
         // make a vec of txs
-        let txs = vec![transfer_tx.clone(), vote_tx.clone(), transfer_tx, vote_tx];
+        let txs = [transfer_tx.clone(), vote_tx.clone(), transfer_tx, vote_tx];
 
         let qos_service = QosService::new(1);
         let txs_costs = qos_service.compute_transaction_costs(
@@ -698,7 +698,7 @@ mod tests {
 
     #[test]
     fn test_update_and_remove_transaction_costs_committed() {
-        solana_logger::setup();
+        agave_logger::setup();
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
@@ -778,7 +778,7 @@ mod tests {
 
     #[test]
     fn test_update_and_remove_transaction_costs_not_committed() {
-        solana_logger::setup();
+        agave_logger::setup();
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
@@ -824,7 +824,7 @@ mod tests {
 
     #[test]
     fn test_update_and_remove_transaction_costs_mixed_execution() {
-        solana_logger::setup();
+        agave_logger::setup();
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 

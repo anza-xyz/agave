@@ -14,8 +14,8 @@ on:
       - "rust-toolchain.toml"
       - "Cargo.toml"
       - "Cargo.lock"
-      - "cargo-build-sbf"
-      - "cargo-test-sbf"
+      - "platform-tools-sdk/cargo-build-sbf"
+      - "platform-tools-sdk/cargo-test-sbf"
       - "ci/downstream-projects/run-spl.sh"
       - ".github/workflows/downstream-project-spl.yml"
       - ".github/scripts/downstream-project-spl-common.sh"
@@ -57,7 +57,7 @@ jobs:
           # re-enable with https://github.com/buffalojoec/mollusk/pull/74
           # - token
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - shell: bash
         run: |
@@ -87,7 +87,7 @@ jobs:
           - single-pool
           - token-2022
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - shell: bash
         run: |
@@ -127,7 +127,7 @@ jobs:
           # re-enable with https://github.com/buffalojoec/mollusk/pull/74
           # - token
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - shell: bash
         run: |
@@ -170,13 +170,4 @@ jobs:
           cd "${{ matrix.programs }}"
           rm -rf target/deploy target/sbpf*
           $CARGO_BUILD_SBF --arch v2 --manifest-path program/Cargo.toml
-          RUSTFLAGS="-Awarnings" SBF_OUT_DIR="../target/deploy"  cargo test --features test-sbf --manifest-path program/Cargo.toml
-
-      - name: Test SBPFv3
-        shell: bash
-        run: |
-          source ci/downstream-projects/common.sh
-          cd "${{ matrix.programs }}"
-          rm -rf target/deploy target/sbpf*
-          $CARGO_BUILD_SBF --arch v3 --manifest-path program/Cargo.toml
           RUSTFLAGS="-Awarnings" SBF_OUT_DIR="../target/deploy"  cargo test --features test-sbf --manifest-path program/Cargo.toml

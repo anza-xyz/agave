@@ -19,8 +19,14 @@ name = "solana_genesis"
 name = "solana-genesis"
 path = "src/main.rs"
 
+[features]
+default = ["agave-unstable-api"]
+agave-unstable-api = []
+
 [dependencies]
 agave-feature-set = { workspace = true }
+agave-logger = { workspace = true }
+agave-snapshots = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
 clap = { workspace = true }
@@ -28,8 +34,8 @@ itertools = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-solana-account = "=3.1.0"
-solana-accounts-db = { workspace = true }
+solana-account = "=3.2.0"
+solana-bls-signatures = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-clock = "=3.0.0"
@@ -40,14 +46,14 @@ solana-epoch-schedule = "=3.0.0"
 solana-feature-gate-interface = "=3.0.0"
 solana-fee-calculator = "=3.0.0"
 solana-genesis-config = "=3.0.0"
+solana-genesis-utils = { workspace = true }
 solana-inflation = "=3.0.0"
 solana-keypair = "=3.0.1"
 solana-ledger = { workspace = true }
 solana-loader-v3-interface = "6.1.0"
-solana-logger = "=3.0.0"
 solana-native-token = "=3.0.0"
 solana-poh-config = "=3.0.0"
-solana-pubkey = { version = "=3.0.0", default-features = false }
+solana-pubkey = { version = "=4.0.0", default-features = false }
 solana-rent = "=3.0.0"
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
@@ -55,7 +61,6 @@ solana-runtime = { workspace = true }
 solana-sdk-ids = "=3.0.0"
 solana-signer = "=3.0.0"
 solana-stake-interface = { version = "=2.0.1", features = ["borsh"] }
-solana-stake-program = { workspace = true }
 solana-time-utils = "3.0.0"
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
@@ -63,5 +68,8 @@ tempfile = { workspace = true }
 
 [dev-dependencies]
 solana-borsh = { workspace = true }
+solana-genesis = { path = ".", features = ["agave-unstable-api"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-vote = { workspace = true }
+test-case = { workspace = true }

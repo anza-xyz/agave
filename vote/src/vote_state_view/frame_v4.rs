@@ -131,6 +131,7 @@ mod tests {
         std::collections::VecDeque,
     };
 
+    #[allow(clippy::large_enum_variant)]
     #[derive(Debug, Clone, Deserialize, Serialize)]
     enum TestVoteStateVersions {
         V0_23_5,

@@ -230,7 +230,7 @@ fn add_stakes(
 }
 
 /// Add accounts that should be present in genesis; skip for development clusters
-pub fn add_genesis_accounts(genesis_config: &mut GenesisConfig, mut issued_lamports: u64) {
+pub fn add_genesis_stake_accounts(genesis_config: &mut GenesisConfig, mut issued_lamports: u64) {
     if genesis_config.cluster_type == ClusterType::Development {
         return;
     }
@@ -275,7 +275,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_add_genesis_accounts() {
+    fn test_add_genesis_stake_accounts() {
         let clusters_and_expected_lamports = [
             (ClusterType::MainnetBeta, 500_000_000 * LAMPORTS_PER_SOL),
             (ClusterType::Testnet, 500_000_000 * LAMPORTS_PER_SOL),
@@ -288,7 +288,7 @@ mod tests {
                 cluster_type: *cluster_type,
                 ..GenesisConfig::default()
             };
-            add_genesis_accounts(&mut genesis_config, 0);
+            add_genesis_stake_accounts(&mut genesis_config, 0);
 
             let lamports = genesis_config
                 .accounts

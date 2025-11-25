@@ -12,9 +12,15 @@ cd "$(dirname "$0")"/..
 source ci/_
 
 if [[ $BUILDKITE_BRANCH == gh-readonly-queue* ]]; then
-
+  # github merge queue
   cat <<EOF | tee /dev/tty | buildkite-agent pipeline upload
+priority: 10
 steps:
+  - name: "sanity"
+    command: "ci/docker-run-default-image.sh ci/test-sanity.sh"
+    timeout_in_minutes: 5
+    agents:
+      queue: "check"
   - name: "checks"
     command: "ci/docker-run-default-image.sh ci/test-checks.sh"
     timeout_in_minutes: 30

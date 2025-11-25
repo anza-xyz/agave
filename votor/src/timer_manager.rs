@@ -1,19 +1,15 @@
-#![allow(dead_code)]
-
 //! Controls the queueing and firing of skip timer events for use
 //! in the event loop.
 // TODO: Make this mockable in event_handler for tests
-
 mod stats;
 mod timers;
-
 use {
     crate::{
         common::{DELTA_BLOCK, DELTA_TIMEOUT},
         event::VotorEvent,
     },
     crossbeam_channel::Sender,
-    parking_lot::RwLock,
+    parking_lot::RwLock as PlRwLock,
     solana_clock::Slot,
     std::{
         sync::{
@@ -25,17 +21,16 @@ use {
     },
     timers::Timers,
 };
-
 /// A manager of timer states.  Uses a background thread to trigger next ready
 /// timers and send events.
 pub(crate) struct TimerManager {
-    timers: Arc<RwLock<Timers>>,
+    timers: Arc<PlRwLock<Timers>>,
     handle: JoinHandle<()>,
 }
 
 impl TimerManager {
     pub(crate) fn new(event_sender: Sender<VotorEvent>, exit: Arc<AtomicBool>) -> Self {
-        let timers = Arc::new(RwLock::new(Timers::new(
+        let timers = Arc::new(PlRwLock::new(Timers::new(
             DELTA_TIMEOUT,
             DELTA_BLOCK,
             event_sender,
@@ -57,23 +52,24 @@ impl TimerManager {
                 }
             })
         };
-
         Self { timers, handle }
     }
-
     pub(crate) fn set_timeouts(&self, slot: Slot) {
         self.timers.write().set_timeouts(slot, Instant::now());
     }
-
     pub(crate) fn join(self) {
         self.handle.join().unwrap();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_timeout_set(&self, slot: Slot) -> bool {
+        self.timers.read().is_timeout_set(slot)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use {super::*, crate::event::VotorEvent, crossbeam_channel::unbounded, std::time::Duration};
-
     #[test]
     fn test_timer_manager() {
         let (event_sender, event_receiver) = unbounded();
@@ -86,7 +82,8 @@ mod tests {
         let mut timeouts_received = 0;
         while timeouts_received < 2 && Instant::now().duration_since(start) < Duration::from_secs(2)
         {
-            if let Ok(event) = event_receiver.recv_timeout(Duration::from_millis(200)) {
+            let res = event_receiver.recv_timeout(Duration::from_millis(200));
+            if let Ok(event) = res {
                 match event {
                     VotorEvent::Timeout(s) => {
                         assert_eq!(s, slot);

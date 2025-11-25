@@ -53,19 +53,18 @@ use {
     solana_dos::cli::*,
     solana_gossip::{
         contact_info::{ContactInfo, Protocol},
-        gossip_service::{discover, get_client},
+        gossip_service::{discover_peers, get_client},
     },
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_message::{compiled_instruction::CompiledInstruction, Message},
-    solana_net_utils::bind_to_unspecified,
+    solana_net_utils::{bind_to_unspecified, SocketAddrSpace},
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signature::Signature,
     solana_signer::Signer,
     solana_stake_interface as stake,
-    solana_streamer::socket::SocketAddrSpace,
     solana_system_interface::{
         instruction::{self as system_instruction, SystemInstruction},
         program as system_program,
@@ -251,7 +250,7 @@ struct TransactionBatchMsg {
 
 /// Creates thread which receives batches of transactions from tx_receiver
 /// and sends them to the target.
-/// If `iterations` is 0, it works indefenetely.
+/// If `iterations` is 0, it works indefinitely.
 /// Otherwise, it sends at least `iterations` number of transactions
 fn create_sender_thread(
     tx_receiver: Receiver<TransactionBatchMsg>,
@@ -760,7 +759,7 @@ fn run_dos<T: 'static + TpsClient + Send + Sync>(
 }
 
 fn main() {
-    solana_logger::setup_with_default_filter();
+    agave_logger::setup_with_default_filter();
     let mut cmd_params = build_cli_parameters();
 
     if !cmd_params.skip_gossip && cmd_params.shred_version.is_none() {
@@ -777,15 +776,15 @@ fn main() {
     let (nodes, client) = if !cmd_params.skip_gossip {
         info!("Finding cluster entry: {:?}", cmd_params.entrypoint_addr);
         let socket_addr_space = SocketAddrSpace::new(cmd_params.allow_private_addr);
-        let (gossip_nodes, validators) = discover(
-            None, // keypair
-            Some(&cmd_params.entrypoint_addr),
-            None,                              // num_nodes
-            Duration::from_secs(60),           // timeout
-            None,                              // find_nodes_by_pubkey
-            Some(&cmd_params.entrypoint_addr), // find_node_by_gossip_addr
-            None,                              // my_gossip_addr
-            cmd_params.shred_version.unwrap(), // my_shred_version
+        let (gossip_nodes, validators) = discover_peers(
+            None,
+            &vec![cmd_params.entrypoint_addr],
+            None,
+            Duration::from_secs(60),
+            None,
+            &[cmd_params.entrypoint_addr],
+            None,
+            cmd_params.shred_version.unwrap(),
             socket_addr_space,
         )
         .unwrap_or_else(|err| {
@@ -943,7 +942,7 @@ pub mod test {
 
     #[test]
     fn test_dos_random() {
-        solana_logger::setup();
+        agave_logger::setup();
         let num_nodes = 1;
         let cluster =
             LocalCluster::new_with_equal_stakes(num_nodes, 100, 3, SocketAddrSpace::Unspecified);
@@ -977,7 +976,7 @@ pub mod test {
 
     #[test]
     fn test_dos_without_blockhash() {
-        solana_logger::setup();
+        agave_logger::setup();
         let num_nodes = 1;
         let cluster =
             LocalCluster::new_with_equal_stakes(num_nodes, 100, 3, SocketAddrSpace::Unspecified);
@@ -1081,7 +1080,7 @@ pub mod test {
     }
 
     fn run_dos_with_blockhash_and_payer(tpu_use_quic: bool) {
-        solana_logger::setup();
+        agave_logger::setup();
 
         // 1. Create faucet thread
         let faucet_keypair = Keypair::new();

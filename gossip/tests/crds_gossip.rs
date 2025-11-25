@@ -19,11 +19,11 @@ use {
         crds_value::{CrdsValue, CrdsValueLabel},
     },
     solana_keypair::Keypair,
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
     solana_sha256_hasher::hash,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_time_utils::timestamp,
     std::{
         collections::{HashMap, HashSet},
@@ -458,7 +458,7 @@ fn network_run_push(
                 }
             }
         }
-        if now % CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS == 0 && now > 0 {
+        if now.is_multiple_of(CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS) && now > 0 {
             network_values.par_iter().for_each(|node| {
                 node.gossip.refresh_push_active_set(
                     &node.keypair,
@@ -712,7 +712,7 @@ fn test_star_network_push_ring_200() {
 #[ignore]
 #[serial]
 fn test_connected_staked_network() {
-    solana_logger::setup();
+    agave_logger::setup();
     let thread_pool = build_gossip_thread_pool();
     let stakes = [
         [1000; 2].to_vec(),
@@ -741,7 +741,7 @@ fn test_connected_staked_network() {
 #[test]
 #[ignore]
 fn test_star_network_large_pull() {
-    solana_logger::setup();
+    agave_logger::setup();
     let network = star_network_create(2000);
     let thread_pool = build_gossip_thread_pool();
     network_simulator_pull_only(&thread_pool, &network);
@@ -749,7 +749,7 @@ fn test_star_network_large_pull() {
 #[test]
 #[ignore]
 fn test_rstar_network_large_push() {
-    solana_logger::setup();
+    agave_logger::setup();
     let mut network = rstar_network_create(4000);
     let thread_pool = build_gossip_thread_pool();
     network_simulator(&thread_pool, &mut network, 0.9);
@@ -757,7 +757,7 @@ fn test_rstar_network_large_push() {
 #[test]
 #[ignore]
 fn test_ring_network_large_push() {
-    solana_logger::setup();
+    agave_logger::setup();
     let mut network = ring_network_create(4001);
     let thread_pool = build_gossip_thread_pool();
     network_simulator(&thread_pool, &mut network, 0.9);
@@ -765,7 +765,7 @@ fn test_ring_network_large_push() {
 #[test]
 #[ignore]
 fn test_star_network_large_push() {
-    solana_logger::setup();
+    agave_logger::setup();
     let mut network = star_network_create(4002);
     let thread_pool = build_gossip_thread_pool();
     network_simulator(&thread_pool, &mut network, 0.9);

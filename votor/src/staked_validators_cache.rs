@@ -241,6 +241,7 @@ mod tests {
             crds_data::CrdsData, crds_value::CrdsValue, node::Node,
         },
         solana_keypair::Keypair,
+        solana_net_utils::SocketAddrSpace,
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::Bank,
@@ -250,7 +251,6 @@ mod tests {
             },
         },
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
         solana_time_utils::timestamp,
         std::{
             collections::HashMap,
@@ -273,12 +273,12 @@ mod tests {
                 .map(|(node_ix, pubkey)| {
                     let mut contact_info = ContactInfo::new(*pubkey, 0_u64, 0_u16);
 
-                    assert!(contact_info
+                    contact_info
                         .set_alpenglow((
                             Ipv4Addr::LOCALHOST,
-                            8080_u16.saturating_add(node_ix as u16)
+                            8080_u16.saturating_add(node_ix as u16),
                         ))
-                        .is_ok());
+                        .unwrap();
 
                     contact_info
                 });
@@ -312,7 +312,7 @@ mod tests {
         num_zero_stake_nodes: usize,
         base_slot: u64,
     ) -> (Arc<RwLock<BankForks>>, ClusterInfo, Vec<Pubkey>) {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let validator_keypairs = (0..num_nodes)
             .map(|_| ValidatorVoteKeypairs::new(Keypair::new(), Keypair::new(), Keypair::new()))
             .collect::<Vec<ValidatorVoteKeypairs>>();
@@ -332,7 +332,7 @@ mod tests {
                 if node_ix < num_zero_stake_nodes {
                     0
                 } else {
-                    rng.gen_range(1..997)
+                    rng.random_range(1..997)
                 }
             })
             .collect();
@@ -566,7 +566,7 @@ mod tests {
 
     #[test]
     fn test_alpenglow_port_override() {
-        solana_logger::setup();
+        agave_logger::setup();
         let (bank_forks, cluster_info, node_pubkeys) = create_bank_forks_and_cluster_info(3, 0, 1);
         let pubkey_b = node_pubkeys[1];
 

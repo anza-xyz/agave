@@ -89,10 +89,6 @@ filter = 'package(solana-cargo-build-sbf)'
 slow-timeout = { period = "60s", terminate-after = 5 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-ledger) & test(/^test_purge_huge$/)'
-slow-timeout = { period = "60s", terminate-after = 4 }
-
-[[profile.ci.overrides]]
 filter = 'package(solana-ledger) & test(/^shred::merkle::test::test_merkle_tree_round_trip/)'
 slow-timeout = { period = "60s", terminate-after = 3 }
 
@@ -127,10 +123,6 @@ slow-timeout = { period = "60s", terminate-after = 3 }
 [[profile.ci.overrides]]
 filter = 'package(solana-svm) & test(/^execute_fixtures/)'
 slow-timeout = { period = "60s", terminate-after = 2 }
-
-[[profile.ci.overrides]]
-filter = "package(solana-bench-tps)"
-threads-required = "num-cpus"
 
 [[profile.ci.overrides]]
 filter = "package(solana-accounts-cluster-bench)"

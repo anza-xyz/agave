@@ -1,13 +1,20 @@
+#[allow(deprecated)]
+use solana_stake_interface::config::Config as StakeConfig;
 use {
+    crate::stake_utils,
     agave_feature_set::{FeatureSet, FEATURE_NAMES},
     agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
+    bincode::serialize,
     log::*,
-    solana_account::{Account, AccountSharedData},
+    solana_account::{
+        state_traits::StateMut, Account, AccountSharedData, ReadableAccount, WritableAccount,
+    },
     solana_bls_signatures::{
         keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
         Pubkey as BLSPubkey,
     },
     solana_cluster_type::ClusterType,
+    solana_config_interface::state::ConfigKeys,
     solana_feature_gate_interface::{self as feature, Feature},
     solana_fee_calculator::FeeRateGovernor,
     solana_genesis_config::GenesisConfig,
@@ -15,11 +22,15 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
+    solana_sdk_ids::{stake as stake_program, sysvar},
     solana_seed_derivable::SeedDerivable,
     solana_signer::Signer,
-    solana_stake_interface::state::StakeStateV2,
-    solana_stake_program::stake_state,
+    solana_stake_interface::state::{Authorized, Lockup, Meta, StakeStateV2},
     solana_system_interface::program as system_program,
+    solana_sysvar::{
+        epoch_rewards::{self, EpochRewards},
+        SysvarSerialize,
+    },
     solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
     solana_vote_program::vote_state,
     std::borrow::Borrow,
@@ -176,41 +187,31 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
 
         // Create accounts
         let node_account = Account::new(VALIDATOR_LAMPORTS, 0, &system_program::id());
-        let vote_account = if is_alpenglow {
+        let bls_pubkey_compressed = if is_alpenglow {
             let bls_keypair = BLSKeypair::derive_from_signer(
                 &validator_voting_keypairs.borrow().vote_keypair,
                 BLS_KEYPAIR_DERIVE_SEED,
             )
             .unwrap();
-            let bls_pubkey_compressed = bls_pubkey_to_compressed_bytes(&bls_keypair.public);
-            vote_state::create_v4_account_with_authorized(
-                &node_pubkey,
-                &vote_pubkey,
-                &vote_pubkey,
-                Some(bls_pubkey_compressed),
-                0,
-                *stake,
-            )
+            Some(bls_pubkey_to_compressed_bytes(&bls_keypair.public))
         } else {
-            vote_state::create_account(&vote_pubkey, &node_pubkey, 0, *stake)
+            None
         };
-        let stake_account = if is_alpenglow {
-            Account::from(stake_state::create_alpenglow_account(
-                &stake_pubkey,
-                &vote_pubkey,
-                &vote_account,
-                &genesis_config_info.genesis_config.rent,
-                *stake,
-            ))
-        } else {
-            Account::from(stake_state::create_account(
-                &stake_pubkey,
-                &vote_pubkey,
-                &vote_account,
-                &genesis_config_info.genesis_config.rent,
-                *stake,
-            ))
-        };
+        let vote_account = vote_state::create_v4_account_with_authorized(
+            &node_pubkey,
+            &vote_pubkey,
+            &vote_pubkey,
+            bls_pubkey_compressed,
+            0,
+            *stake,
+        );
+        let stake_account = Account::from(stake_utils::create_stake_account(
+            &stake_pubkey,
+            &vote_pubkey,
+            &vote_account,
+            &genesis_config_info.genesis_config.rent,
+            *stake,
+        ));
 
         let vote_account = Account::from(vote_account);
 
@@ -349,42 +350,22 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     cluster_type: ClusterType,
     mut initial_accounts: Vec<(Pubkey, AccountSharedData)>,
 ) -> GenesisConfig {
-    let is_alpenglow = validator_bls_pubkey.is_some();
-    let validator_vote_account = if let Some(bls_pubkey_compressed) = validator_bls_pubkey {
-        vote_state::create_v4_account_with_authorized(
-            validator_pubkey,
-            validator_vote_account_pubkey,
-            validator_vote_account_pubkey,
-            Some(bls_pubkey_compressed),
-            0,
-            validator_stake_lamports,
-        )
-    } else {
-        vote_state::create_account(
-            validator_vote_account_pubkey,
-            validator_pubkey,
-            0,
-            validator_stake_lamports,
-        )
-    };
+    let validator_vote_account = vote_state::create_v4_account_with_authorized(
+        validator_pubkey,
+        validator_vote_account_pubkey,
+        validator_vote_account_pubkey,
+        validator_bls_pubkey,
+        0,
+        validator_stake_lamports,
+    );
 
-    let validator_stake_account = if is_alpenglow {
-        stake_state::create_alpenglow_account(
-            validator_stake_account_pubkey,
-            validator_vote_account_pubkey,
-            &validator_vote_account,
-            &rent,
-            validator_stake_lamports,
-        )
-    } else {
-        stake_state::create_account(
-            validator_stake_account_pubkey,
-            validator_vote_account_pubkey,
-            &validator_vote_account,
-            &rent,
-            validator_stake_lamports,
-        )
-    };
+    let validator_stake_account = stake_utils::create_stake_account(
+        validator_stake_account_pubkey,
+        validator_vote_account_pubkey,
+        &validator_vote_account,
+        &rent,
+        validator_stake_lamports,
+    );
 
     initial_accounts.push((
         *mint_pubkey,
@@ -421,7 +402,8 @@ pub fn create_genesis_config_with_leader_ex_no_features(
         ..GenesisConfig::default()
     };
 
-    solana_stake_program::add_genesis_accounts(&mut genesis_config);
+    add_genesis_stake_config_account(&mut genesis_config);
+    add_genesis_epoch_rewards_account(&mut genesis_config);
 
     genesis_config
 }
@@ -461,4 +443,59 @@ pub fn create_genesis_config_with_leader_ex(
     }
 
     genesis_config
+}
+
+#[allow(deprecated)]
+pub fn add_genesis_stake_config_account(genesis_config: &mut GenesisConfig) -> u64 {
+    let mut data = serialize(&ConfigKeys { keys: vec![] }).unwrap();
+    data.extend_from_slice(&serialize(&StakeConfig::default()).unwrap());
+    let lamports = std::cmp::max(genesis_config.rent.minimum_balance(data.len()), 1);
+    let account = AccountSharedData::from(Account {
+        lamports,
+        data,
+        owner: solana_sdk_ids::config::id(),
+        ..Account::default()
+    });
+
+    genesis_config.add_account(solana_stake_interface::config::id(), account);
+
+    lamports
+}
+
+pub fn add_genesis_epoch_rewards_account(genesis_config: &mut GenesisConfig) -> u64 {
+    let data = vec![0; EpochRewards::size_of()];
+    let lamports = std::cmp::max(genesis_config.rent.minimum_balance(data.len()), 1);
+
+    let account = AccountSharedData::create(lamports, data, sysvar::id(), false, u64::MAX);
+
+    genesis_config.add_account(epoch_rewards::id(), account);
+
+    lamports
+}
+
+// genesis investor accounts
+pub fn create_lockup_stake_account(
+    authorized: &Authorized,
+    lockup: &Lockup,
+    rent: &Rent,
+    lamports: u64,
+) -> AccountSharedData {
+    let mut stake_account =
+        AccountSharedData::new(lamports, StakeStateV2::size_of(), &stake_program::id());
+
+    let rent_exempt_reserve = rent.minimum_balance(stake_account.data().len());
+    assert!(
+        lamports >= rent_exempt_reserve,
+        "lamports: {lamports} is less than rent_exempt_reserve {rent_exempt_reserve}"
+    );
+
+    stake_account
+        .set_state(&StakeStateV2::Initialized(Meta {
+            authorized: *authorized,
+            lockup: *lockup,
+            rent_exempt_reserve,
+        }))
+        .expect("set_state");
+
+    stake_account
 }

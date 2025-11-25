@@ -1,10 +1,19 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
-pub mod cuda_runtime;
 pub mod data_budget;
 pub mod deduper;
 pub mod discard;
 pub mod packet;
 pub mod perf_libs;
+pub mod recycled_vec;
 pub mod recycler;
 pub mod recycler_cache;
 pub mod sigverify;
@@ -46,15 +55,6 @@ fn is_rosetta_emulated() -> bool {
 }
 
 pub fn report_target_features() {
-    warn!(
-        "CUDA is {}abled",
-        if crate::perf_libs::api().is_some() {
-            "en"
-        } else {
-            "dis"
-        }
-    );
-
     // Validator binaries built on a machine with AVX support will generate invalid opcodes
     // when run on machines without AVX causing a non-obvious process abort.  Instead detect
     // the mismatch and error cleanly.

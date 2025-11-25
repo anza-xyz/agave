@@ -58,7 +58,7 @@ pub enum VotorEvent {
     /// Produce the window
     ProduceWindow(LeaderWindowInfo),
 
-    /// The block has received a slow or fast finalization certificate and is eligble for rooting
+    /// The block has received a slow or fast finalization certificate and is eligible for rooting
     /// The second bool indicates whether the block is a fast finalization
     Finalized(Block, bool),
 
@@ -72,8 +72,6 @@ pub enum VotorEvent {
 
 impl VotorEvent {
     /// Ignore old events
-    #[allow(dead_code)]
-    // TODO(wen): remove allow(dead_code) when event_handler is fully integrated
     pub(crate) fn should_ignore(&self, root: Slot) -> bool {
         match self {
             VotorEvent::Block(completed_block) => completed_block.slot <= root,

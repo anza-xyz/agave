@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 
@@ -144,10 +153,10 @@ const fn validate_position(migrating_builtins: &[(Pubkey, BuiltinCost)]) {
         match migrating_builtins[index].1 {
             BuiltinCost::Migrating(MigratingBuiltinCost { position, .. }) => assert!(
                 position == index,
-                "migration feture must exist and at correct position"
+                "migration feature must exist and at correct position"
             ),
             BuiltinCost::NotMigrating => {
-                panic!("migration feture must exist and at correct position")
+                panic!("migration feature must exist and at correct position")
             }
         }
         index += 1;

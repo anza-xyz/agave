@@ -179,7 +179,7 @@ impl<Tx> UsageCostDetails<'_, Tx> {
 pub struct WritableKeysTransaction(pub Vec<Pubkey>);
 
 #[cfg(feature = "dev-context-only-utils")]
-impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction {
+impl solana_svm_transaction::svm_message::SVMStaticMessage for WritableKeysTransaction {
     fn num_transaction_signatures(&self) -> u64 {
         unimplemented!("WritableKeysTransaction::num_transaction_signatures")
     }
@@ -198,14 +198,18 @@ impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction
 
     fn instructions_iter(
         &self,
-    ) -> impl Iterator<Item = solana_svm_transaction::instruction::SVMInstruction> {
+    ) -> impl Iterator<Item = solana_svm_transaction::instruction::SVMInstruction<'_>> {
         core::iter::empty()
     }
 
     fn program_instructions_iter(
         &self,
-    ) -> impl Iterator<Item = (&Pubkey, solana_svm_transaction::instruction::SVMInstruction)> + Clone
-    {
+    ) -> impl Iterator<
+        Item = (
+            &Pubkey,
+            solana_svm_transaction::instruction::SVMInstruction<'_>,
+        ),
+    > + Clone {
         core::iter::empty()
     }
 
@@ -213,12 +217,29 @@ impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction
         &self.0
     }
 
-    fn account_keys(&self) -> solana_message::AccountKeys {
-        solana_message::AccountKeys::new(&self.0, None)
-    }
-
     fn fee_payer(&self) -> &Pubkey {
         unimplemented!("WritableKeysTransaction::fee_payer")
+    }
+
+    fn num_lookup_tables(&self) -> usize {
+        unimplemented!("WritableKeysTransaction::num_lookup_tables")
+    }
+
+    fn message_address_table_lookups(
+        &self,
+    ) -> impl Iterator<
+        Item = solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup<
+            '_,
+        >,
+    > {
+        core::iter::empty()
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction {
+    fn account_keys(&self) -> solana_message::AccountKeys<'_> {
+        solana_message::AccountKeys::new(&self.0, None)
     }
 
     fn is_writable(&self, _index: usize) -> bool {
@@ -231,18 +252,6 @@ impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction
 
     fn is_invoked(&self, _key_index: usize) -> bool {
         unimplemented!("WritableKeysTransaction::is_invoked")
-    }
-
-    fn num_lookup_tables(&self) -> usize {
-        unimplemented!("WritableKeysTransaction::num_lookup_tables")
-    }
-
-    fn message_address_table_lookups(
-        &self,
-    ) -> impl Iterator<
-        Item = solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup,
-    > {
-        core::iter::empty()
     }
 }
 
@@ -289,7 +298,7 @@ impl solana_runtime_transaction::transaction_with_meta::TransactionWithMeta
     #[allow(refining_impl_trait)]
     fn as_sanitized_transaction(
         &self,
-    ) -> std::borrow::Cow<solana_transaction::sanitized::SanitizedTransaction> {
+    ) -> std::borrow::Cow<'_, solana_transaction::sanitized::SanitizedTransaction> {
         unimplemented!("WritableKeysTransaction::as_sanitized_transaction");
     }
 
@@ -332,7 +341,7 @@ mod tests {
 
     #[test]
     fn test_vote_transaction_cost() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         // Create a sanitized vote transaction.
         let vote_transaction = RuntimeTransaction::try_create(
@@ -352,7 +361,7 @@ mod tests {
 
     #[test]
     fn test_non_vote_transaction_cost() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         // Create a sanitized non-vote transaction.
         let non_vote_transaction = RuntimeTransaction::try_create(

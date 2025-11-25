@@ -10,7 +10,7 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_net_utils::sockets::bind_to_localhost_unique,
+    solana_net_utils::{sockets::bind_to_localhost_unique, SocketAddrSpace},
     solana_pubkey::Pubkey,
     solana_pubsub_client::nonblocking::pubsub_client::PubsubClient,
     solana_rent::Rent,
@@ -23,7 +23,6 @@ use {
     },
     solana_signature::Signature,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_system_transaction as system_transaction,
     solana_test_validator::TestValidator,
     solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig, DEFAULT_TPU_CONNECTION_POOL_SIZE},
@@ -65,7 +64,7 @@ fn post_rpc(request: Value, rpc_url: &str) -> Value {
 
 #[test]
 fn test_rpc_send_tx() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let alice = Keypair::new();
     let test_validator =
@@ -138,7 +137,7 @@ fn test_rpc_send_tx() {
 
 #[test]
 fn test_simulation_replaced_blockhash() -> ClientResult<()> {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let alice = Keypair::new();
     let validator = TestValidator::with_no_fees(alice.pubkey(), None, SocketAddrSpace::Unspecified);
@@ -183,7 +182,7 @@ fn test_simulation_replaced_blockhash() -> ClientResult<()> {
 
 #[test]
 fn test_rpc_invalid_requests() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let alice = Keypair::new();
     let test_validator =
@@ -216,7 +215,7 @@ fn test_rpc_invalid_requests() {
 
 #[test]
 fn test_rpc_slot_updates() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let test_validator =
         TestValidator::with_no_fees(Pubkey::new_unique(), None, SocketAddrSpace::Unspecified);
@@ -284,7 +283,7 @@ fn test_rpc_slot_updates() {
 
 #[test]
 fn test_rpc_subscriptions() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let alice = Keypair::new();
     let test_validator =
@@ -556,7 +555,7 @@ fn test_tpu_send_transaction_with_quic() {
 
 #[test]
 fn deserialize_rpc_error() -> ClientResult<()> {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let alice = Keypair::new();
     let validator = TestValidator::with_no_fees(alice.pubkey(), None, SocketAddrSpace::Unspecified);

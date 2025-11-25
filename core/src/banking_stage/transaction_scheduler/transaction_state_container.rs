@@ -24,7 +24,7 @@ use {
 /// 4. Processed by `ConsumeWorker`
 ///    a. If consumed, remove `Pending` state from the `TransactionStateContainer`
 ///    b. If retryable, transition back to `Unprocessed` state.
-///       Re-insert to the queue, and return to step 3.
+///    Re-insert to the queue, and return to step 3.
 ///
 /// The structure is composed of two main components:
 /// 1. A priority queue of wrapped `TransactionId`s, which are used to
@@ -236,7 +236,7 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
         self.push_ids_into_queue(std::iter::once(priority_id)) > 0
     }
 
-    fn get_vacant_map_entry(&mut self) -> VacantEntry<TransactionState<Tx>> {
+    fn get_vacant_map_entry(&mut self) -> VacantEntry<'_, TransactionState<Tx>> {
         assert!(self.id_to_transaction_state.len() < self.id_to_transaction_state.capacity());
         self.id_to_transaction_state.vacant_entry()
     }
@@ -246,7 +246,7 @@ pub type SharedBytes = Arc<Vec<u8>>;
 pub(crate) type RuntimeTransactionView = RuntimeTransaction<ResolvedTransactionView<SharedBytes>>;
 pub(crate) type TransactionViewState = TransactionState<RuntimeTransactionView>;
 
-/// A wrapper around `TransactionStateContainer` that allows re-uses
+/// A wrapper around `TransactionStateContainer` that allows reuse of
 /// pre-allocated `Bytes` to copy packet data into and use for serialization.
 /// This is used to avoid allocations in parsing transactions.
 pub struct TransactionViewStateContainer {
@@ -475,13 +475,13 @@ mod tests {
         let reserved_addresses = HashSet::default();
         let packet_parser = |data, priority, cost| {
             let view = SanitizedTransactionView::try_new_sanitized(data, true).unwrap();
-            let view = RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+            let view = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 view,
                 MessageHash::Compute,
                 None,
             )
             .unwrap();
-            let view = RuntimeTransaction::<ResolvedTransactionView<_>>::try_from(
+            let view = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
                 view,
                 None,
                 &reserved_addresses,

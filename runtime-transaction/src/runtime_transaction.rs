@@ -18,8 +18,10 @@ use {
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_svm_transaction::{
-        instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
-        svm_message::SVMMessage, svm_transaction::SVMTransaction,
+        instruction::SVMInstruction,
+        message_address_table_lookup::SVMMessageAddressTableLookup,
+        svm_message::{SVMMessage, SVMStaticMessage},
+        svm_transaction::SVMTransaction,
     },
 };
 
@@ -68,8 +70,7 @@ impl<T> Deref for RuntimeTransaction<T> {
         &self.transaction
     }
 }
-
-impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
+impl<T: SVMStaticMessage> SVMStaticMessage for RuntimeTransaction<T> {
     fn num_transaction_signatures(&self) -> u64 {
         self.transaction.num_transaction_signatures()
     }
@@ -104,11 +105,13 @@ impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
         self.transaction.num_instructions()
     }
 
-    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction> {
+    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction<'_>> {
         self.transaction.instructions_iter()
     }
 
-    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone {
+    fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
         self.transaction.program_instructions_iter()
     }
 
@@ -116,12 +119,24 @@ impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
         self.transaction.static_account_keys()
     }
 
-    fn account_keys(&self) -> AccountKeys {
-        self.transaction.account_keys()
-    }
-
     fn fee_payer(&self) -> &Pubkey {
         self.transaction.fee_payer()
+    }
+
+    fn num_lookup_tables(&self) -> usize {
+        self.transaction.num_lookup_tables()
+    }
+
+    fn message_address_table_lookups(
+        &self,
+    ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>> {
+        self.transaction.message_address_table_lookups()
+    }
+}
+
+impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
+    fn account_keys(&self) -> AccountKeys<'_> {
+        self.transaction.account_keys()
     }
 
     fn is_writable(&self, index: usize) -> bool {
@@ -134,14 +149,6 @@ impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
 
     fn is_invoked(&self, key_index: usize) -> bool {
         self.transaction.is_invoked(key_index)
-    }
-
-    fn num_lookup_tables(&self) -> usize {
-        self.transaction.num_lookup_tables()
-    }
-
-    fn message_address_table_lookups(&self) -> impl Iterator<Item = SVMMessageAddressTableLookup> {
-        self.transaction.message_address_table_lookups()
     }
 }
 

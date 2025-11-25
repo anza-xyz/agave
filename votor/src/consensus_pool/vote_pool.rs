@@ -1,180 +1,297 @@
+//! Container to store received votes and associated stakes.
+//!
+//! Implements various checks for invalid votes as defined by the Alpenglow paper e.g. lemma 20 and 22.
+//! Further detects duplicate votes which are defined as identical vote from the same sender received multiple times.
+
 use {
-    crate::{common::Stake, consensus_pool::vote_certificate_builder::VoteCertificateBuilder},
-    agave_votor_messages::consensus_message::VoteMessage,
+    crate::common::Stake,
+    agave_votor_messages::{consensus_message::VoteMessage, vote::Vote},
+    solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    std::collections::{HashMap, HashSet},
+    std::collections::{btree_map::Entry, BTreeMap},
+    thiserror::Error,
 };
 
-#[allow(dead_code)]
-#[derive(Debug)]
-pub(crate) struct VoteEntry {
-    pub(crate) transactions: Vec<VoteMessage>,
-    pub(crate) total_stake_by_key: Stake,
+/// As per the Alpenglow paper, a validator is allowed to vote notar fallback on at most 3 different block id for a given slot.
+const MAX_NOTAR_FALLBACK_PER_VALIDATOR: usize = 3;
+
+#[derive(Debug, PartialEq, Eq, Error)]
+pub(crate) enum AddVoteError {
+    #[error("duplicate vote")]
+    Duplicate,
+    /// These are invalid votes as defined in the Alpenglow paper e.g. lemma 20 and 22.
+    #[error("invalid votes")]
+    Invalid,
 }
 
-#[allow(dead_code)]
-impl VoteEntry {
-    pub fn new() -> Self {
-        Self {
-            transactions: Vec::new(),
-            total_stake_by_key: 0,
+/// Helper function to reduce some code duplication.
+fn insert_vote(
+    map: &mut BTreeMap<Pubkey, VoteMessage>,
+    voter: Pubkey,
+    vote: VoteMessage,
+) -> Result<(), AddVoteError> {
+    match map.entry(voter) {
+        Entry::Occupied(_) => Err(AddVoteError::Duplicate),
+        Entry::Vacant(e) => {
+            e.insert(vote);
+            Ok(())
         }
     }
 }
 
-#[allow(dead_code)]
-pub(crate) trait VotePool {
-    fn total_stake(&self) -> Stake;
-    fn has_prev_validator_vote(&self, validator_vote_key: &Pubkey) -> bool;
+/// Container to store per slot votes.
+struct InternalVotePool {
+    /// The slot this instance of Votes is responsible for.
+    slot: Slot,
+    /// Skip votes are stored in map indexed by validator.
+    skip: BTreeMap<Pubkey, VoteMessage>,
+    /// Skip fallback votes are stored in map indexed by validator.
+    skip_fallback: BTreeMap<Pubkey, VoteMessage>,
+    /// Finalize votes are stored in map indexed by validator.
+    finalize: BTreeMap<Pubkey, VoteMessage>,
+    /// Notar votes are stored in map indexed by validator.
+    notar: BTreeMap<Pubkey, VoteMessage>,
+    /// A validator can vote notar fallback on upto 3 blocks.
+    ///
+    /// Per validator, we store a map of which block ids the validator has voted notar fallback on.
+    notar_fallback: BTreeMap<Pubkey, BTreeMap<Hash, VoteMessage>>,
 }
 
-#[allow(dead_code)]
-/// There are two types of vote pools:
-/// - SimpleVotePool: Tracks all votes of a specfic vote type made by validators for some slot N, but only one vote per block.
-/// - DuplicateBlockVotePool: Tracks all votes of a specfic vote type made by validators for some slot N,
-///   but allows votes for different blocks by the same validator. Only relevant for VotePool's that are of type
-///   Notarization or NotarizationFallback
-pub(crate) enum VotePoolType {
-    SimpleVotePool(SimpleVotePool),
-    DuplicateBlockVotePool(DuplicateBlockVotePool),
-}
-
-pub(crate) struct SimpleVotePool {
-    /// Tracks all votes of a specfic vote type made by validators for some slot N.
-    pub(crate) vote_entry: VoteEntry,
-    prev_voted_validators: HashSet<Pubkey>,
-}
-
-#[allow(dead_code)]
-impl SimpleVotePool {
-    pub fn new() -> Self {
+impl InternalVotePool {
+    fn new(slot: Slot) -> Self {
         Self {
-            vote_entry: VoteEntry::new(),
-            prev_voted_validators: HashSet::new(),
+            slot,
+            skip: BTreeMap::default(),
+            skip_fallback: BTreeMap::default(),
+            finalize: BTreeMap::default(),
+            notar: BTreeMap::default(),
+            notar_fallback: BTreeMap::default(),
         }
     }
 
-    pub fn add_vote(
+    /// Adds votes.
+    ///
+    /// Checks for different types of invalid and duplicate votes returning appropriate errors.
+    fn add_vote(&mut self, voter: Pubkey, vote: VoteMessage) -> Result<(), AddVoteError> {
+        debug_assert_eq!(self.slot, vote.vote.slot());
+        match vote.vote {
+            Vote::Notarize(notar) => {
+                if self.skip.contains_key(&voter) {
+                    return Err(AddVoteError::Invalid);
+                }
+                match self.notar.entry(voter) {
+                    Entry::Occupied(e) => {
+                        // unwrap should be safe as we should only store notar type votes here
+                        if e.get().vote.block_id().unwrap() == &notar.block_id {
+                            Err(AddVoteError::Duplicate)
+                        } else {
+                            Err(AddVoteError::Invalid)
+                        }
+                    }
+                    Entry::Vacant(e) => {
+                        e.insert(vote);
+                        Ok(())
+                    }
+                }
+            }
+            Vote::NotarizeFallback(notar_fallback) => {
+                if self.finalize.contains_key(&voter) {
+                    return Err(AddVoteError::Invalid);
+                }
+                match self.notar_fallback.entry(voter) {
+                    Entry::Vacant(e) => {
+                        e.insert(BTreeMap::from([(notar_fallback.block_id, vote)]));
+                        Ok(())
+                    }
+                    Entry::Occupied(mut e) => {
+                        let map = e.get_mut();
+                        let map_len = map.len();
+                        match map.entry(notar_fallback.block_id) {
+                            Entry::Vacant(map_e) => {
+                                if map_len == MAX_NOTAR_FALLBACK_PER_VALIDATOR {
+                                    Err(AddVoteError::Invalid)
+                                } else {
+                                    map_e.insert(vote);
+                                    Ok(())
+                                }
+                            }
+                            Entry::Occupied(_) => Err(AddVoteError::Duplicate),
+                        }
+                    }
+                }
+            }
+            Vote::Skip(_) => {
+                if self.notar.contains_key(&voter) || self.finalize.contains_key(&voter) {
+                    return Err(AddVoteError::Invalid);
+                }
+                insert_vote(&mut self.skip, voter, vote)
+            }
+            Vote::SkipFallback(_) => {
+                if self.finalize.contains_key(&voter) {
+                    return Err(AddVoteError::Invalid);
+                }
+                insert_vote(&mut self.skip_fallback, voter, vote)
+            }
+            Vote::Finalize(_) => {
+                if self.skip.contains_key(&voter) || self.skip_fallback.contains_key(&voter) {
+                    return Err(AddVoteError::Invalid);
+                }
+                if let Some(map) = self.notar_fallback.get(&voter) {
+                    debug_assert!(!map.is_empty());
+                    return Err(AddVoteError::Invalid);
+                }
+                insert_vote(&mut self.finalize, voter, vote)
+            }
+        }
+    }
+
+    /// Get [`VoteMessage`]s for the corresponding [`Vote`].
+    ///
+    // TODO: figure out how to return an iterator here instead which would require `CertificateBuilder::aggregate()` to accept an iterator.
+    fn get_votes(&self, vote: &Vote) -> Vec<VoteMessage> {
+        match vote {
+            Vote::Finalize(_) => self.finalize.values().cloned().collect(),
+            Vote::Notarize(notar) => self
+                .notar
+                .values()
+                .filter(|vote| {
+                    // unwrap should be safe as we should only store notar votes here
+                    vote.vote.block_id().unwrap() == &notar.block_id
+                })
+                .cloned()
+                .collect(),
+            Vote::NotarizeFallback(nf) => self
+                .notar_fallback
+                .values()
+                .filter_map(|map| map.get(&nf.block_id))
+                .cloned()
+                .collect(),
+            Vote::Skip(_) => self.skip.values().cloned().collect(),
+            Vote::SkipFallback(_) => self.skip_fallback.values().cloned().collect(),
+        }
+    }
+}
+
+/// Container to store the total stakes for different types of votes.
+struct Stakes {
+    slot: Slot,
+    /// Total stake that has voted skip.
+    skip: Stake,
+    /// Total stake that has voted skil fallback.
+    skip_fallback: Stake,
+    /// Total stake that has voted finalize.
+    finalize: Stake,
+    /// Stake that has voted notar.
+    ///
+    /// Different validators may vote notar for different blocks, so this tracks stake per block id.
+    notar: BTreeMap<Hash, Stake>,
+    /// Stake that has voted notar fallback.
+    ///
+    /// A single validator may vote for upto 3 blocks and different validators can vote for different blocks.
+    /// Hence, this tracks stake per block id.
+    notar_fallback: BTreeMap<Hash, Stake>,
+}
+
+impl Stakes {
+    fn new(slot: Slot) -> Self {
+        Self {
+            slot,
+            skip: 0,
+            skip_fallback: 0,
+            finalize: 0,
+            notar: BTreeMap::default(),
+            notar_fallback: BTreeMap::default(),
+        }
+    }
+
+    /// Updates the corresponding stake after a vote has been successfully added to the pool.
+    ///
+    /// Returns the total stake of the corresponding type (and block id in case of notar or notar-fallback) after the update.
+    fn add_stake(&mut self, voter_stake: Stake, vote: &Vote) -> Stake {
+        debug_assert_eq!(self.slot, vote.slot());
+        match vote {
+            Vote::Notarize(notar) => {
+                let stake = self.notar.entry(notar.block_id).or_default();
+                *stake = (*stake).saturating_add(voter_stake);
+                *stake
+            }
+            Vote::NotarizeFallback(nf) => {
+                let stake = self.notar_fallback.entry(nf.block_id).or_default();
+                *stake = (*stake).saturating_add(voter_stake);
+                *stake
+            }
+            Vote::Skip(_) => {
+                self.skip = self.skip.saturating_add(voter_stake);
+                self.skip
+            }
+            Vote::SkipFallback(_) => {
+                self.skip_fallback = self.skip_fallback.saturating_add(voter_stake);
+                self.skip_fallback
+            }
+            Vote::Finalize(_) => {
+                self.finalize = self.finalize.saturating_add(voter_stake);
+                self.finalize
+            }
+        }
+    }
+
+    /// Get the stake corresponding to the [`Vote`].
+    fn get_stake(&self, vote: &Vote) -> Stake {
+        match vote {
+            Vote::Notarize(notar) => *self.notar.get(&notar.block_id).unwrap_or(&0),
+            Vote::NotarizeFallback(nf) => *self.notar_fallback.get(&nf.block_id).unwrap_or(&0),
+            Vote::Skip(_) => self.skip,
+            Vote::SkipFallback(_) => self.skip_fallback,
+            Vote::Finalize(_) => self.finalize,
+        }
+    }
+}
+
+/// Container to store per slot votes and associated stake.
+///
+/// When adding new votes, various checks for invalid and duplicate votes is performed.
+pub(super) struct VotePool {
+    /// The slot this instance of the pool is responsible for.
+    slot: Slot,
+    /// Stores seen votes.
+    votes: InternalVotePool,
+    /// Stores total stake that voted.
+    stakes: Stakes,
+}
+
+impl VotePool {
+    pub(super) fn new(slot: Slot) -> Self {
+        Self {
+            slot,
+            votes: InternalVotePool::new(slot),
+            stakes: Stakes::new(slot),
+        }
+    }
+
+    /// Adds a vote to the pool.
+    ///
+    /// On success, returns the total stake of the corresponding vote type.
+    pub(super) fn add_vote(
         &mut self,
-        validator_vote_key: &Pubkey,
-        validator_stake: Stake,
-        transaction: &VoteMessage,
-    ) -> Option<Stake> {
-        if self.prev_voted_validators.contains(validator_vote_key) {
-            return None;
-        }
-        self.prev_voted_validators.insert(*validator_vote_key);
-        self.vote_entry.transactions.push(*transaction);
-        self.vote_entry.total_stake_by_key = self
-            .vote_entry
-            .total_stake_by_key
-            .saturating_add(validator_stake);
-        Some(self.vote_entry.total_stake_by_key)
+        voter: Pubkey,
+        voter_stake: Stake,
+        msg: VoteMessage,
+    ) -> Result<Stake, AddVoteError> {
+        debug_assert_eq!(self.slot, msg.vote.slot());
+        let vote = msg.vote;
+        self.votes.add_vote(voter, msg)?;
+        Ok(self.stakes.add_stake(voter_stake, &vote))
     }
 
-    pub fn add_to_certificate(&self, output: &mut VoteCertificateBuilder) {
-        output
-            .aggregate(&self.vote_entry.transactions)
-            .expect("Incoming vote message signatures are assumed to be valid")
-    }
-}
-
-impl VotePool for SimpleVotePool {
-    fn total_stake(&self) -> Stake {
-        self.vote_entry.total_stake_by_key
-    }
-    fn has_prev_validator_vote(&self, validator_vote_key: &Pubkey) -> bool {
-        self.prev_voted_validators.contains(validator_vote_key)
-    }
-}
-
-pub(crate) struct DuplicateBlockVotePool {
-    max_entries_per_pubkey: usize,
-    pub(crate) votes: HashMap<Hash, VoteEntry>,
-    total_stake: Stake,
-    prev_voted_block_ids: HashMap<Pubkey, Vec<Hash>>,
-}
-
-#[allow(dead_code)]
-impl DuplicateBlockVotePool {
-    pub fn new(max_entries_per_pubkey: usize) -> Self {
-        Self {
-            max_entries_per_pubkey,
-            votes: HashMap::new(),
-            total_stake: 0,
-            prev_voted_block_ids: HashMap::new(),
-        }
+    /// Returns the [`Stake`] corresponding to the specific [`Vote`].
+    pub(super) fn get_stake(&self, vote: &Vote) -> Stake {
+        self.stakes.get_stake(vote)
     }
 
-    pub fn add_vote(
-        &mut self,
-        validator_vote_key: &Pubkey,
-        voted_block_id: Hash,
-        transaction: &VoteMessage,
-        validator_stake: Stake,
-    ) -> Option<Stake> {
-        // Check whether the validator_vote_key already used the same voted_block_id or exceeded max_entries_per_pubkey
-        // If so, return false, otherwise add the voted_block_id to the prev_votes
-        let prev_voted_block_ids = self
-            .prev_voted_block_ids
-            .entry(*validator_vote_key)
-            .or_default();
-        if prev_voted_block_ids.contains(&voted_block_id) {
-            return None;
-        }
-        let inserted_first_time = prev_voted_block_ids.is_empty();
-        if prev_voted_block_ids.len() >= self.max_entries_per_pubkey {
-            return None;
-        }
-        prev_voted_block_ids.push(voted_block_id);
-
-        let vote_entry = self
-            .votes
-            .entry(voted_block_id)
-            .or_insert_with(VoteEntry::new);
-        vote_entry.transactions.push(*transaction);
-        vote_entry.total_stake_by_key = vote_entry
-            .total_stake_by_key
-            .saturating_add(validator_stake);
-
-        if inserted_first_time {
-            self.total_stake = self.total_stake.saturating_add(validator_stake);
-        }
-        Some(vote_entry.total_stake_by_key)
-    }
-
-    pub fn total_stake_by_block_id(&self, block_id: &Hash) -> Stake {
-        self.votes
-            .get(block_id)
-            .map_or(0, |vote_entries| vote_entries.total_stake_by_key)
-    }
-
-    pub fn add_to_certificate(&self, block_id: &Hash, output: &mut VoteCertificateBuilder) {
-        if let Some(vote_entries) = self.votes.get(block_id) {
-            output
-                .aggregate(&vote_entries.transactions)
-                .expect("Incoming vote message signatures are assumed to be valid")
-        }
-    }
-
-    pub fn has_prev_validator_vote_for_block(
-        &self,
-        validator_vote_key: &Pubkey,
-        block_id: &Hash,
-    ) -> bool {
-        self.prev_voted_block_ids
-            .get(validator_vote_key)
-            .is_some_and(|vs| vs.contains(block_id))
-    }
-}
-
-impl VotePool for DuplicateBlockVotePool {
-    fn total_stake(&self) -> Stake {
-        self.total_stake
-    }
-    fn has_prev_validator_vote(&self, validator_vote_key: &Pubkey) -> bool {
-        self.prev_voted_block_ids.contains_key(validator_vote_key)
+    /// Returns a list of votes corresponding to the specific [`Vote`].
+    pub(super) fn get_votes(&self, vote: &Vote) -> Vec<VoteMessage> {
+        self.votes.get_votes(vote)
     }
 }
 
@@ -187,125 +304,328 @@ mod test {
     };
 
     #[test]
-    fn test_skip_vote_pool() {
-        let mut vote_pool = SimpleVotePool::new();
-        let vote = Vote::new_skip_vote(5);
-        let transaction = VoteMessage {
-            vote,
-            signature: BLSSignature::default(),
-            rank: 1,
+    fn test_notar_failures() {
+        let voter = Pubkey::new_unique();
+        let signature = BLSSignature::default();
+        let rank = 1;
+        let slot = 1;
+
+        let mut votes = InternalVotePool::new(slot);
+        let skip = VoteMessage {
+            vote: Vote::new_skip_vote(slot),
+            signature,
+            rank,
         };
-        let my_pubkey = Pubkey::new_unique();
+        votes.add_vote(voter, skip).unwrap();
+        let notar = VoteMessage {
+            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
+            signature,
+            rank,
+        };
+        assert!(matches!(
+            votes.add_vote(voter, notar),
+            Err(AddVoteError::Invalid)
+        ));
 
-        assert_eq!(vote_pool.add_vote(&my_pubkey, 10, &transaction), Some(10));
-        assert_eq!(vote_pool.total_stake(), 10);
+        let mut votes = InternalVotePool::new(slot);
+        let notar = VoteMessage {
+            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, notar).unwrap();
+        let notar = VoteMessage {
+            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
+            signature,
+            rank,
+        };
+        assert!(matches!(
+            votes.add_vote(voter, notar),
+            Err(AddVoteError::Invalid)
+        ));
 
-        // Adding the same key again should fail
-        assert_eq!(vote_pool.add_vote(&my_pubkey, 10, &transaction), None);
-        assert_eq!(vote_pool.total_stake(), 10);
-
-        // Adding a different key should succeed
-        let new_pubkey = Pubkey::new_unique();
-        assert_eq!(vote_pool.add_vote(&new_pubkey, 60, &transaction), Some(70));
-        assert_eq!(vote_pool.total_stake(), 70);
+        let mut votes = InternalVotePool::new(slot);
+        let notar = VoteMessage {
+            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, notar.clone()).unwrap();
+        assert!(matches!(
+            votes.add_vote(voter, notar),
+            Err(AddVoteError::Duplicate)
+        ));
     }
 
     #[test]
-    fn test_notarization_pool() {
-        let mut vote_pool = DuplicateBlockVotePool::new(1);
-        let my_pubkey = Pubkey::new_unique();
-        let block_id = Hash::new_unique();
-        let vote = Vote::new_notarization_vote(3, block_id);
-        let transaction = VoteMessage {
-            vote,
-            signature: BLSSignature::default(),
-            rank: 1,
+    fn test_notar_fallback_failures() {
+        let voter = Pubkey::new_unique();
+        let signature = BLSSignature::default();
+        let rank = 1;
+        let slot = 1;
+
+        let mut votes = InternalVotePool::new(slot);
+        let finalize = VoteMessage {
+            vote: Vote::new_finalization_vote(slot),
+            signature,
+            rank,
         };
-        assert_eq!(
-            vote_pool.add_vote(&my_pubkey, block_id, &transaction, 10),
-            Some(10)
-        );
-        assert_eq!(vote_pool.total_stake(), 10);
-        assert_eq!(vote_pool.total_stake_by_block_id(&block_id), 10);
+        votes.add_vote(voter, finalize).unwrap();
+        let nf = VoteMessage {
+            vote: Vote::new_notarization_fallback_vote(slot, Hash::default()),
+            signature,
+            rank,
+        };
+        assert!(matches!(
+            votes.add_vote(voter, nf),
+            Err(AddVoteError::Invalid)
+        ));
 
-        // Adding the same key again should fail
-        assert_eq!(
-            vote_pool.add_vote(&my_pubkey, block_id, &transaction, 10),
-            None
-        );
-        assert_eq!(vote_pool.total_stake(), 10);
+        let mut votes = InternalVotePool::new(slot);
+        for _ in 0..3 {
+            let nf = VoteMessage {
+                vote: Vote::new_notarization_fallback_vote(slot, Hash::new_unique()),
+                signature,
+                rank,
+            };
+            votes.add_vote(voter, nf).unwrap();
+        }
+        let nf = VoteMessage {
+            vote: Vote::new_notarization_fallback_vote(slot, Hash::new_unique()),
+            signature,
+            rank,
+        };
+        assert!(matches!(
+            votes.add_vote(voter, nf),
+            Err(AddVoteError::Invalid)
+        ));
 
-        // Adding a different bankhash should fail
-        assert_eq!(
-            vote_pool.add_vote(&my_pubkey, block_id, &transaction, 10),
-            None
-        );
-        assert_eq!(vote_pool.total_stake(), 10);
-
-        // Adding a different key should succeed
-        let new_pubkey = Pubkey::new_unique();
-        assert_eq!(
-            vote_pool.add_vote(&new_pubkey, block_id, &transaction, 60),
-            Some(70)
-        );
-        assert_eq!(vote_pool.total_stake(), 70);
-        assert_eq!(vote_pool.total_stake_by_block_id(&block_id), 70);
+        let mut votes = InternalVotePool::new(slot);
+        let nf = VoteMessage {
+            vote: Vote::new_notarization_fallback_vote(slot, Hash::new_unique()),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, nf.clone()).unwrap();
+        assert!(matches!(
+            votes.add_vote(voter, nf),
+            Err(AddVoteError::Duplicate)
+        ));
     }
 
     #[test]
-    fn test_notarization_fallback_pool() {
-        solana_logger::setup();
-        let mut vote_pool = DuplicateBlockVotePool::new(3);
-        let vote = Vote::new_notarization_fallback_vote(7, Hash::new_unique());
-        let transaction = VoteMessage {
-            vote,
-            signature: BLSSignature::default(),
-            rank: 1,
+    fn test_skip_failures() {
+        let voter = Pubkey::new_unique();
+        let signature = BLSSignature::default();
+        let rank = 1;
+        let slot = 1;
+
+        let mut votes = InternalVotePool::new(slot);
+        let notar = VoteMessage {
+            vote: Vote::new_notarization_vote(slot, Hash::new_unique()),
+            signature,
+            rank,
         };
-        let my_pubkey = Pubkey::new_unique();
+        votes.add_vote(voter, notar).unwrap();
+        let skip = VoteMessage {
+            vote: Vote::new_skip_vote(slot),
+            signature,
+            rank,
+        };
+        assert!(matches!(
+            votes.add_vote(voter, skip),
+            Err(AddVoteError::Invalid)
+        ));
 
-        let block_ids: Vec<Hash> = (0..4).map(|_| Hash::new_unique()).collect();
+        let mut votes = InternalVotePool::new(slot);
+        let finalize = VoteMessage {
+            vote: Vote::new_finalization_vote(slot),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, finalize).unwrap();
+        let skip = VoteMessage {
+            vote: Vote::new_skip_vote(slot),
+            signature,
+            rank,
+        };
+        assert!(matches!(
+            votes.add_vote(voter, skip),
+            Err(AddVoteError::Invalid)
+        ));
 
-        // Adding the first 3 votes should succeed, but total_stake should remain at 10
-        for block_id in &block_ids[0..3] {
-            assert_eq!(
-                vote_pool.add_vote(&my_pubkey, *block_id, &transaction, 10),
-                Some(10)
-            );
-            assert_eq!(vote_pool.total_stake(), 10);
-            assert_eq!(vote_pool.total_stake_by_block_id(block_id), 10);
-        }
-        // Adding the 4th vote should fail
+        let mut votes = InternalVotePool::new(slot);
+        let skip = VoteMessage {
+            vote: Vote::new_finalization_vote(slot),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, skip.clone()).unwrap();
+        assert!(matches!(
+            votes.add_vote(voter, skip),
+            Err(AddVoteError::Duplicate)
+        ));
+    }
+
+    #[test]
+    fn test_skip_fallback_failures() {
+        let voter = Pubkey::new_unique();
+        let signature = BLSSignature::default();
+        let rank = 1;
+        let slot = 1;
+
+        let mut votes = InternalVotePool::new(slot);
+        let finalize = VoteMessage {
+            vote: Vote::new_finalization_vote(slot),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, finalize).unwrap();
+        let sf = VoteMessage {
+            vote: Vote::new_skip_fallback_vote(slot),
+            signature,
+            rank,
+        };
+        assert!(matches!(
+            votes.add_vote(voter, sf),
+            Err(AddVoteError::Invalid)
+        ));
+
+        let mut votes = InternalVotePool::new(slot);
+        let sf = VoteMessage {
+            vote: Vote::new_skip_fallback_vote(slot),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, sf.clone()).unwrap();
+        assert!(matches!(
+            votes.add_vote(voter, sf),
+            Err(AddVoteError::Duplicate)
+        ));
+    }
+
+    #[test]
+    fn test_finalize_failures() {
+        let voter = Pubkey::new_unique();
+        let signature = BLSSignature::default();
+        let rank = 1;
+        let slot = 1;
+
+        let mut votes = InternalVotePool::new(slot);
+        let skip = VoteMessage {
+            vote: Vote::new_skip_vote(slot),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, skip).unwrap();
+        let finalize = VoteMessage {
+            vote: Vote::new_finalization_vote(slot),
+            signature,
+            rank,
+        };
+        assert!(matches!(
+            votes.add_vote(voter, finalize),
+            Err(AddVoteError::Invalid)
+        ));
+
+        let mut votes = InternalVotePool::new(slot);
+        let sf = VoteMessage {
+            vote: Vote::new_skip_fallback_vote(slot),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, sf).unwrap();
+        let finalize = VoteMessage {
+            vote: Vote::new_finalization_vote(slot),
+            signature,
+            rank,
+        };
+        assert!(matches!(
+            votes.add_vote(voter, finalize),
+            Err(AddVoteError::Invalid)
+        ));
+
+        let mut votes = InternalVotePool::new(slot);
+        let finalize = VoteMessage {
+            vote: Vote::new_finalization_vote(slot),
+            signature,
+            rank,
+        };
+        votes.add_vote(voter, finalize.clone()).unwrap();
+        assert!(matches!(
+            votes.add_vote(voter, finalize),
+            Err(AddVoteError::Duplicate)
+        ));
+    }
+
+    #[test]
+    fn test_stakes() {
+        let slot = 123;
+        let stake = 54321;
+        let mut stakes = Stakes::new(slot);
+        let vote = Vote::new_skip_vote(slot);
+        assert_eq!(stakes.add_stake(stake, &vote), stake);
+        assert_eq!(stakes.get_stake(&vote), stake);
+
+        let mut stakes = Stakes::new(slot);
+        let vote = Vote::new_skip_fallback_vote(slot);
+        assert_eq!(stakes.add_stake(stake, &vote), stake);
+        assert_eq!(stakes.get_stake(&vote), stake);
+
+        let mut stakes = Stakes::new(slot);
+        let vote = Vote::new_finalization_vote(slot);
+        assert_eq!(stakes.add_stake(stake, &vote), stake);
+        assert_eq!(stakes.get_stake(&vote), stake);
+
+        let mut stakes = Stakes::new(slot);
+        let stake0 = 10;
+        let stake1 = 20;
+        let hash0 = Hash::new_unique();
+        let hash1 = Hash::new_unique();
+        let vote0 = Vote::new_notarization_vote(slot, hash0);
+        let vote1 = Vote::new_notarization_vote(slot, hash1);
+        assert_eq!(stakes.add_stake(stake0, &vote0), stake0);
+        assert_eq!(stakes.add_stake(stake1, &vote1), stake1);
+        assert_eq!(stakes.get_stake(&vote0), stake0);
+        assert_eq!(stakes.get_stake(&vote1), stake1);
+
+        let mut stakes = Stakes::new(slot);
+        let stake0 = 10;
+        let stake1 = 20;
+        let hash0 = Hash::new_unique();
+        let hash1 = Hash::new_unique();
+        let vote0 = Vote::new_notarization_fallback_vote(slot, hash0);
+        let vote1 = Vote::new_notarization_fallback_vote(slot, hash1);
+        assert_eq!(stakes.add_stake(stake0, &vote0), stake0);
+        assert_eq!(stakes.add_stake(stake1, &vote1), stake1);
+        assert_eq!(stakes.get_stake(&vote0), stake0);
+        assert_eq!(stakes.get_stake(&vote1), stake1);
+    }
+
+    #[test]
+    fn test_vote_pool() {
+        let slot = 1;
+        let mut vote_pool = VotePool::new(slot);
+
+        let voter = Pubkey::new_unique();
+        let signature = BLSSignature::default();
+        let rank = 1;
+        let vote = Vote::new_finalization_vote(slot);
+        let vote_message = VoteMessage {
+            vote,
+            signature,
+            rank,
+        };
+        let stake = 12345;
         assert_eq!(
-            vote_pool.add_vote(&my_pubkey, block_ids[3], &transaction, 10),
-            None
+            vote_pool
+                .add_vote(voter, stake, vote_message.clone())
+                .unwrap(),
+            stake
         );
-        assert_eq!(vote_pool.total_stake(), 10);
-        assert_eq!(vote_pool.total_stake_by_block_id(&block_ids[3]), 0);
-
-        // Adding a different key should succeed
-        let new_pubkey = Pubkey::new_unique();
-        for block_id in &block_ids[1..3] {
-            assert_eq!(
-                vote_pool.add_vote(&new_pubkey, *block_id, &transaction, 60),
-                Some(70)
-            );
-            assert_eq!(vote_pool.total_stake(), 70);
-            assert_eq!(vote_pool.total_stake_by_block_id(block_id), 70);
-        }
-
-        // The new key only added 2 votes, so adding block_ids[3] should succeed
-        assert_eq!(
-            vote_pool.add_vote(&new_pubkey, block_ids[3], &transaction, 60),
-            Some(60)
-        );
-        assert_eq!(vote_pool.total_stake(), 70);
-        assert_eq!(vote_pool.total_stake_by_block_id(&block_ids[3]), 60);
-
-        // Now if adding the same key again, it should fail
-        assert_eq!(
-            vote_pool.add_vote(&new_pubkey, block_ids[0], &transaction, 60),
-            None
-        );
+        assert_eq!(vote_pool.get_stake(&vote), stake);
+        let returned_votes = vote_pool.get_votes(&vote);
+        assert_eq!(returned_votes.len(), 1);
+        assert_eq!(returned_votes[0], vote_message);
     }
 }

@@ -55,7 +55,7 @@ pub enum SkippedReason {
     ZeroReward,
     ZeroCreditsAndReturnZero,
     ZeroCreditsAndReturnCurrent,
-    ZeroCreditsAndReturnRewinded,
+    ZeroCreditsAndReturnRewound,
 }
 
 impl From<SkippedReason> for InflationPointCalculationEvent {
@@ -116,7 +116,7 @@ pub(crate) fn calculate_stake_points_and_credits(
     match credits_in_vote.cmp(&credits_in_stake) {
         Ordering::Less => {
             if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
-                inflation_point_calc_tracer(&SkippedReason::ZeroCreditsAndReturnRewinded.into());
+                inflation_point_calc_tracer(&SkippedReason::ZeroCreditsAndReturnRewound.into());
             }
             // Don't adjust stake.activation_epoch for simplicity:
             //  - generally fast-forwarding stake.activation_epoch forcibly (for
@@ -209,14 +209,15 @@ pub(crate) fn calculate_stake_points_and_credits(
 #[cfg(test)]
 mod tests {
     use {
-        super::*, solana_native_token::LAMPORTS_PER_SOL,
-        solana_vote_program::vote_state::VoteStateV3,
+        super::*,
+        solana_native_token::LAMPORTS_PER_SOL,
+        solana_vote_program::vote_state::{handler::VoteStateHandle, VoteStateV4},
     };
 
     fn new_stake(
         stake: u64,
         voter_pubkey: &Pubkey,
-        vote_state: &VoteStateV3,
+        vote_state: &VoteStateV4,
         activation_epoch: Epoch,
     ) -> Stake {
         Stake {
@@ -227,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_stake_state_calculate_points_with_typical_values() {
-        let mut vote_state = VoteStateV3::default();
+        let mut vote_state = VoteStateV4::default();
 
         // bootstrap means fully-vested stake at epoch 0 with
         //  10_000_000 SOL is a big but not unreasonable stake

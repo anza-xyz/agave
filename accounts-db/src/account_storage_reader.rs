@@ -140,7 +140,11 @@ mod tests {
             ObsoleteAccounts,
         },
         log::*,
-        rand::{rngs::StdRng, seq::SliceRandom, SeedableRng},
+        rand::{
+            rngs::StdRng,
+            seq::{IndexedMutRandom as _, IndexedRandom},
+            SeedableRng,
+        },
         solana_account::AccountSharedData,
         solana_pubkey::Pubkey,
         std::iter,
@@ -161,7 +165,7 @@ mod tests {
         )
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     #[should_panic(expected = "Obsolete accounts should be empty for TieredStorage")]
     fn test_account_storage_reader_tiered_storage_one_obsolete_account_should_panic(
@@ -193,7 +197,7 @@ mod tests {
         _ = AccountStorageReader::new(&storage, None).unwrap();
     }
 
-    #[test_case(AccountsFileProvider::AppendVec, StorageAccess::Mmap)]
+    #[test_case(AccountsFileProvider::AppendVec, #[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(AccountsFileProvider::AppendVec, StorageAccess::File)]
     #[test_case(AccountsFileProvider::HotStorage, StorageAccess::File)]
     fn test_account_storage_reader_no_obsolete_accounts(
@@ -223,18 +227,18 @@ mod tests {
     #[test_case(100, 0, StorageAccess::File)]
     #[test_case(100, 10, StorageAccess::File)]
     #[test_case(100, 100, StorageAccess::File)]
-    #[test_case(0, 0, StorageAccess::Mmap)]
-    #[test_case(1, 0, StorageAccess::Mmap)]
-    #[test_case(1, 1, StorageAccess::Mmap)]
-    #[test_case(100, 0, StorageAccess::Mmap)]
-    #[test_case(100, 10, StorageAccess::Mmap)]
-    #[test_case(100, 100, StorageAccess::Mmap)]
+    #[test_case(0, 0, #[allow(deprecated)] StorageAccess::Mmap)]
+    #[test_case(1, 0, #[allow(deprecated)] StorageAccess::Mmap)]
+    #[test_case(1, 1, #[allow(deprecated)] StorageAccess::Mmap)]
+    #[test_case(100, 0, #[allow(deprecated)] StorageAccess::Mmap)]
+    #[test_case(100, 10, #[allow(deprecated)] StorageAccess::Mmap)]
+    #[test_case(100, 100, #[allow(deprecated)] StorageAccess::Mmap)]
     fn test_account_storage_reader_with_obsolete_accounts(
         total_accounts: usize,
         number_of_accounts_to_remove: usize,
         storage_access: StorageAccess,
     ) {
-        solana_logger::setup();
+        agave_logger::setup();
         let (storage, _temp_dirs) =
             create_storage_for_storage_reader(0, AccountsFileProvider::AppendVec, storage_access);
 
@@ -294,6 +298,7 @@ mod tests {
                 storage.accounts.internals_for_archive(),
                 InternalsForArchive::FileIo(_)
             )),
+            #[allow(deprecated)]
             StorageAccess::Mmap => assert!(matches!(
                 storage.accounts.internals_for_archive(),
                 InternalsForArchive::Mmap(_)
@@ -342,7 +347,7 @@ mod tests {
         }
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_account_storage_reader_filter_by_slot(storage_access: StorageAccess) {
         let (storage, _temp_dirs) =

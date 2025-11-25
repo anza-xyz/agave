@@ -206,7 +206,7 @@ impl Restart {
 
     /// get one `RestartableBucket` for each bucket.
     /// If a potentially reusable file exists, then put that file's path in `RestartableBucket` for that bucket.
-    /// Delete all files that cannot possibly be re-used.
+    /// Delete all files that cannot possibly be reused.
     pub(crate) fn get_restartable_buckets(
         restart: Option<&Arc<Mutex<Restart>>>,
         drives: &Arc<Vec<PathBuf>>,
@@ -559,7 +559,7 @@ mod test {
         test_get(&restart, buckets, last_offset);
         (4..6).for_each(|offset| test_set_get(&restart, buckets, offset));
         drop(restart);
-        // create a new file without deleting old one. Make sure it is default and not re-used.
+        // create a new file without deleting old one. Make sure it is default and not reused.
         let restart = Arc::new(Mutex::new(Restart::new(&config).unwrap()));
         test_default_restart(&restart, &config);
     }

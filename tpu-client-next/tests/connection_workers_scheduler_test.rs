@@ -1,35 +1,47 @@
+#[allow(deprecated)]
+// Reason: This deprecated function internally creates a
+// PinnedLeaderUpdater. This structure we want to move to tests as soon as
+// we can remove create_leader_updater function.
+use solana_tpu_client_next::leader_updater::create_leader_updater;
 use {
     crossbeam_channel::Receiver as CrossbeamReceiver,
     futures::future::BoxFuture,
     solana_cli_config::ConfigInput,
     solana_commitment_config::CommitmentConfig,
     solana_keypair::Keypair,
-    solana_net_utils::sockets::unique_port_range_for_tests,
+    solana_net_utils::sockets::{
+        bind_to, localhost_port_range_for_tests, unique_port_range_for_tests,
+    },
     solana_pubkey::Pubkey,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_signer::Signer,
     solana_streamer::{
-        nonblocking::testing_utilities::{
-            make_client_endpoint, setup_quic_server, SpawnTestServerResult,
+        nonblocking::{
+            swqos::SwQosConfig,
+            testing_utilities::{make_client_endpoint, setup_quic_server, SpawnTestServerResult},
         },
         packet::PacketBatch,
-        quic::QuicServerParams,
+        quic::QuicStreamerConfig,
         streamer::StakedNodes,
     },
     solana_tpu_client_next::{
         connection_workers_scheduler::{
-            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
+            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, NonblockingBroadcaster,
+            StakeIdentity,
         },
-        leader_updater::create_leader_updater,
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
-        ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, SendTransactionStats,
+        ClientBuilder, ConnectionWorkersScheduler, ConnectionWorkersSchedulerError,
+        SendTransactionStats,
     },
     std::{
         collections::HashMap,
         net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
         num::Saturating,
-        sync::Arc,
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc,
+        },
         time::Duration,
     },
     tokio::{
@@ -38,7 +50,7 @@ use {
             oneshot, watch,
         },
         task::JoinHandle,
-        time::{sleep, Instant},
+        time::{interval, sleep, Instant},
     },
     tokio_util::sync::CancellationToken,
 };
@@ -84,12 +96,15 @@ async fn setup_connection_worker_scheduler(
         CommitmentConfig::confirmed(),
     ));
 
+    let config = test_config(stake_identity);
+
     // Setup sending txs
+    let cancel = CancellationToken::new();
+    #[allow(deprecated)]
     let leader_updater = create_leader_updater(rpc_client, websocket_url, Some(tpu_address))
         .await
         .expect("Leader updates was successfully created");
 
-    let cancel = CancellationToken::new();
     let (update_identity_sender, update_identity_receiver) = watch::channel(None);
     let scheduler = ConnectionWorkersScheduler::new(
         leader_updater,
@@ -97,7 +112,6 @@ async fn setup_connection_worker_scheduler(
         update_identity_receiver,
         cancel.clone(),
     );
-    let config = test_config(stake_identity);
     let scheduler = tokio::spawn(scheduler.run(config));
 
     (scheduler, update_identity_sender, cancel)
@@ -200,7 +214,11 @@ async fn test_basic_transactions_sending() {
         server_address,
         stats: _stats,
         cancel,
-    } = setup_quic_server(None, QuicServerParams::default_for_tests());
+    } = setup_quic_server(
+        None,
+        QuicStreamerConfig::default_for_tests(),
+        SwQosConfig::default(),
+    );
 
     // Setup sending txs
     let tx_size = 1;
@@ -290,50 +308,64 @@ async fn test_connection_denied_until_allowed() {
         server_address,
         stats: _stats,
         cancel,
-    } = setup_quic_server(None, QuicServerParams::default_for_tests());
+    } = setup_quic_server(
+        None,
+        QuicStreamerConfig::default_for_tests(),
+        SwQosConfig {
+            // To prevent server from accepting a new connection, we
+            // set max_connections_per_peer == 1
+            max_connections_per_unstaked_peer: 1,
+            ..Default::default()
+        },
+    );
 
-    // To prevent server from accepting a new connection, we use the following observation.
-    // Since max_connections_per_peer == 1 (< max_unstaked_connections == 500), if we create a first
-    // connection and later try another one, the second connection will be immediately closed.
-    //
+    // If we create a blocking connection and try to create connections to send TXs,
+    // the new connections will be immediately closed.
     // Since client is not retrying sending failed transactions, this leads to the packets loss.
-    // The connection has been created and closed when we already have sent the data.
-    let throttling_connection = make_client_endpoint(&server_address, None).await;
+    let blocking_connection = make_client_endpoint(&server_address, None).await;
 
+    let time_per_tx = Duration::from_millis(100);
     // Setup sending txs
     let tx_size = 1;
-    let expected_num_txs: usize = 10;
+    let num_tx_batches: usize = 30;
     let SpawnTxGenerator {
         tx_receiver,
         tx_sender_shutdown,
         ..
-    } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(100));
+    } = spawn_tx_sender(tx_size, num_tx_batches, time_per_tx);
 
     let (scheduler_handle, _update_identity_sender, _scheduler_cancel) =
         setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
 
     // Check results
-    let actual_num_packets = count_received_packets_for(receiver, tx_size, TEST_MAX_TIME).await;
-    assert!(
-        actual_num_packets < expected_num_txs,
-        "Expected to receive {expected_num_txs} packets in {TEST_MAX_TIME:?} Got packets: \
-         {actual_num_packets}"
+    let received_num_packets = count_received_packets_for(
+        receiver.clone(),
+        tx_size,
+        time_per_tx * num_tx_batches as u32 / 2,
+    )
+    .await;
+    assert_eq!(
+        received_num_packets, 0,
+        "Expected to lose all packets, got {received_num_packets} out of {num_tx_batches} sent"
     );
-
+    // drop blocking connection, allow packets to get in now
+    drop(blocking_connection);
+    let received_num_packets =
+        count_received_packets_for(receiver, tx_size, time_per_tx * num_tx_batches as u32 / 2)
+            .await;
+    assert!(
+        received_num_packets > 0,
+        "Expected to get some packets, got {received_num_packets} out of {num_tx_batches} sent"
+    );
     // Wait for the exchange to finish.
     tx_sender_shutdown.await;
     let stats = join_scheduler(scheduler_handle).await;
-    // With proactive detection, we detect rejection immediately and retry within test duration.
-    // Expect at least 2 errors: initial rejection + retry attempts.
+    // Expect at least some errors.
     assert!(
-        stats.write_error_connection_lost + stats.connection_error_application_closed >= 2,
-        "Expected at least 2 connection errors, got write_error_connection_lost: {}, \
-         connection_error_application_closed: {}",
-        stats.write_error_connection_lost,
+        stats.connection_error_application_closed > 0,
+        "Expected at least 1 connection error, connection_error_application_closed: {}",
         stats.connection_error_application_closed
     );
-
-    drop(throttling_connection);
 
     // Exit server
     cancel.cancel();
@@ -353,10 +385,13 @@ async fn test_connection_pruned_and_reopened() {
         cancel,
     } = setup_quic_server(
         None,
-        QuicServerParams {
-            max_connections_per_peer: 100,
+        QuicStreamerConfig {
+            ..QuicStreamerConfig::default_for_tests()
+        },
+        SwQosConfig {
+            max_connections_per_unstaked_peer: 100,
             max_unstaked_connections: 1,
-            ..QuicServerParams::default_for_tests()
+            ..Default::default()
         },
     );
 
@@ -409,13 +444,16 @@ async fn test_staked_connection() {
         cancel,
     } = setup_quic_server(
         Some(staked_nodes),
-        QuicServerParams {
+        QuicStreamerConfig {
+            ..QuicStreamerConfig::default()
+        },
+        SwQosConfig {
             // Must use at least the number of endpoints (10) because
             // `max_staked_connections` and `max_unstaked_connections` are
             // cumulative for all the endpoints.
             max_staked_connections: 10,
             max_unstaked_connections: 0,
-            ..QuicServerParams::default_for_tests()
+            ..Default::default()
         },
     );
 
@@ -462,7 +500,11 @@ async fn test_connection_throttling() {
         server_address,
         stats: _stats,
         cancel,
-    } = setup_quic_server(None, QuicServerParams::default_for_tests());
+    } = setup_quic_server(
+        None,
+        QuicStreamerConfig::default_for_tests(),
+        SwQosConfig::default(),
+    );
 
     // Setup sending txs
     let tx_size = 1;
@@ -555,10 +597,13 @@ async fn test_rate_limiting() {
         cancel,
     } = setup_quic_server(
         None,
-        QuicServerParams {
-            max_connections_per_peer: 100,
+        QuicStreamerConfig {
             max_connections_per_ipaddr_per_min: 1,
-            ..QuicServerParams::default_for_tests()
+            ..QuicStreamerConfig::default_for_tests()
+        },
+        SwQosConfig {
+            max_connections_per_unstaked_peer: 100,
+            ..Default::default()
         },
     );
 
@@ -616,10 +661,13 @@ async fn test_rate_limiting_establish_connection() {
         cancel,
     } = setup_quic_server(
         None,
-        QuicServerParams {
-            max_connections_per_peer: 100,
+        QuicStreamerConfig {
             max_connections_per_ipaddr_per_min: 1,
-            ..QuicServerParams::default_for_tests()
+            ..QuicStreamerConfig::default_for_tests()
+        },
+        SwQosConfig {
+            max_connections_per_unstaked_peer: 100,
+            ..Default::default()
         },
     );
 
@@ -697,14 +745,17 @@ async fn test_update_identity() {
         cancel,
     } = setup_quic_server(
         Some(staked_nodes),
-        QuicServerParams {
+        QuicStreamerConfig {
+            ..QuicStreamerConfig::default_for_tests()
+        },
+        SwQosConfig {
             // Must use at least the number of endpoints (10) because
             // `max_staked_connections` and `max_unstaked_connections` are
             // cumulative for all the endpoints.
             max_staked_connections: 10,
             // Deny all unstaked connections.
             max_unstaked_connections: 0,
-            ..QuicServerParams::default_for_tests()
+            ..Default::default()
         },
     );
 
@@ -760,10 +811,13 @@ async fn test_proactive_connection_close_detection() {
         cancel,
     } = setup_quic_server(
         None,
-        QuicServerParams {
-            max_connections_per_peer: 1,
+        QuicStreamerConfig {
+            ..QuicStreamerConfig::default_for_tests()
+        },
+        SwQosConfig {
+            max_connections_per_unstaked_peer: 1,
             max_unstaked_connections: 1,
-            ..QuicServerParams::default_for_tests()
+            ..Default::default()
         },
     );
 
@@ -816,4 +870,116 @@ async fn test_proactive_connection_close_detection() {
         stats.connection_error_application_closed > 0 || stats.write_error_connection_lost > 0,
         "Should detect connection close proactively. Stats: {stats:?}"
     );
+}
+
+#[tokio::test]
+async fn test_client_builder() {
+    let SpawnTestServerResult {
+        join_handle: server_handle,
+        receiver,
+        server_address,
+        stats: _stats,
+        cancel,
+    } = setup_quic_server(
+        None,
+        QuicStreamerConfig::default_for_tests(),
+        SwQosConfig::default(),
+    );
+
+    let _drop_guard = cancel.clone().drop_guard();
+
+    let successfully_sent = Arc::new(AtomicU64::new(0));
+
+    let port_range = localhost_port_range_for_tests();
+    let socket = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.0)
+        .expect("Should be able to open UdpSocket for tests.");
+
+    let json_rpc_url = "http://127.0.0.1:8899";
+    let (_, websocket_url) = ConfigInput::compute_websocket_url_setting("", "", json_rpc_url, "");
+
+    let rpc_client = Arc::new(RpcClient::new_with_commitment(
+        json_rpc_url.to_string(),
+        CommitmentConfig::confirmed(),
+    ));
+    #[allow(deprecated)]
+    let leader_updater = create_leader_updater(rpc_client, websocket_url, Some(server_address))
+        .await
+        .unwrap();
+    let builder = ClientBuilder::new(leader_updater)
+        .cancel_token(cancel.child_token())
+        .bind_socket(socket)
+        .leader_send_fanout(1)
+        .identity(None)
+        .max_cache_size(1)
+        .worker_channel_size(100)
+        .metric_reporter({
+            let successfully_sent = successfully_sent.clone();
+            |stats: Arc<SendTransactionStats>, cancel: CancellationToken| async move {
+                let mut interval = interval(Duration::from_millis(10));
+                cancel
+                    .run_until_cancelled(async {
+                        loop {
+                            interval.tick().await;
+                            let view = stats.read_and_reset();
+                            successfully_sent.fetch_add(view.successfully_sent, Ordering::Relaxed);
+                        }
+                    })
+                    .await;
+            }
+        });
+
+    let (tx_sender, client) = builder
+        .build::<NonblockingBroadcaster>()
+        .expect("Client should be built successfully.");
+
+    // Setup sending txs
+    let tx_size = 1;
+    let expected_num_txs: usize = 2;
+
+    let txs = vec![vec![0_u8; tx_size]; 1];
+    tx_sender
+        .send_transactions_in_batch(txs.clone())
+        .await
+        .expect("Client should accept the transaction batch");
+    tx_sender
+        .try_send_transactions_in_batch(txs.clone())
+        .expect("Client should accept the transaction batch");
+
+    // Check results
+    let now = Instant::now();
+    let mut actual_num_packets = 0;
+    while actual_num_packets < expected_num_txs {
+        {
+            let elapsed = now.elapsed();
+            assert!(
+                elapsed < TEST_MAX_TIME,
+                "Failed to send {expected_num_txs} transaction in {elapsed:?}. Only sent \
+                 {actual_num_packets}",
+            );
+        }
+
+        let Ok(packets) = receiver.try_recv() else {
+            sleep(Duration::from_millis(10)).await;
+            continue;
+        };
+
+        actual_num_packets += packets.len();
+        for p in packets.iter() {
+            assert_eq!(p.meta().size, 1);
+        }
+    }
+
+    // Stop client
+    client
+        .shutdown()
+        .await
+        .expect("Client should shutdown successfully.");
+    assert_eq!(
+        successfully_sent.load(Ordering::Relaxed),
+        expected_num_txs as u64,
+    );
+
+    // Stop server
+    cancel.cancel();
+    server_handle.await.unwrap();
 }

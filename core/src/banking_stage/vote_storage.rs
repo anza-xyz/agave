@@ -287,7 +287,7 @@ impl VoteStorage {
         should_replenish_taken_votes && latest_vote.is_vote_taken()
     }
 
-    fn weighted_random_order_by_stake(&self) -> impl Iterator<Item = Pubkey> {
+    fn weighted_random_order_by_stake(&self) -> impl Iterator<Item = Pubkey> + use<> {
         // Efraimidis and Spirakis algo for weighted random sample without replacement
         let mut pubkey_with_weight: Vec<(f64, Pubkey)> = self
             .latest_vote_per_vote_pubkey
@@ -301,7 +301,7 @@ impl VoteStorage {
                 }
             })
             .collect::<Vec<_>>();
-        pubkey_with_weight.sort_by(|(w1, _), (w2, _)| w1.partial_cmp(w2).unwrap());
+        pubkey_with_weight.sort_by(|(w1, _), (w2, _)| w2.partial_cmp(w1).unwrap());
         pubkey_with_weight.into_iter().map(|(_, pubkey)| pubkey)
     }
 

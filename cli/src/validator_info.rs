@@ -28,7 +28,7 @@ use {
     solana_message::Message,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
-    solana_rpc_client::rpc_client::RpcClient,
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_signer::Signer,
     solana_transaction::Transaction,
     std::{error, rc::Rc},
@@ -271,9 +271,9 @@ pub fn parse_get_validator_info_command(
     ))
 }
 
-pub fn process_set_validator_info(
+pub async fn process_set_validator_info(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     validator_info: &Value,
     force_keybase: bool,
     info_pubkey: Option<Pubkey>,
@@ -305,7 +305,9 @@ pub fn process_set_validator_info(
     }
 
     // Check for existing validator-info account
-    let all_config = rpc_client.get_program_accounts(&solana_config_interface::id())?;
+    let all_config = rpc_client
+        .get_program_accounts(&solana_config_interface::id())
+        .await?;
     let existing_account = all_config
         .iter()
         .filter(
@@ -330,7 +332,7 @@ pub fn process_set_validator_info(
     };
 
     // Check existence of validator-info account
-    let balance = rpc_client.get_balance(&info_pubkey).unwrap_or(0);
+    let balance = rpc_client.get_balance(&info_pubkey).await.unwrap_or(0);
 
     let keys = vec![
         (validator_info::id(), false),
@@ -339,7 +341,9 @@ pub fn process_set_validator_info(
     let data_len = MAX_VALIDATOR_INFO
         .checked_add(serialized_size(&ConfigKeys { keys: keys.clone() }).unwrap())
         .expect("ValidatorInfo and two keys fit into a u64");
-    let lamports = rpc_client.get_minimum_balance_for_rent_exemption(data_len as usize)?;
+    let lamports = rpc_client
+        .get_minimum_balance_for_rent_exemption(data_len as usize)
+        .await?;
 
     let signers = if balance == 0 {
         if info_pubkey != info_keypair.pubkey() {
@@ -399,7 +403,7 @@ pub fn process_set_validator_info(
     };
 
     // Submit transaction
-    let latest_blockhash = rpc_client.get_latest_blockhash()?;
+    let latest_blockhash = rpc_client.get_latest_blockhash().await?;
     let (message, _) = resolve_spend_tx_and_check_account_balance(
         rpc_client,
         false,
@@ -409,32 +413,37 @@ pub fn process_set_validator_info(
         compute_unit_limit,
         build_message,
         config.commitment,
-    )?;
+    )
+    .await?;
     let mut tx = Transaction::new_unsigned(message);
     tx.try_sign(&signers, latest_blockhash)?;
-    let signature_str = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
-        &tx,
-        config.commitment,
-        config.send_transaction_config,
-    )?;
+    let signature_str = rpc_client
+        .send_and_confirm_transaction_with_spinner_and_config(
+            &tx,
+            config.commitment,
+            config.send_transaction_config,
+        )
+        .await?;
 
     println!("Success! Validator info published at: {info_pubkey:?}");
     println!("{signature_str}");
     Ok("".to_string())
 }
 
-pub fn process_get_validator_info(
+pub async fn process_get_validator_info(
     rpc_client: &RpcClient,
-    config: &CliConfig,
+    config: &CliConfig<'_>,
     pubkey: Option<Pubkey>,
 ) -> ProcessResult {
     let validator_info: Vec<(Pubkey, Account)> = if let Some(validator_info_pubkey) = pubkey {
         vec![(
             validator_info_pubkey,
-            rpc_client.get_account(&validator_info_pubkey)?,
+            rpc_client.get_account(&validator_info_pubkey).await?,
         )]
     } else {
-        let all_config = rpc_client.get_program_accounts(&solana_config_interface::id())?;
+        let all_config = rpc_client
+            .get_program_accounts(&solana_config_interface::id())
+            .await?;
         all_config
             .into_iter()
             .filter(|(_, validator_info_account)| {

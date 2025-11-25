@@ -2,8 +2,7 @@
 //! receives a list of lists of packets and outputs the same list, but tags each
 //! top-level list with a list of booleans, telling the next stage whether the
 //! signature in that packet is valid. It assumes each packet contains one
-//! transaction. All processing is done on the CPU by default and on a GPU
-//! if perf-libs are available
+//! transaction. All processing is done on the CPU by default.
 
 use {
     crate::sigverify,
@@ -440,7 +439,7 @@ mod tests {
         crate::{banking_trace::BankingTracer, sigverify::TransactionSigVerifier},
         crossbeam_channel::unbounded,
         solana_perf::{
-            packet::{to_packet_batches, Packet, PinnedPacketBatch},
+            packet::{to_packet_batches, Packet, RecycledPacketBatch},
             test_tx::test_tx,
         },
     };
@@ -455,9 +454,9 @@ mod tests {
 
     #[test]
     fn test_packet_discard() {
-        solana_logger::setup();
+        agave_logger::setup();
         let batch_size = 10;
-        let mut batch = PinnedPacketBatch::with_capacity(batch_size);
+        let mut batch = RecycledPacketBatch::with_capacity(batch_size);
         let packet = Packet::default();
         batch.resize(batch_size, packet);
         batch[3].meta_mut().addr = std::net::IpAddr::from([1u16; 8]);
@@ -498,7 +497,7 @@ mod tests {
     }
 
     fn test_sigverify_stage(use_same_tx: bool) {
-        solana_logger::setup();
+        agave_logger::setup();
         trace!("start");
         let (packet_s, packet_r) = unbounded();
         let (verified_s, verified_r) = BankingTracer::channel_for_test();

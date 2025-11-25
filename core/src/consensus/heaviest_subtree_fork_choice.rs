@@ -201,7 +201,7 @@ impl PartialEq for HeaviestSubtreeForkChoice {
 impl PartialOrd for HeaviestSubtreeForkChoice {
     // Sort by root
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.tree_root.cmp(&other.tree_root))
+        Some(self.cmp(other))
     }
 }
 
@@ -848,7 +848,7 @@ impl HeaviestSubtreeForkChoice {
         }
     }
 
-    fn ancestor_iterator(&self, start_slot_hash_key: SlotHashKey) -> AncestorIterator {
+    fn ancestor_iterator(&self, start_slot_hash_key: SlotHashKey) -> AncestorIterator<'_> {
         AncestorIterator::new(start_slot_hash_key, &self.fork_infos)
     }
 
@@ -2704,8 +2704,8 @@ mod test {
         let (bank, vote_pubkeys) =
             bank_utils::setup_bank_and_vote_pubkeys_for_tests(num_validators, stake);
 
-        // Both voters voted on duplicate_leaves_descended_from_4[1], so thats the heaviest
-        // branch
+        // Both voters voted on duplicate_leaves_descended_from_4[1], so that is
+        // the heaviest branch
         let pubkey_votes: Vec<(Pubkey, SlotHashKey)> = vec![
             (vote_pubkeys[0], duplicate_leaves_descended_from_4[1]),
             (vote_pubkeys[1], duplicate_leaves_descended_from_4[1]),

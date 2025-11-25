@@ -10,6 +10,7 @@ use {
     },
     std::{
         ffi::{c_char, CStr, CString},
+        fs,
         io::{self, ErrorKind},
         marker::PhantomData,
         mem,
@@ -135,6 +136,22 @@ impl NetworkDevice {
             Ipv4Addr::from(sin_addr.s_addr.to_ne_bytes())
         };
         Ok(addr)
+    }
+
+    pub fn driver(&self) -> io::Result<String> {
+        let path = format!("/sys/class/net/{}/device/driver", self.if_name);
+
+        let path = fs::read_link(path).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!(
+                    "Failed to read driver link for interface {}: {}",
+                    self.if_name, e
+                ),
+            )
+        })?;
+
+        Ok(path.file_name().unwrap().to_str().unwrap().into())
     }
 
     pub fn open_queue(&self, queue_id: QueueId) -> Result<DeviceQueue, io::Error> {

@@ -509,10 +509,9 @@ mod test {
             get_tmp_ledger_path,
             shred::{max_ticks_per_n_shreds, DATA_SHREDS_PER_FEC_BLOCK},
         },
-        solana_net_utils::sockets::bind_to_localhost_unique,
+        solana_net_utils::{sockets::bind_to_localhost_unique, SocketAddrSpace},
         solana_runtime::bank::Bank,
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
         std::{ops::Deref, sync::Arc, time::Duration},
     };
 
@@ -817,7 +816,7 @@ mod test {
 
     #[test]
     fn entries_to_shreds_max() {
-        solana_logger::setup();
+        agave_logger::setup();
         let keypair = Keypair::new();
         let mut bs = StandardBroadcastRun::new(0);
         bs.slot = 1;

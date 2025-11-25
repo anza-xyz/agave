@@ -12,6 +12,9 @@ edition = { workspace = true }
 name = "gen-headers"
 path = "src/main.rs"
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 log = { workspace = true, features = ["std"] }
 regex = { workspace = true }

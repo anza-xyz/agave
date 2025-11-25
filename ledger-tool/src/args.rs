@@ -1,11 +1,12 @@
 use {
     crate::LEDGER_TOOL_DIRECTORY,
     clap::{value_t, value_t_or_exit, values_t, values_t_or_exit, Arg, ArgMatches},
+    log::*,
     solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_accounts_db::{
         accounts_db::{AccountsDbConfig, DEFAULT_MEMLOCK_BUDGET_SIZE},
         accounts_file::StorageAccess,
-        accounts_index::{AccountsIndexConfig, IndexLimitMb, ScanFilter},
+        accounts_index::{AccountsIndexConfig, IndexLimit, ScanFilter},
     },
     solana_clap_utils::{
         hidden_unless_forced,
@@ -53,6 +54,13 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .validator(is_pow2)
             .takes_value(true)
             .help("Number of bins to divide the accounts index into"),
+        Arg::with_name("accounts_index_initial_accounts_count")
+            .long("accounts-index-initial-accounts-count")
+            .value_name("NUMBER")
+            .validator(is_parsable::<usize>)
+            .takes_value(true)
+            .help("Pre-allocate the accounts index, assuming this many accounts")
+            .hidden(hidden_unless_forced()),
         Arg::with_name("enable_accounts_disk_index")
             .long("enable-accounts-disk-index")
             .help("Enables the disk-based accounts index")
@@ -242,10 +250,12 @@ pub fn get_accounts_db_config(
     let ledger_tool_ledger_path = ledger_path.join(LEDGER_TOOL_DIRECTORY);
 
     let accounts_index_bins = value_t!(arg_matches, "accounts_index_bins", usize).ok();
-    let accounts_index_index_limit_mb = if !arg_matches.is_present("enable_accounts_disk_index") {
-        IndexLimitMb::InMemOnly
+    let num_initial_accounts =
+        value_t!(arg_matches, "accounts_index_initial_accounts_count", usize).ok();
+    let accounts_index_index_limit = if !arg_matches.is_present("enable_accounts_disk_index") {
+        IndexLimit::InMemOnly
     } else {
-        IndexLimitMb::Minimal
+        IndexLimit::Minimal
     };
     let accounts_index_drives = values_t!(arg_matches, "accounts_index_path", String)
         .ok()
@@ -253,7 +263,8 @@ pub fn get_accounts_db_config(
         .unwrap_or_else(|| vec![ledger_tool_ledger_path.join("accounts_index")]);
     let accounts_index_config = AccountsIndexConfig {
         bins: accounts_index_bins,
-        index_limit_mb: accounts_index_index_limit_mb,
+        num_initial_accounts,
+        index_limit: accounts_index_index_limit,
         drives: Some(accounts_index_drives),
         ..AccountsIndexConfig::default()
     };
@@ -261,7 +272,11 @@ pub fn get_accounts_db_config(
     let storage_access = arg_matches
         .value_of("accounts_db_access_storages_method")
         .map(|method| match method {
-            "mmap" => StorageAccess::Mmap,
+            "mmap" => {
+                warn!("Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.");
+                #[allow(deprecated)]
+                StorageAccess::Mmap
+            }
             "file" => StorageAccess::File,
             _ => {
                 // clap will enforce one of the above values is given
@@ -346,7 +361,7 @@ pub fn hardforks_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<Slot>> {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_accounts_db::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE};
+    use {super::*, solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE};
 
     #[test]
     fn test_max_genesis_archive_unpacked_size_constant() {

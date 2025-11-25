@@ -6,6 +6,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path_auto_delete},
     solana_native_token::LAMPORTS_PER_SOL,
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_pubsub_client::{nonblocking, pubsub_client::PubsubClient},
     solana_rpc::{
@@ -29,7 +30,6 @@ use {
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
     },
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_system_interface::program as system_program,
     solana_system_transaction as system_transaction,
     solana_test_validator::TestValidator,
@@ -57,7 +57,7 @@ fn pubsub_addr() -> SocketAddr {
 
 #[test]
 fn test_rpc_client() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let alice = Keypair::new();
     let test_validator =

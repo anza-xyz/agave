@@ -19,12 +19,12 @@ use {
         local_cluster::{ClusterConfig, LocalCluster},
         validator_configs::make_identical_validator_configs,
     },
+    solana_net_utils::SocketAddrSpace,
     solana_quic_client::{QuicConfig, QuicConnectionManager},
     solana_rent::Rent,
     solana_rpc::rpc::JsonRpcConfig,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_test_validator::TestValidatorGenesis,
     solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig},
     std::{sync::Arc, time::Duration},
@@ -46,7 +46,7 @@ fn test_bench_tps_local_cluster(config: Config) {
         program_account(include_bytes!("fixtures/spl_instruction_padding.so")),
     )];
 
-    solana_logger::setup();
+    agave_logger::setup();
 
     let faucet_keypair = Keypair::new();
     let faucet_pubkey = faucet_keypair.pubkey();
@@ -107,7 +107,7 @@ fn test_bench_tps_local_cluster(config: Config) {
 }
 
 fn test_bench_tps_test_validator(config: Config) {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();

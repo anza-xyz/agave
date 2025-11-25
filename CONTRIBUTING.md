@@ -73,7 +73,7 @@ be backported to release branches.
 Duplicate code should generally be avoided.
 
 Features should be activated on testnet before mainnet in the closest configuration to mainnet as possible
-Relevant metrics need to be monitored and approriate follow-up given after feature activation.
+Relevant metrics need to be monitored and appropriate follow-up given after feature activation.
 
 Avoid “hack” or “one-off” solutions, prefer well-architected designs which are not fragile.
 
@@ -98,7 +98,7 @@ maintainer to review.
 
 Add only code to the codebase that is ready to be deployed. If you are building
 a large library, consider developing it in a separate git repository. When it
-is ready to be integrated, the Solana Labs Maintainers will work with you to decide
+is ready to be integrated, the repository maintainers will work with you to decide
 on a path forward. Smaller libraries may be copied in whereas very large ones
 may be pulled in with a package manager.
 

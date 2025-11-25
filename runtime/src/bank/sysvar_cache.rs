@@ -121,7 +121,7 @@ mod tests {
             expected_epoch_rewards.distributed_rewards,
             expected_epoch_rewards.distribution_starting_block_height,
             num_partitions,
-            PointValue {
+            &PointValue {
                 rewards: 100,
                 points: total_points,
             },

@@ -18,12 +18,14 @@ path = "src/main.rs"
 
 [features]
 default = ["remote-wallet-hidraw"]
+agave-unstable-api = []
 dev-context-only-utils = ["solana-faucet/dev-context-only-utils"]
 remote-wallet-hidraw = ["solana-remote-wallet/linux-static-hidraw"]
 remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 
 [dependencies]
 agave-feature-set = { workspace = true }
+agave-logger = { workspace = true }
 agave-syscalls = { workspace = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }
@@ -42,7 +44,7 @@ reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip
 semver = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-solana-account = "=3.1.0"
+solana-account = "=3.2.0"
 solana-account-decoder = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
 solana-borsh = "=3.0.0"
@@ -60,20 +62,19 @@ solana-epoch-schedule = "=3.0.0"
 solana-feature-gate-interface = { version = "=3.0.0", features = ["bincode"] }
 solana-fee-calculator = "=3.0.0"
 solana-fee-structure = "=3.0.0"
-solana-hash = "=3.0.0"
+solana-hash = "=3.1.0"
 solana-instruction = "=3.0.0"
 solana-keypair = "=3.0.1"
 solana-loader-v3-interface = { version = "=6.1.0", features = ["bincode"] }
 solana-loader-v4-interface = "=3.1.0"
 solana-loader-v4-program = { workspace = true }
-solana-logger = "=3.0.0"
 solana-message = "=3.0.1"
 solana-native-token = "=3.0.0"
 solana-nonce = "=3.0.0"
 solana-offchain-message = { version = "=3.0.0", features = ["verify"] }
 solana-packet = "=3.0.0"
 solana-program-runtime = { workspace = true }
-solana-pubkey = { version = "=3.0.0", default-features = false }
+solana-pubkey = { version = "=4.0.0", default-features = false }
 solana-pubsub-client = { workspace = true }
 solana-quic-client = { workspace = true }
 solana-remote-wallet = { workspace = true }
@@ -87,12 +88,11 @@ solana-signature = { version = "=3.1.0", default-features = false }
 solana-signer = "=3.0.0"
 solana-slot-history = "=3.0.0"
 solana-stake-interface = "=2.0.1"
-solana-streamer = { workspace = true }
 solana-system-interface = { version = "=2.0", features = ["bincode"] }
 solana-sysvar = "=3.0.0"
 solana-tps-client = { workspace = true }
 solana-tpu-client = { workspace = true, features = ["default"] }
-solana-transaction = "=3.0.1"
+solana-transaction = "=3.0.2"
 solana-transaction-error = "=3.0.0"
 solana-transaction-status = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
@@ -102,16 +102,17 @@ solana-vote-program = { workspace = true }
 spl-memo-interface = { version = "=2.0.0" }
 thiserror = { workspace = true }
 tiny-bip39 = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
 solana-client = { workspace = true, features = ["dev-context-only-utils"] }
 solana-faucet = { workspace = true, features = ["dev-context-only-utils"] }
+solana-net-utils = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-presigner = { workspace = true }
 solana-rpc = { workspace = true }
 solana-sha256-hasher = { workspace = true }
-solana-streamer = { workspace = true }
 solana-test-validator = { workspace = true }
 solana-tps-client = { workspace = true, features = ["dev-context-only-utils"] }
 tempfile = { workspace = true }

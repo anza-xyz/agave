@@ -5,8 +5,8 @@ use {
     crate::{
         banking_trace::BankingTracer,
         cluster_info_vote_listener::{
-            DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VerifiedVoteReceiver,
-            VoteTracker,
+            DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver,
+            VerifiedVoterSlotsReceiver, VoteTracker,
         },
         cluster_slots_service::{cluster_slots::ClusterSlots, ClusterSlotsService},
         completed_data_sets_service::CompletedDataSetsSender,
@@ -149,7 +149,7 @@ impl Tvu {
         vote_tracker: Arc<VoteTracker>,
         retransmit_slots_sender: Sender<Slot>,
         gossip_verified_vote_hash_receiver: GossipVerifiedVoteHashReceiver,
-        verified_vote_receiver: VerifiedVoteReceiver,
+        verified_voter_slots_receiver: VerifiedVoterSlotsReceiver,
         replay_vote_sender: ReplayVoteSender,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
         bank_notification_sender: Option<BankNotificationSenderConfig>,
@@ -160,7 +160,6 @@ impl Tvu {
         wait_to_vote_slot: Option<Slot>,
         snapshot_controller: Option<Arc<SnapshotController>>,
         log_messages_bytes_limit: Option<usize>,
-        connection_cache: Option<&Arc<ConnectionCache>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         banking_tracer: Arc<BankingTracer>,
         turbine_quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
@@ -230,6 +229,8 @@ impl Tvu {
             rpc_subscriptions.clone(),
             slot_status_notifier.clone(),
             tvu_config.xdp_sender,
+            // votor_event_sender is Alpenglow specific sender, it is None if Alpenglow is not enabled.
+            None,
         );
 
         let (ancestor_duplicate_slots_sender, ancestor_duplicate_slots_receiver) = unbounded();
@@ -257,7 +258,7 @@ impl Tvu {
             };
             let repair_service_channels = RepairServiceChannels::new(
                 repair_request_quic_sender,
-                verified_vote_receiver,
+                verified_voter_slots_receiver,
                 dumped_slots_receiver,
                 popular_pruned_forks_sender,
                 ancestor_hashes_request_quic_sender,
@@ -359,7 +360,7 @@ impl Tvu {
         );
 
         let warm_quic_cache_service = create_cache_warmer_if_needed(
-            connection_cache,
+            None,
             vote_connection_cache,
             cluster_info,
             poh_recorder,
@@ -473,17 +474,17 @@ pub mod tests {
             create_new_tmp_ledger,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
         },
+        solana_net_utils::SocketAddrSpace,
         solana_poh::poh_recorder::create_test_recorder,
         solana_rpc::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         solana_runtime::bank::Bank,
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
         solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
         std::sync::atomic::{AtomicU64, Ordering},
     };
 
     fn test_tvu_exit(enable_wen_restart: bool) {
-        solana_logger::setup();
+        agave_logger::setup();
         let leader = Node::new_localhost();
         let target1_keypair = Keypair::new();
         let target1 = Node::new_localhost_with_pubkey(&target1_keypair.pubkey());
@@ -601,7 +602,6 @@ pub mod tests {
             None,
             None, // snapshot_controller
             None,
-            Some(&Arc::new(ConnectionCache::new("connection_cache_test"))),
             &ignored_prioritization_fee_cache,
             BankingTracer::new_disabled(),
             turbine_quic_endpoint_sender,

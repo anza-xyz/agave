@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
@@ -25,6 +34,7 @@ use {
     std::{
         collections::{HashMap, HashSet},
         convert::TryInto,
+        fmt::Debug,
         sync::{
             atomic::{AtomicUsize, Ordering},
             Arc,
@@ -541,14 +551,14 @@ impl LedgerStorage {
     }
 
     // Fetches and gets a vector of confirmed blocks via a multirow fetch
-    pub async fn get_confirmed_blocks_with_data<'a>(
+    pub async fn get_confirmed_blocks_with_data(
         &self,
-        slots: &'a [Slot],
-    ) -> Result<impl Iterator<Item = (Slot, ConfirmedBlock)> + 'a> {
+        slots: impl IntoIterator<Item = Slot> + Debug,
+    ) -> Result<impl Iterator<Item = (Slot, ConfirmedBlock)>> {
         trace!("LedgerStorage::get_confirmed_blocks_with_data request received: {slots:?}");
         self.stats.increment_num_queries();
         let mut bigtable = self.connection.client();
-        let row_keys = slots.iter().copied().map(slot_to_blocks_key);
+        let row_keys = slots.into_iter().map(slot_to_blocks_key);
         let data = bigtable
             .get_protobuf_or_bincode_cells("blocks", row_keys)
             .await?
@@ -604,7 +614,10 @@ impl LedgerStorage {
     }
 
     /// Fetches a vector of block entries via a multirow fetch
-    pub async fn get_entries(&self, slot: Slot) -> Result<impl Iterator<Item = EntrySummary>> {
+    pub async fn get_entries(
+        &self,
+        slot: Slot,
+    ) -> Result<impl Iterator<Item = EntrySummary> + use<>> {
         trace!("LedgerStorage::get_block_entries request received: {slot:?}");
         self.stats.increment_num_queries();
         let mut bigtable = self.connection.client();
@@ -660,7 +673,7 @@ impl LedgerStorage {
 
         // Fetch blocks
         let blocks = self
-            .get_confirmed_blocks_with_data(&slots.into_iter().collect::<Vec<_>>())
+            .get_confirmed_blocks_with_data(slots)
             .await?
             .collect::<HashMap<_, _>>();
 

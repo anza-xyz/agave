@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 
@@ -11,7 +20,6 @@ pub mod accounts_db;
 pub mod accounts_file;
 pub mod accounts_hash;
 pub mod accounts_index;
-pub mod accounts_index_storage;
 pub mod accounts_update_notifier_interface;
 mod active_stats;
 pub mod ancestors;
@@ -21,13 +29,7 @@ pub mod append_vec;
 #[cfg(not(feature = "dev-context-only-utils"))]
 mod append_vec;
 pub mod blockhash_queue;
-mod bucket_map_holder;
-mod bucket_map_holder_stats;
-mod buffered_reader;
 pub mod contains;
-mod file_io;
-pub mod hardened_unpack;
-mod io_uring;
 pub mod is_loadable;
 mod is_zero_lamport;
 mod obsolete_accounts;
@@ -45,10 +47,7 @@ pub mod tiered_storage;
 pub mod utils;
 pub mod waitable_condvar;
 
-pub use {
-    buffered_reader::large_file_buf_reader, file_io::validate_memlock_limit_for_disk_io,
-    obsolete_accounts::ObsoleteAccounts,
-};
+pub use obsolete_accounts::{ObsoleteAccountItem, ObsoleteAccounts};
 
 #[macro_use]
 extern crate solana_metrics;

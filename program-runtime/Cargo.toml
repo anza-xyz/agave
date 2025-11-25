@@ -17,6 +17,7 @@ crate-type = ["lib"]
 name = "solana_program_runtime"
 
 [features]
+agave-unstable-api = []
 dev-context-only-utils = []
 dummy-for-ci-check = ["metrics"]
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]

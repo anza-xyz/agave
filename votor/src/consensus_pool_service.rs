@@ -2,15 +2,17 @@
 //! and notifying votor of new events that occur
 use {
     crate::{
-        commitment::{update_commitment_cache, CommitmentAggregationData, CommitmentType},
+        commitment::{
+            update_commitment_cache, CommitmentAggregationData, CommitmentError, CommitmentType,
+        },
         consensus_pool::{
-            parent_ready_tracker::BlockProductionParent, AddVoteError, ConsensusPool,
+            parent_ready_tracker::BlockProductionParent, AddMessageError, ConsensusPool,
         },
         event::{LeaderWindowInfo, VotorEvent, VotorEventSender},
         voting_service::BLSOp,
         votor::Votor,
     },
-    agave_votor_messages::consensus_message::{CertificateMessage, ConsensusMessage},
+    agave_votor_messages::consensus_message::{Certificate, ConsensusMessage},
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -20,6 +22,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
+    stats::Stats,
     std::{
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -30,6 +33,8 @@ use {
     },
     thiserror::Error,
 };
+
+mod stats;
 
 /// Inputs for the certificate pool thread
 pub(crate) struct ConsensusPoolContext {
@@ -52,17 +57,21 @@ pub(crate) struct ConsensusPoolContext {
     pub(crate) event_sender: VotorEventSender,
     pub(crate) commitment_sender: Sender<CommitmentAggregationData>,
 
-    delta_standstill: Duration,
+    pub(crate) delta_standstill: Duration,
 }
 
 pub(crate) struct ConsensusPoolService {
     t_ingest: JoinHandle<()>,
 }
 
-#[derive(Error, Debug)]
-enum ConsensusPoolServiceError {
+#[derive(Debug, Error)]
+enum ServiceError {
+    #[error("Failed to add message into the consensus pool: {0}")]
+    AddMessage(#[from] AddMessageError),
     #[error("Channel {0} disconnected")]
     ChannelDisconnected(String),
+    #[error("Channel is full")]
+    ChannelFull,
     #[error("Failed to add block event: {0}")]
     FailedToAddBlockEvent(String),
 }
@@ -89,40 +98,44 @@ impl ConsensusPoolService {
         sharable_banks: &SharableBanks,
         bls_sender: &Sender<BLSOp>,
         new_finalized_slot: Option<Slot>,
-        new_certificates_to_send: Vec<Arc<CertificateMessage>>,
+        new_certificates_to_send: Vec<Arc<Certificate>>,
         standstill_timer: &mut Instant,
-    ) -> Result<(), AddVoteError> {
+        stats: &mut Stats,
+    ) -> Result<(), ServiceError> {
         // If we have a new finalized slot, update the root and send new certificates
         if new_finalized_slot.is_some() {
             // Reset standstill timer
             *standstill_timer = Instant::now();
+            stats.new_finalized_slot += 1;
         }
         let root_bank = sharable_banks.root();
         consensus_pool.prune_old_state(root_bank.slot());
+        stats.prune_old_state_called += 1;
         // Send new certificates to peers
-        Self::send_certificates(bls_sender, new_certificates_to_send)
+        Self::send_certificates(bls_sender, new_certificates_to_send, stats)
     }
 
     fn send_certificates(
         bls_sender: &Sender<BLSOp>,
-        certificates_to_send: Vec<Arc<CertificateMessage>>,
-    ) -> Result<(), AddVoteError> {
-        for certificate in certificates_to_send.iter() {
+        certs: Vec<Arc<Certificate>>,
+        stats: &mut Stats,
+    ) -> Result<(), ServiceError> {
+        let certs_len = certs.len();
+        for (i, certificate) in certs.into_iter().enumerate() {
             // The BLS cert channel is expected to be large enough, so we don't
             // handle certificate re-send here.
-            match bls_sender.try_send(BLSOp::PushCertificate {
-                certificate: certificate.clone(),
-            }) {
-                Ok(_) => {
-                    // Successfully sent certificate
+            match bls_sender.try_send(BLSOp::PushCertificate { certificate }) {
+                Ok(()) => {
+                    stats.certificates_sent += 1;
                 }
                 Err(TrySendError::Disconnected(_)) => {
-                    return Err(AddVoteError::ChannelDisconnected(
+                    return Err(ServiceError::ChannelDisconnected(
                         "VotingService".to_string(),
                     ));
                 }
                 Err(TrySendError::Full(_)) => {
-                    return Err(AddVoteError::VotingServiceChannelFull);
+                    stats.certificates_dropped += certs_len.saturating_sub(i);
+                    return Err(ServiceError::ChannelFull);
                 }
             }
         }
@@ -132,11 +145,20 @@ impl ConsensusPoolService {
     fn process_consensus_message(
         ctx: &mut ConsensusPoolContext,
         my_pubkey: &Pubkey,
-        message: &ConsensusMessage,
+        message: ConsensusMessage,
         consensus_pool: &mut ConsensusPool,
         events: &mut Vec<VotorEvent>,
         standstill_timer: &mut Instant,
-    ) -> Result<(), AddVoteError> {
+        stats: &mut Stats,
+    ) -> Result<(), ServiceError> {
+        match message {
+            ConsensusMessage::Certificate(_) => {
+                stats.received_certificates += 1;
+            }
+            ConsensusMessage::Vote(_) => {
+                stats.received_votes += 1;
+            }
+        }
         let root_bank = ctx.sharable_banks.root();
         let (new_finalized_slot, new_certificates_to_send) =
             Self::add_message_and_maybe_update_commitment(
@@ -155,23 +177,25 @@ impl ConsensusPoolService {
             new_finalized_slot,
             new_certificates_to_send,
             standstill_timer,
+            stats,
         )
     }
 
     // Main loop for the consensus pool service. Only exits when signalled or if
     // any channel is disconnected.
-    fn consensus_pool_ingest_loop(
-        ctx: &mut ConsensusPoolContext,
-    ) -> Result<(), ConsensusPoolServiceError> {
+    fn consensus_pool_ingest_loop(ctx: &mut ConsensusPoolContext) -> Result<(), ServiceError> {
         let mut events = vec![];
         let mut my_pubkey = ctx.cluster_info.id();
         let root_bank = ctx.sharable_banks.root();
-        let mut consensus_pool = ConsensusPool::new_from_root_bank(my_pubkey, &root_bank);
+        let mut consensus_pool =
+            ConsensusPool::new_from_root_bank(ctx.cluster_info.clone(), &root_bank);
 
         // Wait until migration has completed
         info!("{my_pubkey}: Consensus pool loop initialized, waiting for Alpenglow migration");
         Votor::wait_for_migration_or_exit(&ctx.exit, &ctx.start);
         info!("{my_pubkey}: Consensus pool loop starting");
+
+        let mut stats = Stats::default();
 
         // Standstill tracking
         let mut standstill_timer = Instant::now();
@@ -190,7 +214,6 @@ impl ConsensusPoolService {
             let new_pubkey = ctx.cluster_info.id();
             if my_pubkey != new_pubkey {
                 my_pubkey = new_pubkey;
-                consensus_pool.update_pubkey(my_pubkey);
                 info!("Consensus pool pubkey updated to {my_pubkey}");
             }
 
@@ -200,20 +223,23 @@ impl ConsensusPoolService {
                 &my_pubkey,
                 ctx,
                 &mut events,
+                &mut stats,
             )?;
 
             if standstill_timer.elapsed() > ctx.delta_standstill {
                 events.push(VotorEvent::Standstill(
                     consensus_pool.highest_finalized_slot(),
                 ));
+                stats.standstill = true;
                 standstill_timer = Instant::now();
                 match Self::send_certificates(
                     &ctx.bls_sender,
                     consensus_pool.get_certs_for_standstill(),
+                    &mut stats,
                 ) {
                     Ok(()) => (),
-                    Err(AddVoteError::ChannelDisconnected(channel_name)) => {
-                        return Err(ConsensusPoolServiceError::ChannelDisconnected(channel_name));
+                    Err(ServiceError::ChannelDisconnected(channel_name)) => {
+                        return Err(ServiceError::ChannelDisconnected(channel_name));
                     }
                     Err(e) => {
                         trace!("{my_pubkey}: unable to push standstill certificates into pool {e}");
@@ -225,9 +251,7 @@ impl ConsensusPoolService {
                 .drain(..)
                 .try_for_each(|event| ctx.event_sender.send(event))
                 .map_err(|_| {
-                    ConsensusPoolServiceError::ChannelDisconnected(
-                        "Votor event receiver".to_string(),
-                    )
+                    ServiceError::ChannelDisconnected("Votor event receiver".to_string())
                 })?;
 
             let consensus_message_receiver = ctx.consensus_message_receiver.clone();
@@ -237,7 +261,7 @@ impl ConsensusPoolService {
                 }
                 Err(RecvTimeoutError::Timeout) => continue,
                 Err(RecvTimeoutError::Disconnected) => {
-                    return Err(ConsensusPoolServiceError::ChannelDisconnected(
+                    return Err(ServiceError::ChannelDisconnected(
                         "BLS receiver".to_string(),
                     ));
                 }
@@ -247,21 +271,23 @@ impl ConsensusPoolService {
                 match Self::process_consensus_message(
                     ctx,
                     &my_pubkey,
-                    &message,
+                    message,
                     &mut consensus_pool,
                     &mut events,
                     &mut standstill_timer,
+                    &mut stats,
                 ) {
                     Ok(()) => {}
-                    Err(AddVoteError::ChannelDisconnected(channel_name)) => {
-                        return Err(ConsensusPoolServiceError::ChannelDisconnected(channel_name));
+                    Err(ServiceError::ChannelDisconnected(n)) => {
+                        return Err(ServiceError::ChannelDisconnected(n));
                     }
                     Err(e) => {
-                        // This is a non critical error, a duplicate vote for example
-                        trace!("{my_pubkey}: unable to push vote into pool {e}");
+                        warn!("{my_pubkey}: process_consensus_message() failed with {e}");
+                        stats.add_message_failed += 1;
                     }
                 }
             }
+            stats.maybe_report();
             consensus_pool.maybe_report();
         }
         Ok(())
@@ -275,11 +301,11 @@ impl ConsensusPoolService {
         root_bank: &Bank,
         my_pubkey: &Pubkey,
         my_vote_pubkey: &Pubkey,
-        message: &ConsensusMessage,
+        message: ConsensusMessage,
         consensus_pool: &mut ConsensusPool,
         votor_events: &mut Vec<VotorEvent>,
         commitment_sender: &Sender<CommitmentAggregationData>,
-    ) -> Result<(Option<Slot>, Vec<Arc<CertificateMessage>>), AddVoteError> {
+    ) -> Result<(Option<Slot>, Vec<Arc<Certificate>>), ServiceError> {
         let (new_finalized_slot, new_certificates_to_send) = consensus_pool.add_message(
             root_bank.epoch_schedule(),
             root_bank.epoch_stakes_map(),
@@ -296,7 +322,12 @@ impl ConsensusPoolService {
             CommitmentType::Finalized,
             new_finalized_slot,
             commitment_sender,
-        )?;
+        )
+        .map_err(|e| match e {
+            CommitmentError::ChannelDisconnected => {
+                ServiceError::ChannelDisconnected("CommitmentSender".to_string())
+            }
+        })?;
         Ok((Some(new_finalized_slot), new_certificates_to_send))
     }
 
@@ -306,7 +337,8 @@ impl ConsensusPoolService {
         my_pubkey: &Pubkey,
         ctx: &mut ConsensusPoolContext,
         events: &mut Vec<VotorEvent>,
-    ) -> Result<(), ConsensusPoolServiceError> {
+        stats: &mut Stats,
+    ) -> Result<(), ServiceError> {
         let Some(new_highest_parent_ready) = events
             .iter()
             .filter_map(|event| match event {
@@ -329,7 +361,7 @@ impl ConsensusPoolService {
             .leader_schedule_cache
             .slot_leader_at(*highest_parent_ready, Some(&root_bank))
         else {
-            return Err(ConsensusPoolServiceError::FailedToAddBlockEvent(format!(
+            return Err(ServiceError::FailedToAddBlockEvent(format!(
                 "Unable to compute the leader at slot {highest_parent_ready}. Something is wrong, \
                  exiting"
             )));
@@ -359,13 +391,13 @@ impl ConsensusPoolService {
                     "{my_pubkey}: Leader slot {start_slot} has already been certified, skipping \
                      production of {start_slot}-{end_slot}"
                 );
+                stats.parent_ready_missed_window += 1;
             }
             BlockProductionParent::ParentNotReady => {
                 // This can't happen, place holder depending on how we hook up optimistic
-                return Err(ConsensusPoolServiceError::FailedToAddBlockEvent(format!(
-                    "Must have a block production parent: {:#?}",
-                    consensus_pool.parent_ready_tracker
-                )));
+                return Err(ServiceError::FailedToAddBlockEvent(
+                    "Must have a block production parent".to_string(),
+                ));
             }
             BlockProductionParent::Parent(parent_block) => {
                 events.push(VotorEvent::ProduceWindow(LeaderWindowInfo {
@@ -374,6 +406,7 @@ impl ConsensusPoolService {
                     parent_block,
                     skip_timer: Instant::now(),
                 }));
+                stats.parent_ready_produce_window += 1;
             }
         }
 
@@ -391,9 +424,7 @@ mod tests {
         super::*,
         crate::common::DELTA_STANDSTILL,
         agave_votor_messages::{
-            consensus_message::{
-                Certificate, CertificateType, VoteMessage, BLS_KEYPAIR_DERIVE_SEED,
-            },
+            consensus_message::{CertificateType, VoteMessage, BLS_KEYPAIR_DERIVE_SEED},
             vote::Vote,
         },
         crossbeam_channel::Sender,
@@ -403,6 +434,7 @@ mod tests {
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_hash::Hash,
         solana_ledger::get_tmp_ledger_path_auto_delete,
+        solana_net_utils::SocketAddrSpace,
         solana_runtime::{
             bank_forks::{BankForks, SharableBanks},
             genesis_utils::{
@@ -410,7 +442,6 @@ mod tests {
             },
         },
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
         std::sync::{Arc, Mutex},
         test_case::test_case,
     };
@@ -439,7 +470,7 @@ mod tests {
         // Make stake monotonic decreasing so rank is deterministic
         let stake = (0..validator_keypairs.len())
             .rev()
-            .map(|i| ((i.saturating_add(5).saturating_mul(100)) as u64))
+            .map(|i| (i.saturating_add(5).saturating_mul(100)) as u64)
             .collect::<Vec<_>>();
         let genesis = create_genesis_config_with_alpenglow_vote_accounts(
             1_000_000_000,
@@ -493,7 +524,8 @@ mod tests {
         let start = Instant::now();
         let mut event_received = false;
         while start.elapsed() < Duration::from_secs(5) {
-            if let Ok(event) = receiver.recv_timeout(Duration::from_millis(500)) {
+            let res = receiver.recv_timeout(Duration::from_millis(500));
+            if let Ok(event) = res {
                 if condition(&event) {
                     event_received = true;
                     break;
@@ -517,7 +549,7 @@ mod tests {
 
     #[test]
     fn test_receive_and_send_consensus_message() {
-        solana_logger::setup();
+        agave_logger::setup();
         let setup_result = setup(None);
 
         // validator 0 to 7 send Notarize on slot 2
@@ -543,13 +575,13 @@ mod tests {
             &setup_result.bls_receiver,
             |event| {
                 if let BLSOp::PushCertificate { certificate } = event {
-                    assert_eq!(certificate.certificate.slot(), target_slot);
-                    let certificate_type = certificate.certificate.certificate_type();
+                    assert_eq!(certificate.cert_type.slot(), target_slot);
+                    let certificate_type = certificate.cert_type;
                     assert!(matches!(
                         certificate_type,
-                        CertificateType::Notarize
-                            | CertificateType::FinalizeFast
-                            | CertificateType::NotarizeFallback
+                        CertificateType::Notarize(_, _)
+                            | CertificateType::FinalizeFast(_, _)
+                            | CertificateType::NotarizeFallback(_, _)
                     ));
                     true
                 } else {
@@ -584,8 +616,8 @@ mod tests {
 
         // Now send a Skip certificate on slot 3, should be forwarded immediately
         let target_slot = 3;
-        let skip_certificate = CertificateMessage {
-            certificate: Certificate::Skip(target_slot),
+        let skip_certificate = Certificate {
+            cert_type: CertificateType::Skip(target_slot),
             signature: BLSSignature::default(),
             bitmap: vec![],
         };
@@ -595,7 +627,7 @@ mod tests {
             &setup_result.bls_receiver,
             |event| {
                 if let BLSOp::PushCertificate { certificate } = event {
-                    matches!(certificate.certificate, Certificate::Skip(slot) if slot == target_slot)
+                    matches!(certificate.cert_type, CertificateType::Skip(slot) if slot == target_slot)
                 } else {
                     false
                 }
@@ -623,8 +655,8 @@ mod tests {
         // Send skip certificates for all slots up to the next leader slot
         let messages_to_send = (1..next_leader_slot.0)
             .map(|slot| {
-                let skip_certificate = CertificateMessage {
-                    certificate: Certificate::Skip(slot),
+                let skip_certificate = Certificate {
+                    cert_type: CertificateType::Skip(slot),
                     signature: BLSSignature::default(),
                     bitmap: vec![],
                 };
@@ -670,8 +702,8 @@ mod tests {
         let setup_result = setup(None);
         // A lot of the receiver needs a finalize certificate to trigger an exit
         if channel_name != "consensus_message_receiver" {
-            let finalize_certificate = CertificateMessage {
-                certificate: Certificate::FinalizeFast(2, Hash::new_unique()),
+            let finalize_certificate = Certificate {
+                cert_type: CertificateType::FinalizeFast(2, Hash::new_unique()),
                 signature: BLSSignature::default(),
                 bitmap: vec![],
             };

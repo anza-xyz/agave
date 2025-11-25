@@ -15,10 +15,14 @@ targets = ["x86_64-unknown-linux-gnu"]
 [lib]
 name = "solana_clap_utils"
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 chrono = { workspace = true, features = ["default"] }
 clap = "2.33.0"
 rpassword = { workspace = true }
+solana-bls-signatures = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
 solana-commitment-config = { workspace = true }

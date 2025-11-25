@@ -7,7 +7,7 @@ use {
             fork_choice::{select_vote_and_reset_forks, SelectVoteAndResetForkResult},
             heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice,
             latest_validator_votes_for_frozen_banks::LatestValidatorVotesForFrozenBanks,
-            progress_map::{ForkProgress, ProgressMap},
+            progress_map::{ForkProgress, LockoutInterval, ProgressMap},
             tower_vote_state::TowerVoteState,
             Tower,
         },
@@ -19,6 +19,7 @@ use {
     },
     crossbeam_channel::unbounded,
     solana_clock::Slot,
+    solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -184,7 +185,7 @@ impl VoteSimulator {
             .frozen_banks()
             .map(|(_slot, bank)| bank)
             .collect();
-
+        let mut vote_slots = HashSet::default();
         let _ = ReplayStage::compute_bank_stats(
             my_pubkey,
             &ancestors,
@@ -196,6 +197,7 @@ impl VoteSimulator {
             &self.bank_forks,
             &mut self.tbft_structs.heaviest_subtree_fork_choice,
             &mut self.latest_validator_votes_for_frozen_banks,
+            &mut vote_slots,
         );
 
         let vote_bank = self
@@ -284,9 +286,11 @@ impl VoteSimulator {
             .or_insert_with(|| ForkProgress::new(Hash::default(), None, None, 0, 0))
             .fork_stats
             .lockout_intervals
-            .entry(lockout_interval.1)
-            .or_default()
-            .push((lockout_interval.0, *vote_account_pubkey));
+            .push(LockoutInterval {
+                start: lockout_interval.0,
+                end: lockout_interval.1,
+                voter: *vote_account_pubkey,
+            });
     }
 
     pub fn clear_lockout_intervals(&mut self, slot: Slot) {
@@ -392,6 +396,7 @@ pub fn initialize_state(
         vec![stake; validator_keypairs.len()],
     );
 
+    genesis_config.epoch_schedule = EpochSchedule::without_warmup();
     genesis_config.poh_config.hashes_per_tick = Some(2);
     let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     bank0.set_block_id(Some(Hash::new_unique()));

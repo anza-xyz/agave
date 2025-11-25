@@ -43,7 +43,10 @@ use {
         },
     },
     solana_svm_feature_set::SVMFeatureSet,
-    solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
+    solana_svm_transaction::{
+        instruction::SVMInstruction,
+        svm_message::{SVMMessage, SVMStaticMessage},
+    },
     solana_svm_type_overrides::sync::{Arc, RwLock},
     solana_system_interface::{instruction as system_instruction, program as system_program},
     solana_system_transaction as system_transaction,
@@ -51,7 +54,7 @@ use {
     solana_transaction::{sanitized::SanitizedTransaction, Transaction},
     solana_transaction_context::TransactionReturnData,
     solana_transaction_error::TransactionError,
-    std::{collections::HashMap, num::NonZeroU32, sync::atomic::Ordering},
+    std::{collections::HashMap, num::NonZeroU32, slice, sync::atomic::Ordering},
     test_case::test_case,
 };
 
@@ -151,6 +154,8 @@ impl SvmTestEnvironment<'_> {
                 enable_cpi_recording: false,
                 enable_transaction_balance_recording: false,
             },
+            drop_on_failure: test_entry.drop_on_failure,
+            all_or_nothing: test_entry.all_or_nothing,
             ..Default::default()
         };
 
@@ -158,6 +163,10 @@ impl SvmTestEnvironment<'_> {
             blockhash: LAST_BLOCKHASH,
             feature_set: test_entry.feature_set,
             blockhash_lamports_per_signature: LAMPORTS_PER_SIGNATURE,
+            program_runtime_environments_for_execution: batch_processor
+                .get_environments_for_epoch(EXECUTION_EPOCH),
+            program_runtime_environments_for_deployment: batch_processor
+                .get_environments_for_epoch(EXECUTION_EPOCH),
             ..TransactionProcessingEnvironment::default()
         };
 
@@ -306,7 +315,7 @@ impl SvmTestEnvironment<'_> {
                         .global_program_cache
                         .write()
                         .unwrap()
-                        .merge(programs_modified_by_tx);
+                        .merge(&self.batch_processor.environments, programs_modified_by_tx);
                 }
             }
         }
@@ -343,6 +352,12 @@ pub struct SvmTestEntry {
     // until LoaderV4 is live on mainnet, we default to omitting it, but can also test it
     pub with_loader_v4: bool,
 
+    // enables drop on failure processing (transactions without Ok status have no state effect)
+    pub drop_on_failure: bool,
+
+    // enables all or nothing processing (if not all transactions can be committed then none are)
+    pub all_or_nothing: bool,
+
     // programs to deploy to the new svm
     pub initial_programs: Vec<(String, Slot, Option<Pubkey>)>,
 
@@ -361,6 +376,8 @@ impl Default for SvmTestEntry {
         Self {
             feature_set: SVMFeatureSet::all_enabled(),
             with_loader_v4: false,
+            all_or_nothing: false,
+            drop_on_failure: false,
             initial_programs: Vec::new(),
             initial_accounts: HashMap::new(),
             transaction_batch: Vec::new(),
@@ -501,7 +518,7 @@ impl SvmTestEntry {
                 let message = SanitizedTransaction::from_transaction_for_tests(item.transaction);
                 let check_result = item.check_result.map(|tx_details| {
                     let compute_budget_limits = process_test_compute_budget_instructions(
-                        SVMMessage::program_instructions_iter(&message),
+                        SVMStaticMessage::program_instructions_iter(&message),
                     );
                     let signature_count = message
                         .num_transaction_signatures()
@@ -509,16 +526,18 @@ impl SvmTestEntry {
                         .saturating_add(message.num_secp256k1_signatures())
                         .saturating_add(message.num_secp256r1_signatures());
 
-                    let compute_budget = compute_budget_limits.map(|v| {
-                        v.get_compute_budget_and_limits(
-                            v.loaded_accounts_bytes,
-                            FeeDetails::new(
-                                signature_count.saturating_mul(LAMPORTS_PER_SIGNATURE),
-                                v.get_prioritization_fee(),
-                            ),
-                            self.feature_set.raise_cpi_nesting_limit_to_8,
-                        )
-                    });
+                    let compute_budget = compute_budget_limits
+                        .map(|v| {
+                            v.get_compute_budget_and_limits(
+                                v.loaded_accounts_bytes,
+                                FeeDetails::new(
+                                    signature_count.saturating_mul(LAMPORTS_PER_SIGNATURE),
+                                    v.get_prioritization_fee(),
+                                ),
+                                self.feature_set.raise_cpi_nesting_limit_to_8,
+                            )
+                        })
+                        .unwrap();
                     CheckedTransactionDetails::new(tx_details.nonce, compute_budget)
                 });
 
@@ -550,7 +569,7 @@ impl TransactionBatchItem {
         Self {
             check_result: Ok(CheckedTransactionDetails::new(
                 Some(nonce_info),
-                Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
+                SVMTransactionExecutionAndFeeBudgetLimits::default(),
             )),
             ..Self::default()
         }
@@ -563,7 +582,7 @@ impl Default for TransactionBatchItem {
             transaction: Transaction::default(),
             check_result: Ok(CheckedTransactionDetails::new(
                 None,
-                Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
+                SVMTransactionExecutionAndFeeBudgetLimits::default(),
             )),
             asserts: TransactionBatchItemAsserts::default(),
         }
@@ -694,8 +713,11 @@ impl From<Option<TransactionReturnData>> for ReturnDataAssert {
     }
 }
 
-fn program_medley() -> Vec<SvmTestEntry> {
-    let mut test_entry = SvmTestEntry::default();
+fn program_medley(drop_on_failure: bool) -> Vec<SvmTestEntry> {
+    let mut test_entry = SvmTestEntry {
+        drop_on_failure,
+        ..Default::default()
+    };
 
     // 0: A transaction that works without any account
     {
@@ -822,14 +844,23 @@ fn program_medley() -> Vec<SvmTestEntry> {
         let mut fee_payer_data = AccountSharedData::default();
         fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
         test_entry.add_initial_account(fee_payer, &fee_payer_data);
+        if drop_on_failure {
+            test_entry.final_accounts.insert(fee_payer, fee_payer_data);
+        }
 
         let mut sender_data = AccountSharedData::default();
         sender_data.set_lamports(base_amount);
         test_entry.add_initial_account(sender, &sender_data);
+        if drop_on_failure {
+            test_entry.final_accounts.insert(sender, sender_data);
+        }
 
         let mut recipient_data = AccountSharedData::default();
         recipient_data.set_lamports(base_amount);
         test_entry.add_initial_account(recipient, &recipient_data);
+        if drop_on_failure {
+            test_entry.final_accounts.insert(recipient, recipient_data);
+        }
 
         let instruction = Instruction::new_with_bytes(
             program_id,
@@ -848,15 +879,19 @@ fn program_medley() -> Vec<SvmTestEntry> {
                 &[&fee_payer_keypair, &sender_keypair],
                 Hash::default(),
             ),
-            ExecutionStatus::ExecutedFailed,
+            match drop_on_failure {
+                true => ExecutionStatus::Discarded,
+                false => ExecutionStatus::ExecutedFailed,
+            },
         );
 
-        test_entry.transaction_batch[3]
-            .asserts
-            .logs
-            .push("Transfer: insufficient lamports 900000, need 900050".to_string());
-
-        test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
+        if !drop_on_failure {
+            test_entry.transaction_batch[3]
+                .asserts
+                .logs
+                .push("Transfer: insufficient lamports 900000, need 900050".to_string());
+            test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
+        }
     }
 
     // 4: A transaction whose verification has already failed
@@ -879,9 +914,17 @@ fn program_medley() -> Vec<SvmTestEntry> {
     vec![test_entry]
 }
 
-fn simple_transfer() -> Vec<SvmTestEntry> {
-    let mut test_entry = SvmTestEntry::default();
+fn simple_transfer(drop_on_failure: bool) -> Vec<SvmTestEntry> {
+    let mut test_entry = SvmTestEntry {
+        drop_on_failure,
+        ..Default::default()
+    };
     let transfer_amount = LAMPORTS_PER_SOL;
+    let drop_on_failure_status = |status: ExecutionStatus| match (drop_on_failure, status) {
+        (true, ExecutionStatus::Succeeded) => ExecutionStatus::Succeeded,
+        (true, _) => ExecutionStatus::Discarded,
+        (false, status) => status,
+    };
 
     // 0: a transfer that succeeds
     {
@@ -919,6 +962,9 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
 
         source_data.set_lamports(transfer_amount - 1);
         test_entry.add_initial_account(source, &source_data);
+        if drop_on_failure {
+            test_entry.final_accounts.insert(source, source_data);
+        }
 
         test_entry.push_transaction_with_status(
             system_transaction::transfer(
@@ -927,10 +973,12 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
                 transfer_amount,
                 Hash::default(),
             ),
-            ExecutionStatus::ExecutedFailed,
+            drop_on_failure_status(ExecutionStatus::ExecutedFailed),
         );
 
-        test_entry.decrease_expected_lamports(&source, LAMPORTS_PER_SIGNATURE);
+        if !drop_on_failure {
+            test_entry.decrease_expected_lamports(&source, LAMPORTS_PER_SIGNATURE);
+        }
     }
 
     // 2: a non-processable transfer that fails before loading
@@ -977,7 +1025,9 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
             system_instruction::transfer(&source, &Pubkey::new_unique(), transfer_amount);
         instruction.program_id = Pubkey::new_unique();
 
-        test_entry.decrease_expected_lamports(&source, LAMPORTS_PER_SIGNATURE);
+        if !drop_on_failure {
+            test_entry.decrease_expected_lamports(&source, LAMPORTS_PER_SIGNATURE);
+        }
 
         test_entry.push_transaction_with_status(
             Transaction::new_signed_with_payer(
@@ -986,7 +1036,7 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
                 &[&source_keypair],
                 Hash::default(),
             ),
-            ExecutionStatus::ProcessedFailed,
+            drop_on_failure_status(ExecutionStatus::ProcessedFailed),
         );
     }
 
@@ -1005,7 +1055,7 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
     // there are four cases of fee_paying_nonce and fake_fee_payer:
     // * false/false: normal nonce account with rent minimum, normal fee payer account with 1sol
     // * true/false: normal nonce account used to pay fees with rent minimum plus 1sol
-    // * false/true: normal nonce account with rent minimum, fee payer doesnt exist
+    // * false/true: normal nonce account with rent minimum, fee payer doesn't exist
     // * true/true: same account for both which does not exist
     // we also provide a side door to bring a fee-paying nonce account below rent-exemption
     let mk_nonce_transaction = |test_entry: &mut SvmTestEntry,
@@ -1089,7 +1139,7 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
             .copy_from_slice(nonce_info.account().data());
     }
 
-    // 1: non-executing nonce transaction (fee payer doesnt exist) regardless of features
+    // 1: non-executing nonce transaction (fee payer doesn't exist) regardless of features
     {
         let (transaction, _fee_payer, nonce_info) =
             mk_nonce_transaction(&mut test_entry, real_program_id, true, false);
@@ -1683,7 +1733,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         let mut test_entry = common_test_entry.clone();
 
         let first_transaction = Transaction::new_signed_with_payer(
-            &[withdraw_instruction.clone()],
+            slice::from_ref(&withdraw_instruction),
             Some(&fee_payer),
             &[&fee_payer_keypair],
             Hash::default(),
@@ -1711,7 +1761,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         let mut test_entry = common_test_entry.clone();
 
         let first_transaction = Transaction::new_signed_with_payer(
-            &[withdraw_instruction.clone()],
+            slice::from_ref(&withdraw_instruction),
             Some(&fee_payer),
             &[&fee_payer_keypair],
             Hash::default(),
@@ -1750,7 +1800,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         let mut test_entry = common_test_entry.clone();
 
         let first_transaction = Transaction::new_signed_with_payer(
-            &[withdraw_instruction.clone()],
+            slice::from_ref(&withdraw_instruction),
             Some(&fee_payer),
             &[&fee_payer_keypair],
             Hash::default(),
@@ -1796,7 +1846,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         let mut test_entry = common_test_entry.clone();
 
         let first_transaction = Transaction::new_signed_with_payer(
-            &[withdraw_instruction.clone()],
+            slice::from_ref(&withdraw_instruction),
             Some(&fee_payer),
             &[&fee_payer_keypair],
             Hash::default(),
@@ -1846,7 +1896,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         test_entry.add_initial_account(nonce_pubkey, &fake_nonce_account);
 
         let first_transaction = Transaction::new_signed_with_payer(
-            &[successful_noop_instruction.clone()],
+            slice::from_ref(&successful_noop_instruction),
             Some(&fee_payer),
             &[&fee_payer_keypair],
             Hash::default(),
@@ -2335,8 +2385,177 @@ fn simd83_account_reallocate(formalize_loaded_transaction_data_size: bool) -> Ve
     test_entries
 }
 
-#[test_case(program_medley())]
-#[test_case(simple_transfer())]
+enum AbortReason {
+    None,
+    Unprocessable,
+    DropOnFailure,
+}
+
+fn all_or_nothing(abort: AbortReason) -> Vec<SvmTestEntry> {
+    let mut test_entry = SvmTestEntry {
+        all_or_nothing: true,
+        drop_on_failure: matches!(abort, AbortReason::DropOnFailure),
+        ..Default::default()
+    };
+    let transfer_amount = LAMPORTS_PER_SOL;
+
+    // 0: a transfer that succeeds
+    {
+        let source_keypair = Keypair::new();
+        let source = source_keypair.pubkey();
+        let destination = Pubkey::new_unique();
+
+        let mut source_data = AccountSharedData::default();
+        let mut destination_data = AccountSharedData::default();
+
+        source_data.set_lamports(LAMPORTS_PER_SOL * 10);
+        test_entry.add_initial_account(source, &source_data);
+
+        let status = match abort {
+            AbortReason::None => {
+                destination_data
+                    .checked_add_lamports(transfer_amount)
+                    .unwrap();
+                test_entry.create_expected_account(destination, &destination_data);
+                test_entry
+                    .decrease_expected_lamports(&source, transfer_amount + LAMPORTS_PER_SIGNATURE);
+
+                ExecutionStatus::Succeeded
+            }
+            AbortReason::Unprocessable | AbortReason::DropOnFailure => {
+                test_entry.final_accounts.insert(source, source_data);
+
+                ExecutionStatus::Discarded
+            }
+        };
+
+        test_entry.push_transaction_with_status(
+            system_transaction::transfer(
+                &source_keypair,
+                &destination,
+                transfer_amount,
+                Hash::default(),
+            ),
+            status,
+        );
+    }
+
+    // 1: an executable transfer that fails
+    if matches!(abort, AbortReason::DropOnFailure) {
+        let source_keypair = Keypair::new();
+        let source = source_keypair.pubkey();
+
+        let mut source_data = AccountSharedData::default();
+
+        source_data.set_lamports(transfer_amount - 1);
+        test_entry.add_initial_account(source, &source_data);
+        test_entry.final_accounts.insert(source, source_data);
+
+        test_entry.push_transaction_with_status(
+            system_transaction::transfer(
+                &source_keypair,
+                &Pubkey::new_unique(),
+                transfer_amount,
+                Hash::default(),
+            ),
+            ExecutionStatus::Discarded,
+        );
+    }
+
+    // 2: a non-processable transfer that fails before loading
+    if matches!(abort, AbortReason::Unprocessable) {
+        test_entry.transaction_batch.push(TransactionBatchItem {
+            transaction: system_transaction::transfer(
+                &Keypair::new(),
+                &Pubkey::new_unique(),
+                transfer_amount,
+                Hash::default(),
+            ),
+            check_result: Err(TransactionError::BlockhashNotFound),
+            asserts: ExecutionStatus::Discarded.into(),
+        });
+    }
+
+    vec![test_entry]
+}
+
+fn drop_on_failure_batch(statuses: &[bool]) -> Vec<SvmTestEntry> {
+    let mut test_entry = SvmTestEntry {
+        drop_on_failure: true,
+        ..Default::default()
+    };
+    let transfer_amount = LAMPORTS_PER_SOL;
+
+    // Shared source account to fund all transfers.
+    let source_keypair = Keypair::new();
+    let source = source_keypair.pubkey();
+    let mut source_data = AccountSharedData::default();
+    source_data.set_lamports(LAMPORTS_PER_SOL * 100);
+    test_entry.add_initial_account(source, &source_data);
+
+    // Shared destination account to receive all transfers.
+    let destination = Pubkey::new_unique();
+    let mut destination_data = AccountSharedData::default();
+
+    println!("source: {source}");
+    println!("destination: {destination}");
+
+    for success in statuses {
+        match success {
+            true => {
+                test_entry
+                    .decrease_expected_lamports(&source, transfer_amount + LAMPORTS_PER_SIGNATURE);
+                destination_data
+                    .checked_add_lamports(transfer_amount)
+                    .unwrap();
+                destination_data.set_rent_epoch(u64::MAX);
+
+                test_entry.push_transaction_with_status(
+                    system_transaction::transfer(
+                        &source_keypair,
+                        &destination,
+                        transfer_amount,
+                        Hash::default(),
+                    ),
+                    ExecutionStatus::Succeeded,
+                );
+            }
+            false => test_entry.push_transaction_with_status(
+                system_transaction::transfer(
+                    &source_keypair,
+                    &destination,
+                    source_data.lamports() + 1,
+                    Hash::default(),
+                ),
+                ExecutionStatus::Discarded,
+            ),
+        }
+    }
+
+    // Set the final expected source state.
+    if statuses.iter().all(|success| !*success) {
+        test_entry
+            .final_accounts
+            .get_mut(&source)
+            .unwrap()
+            .set_rent_epoch(0);
+    }
+
+    // Set the final expected destination state.
+    if statuses.iter().any(|success| *success) {
+        assert!(test_entry
+            .final_accounts
+            .insert(destination, destination_data)
+            .is_none());
+    }
+
+    vec![test_entry]
+}
+
+#[test_case(program_medley(false))]
+#[test_case(program_medley(true))]
+#[test_case(simple_transfer(false))]
+#[test_case(simple_transfer(true))]
 #[test_case(simple_nonce(false))]
 #[test_case(simple_nonce(true))]
 #[test_case(simd83_intrabatch_account_reuse())]
@@ -2346,6 +2565,17 @@ fn simd83_account_reallocate(formalize_loaded_transaction_data_size: bool) -> Ve
 #[test_case(simd83_fee_payer_deallocate())]
 #[test_case(simd83_account_reallocate(false))]
 #[test_case(simd83_account_reallocate(true))]
+#[test_case(all_or_nothing(AbortReason::None))]
+#[test_case(all_or_nothing(AbortReason::Unprocessable))]
+#[test_case(all_or_nothing(AbortReason::DropOnFailure))]
+#[test_case(drop_on_failure_batch(&[false]))]
+#[test_case(drop_on_failure_batch(&[true]))]
+#[test_case(drop_on_failure_batch(&[false, false]))]
+#[test_case(drop_on_failure_batch(&[true, true]))]
+#[test_case(drop_on_failure_batch(&[false, false, true]))]
+#[test_case(drop_on_failure_batch(&[true, true, false]))]
+#[test_case(drop_on_failure_batch(&[false, true, false]))]
+#[test_case(drop_on_failure_batch(&[true, false, true]))]
 fn svm_integration(test_entries: Vec<SvmTestEntry>) {
     for test_entry in test_entries {
         let env = SvmTestEnvironment::create(test_entry);
@@ -2719,15 +2949,19 @@ fn program_cache_stats() {
     let mut system_tx_usage = 0;
     let mut successful_transfers = 0;
 
-    test_entry.push_transaction(make_transaction(&[succesful_noop_instruction.clone()]));
+    test_entry.push_transaction(make_transaction(slice::from_ref(
+        &succesful_noop_instruction,
+    )));
     noop_tx_usage += 1;
 
-    test_entry.push_transaction(make_transaction(&[succesful_transfer_instruction.clone()]));
+    test_entry.push_transaction(make_transaction(slice::from_ref(
+        &succesful_transfer_instruction,
+    )));
     system_tx_usage += 1;
     successful_transfers += 1;
 
     test_entry.push_transaction_with_status(
-        make_transaction(&[failing_transfer_instruction.clone()]),
+        make_transaction(slice::from_ref(&failing_transfer_instruction)),
         ExecutionStatus::ExecutedFailed,
     );
     system_tx_usage += 1;
@@ -2771,7 +3005,7 @@ fn program_cache_stats() {
 
     // nor does discard
     test_entry.transaction_batch.push(TransactionBatchItem {
-        transaction: make_transaction(&[succesful_transfer_instruction.clone()]),
+        transaction: make_transaction(slice::from_ref(&succesful_transfer_instruction)),
         check_result: Err(TransactionError::BlockhashNotFound),
         asserts: ExecutionStatus::Discarded.into(),
     });
@@ -2847,7 +3081,7 @@ fn program_cache_stats() {
     test_entry.drop_expected_account(buffer_address);
 
     test_entry.push_transaction_with_status(
-        make_transaction(&[succesful_noop_instruction.clone()]),
+        make_transaction(slice::from_ref(&succesful_noop_instruction)),
         ExecutionStatus::ExecutedFailed,
     );
     noop_tx_usage += 1;
@@ -2882,7 +3116,7 @@ fn program_cache_stats() {
     };
 
     test_entry.push_transaction_with_status(
-        make_transaction(&[succesful_noop_instruction.clone()]),
+        make_transaction(slice::from_ref(&succesful_noop_instruction)),
         ExecutionStatus::ExecutedFailed,
     );
     noop_tx_usage += 1;
@@ -3239,7 +3473,7 @@ fn svm_inspect_account() {
 // Tests for proper accumulation of metrics across loaded programs in a batch.
 #[test]
 fn svm_metrics_accumulation() {
-    for test_entry in program_medley() {
+    for test_entry in program_medley(false) {
         let env = SvmTestEnvironment::create(test_entry);
 
         let (transactions, check_results) = env.test_entry.prepare_transactions();

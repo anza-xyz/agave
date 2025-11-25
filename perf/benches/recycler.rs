@@ -4,7 +4,7 @@ use {
 };
 
 fn bench_recycler(b: &mut Bencher) {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let recycler: PacketBatchRecycler = Recycler::default();
 

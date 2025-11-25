@@ -238,14 +238,10 @@ impl VersionedEpochStakes {
 #[cfg(test)]
 pub(crate) mod tests {
     use {
-        super::*,
-        solana_account::AccountSharedData,
+        super::*, solana_account::AccountSharedData,
         solana_bls_signatures::keypair::Keypair as BLSKeypair,
         solana_vote::vote_account::VoteAccount,
-        solana_vote_program::vote_state::{
-            create_account_with_authorized, create_v4_account_with_authorized,
-        },
-        std::iter,
+        solana_vote_program::vote_state::create_v4_account_with_authorized, std::iter,
         test_case::test_case,
     };
 
@@ -286,10 +282,11 @@ pub(crate) mod tests {
                                 100,
                             )
                         } else {
-                            create_account_with_authorized(
+                            create_v4_account_with_authorized(
                                 &node_id,
                                 &authorized_voter,
                                 &node_id,
+                                None,
                                 0,
                                 100,
                             )
@@ -347,7 +344,7 @@ pub(crate) mod tests {
             .map(|(node_pubkey, vote_accounts)| {
                 let mut vote_accounts = vote_accounts
                     .iter()
-                    .map(|v| (v.vote_account))
+                    .map(|v| v.vote_account)
                     .collect::<Vec<_>>();
                 vote_accounts.sort();
                 let node_vote_accounts = NodeVoteAccounts {
@@ -417,7 +414,7 @@ pub(crate) mod tests {
     #[test_case(1; "single_vote_account")]
     #[test_case(2; "multiple_vote_accounts")]
     fn test_bls_pubkey_rank_map(num_vote_accounts_per_node: usize) {
-        solana_logger::setup();
+        agave_logger::setup();
         let num_nodes = 10;
         let num_vote_accounts = num_nodes * num_vote_accounts_per_node;
 

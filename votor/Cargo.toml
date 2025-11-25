@@ -11,7 +11,6 @@ edition = { workspace = true }
 
 [features]
 agave-unstable-api = []
-default = ["agave-unstable-api"]
 dev-context-only-utils = ["solana-runtime/dev-context-only-utils"]
 frozen-abi = [
     "dep:solana-frozen-abi",
@@ -20,9 +19,12 @@ frozen-abi = [
     "solana-bloom/frozen-abi",
     "solana-ledger/frozen-abi",
     "solana-runtime/frozen-abi",
+    "solana-signature/frozen-abi",
+    "agave-votor-messages/frozen-abi",
 ]
 
 [dependencies]
+agave-logger = { workspace = true }
 agave-votor-messages = { workspace = true }
 anyhow = { workspace = true }
 bincode = { workspace = true }
@@ -59,7 +61,6 @@ solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
-solana-logger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-pubkey = { workspace = true }

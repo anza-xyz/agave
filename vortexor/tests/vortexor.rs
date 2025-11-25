@@ -7,16 +7,15 @@ use {
         local_cluster::{ClusterConfig, LocalCluster},
     },
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_net_utils::VALIDATOR_PORT_RANGE,
+    solana_net_utils::{SocketAddrSpace, VALIDATOR_PORT_RANGE},
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_streamer::{
         nonblocking::testing_utilities::check_multiple_streams,
         quic::{
             DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STAKED_CONNECTIONS,
-            DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS, DEFAULT_TPU_COALESCE,
+            DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
         },
-        socket::SocketAddrSpace,
         streamer::StakedNodes,
     },
     solana_vortexor::{
@@ -39,7 +38,7 @@ use {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_vortexor() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let bind_address = solana_net_utils::parse_host("127.0.0.1").expect("invalid bind_address");
     let keypair = Keypair::new();
@@ -76,7 +75,6 @@ async fn test_vortexor() {
         0, // max_fwd_unstaked_connections
         DEFAULT_MAX_STREAMS_PER_MS,
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
-        DEFAULT_TPU_COALESCE,
         &keypair,
         cancel.clone(),
     );
@@ -98,7 +96,7 @@ fn get_server_urls(validator: &ClusterValidatorInfo) -> (Url, Url) {
 
 #[test]
 fn test_stake_update() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     // Create a local cluster with 3 validators
     let default_node_stake = 10 * LAMPORTS_PER_SOL; // Define a default value for node stake

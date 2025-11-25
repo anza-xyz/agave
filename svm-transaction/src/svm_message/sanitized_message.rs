@@ -1,15 +1,15 @@
 use {
     crate::{
-        instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
-        svm_message::SVMMessage,
+        instruction::SVMInstruction,
+        message_address_table_lookup::SVMMessageAddressTableLookup,
+        svm_message::{SVMMessage, SVMStaticMessage},
     },
     solana_hash::Hash,
     solana_message::{AccountKeys, SanitizedMessage},
     solana_pubkey::Pubkey,
 };
 
-// Implement for the "reference" `SanitizedMessage` type.
-impl SVMMessage for SanitizedMessage {
+impl SVMStaticMessage for SanitizedMessage {
     fn num_transaction_signatures(&self) -> u64 {
         u64::from(self.header().num_required_signatures)
     }
@@ -26,13 +26,15 @@ impl SVMMessage for SanitizedMessage {
         SanitizedMessage::instructions(self).len()
     }
 
-    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction> {
+    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction<'_>> {
         SanitizedMessage::instructions(self)
             .iter()
             .map(SVMInstruction::from)
     }
 
-    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone {
+    fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction<'_>)> + Clone {
         SanitizedMessage::program_instructions_iter(self)
             .map(|(pubkey, ix)| (pubkey, SVMInstruction::from(ix)))
     }
@@ -41,12 +43,27 @@ impl SVMMessage for SanitizedMessage {
         SanitizedMessage::static_account_keys(self)
     }
 
-    fn account_keys(&self) -> AccountKeys {
-        SanitizedMessage::account_keys(self)
-    }
-
     fn fee_payer(&self) -> &Pubkey {
         SanitizedMessage::fee_payer(self)
+    }
+
+    fn num_lookup_tables(&self) -> usize {
+        SanitizedMessage::message_address_table_lookups(self).len()
+    }
+
+    fn message_address_table_lookups(
+        &self,
+    ) -> impl Iterator<Item = SVMMessageAddressTableLookup<'_>> {
+        SanitizedMessage::message_address_table_lookups(self)
+            .iter()
+            .map(SVMMessageAddressTableLookup::from)
+    }
+}
+
+// Implement for the "reference" `SanitizedMessage` type.
+impl SVMMessage for SanitizedMessage {
+    fn account_keys(&self) -> AccountKeys<'_> {
+        SanitizedMessage::account_keys(self)
     }
 
     fn is_writable(&self, index: usize) -> bool {
@@ -59,15 +76,5 @@ impl SVMMessage for SanitizedMessage {
 
     fn is_invoked(&self, key_index: usize) -> bool {
         SanitizedMessage::is_invoked(self, key_index)
-    }
-
-    fn num_lookup_tables(&self) -> usize {
-        SanitizedMessage::message_address_table_lookups(self).len()
-    }
-
-    fn message_address_table_lookups(&self) -> impl Iterator<Item = SVMMessageAddressTableLookup> {
-        SanitizedMessage::message_address_table_lookups(self)
-            .iter()
-            .map(SVMMessageAddressTableLookup::from)
     }
 }

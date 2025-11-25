@@ -18,15 +18,11 @@ impl ConnectionRateLimiter {
     /// less frequent connections. Higher limit also allows higher bursts.
     /// num_shards controls how many shards are used in the underlying dashmap,
     /// should be set >= number of contending threads.
-    pub fn new(limit_per_minute: u64, num_shards: usize) -> Self {
+    pub fn new(limit_per_minute: u64, max_burst: u64, num_shards: usize) -> Self {
         Self {
             limiter: KeyedRateLimiter::new(
                 CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD,
-                TokenBucket::new(
-                    limit_per_minute,
-                    limit_per_minute,
-                    limit_per_minute as f64 / 60.0,
-                ),
+                TokenBucket::new(limit_per_minute, max_burst, limit_per_minute as f64 / 60.0),
                 num_shards,
             ),
         }
@@ -60,7 +56,7 @@ pub mod test {
 
     #[tokio::test]
     async fn test_connection_rate_limiter() {
-        let limiter = ConnectionRateLimiter::new(3, 4);
+        let limiter = ConnectionRateLimiter::new(3, 3, 4);
         let ip1 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
         assert!(limiter.is_allowed(&ip1));
         assert!(limiter.register_connection(&ip1));

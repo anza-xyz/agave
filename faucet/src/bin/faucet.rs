@@ -1,11 +1,12 @@
+#[allow(deprecated)]
+use solana_faucet::{
+    faucet::{run_faucet, Faucet, FAUCET_PORT},
+    socketaddr,
+};
 use {
     clap::{crate_description, crate_name, values_t, App, Arg},
     log::*,
     solana_clap_utils::input_parsers::{lamports_of_sol, value_of},
-    solana_faucet::{
-        faucet::{run_faucet, Faucet, FAUCET_PORT},
-        socketaddr,
-    },
     solana_keypair::read_keypair_file,
     std::{
         collections::HashSet,
@@ -19,7 +20,7 @@ use {
 async fn main() {
     let default_keypair = solana_cli_config::Config::default().keypair_path;
 
-    solana_logger::setup_with_default_filter();
+    agave_logger::setup_with_default_filter();
     solana_metrics::set_panic_hook("faucet", /*version:*/ None);
     let matches = App::new(crate_name!())
         .about(crate_description!())
@@ -81,23 +82,31 @@ async fn main() {
         .into_iter()
         .collect();
 
+    #[allow(deprecated)]
     let faucet_addr = socketaddr!(Ipv4Addr::UNSPECIFIED, FAUCET_PORT);
 
-    let faucet = Arc::new(Mutex::new(Faucet::new_with_allowed_ips(
-        faucet_keypair,
-        time_slice,
-        per_time_cap,
-        per_request_cap,
-        allowed_ips,
-    )));
+    let faucet = Arc::new(Mutex::new(
+        #[allow(deprecated)]
+        Faucet::new_with_allowed_ips(
+            faucet_keypair,
+            time_slice,
+            per_time_cap,
+            per_request_cap,
+            allowed_ips,
+        ),
+    ));
 
     let faucet1 = faucet.clone();
     thread::spawn(move || loop {
-        let time = faucet1.lock().unwrap().time_slice;
-        thread::sleep(time);
-        debug!("clearing ip cache");
-        faucet1.lock().unwrap().clear_caches();
+        #[allow(deprecated)]
+        {
+            let time = faucet1.lock().unwrap().time_slice;
+            thread::sleep(time);
+            debug!("clearing ip cache");
+            faucet1.lock().unwrap().clear_caches();
+        }
     });
 
+    #[allow(deprecated)]
     run_faucet(faucet, faucet_addr, None).await;
 }

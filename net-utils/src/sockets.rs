@@ -126,18 +126,6 @@ impl SocketConfiguration {
     }
 }
 
-#[allow(deprecated)]
-impl From<crate::SocketConfig> for SocketConfiguration {
-    fn from(value: crate::SocketConfig) -> Self {
-        Self {
-            reuseport: value.reuseport,
-            recv_buffer_size: value.recv_buffer_size,
-            send_buffer_size: value.send_buffer_size,
-            non_blocking: false,
-        }
-    }
-}
-
 #[cfg(any(windows, target_os = "ios"))]
 fn set_reuse_port<T>(_socket: &T) -> io::Result<()> {
     Ok(())
@@ -214,20 +202,6 @@ pub fn bind_in_range_with_config(
     Err(io::Error::other(format!(
         "No available UDP ports in {range:?}"
     )))
-}
-
-#[deprecated(since = "3.0.0", note = "Please bind to specific ports instead")]
-pub fn bind_with_any_port_with_config(
-    ip_addr: IpAddr,
-    config: SocketConfiguration,
-) -> io::Result<UdpSocket> {
-    let sock = udp_socket_with_config(config)?;
-    let addr = SocketAddr::new(ip_addr, 0);
-    let bind = sock.bind(&SockAddr::from(addr));
-    match bind {
-        Ok(_) => Result::Ok(sock.into()),
-        Err(err) => Err(io::Error::other(format!("No available UDP port: {err}"))),
-    }
 }
 
 /// binds num sockets to the same port in a range with config
@@ -332,9 +306,9 @@ pub fn bind_two_in_range_with_offset_and_config(
             }
         }
     }
-    Err(io::Error::other(
-        "couldn't find two ports with the correct offset in range".to_string(),
-    ))
+    Err(io::Error::other(format!(
+        "couldn't find two unused ports with offset {offset} in range {range:?}"
+    )))
 }
 
 pub fn bind_more_with_config(
@@ -450,7 +424,7 @@ mod tests {
 
     #[test]
     fn test_bind_two_in_range_with_offset() {
-        solana_logger::setup();
+        agave_logger::setup();
         let config = SocketConfiguration::default();
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let offset = 6;
@@ -486,7 +460,7 @@ mod tests {
 
     #[test]
     fn test_get_public_ip_addr_none() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let (pr_s, pr_e) = localhost_port_range_for_tests();
         let config = SocketConfiguration::default();
@@ -515,7 +489,7 @@ mod tests {
 
     #[test]
     fn test_get_public_ip_addr_reachable() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let port_range = localhost_port_range_for_tests();
         let config = SocketConfiguration::default();
@@ -555,7 +529,7 @@ mod tests {
 
     #[test]
     fn test_verify_ports_tcp_unreachable() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let port_range = localhost_port_range_for_tests();
         let config = SocketConfiguration::default();
@@ -578,7 +552,7 @@ mod tests {
 
     #[test]
     fn test_verify_ports_udp_unreachable() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let port_range = unique_port_range_for_tests(2);
         let config = SocketConfiguration::default();
@@ -604,7 +578,7 @@ mod tests {
 
     #[test]
     fn test_verify_many_ports_reachable() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let config = SocketConfiguration::default();
         let mut tcp_listeners = vec![];
@@ -657,7 +631,7 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn test_verify_udp_multiple_ips_reachable() {
-        solana_logger::setup();
+        agave_logger::setup();
         let config = SocketConfiguration::default();
         let ip_a = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let ip_b = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));

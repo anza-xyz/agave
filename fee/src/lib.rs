@@ -1,7 +1,16 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 use {
     agave_feature_set::{enable_secp256r1_precompile, FeatureSet},
     solana_fee_structure::FeeDetails,
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::svm_message::SVMStaticMessage,
 };
 
 /// Bools indicating the activation of features relevant
@@ -25,7 +34,7 @@ impl From<&FeatureSet> for FeeFeatures {
 
 /// Calculate fee for `SanitizedMessage`
 pub fn calculate_fee(
-    message: &impl SVMMessage,
+    message: &impl SVMStaticMessage,
     zero_fees_for_test: bool,
     lamports_per_signature: u64,
     prioritization_fee: u64,
@@ -42,7 +51,7 @@ pub fn calculate_fee(
 }
 
 pub fn calculate_fee_details(
-    message: &impl SVMMessage,
+    message: &impl SVMStaticMessage,
     zero_fees_for_test: bool,
     lamports_per_signature: u64,
     prioritization_fee: u64,
@@ -89,7 +98,7 @@ pub struct SignatureCounts {
     pub num_secp256r1_signatures: u64,
 }
 
-impl<Tx: SVMMessage> From<&Tx> for SignatureCounts {
+impl<Tx: SVMStaticMessage> From<&Tx> for SignatureCounts {
     fn from(message: &Tx) -> Self {
         Self {
             num_transaction_signatures: message.num_transaction_signatures(),

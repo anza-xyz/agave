@@ -16,6 +16,9 @@ targets = ["x86_64-unknown-linux-gnu"]
 crate-type = ["lib"]
 name = "solana_banks_client"
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 borsh = { workspace = true }
 futures = { workspace = true }

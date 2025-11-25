@@ -100,6 +100,6 @@ Store Headers in program sub-accounts indexed by Public address:
 Linked List of multiple sub-accounts storing headers:
 
 - Maintain sequential index of storage accounts, many headers per storage account
-- Max 2 account data lookups for &gt;99.9% of verifications \(1 for most\)
+- Max 2 account data lookups for &gt;99.9% of verification \(1 for most\)
 - Compact sequential data address format allows any number of confirmations and fast lookups
 - Facilitates network-wide header duplication inefficiencies

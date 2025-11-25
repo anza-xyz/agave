@@ -1,31 +1,31 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 #![allow(clippy::arithmetic_side_effects)]
 
-#[cfg(feature = "agave-unstable-api")]
 mod addr_cache;
 
-#[cfg(feature = "agave-unstable-api")]
 pub mod broadcast_stage;
 
-#[cfg(feature = "agave-unstable-api")]
 pub mod cluster_nodes;
 
-#[cfg(feature = "agave-unstable-api")]
 pub mod quic_endpoint;
 
-#[cfg(feature = "agave-unstable-api")]
 pub mod retransmit_stage;
 
-#[cfg(feature = "agave-unstable-api")]
 pub mod sigverify_shreds;
 
-#[cfg(feature = "agave-unstable-api")]
 pub mod xdp;
 
-#[cfg(feature = "agave-unstable-api")]
 #[macro_use]
 extern crate log;
 
-#[cfg(feature = "agave-unstable-api")]
 #[macro_use]
 extern crate solana_metrics;
 

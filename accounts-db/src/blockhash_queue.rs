@@ -130,7 +130,7 @@ impl BlockhashQueue {
         note = "Please do not use, will no longer be available in the future"
     )]
     #[allow(deprecated)]
-    pub fn get_recent_blockhashes(&self) -> impl Iterator<Item = recent_blockhashes::IterItem> {
+    pub fn get_recent_blockhashes(&self) -> impl Iterator<Item = recent_blockhashes::IterItem<'_>> {
         (self.hashes).iter().map(|(k, v)| {
             recent_blockhashes::IterItem(v.hash_index, k, v.fee_calculator.lamports_per_signature)
         })
@@ -141,6 +141,7 @@ impl BlockhashQueue {
         note = "Please use `solana_clock::MAX_PROCESSING_AGE`"
     )]
     pub fn get_max_age(&self) -> usize {
+        #[allow(deprecated)]
         self.max_age
     }
 }

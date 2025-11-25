@@ -18,6 +18,7 @@ path = "src/keygen.rs"
 
 [features]
 default = ["remote-wallet-hidraw"]
+agave-unstable-api = []
 remote-wallet-hidraw = ["solana-remote-wallet/linux-static-hidraw"]
 remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 
@@ -35,7 +36,7 @@ solana-derivation-path = "=3.0.0"
 solana-instruction = { version = "=3.0.0", features = ["bincode"] }
 solana-keypair = "=3.0.1"
 solana-message = { version = "=3.0.1", features = ["bincode"] }
-solana-pubkey = { version = "=3.0.0", default-features = false }
+solana-pubkey = { version = "=4.0.0", default-features = false }
 solana-remote-wallet = { workspace = true }
 solana-seed-derivable = "=3.0.0"
 solana-signer = "=3.0.0"

@@ -68,6 +68,10 @@ impl fmt::Debug for LeaderUpdaterError {
 /// always returns the provided address instead of checking leader schedule.
 /// Otherwise, it creates a `LeaderUpdaterService` which dynamically updates the
 /// leaders by connecting to the network via the [`LeaderTpuService`].
+#[deprecated(
+    since = "3.1.0",
+    note = "Use create_leader_updater_with_config instead."
+)]
 pub async fn create_leader_updater(
     rpc_client: Arc<RpcClient>,
     websocket_url: String,
@@ -118,7 +122,7 @@ impl LeaderUpdater for LeaderUpdaterService {
 /// `PinnedLeaderUpdater` is an implementation of [`LeaderUpdater`] that always
 /// returns a fixed, "pinned" leader address. It is mainly used for testing.
 struct PinnedLeaderUpdater {
-    address: Vec<SocketAddr>,
+    pub address: Vec<SocketAddr>,
 }
 
 #[async_trait]

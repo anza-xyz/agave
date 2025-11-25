@@ -52,7 +52,7 @@ where
         self.inner.get(k).map(|v| ROValue::clone(&v))
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = DashmapIteratorItem<K, V, S>> {
+    pub fn iter(&self) -> impl Iterator<Item = DashmapIteratorItem<'_, K, V, S>> {
         self.inner.iter()
     }
 

@@ -161,8 +161,9 @@ impl MockBankCallback {
             .unwrap()
             .insert(Rent::id(), account_data);
 
-        // SystemInstruction::AdvanceNonceAccount asserts RecentBlockhashes is non-empty
-        // but then just gets the blockhash from InvokeContext. so the sysvar doesnt need real entries
+        // SystemInstruction::AdvanceNonceAccount asserts RecentBlockhashes is
+        // non-empty but then just gets the blockhash from InvokeContext. So,
+        // the sysvar doesn't need real entries
         #[allow(deprecated)]
         let recent_blockhashes = vec![BlockhashesEntry::default()];
 
@@ -354,7 +355,7 @@ pub fn register_builtins(
     );
 }
 
-pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a>> {
+pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a, 'a>> {
     let compute_budget = SVMTransactionExecutionBudget::default();
     let vm_config = Config {
         max_call_depth: compute_budget.max_call_depth,

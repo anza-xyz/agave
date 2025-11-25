@@ -20,7 +20,7 @@ const NUM_ENTRIES: usize = 800;
 
 #[bench]
 fn bench_poh_verify_ticks(bencher: &mut Bencher) {
-    solana_logger::setup();
+    agave_logger::setup();
     let thread_pool = entry::thread_pool_for_benches();
 
     let zero = Hash::default();
@@ -33,7 +33,7 @@ fn bench_poh_verify_ticks(bencher: &mut Bencher) {
     }
 
     bencher.iter(|| {
-        assert!(ticks.verify(&start_hash, &thread_pool));
+        assert!(ticks.verify(&start_hash, &thread_pool).status());
     })
 }
 
@@ -55,6 +55,6 @@ fn bench_poh_verify_transaction_entries(bencher: &mut Bencher) {
     }
 
     bencher.iter(|| {
-        assert!(ticks.verify(&start_hash, &thread_pool));
+        assert!(ticks.verify(&start_hash, &thread_pool).status());
     })
 }

@@ -9,7 +9,8 @@ use nix::poll::{poll, PollFd, PollTimeout};
 ))]
 use nix::{poll::ppoll, sys::time::TimeSpec};
 use {
-    crate::{recvmmsg::recv_mmsg, socket::SocketAddrSpace},
+    crate::recvmmsg::recv_mmsg,
+    solana_net_utils::SocketAddrSpace,
     std::{
         io::{ErrorKind, Result},
         net::UdpSocket,
@@ -19,8 +20,8 @@ use {
 pub use {
     solana_packet::{Meta, Packet, PACKET_DATA_SIZE},
     solana_perf::packet::{
-        PacketBatch, PacketBatchRecycler, PacketRef, PacketRefMut, PinnedPacketBatch, NUM_PACKETS,
-        PACKETS_PER_BATCH,
+        PacketBatch, PacketBatchRecycler, PacketRef, PacketRefMut, RecycledPacketBatch,
+        NUM_PACKETS, PACKETS_PER_BATCH,
     },
 };
 
@@ -34,7 +35,7 @@ This is a wrapper around recvmmsg(7) call.
 */
 #[cfg(not(unix))]
 pub(crate) fn recv_from(
-    batch: &mut PinnedPacketBatch,
+    batch: &mut RecycledPacketBatch,
     socket: &UdpSocket,
     // If max_wait is None, reads from the socket until either:
     //   * 64 packets are read (PACKETS_PER_BATCH == 64), or
@@ -89,7 +90,7 @@ pub(crate) fn recv_from(
 /// This is a wrapper around recvmmsg(7) call.
 #[cfg(unix)]
 pub(crate) fn recv_from(
-    batch: &mut PinnedPacketBatch,
+    batch: &mut RecycledPacketBatch,
     socket: &UdpSocket,
     // If max_wait is None, reads from the socket until either:
     //   * 64 packets are read (PACKETS_PER_BATCH == 64), or
@@ -132,7 +133,7 @@ pub(crate) fn recv_from(
     /// - If any packets were read, the function will exit.
     /// - If no packets were read, the function will return an error.
     fn recv_from_once(
-        batch: &mut PinnedPacketBatch,
+        batch: &mut RecycledPacketBatch,
         socket: &UdpSocket,
         poll_fd: &mut [PollFd],
     ) -> Result<usize> {
@@ -177,7 +178,7 @@ pub(crate) fn recv_from(
     /// On subsequent iterations, when [`ErrorKind::WouldBlock`] is encountered, poll for the
     /// saturating duration since the start of the loop.
     fn recv_from_coalesce(
-        batch: &mut PinnedPacketBatch,
+        batch: &mut RecycledPacketBatch,
         socket: &UdpSocket,
         max_wait: Duration,
         poll_fd: &mut [PollFd],
@@ -278,7 +279,7 @@ pub(crate) fn recv_from(
     Ok(i)
 }
 pub fn send_to(
-    batch: &PinnedPacketBatch,
+    batch: &RecycledPacketBatch,
     socket: &UdpSocket,
     socket_addr_space: &SocketAddrSpace,
 ) -> Result<()> {
@@ -309,13 +310,13 @@ mod tests {
         // test that the address is actually being updated
         let send_addr: SocketAddr = "127.0.0.1:123".parse().unwrap();
         let packets = vec![Packet::default()];
-        let mut packet_batch = PinnedPacketBatch::new(packets);
+        let mut packet_batch = RecycledPacketBatch::new(packets);
         packet_batch.set_addr(&send_addr);
         assert_eq!(packet_batch[0].meta().socket_addr(), send_addr);
     }
 
     fn recv_from(
-        batch: &mut PinnedPacketBatch,
+        batch: &mut RecycledPacketBatch,
         socket: &UdpSocket,
         max_wait: Option<Duration>,
     ) -> Result<usize> {
@@ -334,13 +335,13 @@ mod tests {
 
     #[test]
     pub fn packet_send_recv() {
-        solana_logger::setup();
+        agave_logger::setup();
         let recv_socket = bind_to_localhost_unique().expect("should bind - receiver");
         let addr = recv_socket.local_addr().unwrap();
         let send_socket = bind_to_localhost_unique().expect("should bind - sender");
         let saddr = send_socket.local_addr().unwrap();
 
-        let mut batch = PinnedPacketBatch::with_capacity(PACKETS_PER_BATCH);
+        let mut batch = RecycledPacketBatch::with_capacity(PACKETS_PER_BATCH);
         batch.resize(PACKETS_PER_BATCH, Packet::default());
 
         for m in batch.iter_mut() {
@@ -369,7 +370,7 @@ mod tests {
     #[test]
     pub fn debug_trait() {
         write!(io::sink(), "{:?}", Packet::default()).unwrap();
-        write!(io::sink(), "{:?}", PinnedPacketBatch::default()).unwrap();
+        write!(io::sink(), "{:?}", RecycledPacketBatch::default()).unwrap();
     }
 
     #[test]
@@ -391,18 +392,18 @@ mod tests {
 
     #[test]
     fn test_packet_resize() {
-        solana_logger::setup();
+        agave_logger::setup();
         let recv_socket = bind_to_localhost_unique().expect("should bind - receiver");
         let addr = recv_socket.local_addr().unwrap();
         let send_socket = bind_to_localhost_unique().expect("should bind - sender");
-        let mut batch = PinnedPacketBatch::with_capacity(PACKETS_PER_BATCH);
+        let mut batch = RecycledPacketBatch::with_capacity(PACKETS_PER_BATCH);
         batch.resize(PACKETS_PER_BATCH, Packet::default());
 
         // Should only get PACKETS_PER_BATCH packets per iteration even
         // if a lot more were sent, and regardless of packet size
         for _ in 0..2 * PACKETS_PER_BATCH {
             let batch_size = 1;
-            let mut batch = PinnedPacketBatch::with_capacity(batch_size);
+            let mut batch = RecycledPacketBatch::with_capacity(batch_size);
             batch.resize(batch_size, Packet::default());
             for p in batch.iter_mut() {
                 p.meta_mut().set_socket_addr(&addr);

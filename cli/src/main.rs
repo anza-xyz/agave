@@ -17,23 +17,19 @@ use {
     },
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client_api::config::RpcSendTransactionConfig,
-    solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     std::{collections::HashMap, error, path::PathBuf, rc::Rc, time::Duration},
 };
 
 fn parse_settings(matches: &ArgMatches<'_>) -> Result<bool, Box<dyn error::Error>> {
     let parse_args = match matches.subcommand() {
         ("config", Some(matches)) => {
-            let config_file = match matches.value_of("config_file") {
-                None => {
-                    println!(
-                        "{} Either provide the `--config` arg or ensure home directory exists to \
-                         use the default config location",
-                        style("No config file found.").bold()
-                    );
-                    return Ok(false);
-                }
-                Some(config_file) => config_file,
+            let Some(config_file) = matches.value_of("config_file") else {
+                println!(
+                    "{} Either provide the `--config` arg or ensure home directory exists to use \
+                     the default config location",
+                    style("No config file found.").bold()
+                );
+                return Ok(false);
             };
             let mut config = Config::load(config_file).unwrap_or_default();
 
@@ -204,14 +200,6 @@ pub fn parse_args<'a>(
         config.address_labels
     };
 
-    let use_quic = if matches.is_present("use_quic") {
-        true
-    } else if matches.is_present("use_udp") {
-        false
-    } else {
-        !DEFAULT_TPU_ENABLE_UDP
-    };
-
     let skip_preflight = matches.is_present("skip_preflight");
 
     let use_tpu_client = matches.is_present("use_tpu_client");
@@ -235,15 +223,15 @@ pub fn parse_args<'a>(
             },
             confirm_transaction_initial_timeout,
             address_labels,
-            use_quic,
             use_tpu_client,
         },
         signers,
     ))
 }
 
-fn main() -> Result<(), Box<dyn error::Error>> {
-    solana_logger::setup_with_default("off");
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn error::Error>> {
+    agave_logger::setup_with_default("off");
     let matches = get_clap_app(
         crate_name!(),
         crate_description!(),
@@ -251,16 +239,18 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     )
     .get_matches();
 
-    do_main(&matches).map_err(|err| DisplayError::new_as_boxed(err).into())
+    do_main(&matches)
+        .await
+        .map_err(|err| DisplayError::new_as_boxed(err).into())
 }
 
-fn do_main(matches: &ArgMatches<'_>) -> Result<(), Box<dyn error::Error>> {
+async fn do_main(matches: &ArgMatches<'_>) -> Result<(), Box<dyn error::Error>> {
     if parse_settings(matches)? {
         let mut wallet_manager = None;
 
         let (mut config, signers) = parse_args(matches, &mut wallet_manager)?;
         config.signers = signers.iter().map(|s| s.as_ref()).collect();
-        let result = process_command(&config)?;
+        let result = process_command(&config).await?;
         println!("{result}");
     };
     Ok(())

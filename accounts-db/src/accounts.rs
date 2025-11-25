@@ -49,7 +49,7 @@ impl<'a, T: SVMMessage> TransactionAccountLocksIterator<'a, T> {
 
     pub(crate) fn accounts_with_is_writable(
         &self,
-    ) -> impl Iterator<Item = (&'a Pubkey, bool)> + Clone {
+    ) -> impl Iterator<Item = (&'a Pubkey, bool)> + Clone + use<'a, T> {
         self.transaction
             .account_keys()
             .iter()
@@ -841,7 +841,7 @@ mod tests {
                 ..Message::default()
             };
 
-            let txs = vec![new_sanitized_tx(&[&keypair], message, Hash::default())];
+            let txs = [new_sanitized_tx(&[&keypair], message, Hash::default())];
             let results = accounts.lock_accounts(
                 txs.iter(),
                 vec![Ok(()); txs.len()].into_iter(),
@@ -868,7 +868,7 @@ mod tests {
                 ..Message::default()
             };
 
-            let txs = vec![new_sanitized_tx(&[&keypair], message, Hash::default())];
+            let txs = [new_sanitized_tx(&[&keypair], message, Hash::default())];
             let results = accounts.lock_accounts(
                 txs.iter(),
                 vec![Ok(()); txs.len()].into_iter(),
@@ -943,7 +943,7 @@ mod tests {
             instructions,
         );
         let tx1 = new_sanitized_tx(&[&keypair1], message, Hash::default());
-        let txs = vec![tx0, tx1];
+        let txs = [tx0, tx1];
         let results1 = accounts.lock_accounts(
             txs.iter(),
             vec![Ok(()); txs.len()].into_iter(),
@@ -1042,7 +1042,7 @@ mod tests {
         let accounts_clone = accounts_arc.clone();
         let exit_clone = exit.clone();
         thread::spawn(move || loop {
-            let txs = vec![writable_tx.clone()];
+            let txs = [writable_tx.clone()];
             let results = accounts_clone.clone().lock_accounts(
                 txs.iter(),
                 vec![Ok(()); txs.len()].into_iter(),
@@ -1061,7 +1061,7 @@ mod tests {
         });
         let counter_clone = counter;
         for _ in 0..5 {
-            let txs = vec![readonly_tx.clone()];
+            let txs = [readonly_tx.clone()];
             let results = accounts_arc.clone().lock_accounts(
                 txs.iter(),
                 vec![Ok(()); txs.len()].into_iter(),
@@ -1200,7 +1200,7 @@ mod tests {
             instructions,
         );
         let tx2 = new_sanitized_tx(&[&keypair3], message, Hash::default());
-        let txs = vec![tx0, tx1, tx2];
+        let txs = [tx0, tx1, tx2];
 
         let qos_results = vec![
             Ok(()),
@@ -1329,7 +1329,7 @@ mod tests {
 
     #[test]
     fn huge_clean() {
-        solana_logger::setup();
+        agave_logger::setup();
         let accounts_db = AccountsDb::new_single_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         let mut old_pubkey = Pubkey::default();

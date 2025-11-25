@@ -40,7 +40,7 @@ mod tests {
     /// Export the "GOSSIP_WIRE_FORMAT_PACKETS" variable to run this test
     #[test]
     fn test_gossip_wire_format() {
-        solana_logger::setup();
+        agave_logger::setup();
         let path_base = match std::env::var_os("GOSSIP_WIRE_FORMAT_PACKETS") {
             Some(p) => PathBuf::from(p),
             None => {

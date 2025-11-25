@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 #![allow(clippy::arithmetic_side_effects)]
 
 pub use {
@@ -458,7 +467,7 @@ impl TransactionWithStatusMeta {
         }
     }
 
-    pub fn account_keys(&self) -> AccountKeys {
+    pub fn account_keys(&self) -> AccountKeys<'_> {
         match self {
             Self::MissingMetadata(tx) => AccountKeys::new(&tx.message.account_keys, None),
             Self::Complete(tx_with_meta) => tx_with_meta.account_keys(),
@@ -536,7 +545,7 @@ impl VersionedTransactionWithStatusMeta {
         })
     }
 
-    pub fn account_keys(&self) -> AccountKeys {
+    pub fn account_keys(&self) -> AccountKeys<'_> {
         AccountKeys::new(
             self.transaction.message.static_account_keys(),
             Some(&self.meta.loaded_addresses),

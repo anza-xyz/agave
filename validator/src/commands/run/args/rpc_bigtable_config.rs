@@ -1,9 +1,16 @@
 use {
     crate::commands::{FromClapArgMatches, Result},
-    clap::{value_t, ArgMatches},
+    clap::{value_t, Arg, ArgMatches},
+    solana_clap_utils::{hidden_unless_forced, input_validators::is_parsable},
     solana_rpc::rpc::RpcBigtableConfig,
-    std::time::Duration,
+    std::{sync::LazyLock, time::Duration},
 };
+
+const DEFAULT_BIGTABLE_INSTANCE_NAME: &str = solana_storage_bigtable::DEFAULT_INSTANCE_NAME;
+const DEFAULT_BIGTABLE_APP_PROFILE_ID: &str = solana_storage_bigtable::DEFAULT_APP_PROFILE_ID;
+const DEFAULT_BIGTABLE_TIMEOUT: &str = "30";
+static DEFAULT_BIGTABLE_MAX_MESSAGE_SIZE: LazyLock<String> =
+    LazyLock::new(|| solana_storage_bigtable::DEFAULT_MAX_MESSAGE_SIZE.to_string());
 
 impl FromClapArgMatches for RpcBigtableConfig {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
@@ -17,6 +24,42 @@ impl FromClapArgMatches for RpcBigtableConfig {
             max_message_size: value_t!(matches, "rpc_bigtable_max_message_size", usize)?,
         })
     }
+}
+
+pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
+    vec![
+        Arg::with_name("enable_bigtable_ledger_upload")
+            .long("enable-bigtable-ledger-upload")
+            .takes_value(false)
+            .hidden(hidden_unless_forced())
+            .help("Upload new confirmed blocks into a BigTable instance"),
+        Arg::with_name("rpc_bigtable_instance_name")
+            .long("rpc-bigtable-instance-name")
+            .takes_value(true)
+            .value_name("INSTANCE_NAME")
+            .default_value(DEFAULT_BIGTABLE_INSTANCE_NAME)
+            .help("Name of the Bigtable instance to upload to"),
+        Arg::with_name("rpc_bigtable_app_profile_id")
+            .long("rpc-bigtable-app-profile-id")
+            .takes_value(true)
+            .value_name("APP_PROFILE_ID")
+            .default_value(DEFAULT_BIGTABLE_APP_PROFILE_ID)
+            .help("Bigtable application profile id to use in requests"),
+        Arg::with_name("rpc_bigtable_timeout")
+            .long("rpc-bigtable-timeout")
+            .value_name("SECONDS")
+            .validator(is_parsable::<u64>)
+            .takes_value(true)
+            .default_value(DEFAULT_BIGTABLE_TIMEOUT)
+            .help("Number of seconds before timing out RPC requests backed by BigTable"),
+        Arg::with_name("rpc_bigtable_max_message_size")
+            .long("rpc-bigtable-max-message-size")
+            .value_name("BYTES")
+            .validator(is_parsable::<usize>)
+            .takes_value(true)
+            .default_value(&DEFAULT_BIGTABLE_MAX_MESSAGE_SIZE)
+            .help("Max encoding and decoding message size used in Bigtable Grpc client"),
+    ]
 }
 
 #[cfg(test)]
@@ -189,5 +232,25 @@ mod tests {
             ],
             expected_args,
         );
+    }
+
+    #[test]
+    fn test_default_bigtable_instance_name_unchanged() {
+        assert_eq!(DEFAULT_BIGTABLE_INSTANCE_NAME, "solana-ledger");
+    }
+
+    #[test]
+    fn test_default_bigtable_app_profile_id_unchanged() {
+        assert_eq!(DEFAULT_BIGTABLE_APP_PROFILE_ID, "default");
+    }
+
+    #[test]
+    fn test_default_bigtable_timeout_unchanged() {
+        assert_eq!(DEFAULT_BIGTABLE_TIMEOUT, "30");
+    }
+
+    #[test]
+    fn test_default_bigtable_max_message_size_unchanged() {
+        assert_eq!(*DEFAULT_BIGTABLE_MAX_MESSAGE_SIZE, "67108864");
     }
 }

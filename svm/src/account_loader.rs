@@ -9,7 +9,6 @@ use {
         },
         rollback_accounts::RollbackAccounts,
         transaction_error_metrics::TransactionErrorMetrics,
-        transaction_execution_result::ExecutedTransaction,
     },
     ahash::{AHashMap, AHashSet},
     solana_account::{
@@ -70,7 +69,7 @@ pub(crate) enum TransactionLoadResult {
 #[cfg_attr(feature = "svm-internal", field_qualifiers(nonce(pub)))]
 pub struct CheckedTransactionDetails {
     pub(crate) nonce: Option<NonceInfo>,
-    pub(crate) compute_budget_and_limits: Result<SVMTransactionExecutionAndFeeBudgetLimits>,
+    pub(crate) compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits,
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -78,12 +77,12 @@ impl Default for CheckedTransactionDetails {
     fn default() -> Self {
         Self {
             nonce: None,
-            compute_budget_and_limits: Ok(SVMTransactionExecutionAndFeeBudgetLimits {
+            compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits {
                 budget: SVMTransactionExecutionBudget::default(),
                 loaded_accounts_data_size_limit: NonZeroU32::new(32)
                     .expect("Failed to set loaded_accounts_bytes"),
                 fee_details: FeeDetails::default(),
-            }),
+            },
         }
     }
 }
@@ -91,7 +90,7 @@ impl Default for CheckedTransactionDetails {
 impl CheckedTransactionDetails {
     pub fn new(
         nonce: Option<NonceInfo>,
-        compute_budget_and_limits: Result<SVMTransactionExecutionAndFeeBudgetLimits>,
+        compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits,
     ) -> Self {
         Self {
             nonce,
@@ -276,23 +275,6 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         }
     }
 
-    pub(crate) fn update_accounts_for_executed_tx(
-        &mut self,
-        message: &impl SVMMessage,
-        executed_transaction: &ExecutedTransaction,
-    ) {
-        if executed_transaction.was_successful() {
-            self.update_accounts_for_successful_tx(
-                message,
-                &executed_transaction.loaded_transaction.accounts,
-            );
-        } else {
-            self.update_accounts_for_failed_tx(
-                &executed_transaction.loaded_transaction.rollback_accounts,
-            );
-        }
-    }
-
     pub(crate) fn update_accounts_for_failed_tx(&mut self, rollback_accounts: &RollbackAccounts) {
         for (account_address, account) in rollback_accounts {
             self.loaded_accounts
@@ -300,7 +282,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         }
     }
 
-    fn update_accounts_for_successful_tx(
+    pub(crate) fn update_accounts_for_successful_tx(
         &mut self,
         message: &impl SVMMessage,
         transaction_accounts: &[KeyedAccountSharedData],
@@ -401,12 +383,14 @@ pub fn validate_fee_payer(
             TransactionError::InsufficientFundsForFee
         })?;
 
-    let payer_pre_rent_state = get_account_rent_state(rent, payer_account);
+    let payer_pre_rent_state =
+        get_account_rent_state(rent, payer_account.lamports(), payer_account.data().len());
     payer_account
         .checked_sub_lamports(fee)
         .map_err(|_| TransactionError::InsufficientFundsForFee)?;
 
-    let payer_post_rent_state = get_account_rent_state(rent, payer_account);
+    let payer_post_rent_state =
+        get_account_rent_state(rent, payer_account.lamports(), payer_account.data().len());
     check_rent_state_with_account(
         &payer_pre_rent_state,
         &payer_post_rent_state,
@@ -1266,7 +1250,7 @@ mod tests {
 
     #[test]
     fn test_instructions() {
-        solana_logger::setup();
+        agave_logger::setup();
         let instructions_key = solana_sdk_ids::sysvar::instructions::id();
         let keypair = Keypair::new();
         let instructions = vec![CompiledInstruction::new(1, &(), vec![0, 1])];
@@ -1290,7 +1274,7 @@ mod tests {
 
     #[test]
     fn test_overrides() {
-        solana_logger::setup();
+        agave_logger::setup();
         let mut account_overrides = AccountOverrides::default();
         let slot_history_id = sysvar::slot_history::id();
         let account = AccountSharedData::new(42, 0, &Pubkey::default());
@@ -3005,7 +2989,7 @@ mod tests {
             &expected_hit_account.data_clone()
         ));
 
-        // reload doesnt affect this
+        // reload doesn't affect this
         account_loader.load_account(&hit_address);
         let actual_hit_account = account_loader.loaded_accounts.get(&hit_address);
 

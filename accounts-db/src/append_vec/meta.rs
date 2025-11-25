@@ -8,7 +8,7 @@ use {
 };
 
 /// Meta contains enough context to recover the index from storage itself
-/// This struct will be backed by mmaped and snapshotted data files.
+/// This struct will be backed by mmapped and snapshotted data files.
 /// So the data layout must be stable and consistent across the entire cluster!
 #[derive(Clone, PartialEq, Eq, Debug)]
 #[repr(C)]
@@ -23,7 +23,7 @@ pub struct StoredMeta {
     pub pubkey: Pubkey,
 }
 
-/// This struct will be backed by mmaped and snapshotted data files.
+/// This struct will be backed by mmapped and snapshotted data files.
 /// So the data layout must be stable and consistent across the entire cluster!
 #[derive(Serialize, Deserialize, Clone, Debug, Default, Eq, PartialEq)]
 #[repr(C)]
@@ -209,5 +209,50 @@ impl<'append_vec> StoredAccountNoData<'append_vec> {
 impl IsZeroLamport for StoredAccountNoData<'_> {
     fn is_zero_lamport(&self) -> bool {
         self.lamports() == 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        solana_account::{accounts_equal, Account},
+    };
+
+    #[test]
+    fn test_stored_readable_account() {
+        let lamports = 1;
+        let owner = Pubkey::new_unique();
+        let executable = true;
+        let rent_epoch = 2;
+        let meta = StoredMeta {
+            write_version_obsolete: 5,
+            pubkey: Pubkey::new_unique(),
+            data_len: 7,
+        };
+        let account_meta = AccountMeta {
+            lamports,
+            owner,
+            executable,
+            rent_epoch,
+        };
+        let data = Vec::new();
+        let account = Account {
+            lamports,
+            owner,
+            executable,
+            rent_epoch,
+            data: data.clone(),
+        };
+        let offset = 99 * size_of::<u64>(); // offset needs to be 8 byte aligned
+        let stored_size = 101;
+        let stored_account = StoredAccountMeta {
+            meta: &meta,
+            account_meta: &account_meta,
+            data: &data,
+            offset,
+            stored_size,
+        };
+        assert!(accounts_equal(&account, &stored_account));
     }
 }

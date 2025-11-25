@@ -556,7 +556,7 @@ impl MockAlpenglowConsensus {
             return false;
         }
 
-        slot % interval == 0
+        slot.is_multiple_of(interval)
     }
 
     pub(crate) fn signal_new_slot(&mut self, slot: Slot, root_bank: &Bank) {
@@ -804,7 +804,7 @@ mod tests {
     fn test_mock_alpenglow_statemachine() {
         let test_timeout = Duration::from_secs(3);
         let max_slots = 5;
-        solana_logger::setup_with("trace");
+        agave_logger::setup_with("trace");
         let num_nodes = 10;
         let keypairs: Vec<Keypair> = (0..num_nodes).map(|_| Keypair::new()).collect();
         let peers: Vec<(Pubkey, UdpSocket)> = keypairs

@@ -12,10 +12,10 @@ use {
 /// For each instruction it calls the program entrypoint method and verifies that the result of
 /// the call does not violate the bank's accounting rules.
 /// The accounts are committed back to the bank only if every instruction succeeds.
-pub(crate) fn process_message(
-    message: &impl SVMMessage,
+pub(crate) fn process_message<'ix_data>(
+    message: &'ix_data impl SVMMessage,
     program_indices: &[IndexOfAccount],
-    invoke_context: &mut InvokeContext,
+    invoke_context: &mut InvokeContext<'_, 'ix_data>,
     execute_timings: &mut ExecuteTimings,
     accumulated_consumed_units: &mut u64,
 ) -> Result<(), TransactionError> {
@@ -26,7 +26,12 @@ pub(crate) fn process_message(
         .enumerate()
     {
         invoke_context
-            .prepare_next_top_level_instruction(message, &instruction, *program_account_index)
+            .prepare_next_top_level_instruction(
+                message,
+                &instruction,
+                *program_account_index,
+                instruction.data,
+            )
             .map_err(|err| {
                 TransactionError::InstructionError(top_level_instruction_index as u8, err)
             })?;
@@ -95,7 +100,9 @@ mod tests {
             declare_process_instruction,
             execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
             invoke_context::EnvironmentConfig,
-            loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
+            loaded_programs::{
+                ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments,
+            },
             sysvar_cache::SysvarCache,
         },
         solana_pubkey::Pubkey,
@@ -219,11 +226,14 @@ mod tests {
         ));
         let sysvar_cache = SysvarCache::default();
         let feature_set = SVMFeatureSet::all_enabled();
+        let program_runtime_environments = ProgramRuntimeEnvironments::default();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockCallback {},
             &feature_set,
+            &program_runtime_environments,
+            &program_runtime_environments,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -273,11 +283,14 @@ mod tests {
                 ),
             ]),
         ));
+        let program_runtime_environments = ProgramRuntimeEnvironments::default();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockCallback {},
             &feature_set,
+            &program_runtime_environments,
+            &program_runtime_environments,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -317,11 +330,14 @@ mod tests {
                 ),
             ]),
         ));
+        let program_runtime_environments = ProgramRuntimeEnvironments::default();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockCallback {},
             &feature_set,
+            &program_runtime_environments,
+            &program_runtime_environments,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -450,11 +466,14 @@ mod tests {
         ));
         let sysvar_cache = SysvarCache::default();
         let feature_set = SVMFeatureSet::all_enabled();
+        let program_runtime_environments = ProgramRuntimeEnvironments::default();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockCallback {},
             &feature_set,
+            &program_runtime_environments,
+            &program_runtime_environments,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -489,11 +508,14 @@ mod tests {
             )],
             Some(transaction_context.get_key_of_account_at_index(0).unwrap()),
         ));
+        let program_runtime_environments = ProgramRuntimeEnvironments::default();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockCallback {},
             &feature_set,
+            &program_runtime_environments,
+            &program_runtime_environments,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -525,11 +547,14 @@ mod tests {
             )],
             Some(transaction_context.get_key_of_account_at_index(0).unwrap()),
         ));
+        let program_runtime_environments = ProgramRuntimeEnvironments::default();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockCallback {},
             &feature_set,
+            &program_runtime_environments,
+            &program_runtime_environments,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -673,11 +698,14 @@ mod tests {
             }
         }
         let feature_set = SVMFeatureSet::all_enabled();
+        let program_runtime_environments = ProgramRuntimeEnvironments::default();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockCallback {},
             &feature_set,
+            &program_runtime_environments,
+            &program_runtime_environments,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(

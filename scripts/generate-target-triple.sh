@@ -14,7 +14,7 @@ linux*)
 darwin*)
   export BUILD_TARGET_TRIPLE="$_arch-apple-darwin"
   ;;
-msys*)
+msys*|mingw*)
   export BUILD_TARGET_TRIPLE="$_arch-pc-windows-msvc"
   ;;
 *)

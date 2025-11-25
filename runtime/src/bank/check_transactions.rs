@@ -3,9 +3,7 @@ use {
     agave_feature_set::{raise_cpi_nesting_limit_to_8, FeatureSet},
     solana_account::{state_traits::StateMut, AccountSharedData},
     solana_accounts_db::blockhash_queue::BlockhashQueue,
-    solana_clock::{
-        MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY, MAX_TRANSACTION_FORWARDING_DELAY_GPU,
-    },
+    solana_clock::{Slot, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY},
     solana_fee::{calculate_fee_details, FeeFeatures},
     solana_fee_structure::{FeeBudgetLimits, FeeDetails},
     solana_nonce::{
@@ -14,7 +12,6 @@ use {
         NONCED_TX_MARKER_IX_INDEX,
     },
     solana_nonce_account as nonce_account,
-    solana_perf::perf_libs,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -41,12 +38,7 @@ impl Bank {
         //  1. Transaction forwarding delay
         //  2. The slot at which the next leader will actually process the transaction
         // Drop the transaction if it will expire by the time the next node receives and processes it
-        let api = perf_libs::api();
-        let max_tx_fwd_delay = if api.is_none() {
-            MAX_TRANSACTION_FORWARDING_DELAY
-        } else {
-            MAX_TRANSACTION_FORWARDING_DELAY_GPU
-        };
+        let max_tx_fwd_delay = MAX_TRANSACTION_FORWARDING_DELAY;
 
         self.check_transactions(
             transactions,
@@ -65,13 +57,36 @@ impl Bank {
         max_age: usize,
         error_counters: &mut TransactionErrorMetrics,
     ) -> Vec<TransactionCheckResult> {
+        self.check_transactions_with_processed_slots(
+            sanitized_txs,
+            lock_results,
+            max_age,
+            false,
+            error_counters,
+        )
+        .0
+    }
+
+    pub fn check_transactions_with_processed_slots<Tx: TransactionWithMeta>(
+        &self,
+        sanitized_txs: &[impl core::borrow::Borrow<Tx>],
+        lock_results: &[TransactionResult<()>],
+        max_age: usize,
+        collect_processed_slots: bool,
+        error_counters: &mut TransactionErrorMetrics,
+    ) -> (Vec<TransactionCheckResult>, Option<Vec<Option<Slot>>>) {
         let lock_results = self.check_age_and_compute_budget_limits(
             sanitized_txs,
             lock_results,
             max_age,
             error_counters,
         );
-        self.check_status_cache(sanitized_txs, lock_results, error_counters)
+        self.check_status_cache(
+            sanitized_txs,
+            lock_results,
+            collect_processed_slots,
+            error_counters,
+        )
     }
 
     fn check_age_and_compute_budget_limits<Tx: TransactionWithMeta>(
@@ -91,6 +106,8 @@ impl Bank {
 
         let feature_set: &FeatureSet = &self.feature_set;
         let fee_features = FeeFeatures::from(feature_set);
+
+        let raise_cpi_limit = feature_set.is_active(&raise_cpi_nesting_limit_to_8::id());
 
         sanitized_txs
             .iter()
@@ -122,11 +139,13 @@ impl Bank {
                                 limit.get_compute_budget_and_limits(
                                     fee_budget.loaded_accounts_data_size_limit,
                                     fee_details,
-                                    self.feature_set
-                                        .is_active(&raise_cpi_nesting_limit_to_8::id()),
+                                    raise_cpi_limit,
                                 )
                             }
-                        });
+                        })
+                        .inspect_err(|_err| {
+                            error_counters.invalid_compute_budget += 1;
+                        })?;
                     self.check_transaction_age(
                         tx.borrow(),
                         max_age,
@@ -145,22 +164,14 @@ impl Bank {
     fn checked_transactions_details_with_test_override(
         nonce: Option<NonceInfo>,
         lamports_per_signature: u64,
-        compute_budget_and_limits: Result<
-            SVMTransactionExecutionAndFeeBudgetLimits,
-            TransactionError,
-        >,
+        mut compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits,
     ) -> CheckedTransactionDetails {
-        let compute_budget_and_limits = if lamports_per_signature == 0 {
-            // This is done to support legacy tests. The tests should be updated, and check
-            // for 0 lamports_per_signature should be removed from the code.
-            compute_budget_and_limits.map(|v| SVMTransactionExecutionAndFeeBudgetLimits {
-                budget: v.budget,
-                loaded_accounts_data_size_limit: v.loaded_accounts_data_size_limit,
-                fee_details: FeeDetails::default(),
-            })
-        } else {
-            compute_budget_and_limits
-        };
+        // This is done to support legacy tests. The tests should be updated, and check
+        // for 0 lamports_per_signature should be removed from the code.
+        if lamports_per_signature == 0 {
+            compute_budget_and_limits.fee_details = FeeDetails::default();
+        }
+
         CheckedTransactionDetails::new(nonce, compute_budget_and_limits)
     }
 
@@ -172,7 +183,7 @@ impl Bank {
         hash_queue: &BlockhashQueue,
         next_lamports_per_signature: u64,
         error_counters: &mut TransactionErrorMetrics,
-        compute_budget: Result<SVMTransactionExecutionAndFeeBudgetLimits, TransactionError>,
+        compute_budget: SVMTransactionExecutionAndFeeBudgetLimits,
     ) -> TransactionCheckResult {
         let recent_blockhash = tx.recent_blockhash();
         if let Some(hash_info) = hash_queue.get_hash_info_if_valid(recent_blockhash, max_age) {
@@ -255,38 +266,51 @@ impl Bank {
         &self,
         sanitized_txs: &[impl core::borrow::Borrow<Tx>],
         lock_results: Vec<TransactionCheckResult>,
+        collect_processed_slots: bool,
         error_counters: &mut TransactionErrorMetrics,
-    ) -> Vec<TransactionCheckResult> {
+    ) -> (Vec<TransactionCheckResult>, Option<Vec<Option<Slot>>>) {
         // Do allocation before acquiring the lock on the status cache.
         let mut check_results = Vec::with_capacity(sanitized_txs.len());
+        let mut processed_slots = if collect_processed_slots {
+            Some(Vec::with_capacity(sanitized_txs.len()))
+        } else {
+            None
+        };
         let rcache = self.status_cache.read().unwrap();
 
-        check_results.extend(sanitized_txs.iter().zip(lock_results).map(
-            |(sanitized_tx, lock_result)| {
-                let sanitized_tx = sanitized_tx.borrow();
-                if lock_result.is_ok()
-                    && self.is_transaction_already_processed(sanitized_tx, &rcache)
-                {
-                    error_counters.already_processed += 1;
-                    return Err(TransactionError::AlreadyProcessed);
-                }
+        for (sanitized_tx_ref, lock_result) in sanitized_txs.iter().zip(lock_results) {
+            let sanitized_tx = sanitized_tx_ref.borrow();
 
-                lock_result
-            },
-        ));
-        check_results
+            let (result, processed_slot) = if lock_result.is_ok() {
+                if let Some(slot) = self.get_processed_slot(sanitized_tx, &rcache) {
+                    error_counters.already_processed += 1;
+                    (Err(TransactionError::AlreadyProcessed), Some(slot))
+                } else {
+                    (lock_result, None)
+                }
+            } else {
+                (lock_result, None)
+            };
+
+            check_results.push(result);
+            if let Some(processed_slots) = processed_slots.as_mut() {
+                processed_slots.push(processed_slot)
+            }
+        }
+
+        (check_results, processed_slots)
     }
 
-    fn is_transaction_already_processed(
+    fn get_processed_slot(
         &self,
         sanitized_tx: &impl TransactionWithMeta,
         status_cache: &BankStatusCache,
-    ) -> bool {
+    ) -> Option<Slot> {
         let key = sanitized_tx.message_hash();
         let transaction_blockhash = sanitized_tx.recent_blockhash();
         status_cache
             .get_status(key, transaction_blockhash, &self.ancestors)
-            .is_some()
+            .map(|status| status.0)
     }
 }
 

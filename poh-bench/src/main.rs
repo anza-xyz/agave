@@ -1,17 +1,16 @@
 #![allow(clippy::arithmetic_side_effects)]
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-use solana_entry::entry::{self, create_ticks, init_poh, EntrySlice, VerifyRecyclers};
+use solana_entry::entry::{self, create_ticks, init_poh, EntrySlice};
 #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-use solana_entry::entry::{create_ticks, init_poh, EntrySlice, VerifyRecyclers};
+use solana_entry::entry::{create_ticks, init_poh, EntrySlice};
 use {
     clap::{crate_description, crate_name, Arg, Command},
     solana_measure::measure::Measure,
-    solana_perf::perf_libs,
     solana_sha256_hasher::hash,
 };
 
 fn main() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let matches = Command::new(crate_name!())
         .about(crate_description!())
@@ -56,12 +55,6 @@ fn main() {
                 .takes_value(true)
                 .help("Number of threads"),
         )
-        .arg(
-            Arg::new("cuda")
-                .long("cuda")
-                .takes_value(false)
-                .help("Use cuda"),
-        )
         .get_matches();
 
     let max_num_entries: u64 = matches.value_of_t("max_num_entries").unwrap_or(64);
@@ -79,16 +72,13 @@ fn main() {
         .thread_name(|i| format!("solPohBench{i:02}"))
         .build()
         .expect("new rayon threadpool");
-    if matches.is_present("cuda") {
-        perf_libs::init_cuda();
-    }
     init_poh();
     while num_entries <= max_num_entries as usize {
         let mut time = Measure::start("time");
         for _ in 0..iterations {
             assert!(ticks[..num_entries]
                 .verify_cpu_generic(&start_hash, &thread_pool)
-                .finish_verify(&thread_pool));
+                .status());
         }
         time.stop();
         println!(
@@ -107,7 +97,7 @@ fn main() {
                 for _ in 0..iterations {
                     assert!(ticks[..num_entries]
                         .verify_cpu_x86_simd(&start_hash, 8, &thread_pool)
-                        .finish_verify(&thread_pool));
+                        .status());
                 }
                 time.stop();
                 println!(
@@ -122,7 +112,7 @@ fn main() {
                 for _ in 0..iterations {
                     assert!(ticks[..num_entries]
                         .verify_cpu_x86_simd(&start_hash, 16, &thread_pool)
-                        .finish_verify(&thread_pool));
+                        .status())
                 }
                 time.stop();
                 println!(
@@ -131,22 +121,6 @@ fn main() {
                     time.as_us() / iterations as u64
                 );
             }
-        }
-
-        if perf_libs::api().is_some() {
-            let mut time = Measure::start("time");
-            let recyclers = VerifyRecyclers::default();
-            for _ in 0..iterations {
-                assert!(ticks[..num_entries]
-                    .start_verify(&start_hash, &thread_pool, recyclers.clone())
-                    .finish_verify(&thread_pool));
-            }
-            time.stop();
-            println!(
-                "{},gpu_cuda,{}",
-                num_entries,
-                time.as_us() / iterations as u64
-            );
         }
 
         println!();

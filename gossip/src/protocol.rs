@@ -44,7 +44,6 @@ const GOSSIP_PING_TOKEN_SIZE: usize = 32;
 /// Minimum serialized size of a Protocol::PullResponse packet.
 pub(crate) const PULL_RESPONSE_MIN_SERIALIZED_SIZE: usize = 161;
 
-// TODO These messages should go through the gpu pipeline for spam filtering
 /// Gossip protocol messages base enum
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(clippy::large_enum_variant)]
@@ -103,7 +102,7 @@ impl Protocol {
 }
 
 impl PruneData {
-    fn signable_data_without_prefix(&self) -> Cow<[u8]> {
+    fn signable_data_without_prefix(&self) -> Cow<'static, [u8]> {
         #[derive(Serialize)]
         struct SignData<'a> {
             pubkey: &'a Pubkey,
@@ -120,7 +119,7 @@ impl PruneData {
         Cow::Owned(serialize(&data).expect("should serialize PruneData"))
     }
 
-    fn signable_data_with_prefix(&self) -> Cow<[u8]> {
+    fn signable_data_with_prefix(&self) -> Cow<'static, [u8]> {
         #[derive(Serialize)]
         struct SignDataWithPrefix<'a> {
             prefix: &'a [u8],
@@ -157,7 +156,7 @@ impl Sanitize for Protocol {
                 filter.sanitize()?;
                 // PullRequest is only allowed to have ContactInfo in its CrdsData
                 match val.data() {
-                    CrdsData::LegacyContactInfo(_) | CrdsData::ContactInfo(_) => val.sanitize(),
+                    CrdsData::ContactInfo(_) => val.sanitize(),
                     _ => Err(SanitizeError::InvalidValue),
                 }
             }
@@ -199,7 +198,7 @@ impl Signable for PruneData {
         self.pubkey
     }
 
-    fn signable_data(&self) -> Cow<[u8]> {
+    fn signable_data(&self) -> Cow<'static, [u8]> {
         // Continue to return signable data without a prefix until cluster has upgraded
         self.signable_data_without_prefix()
     }

@@ -12,11 +12,9 @@ use {
     solana_compute_budget::compute_budget_limits::DEFAULT_HEAP_COST,
     solana_fee_structure::FeeStructure,
     solana_pubkey::Pubkey,
-    solana_runtime_transaction::{
-        transaction_meta::StaticMeta, transaction_with_meta::TransactionWithMeta,
-    },
+    solana_runtime_transaction::transaction_meta::StaticMeta,
     solana_sdk_ids::system_program,
-    solana_svm_transaction::instruction::SVMInstruction,
+    solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMStaticMessage},
     solana_system_interface::{
         instruction::SystemInstruction, MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
         MAX_PERMITTED_DATA_LENGTH,
@@ -34,7 +32,7 @@ enum SystemProgramAccountAllocation {
 }
 
 impl CostModel {
-    pub fn calculate_cost<'a, Tx: TransactionWithMeta>(
+    pub fn calculate_cost<'a, Tx: StaticMeta + SVMStaticMessage>(
         transaction: &'a Tx,
         feature_set: &FeatureSet,
     ) -> TransactionCost<'a, Tx> {
@@ -58,7 +56,7 @@ impl CostModel {
 
     // Calculate executed transaction CU cost, with actual execution and loaded accounts size
     // costs.
-    pub fn calculate_cost_for_executed_transaction<'a, Tx: TransactionWithMeta>(
+    pub fn calculate_cost_for_executed_transaction<'a, Tx: StaticMeta + SVMStaticMessage>(
         transaction: &'a Tx,
         actual_programs_execution_cost: u64,
         actual_loaded_accounts_data_size_bytes: u32,
@@ -310,14 +308,14 @@ mod tests {
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk_ids::{compute_budget, system_program},
         solana_signer::Signer,
-        solana_svm_transaction::svm_message::SVMMessage,
+        solana_svm_transaction::svm_message::SVMStaticMessage,
         solana_system_interface::instruction::{self as system_instruction},
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
     };
 
     fn test_setup() -> (Keypair, Hash) {
-        solana_logger::setup();
+        agave_logger::setup();
         (Keypair::new(), Hash::new_unique())
     }
 

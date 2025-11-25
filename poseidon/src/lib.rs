@@ -1,8 +1,20 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 //! Hashing with the [Poseidon] hash function.
 //!
 //! [Poseidon]: https://www.poseidon-hash.info/
 
 use thiserror::Error;
+
+#[doc(hidden)]
+pub mod legacy;
 
 /// Length of Poseidon hash result.
 pub const HASH_BYTES: usize = 32;
@@ -446,13 +458,23 @@ mod tests {
             ],
         ];
 
-        for (i, expected_hash) in expected_hashes.iter().enumerate() {
-            let inputs = vec![&input; i + 1]
-                .into_iter()
-                .map(|arr| &arr[..])
-                .collect::<Vec<_>>();
+        for (i, expected_hash) in expected_hashes.into_iter().enumerate() {
+            let inputs = vec![&input[..]; i + 1];
             let hash = hashv(Parameters::Bn254X5, Endianness::BigEndian, &inputs).unwrap();
-            assert_eq!(hash.to_bytes(), *expected_hash);
+            assert_eq!(hash.to_bytes(), expected_hash);
+        }
+    }
+
+    #[test]
+    fn test_poseidon_input_without_padding() {
+        let input = [1];
+
+        for i in 1..12 {
+            let inputs = vec![&input[..]; i + 1];
+            let res = hashv(Parameters::Bn254X5, Endianness::BigEndian, &inputs);
+            assert!(res.is_err());
+            let res = hashv(Parameters::Bn254X5, Endianness::LittleEndian, &inputs);
+            assert!(res.is_err());
         }
     }
 }

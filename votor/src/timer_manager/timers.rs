@@ -9,7 +9,6 @@ use {
         time::{Duration, Instant},
     },
 };
-
 /// Encodes a basic state machine of the different stages involved in handling
 /// timeouts for a window of slots.
 enum TimerState {
@@ -30,7 +29,6 @@ enum TimerState {
     /// The state machine is done.
     Done,
 }
-
 impl TimerState {
     /// Creates a new instance of the state machine.
     ///
@@ -41,7 +39,6 @@ impl TimerState {
         let timeout = now.checked_add(delta_timeout).unwrap();
         (Self::WaitDeltaTimeout { window, timeout }, timeout)
     }
-
     /// Call to make progress on the state machine.
     ///
     /// Returns a potentially empty list of events that should be sent.
@@ -67,17 +64,17 @@ impl TimerState {
                 }
 
                 let ret = Some(VotorEvent::Timeout(window.pop_front().unwrap()));
-                if window.is_empty() {
-                    *self = Self::Done;
-                } else {
-                    *timeout = now.checked_add(delta_block).unwrap();
+                match window.front() {
+                    None => *self = Self::Done,
+                    Some(_next_slot) => {
+                        *timeout = now.checked_add(delta_block).unwrap();
+                    }
                 }
                 ret
             }
             Self::Done => None,
         }
     }
-
     /// When would this state machine next be able to make progress.
     fn next_fire(&self) -> Option<Instant> {
         match self {
@@ -87,7 +84,6 @@ impl TimerState {
         }
     }
 }
-
 /// Maintains all active timer states for windows of slots.
 pub(super) struct Timers {
     delta_timeout: Duration,
@@ -101,7 +97,6 @@ pub(super) struct Timers {
     /// Stats for the timer manager.
     stats: TimerManagerStats,
 }
-
 impl Timers {
     pub(super) fn new(
         delta_timeout: Duration,
@@ -117,7 +112,6 @@ impl Timers {
             stats: TimerManagerStats::new(),
         }
     }
-
     /// Call to set timeouts for a new window of slots.
     pub(super) fn set_timeouts(&mut self, slot: Slot, now: Instant) {
         assert_eq!(self.heap.len(), self.timers.len());
@@ -133,7 +127,6 @@ impl Timers {
         self.stats
             .incr_timeout_count_with_heap_size(self.heap.len(), new_timer_inserted);
     }
-
     /// Call to make progress on the timer states.  If there are still active
     /// timer states, returns when the earliest one might become ready.
     pub(super) fn progress(&mut self, now: Instant) -> Option<Instant> {
@@ -166,10 +159,14 @@ impl Timers {
         }
         ret_timeout
     }
-
     #[cfg(test)]
     pub(super) fn stats(&self) -> TimerManagerStats {
         self.stats.clone()
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_timeout_set(&self, slot: Slot) -> bool {
+        self.timers.contains_key(&slot)
     }
 }
 
@@ -185,7 +182,7 @@ mod tests {
         let (mut timer_state, next_fire) = TimerState::new(slot, one_micro, now);
 
         assert!(matches!(
-            timer_state.progress(one_micro, next_fire).unwrap(),
+            timer_state.progress(one_micro, next_fire,).unwrap(),
             VotorEvent::TimeoutCrashedLeader(0)
         ));
 
@@ -233,7 +230,6 @@ mod tests {
             now = now.checked_add(one_micro).unwrap();
         }
         let mut events = receiver.try_iter().collect::<Vec<_>>();
-
         assert!(matches!(
             events.remove(0),
             VotorEvent::TimeoutCrashedLeader(0)

@@ -1,6 +1,9 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    agave_snapshots::SnapshotInterval,
+    agave_snapshots::{
+        paths as snapshot_paths, snapshot_archive_info::SnapshotArchiveInfoGetter,
+        snapshot_config::SnapshotConfig, SnapshotArchiveKind, SnapshotInterval,
+    },
     assert_matches::assert_matches,
     crossbeam_channel::{unbounded, Receiver},
     gag::BufferRedirect,
@@ -9,9 +12,7 @@ use {
     rand::seq::SliceRandom,
     serial_test::serial,
     solana_account::AccountSharedData,
-    solana_accounts_db::{
-        hardened_unpack::open_genesis_config, utils::create_accounts_run_and_snapshot_dirs,
-    },
+    solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
     solana_client_traits::AsyncClient,
     solana_clock::{
         self as clock, Slot, DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE,
@@ -29,6 +30,7 @@ use {
     solana_download_utils::download_snapshot_archive,
     solana_entry::entry::create_ticks,
     solana_epoch_schedule::{MAX_LEADER_SCHEDULE_EPOCH_OFFSET, MINIMUM_SLOTS_PER_EPOCH},
+    solana_genesis_utils::open_genesis_config,
     solana_gossip::{crds_data::MAX_VOTES, gossip_service::discover_validators},
     solana_hard_forks::HardForks,
     solana_hash::Hash,
@@ -38,7 +40,7 @@ use {
         bank_forks_utils,
         blockstore::{entries_to_test_shreds, Blockstore},
         blockstore_processor::ProcessOptions,
-        leader_schedule::FixedSchedule,
+        leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule},
         shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
@@ -58,6 +60,7 @@ use {
         local_cluster::{ClusterConfig, LocalCluster, DEFAULT_MINT_LAMPORTS},
         validator_configs::*,
     },
+    solana_net_utils::SocketAddrSpace,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_pubsub_client::pubsub_client::PubsubClient,
@@ -69,17 +72,9 @@ use {
         },
         response::RpcSignatureResult,
     },
-    solana_runtime::{
-        commitment::VOTE_THRESHOLD_SIZE,
-        snapshot_archive_info::SnapshotArchiveInfoGetter,
-        snapshot_bank_utils,
-        snapshot_config::SnapshotConfig,
-        snapshot_package::SnapshotKind,
-        snapshot_utils::{self, BANK_SNAPSHOTS_DIR},
-    },
+    solana_runtime::{commitment::VOTE_THRESHOLD_SIZE, snapshot_bank_utils, snapshot_utils},
     solana_signer::Signer,
     solana_stake_interface::{self as stake, state::NEW_WARMUP_COOLDOWN_RATE},
-    solana_streamer::socket::SocketAddrSpace,
     solana_system_interface::program as system_program,
     solana_system_transaction as system_transaction,
     solana_turbine::broadcast_stage::{
@@ -109,7 +104,7 @@ use {
 #[test]
 #[serial]
 fn test_local_cluster_start_and_exit() {
-    solana_logger::setup();
+    agave_logger::setup();
     let num_nodes = 1;
     let cluster = LocalCluster::new_with_equal_stakes(
         num_nodes,
@@ -123,7 +118,7 @@ fn test_local_cluster_start_and_exit() {
 #[test]
 #[serial]
 fn test_local_cluster_start_and_exit_with_config() {
-    solana_logger::setup();
+    agave_logger::setup();
     const NUM_NODES: usize = 1;
     let mut config = ClusterConfig {
         validator_configs: make_identical_validator_configs(
@@ -143,7 +138,7 @@ fn test_local_cluster_start_and_exit_with_config() {
 #[test]
 #[serial]
 fn test_spend_and_verify_all_nodes_1() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     error!("test_spend_and_verify_all_nodes_1");
     let num_nodes = 1;
     let local = LocalCluster::new_with_equal_stakes(
@@ -165,7 +160,7 @@ fn test_spend_and_verify_all_nodes_1() {
 #[test]
 #[serial]
 fn test_spend_and_verify_all_nodes_2() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     error!("test_spend_and_verify_all_nodes_2");
     let num_nodes = 2;
     let local = LocalCluster::new_with_equal_stakes(
@@ -187,7 +182,7 @@ fn test_spend_and_verify_all_nodes_2() {
 #[test]
 #[serial]
 fn test_spend_and_verify_all_nodes_3() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     error!("test_spend_and_verify_all_nodes_3");
     let num_nodes = 3;
     let local = LocalCluster::new_with_equal_stakes(
@@ -209,7 +204,7 @@ fn test_spend_and_verify_all_nodes_3() {
 #[test]
 #[serial]
 fn test_local_cluster_signature_subscribe() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     let num_nodes = 2;
     let cluster = LocalCluster::new_with_equal_stakes(
         num_nodes,
@@ -292,7 +287,7 @@ fn test_local_cluster_signature_subscribe() {
 #[test]
 #[serial]
 fn test_two_unbalanced_stakes() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     error!("test_two_unbalanced_stakes");
     let validator_config = ValidatorConfig::default_for_test();
     let num_ticks_per_second = 100;
@@ -328,7 +323,7 @@ fn test_two_unbalanced_stakes() {
 #[test]
 #[serial]
 fn test_forwarding() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     // Set up a cluster where one node is never the leader, so all txs sent to this node
     // will be have to be forwarded in order to be confirmed
     let mut config = ClusterConfig {
@@ -371,7 +366,7 @@ fn test_forwarding() {
 #[test]
 #[serial]
 fn test_restart_node() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     error!("test_restart_node");
     let slots_per_epoch = MINIMUM_SLOTS_PER_EPOCH * 2;
     let ticks_per_slot = 16;
@@ -414,7 +409,7 @@ fn test_restart_node() {
 #[test]
 #[serial]
 fn test_mainnet_beta_cluster_type() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
 
     let mut config = ClusterConfig {
         cluster_type: ClusterType::MainnetBeta,
@@ -482,7 +477,7 @@ fn test_mainnet_beta_cluster_type() {
 #[test]
 #[serial]
 fn test_snapshot_download() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 1 node
     let snapshot_interval_slots = NonZeroU64::new(50).unwrap();
     let num_account_paths = 3;
@@ -531,7 +526,7 @@ fn test_snapshot_download() {
             full_snapshot_archive_info.slot(),
             *full_snapshot_archive_info.hash(),
         ),
-        SnapshotKind::FullSnapshot,
+        SnapshotArchiveKind::Full,
         validator_snapshot_test_config
             .validator_config
             .snapshot_config
@@ -557,7 +552,7 @@ fn test_snapshot_download() {
 #[test]
 #[serial]
 fn test_incremental_snapshot_download() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 1 node
     let incremental_snapshot_interval = 9;
     let full_snapshot_interval = incremental_snapshot_interval * 3;
@@ -660,7 +655,7 @@ fn test_incremental_snapshot_download() {
             full_snapshot_archive_info.slot(),
             *full_snapshot_archive_info.hash(),
         ),
-        SnapshotKind::FullSnapshot,
+        SnapshotArchiveKind::Full,
         validator_snapshot_test_config
             .validator_config
             .snapshot_config
@@ -688,7 +683,7 @@ fn test_incremental_snapshot_download() {
             incremental_snapshot_archive_info.slot(),
             *incremental_snapshot_archive_info.hash(),
         ),
-        SnapshotKind::IncrementalSnapshot(incremental_snapshot_archive_info.base_slot()),
+        SnapshotArchiveKind::Incremental(incremental_snapshot_archive_info.base_slot()),
         validator_snapshot_test_config
             .validator_config
             .snapshot_config
@@ -730,7 +725,7 @@ fn test_incremental_snapshot_download() {
 #[test]
 #[serial]
 fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_startup() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     // If these intervals change, also make sure to change the loop timers accordingly.
     let incremental_snapshot_interval = 9;
     let full_snapshot_interval = incremental_snapshot_interval * 5;
@@ -833,7 +828,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
             .incremental_snapshot_archives_dir
             .path(),
         (full_snapshot_archive.slot(), *full_snapshot_archive.hash()),
-        SnapshotKind::FullSnapshot,
+        SnapshotArchiveKind::Full,
         validator_snapshot_test_config
             .validator_config
             .snapshot_config
@@ -846,7 +841,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
         &mut None,
     )
     .unwrap();
-    let downloaded_full_snapshot_archive = snapshot_utils::get_highest_full_snapshot_archive_info(
+    let downloaded_full_snapshot_archive = snapshot_paths::get_highest_full_snapshot_archive_info(
         validator_snapshot_test_config
             .full_snapshot_archives_dir
             .path(),
@@ -870,7 +865,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
             incremental_snapshot_archive.slot(),
             *incremental_snapshot_archive.hash(),
         ),
-        SnapshotKind::IncrementalSnapshot(incremental_snapshot_archive.base_slot()),
+        SnapshotArchiveKind::Incremental(incremental_snapshot_archive.base_slot()),
         validator_snapshot_test_config
             .validator_config
             .snapshot_config
@@ -884,7 +879,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
     )
     .unwrap();
     let downloaded_incremental_snapshot_archive =
-        snapshot_utils::get_highest_incremental_snapshot_archive_info(
+        snapshot_paths::get_highest_incremental_snapshot_archive_info(
             validator_snapshot_test_config
                 .incremental_snapshot_archives_dir
                 .path(),
@@ -939,8 +934,8 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
     let copy_files_with_remote = |from: &Path, to: &Path| {
         copy_files(from, to);
-        let remote_from = snapshot_utils::build_snapshot_archives_remote_dir(from);
-        let remote_to = snapshot_utils::build_snapshot_archives_remote_dir(to);
+        let remote_from = snapshot_paths::build_snapshot_archives_remote_dir(from);
+        let remote_to = snapshot_paths::build_snapshot_archives_remote_dir(to);
         let _ = fs::create_dir_all(&remote_from);
         let _ = fs::create_dir_all(&remote_to);
         copy_files(&remote_from, &remote_to);
@@ -948,7 +943,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
     let delete_files_with_remote = |from: &Path| {
         delete_files(from);
-        let remote_dir = snapshot_utils::build_snapshot_archives_remote_dir(from);
+        let remote_dir = snapshot_paths::build_snapshot_archives_remote_dir(from);
         let _ = fs::create_dir_all(&remote_dir);
         delete_files(&remote_dir);
     };
@@ -1033,7 +1028,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
     //
     // Putting this all in its own block so its clear we're only intended to keep the leader's info
     let leader_full_snapshot_archive_for_comparison = {
-        let validator_full_snapshot = snapshot_utils::get_highest_full_snapshot_archive_info(
+        let validator_full_snapshot = snapshot_paths::get_highest_full_snapshot_archive_info(
             validator_snapshot_test_config
                 .full_snapshot_archives_dir
                 .path(),
@@ -1041,7 +1036,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
         .unwrap();
 
         // Now get the same full snapshot on the LEADER that we just got from the validator
-        let mut leader_full_snapshots = snapshot_utils::get_full_snapshot_archives(
+        let mut leader_full_snapshots = snapshot_paths::get_full_snapshot_archives(
             leader_snapshot_test_config
                 .full_snapshot_archives_dir
                 .path(),
@@ -1103,7 +1098,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
     // Get the highest full snapshot slot *before* restarting, as a comparison
     let validator_full_snapshot_slot_at_startup =
-        snapshot_utils::get_highest_full_snapshot_archive_slot(
+        snapshot_paths::get_highest_full_snapshot_archive_slot(
             validator_snapshot_test_config
                 .full_snapshot_archives_dir
                 .path(),
@@ -1134,14 +1129,14 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
     );
     let timer = Instant::now();
     loop {
-        if let Some(full_snapshot_slot) = snapshot_utils::get_highest_full_snapshot_archive_slot(
+        if let Some(full_snapshot_slot) = snapshot_paths::get_highest_full_snapshot_archive_slot(
             validator_snapshot_test_config
                 .full_snapshot_archives_dir
                 .path(),
         ) {
             if full_snapshot_slot >= validator_next_full_snapshot_slot {
                 if let Some(incremental_snapshot_slot) =
-                    snapshot_utils::get_highest_incremental_snapshot_archive_slot(
+                    snapshot_paths::get_highest_incremental_snapshot_archive_slot(
                         validator_snapshot_test_config
                             .incremental_snapshot_archives_dir
                             .path(),
@@ -1175,7 +1170,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
     // Check to make sure that the full snapshot the validator created during startup is the same
     // or one greater than the snapshot the leader created.
-    let validator_full_snapshot_archives = snapshot_utils::get_full_snapshot_archives(
+    let validator_full_snapshot_archives = snapshot_paths::get_full_snapshot_archives(
         validator_snapshot_test_config
             .full_snapshot_archives_dir
             .path(),
@@ -1238,7 +1233,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 #[test]
 #[serial]
 fn test_snapshot_restart_tower() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 2 nodes
     let snapshot_interval_slots = NonZeroU64::new(10).unwrap();
     let num_account_paths = 2;
@@ -1280,7 +1275,7 @@ fn test_snapshot_restart_tower() {
     );
 
     // Copy archive to validator's snapshot output directory
-    let validator_archive_path = snapshot_utils::build_full_snapshot_archive_path(
+    let validator_archive_path = snapshot_paths::build_full_snapshot_archive_path(
         validator_snapshot_test_config
             .full_snapshot_archives_dir
             .keep(),
@@ -1311,7 +1306,7 @@ fn test_snapshot_restart_tower() {
 #[test]
 #[serial]
 fn test_snapshots_blockstore_floor() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 1 snapshotting leader
     let snapshot_interval_slots = NonZeroU64::new(100).unwrap();
     let num_account_paths = 4;
@@ -1341,7 +1336,7 @@ fn test_snapshots_blockstore_floor() {
 
     let archive_info = loop {
         let archive =
-            snapshot_utils::get_highest_full_snapshot_archive_info(full_snapshot_archives_dir);
+            snapshot_paths::get_highest_full_snapshot_archive_info(full_snapshot_archives_dir);
         if archive.is_some() {
             trace!("snapshot exists");
             break archive.unwrap();
@@ -1350,7 +1345,7 @@ fn test_snapshots_blockstore_floor() {
     };
 
     // Copy archive to validator's snapshot output directory
-    let validator_archive_path = snapshot_utils::build_full_snapshot_archive_path(
+    let validator_archive_path = snapshot_paths::build_full_snapshot_archive_path(
         validator_snapshot_test_config
             .full_snapshot_archives_dir
             .keep(),
@@ -1424,7 +1419,7 @@ fn test_snapshots_blockstore_floor() {
 #[test]
 #[serial]
 fn test_snapshots_restart_validity() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     let snapshot_interval_slots = NonZeroU64::new(100).unwrap();
     let num_account_paths = 1;
     let mut snapshot_test_config =
@@ -1513,7 +1508,7 @@ fn test_snapshots_restart_validity() {
 #[allow(unused_attributes)]
 #[ignore]
 fn test_fail_entry_verification_leader() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     let leader_stake = (DUPLICATE_THRESHOLD * 100.0) as u64 + 1;
     let validator_stake1 = (100 - leader_stake) / 2;
     let validator_stake2 = 100 - leader_stake - validator_stake1;
@@ -1535,7 +1530,7 @@ fn test_fail_entry_verification_leader() {
 #[ignore]
 #[allow(unused_attributes)]
 fn test_fake_shreds_broadcast_leader() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     let node_stakes = vec![300, 100];
     let (cluster, _) = test_faulty_node(
         BroadcastStageType::BroadcastFakeShreds,
@@ -1553,7 +1548,7 @@ fn test_fake_shreds_broadcast_leader() {
 #[test]
 #[serial]
 fn test_wait_for_max_stake() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     let validator_config = ValidatorConfig::default_for_test();
     let slots_per_epoch = MINIMUM_SLOTS_PER_EPOCH;
     // Set this large enough to allow for skipped slots but still be able to
@@ -1611,7 +1606,7 @@ fn test_wait_for_max_stake() {
 // Test that when a leader is leader for banks B_i..B_{i+n}, and B_i is not
 // votable, then B_{i+1} still chains to B_i
 fn test_no_voting() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     let validator_config = ValidatorConfig {
         voting_disabled: true,
         ..ValidatorConfig::default_for_test()
@@ -1650,9 +1645,8 @@ fn test_no_voting() {
 
 #[test]
 #[serial]
-#[ignore]
 fn test_optimistic_confirmation_violation_detection() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 2 nodes
     let slots_per_epoch = 2048;
     let node_stakes = vec![50 * DEFAULT_NODE_STAKE, 51 * DEFAULT_NODE_STAKE];
@@ -1670,13 +1664,14 @@ fn test_optimistic_confirmation_violation_detection() {
     // to form a cluster. The heavier validator is the second node.
     let node_to_restart = validator_keys[1].0.pubkey();
 
+    // WFSM as we require a OC slot > 50 within 100 seconds
+    let mut validator_config = ValidatorConfig::default_for_test();
+    validator_config.wait_for_supermajority = Some(0);
+
     let mut config = ClusterConfig {
         mint_lamports: DEFAULT_MINT_LAMPORTS + node_stakes.iter().sum::<u64>(),
         node_stakes: node_stakes.clone(),
-        validator_configs: make_identical_validator_configs(
-            &ValidatorConfig::default_for_test(),
-            node_stakes.len(),
-        ),
+        validator_configs: make_identical_validator_configs(&validator_config, node_stakes.len()),
         validator_keys: Some(validator_keys),
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
@@ -1888,7 +1883,7 @@ fn test_optimistic_confirmation_violation_detection() {
 #[test]
 #[serial]
 fn test_validator_saves_tower() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
 
     let validator_config = ValidatorConfig {
         require_tower: true,
@@ -2038,7 +2033,7 @@ enum ClusterMode {
 }
 
 fn do_test_future_tower(cluster_mode: ClusterMode) {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
 
     // First set up the cluster with 4 nodes
     let slots_per_epoch = 2048;
@@ -2064,13 +2059,12 @@ fn do_test_future_tower(cluster_mode: ClusterMode) {
         ClusterMode::MasterSlave => validators[1],
     };
 
+    let mut validator_config = ValidatorConfig::default_for_test();
+    validator_config.wait_for_supermajority = Some(0);
     let mut config = ClusterConfig {
         mint_lamports: DEFAULT_MINT_LAMPORTS + DEFAULT_NODE_STAKE * 100,
         node_stakes: node_stakes.clone(),
-        validator_configs: make_identical_validator_configs(
-            &ValidatorConfig::default_for_test(),
-            node_stakes.len(),
-        ),
+        validator_configs: make_identical_validator_configs(&validator_config, node_stakes.len()),
         validator_keys: Some(validator_keys),
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
@@ -2207,7 +2201,7 @@ fn restart_whole_cluster_after_hard_fork(
 #[test]
 #[serial]
 fn test_hard_fork_invalidates_tower() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
 
     // First set up the cluster with 2 nodes
     let slots_per_epoch = 2048;
@@ -2323,7 +2317,7 @@ fn test_run_test_load_program_accounts_root() {
 fn create_simple_snapshot_config(ledger_path: &Path) -> SnapshotConfig {
     SnapshotConfig {
         full_snapshot_archives_dir: ledger_path.to_path_buf(),
-        bank_snapshots_dir: ledger_path.join(BANK_SNAPSHOTS_DIR),
+        bank_snapshots_dir: ledger_path.join(snapshot_paths::BANK_SNAPSHOTS_DIR),
         ..SnapshotConfig::default()
     }
 }
@@ -2380,7 +2374,7 @@ fn create_snapshot_to_hard_fork(
 #[ignore]
 #[serial]
 fn test_hard_fork_with_gap_in_roots() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
 
     // First set up the cluster with 2 nodes
     let slots_per_epoch = 2048;
@@ -2547,7 +2541,7 @@ fn test_restart_tower_rollback() {
     // Test node crashing and failing to save its tower before restart
     // Cluster continues to make progress, this node is able to rejoin with
     // outdated tower post restart.
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
 
     // First set up the cluster with 2 nodes
     let slots_per_epoch = 2048;
@@ -2566,13 +2560,12 @@ fn test_restart_tower_rollback() {
 
     let b_pubkey = validator_keys[1].0.pubkey();
 
+    let mut validator_config = ValidatorConfig::default_for_test();
+    validator_config.wait_for_supermajority = Some(0);
     let mut config = ClusterConfig {
         mint_lamports: DEFAULT_MINT_LAMPORTS + DEFAULT_NODE_STAKE * 100,
         node_stakes: node_stakes.clone(),
-        validator_configs: make_identical_validator_configs(
-            &ValidatorConfig::default_for_test(),
-            node_stakes.len(),
-        ),
+        validator_configs: make_identical_validator_configs(&validator_config, node_stakes.len()),
         validator_keys: Some(validator_keys),
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
@@ -2656,7 +2649,7 @@ fn run_test_load_program_accounts_partition(scan_commitment: CommitmentConfig) {
     let exit = Arc::new(AtomicBool::new(false));
 
     let (t_update, t_scan, additional_accounts) = setup_transfer_scan_threads(
-        1000,
+        100,
         exit.clone(),
         scan_commitment,
         update_client_receiver,
@@ -2695,6 +2688,7 @@ fn run_test_load_program_accounts_partition(scan_commitment: CommitmentConfig) {
         on_partition_before_resolved,
         on_partition_resolved,
         None,
+        false,
         additional_accounts,
     );
 }
@@ -2708,6 +2702,7 @@ fn test_rpc_block_subscribe() {
     let node_stakes = vec![leader_stake, rpc_stake];
     let mut validator_config = ValidatorConfig::default_for_test();
     validator_config.enable_default_rpc_block_subscribe();
+    validator_config.wait_for_supermajority = Some(0);
 
     let validator_keys = [
         "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
@@ -2780,17 +2775,12 @@ fn test_rpc_block_subscribe() {
 #[serial]
 #[allow(unused_attributes)]
 fn test_oc_bad_signatures() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
 
     let total_stake = 100 * DEFAULT_NODE_STAKE;
     let leader_stake = (total_stake as f64 * VOTE_THRESHOLD_SIZE) as u64;
     let our_node_stake = total_stake - leader_stake;
     let node_stakes = vec![leader_stake, our_node_stake];
-    let mut validator_config = ValidatorConfig {
-        require_tower: true,
-        ..ValidatorConfig::default_for_test()
-    };
-    validator_config.enable_default_rpc_block_subscribe();
     let validator_keys = [
         "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
         "2saHBBoTkLMmttmPQP8KfBkcCw45S5cwtV3wTdGCscRC8uxdgvHxpHiWXKx4LvJjNJtnNcbSv5NdheokFFqnNDt8",
@@ -2799,6 +2789,23 @@ fn test_oc_bad_signatures() {
     .map(|s| (Arc::new(Keypair::from_base58_string(s)), true))
     .take(node_stakes.len())
     .collect::<Vec<_>>();
+
+    // Give bootstrap node all the leader slots to avoid initial forking leading
+    // to casting votes with invalid blockhash. This is not what is meant to be
+    // test and only inflates test time.
+    let fixed_schedule = FixedSchedule {
+        leader_schedule: Arc::new(Box::new(IdentityKeyedLeaderSchedule::new_from_schedule(
+            vec![validator_keys.first().unwrap().0.pubkey()],
+        ))),
+    };
+
+    let mut validator_config = ValidatorConfig {
+        require_tower: true,
+        wait_for_supermajority: Some(0),
+        fixed_leader_schedule: Some(fixed_schedule),
+        ..ValidatorConfig::default_for_test()
+    };
+    validator_config.enable_default_rpc_block_subscribe();
 
     let our_id = validator_keys.last().unwrap().0.pubkey();
     let mut config = ClusterConfig {
@@ -2825,7 +2832,6 @@ fn test_oc_bad_signatures() {
     let client = cluster
         .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
         .unwrap();
-    let cluster_funding_keypair = cluster.funding_keypair.insecure_clone();
     let voter_thread_sleep_ms: usize = 100;
     let num_votes_simulated = Arc::new(AtomicUsize::new(0));
     let gossip_voter = cluster_tests::start_gossip_voter(
@@ -2868,7 +2874,7 @@ fn test_oc_bad_signatures() {
                 );
                 LocalCluster::send_transaction_with_retries(
                     &client,
-                    &[&cluster_funding_keypair, &bad_authorized_signer_keypair],
+                    &[&node_keypair, &bad_authorized_signer_keypair],
                     &mut vote_tx,
                     5,
                 )
@@ -3141,7 +3147,7 @@ fn setup_transfer_scan_threads(
 }
 
 fn run_test_load_program_accounts(scan_commitment: CommitmentConfig) {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 2 nodes
     let slots_per_epoch = 2048;
     let node_stakes = vec![51 * DEFAULT_NODE_STAKE, 50 * DEFAULT_NODE_STAKE];
@@ -3154,7 +3160,7 @@ fn run_test_load_program_accounts(scan_commitment: CommitmentConfig) {
     .take(node_stakes.len())
     .collect();
 
-    let num_starting_accounts = 1000;
+    let num_starting_accounts = 100;
     let exit = Arc::new(AtomicBool::new(false));
     let (update_client_sender, update_client_receiver) = unbounded();
     let (scan_client_sender, scan_client_receiver) = unbounded();
@@ -3168,13 +3174,12 @@ fn run_test_load_program_accounts(scan_commitment: CommitmentConfig) {
         scan_client_receiver,
     );
 
+    let mut validator_config = ValidatorConfig::default_for_test();
+    validator_config.wait_for_supermajority = Some(0);
     let mut config = ClusterConfig {
         mint_lamports: DEFAULT_MINT_LAMPORTS + node_stakes.iter().sum::<u64>(),
         node_stakes: node_stakes.clone(),
-        validator_configs: make_identical_validator_configs(
-            &ValidatorConfig::default_for_test(),
-            node_stakes.len(),
-        ),
+        validator_configs: make_identical_validator_configs(&validator_config, node_stakes.len()),
         validator_keys: Some(validator_keys),
         slots_per_epoch,
         stakers_slot_offset: slots_per_epoch,
@@ -3257,7 +3262,7 @@ fn test_lockout_violation_without_tower() {
 //    `A` should not be able to generate a switching proof.
 //
 fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
-    solana_logger::setup_with("info");
+    agave_logger::setup_with("info");
 
     // First set up the cluster with 4 nodes
     let slots_per_epoch = 2048;
@@ -3317,6 +3322,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     default_config.fixed_leader_schedule = Some(FixedSchedule {
         leader_schedule: leader_schedule.clone(),
     });
+    default_config.wait_for_supermajority = Some(0);
     let mut validator_configs =
         make_identical_validator_configs(&default_config, node_stakes.len());
 
@@ -3536,7 +3542,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
 // stalling the network.
 
 fn test_fork_choice_refresh_old_votes() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     let max_switch_threshold_failure_pct = 1.0 - 2.0 * SWITCH_FORK_THRESHOLD;
     let total_stake = 100 * DEFAULT_NODE_STAKE;
     let max_failures_stake = (max_switch_threshold_failure_pct * total_stake as f64) as u64;
@@ -3833,6 +3839,7 @@ fn test_kill_heaviest_partition() {
         empty,
         on_partition_resolved,
         None,
+        true,
         vec![],
     )
 }
@@ -3933,7 +3940,7 @@ fn test_duplicate_shreds_broadcast_leader_ancestor_hashes() {
 }
 
 fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     // Create 4 nodes:
     // 1) Bad leader sending different versions of shreds to both of the other nodes
     // 2) 1 node who's voting behavior in gossip
@@ -4085,7 +4092,7 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
                     );
                     gossip_vote_index += 1;
                     gossip_vote_index %= MAX_VOTES;
-                    cluster_info.push_vote_at_index(vote_tx, gossip_vote_index);
+                    cluster_info.push_vote_at_index(vote_tx, gossip_vote_index, &node_keypair);
                 }
             }
         },
@@ -4111,7 +4118,7 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
 #[serial]
 #[ignore]
 fn test_switch_threshold_uses_gossip_votes() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     let total_stake = 100 * DEFAULT_NODE_STAKE;
 
     // Minimum stake needed to generate a switching proof
@@ -4414,6 +4421,7 @@ fn test_cluster_partition_1_1() {
         empty,
         on_partition_resolved,
         None,
+        false,
         vec![],
     )
 }
@@ -4433,6 +4441,7 @@ fn test_cluster_partition_1_1_1() {
         empty,
         on_partition_resolved,
         None,
+        false,
         vec![],
     )
 }
@@ -4440,12 +4449,13 @@ fn test_cluster_partition_1_1_1() {
 #[test]
 #[serial]
 fn test_leader_failure_4() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     error!("test_leader_failure_4");
     // Cluster needs a supermajority to remain even after taking 1 node offline,
     // so the minimum number of nodes for this test is 4.
     let num_nodes = 4;
-    let validator_config = ValidatorConfig::default_for_test();
+    let mut validator_config = ValidatorConfig::default_for_test();
+    validator_config.wait_for_supermajority = Some(0);
     // Embed vote and stake account in genesis to avoid waiting for stake
     // activation and race conditions around accepting gossip votes, repairing
     // blocks, etc. before we advance through too many epochs.
@@ -4514,7 +4524,7 @@ fn test_leader_failure_4() {
 #[test]
 #[serial]
 fn test_slot_hash_expiry() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     solana_slot_hashes::set_entries_for_tests_only(64);
 
     let slots_per_epoch = 2048;
@@ -4541,8 +4551,10 @@ fn test_slot_hash_expiry() {
 
     // We want B to not vote (we are trying to simulate its votes not landing until it gets to the
     // minority fork)
+    let mut validator_config = ValidatorConfig::default_for_test();
+    validator_config.wait_for_supermajority = Some(0);
     let mut validator_configs =
-        make_identical_validator_configs(&ValidatorConfig::default_for_test(), node_stakes.len());
+        make_identical_validator_configs(&validator_config, node_stakes.len());
     validator_configs[1].voting_disabled = true;
 
     let mut config = ClusterConfig {
@@ -4728,7 +4740,7 @@ fn test_slot_hash_expiry() {
 #[serial]
 #[ignore]
 fn test_duplicate_with_pruned_ancestor() {
-    solana_logger::setup_with("info,solana_metrics=off");
+    agave_logger::setup_with("info,solana_metrics=off");
     solana_core::repair::duplicate_repair_status::set_ancestor_hash_repair_sample_size_for_tests_only(3);
 
     let majority_leader_stake = 10_000_000 * DEFAULT_NODE_STAKE;
@@ -4972,7 +4984,7 @@ fn test_duplicate_with_pruned_ancestor() {
 #[test]
 #[serial]
 fn test_boot_from_local_state() {
-    solana_logger::setup_with_default("error,local_cluster=info");
+    agave_logger::setup_with_default("error,local_cluster=info");
     const FULL_SNAPSHOT_INTERVAL: SnapshotInterval =
         SnapshotInterval::Slots(NonZeroU64::new(100).unwrap());
     const INCREMENTAL_SNAPSHOT_INTERVAL: SnapshotInterval =
@@ -5167,12 +5179,12 @@ fn test_boot_from_local_state() {
         let timer = Instant::now();
         loop {
             if let Some(other_full_snapshot_slot) =
-                snapshot_utils::get_highest_full_snapshot_archive_slot(
+                snapshot_paths::get_highest_full_snapshot_archive_slot(
                     &other_validator_config.full_snapshot_archives_dir,
                 )
             {
                 let other_incremental_snapshot_slot =
-                    snapshot_utils::get_highest_incremental_snapshot_archive_slot(
+                    snapshot_paths::get_highest_incremental_snapshot_archive_slot(
                         &other_validator_config.incremental_snapshot_archives_dir,
                         other_full_snapshot_slot,
                     );
@@ -5188,7 +5200,7 @@ fn test_boot_from_local_state() {
             );
             std::thread::yield_now();
         }
-        let other_full_snapshot_archives = snapshot_utils::get_full_snapshot_archives(
+        let other_full_snapshot_archives = snapshot_paths::get_full_snapshot_archives(
             &other_validator_config.full_snapshot_archives_dir,
         );
         debug!("validator{i} full snapshot archives: {other_full_snapshot_archives:?}");
@@ -5213,7 +5225,7 @@ fn test_boot_from_local_state() {
                 .collect::<Vec<_>>(),
         );
 
-        let other_incremental_snapshot_archives = snapshot_utils::get_incremental_snapshot_archives(
+        let other_incremental_snapshot_archives = snapshot_paths::get_incremental_snapshot_archives(
             &other_validator_config.incremental_snapshot_archives_dir,
         );
         debug!(
@@ -5267,7 +5279,7 @@ fn test_boot_from_local_state() {
 #[test]
 #[serial]
 fn test_boot_from_local_state_missing_archive() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     const FULL_SNAPSHOT_INTERVAL: SnapshotInterval =
         SnapshotInterval::Slots(NonZeroU64::new(20).unwrap());
     const INCREMENTAL_SNAPSHOT_INTERVAL: SnapshotInterval =
@@ -5303,10 +5315,10 @@ fn test_boot_from_local_state_missing_archive() {
     );
     debug!(
         "snapshot archives:\n\tfull: {:?}\n\tincr: {:?}",
-        snapshot_utils::get_full_snapshot_archives(
+        snapshot_paths::get_full_snapshot_archives(
             validator_config.full_snapshot_archives_dir.path()
         ),
-        snapshot_utils::get_incremental_snapshot_archives(
+        snapshot_paths::get_incremental_snapshot_archives(
             validator_config.incremental_snapshot_archives_dir.path()
         ),
     );
@@ -5320,7 +5332,7 @@ fn test_boot_from_local_state_missing_archive() {
     info!("Stopping validator... DONE");
 
     info!("Deleting latest full snapshot archive...");
-    let highest_full_snapshot = snapshot_utils::get_highest_full_snapshot_archive_info(
+    let highest_full_snapshot = snapshot_paths::get_highest_full_snapshot_archive_info(
         validator_config.full_snapshot_archives_dir.path(),
     )
     .unwrap();
@@ -5442,7 +5454,7 @@ fn test_duplicate_shreds_switch_failure() {
         }
     }
 
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    agave_logger::setup_with_default(RUST_LOG_FILTER);
     let validator_keypairs = [
         "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
         "2saHBBoTkLMmttmPQP8KfBkcCw45S5cwtV3wTdGCscRC8uxdgvHxpHiWXKx4LvJjNJtnNcbSv5NdheokFFqnNDt8",
@@ -5772,7 +5784,7 @@ fn test_duplicate_shreds_switch_failure() {
 #[serial]
 fn test_randomly_mixed_block_verification_methods_between_bootstrap_and_not() {
     // tailored logging just to see two block verification methods are working correctly
-    solana_logger::setup_with_default(
+    agave_logger::setup_with_default(
         "solana_metrics::metrics=warn,solana_core=warn,\
          solana_runtime::installed_scheduler_pool=trace,solana_ledger::blockstore_processor=debug,\
          info",
@@ -5784,7 +5796,7 @@ fn test_randomly_mixed_block_verification_methods_between_bootstrap_and_not() {
 
     // Overwrite block_verification_method with shuffled variants
     let mut methods = BlockVerificationMethod::iter().collect::<Vec<_>>();
-    methods.shuffle(&mut rand::thread_rng());
+    methods.shuffle(&mut rand::rng());
     for (validator_config, method) in config.validator_configs.iter_mut().zip_eq(methods) {
         validator_config.block_verification_method = method;
     }
@@ -5805,7 +5817,7 @@ fn test_randomly_mixed_block_verification_methods_between_bootstrap_and_not() {
 #[ignore]
 #[serial]
 fn test_invalid_forks_persisted_on_restart() {
-    solana_logger::setup_with("info,solana_metrics=off,solana_ledger=off");
+    agave_logger::setup_with("info,solana_metrics=off,solana_ledger=off");
 
     let dup_slot = 10;
     let validator_keypairs = [

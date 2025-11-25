@@ -208,7 +208,11 @@ use {
         },
         MaybeTlsStream, WebSocketStream,
     },
-    tungstenite::{client::IntoClientRequest, Bytes},
+    tungstenite::{
+        client::IntoClientRequest,
+        http::{header, StatusCode},
+        Bytes,
+    },
 };
 
 pub type PubsubClientResult<T = ()> = Result<T, PubsubClientError>;
@@ -271,12 +275,47 @@ pub struct PubsubClient {
     ws: JoinHandle<PubsubClientResult>,
 }
 
+async fn connect_with_retry<R: IntoClientRequest>(
+    request: R,
+) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, Box<tungstenite::Error>> {
+    let mut connection_retries = 5;
+    let client_request = request.into_client_request().map_err(Box::new)?;
+    loop {
+        let result = connect_async(client_request.clone())
+            .await
+            .map(|(socket, _)| socket);
+        if let Err(tungstenite::Error::Http(response)) = &result {
+            if response.status() == StatusCode::TOO_MANY_REQUESTS && connection_retries > 0 {
+                let mut duration = Duration::from_millis(500);
+                if let Some(retry_after) = response.headers().get(header::RETRY_AFTER) {
+                    if let Ok(retry_after) = retry_after.to_str() {
+                        if let Ok(retry_after) = retry_after.parse::<u64>() {
+                            if retry_after < 120 {
+                                duration = Duration::from_secs(retry_after);
+                            }
+                        }
+                    }
+                }
+
+                connection_retries -= 1;
+                debug!(
+                    "Too many requests: server responded with {response:?}, {connection_retries} \
+                     retries left, pausing for {duration:?}"
+                );
+
+                sleep(duration).await;
+                continue;
+            }
+        }
+        return result.map_err(Box::new);
+    }
+}
+
 impl PubsubClient {
     pub async fn new<R: IntoClientRequest>(request: R) -> PubsubClientResult<Self> {
         let client_request = request.into_client_request().map_err(Box::new)?;
-        let (ws, _response) = connect_async(client_request)
+        let ws = connect_with_retry(client_request)
             .await
-            .map_err(Box::new)
             .map_err(PubsubClientError::ConnectionError)?;
 
         let (subscribe_sender, subscribe_receiver) = mpsc::unbounded_channel();

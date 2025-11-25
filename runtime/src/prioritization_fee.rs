@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn test_update_compute_unit_price() {
-        solana_logger::setup();
+        agave_logger::setup();
         let write_account_a = Pubkey::new_unique();
         let write_account_b = Pubkey::new_unique();
         let write_account_c = Pubkey::new_unique();

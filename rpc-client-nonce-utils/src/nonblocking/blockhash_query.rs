@@ -31,7 +31,7 @@ impl Source {
                     .await?;
                 Ok(blockhash)
             }
-            Self::NonceAccount(ref pubkey) => {
+            Self::NonceAccount(pubkey) => {
                 let data = nonblocking::get_account_with_commitment(rpc_client, pubkey, commitment)
                     .await
                     .and_then(|ref a| nonblocking::data_from_account(a))?;
@@ -48,7 +48,7 @@ impl Source {
     ) -> Result<bool, Box<dyn std::error::Error>> {
         Ok(match self {
             Self::Cluster => rpc_client.is_blockhash_valid(blockhash, commitment).await?,
-            Self::NonceAccount(ref pubkey) => {
+            Self::NonceAccount(pubkey) => {
                 let _ = nonblocking::get_account_with_commitment(rpc_client, pubkey, commitment)
                     .await
                     .and_then(|ref a| nonblocking::data_from_account(a))?;

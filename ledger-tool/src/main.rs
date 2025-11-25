@@ -14,7 +14,10 @@ use {
     },
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccountKeys,
-    agave_snapshots::{ArchiveFormat, DEFAULT_ARCHIVE_COMPRESSION, SUPPORTED_ARCHIVE_COMPRESSION},
+    agave_snapshots::{
+        snapshot_archive_info::SnapshotArchiveInfoGetter as _, ArchiveFormat, SnapshotVersion,
+        DEFAULT_ARCHIVE_COMPRESSION, SUPPORTED_ARCHIVE_COMPRESSION,
+    },
     clap::{
         crate_description, crate_name, value_t, value_t_or_exit, values_t_or_exit, App,
         AppSettings, Arg, ArgMatches, SubCommand,
@@ -36,6 +39,7 @@ use {
     solana_cluster_type::ClusterType,
     solana_core::{
         banking_simulation::{BankingSimulator, BankingTraceEvents},
+        resource_limits::adjust_nofile_limit,
         system_monitor_service::{SystemMonitorService, SystemMonitorStatsReportConfig},
         validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
     },
@@ -64,15 +68,13 @@ use {
         bank_forks::BankForks,
         inflation_rewards::points::{InflationPointCalculationEvent, PointValue},
         installed_scheduler_pool::BankWithScheduler,
-        snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils,
         snapshot_minimizer::SnapshotMinimizer,
-        snapshot_utils::SnapshotVersion,
+        stake_utils,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_shred_version::compute_shred_version,
     solana_stake_interface::{self as stake, state::StakeStateV2},
-    solana_stake_program::stake_state,
     solana_system_interface::program as system_program,
     solana_transaction::sanitized::MessageHash,
     solana_transaction_status::parse_ui_instruction,
@@ -80,7 +82,7 @@ use {
     solana_vote::vote_state_view::VoteStateView,
     solana_vote_program::{
         self,
-        vote_state::{self, VoteStateV3},
+        vote_state::{self, VoteStateV4},
     },
     std::{
         collections::{HashMap, HashSet},
@@ -132,8 +134,9 @@ fn render_dot(dot: String, output_file: &str, output_format: &str) -> io::Result
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 enum GraphVoteAccountMode {
+    #[default]
     Disabled,
     LastOnly,
     WithHistory,
@@ -158,12 +161,6 @@ impl AsRef<str> for GraphVoteAccountMode {
             Self::LastOnly => Self::LAST_ONLY,
             Self::WithHistory => Self::WITH_HISTORY,
         }
-    }
-}
-
-impl Default for GraphVoteAccountMode {
-    fn default() -> Self {
-        Self::Disabled
     }
 }
 
@@ -857,8 +854,6 @@ fn main() {
         unsafe { signal_hook::low_level::register(signal_hook::consts::SIGUSR1, || {}) }.unwrap();
     }
 
-    solana_logger::setup_with_default_filter();
-
     let load_genesis_config_arg = load_genesis_arg();
     let accounts_db_config_args = accounts_db_args();
     let snapshot_config_args = snapshot_args();
@@ -943,7 +938,7 @@ fn main() {
 
     let rent = Rent::default();
     let default_bootstrap_validator_lamports = &(500 * LAMPORTS_PER_SOL)
-        .max(rent.minimum_balance(VoteStateV3::size_of()))
+        .max(rent.minimum_balance(VoteStateV4::size_of()))
         .to_string();
     let default_bootstrap_validator_stake_lamports = &(LAMPORTS_PER_SOL / 2)
         .max(rent.minimum_balance(StakeStateV2::size_of()))
@@ -969,6 +964,14 @@ fn main() {
                 .global(true)
                 .default_value("ledger")
                 .help("Use DIR as ledger location"),
+        )
+        .arg(
+            Arg::with_name("logfile")
+                .long("log")
+                .value_name("FILE")
+                .takes_value(true)
+                .global(true)
+                .help("Redirect logging to the specified file, stderr is used if unset"),
         )
         .arg(
             Arg::with_name("wal_recovery_mode")
@@ -1000,9 +1003,9 @@ fn main() {
                 .takes_value(false)
                 .global(true)
                 .help(
-                    "Allow opening the blockstore to succeed even if the desired open file \
-                     descriptor limit cannot be configured. Use with caution as some commands may \
-                     run fine with a reduced file descriptor limit while others will not",
+                    "Allow the command to continue even if the desired open file descriptor limit \
+                     cannot be configured. Use with caution as some commands may run fine with a \
+                     a reduced file descriptor limit while others may fail in nonobvious ways",
                 ),
         )
         .arg(
@@ -1687,10 +1690,19 @@ fn main() {
         .program_subcommand()
         .get_matches();
 
+    let logfile = value_t!(matches, "logfile", PathBuf).ok();
+    agave_logger::initialize_logging(logfile);
+
     info!("{} {}", crate_name!(), solana_version::version!());
 
     let ledger_path = PathBuf::from(value_t_or_exit!(matches, "ledger_path", String));
     let verbose_level = matches.occurrences_of("verbose");
+
+    let enforce_nofile_limit = !matches.is_present("ignore_ulimit_nofile_error");
+    adjust_nofile_limit(enforce_nofile_limit).unwrap_or_else(|err| {
+        eprintln!("Error: {err:?}");
+        exit(1);
+    });
 
     // Name the rayon global thread pool
     rayon::ThreadPoolBuilder::new()
@@ -1778,7 +1790,7 @@ fn main() {
                     create_new_ledger(
                         &output_directory,
                         &genesis_config,
-                        solana_accounts_db::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+                        solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
                         LedgerColumnOptions::default(),
                     )
                     .unwrap_or_else(|err| {
@@ -1895,7 +1907,7 @@ fn main() {
 
                     if let Some(mut slot_recorder_config) = slot_recorder_config {
                         // Drop transaction_status_sender to break transaction_recorder
-                        // out of its' recieve loop
+                        // out of its' receive loop
                         let transaction_status_sender =
                             slot_recorder_config.transaction_status_sender.take();
                         drop(transaction_status_sender);
@@ -2326,17 +2338,18 @@ fn main() {
                                 ),
                             );
 
-                            let vote_account = vote_state::create_account_with_authorized(
+                            let vote_account = vote_state::create_v4_account_with_authorized(
                                 identity_pubkey,
                                 identity_pubkey,
                                 identity_pubkey,
-                                100,
-                                rent.minimum_balance(VoteStateV3::size_of()).max(1),
+                                None,
+                                10000,
+                                rent.minimum_balance(VoteStateV4::size_of()).max(1),
                             );
 
                             bank.store_account(
                                 stake_pubkey,
-                                &stake_state::create_account(
+                                &stake_utils::create_stake_account(
                                     bootstrap_stake_authorized_pubkey
                                         .as_ref()
                                         .unwrap_or(identity_pubkey),
@@ -2562,8 +2575,8 @@ fn main() {
                     };
                     process_options.halt_at_slot = Some(parent_slot);
 
-                    // PrimaryForMaintenance needed over Secondary to purge any
-                    // existing simulated shreds from previous runs
+                    // PrimaryForMaintenance needed to purge (write) any existing simulated shreds
+                    // from previous runs
                     let blockstore = Arc::new(open_blockstore(
                         &ledger_path,
                         arg_matches,
@@ -3156,7 +3169,7 @@ fn main() {
                 }
                 ("compute-slot-cost", Some(arg_matches)) => {
                     let blockstore =
-                        open_blockstore(&ledger_path, arg_matches, AccessType::Secondary);
+                        open_blockstore(&ledger_path, arg_matches, AccessType::ReadOnly);
 
                     let mut slots: Vec<u64> = vec![];
                     if !arg_matches.is_present("slots") {

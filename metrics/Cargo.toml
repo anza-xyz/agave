@@ -15,6 +15,9 @@ targets = ["x86_64-unknown-linux-gnu"]
 [lib]
 name = "solana_metrics"
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 crossbeam-channel = { workspace = true }
 gethostname = { workspace = true }
@@ -30,6 +33,7 @@ bencher = { workspace = true }
 env_logger = { workspace = true }
 rand = { workspace = true }
 serial_test = { workspace = true }
+solana-metrics = { path = ".", features = ["agave-unstable-api"] }
 solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 
 [[bench]]

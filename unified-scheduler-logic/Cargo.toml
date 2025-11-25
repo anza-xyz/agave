@@ -9,8 +9,12 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 assert_matches = { workspace = true }
+solana-clock = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-transaction = { workspace = true }

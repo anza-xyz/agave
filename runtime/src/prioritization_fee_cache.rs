@@ -534,7 +534,7 @@ mod tests {
 
     #[test]
     fn test_prioritization_fee_cache_update() {
-        solana_logger::setup();
+        agave_logger::setup();
         let write_account_a = Pubkey::new_unique();
         let write_account_b = Pubkey::new_unique();
         let write_account_c = Pubkey::new_unique();
@@ -548,7 +548,7 @@ mod tests {
         // [9,      b, c          ]  -->  [5,     5,         5,         9        ]
         // [2,   a,    c          ]  -->  [2,     2,         5,         2        ]
         //
-        let txs = vec![
+        let txs = [
             build_sanitized_transaction_for_test(5, &write_account_a, &write_account_b),
             build_sanitized_transaction_for_test(9, &write_account_b, &write_account_c),
             build_sanitized_transaction_for_test(2, &write_account_a, &write_account_c),
@@ -592,7 +592,7 @@ mod tests {
         sync_update(
             &prioritization_fee_cache,
             bank1.clone(),
-            vec![build_sanitized_transaction_for_test(
+            [build_sanitized_transaction_for_test(
                 1,
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
@@ -603,7 +603,7 @@ mod tests {
 
         // add slot 2 entry to cache, but not finalize it
         let bank2 = Arc::new(Bank::new_from_parent(bank.clone(), &collector, 2));
-        let txs = vec![build_sanitized_transaction_for_test(
+        let txs = [build_sanitized_transaction_for_test(
             1,
             &Pubkey::new_unique(),
             &Pubkey::new_unique(),
@@ -614,7 +614,7 @@ mod tests {
         sync_update(
             &prioritization_fee_cache,
             bank3.clone(),
-            vec![build_sanitized_transaction_for_test(
+            [build_sanitized_transaction_for_test(
                 1,
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
@@ -629,7 +629,7 @@ mod tests {
 
     #[test]
     fn test_get_prioritization_fees() {
-        solana_logger::setup();
+        agave_logger::setup();
         let write_account_a = Pubkey::new_unique();
         let write_account_b = Pubkey::new_unique();
         let write_account_c = Pubkey::new_unique();
@@ -667,7 +667,7 @@ mod tests {
 
         // Assert after add one transaction for slot 1
         {
-            let txs = vec![
+            let txs = [
                 build_sanitized_transaction_for_test(2, &write_account_a, &write_account_b),
                 build_sanitized_transaction_for_test(
                     1,
@@ -730,7 +730,7 @@ mod tests {
 
         // Assert after add one transaction for slot 2
         {
-            let txs = vec![
+            let txs = [
                 build_sanitized_transaction_for_test(4, &write_account_b, &write_account_c),
                 build_sanitized_transaction_for_test(
                     3,
@@ -804,7 +804,7 @@ mod tests {
 
         // Assert after add one transaction for slot 3
         {
-            let txs = vec![
+            let txs = [
                 build_sanitized_transaction_for_test(6, &write_account_a, &write_account_c),
                 build_sanitized_transaction_for_test(
                     5,
@@ -881,7 +881,7 @@ mod tests {
     fn test_purge_duplicated_bank() {
         // duplicated bank can exists for same slot before OC.
         // prioritization_fee_cache should only have data from OC-ed bank
-        solana_logger::setup();
+        agave_logger::setup();
         let write_account_a = Pubkey::new_unique();
         let write_account_b = Pubkey::new_unique();
         let write_account_c = Pubkey::new_unique();
@@ -899,7 +899,7 @@ mod tests {
 
         // Assert after add transactions for bank1 of slot 1
         {
-            let txs = vec![
+            let txs = [
                 build_sanitized_transaction_for_test(2, &write_account_a, &write_account_b),
                 build_sanitized_transaction_for_test(
                     1,
@@ -912,7 +912,7 @@ mod tests {
 
         // Assert after add transactions for bank2 of slot 1
         {
-            let txs = vec![
+            let txs = [
                 build_sanitized_transaction_for_test(4, &write_account_b, &write_account_c),
                 build_sanitized_transaction_for_test(
                     3,

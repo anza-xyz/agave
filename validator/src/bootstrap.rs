@@ -1,8 +1,13 @@
 use {
+    agave_snapshots::{
+        paths as snapshot_paths, snapshot_archive_info::SnapshotArchiveInfoGetter as _,
+        SnapshotArchiveKind,
+    },
     itertools::Itertools,
     log::*,
-    rand::{seq::SliceRandom, thread_rng, Rng},
+    rand::{rng, seq::SliceRandom, Rng},
     rayon::prelude::*,
+    solana_account::ReadableAccount,
     solana_clock::Slot,
     solana_commitment_config::CommitmentConfig,
     solana_core::validator::{ValidatorConfig, ValidatorStartProgress},
@@ -18,14 +23,11 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_metrics::datapoint_info,
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_runtime::{
-        snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_package::SnapshotKind,
-        snapshot_utils,
-    },
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_vote_program::vote_state::VoteStateV4,
     std::{
         collections::{hash_map::RandomState, HashMap, HashSet},
         net::{SocketAddr, TcpListener, TcpStream, UdpSocket},
@@ -261,9 +263,9 @@ fn check_vote_account(
         .value
         .ok_or_else(|| format!("identity account does not exist: {identity_pubkey}"))?;
 
-    let vote_state = solana_vote_program::vote_state::from(&vote_account);
+    let vote_state = VoteStateV4::deserialize(vote_account.data(), vote_account_address).ok();
     if let Some(vote_state) = vote_state {
-        if vote_state.authorized_voters().is_empty() {
+        if vote_state.authorized_voters.is_empty() {
             return Err("Vote account not yet initialized".to_string());
         }
 
@@ -274,7 +276,7 @@ fn check_vote_account(
             ));
         }
 
-        for (_, vote_account_authorized_voter_pubkey) in vote_state.authorized_voters().iter() {
+        for (_, vote_account_authorized_voter_pubkey) in vote_state.authorized_voters.iter() {
             if !authorized_voter_pubkeys.contains(vote_account_authorized_voter_pubkey) {
                 return Err(format!(
                     "authorized voter {vote_account_authorized_voter_pubkey} not available"
@@ -338,7 +340,7 @@ pub fn fail_rpc_node(
     blacklisted_rpc_nodes: &mut HashSet<Pubkey, RandomState>,
 ) {
     warn!("{err}");
-    if let Some(ref known_validators) = known_validators {
+    if let Some(known_validators) = known_validators {
         if known_validators.contains(rpc_id) {
             return;
         }
@@ -567,7 +569,7 @@ pub fn rpc_bootstrap(
 ) {
     if do_port_check {
         let mut order: Vec<_> = (0..cluster_entrypoints.len()).collect();
-        order.shuffle(&mut thread_rng());
+        order.shuffle(&mut rng());
         if order.into_iter().all(|i| {
             !verify_reachable_ports(
                 node,
@@ -716,7 +718,7 @@ fn get_rpc_nodes(
         blacklist_timeout = Instant::now();
         get_rpc_peers_timout = Instant::now();
         if bootstrap_config.no_snapshot_fetch {
-            let random_peer = &rpc_peers[thread_rng().gen_range(0..rpc_peers.len())];
+            let random_peer = &rpc_peers[rng().random_range(0..rpc_peers.len())];
             return Ok(vec![GetRpcNodeResult {
                 rpc_contact_info: random_peer.clone(),
                 snapshot_hash: None,
@@ -786,10 +788,10 @@ fn get_highest_local_snapshot_hash(
     incremental_snapshot_archives_dir: impl AsRef<Path>,
     incremental_snapshot_fetch: bool,
 ) -> Option<(Slot, Hash)> {
-    snapshot_utils::get_highest_full_snapshot_archive_info(full_snapshot_archives_dir)
+    snapshot_paths::get_highest_full_snapshot_archive_info(full_snapshot_archives_dir)
         .and_then(|full_snapshot_info| {
             if incremental_snapshot_fetch {
-                snapshot_utils::get_highest_incremental_snapshot_archive_info(
+                snapshot_paths::get_highest_incremental_snapshot_archive_info(
                     incremental_snapshot_archives_dir,
                     full_snapshot_info.slot(),
                 )
@@ -860,7 +862,7 @@ type KnownSnapshotHashes = HashMap<(Slot, Hash), HashSet<(Slot, Hash)>>;
 /// queried for their individual snapshot hashes, their results will be checked against this
 /// map to verify correctness.
 ///
-/// NOTE: Only a single snashot hash is allowed per slot.  If somehow two known validators have
+/// NOTE: Only a single snapshot hash is allowed per slot.  If somehow two known validators have
 /// a snapshot hash with the same slot and _different_ hashes, the second will be skipped.
 /// This applies to both full and incremental snapshot hashes.
 fn get_snapshot_hashes_from_known_validators(
@@ -1129,7 +1131,7 @@ fn download_snapshots(
     }
 
     // Check and see if we've already got the full snapshot; if not, download it
-    if snapshot_utils::get_full_snapshot_archives(full_snapshot_archives_dir)
+    if snapshot_paths::get_full_snapshot_archives(full_snapshot_archives_dir)
         .into_iter()
         .any(|snapshot_archive| {
             snapshot_archive.slot() == full_snapshot_hash.0
@@ -1151,14 +1153,14 @@ fn download_snapshots(
             download_abort_count,
             rpc_contact_info,
             full_snapshot_hash,
-            SnapshotKind::FullSnapshot,
+            SnapshotArchiveKind::Full,
         )?;
     }
 
     if bootstrap_config.incremental_snapshot_fetch {
         // Check and see if we've already got the incremental snapshot; if not, download it
         if let Some(incremental_snapshot_hash) = incremental_snapshot_hash {
-            if snapshot_utils::get_incremental_snapshot_archives(incremental_snapshot_archives_dir)
+            if snapshot_paths::get_incremental_snapshot_archives(incremental_snapshot_archives_dir)
                 .into_iter()
                 .any(|snapshot_archive| {
                     snapshot_archive.slot() == incremental_snapshot_hash.0
@@ -1182,7 +1184,7 @@ fn download_snapshots(
                     download_abort_count,
                     rpc_contact_info,
                     incremental_snapshot_hash,
-                    SnapshotKind::IncrementalSnapshot(full_snapshot_hash.0),
+                    SnapshotArchiveKind::Incremental(full_snapshot_hash.0),
                 )?;
             }
         }
@@ -1203,7 +1205,7 @@ fn download_snapshot(
     download_abort_count: &mut u64,
     rpc_contact_info: &ContactInfo,
     desired_snapshot_hash: (Slot, Hash),
-    snapshot_kind: SnapshotKind,
+    snapshot_kind: SnapshotArchiveKind,
 ) -> Result<(), String> {
     let maximum_full_snapshot_archives_to_retain = validator_config
         .snapshot_config
@@ -1224,7 +1226,7 @@ fn download_snapshot(
     };
     let desired_snapshot_hash = (
         desired_snapshot_hash.0,
-        solana_runtime::snapshot_hash::SnapshotHash(desired_snapshot_hash.1),
+        agave_snapshots::snapshot_hash::SnapshotHash(desired_snapshot_hash.1),
     );
     download_snapshot_archive(
         &rpc_contact_info
@@ -1367,7 +1369,7 @@ mod tests {
 
     #[test]
     fn test_build_known_snapshot_hashes() {
-        solana_logger::setup();
+        agave_logger::setup();
         let full_snapshot_hash1 = (400_000, Hash::new_unique());
         let full_snapshot_hash2 = (400_000, Hash::new_unique());
 

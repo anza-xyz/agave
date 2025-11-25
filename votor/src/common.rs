@@ -1,5 +1,5 @@
 use {
-    agave_votor_messages::{consensus_message::Certificate, vote::Vote},
+    agave_votor_messages::{consensus_message::CertificateType, vote::Vote},
     std::time::Duration,
 };
 
@@ -32,54 +32,49 @@ impl VoteType {
     }
 }
 
-pub const fn conflicting_types(vote_type: VoteType) -> &'static [VoteType] {
-    match vote_type {
-        VoteType::Finalize => &[VoteType::NotarizeFallback, VoteType::Skip],
-        VoteType::Notarize => &[VoteType::Skip, VoteType::NotarizeFallback],
-        VoteType::NotarizeFallback => &[VoteType::Finalize, VoteType::Notarize],
-        VoteType::Skip => &[
-            VoteType::Finalize,
-            VoteType::Notarize,
-            VoteType::SkipFallback,
-        ],
-        VoteType::SkipFallback => &[VoteType::Skip],
-    }
-}
-
-/// Lookup from `CertificateId` to the `VoteType`s that contribute,
-/// as well as the stake fraction required for certificate completion.
+/// For a given [`CertificateType`], returns the fractional stake, the [`Vote`], and the optional fallback [`Vote`] required to construct it.
 ///
-/// Must be in sync with `vote_to_certificate_ids`
-pub const fn certificate_limits_and_vote_types(
-    cert_type: Certificate,
-) -> (f64, &'static [VoteType]) {
+/// Must be in sync with [`vote_to_certificate_ids`].
+pub(crate) fn certificate_limits_and_votes(
+    cert_type: &CertificateType,
+) -> (f64, Vote, Option<Vote>) {
     match cert_type {
-        Certificate::Notarize(_, _) => (0.6, &[VoteType::Notarize]),
-        Certificate::NotarizeFallback(_, _) => {
-            (0.6, &[VoteType::Notarize, VoteType::NotarizeFallback])
+        CertificateType::Notarize(slot, block_id) => {
+            (0.6, Vote::new_notarization_vote(*slot, *block_id), None)
         }
-        Certificate::FinalizeFast(_, _) => (0.8, &[VoteType::Notarize]),
-        Certificate::Finalize(_) => (0.6, &[VoteType::Finalize]),
-        Certificate::Skip(_) => (0.6, &[VoteType::Skip, VoteType::SkipFallback]),
+        CertificateType::NotarizeFallback(slot, block_id) => (
+            0.6,
+            Vote::new_notarization_vote(*slot, *block_id),
+            Some(Vote::new_notarization_fallback_vote(*slot, *block_id)),
+        ),
+        CertificateType::FinalizeFast(slot, block_id) => {
+            (0.8, Vote::new_notarization_vote(*slot, *block_id), None)
+        }
+        CertificateType::Finalize(slot) => (0.6, Vote::new_finalization_vote(*slot), None),
+        CertificateType::Skip(slot) => (
+            0.6,
+            Vote::new_skip_vote(*slot),
+            Some(Vote::new_skip_fallback_vote(*slot)),
+        ),
     }
 }
 
 /// Lookup from `Vote` to the `CertificateId`s the vote accounts for
 ///
 /// Must be in sync with `certificate_limits_and_vote_types` and `VoteType::get_type`
-pub fn vote_to_certificate_ids(vote: &Vote) -> Vec<Certificate> {
+pub fn vote_to_certificate_ids(vote: &Vote) -> Vec<CertificateType> {
     match vote {
         Vote::Notarize(vote) => vec![
-            Certificate::Notarize(vote.slot(), *vote.block_id()),
-            Certificate::NotarizeFallback(vote.slot(), *vote.block_id()),
-            Certificate::FinalizeFast(vote.slot(), *vote.block_id()),
+            CertificateType::Notarize(vote.slot, vote.block_id),
+            CertificateType::NotarizeFallback(vote.slot, vote.block_id),
+            CertificateType::FinalizeFast(vote.slot, vote.block_id),
         ],
         Vote::NotarizeFallback(vote) => {
-            vec![Certificate::NotarizeFallback(vote.slot(), *vote.block_id())]
+            vec![CertificateType::NotarizeFallback(vote.slot, vote.block_id)]
         }
-        Vote::Finalize(vote) => vec![Certificate::Finalize(vote.slot())],
-        Vote::Skip(vote) => vec![Certificate::Skip(vote.slot())],
-        Vote::SkipFallback(vote) => vec![Certificate::Skip(vote.slot())],
+        Vote::Finalize(vote) => vec![CertificateType::Finalize(vote.slot)],
+        Vote::Skip(vote) => vec![CertificateType::Skip(vote.slot)],
+        Vote::SkipFallback(vote) => vec![CertificateType::Skip(vote.slot)],
     }
 }
 
@@ -101,7 +96,6 @@ pub(crate) const DELTA_BLOCK: Duration = Duration::from_millis(400);
 /// Base timeout for when leader's first slice should arrive if they sent it immediately.
 pub(crate) const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 
-#[cfg(test)]
 /// Timeout for standstill detection mechanism.
 pub(crate) const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 

@@ -452,7 +452,7 @@ fn validate_endpoints(
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
-    solana_logger::setup_with_default_filter();
+    agave_logger::setup_with_default_filter();
     solana_metrics::set_panic_hook("watchtower", /*version:*/ None);
 
     let config = get_config();

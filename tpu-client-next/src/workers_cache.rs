@@ -2,8 +2,6 @@
 //! structures provide mechanisms for caching workers, sending transaction
 //! batches, and gathering send transaction statistics.
 
-#[cfg(feature = "agave-unstable-api")]
-use qualifier_attr::qualifiers;
 use {
     crate::{
         connection_worker::ConnectionWorker,
@@ -81,8 +79,7 @@ impl WorkerInfo {
 }
 
 /// Spawns a worker to handle communication with a given peer.
-#[cfg_attr(feature = "agave-unstable-api", qualifiers(pub))]
-pub(crate) fn spawn_worker(
+pub fn spawn_worker(
     endpoint: &Endpoint,
     peer: &SocketAddr,
     worker_channel_size: usize,
@@ -141,8 +138,7 @@ pub enum WorkersCacheError {
 }
 
 impl WorkersCache {
-    #[cfg_attr(feature = "agave-unstable-api", qualifiers(pub))]
-    pub(crate) fn new(capacity: usize, cancel: CancellationToken) -> Self {
+    pub fn new(capacity: usize, cancel: CancellationToken) -> Self {
         Self {
             workers: LruCache::new(capacity),
             cancel,
@@ -155,12 +151,7 @@ impl WorkersCache {
         self.workers.contains(peer)
     }
 
-    #[cfg_attr(feature = "agave-unstable-api", qualifiers(pub))]
-    pub(crate) fn push(
-        &mut self,
-        leader: SocketAddr,
-        peer_worker: WorkerInfo,
-    ) -> Option<ShutdownWorker> {
+    pub fn push(&mut self, leader: SocketAddr, peer_worker: WorkerInfo) -> Option<ShutdownWorker> {
         if let Some((leader, popped_worker)) = self.workers.push(leader, peer_worker) {
             return Some(ShutdownWorker {
                 leader,
@@ -320,8 +311,7 @@ impl WorkersCache {
     ///
     /// The method awaits the completion of all shutdown tasks, ensuring that
     /// each worker is properly terminated.
-    #[cfg_attr(feature = "agave-unstable-api", qualifiers(pub))]
-    pub(crate) async fn shutdown(&mut self) {
+    pub async fn shutdown(&mut self) {
         // Interrupt any outstanding `send_transactions()` calls.
         self.cancel.cancel();
 

@@ -16,6 +16,9 @@ targets = ["x86_64-unknown-linux-gnu"]
 crate-type = ["lib"]
 name = "solana_storage_bigtable"
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 agave-reserved-account-keys = { workspace = true }
 backoff = { workspace = true, features = ["tokio"] }

@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 pub use self::{
     cpi::{SyscallInvokeSignedC, SyscallInvokeSignedRust},
     logging::{
@@ -16,11 +25,6 @@ use {
     crate::mem_ops::is_nonoverlapping,
     solana_big_mod_exp::{big_mod_exp, BigModExpParams},
     solana_blake3_hasher as blake3,
-    solana_bn254::prelude::{
-        alt_bn128_addition, alt_bn128_multiplication, alt_bn128_pairing,
-        ALT_BN128_ADDITION_OUTPUT_LEN, ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
-        ALT_BN128_PAIRING_ELEMENT_LEN, ALT_BN128_PAIRING_OUTPUT_LEN,
-    },
     solana_cpi::MAX_RETURN_DATA,
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta, ProcessedSiblingInstruction},
@@ -275,12 +279,12 @@ macro_rules! register_feature_gated_function {
     };
 }
 
-pub fn create_program_runtime_environment_v1<'a>(
+pub fn create_program_runtime_environment_v1<'a, 'ix_data>(
     feature_set: &SVMFeatureSet,
     compute_budget: &SVMTransactionExecutionBudget,
     reject_deployment_of_broken_elfs: bool,
     debugging_features: bool,
-) -> Result<BuiltinProgram<InvokeContext<'a>>, Error> {
+) -> Result<BuiltinProgram<InvokeContext<'a, 'ix_data>>, Error> {
     let enable_alt_bn128_syscall = feature_set.enable_alt_bn128_syscall;
     let enable_alt_bn128_compression_syscall = feature_set.enable_alt_bn128_compression_syscall;
     let enable_big_mod_exp_syscall = feature_set.enable_big_mod_exp_syscall;
@@ -509,10 +513,10 @@ pub fn create_program_runtime_environment_v1<'a>(
     Ok(result)
 }
 
-pub fn create_program_runtime_environment_v2<'a>(
+pub fn create_program_runtime_environment_v2<'a, 'ix_data>(
     compute_budget: &SVMTransactionExecutionBudget,
     debugging_features: bool,
-) -> BuiltinProgram<InvokeContext<'a>> {
+) -> BuiltinProgram<InvokeContext<'a, 'ix_data>> {
     let config = Config {
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,
@@ -575,6 +579,7 @@ fn translate_string_and_do(
 }
 
 // Do not use this directly
+#[allow(clippy::mut_from_ref)]
 fn translate_type_mut<'a, T>(
     memory_mapping: &'a MemoryMapping,
     vm_addr: u64,
@@ -583,6 +588,7 @@ fn translate_type_mut<'a, T>(
     translate_type_inner!(memory_mapping, AccessType::Store, vm_addr, T, check_aligned)
 }
 // Do not use this directly
+#[allow(clippy::mut_from_ref)]
 fn translate_slice_mut<'a, T>(
     memory_mapping: &'a MemoryMapping,
     vm_addr: u64,
@@ -1563,20 +1569,29 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        use solana_bn254::prelude::{ALT_BN128_ADD, ALT_BN128_MUL, ALT_BN128_PAIRING};
+        use solana_bn254::versioned::{
+            alt_bn128_versioned_g1_addition, alt_bn128_versioned_g1_multiplication,
+            alt_bn128_versioned_pairing, Endianness, VersionedG1Addition,
+            VersionedG1Multiplication, VersionedPairing, ALT_BN128_ADDITION_OUTPUT_SIZE,
+            ALT_BN128_G1_ADD_BE, ALT_BN128_G1_MUL_BE, ALT_BN128_MULTIPLICATION_OUTPUT_SIZE,
+            ALT_BN128_PAIRING_BE, ALT_BN128_PAIRING_ELEMENT_SIZE,
+            ALT_BN128_PAIRING_OUTPUT_SIZE, ALT_BN128_G1_ADD_LE, ALT_BN128_G1_MUL_LE,
+            ALT_BN128_PAIRING_LE
+        };
+
         let execution_cost = invoke_context.get_execution_cost();
         let (cost, output): (u64, usize) = match group_op {
-            ALT_BN128_ADD => (
+            ALT_BN128_G1_ADD_BE | ALT_BN128_G1_ADD_LE => (
                 execution_cost.alt_bn128_addition_cost,
-                ALT_BN128_ADDITION_OUTPUT_LEN,
+                ALT_BN128_ADDITION_OUTPUT_SIZE,
             ),
-            ALT_BN128_MUL => (
+            ALT_BN128_G1_MUL_BE | ALT_BN128_G1_MUL_LE => (
                 execution_cost.alt_bn128_multiplication_cost,
-                ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
+                ALT_BN128_MULTIPLICATION_OUTPUT_SIZE,
             ),
-            ALT_BN128_PAIRING => {
+            ALT_BN128_PAIRING_BE | ALT_BN128_PAIRING_LE => {
                 let ele_len = input_size
-                    .checked_div(ALT_BN128_PAIRING_ELEMENT_LEN as u64)
+                    .checked_div(ALT_BN128_PAIRING_ELEMENT_SIZE as u64)
                     .expect("div by non-zero constant");
                 let cost = execution_cost
                     .alt_bn128_pairing_one_pair_cost_first
@@ -1587,8 +1602,8 @@ declare_builtin_function!(
                     )
                     .saturating_add(execution_cost.sha256_base_cost)
                     .saturating_add(input_size)
-                    .saturating_add(ALT_BN128_PAIRING_OUTPUT_LEN as u64);
-                (cost, ALT_BN128_PAIRING_OUTPUT_LEN)
+                    .saturating_add(ALT_BN128_PAIRING_OUTPUT_SIZE as u64);
+                (cost, ALT_BN128_PAIRING_OUTPUT_SIZE)
             }
             _ => {
                 return Err(SyscallError::InvalidAttribute.into());
@@ -1609,19 +1624,66 @@ declare_builtin_function!(
             invoke_context.get_check_aligned(),
         )?;
 
-        let calculation = match group_op {
-            ALT_BN128_ADD => alt_bn128_addition,
-            ALT_BN128_MUL => alt_bn128_multiplication,
-            ALT_BN128_PAIRING => alt_bn128_pairing,
+        let result_point = match group_op {
+            ALT_BN128_G1_ADD_BE => {
+                alt_bn128_versioned_g1_addition(VersionedG1Addition::V0, input, Endianness::BE)
+            }
+            ALT_BN128_G1_ADD_LE => {
+                if invoke_context.get_feature_set().alt_bn128_little_endian {
+                    alt_bn128_versioned_g1_addition(VersionedG1Addition::V0, input, Endianness::LE)
+                } else {
+                    return Err(SyscallError::InvalidAttribute.into());
+                }
+            }
+            ALT_BN128_G1_MUL_BE => {
+                alt_bn128_versioned_g1_multiplication(
+                    VersionedG1Multiplication::V1,
+                    input,
+                    Endianness::BE
+                )
+            }
+            ALT_BN128_G1_MUL_LE => {
+                if invoke_context.get_feature_set().alt_bn128_little_endian {
+                    alt_bn128_versioned_g1_multiplication(
+                        VersionedG1Multiplication::V1,
+                        input,
+                        Endianness::LE
+                    )
+                } else {
+                    return Err(SyscallError::InvalidAttribute.into());
+                }
+            }
+            ALT_BN128_PAIRING_BE => {
+                let version = if invoke_context
+                    .get_feature_set()
+                    .fix_alt_bn128_pairing_length_check {
+                    VersionedPairing::V1
+                } else {
+                    VersionedPairing::V0
+                };
+                alt_bn128_versioned_pairing(version, input, Endianness::BE)
+            }
+            ALT_BN128_PAIRING_LE => {
+                if invoke_context.get_feature_set().alt_bn128_little_endian {
+                    alt_bn128_versioned_pairing(VersionedPairing::V1, input, Endianness::LE)
+                } else {
+                    return Err(SyscallError::InvalidAttribute.into());
+                }
+            }
             _ => {
                 return Err(SyscallError::InvalidAttribute.into());
             }
         };
 
-        let Ok(result_point) = calculation(input) else { return Ok(1) };
-
-        call_result.copy_from_slice(&result_point);
-        Ok(SUCCESS)
+        match result_point {
+            Ok(point) => {
+                call_result.copy_from_slice(&point);
+                Ok(SUCCESS)
+            }
+            Err(_) => {
+                Ok(1)
+            }
+        }
     }
 );
 
@@ -1752,19 +1814,13 @@ declare_builtin_function!(
             })
             .collect::<Result<Vec<_>, Error>>()?;
 
-        let simplify_alt_bn128_syscall_error_codes = invoke_context
-            .get_feature_set()
-            .simplify_alt_bn128_syscall_error_codes;
-
-        let hash = match poseidon::hashv(parameters, endianness, inputs.as_slice()) {
-            Ok(hash) => hash,
-            Err(e) => {
-                return if simplify_alt_bn128_syscall_error_codes {
-                    Ok(1)
-                } else {
-                    Ok(e.into())
-                };
-            }
+        let result = if invoke_context.get_feature_set().poseidon_enforce_padding {
+            poseidon::hashv(parameters, endianness, inputs.as_slice())
+        } else {
+            poseidon::legacy::hashv(parameters, endianness, inputs.as_slice())
+        };
+        let Ok(hash) = result else {
+            return Ok(1);
         };
         hash_result.copy_from_slice(&hash.to_bytes());
 
@@ -1804,27 +1860,36 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        use solana_bn254::compression::prelude::{
-            alt_bn128_g1_compress, alt_bn128_g1_decompress, alt_bn128_g2_compress,
-            alt_bn128_g2_decompress, ALT_BN128_G1_COMPRESS, ALT_BN128_G1_DECOMPRESS,
-            ALT_BN128_G2_COMPRESS, ALT_BN128_G2_DECOMPRESS, G1, G1_COMPRESSED, G2, G2_COMPRESSED,
+        use solana_bn254::{
+            prelude::{ALT_BN128_G1_POINT_SIZE, ALT_BN128_G2_POINT_SIZE},
+            compression::prelude::{
+                alt_bn128_g1_compress, alt_bn128_g1_decompress,
+                alt_bn128_g2_compress, alt_bn128_g2_decompress,
+                alt_bn128_g1_compress_le, alt_bn128_g1_decompress_le,
+                alt_bn128_g2_compress_le, alt_bn128_g2_decompress_le,
+                ALT_BN128_G1_COMPRESS_BE, ALT_BN128_G1_DECOMPRESS_BE,
+                ALT_BN128_G2_COMPRESS_BE, ALT_BN128_G2_DECOMPRESS_BE,
+                ALT_BN128_G1_COMPRESSED_POINT_SIZE, ALT_BN128_G2_COMPRESSED_POINT_SIZE,
+                ALT_BN128_G1_COMPRESS_LE, ALT_BN128_G2_COMPRESS_LE,
+                ALT_BN128_G1_DECOMPRESS_LE, ALT_BN128_G2_DECOMPRESS_LE,
+            }
         };
         let execution_cost = invoke_context.get_execution_cost();
         let base_cost = execution_cost.syscall_base_cost;
         let (cost, output): (u64, usize) = match op {
-            ALT_BN128_G1_COMPRESS => (
+            ALT_BN128_G1_COMPRESS_BE | ALT_BN128_G1_COMPRESS_LE => (
                 base_cost.saturating_add(execution_cost.alt_bn128_g1_compress),
-                G1_COMPRESSED,
+                ALT_BN128_G1_COMPRESSED_POINT_SIZE,
             ),
-            ALT_BN128_G1_DECOMPRESS => {
-                (base_cost.saturating_add(execution_cost.alt_bn128_g1_decompress), G1)
+            ALT_BN128_G1_DECOMPRESS_BE | ALT_BN128_G1_DECOMPRESS_LE => {
+                (base_cost.saturating_add(execution_cost.alt_bn128_g1_decompress), ALT_BN128_G1_POINT_SIZE)
             }
-            ALT_BN128_G2_COMPRESS => (
+            ALT_BN128_G2_COMPRESS_BE | ALT_BN128_G2_COMPRESS_LE => (
                 base_cost.saturating_add(execution_cost.alt_bn128_g2_compress),
-                G2_COMPRESSED,
+                ALT_BN128_G2_COMPRESSED_POINT_SIZE,
             ),
-            ALT_BN128_G2_DECOMPRESS => {
-                (base_cost.saturating_add(execution_cost.alt_bn128_g2_decompress), G2)
+            ALT_BN128_G2_DECOMPRESS_BE | ALT_BN128_G2_DECOMPRESS_LE => {
+                (base_cost.saturating_add(execution_cost.alt_bn128_g2_decompress), ALT_BN128_G2_POINT_SIZE)
             }
             _ => {
                 return Err(SyscallError::InvalidAttribute.into());
@@ -1845,69 +1910,75 @@ declare_builtin_function!(
             invoke_context.get_check_aligned(),
         )?;
 
-        let simplify_alt_bn128_syscall_error_codes = invoke_context
-            .get_feature_set()
-            .simplify_alt_bn128_syscall_error_codes;
-
         match op {
-            ALT_BN128_G1_COMPRESS => {
-                let result_point = match alt_bn128_g1_compress(input) {
-                    Ok(result_point) => result_point,
-                    Err(e) => {
-                        return if simplify_alt_bn128_syscall_error_codes {
-                            Ok(1)
-                        } else {
-                            Ok(e.into())
-                        };
-                    }
+            ALT_BN128_G1_COMPRESS_BE => {
+                let Ok(result_point) = alt_bn128_g1_compress(input) else {
+                    return Ok(1);
                 };
                 call_result.copy_from_slice(&result_point);
-                Ok(SUCCESS)
             }
-            ALT_BN128_G1_DECOMPRESS => {
-                let result_point = match alt_bn128_g1_decompress(input) {
-                    Ok(result_point) => result_point,
-                    Err(e) => {
-                        return if simplify_alt_bn128_syscall_error_codes {
-                            Ok(1)
-                        } else {
-                            Ok(e.into())
-                        };
-                    }
+            ALT_BN128_G1_COMPRESS_LE => {
+                if invoke_context.get_feature_set().alt_bn128_little_endian {
+                    let Ok(result_point) = alt_bn128_g1_compress_le(input) else {
+                        return Ok(1);
+                    };
+                    call_result.copy_from_slice(&result_point);
+                } else {
+                    return Err(SyscallError::InvalidAttribute.into());
+                }
+            }
+            ALT_BN128_G1_DECOMPRESS_BE => {
+                let Ok(result_point) = alt_bn128_g1_decompress(input) else {
+                    return Ok(1);
                 };
                 call_result.copy_from_slice(&result_point);
-                Ok(SUCCESS)
             }
-            ALT_BN128_G2_COMPRESS => {
-                let result_point = match alt_bn128_g2_compress(input) {
-                    Ok(result_point) => result_point,
-                    Err(e) => {
-                        return if simplify_alt_bn128_syscall_error_codes {
-                            Ok(1)
-                        } else {
-                            Ok(e.into())
-                        };
-                    }
+            ALT_BN128_G1_DECOMPRESS_LE => {
+                if invoke_context.get_feature_set().alt_bn128_little_endian {
+                    let Ok(result_point) = alt_bn128_g1_decompress_le(input) else {
+                        return Ok(1);
+                    };
+                    call_result.copy_from_slice(&result_point);
+                } else {
+                    return Err(SyscallError::InvalidAttribute.into());
+                }
+            }
+            ALT_BN128_G2_COMPRESS_BE => {
+                let Ok(result_point) = alt_bn128_g2_compress(input) else {
+                    return Ok(1);
                 };
                 call_result.copy_from_slice(&result_point);
-                Ok(SUCCESS)
             }
-            ALT_BN128_G2_DECOMPRESS => {
-                let result_point = match alt_bn128_g2_decompress(input) {
-                    Ok(result_point) => result_point,
-                    Err(e) => {
-                        return if simplify_alt_bn128_syscall_error_codes {
-                            Ok(1)
-                        } else {
-                            Ok(e.into())
-                        };
-                    }
+            ALT_BN128_G2_COMPRESS_LE => {
+                if invoke_context.get_feature_set().alt_bn128_little_endian {
+                    let Ok(result_point) = alt_bn128_g2_compress_le(input) else {
+                        return Ok(1);
+                    };
+                    call_result.copy_from_slice(&result_point);
+                } else {
+                    return Err(SyscallError::InvalidAttribute.into());
+                }
+            }
+            ALT_BN128_G2_DECOMPRESS_BE => {
+                let Ok(result_point) = alt_bn128_g2_decompress(input) else {
+                    return Ok(1);
                 };
                 call_result.copy_from_slice(&result_point);
-                Ok(SUCCESS)
             }
-            _ => Err(SyscallError::InvalidAttribute.into()),
+            ALT_BN128_G2_DECOMPRESS_LE => {
+                if invoke_context.get_feature_set().alt_bn128_little_endian {
+                    let Ok(result_point) = alt_bn128_g2_decompress_le(input) else {
+                        return Ok(1);
+                    };
+                    call_result.copy_from_slice(&result_point);
+                } else {
+                    return Err(SyscallError::InvalidAttribute.into());
+                }
+            }
+            _ => return Err(SyscallError::InvalidAttribute.into()),
         }
+
+        Ok(SUCCESS)
     }
 );
 
@@ -2083,7 +2154,7 @@ mod tests {
         solana_stable_layout::stable_instruction::StableInstruction,
         solana_stake_interface::stake_history::{self, StakeHistory, StakeHistoryEntry},
         solana_sysvar_id::SysvarId,
-        solana_transaction_context::{IndexOfAccount, InstructionAccount},
+        solana_transaction_context::{instruction_accounts::InstructionAccount, IndexOfAccount},
         std::{
             hash::{DefaultHasher, Hash, Hasher},
             mem,
@@ -4161,7 +4232,7 @@ mod tests {
     }
 
     type BuiltinFunctionRustInterface<'a> = fn(
-        &mut InvokeContext<'a>,
+        &mut InvokeContext<'a, 'a>,
         u64,
         u64,
         u64,
@@ -4171,7 +4242,7 @@ mod tests {
     ) -> Result<u64, Box<dyn std::error::Error>>;
 
     fn call_program_address_common<'a, 'b: 'a>(
-        invoke_context: &'a mut InvokeContext<'b>,
+        invoke_context: &'a mut InvokeContext<'b, 'b>,
         seeds: &[&[u8]],
         program_id: &Pubkey,
         overlap_outputs: bool,
@@ -4224,8 +4295,8 @@ mod tests {
         result.map(|_| (address, bump_seed))
     }
 
-    fn create_program_address(
-        invoke_context: &mut InvokeContext,
+    fn create_program_address<'a>(
+        invoke_context: &mut InvokeContext<'a, 'a>,
         seeds: &[&[u8]],
         address: &Pubkey,
     ) -> Result<Pubkey, Error> {
@@ -4239,8 +4310,8 @@ mod tests {
         Ok(address)
     }
 
-    fn try_find_program_address(
-        invoke_context: &mut InvokeContext,
+    fn try_find_program_address<'a>(
+        invoke_context: &mut InvokeContext<'a, 'a>,
         seeds: &[&[u8]],
         address: &Pubkey,
     ) -> Result<(Pubkey, u8), Error> {
@@ -4770,11 +4841,14 @@ mod tests {
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
         let feature_set = SVMFeatureSet::default();
+        let program_runtime_environments = ProgramRuntimeEnvironments::default();
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockCallback {},
             &feature_set,
+            &program_runtime_environments,
+            &program_runtime_environments,
             &sysvar_cache,
         );
 
@@ -4832,11 +4906,14 @@ mod tests {
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
         let feature_set = SVMFeatureSet::default();
+        let program_runtime_environments = ProgramRuntimeEnvironments::default();
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockCallback {},
             &feature_set,
+            &program_runtime_environments,
+            &program_runtime_environments,
             &sysvar_cache,
         );
 

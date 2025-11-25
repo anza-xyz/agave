@@ -5,7 +5,7 @@ use {
         staked_validators_cache::StakedValidatorsCache,
         vote_history_storage::{SavedVoteHistoryVersions, VoteHistoryStorage},
     },
-    agave_votor_messages::consensus_message::{CertificateMessage, ConsensusMessage},
+    agave_votor_messages::consensus_message::{Certificate, ConsensusMessage},
     bincode::serialize,
     crossbeam_channel::Receiver,
     solana_client::connection_cache::ConnectionCache,
@@ -45,7 +45,7 @@ pub enum BLSOp {
         saved_vote_history: SavedVoteHistoryVersions,
     },
     PushCertificate {
-        certificate: Arc<CertificateMessage>,
+        certificate: Arc<Certificate>,
     },
 }
 
@@ -142,7 +142,7 @@ impl VotingService {
         };
 
         let thread_hdl = Builder::new()
-            .name("solVoteService".to_string())
+            .name("solVotorVoteSvc".to_string())
             .spawn(move || {
                 let mut staked_validators_cache = StakedValidatorsCache::new(
                     bank_forks.clone(),
@@ -152,6 +152,7 @@ impl VotingService {
                     alpenglow_port_override,
                 );
 
+                info!("AlpenglowVotingService has started");
                 loop {
                     let Ok(bls_op) = bls_receiver.recv() else {
                         break;
@@ -165,6 +166,7 @@ impl VotingService {
                         &mut staked_validators_cache,
                     );
                 }
+                info!("AlpenglowVotingService has stopped");
             })
             .unwrap();
         Self { thread_hdl }
@@ -234,7 +236,7 @@ impl VotingService {
                 );
             }
             BLSOp::PushCertificate { certificate } => {
-                let vote_slot = certificate.certificate.slot();
+                let vote_slot = certificate.cert_type.slot();
                 let message = ConsensusMessage::Certificate((*certificate).clone());
                 Self::broadcast_consensus_message(
                     vote_slot,
@@ -261,15 +263,13 @@ mod tests {
             NullVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
         },
         agave_votor_messages::{
-            consensus_message::{
-                Certificate, CertificateMessage, CertificateType, ConsensusMessage, VoteMessage,
-            },
+            consensus_message::{Certificate, CertificateType, ConsensusMessage, VoteMessage},
             vote::Vote,
         },
         solana_bls_signatures::Signature as BLSSignature,
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
         solana_keypair::Keypair,
-        solana_net_utils::sockets::bind_to_localhost_unique,
+        solana_net_utils::{sockets::bind_to_localhost_unique, SocketAddrSpace},
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
@@ -279,8 +279,8 @@ mod tests {
         },
         solana_signer::Signer,
         solana_streamer::{
-            quic::{spawn_server_with_cancel, QuicServerParams, SpawnServerResult},
-            socket::SocketAddrSpace,
+            nonblocking::swqos::SwQosConfig,
+            quic::{spawn_stake_wighted_qos_server, QuicStreamerConfig, SpawnServerResult},
             streamer::StakedNodes,
         },
         std::{net::SocketAddr, sync::Arc},
@@ -344,18 +344,18 @@ mod tests {
         rank: 1,
     }))]
     #[test_case(BLSOp::PushCertificate {
-        certificate: Arc::new(CertificateMessage {
-            certificate: Certificate::new(CertificateType::Skip, 5, None),
+        certificate: Arc::new(Certificate {
+            cert_type: CertificateType::Skip(5),
             signature: BLSSignature::default(),
             bitmap: Vec::new(),
         }),
-    }, ConsensusMessage::Certificate(CertificateMessage {
-        certificate: Certificate::new(CertificateType::Skip, 5, None),
+    }, ConsensusMessage::Certificate(Certificate {
+        cert_type: CertificateType::Skip(5),
         signature: BLSSignature::default(),
         bitmap: Vec::new(),
     }))]
     fn test_send_message(bls_op: BLSOp, expected_message: ConsensusMessage) {
-        solana_logger::setup();
+        agave_logger::setup();
         let (bls_sender, bls_receiver) = crossbeam_channel::unbounded();
         // Create listener thread on a random port we allocated and return SocketAddr to create VotingService
 
@@ -367,7 +367,7 @@ mod tests {
         let (_, validator_keypairs) = create_voting_service(bls_receiver, listener_addr);
 
         // Send a BLS message via the VotingService
-        assert!(bls_sender.send(bls_op).is_ok());
+        bls_sender.send(bls_op).unwrap();
 
         // Start a quick streamer to handle quick control packets
         let (sender, receiver) = crossbeam_channel::unbounded();
@@ -383,14 +383,15 @@ mod tests {
         let SpawnServerResult {
             thread: quic_server_thread,
             ..
-        } = spawn_server_with_cancel(
+        } = spawn_stake_wighted_qos_server(
             "AlpenglowLocalClusterTest",
             "quic_streamer_test",
             [socket],
             &Keypair::new(),
             sender,
             staked_nodes,
-            QuicServerParams::default_for_tests(),
+            QuicStreamerConfig::default_for_tests(),
+            SwQosConfig::default(),
             cancel_token.clone(),
         )
         .unwrap();

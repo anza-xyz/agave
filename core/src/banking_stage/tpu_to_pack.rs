@@ -4,18 +4,19 @@
 use {
     agave_banking_stage_ingress_types::BankingPacketReceiver,
     agave_scheduler_bindings::{tpu_message_flags, SharableTransactionRegion, TpuToPackMessage},
+    agave_scheduling_utils::handshake::server::AgaveTpuToPackSession,
     rts_alloc::Allocator,
     solana_packet::PacketFlags,
     solana_perf::packet::PacketBatch,
     std::{
         net::IpAddr,
-        path::{Path, PathBuf},
         ptr::NonNull,
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc,
         },
         thread::JoinHandle,
+        time::Duration,
     },
 };
 
@@ -26,26 +27,18 @@ pub struct BankingPacketReceivers {
 }
 
 /// Spawns a thread to receive packets from TPU and send them to the external scheduler.
-///
-/// # Safety:
-/// - `allocator_worker_id` must be unique among all processes using the same allocator path.
-pub unsafe fn spawn(
+pub fn spawn(
     exit: Arc<AtomicBool>,
     receivers: BankingPacketReceivers,
-    allocator_path: PathBuf,
-    allocator_worker_id: u32,
-    queue_path: PathBuf,
+    AgaveTpuToPackSession {
+        allocator,
+        producer,
+    }: AgaveTpuToPackSession,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("solTpu2Pack".to_string())
         .spawn(move || {
-            // Setup allocator and queue
-            // SAFETY: The caller must ensure that no other process is using the same worker id.
-            if let Some((allocator, producer)) =
-                unsafe { setup(allocator_path, allocator_worker_id, queue_path) }
-            {
-                tpu_to_pack(exit, receivers, allocator, producer);
-            }
+            tpu_to_pack(exit, receivers, allocator, producer);
         })
         .unwrap()
 }
@@ -71,6 +64,7 @@ fn tpu_to_pack(
             recv(non_vote_receiver) -> msg => msg,
             recv(gossip_vote_receiver) -> msg => msg,
             recv(tpu_vote_receiver) -> msg => msg,
+            default(Duration::from_secs(1)) => continue,
         } {
             Ok(packet_batches) => packet_batches,
             Err(crossbeam_channel::RecvError) => {
@@ -102,28 +96,30 @@ fn handle_packet_batches(
             };
             let packet_size = packet_bytes.len();
 
-            let Some((allocated_ptr, tpu_to_pack_message)) =
-                allocate_and_reserve_message(allocator, producer, packet_size)
-            else {
-                warn!("Failed to allocate/reserve message. Dropping the rest of the batch.");
+            // Allocate space for the packet to be copied into.
+            let Some(allocated_ptr) = allocator.allocate(packet_size as u32) else {
+                warn!("Failed to allocate. Dropping the rest of the batch.");
                 break 'batch_loop;
             };
-
             // Get the offset of the allocated pointer in the allocator.
             // SAFETY: `allocated_ptr` was allocated from `allocator`.
             let allocated_ptr_offset_in_allocator = unsafe { allocator.offset(allocated_ptr) };
 
             // SAFETY:
             // - `allocated_ptr` is valid for `packet_size` bytes.
-            // - `tpu_to_pack_message` is a valid pointer to a `TpuToPackMessage`.
-            unsafe {
+            let message = unsafe {
                 copy_packet_and_populate_message(
                     packet_bytes,
                     packet.meta(),
                     allocated_ptr,
                     allocated_ptr_offset_in_allocator,
-                    tpu_to_pack_message,
-                );
+                )
+            };
+
+            if producer.try_write(message).is_err() {
+                // SAFETY: `allocated_ptr` was allocated by `allocator`
+                //         and not previously freed.
+                unsafe { allocator.free(allocated_ptr) };
             }
         }
     }
@@ -133,37 +129,14 @@ fn handle_packet_batches(
     producer.commit();
 }
 
-fn allocate_and_reserve_message(
-    allocator: &Allocator,
-    producer: &mut shaq::Producer<TpuToPackMessage>,
-    packet_size: usize,
-) -> Option<(NonNull<u8>, NonNull<TpuToPackMessage>)> {
-    // Allocate enough memory for the packet in the allocator.
-    let allocated_ptr = allocator.allocate(packet_size as u32)?;
-
-    // Reserve space in the producer queue for the packet message.
-    let Some(tpu_to_pack_message) = producer.reserve() else {
-        // Free the allocated packet if we can't reserve space in the queue.
-        // SAFETY: `allocated_ptr` was allocated from `allocator`.
-        unsafe {
-            allocator.free(allocated_ptr);
-        }
-        return None;
-    };
-
-    Some((allocated_ptr, tpu_to_pack_message))
-}
-
 /// # Safety:
 /// - `allocated_ptr` must be valid for `packet_bytes.len()` bytes.
-/// - `tpu_to_pack_message` must be a valid pointer to a `TpuToPackMessage`.
 unsafe fn copy_packet_and_populate_message(
     packet_bytes: &[u8],
     packet_meta: &solana_packet::Meta,
     allocated_ptr: NonNull<u8>,
     allocated_ptr_offset_in_allocator: usize,
-    tpu_to_pack_message: NonNull<TpuToPackMessage>,
-) {
+) -> TpuToPackMessage {
     // Copy the packet data into the allocated memory.
     // SAFETY:
     // - `allocated_ptr` is valid for `packet_size` bytes.
@@ -188,14 +161,10 @@ unsafe fn copy_packet_and_populate_message(
     // Get the source address of the packet - convert to expected format.
     let src_addr = map_src_addr(packet_meta.addr);
 
-    // Populate the message and write it to the queue.
-    // SAFETY: `tpu_to_pack_message` is a valid pointer to a `TpuToPackMessage`.
-    unsafe {
-        tpu_to_pack_message.write(TpuToPackMessage {
-            transaction,
-            flags: tpu_message_flags,
-            src_addr,
-        });
+    TpuToPackMessage {
+        transaction,
+        flags: tpu_message_flags,
+        src_addr,
     }
 }
 
@@ -222,29 +191,6 @@ fn map_src_addr(addr: IpAddr) -> [u8; 16] {
     }
 }
 
-/// # Safety:
-/// - `allocator_worker_id` must be unique among all processes using the same allocator path.
-unsafe fn setup(
-    allocator_path: impl AsRef<Path>,
-    allocator_worker_id: u32,
-    queue_path: impl AsRef<Path>,
-) -> Option<(Allocator, shaq::Producer<TpuToPackMessage>)> {
-    // SAFETY: The caller must ensure that no other process is using the same worker id.
-    let allocator = unsafe { Allocator::join(allocator_path, allocator_worker_id) }
-        .map_err(|err| {
-            error!("Failed to join allocator: {err:?}");
-        })
-        .ok()?;
-
-    let producer = shaq::Producer::join(queue_path)
-        .map_err(|err| {
-            error!("Failed to join queue: {err:?}");
-        })
-        .ok()?;
-
-    Some((allocator, producer))
-}
-
 #[cfg(test)]
 mod tests {
     use {super::*, std::net::Ipv4Addr};
@@ -253,34 +199,24 @@ mod tests {
     fn test_copy_packet_and_populate_message() {
         let packet_bytes = vec![1, 2, 3, 4, 5];
         let src_ip = Ipv4Addr::new(192, 168, 1, 1);
-        let packet_meta = solana_packet::Meta {
-            size: packet_bytes.len(),
-            addr: IpAddr::V4(src_ip),
-            port: 1,
-            flags: PacketFlags::all(),
-        };
+        let mut packet_meta = solana_packet::Meta::default();
+        packet_meta.size = packet_bytes.len();
+        packet_meta.addr = IpAddr::V4(src_ip);
+        packet_meta.port = 1;
+        packet_meta.flags = PacketFlags::all();
 
         // Buffer to simulate allocated memory
         let mut buffer = [0u8; 256];
-        let mut tpu_to_pack_message = TpuToPackMessage {
-            transaction: SharableTransactionRegion {
-                offset: 0,
-                length: 0,
-            },
-            flags: 0,
-            src_addr: [0; 16],
-        };
         const DUMMY_OFFSET: usize = 42;
 
-        unsafe {
+        let tpu_to_pack_message = unsafe {
             copy_packet_and_populate_message(
                 packet_bytes.as_slice(),
                 &packet_meta,
                 NonNull::new(buffer.as_mut_ptr()).unwrap(),
                 DUMMY_OFFSET,
-                NonNull::new(&mut tpu_to_pack_message as *mut TpuToPackMessage).unwrap(),
-            );
-        }
+            )
+        };
 
         assert_eq!(&buffer[..packet_bytes.len()], packet_bytes.as_slice());
         assert_eq!(tpu_to_pack_message.transaction.offset, DUMMY_OFFSET);

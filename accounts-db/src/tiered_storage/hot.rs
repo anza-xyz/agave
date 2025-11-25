@@ -130,7 +130,7 @@ impl HotAccountOffset {
         }
 
         // Hot accounts are aligned based on HOT_ACCOUNT_ALIGNMENT.
-        if offset % HOT_ACCOUNT_ALIGNMENT != 0 {
+        if !offset.is_multiple_of(HOT_ACCOUNT_ALIGNMENT) {
             return Err(TieredStorageError::OffsetAlignmentError(
                 offset,
                 HOT_ACCOUNT_ALIGNMENT,
@@ -878,7 +878,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test");
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         // create owners
         let owners: Vec<_> = std::iter::repeat_with(Pubkey::new_unique)
@@ -892,15 +892,15 @@ mod tests {
 
         // create account data
         let datas: Vec<_> = (0..num_accounts)
-            .map(|i| vec![i as u8; rng.gen_range(0..4096)])
+            .map(|i| vec![i as u8; rng.random_range(0..4096)])
             .collect();
 
         // create account metas that link to its data and owner
         let metas: Vec<_> = (0..num_accounts)
             .map(|i| {
                 HotAccountMeta::new()
-                    .with_lamports(rng.gen())
-                    .with_owner_offset(OwnerOffset(rng.gen_range(0..num_owners) as u32))
+                    .with_lamports(rng.random())
+                    .with_owner_offset(OwnerOffset(rng.random_range(0..num_owners) as u32))
                     .with_account_data_padding(padding_bytes(datas[i].len()))
             })
             .collect();
@@ -1156,13 +1156,13 @@ mod tests {
         let path = temp_dir.path().join("test_hot_storage_footer");
 
         const NUM_ACCOUNTS: u32 = 10;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         let hot_account_metas: Vec<_> = (0..NUM_ACCOUNTS)
             .map(|_| {
                 HotAccountMeta::new()
-                    .with_lamports(rng.gen_range(0..u64::MAX))
-                    .with_owner_offset(OwnerOffset(rng.gen_range(0..NUM_ACCOUNTS)))
+                    .with_lamports(rng.random_range(0..u64::MAX))
+                    .with_owner_offset(OwnerOffset(rng.random_range(0..NUM_ACCOUNTS)))
             })
             .collect();
 
@@ -1237,7 +1237,7 @@ mod tests {
             .path()
             .join("test_hot_storage_get_account_offset_and_address");
         const NUM_ACCOUNTS: u32 = 10;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         let addresses: Vec<_> = std::iter::repeat_with(Pubkey::new_unique)
             .take(NUM_ACCOUNTS as usize)
@@ -1248,7 +1248,7 @@ mod tests {
             .map(|address| AccountIndexWriterEntry {
                 address: *address,
                 offset: HotAccountOffset::new(
-                    rng.gen_range(0..u32::MAX) as usize * HOT_ACCOUNT_ALIGNMENT,
+                    rng.random_range(0..u32::MAX) as usize * HOT_ACCOUNT_ALIGNMENT,
                 )
                 .unwrap(),
             })
@@ -1462,13 +1462,8 @@ mod tests {
             .map(|size| create_test_account(*size))
             .collect();
 
-        let account_refs: Vec<_> = accounts
-            .iter()
-            .map(|account| (&account.0.pubkey, &account.1))
-            .collect();
-
         // Slot information is not used here
-        let storable_accounts = (Slot::MAX, &account_refs[..]);
+        let storable_accounts = (Slot::MAX, &accounts[..]);
 
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("test_write_account_and_index_blocks");
@@ -1489,7 +1484,7 @@ mod tests {
                     storable_accounts.account_default_if_zero_lamport(i, |account| {
                         verify_test_account(
                             &stored_account,
-                            &account.to_account_shared_data(),
+                            &account.take_account(),
                             account.pubkey(),
                         );
                     });
@@ -1512,7 +1507,7 @@ mod tests {
                     storable_accounts.account_default_if_zero_lamport(offset, |account| {
                         verify_test_account(
                             &stored_account,
-                            &account.to_account_shared_data(),
+                            &account.take_account(),
                             account.pubkey(),
                         );
                     });
@@ -1526,11 +1521,7 @@ mod tests {
         hot_storage
             .scan_accounts(|_offset, stored_account| {
                 storable_accounts.account_default_if_zero_lamport(i, |account| {
-                    verify_test_account(
-                        &stored_account,
-                        &account.to_account_shared_data(),
-                        account.pubkey(),
-                    );
+                    verify_test_account(&stored_account, &account.take_account(), account.pubkey());
                 });
                 i += 1;
             })

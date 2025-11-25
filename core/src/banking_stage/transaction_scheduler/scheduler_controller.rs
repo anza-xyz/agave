@@ -214,6 +214,8 @@ where
                 let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
                     &mut self.container,
                     scheduling_budget,
+                    bank.feature_set
+                        .is_active(&agave_feature_set::relax_intrabatch_account_locks::ID),
                     |txs, results| {
                         Self::pre_graph_filter(txs, results, bank, MAX_PROCESSING_AGE)
                     },
@@ -469,9 +471,7 @@ mod tests {
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::Message,
         solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
-        solana_poh::poh_recorder::{
-            SharedLeaderFirstTickHeight, SharedTickHeight, SharedWorkingBank,
-        },
+        solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
         solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
         solana_runtime_transaction::transaction_meta::StaticMeta,
@@ -491,7 +491,7 @@ mod tests {
         bank: Arc<Bank>,
         mint_keypair: Keypair,
         banking_packet_sender: Sender<Arc<Vec<PacketBatch>>>,
-        shared_working_bank: SharedWorkingBank,
+        shared_leader_state: SharedLeaderState,
         consume_work_receivers: Vec<Receiver<ConsumeWork<Tx>>>,
         finished_consume_work_sender: Sender<FinishedConsumeWork<Tx>>,
     }
@@ -522,15 +522,9 @@ mod tests {
         genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0);
         let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
 
-        let shared_working_bank = SharedWorkingBank::empty();
-        let shared_tick_height = SharedTickHeight::new(0);
-        let shared_leader_first_tick_height = SharedLeaderFirstTickHeight::new(None);
+        let shared_leader_state = SharedLeaderState::new(0, None, None);
 
-        let decision_maker = DecisionMaker::new(
-            shared_working_bank.clone(),
-            shared_tick_height,
-            shared_leader_first_tick_height,
-        );
+        let decision_maker = DecisionMaker::new(shared_leader_state.clone());
 
         let (banking_packet_sender, banking_packet_receiver) = unbounded();
         let receive_and_buffer =
@@ -542,7 +536,7 @@ mod tests {
         let test_frame = TestFrame {
             bank,
             mint_keypair,
-            shared_working_bank,
+            shared_leader_state,
             banking_packet_sender,
             consume_work_receivers,
             finished_consume_work_sender,
@@ -669,13 +663,18 @@ mod tests {
         let TestFrame {
             bank,
             mint_keypair,
-            shared_working_bank,
+            shared_leader_state,
             banking_packet_sender,
             consume_work_receivers,
             ..
         } = &mut test_frame;
 
-        shared_working_bank.store(bank.clone());
+        shared_leader_state.store(Arc::new(LeaderState::new(
+            Some(bank.clone()),
+            bank.tick_height(),
+            None,
+            None,
+        )));
 
         // Send packet batch to the scheduler - should do nothing until we become the leader.
         let tx1 = create_and_fund_prioritized_transfer(
@@ -723,13 +722,18 @@ mod tests {
         let TestFrame {
             bank,
             mint_keypair,
-            shared_working_bank,
+            shared_leader_state,
             banking_packet_sender,
             consume_work_receivers,
             ..
         } = &mut test_frame;
 
-        shared_working_bank.store(bank.clone());
+        shared_leader_state.store(Arc::new(LeaderState::new(
+            Some(bank.clone()),
+            bank.tick_height(),
+            None,
+            None,
+        )));
 
         let pk = Pubkey::new_unique();
         let tx1 = create_and_fund_prioritized_transfer(
@@ -780,13 +784,18 @@ mod tests {
         let TestFrame {
             bank,
             mint_keypair,
-            shared_working_bank,
+            shared_leader_state,
             banking_packet_sender,
             consume_work_receivers,
             ..
         } = &mut test_frame;
 
-        shared_working_bank.store(bank.clone());
+        shared_leader_state.store(Arc::new(LeaderState::new(
+            Some(bank.clone()),
+            bank.tick_height(),
+            None,
+            None,
+        )));
 
         // Send multiple batches - all get scheduled
         let txs1 = (0..2 * TARGET_NUM_TRANSACTIONS_PER_BATCH)
@@ -842,13 +851,18 @@ mod tests {
         let TestFrame {
             bank,
             mint_keypair,
-            shared_working_bank,
+            shared_leader_state,
             banking_packet_sender,
             consume_work_receivers,
             ..
         } = &mut test_frame;
 
-        shared_working_bank.store(bank.clone());
+        shared_leader_state.store(Arc::new(LeaderState::new(
+            Some(bank.clone()),
+            bank.tick_height(),
+            None,
+            None,
+        )));
 
         // Send 4 transactions w/o conflicts. 2 should be scheduled on each thread
         let txs = (0..4)
@@ -907,14 +921,19 @@ mod tests {
         let TestFrame {
             bank,
             mint_keypair,
-            shared_working_bank,
+            shared_leader_state,
             banking_packet_sender,
             consume_work_receivers,
             finished_consume_work_sender,
             ..
         } = &mut test_frame;
 
-        shared_working_bank.store(bank.clone());
+        shared_leader_state.store(Arc::new(LeaderState::new(
+            Some(bank.clone()),
+            bank.tick_height(),
+            None,
+            None,
+        )));
 
         // Send packet batch to the scheduler - should do nothing until we become the leader.
         let tx1 = create_and_fund_prioritized_transfer(

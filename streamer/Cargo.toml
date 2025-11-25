@@ -17,6 +17,7 @@ crate-type = ["lib"]
 name = "solana_streamer"
 
 [features]
+agave-unstable-api = []
 dev-context-only-utils = []
 
 [dependencies]
@@ -61,9 +62,10 @@ tokio-util = { workspace = true, features = ["rt"] }
 x509-parser = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { workspace = true }
 anyhow = { workspace = true }
 assert_matches = { workspace = true }
+chrono = { workspace = true, features = ["now"] }
 clap = { version = "4.5.31", features = ["cargo", "derive", "error-context"] }
-solana-logger = { workspace = true }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
-solana-streamer = { path = ".", features = ["dev-context-only-utils"] }
+solana-streamer = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }

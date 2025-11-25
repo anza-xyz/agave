@@ -245,10 +245,6 @@ impl AccountsCache {
         }
     }
 
-    pub fn contains_any_slots(&self, max_slot_inclusive: Slot) -> bool {
-        self.cache.iter().any(|e| e.key() <= &max_slot_inclusive)
-    }
-
     pub fn cached_frozen_slots(&self) -> Vec<Slot> {
         self.cache
             .iter()

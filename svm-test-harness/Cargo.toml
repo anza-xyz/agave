@@ -1,0 +1,58 @@
+[package]
+name = "solana-svm-test-harness"
+description = "Solana SVM test harness."
+documentation = "https://docs.rs/solana-svm-test-harness"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[[bin]]
+name = "test_exec_instr"
+path = "bin/test_exec_instr.rs"
+required-features = ["fuzz"]
+
+[features]
+agave-unstable-api = []
+dummy-for-ci-check = ["fuzz"]
+fuzz = ["dep:clap", "dep:prost", "dep:prost-build", "dep:protosol"]
+
+[dependencies]
+agave-feature-set = { workspace = true }
+agave-logger = { workspace = true }
+agave-precompiles = { workspace = true }
+agave-syscalls = { workspace = true }
+bincode = { workspace = true }
+clap = { version = "4.5.2", features = ["derive"], optional = true }
+prost = { workspace = true, optional = true }
+protosol = { workspace = true, optional = true }
+solana-account = { workspace = true }
+solana-builtins = { workspace = true }
+solana-clock = { workspace = true, features = ["sysvar"] }
+solana-compute-budget = { workspace = true }
+solana-epoch-schedule = { workspace = true, features = ["sysvar"] }
+solana-instruction = { workspace = true }
+solana-instruction-error = { workspace = true, features = ["serde"] }
+solana-last-restart-slot = { workspace = true, features = ["sysvar"] }
+solana-precompile-error = { workspace = true }
+solana-program-runtime = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true, features = ["sysvar"] }
+solana-sdk-ids = { workspace = true }
+solana-stable-layout = { workspace = true }
+solana-svm = { workspace = true }
+solana-svm-callback = { workspace = true }
+solana-svm-log-collector = { workspace = true }
+solana-svm-timings = { workspace = true }
+solana-sysvar-id = { workspace = true }
+solana-transaction-context = { workspace = true }
+thiserror = { workspace = true }
+
+[build-dependencies]
+prost-build = { workspace = true, optional = true }
+
+[lints]
+workspace = true

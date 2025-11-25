@@ -15,6 +15,7 @@ all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
 [features]
+agave-unstable-api = []
 bincode = ["dep:bincode", "serde", "solana-account/bincode"]
 dev-context-only-utils = ["bincode", "solana-account/dev-context-only-utils", "dep:qualifier_attr"]
 serde = ["serde/derive"]
@@ -39,6 +40,7 @@ solana-account-info = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction-context = { path = ".", features = [
+    "agave-unstable-api",
     "dev-context-only-utils",
 ] }
 static_assertions = { workspace = true }

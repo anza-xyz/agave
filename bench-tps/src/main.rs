@@ -76,17 +76,10 @@ fn find_node_activated_stake(
 fn create_connection_cache(
     json_rpc_url: &str,
     tpu_connection_pool_size: usize,
-    use_quic: bool,
     bind_address: IpAddr,
     client_node_id: Option<&Keypair>,
     commitment_config: CommitmentConfig,
 ) -> ConnectionCache {
-    if !use_quic {
-        return ConnectionCache::with_udp(
-            "bench-tps-connection_cache_udp",
-            tpu_connection_pool_size,
-        );
-    }
     if client_node_id.is_none() {
         return ConnectionCache::new_quic(
             "bench-tps-connection_cache_quic",
@@ -169,7 +162,7 @@ fn create_client(
 }
 
 fn main() {
-    solana_logger::setup_with_default_filter();
+    agave_logger::setup_with_default_filter();
     solana_metrics::set_panic_hook("bench-tps", /*version:*/ None);
 
     let matches = cli::build_args(solana_version::version!()).get_matches();
@@ -193,7 +186,6 @@ fn main() {
         target_lamports_per_signature,
         num_lamports_per_account,
         external_client_type,
-        use_quic,
         tpu_connection_pool_size,
         skip_tx_account_data_size,
         compute_unit_price,
@@ -240,7 +232,6 @@ fn main() {
     let connection_cache = create_connection_cache(
         json_rpc_url,
         *tpu_connection_pool_size,
-        *use_quic,
         *bind_address,
         client_node_id.as_ref(),
         *commitment_config,

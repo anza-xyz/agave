@@ -13,9 +13,6 @@ pub struct BlockstoreOptions {
     pub access_type: AccessType,
     // Whether to open a blockstore under a recovery mode. Default: None.
     pub recovery_mode: Option<BlockstoreRecoveryMode>,
-    // When opening the Blockstore, determines whether to error or not if the
-    // desired open file descriptor limit cannot be configured. Default: true.
-    pub enforce_ulimit_nofile: bool,
     pub column_options: LedgerColumnOptions,
     pub num_rocksdb_compaction_threads: NonZeroUsize,
     pub num_rocksdb_flush_threads: NonZeroUsize,
@@ -29,7 +26,6 @@ impl Default for BlockstoreOptions {
         Self {
             access_type: AccessType::Primary,
             recovery_mode: None,
-            enforce_ulimit_nofile: true,
             column_options: LedgerColumnOptions::default(),
             num_rocksdb_compaction_threads: default_num_compaction_threads(),
             num_rocksdb_flush_threads: default_num_flush_threads(),
@@ -39,24 +35,21 @@ impl Default for BlockstoreOptions {
 
 impl BlockstoreOptions {
     pub fn default_for_tests() -> Self {
-        Self {
-            // No need to enforce the limit in tests
-            enforce_ulimit_nofile: false,
-            ..BlockstoreOptions::default()
-        }
+        BlockstoreOptions::default()
     }
 }
 
+/// The mode to open a Blockstore with. For more details, see:
+/// https://github.com/facebook/rocksdb/wiki/Read-only-and-Secondary-instances
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AccessType {
     /// Primary (read/write) access; only one process can have Primary access.
     Primary,
     /// Primary (read/write) access with RocksDB automatic compaction disabled.
     PrimaryForMaintenance,
-    /// Secondary (read) access; multiple processes can have Secondary access.
-    /// Additionally, Secondary access can be obtained while another process
-    /// already has Primary access.
-    Secondary,
+    /// Read only access; multiple processes can obtain ReadOnly access.
+    /// ReadOnly instance gets a static view of the database at creation time.
+    ReadOnly,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -122,18 +115,13 @@ impl LedgerColumnOptions {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum BlockstoreCompressionType {
+    #[default]
     None,
     Snappy,
     Lz4,
     Zlib,
-}
-
-impl Default for BlockstoreCompressionType {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl BlockstoreCompressionType {

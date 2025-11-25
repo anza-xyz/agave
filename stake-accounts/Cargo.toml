@@ -14,6 +14,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
 default = ["remote-wallet-hidraw"]
+agave-unstable-api = []
 remote-wallet-hidraw = ["solana-remote-wallet/linux-static-hidraw"]
 remote-wallet-libusb = ["solana-remote-wallet/linux-static-libusb"]
 
@@ -38,7 +39,6 @@ solana-rpc-client-api = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-stake-interface = { workspace = true }
-solana-stake-program = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-transaction = { workspace = true }
 solana-version = { workspace = true }

@@ -1,17 +1,15 @@
-#[cfg(feature = "dev-context-only-utils")]
-use crate::append_vec::{self, StoredAccountMeta};
 use {
     crate::{
         account_info::{AccountInfo, Offset},
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_db::AccountsFileId,
         append_vec::{AppendVec, AppendVecError},
-        buffered_reader::RequiredLenBufFileRead,
         storable_accounts::StorableAccounts,
         tiered_storage::{
             error::TieredStorageError, hot::HOT_FORMAT, index::IndexOffset, TieredStorage,
         },
     },
+    agave_fs::buffered_reader::RequiredLenBufFileRead,
     solana_account::AccountSharedData,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
@@ -51,6 +49,7 @@ pub enum AccountsFileError {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum StorageAccess {
     /// storages should be accessed by Mmap
+    #[deprecated(since = "4.0.0")]
     Mmap,
     /// storages should be accessed by File I/O
     /// ancient storages are created by 1-shot write to pack multiple accounts together more efficiently with new formats
@@ -207,24 +206,6 @@ impl AccountsFile {
         }
     }
 
-    /// calls `callback` with the account located at the specified index offset.
-    ///
-    /// Prefer get_stored_account_callback() when possible, as it does not contain file format
-    /// implementation details, and thus potentially can read less and be faster.
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn get_stored_account_meta_callback<Ret>(
-        &self,
-        offset: usize,
-        callback: impl for<'local> FnMut(StoredAccountMeta<'local>) -> Ret,
-    ) -> Option<Ret> {
-        match self {
-            Self::AppendVec(av) => av.get_stored_account_meta_callback(offset, callback),
-            Self::TieredStorage(_) => {
-                unimplemented!("StoredAccountMeta is only implemented for AppendVec")
-            }
-        }
-    }
-
     /// return an `AccountSharedData` for an account at `offset`, if any.  Otherwise return None.
     pub(crate) fn get_account_shared_data(&self, offset: usize) -> Option<AccountSharedData> {
         match self {
@@ -288,25 +269,6 @@ impl AccountsFile {
                 if let Some(reader) = ts.reader() {
                     reader.scan_accounts(callback)?;
                 }
-            }
-        }
-        Ok(())
-    }
-
-    /// Iterate over all accounts and call `callback` with each account.
-    ///
-    /// Prefer scan_accounts() when possible, as it does not contain file format
-    /// implementation details, and thus potentially can read less and be faster.
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn scan_accounts_stored_meta(
-        &self,
-        callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
-    ) -> Result<()> {
-        let mut reader = append_vec::new_scan_accounts_reader();
-        match self {
-            Self::AppendVec(av) => av.scan_accounts_stored_meta(&mut reader, callback)?,
-            Self::TieredStorage(_) => {
-                unimplemented!("StoredAccountMeta is only implemented for AppendVec")
             }
         }
         Ok(())
@@ -378,7 +340,7 @@ impl AccountsFile {
     }
 
     /// Returns the way to access this accounts file when archiving
-    pub fn internals_for_archive(&self) -> InternalsForArchive {
+    pub fn internals_for_archive(&self) -> InternalsForArchive<'_> {
         match self {
             Self::AppendVec(av) => av.internals_for_archive(),
             Self::TieredStorage(ts) => InternalsForArchive::Mmap(

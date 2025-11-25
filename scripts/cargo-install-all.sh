@@ -119,11 +119,6 @@ for bin in "${DCOU_BINS[@]}"; do
   dcouBinArgs+=(--bin "$bin")
 done
 
-excludeArgs=()
-for package in "${DCOU_TAINTED_PACKAGES[@]}"; do
-  excludeArgs+=(--exclude "$package")
-done
-
 cargo_build() {
   # shellcheck disable=SC2086 # Don't want to double quote $maybeRustVersion
   "$cargo" $maybeRustVersion build $buildProfileArg "$@"
@@ -150,21 +145,21 @@ check_dcou() {
   # output after turning rustc into the nightly mode with RUSTC_BOOTSTRAP=1.
   # In this way, additional requirement of nightly rustc toolchian is avoided.
   # Note that `cargo tree` can't be used, because it doesn't support `--bin`.
-  if check_dcou "${binArgs[@]}" --workspace "${excludeArgs[@]}"; then
+  if check_dcou "${binArgs[@]}" --workspace; then
      echo 'dcou feature activation is incorrectly activated!'
      exit 1
   fi
 
   # Build our production binaries without dcou.
-  cargo_build "${binArgs[@]}" --workspace "${excludeArgs[@]}"
+  cargo_build "${binArgs[@]}" --workspace
 
   # Finally, build the remaining dev tools with dcou.
   if [[ ${#dcouBinArgs[@]} -gt 0 ]]; then
-    if ! check_dcou "${dcouBinArgs[@]}"; then
+    if ! check_dcou --manifest-path "dev-bins/Cargo.toml" "${dcouBinArgs[@]}"; then
        echo 'dcou feature activation is incorrectly remain to be deactivated!'
        exit 1
     fi
-    cargo_build "${dcouBinArgs[@]}"
+    cargo_build --manifest-path "dev-bins/Cargo.toml" "${dcouBinArgs[@]}"
   fi
 
   # Exclude `spl-token` if requested
@@ -177,8 +172,12 @@ check_dcou() {
   fi
 )
 
-for bin in "${BINS[@]}" "${DCOU_BINS[@]}"; do
+for bin in "${BINS[@]}"; do
   cp -fv "target/$buildProfile/$bin" "$installDir"/bin
+done
+
+for bin in "${DCOU_BINS[@]}"; do
+  cp -fv "dev-bins/target/$buildProfile/$bin" "$installDir"/bin
 done
 
 if [[ $OSTYPE != msys ]]; then

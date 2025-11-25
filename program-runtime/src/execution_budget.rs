@@ -17,6 +17,19 @@ fn get_max_instruction_stack_depth(simd_0268_active: bool) -> usize {
     }
 }
 
+//Default CPI invocation cost
+pub const DEFAULT_INVOCATION_COST: u64 = 1000;
+//CPI Invocation cost with SIMD-0339 active
+pub const INVOKE_UNITS_COST_SIMD_0339: u64 = 946;
+
+fn get_invoke_unit_cost(simd_0339_active: bool) -> u64 {
+    if simd_0339_active {
+        INVOKE_UNITS_COST_SIMD_0339
+    } else {
+        DEFAULT_INVOCATION_COST
+    }
+}
+
 /// Max call depth. This is the maximum nesting of SBF to SBF call that can happen within a program.
 pub const MAX_CALL_DEPTH: usize = 64;
 
@@ -176,10 +189,16 @@ pub struct SVMTransactionExecutionCost {
 
 impl Default for SVMTransactionExecutionCost {
     fn default() -> Self {
-        Self {
+        Self::new_with_defaults(/* simd_0339_active */ false)
+    }
+}
+
+impl SVMTransactionExecutionCost {
+    pub fn new_with_defaults(simd_0339_active: bool) -> Self {
+        SVMTransactionExecutionCost {
             log_64_units: 100,
             create_program_address_units: 1500,
-            invoke_units: 1000,
+            invoke_units: get_invoke_unit_cost(simd_0339_active),
             sha256_base_cost: 85,
             sha256_byte_cost: 1,
             log_pubkey_units: 100,
@@ -216,15 +235,13 @@ impl Default for SVMTransactionExecutionCost {
             alt_bn128_g2_decompress: 13610,
         }
     }
-}
 
-impl SVMTransactionExecutionCost {
     /// Returns cost of the Poseidon hash function for the given number of
     /// inputs is determined by the following quadratic function:
     ///
     /// 61*n^2 + 542
     ///
-    /// Which aproximates the results of benchmarks of light-posiedon
+    /// Which approximates the results of benchmarks of light-posiedon
     /// library[0]. These results assume 1 CU per 33 ns. Examples:
     ///
     /// * 1 input

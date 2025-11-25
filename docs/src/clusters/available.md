@@ -66,7 +66,7 @@ $ agave-validator \
 ```
 
 The [`--known-validator`s](../operations/guides/validator-start.md#known-validators)
-are operated by Solana Labs
+are operated by Anza
 
 ## Testnet
 
@@ -119,7 +119,7 @@ $ agave-validator \
 The identities of the
 [`--known-validator`s](../operations/guides/validator-start.md#known-validators) are:
 
-- `5D1fNXzvv5NjV1ysLjirC4WY92RNsVH18vjmcszZd8on` - Solana Labs
+- `5D1fNXzvv5NjV1ysLjirC4WY92RNsVH18vjmcszZd8on` - Anza
 - `dDzy5SR3AXdYWVqbDEkVFdvSPCtS9ihF5kJkHCtXoFs` - MonkeDAO
 - `Ft5fbkqNa76vnsjYNwjDZUXoTWpP7VYm3mtsaQckQADN` - Certus One
 - `eoKpUABi59aT4rR9HGS3LcMecfut9x7zJyodWWP43YQ` - SerGo
@@ -172,5 +172,5 @@ $ agave-validator \
 
 :::info
 The above four [`--known-validator`s](../operations/guides/validator-start.md#known-validators)
-are operated by Solana Labs.
+are operated by Anza.
 :::

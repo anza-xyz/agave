@@ -33,7 +33,7 @@ impl PushActiveSet {
         pubkey: &'a Pubkey, // This node.
         origin: &'a Pubkey, // CRDS value owner.
         stakes: &HashMap<Pubkey, u64>,
-    ) -> impl Iterator<Item = &'a Pubkey> + 'a {
+    ) -> impl Iterator<Item = &'a Pubkey> + 'a + use<'a> {
         let stake = stakes.get(pubkey).min(stakes.get(origin));
         self.get_entry(stake).get_nodes(pubkey, origin)
     }
@@ -143,7 +143,7 @@ impl PushActiveSetEntry {
     ) {
         debug_assert_eq!(nodes.len(), weights.len());
         debug_assert!(weights.iter().all(|&weight| weight != 0u64));
-        let mut weighted_shuffle = WeightedShuffle::<u64>::new("rotate-active-set", weights);
+        let mut weighted_shuffle = WeightedShuffle::new("rotate-active-set", weights);
         for node in weighted_shuffle.shuffle(rng).map(|k| &nodes[k]) {
             // We intend to discard the oldest/first entry in the index-map.
             if self.0.len() > size {

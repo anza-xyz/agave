@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 /// To activate Slack, Discord, PagerDuty and/or Telegram notifications, define these environment variables
 /// before using the `Notifier`
 /// ```bash
@@ -203,8 +212,8 @@ impl Notifier {
                         NotificationType::Resolve { incident: _ } => String::from("resolve"),
                     };
                     let dedup_key = match notification_type {
-                        NotificationType::Trigger { ref incident } => incident.clone().to_string(),
-                        NotificationType::Resolve { ref incident } => incident.clone().to_string(),
+                        NotificationType::Trigger { incident } => incident.clone().to_string(),
+                        NotificationType::Resolve { incident } => incident.clone().to_string(),
                     };
 
                     let data = json!({"payload":{"summary":msg,"source":"agave-watchtower","severity":"critical"},"routing_key":routing_key,"event_action":event_action,"dedup_key":dedup_key});

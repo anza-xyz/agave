@@ -1130,7 +1130,7 @@ pub mod tests {
         let tree = test_setup
             .correct_ancestors_response
             .iter()
-            .fold(tr(request_slot + 1), |tree, (slot, _)| (tr(*slot) / tree));
+            .fold(tr(request_slot + 1), |tree, (slot, _)| tr(*slot) / tree);
         test_setup
             .blockstore
             .add_tree(tree, true, true, 2, Hash::default());
@@ -1165,7 +1165,7 @@ pub mod tests {
             .correct_ancestors_response
             .iter()
             .filter(|(slot, _)| *slot <= 92 || *slot % 2 == 1)
-            .fold(tr(request_slot), |tree, (slot, _)| (tr(*slot) / tree));
+            .fold(tr(request_slot), |tree, (slot, _)| tr(*slot) / tree);
         test_setup
             .blockstore
             .add_tree(tree, true, true, 2, Hash::default());
@@ -1210,7 +1210,7 @@ pub mod tests {
         let pruned_fork = [10, 11, 93, 94, 95, 96, 97, 98, 99]
             .iter()
             .rev()
-            .fold(tr(100), |tree, slot| (tr(*slot) / tree));
+            .fold(tr(100), |tree, slot| tr(*slot) / tree);
 
         test_setup
             .blockstore

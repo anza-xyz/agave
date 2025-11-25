@@ -10,7 +10,7 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 const NUM: usize = 1000;
 
 fn bench_discard(b: &mut Bencher) {
-    solana_logger::setup();
+    agave_logger::setup();
     let tx = test_tx();
     let num_packets = NUM;
 

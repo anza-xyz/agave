@@ -2,14 +2,15 @@
 
 use {
     solana_bn254::compression::prelude::{
-        alt_bn128_g1_compress, alt_bn128_g1_decompress, alt_bn128_g2_compress,
-        alt_bn128_g2_decompress,
+        alt_bn128_g1_compress, alt_bn128_g1_compress_le, alt_bn128_g1_decompress,
+        alt_bn128_g1_decompress_le, alt_bn128_g2_compress, alt_bn128_g2_compress_le,
+        alt_bn128_g2_decompress, alt_bn128_g2_decompress_le,
     },
     solana_msg::msg,
     solana_program_entrypoint::{custom_heap_default, custom_panic_default},
 };
 
-fn alt_bn128_compression_g1() {
+fn alt_bn128_compression_g1_be() {
     let points_g1: [[u8; 64]; 3] = [
         [
             45, 206, 255, 166, 152, 55, 128, 138, 79, 217, 145, 164, 25, 74, 120, 234, 234, 217,
@@ -26,13 +27,36 @@ fn alt_bn128_compression_g1() {
         [0u8; 64],
     ];
     points_g1.iter().for_each(|point| {
-        let g1_compressed = alt_bn128_g1_compress(point).unwrap();
-        let g1_decompressed = alt_bn128_g1_decompress(&g1_compressed).unwrap();
-        assert_eq!(*point, g1_decompressed);
+        let g1_compressed_be = alt_bn128_g1_compress(point).unwrap();
+        let g1_decompressed_be = alt_bn128_g1_decompress(&g1_compressed_be).unwrap();
+        assert_eq!(*point, g1_decompressed_be);
     });
 }
 
-fn alt_bn128_compression_g2() {
+fn alt_bn128_compression_g1_le() {
+    let points_g1: [[u8; 64]; 3] = [
+        [
+            172, 168, 98, 175, 44, 12, 205, 184, 120, 133, 44, 162, 149, 68, 217, 234, 234, 120,
+            74, 25, 164, 145, 217, 79, 138, 128, 55, 152, 166, 255, 206, 45, 84, 193, 81, 42, 122,
+            218, 191, 243, 254, 32, 8, 148, 104, 218, 202, 209, 151, 245, 219, 123, 101, 90, 236,
+            147, 75, 106, 175, 209, 15, 216, 24, 20,
+        ],
+        [
+            172, 168, 98, 175, 44, 12, 205, 184, 120, 133, 44, 162, 149, 68, 217, 234, 234, 120,
+            74, 25, 164, 145, 217, 79, 138, 128, 55, 152, 166, 255, 206, 45, 243, 59, 43, 174, 156,
+            177, 96, 72, 142, 169, 105, 212, 40, 144, 182, 197, 197, 98, 165, 5, 81, 235, 99, 36,
+            222, 53, 130, 15, 99, 118, 75, 28,
+        ],
+        [0u8; 64],
+    ];
+    points_g1.iter().for_each(|point| {
+        let g1_compressed_le = alt_bn128_g1_compress_le(point).unwrap();
+        let g1_decompressed_le = alt_bn128_g1_decompress_le(&g1_compressed_le).unwrap();
+        assert_eq!(*point, g1_decompressed_le);
+    });
+}
+
+fn alt_bn128_compression_g2_be() {
     let points_g2: [[u8; 128]; 3] = [
         [
             40, 57, 233, 205, 180, 46, 35, 111, 215, 5, 23, 93, 12, 71, 118, 225, 7, 46, 247, 147,
@@ -55,17 +79,49 @@ fn alt_bn128_compression_g2() {
         [0u8; 128],
     ];
     points_g2.iter().for_each(|point| {
-        let g2_compressed = alt_bn128_g2_compress(point).unwrap();
-        let g2_decompressed = alt_bn128_g2_decompress(&g2_compressed).unwrap();
-        assert_eq!(*point, g2_decompressed);
+        let g2_compressed_be = alt_bn128_g2_compress(point).unwrap();
+        let g2_decompressed_be = alt_bn128_g2_decompress(&g2_compressed_be).unwrap();
+        assert_eq!(*point, g2_decompressed_be);
     });
 }
+
+fn alt_bn128_compression_g2_le() {
+    let points_g2: [[u8; 128]; 3] = [
+        [
+            56, 176, 86, 18, 168, 81, 174, 75, 159, 92, 196, 168, 183, 205, 137, 17, 209, 133, 189,
+            236, 151, 238, 180, 66, 212, 151, 34, 110, 176, 124, 203, 0, 25, 242, 52, 141, 103,
+            146, 80, 184, 189, 106, 130, 47, 147, 247, 46, 7, 225, 118, 71, 12, 93, 23, 5, 215,
+            111, 35, 46, 180, 205, 233, 57, 40, 18, 152, 147, 62, 189, 19, 17, 90, 174, 147, 144,
+            60, 91, 177, 200, 22, 245, 3, 211, 247, 49, 94, 131, 218, 100, 254, 246, 80, 6, 168,
+            129, 14, 22, 4, 108, 174, 147, 88, 183, 79, 31, 228, 109, 33, 15, 182, 130, 50, 253,
+            21, 141, 98, 169, 251, 62, 104, 142, 122, 81, 18, 20, 210, 26, 16,
+        ],
+        [
+            56, 176, 86, 18, 168, 81, 174, 75, 159, 92, 196, 168, 183, 205, 137, 17, 209, 133, 189,
+            236, 151, 238, 180, 66, 212, 151, 34, 110, 176, 124, 203, 0, 25, 242, 52, 141, 103,
+            146, 80, 184, 189, 106, 130, 47, 147, 247, 46, 7, 225, 118, 71, 12, 93, 23, 5, 215,
+            111, 35, 46, 180, 205, 233, 57, 40, 53, 101, 233, 153, 89, 120, 15, 226, 222, 54, 225,
+            43, 54, 185, 184, 128, 104, 84, 174, 137, 132, 231, 204, 221, 196, 161, 58, 144, 108,
+            166, 226, 33, 49, 249, 16, 42, 131, 51, 105, 236, 109, 230, 3, 71, 130, 180, 254, 100,
+            96, 66, 244, 30, 13, 74, 17, 80, 155, 37, 224, 206, 94, 124, 73, 32,
+        ],
+        [0u8; 128],
+    ];
+    points_g2.iter().for_each(|point| {
+        let g2_compressed_le = alt_bn128_g2_compress_le(point).unwrap();
+        let g2_decompressed_le = alt_bn128_g2_decompress_le(&g2_compressed_le).unwrap();
+        assert_eq!(*point, g2_decompressed_le);
+    });
+}
+
 #[no_mangle]
 pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
     msg!("alt_bn128_compression");
 
-    alt_bn128_compression_g1();
-    alt_bn128_compression_g2();
+    alt_bn128_compression_g1_be();
+    alt_bn128_compression_g1_le();
+    alt_bn128_compression_g2_be();
+    alt_bn128_compression_g2_le();
     0
 }
 

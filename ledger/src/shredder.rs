@@ -74,7 +74,7 @@ impl Shredder {
         next_code_index: u32,
         reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
-    ) -> impl Iterator<Item = Shred> {
+    ) -> impl Iterator<Item = Shred> + use<> {
         let now = Instant::now();
         let entries = wincode::serialize(entries).unwrap();
         stats.serialize_elapsed += now.elapsed().as_micros() as u64;
@@ -103,7 +103,7 @@ impl Shredder {
         next_code_index: u32,
         reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
-    ) -> Result<impl Iterator<Item = Shred>, Error> {
+    ) -> Result<impl Iterator<Item = Shred> + use<>, Error> {
         let thread_pool: &ThreadPool = &PAR_THREAD_POOL;
         let shreds = shred::merkle::make_shreds_from_data(
             thread_pool,
@@ -309,9 +309,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            Hash::new_from_array(rand::thread_rng().gen()), // chained_merkle_root
-            start_index,                                    // next_shred_index
-            start_index,                                    // next_code_index
+            Hash::new_from_array(rand::rng().random()), // chained_merkle_root
+            start_index,                                // next_shred_index
+            start_index,                                // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -395,9 +395,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            Hash::new_from_array(rand::thread_rng().gen()), // chained_merkle_root
-            369,                                            // next_shred_index
-            776,                                            // next_code_index
+            Hash::new_from_array(rand::rng().random()), // chained_merkle_root
+            369,                                        // next_shred_index
+            776,                                        // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -427,9 +427,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            Hash::new_from_array(rand::thread_rng().gen()), // chained_merkle_root
-            0,                                              // next_shred_index
-            0,                                              // next_code_index
+            Hash::new_from_array(rand::rng().random()), // chained_merkle_root
+            0,                                          // next_shred_index
+            0,                                          // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -464,9 +464,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            Hash::new_from_array(rand::thread_rng().gen()), // chained_merkle_root
-            0,                                              // next_shred_index
-            0,                                              // next_code_index
+            Hash::new_from_array(rand::rng().random()), // chained_merkle_root
+            0,                                          // next_shred_index
+            0,                                          // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -511,9 +511,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            Hash::new_from_array(rand::thread_rng().gen()), // chained_merkle_root
-            0,                                              // next_shred_index
-            0,                                              // next_code_index
+            Hash::new_from_array(rand::rng().random()), // chained_merkle_root
+            0,                                          // next_shred_index
+            0,                                          // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -561,9 +561,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            Hash::new_from_array(rand::thread_rng().gen()), // chained_merkle_root
-            0,                                              // next_shred_index
-            0,                                              // next_code_index
+            Hash::new_from_array(rand::rng().random()), // chained_merkle_root
+            0,                                          // next_shred_index
+            0,                                          // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -595,16 +595,16 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            Hash::new_from_array(rand::thread_rng().gen()), // chained_merkle_root
-            start_index,                                    // next_shred_index
-            start_index,                                    // next_code_index
+            Hash::new_from_array(rand::rng().random()), // chained_merkle_root
+            start_index,                                // next_shred_index
+            start_index,                                // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         const MIN_CHUNK_SIZE: usize = DATA_SHREDS_PER_FEC_BLOCK;
         let chunks: Vec<_> = data_shreds
             .iter()
-            .group_by(|shred| shred.fec_set_index())
+            .chunk_by(|shred| shred.fec_set_index())
             .into_iter()
             .map(|(fec_set_index, chunk)| (fec_set_index, chunk.count()))
             .collect();

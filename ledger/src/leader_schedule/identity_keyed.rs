@@ -3,14 +3,14 @@ use {
     itertools::Itertools,
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    std::{collections::HashMap, ops::Index, sync::Arc},
+    std::{collections::HashMap, ops::Index},
 };
 
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct LeaderSchedule {
     slot_leaders: Vec<Pubkey>,
     // Inverted index from pubkeys to indices where they are the leader.
-    leader_slots_map: HashMap<Pubkey, Arc<Vec<usize>>>,
+    leader_slots_map: HashMap<Pubkey, Vec<usize>>,
 }
 
 impl LeaderSchedule {
@@ -36,15 +36,12 @@ impl LeaderSchedule {
         }
     }
 
-    fn invert_slot_leaders(slot_leaders: &[Pubkey]) -> HashMap<Pubkey, Arc<Vec<usize>>> {
+    fn invert_slot_leaders(slot_leaders: &[Pubkey]) -> HashMap<Pubkey, Vec<usize>> {
         slot_leaders
             .iter()
             .enumerate()
             .map(|(i, pk)| (*pk, i))
             .into_group_map()
-            .into_iter()
-            .map(|(k, v)| (k, Arc::new(v)))
-            .collect()
     }
 
     pub fn get_slot_leaders(&self) -> &[Pubkey] {
@@ -57,7 +54,7 @@ impl LeaderScheduleVariant for LeaderSchedule {
         &self.slot_leaders
     }
 
-    fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Arc<Vec<usize>>> {
+    fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Vec<usize>> {
         &self.leader_slots_map
     }
 }

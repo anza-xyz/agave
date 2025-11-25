@@ -5,6 +5,7 @@ use {
     },
     chrono::DateTime,
     clap::ArgMatches,
+    solana_bls_signatures::Pubkey as BLSPubkey,
     solana_clock::UnixTimestamp,
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
@@ -98,6 +99,18 @@ pub fn pubkeys_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<Pubkey>> {
                     read_keypair_file(value)
                         .expect("read_keypair_file failed")
                         .pubkey()
+                })
+            })
+            .collect()
+    })
+}
+
+pub fn bls_pubkeys_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<BLSPubkey>> {
+    matches.values_of(name).map(|values| {
+        values
+            .map(|value| {
+                BLSPubkey::from_str(value).unwrap_or_else(|_| {
+                    panic!("Failed to parse BLS public key from value: {value}")
                 })
             })
             .collect()
@@ -253,6 +266,7 @@ mod tests {
     use {
         super::*,
         clap::{App, Arg},
+        solana_bls_signatures::{keypair::Keypair as BLSKeypair, Pubkey as BLSPubkey},
         solana_keypair::write_keypair_file,
         std::fs,
     };
@@ -414,6 +428,23 @@ mod tests {
         assert_ne!(lamports_of_sol(&matches, "single"), Some(15_700_000));
         let matches = app().get_matches_from(vec!["test", "--single", "0.5025"]);
         assert_ne!(lamports_of_sol(&matches, "single"), Some(502_500_000));
+    }
+
+    #[test]
+    fn test_bls_pubkeys_of() {
+        let bls_pubkey1: BLSPubkey = BLSKeypair::new().public;
+        let bls_pubkey2: BLSPubkey = BLSKeypair::new().public;
+        let matches = app().get_matches_from(vec![
+            "test",
+            "--multiple",
+            &bls_pubkey1.to_string(),
+            "--multiple",
+            &bls_pubkey2.to_string(),
+        ]);
+        assert_eq!(
+            bls_pubkeys_of(&matches, "multiple"),
+            Some(vec![bls_pubkey1, bls_pubkey2])
+        );
     }
 
     #[test]

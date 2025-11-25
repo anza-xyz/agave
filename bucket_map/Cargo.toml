@@ -14,9 +14,11 @@ crate-type = ["lib"]
 name = "solana_bucket_map"
 
 [features]
+agave-unstable-api = []
 dev-context-only-utils = []
 
 [dependencies]
+ahash = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
 bytemuck = { workspace = true }
 bytemuck_derive = { workspace = true }
@@ -30,11 +32,8 @@ solana-pubkey = { workspace = true }
 tempfile = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { workspace = true }
 fs_extra = { workspace = true }
 rayon = { workspace = true }
-solana-bucket-map = { path = ".", features = ["dev-context-only-utils"] }
-solana-logger = { workspace = true }
+solana-bucket-map = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
-
-[[bench]]
-name = "bucket_map"

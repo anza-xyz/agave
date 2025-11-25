@@ -2,7 +2,7 @@ use {
     solana_entry::entry,
     solana_hash::Hash,
     solana_ledger::{
-        blockstore::{self, make_many_slot_entries, test_all_empty_or_min, Blockstore},
+        blockstore::{self, Blockstore},
         get_tmp_ledger_path_auto_delete,
     },
     std::{sync::Arc, thread::Builder},
@@ -45,16 +45,4 @@ fn test_multiple_threads_insert_shred() {
         // Delete slots for next iteration
         blockstore.purge_and_compact_slots(0, num_threads + 1);
     }
-}
-
-#[test]
-fn test_purge_huge() {
-    let ledger_path = get_tmp_ledger_path_auto_delete!();
-    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-    let (shreds, _) = make_many_slot_entries(0, 5000, 10);
-    blockstore.insert_shreds(shreds, None, false).unwrap();
-
-    blockstore.purge_and_compact_slots(0, 4999);
-    test_all_empty_or_min(&blockstore, 5000);
 }

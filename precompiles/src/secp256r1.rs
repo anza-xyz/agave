@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_invalid_offsets() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let mut instruction_data = vec![0u8; DATA_START];
         let offsets = Secp256r1SignatureOffsets::default();
@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn test_invalid_signature_data_size() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         // Test data.len() < SIGNATURE_OFFSETS_START
         let small_data = vec![0u8; SIGNATURE_OFFSETS_START - 1];
@@ -358,7 +358,7 @@ mod tests {
 
     #[test]
     fn test_secp256r1() {
-        solana_logger::setup();
+        agave_logger::setup();
         let message_arr = b"hello";
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
         let signing_key = EcKey::generate(&group).unwrap();
@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn test_secp256r1_high_s() {
-        solana_logger::setup();
+        agave_logger::setup();
         let message_arr = b"hello";
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
         let signing_key = EcKey::generate(&group).unwrap();
@@ -461,7 +461,7 @@ mod tests {
     }
     #[test]
     fn test_new_secp256r1_instruction_31byte_components() {
-        solana_logger::setup();
+        agave_logger::setup();
         let message_arr = b"hello";
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
         let signing_key = EcKey::generate(&group).unwrap();

@@ -17,6 +17,7 @@ crate-type = ["lib"]
 name = "solana_runtime"
 
 [features]
+agave-unstable-api = []
 dev-context-only-utils = [
     "dep:solana-system-program",
     "solana-accounts-db/dev-context-only-utils",
@@ -51,6 +52,7 @@ shuttle-test = ["dep:shuttle"]
 
 [dependencies]
 agave-feature-set = { workspace = true }
+agave-fs = { workspace = true }
 agave-precompiles = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }
@@ -67,7 +69,7 @@ blake3 = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
 bytemuck = { workspace = true }
 crossbeam-channel = { workspace = true }
-dashmap = { workspace = true, features = ["rayon", "raw-api"] }
+dashmap = { workspace = true, features = ["rayon", "raw-api", "serde"] }
 dir-diff = { workspace = true }
 fnv = { workspace = true }
 im = { workspace = true, features = ["rayon", "serde"] }
@@ -107,6 +109,7 @@ solana-commitment-config = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
+solana-config-interface = { workspace = true, features = ["bincode"] }
 solana-cost-model = { workspace = true }
 solana-cpi = { workspace = true }
 solana-ed25519-program = { workspace = true }
@@ -159,7 +162,6 @@ solana-signer = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-slot-history = { workspace = true }
 solana-stake-interface = { workspace = true }
-solana-stake-program = { workspace = true }
 solana-svm = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-timings = { workspace = true }
@@ -184,25 +186,22 @@ static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }
 symlink = { workspace = true }
-tar = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
-zstd = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { workspace = true }
 agave-transaction-view = { workspace = true }
 ed25519-dalek = { workspace = true }
 libsecp256k1 = { workspace = true }
 memoffset = { workspace = true }
-rand0-7 = { package = "rand", version = "0.7" }
 rand_chacha = { workspace = true }
 solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }
 solana-builtins = { workspace = true, features = ["dev-context-only-utils"] }
 solana-instruction-error = { workspace = true }
-solana-logger = { workspace = true }
 solana-program-binaries = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-runtime = { path = ".", features = ["dev-context-only-utils"] }
+solana-runtime = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime-transaction = { workspace = true, features = [
     "dev-context-only-utils",
 ] }
@@ -214,6 +213,7 @@ solana-svm = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-context = { workspace = true, features = [
     "dev-context-only-utils",
 ] }
+solana-vote-program = { workspace = true, features = ["dev-context-only-utils"] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 

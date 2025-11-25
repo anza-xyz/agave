@@ -1,0 +1,27 @@
+[package]
+name = "agave-logger"
+description = "Agave Logger"
+documentation = "https://docs.rs/agave-logger"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+name = "agave_logger"
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
+env_logger = { workspace = true }
+log = { workspace = true }
+
+[target."cfg(unix)".dependencies]
+libc = { workspace = true }
+signal-hook = { workspace = true }

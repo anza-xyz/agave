@@ -61,7 +61,7 @@ mod test {
     };
 
     fn run_test_sigverify_shred_cpu_repair(slot: Slot) {
-        solana_logger::setup();
+        agave_logger::setup();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let keypair = Keypair::new();
         let shred = Shredder::single_shred_for_tests(slot, &keypair);

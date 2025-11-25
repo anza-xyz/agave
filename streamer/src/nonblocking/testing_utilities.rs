@@ -2,11 +2,14 @@
 use {
     super::quic::{SpawnNonBlockingServerResult, ALPN_TPU_PROTOCOL_ID},
     crate::{
-        nonblocking::quic::spawn_server_with_cancel,
-        quic::{QuicServerParams, StreamerStats},
+        nonblocking::{
+            quic::spawn_server,
+            swqos::{SwQos, SwQosConfig},
+        },
+        quic::{QuicServerError, QuicStreamerConfig, StreamerStats},
         streamer::StakedNodes,
     },
-    crossbeam_channel::{unbounded, Receiver},
+    crossbeam_channel::{unbounded, Receiver, Sender},
     quinn::{
         crypto::rustls::QuicClientConfig, ClientConfig, Connection, EndpointConfig, IdleTimeout,
         TokioRuntime, TransportConfig,
@@ -27,6 +30,40 @@ use {
     tokio::{task::JoinHandle, time::sleep},
     tokio_util::sync::CancellationToken,
 };
+
+/// Spawn a streamer instance in the current tokio runtime.
+pub fn spawn_stake_weighted_qos_server(
+    name: &'static str,
+    sockets: impl IntoIterator<Item = UdpSocket>,
+    keypair: &Keypair,
+    packet_sender: Sender<PacketBatch>,
+    staked_nodes: Arc<RwLock<StakedNodes>>,
+    quic_server_params: QuicStreamerConfig,
+    qos_config: SwQosConfig,
+    cancel: CancellationToken,
+) -> Result<SpawnNonBlockingServerResult, QuicServerError>
+where
+{
+    let stats = Arc::<StreamerStats>::default();
+
+    let swqos = Arc::new(SwQos::new(
+        qos_config,
+        stats.clone(),
+        staked_nodes,
+        cancel.clone(),
+    ));
+
+    spawn_server(
+        name,
+        stats,
+        sockets,
+        keypair,
+        packet_sender,
+        quic_server_params,
+        swqos,
+        cancel,
+    )
+}
 
 pub fn get_client_config(keypair: &Keypair) -> ClientConfig {
     let (cert, key) = new_dummy_x509_certificate(keypair);
@@ -77,17 +114,10 @@ pub fn create_quic_server_sockets() -> Vec<UdpSocket> {
 
 pub fn setup_quic_server(
     option_staked_nodes: Option<StakedNodes>,
-    quic_server_params: QuicServerParams,
+    quic_server_params: QuicStreamerConfig,
+    qos_config: SwQosConfig,
 ) -> SpawnTestServerResult {
     let sockets = create_quic_server_sockets();
-    setup_quic_server_with_sockets(sockets, option_staked_nodes, quic_server_params)
-}
-
-pub fn setup_quic_server_with_sockets(
-    sockets: Vec<UdpSocket>,
-    option_staked_nodes: Option<StakedNodes>,
-    quic_server_params: QuicServerParams,
-) -> SpawnTestServerResult {
     let (sender, receiver) = unbounded();
     let keypair = Keypair::new();
     let server_address = sockets[0].local_addr().unwrap();
@@ -99,13 +129,14 @@ pub fn setup_quic_server_with_sockets(
         stats,
         thread: handle,
         max_concurrent_connections: _,
-    } = spawn_server_with_cancel(
+    } = spawn_stake_weighted_qos_server(
         "quic_streamer_test",
         sockets,
         &keypair,
         sender,
         staked_nodes,
         quic_server_params,
+        qos_config,
         cancel.clone(),
     )
     .unwrap();

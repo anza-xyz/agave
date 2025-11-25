@@ -1,12 +1,11 @@
 use {
+    agave_logger::redirect_stderr_to_file,
     clap::{crate_name, Parser},
     crossbeam_channel::bounded,
     log::*,
     solana_core::banking_trace::BankingTracer,
     solana_keypair::read_keypair_file,
-    solana_logger::redirect_stderr_to_file,
     solana_net_utils::sockets::{bind_in_range_with_config, SocketConfiguration as SocketConfig},
-    solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_signer::Signer,
     solana_streamer::streamer::StakedNodes,
     solana_vortexor::{
@@ -22,9 +21,9 @@ use {
     std::{
         collections::HashMap,
         env,
-        net::{IpAddr, SocketAddr},
+        net::IpAddr,
+        path::PathBuf,
         sync::{atomic::AtomicBool, Arc, RwLock},
-        time::Duration,
     },
     tokio_util::sync::CancellationToken,
 };
@@ -32,7 +31,7 @@ use {
 const DEFAULT_CHANNEL_SIZE: usize = 100_000;
 
 pub fn main() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let args = Cli::parse();
     let solana_version = solana_version::version!();
@@ -55,7 +54,7 @@ pub fn main() {
             None
         } else {
             println!("log file: {logfile}");
-            Some(logfile)
+            Some(PathBuf::from(logfile))
         }
     };
     let _logger_thread = redirect_stderr_to_file(logfile);
@@ -77,7 +76,6 @@ pub fn main() {
 
     let max_connections_per_ipaddr_per_min = args.max_connections_per_ipaddr_per_minute;
     let num_quic_endpoints = args.num_quic_endpoints;
-    let tpu_coalesce = Duration::from_millis(args.tpu_coalesce_ms);
     let dynamic_port_range = args.dynamic_port_range;
 
     let tpu_address = args.tpu_address;
@@ -98,7 +96,7 @@ pub fn main() {
     );
 
     let (banking_tracer, _) = BankingTracer::new(
-        None, // Not interesed in banking tracing
+        None, // Not interested in banking tracing
     )
     .unwrap();
 
@@ -170,16 +168,8 @@ pub fn main() {
         tpu_sockets.tpu_quic_fwd[0].local_addr()
     );
 
-    let tpu_address = tpu_sockets.tpu_quic[0].local_addr().unwrap();
-    let tpu_public_address = SocketAddr::new(
-        tpu_address.ip(),
-        tpu_address.port().saturating_sub(QUIC_PORT_OFFSET),
-    );
-    let tpu_fwd_address = tpu_sockets.tpu_quic_fwd[0].local_addr().unwrap();
-    let tpu_fwd_public_address = SocketAddr::new(
-        tpu_fwd_address.ip(),
-        tpu_fwd_address.port().saturating_sub(QUIC_PORT_OFFSET),
-    );
+    let tpu_public_address = tpu_sockets.tpu_quic[0].local_addr().unwrap();
+    let tpu_fwd_public_address = tpu_sockets.tpu_quic_fwd[0].local_addr().unwrap();
 
     for destination in destinations.read().unwrap().iter() {
         info!(
@@ -202,7 +192,6 @@ pub fn main() {
         max_fwd_unstaked_connections,
         max_streams_per_ms,
         max_connections_per_ipaddr_per_min,
-        tpu_coalesce,
         &identity_keypair,
         cancel.clone(),
     );

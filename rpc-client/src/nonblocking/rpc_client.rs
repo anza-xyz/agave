@@ -626,7 +626,7 @@ impl RpcClient {
     /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
     ///
     /// After sending the transaction, this method polls in a loop for the
-    /// status of the transaction until it has ben confirmed.
+    /// status of the transaction until it has been confirmed.
     ///
     /// # Errors
     ///
@@ -3546,6 +3546,7 @@ impl RpcClient {
         pubkey: &Pubkey,
         config: RpcAccountInfoConfig,
     ) -> RpcResult<Option<Account>> {
+        #[allow(deprecated)]
         let response = self
             .send(
                 RpcRequest::GetAccountInfo,
@@ -3823,26 +3824,29 @@ impl RpcClient {
         pubkeys: &[Pubkey],
         config: RpcAccountInfoConfig,
     ) -> RpcResult<Vec<Option<Account>>> {
-        let config = RpcAccountInfoConfig {
-            commitment: config.commitment.or_else(|| Some(self.commitment())),
-            ..config
-        };
-        let pubkeys: Vec<_> = pubkeys.iter().map(|pubkey| pubkey.to_string()).collect();
-        let response = self
-            .send(RpcRequest::GetMultipleAccounts, json!([pubkeys, config]))
-            .await?;
-        let Response {
-            context,
-            value: accounts,
-        } = serde_json::from_value::<Response<Vec<Option<UiAccount>>>>(response)?;
-        let accounts: Vec<Option<Account>> = accounts
-            .into_iter()
-            .map(|rpc_account| rpc_account.and_then(|a| a.decode()))
-            .collect();
-        Ok(Response {
-            context,
-            value: accounts,
-        })
+        #[allow(deprecated)]
+        {
+            let config = RpcAccountInfoConfig {
+                commitment: config.commitment.or_else(|| Some(self.commitment())),
+                ..config
+            };
+            let pubkeys: Vec<_> = pubkeys.iter().map(|pubkey| pubkey.to_string()).collect();
+            let response = self
+                .send(RpcRequest::GetMultipleAccounts, json!([pubkeys, config]))
+                .await?;
+            let Response {
+                context,
+                value: accounts,
+            } = serde_json::from_value::<Response<Vec<Option<UiAccount>>>>(response)?;
+            let accounts: Vec<Option<Account>> = accounts
+                .into_iter()
+                .map(|rpc_account| rpc_account.and_then(|a| a.decode()))
+                .collect();
+            Ok(Response {
+                context,
+                value: accounts,
+            })
+        }
     }
 
     /// Returns the account information for a list of pubkeys.
@@ -4124,21 +4128,23 @@ impl RpcClient {
         pubkey: &Pubkey,
         mut config: RpcProgramAccountsConfig,
     ) -> ClientResult<Vec<(Pubkey, Account)>> {
-        let commitment = config
-            .account_config
-            .commitment
-            .unwrap_or_else(|| self.commitment());
-        config.account_config.commitment = Some(commitment);
-
-        let accounts = self
-            .send::<OptionalContext<Vec<RpcKeyedAccount>>>(
-                RpcRequest::GetProgramAccounts,
-                json!([pubkey.to_string(), config]),
-            )
-            .await?
-            .parse_value();
         #[allow(deprecated)]
-        parse_keyed_accounts(accounts, RpcRequest::GetProgramAccounts)
+        {
+            let commitment = config
+                .account_config
+                .commitment
+                .unwrap_or_else(|| self.commitment());
+            config.account_config.commitment = Some(commitment);
+
+            let accounts = self
+                .send::<OptionalContext<Vec<RpcKeyedAccount>>>(
+                    RpcRequest::GetProgramAccounts,
+                    json!([pubkey.to_string(), config]),
+                )
+                .await?
+                .parse_value();
+            parse_keyed_accounts(accounts, RpcRequest::GetProgramAccounts)
+        }
     }
 
     /// Returns all accounts owned by the provided program pubkey.

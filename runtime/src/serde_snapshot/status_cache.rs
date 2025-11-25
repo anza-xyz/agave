@@ -25,11 +25,11 @@ type SerdeStatus<T> = ahash::HashMap<Hash, (usize, Vec<(KeySlice, T)>)>;
 
 /// Serializes the status cache's `slot_deltas` to file at `status_cache_path`
 ///
-/// This fn serializes the status cache into the binary format requried by snapshots.
+/// This fn serializes the status cache into the binary format required by snapshots.
 pub fn serialize_status_cache(
     slot_deltas: &[BankSlotDelta],
     status_cache_path: &Path,
-) -> snapshot_utils::Result<u64> {
+) -> agave_snapshots::Result<u64> {
     snapshot_utils::serialize_snapshot_data_file(status_cache_path, |stream| {
         let snapshot_slot_deltas = slot_deltas
             .iter()
@@ -69,7 +69,7 @@ pub fn serialize_status_cache(
 /// This fn deserializes the status cache from a snapshot.
 pub fn deserialize_status_cache(
     status_cache_path: &Path,
-) -> snapshot_utils::Result<Vec<BankSlotDelta>> {
+) -> agave_snapshots::Result<Vec<BankSlotDelta>> {
     snapshot_utils::deserialize_snapshot_data_file(status_cache_path, |stream| {
         let snapshot_slot_deltas: Vec<SerdeBankSlotDelta> = bincode::options()
             .with_limit(snapshot_utils::MAX_SNAPSHOT_DATA_FILE_SIZE)
@@ -374,6 +374,7 @@ impl From<SerdeInstructionError> for InstructionError {
             SerdeInstructionError::DuplicateAccountIndex => Self::DuplicateAccountIndex,
             SerdeInstructionError::ExecutableModified => Self::ExecutableModified,
             SerdeInstructionError::RentEpochModified => Self::RentEpochModified,
+            #[allow(deprecated)]
             SerdeInstructionError::NotEnoughAccountKeys => Self::NotEnoughAccountKeys,
             SerdeInstructionError::AccountDataSizeChanged => Self::AccountDataSizeChanged,
             SerdeInstructionError::AccountNotExecutable => Self::AccountNotExecutable,
@@ -445,6 +446,7 @@ impl From<InstructionError> for SerdeInstructionError {
             InstructionError::DuplicateAccountIndex => Self::DuplicateAccountIndex,
             InstructionError::ExecutableModified => Self::ExecutableModified,
             InstructionError::RentEpochModified => Self::RentEpochModified,
+            #[allow(deprecated)]
             InstructionError::NotEnoughAccountKeys => Self::NotEnoughAccountKeys,
             InstructionError::AccountDataSizeChanged => Self::AccountDataSizeChanged,
             InstructionError::AccountNotExecutable => Self::AccountNotExecutable,

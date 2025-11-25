@@ -92,14 +92,14 @@ impl fmt::Display for Checksum {
 mod tests {
     use {
         super::*,
-        rand::prelude::*,
+        rand::Rng,
         std::ops::{Add, Sub},
     };
 
     impl LtHash {
         fn new_random() -> Self {
             let mut new = Self::identity();
-            thread_rng().fill(&mut new.0);
+            rand::rng().fill(&mut new.0);
             new
         }
     }

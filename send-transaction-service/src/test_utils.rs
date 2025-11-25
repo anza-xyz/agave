@@ -4,16 +4,10 @@
 use {
     crate::{
         tpu_info::NullTpuInfo,
-        transaction_client::{
-            ConnectionCacheClient, TpuClientNextClient, TpuInfoWithSendStatic, TransactionClient,
-        },
+        transaction_client::{TpuClientNextClient, TransactionClient},
     },
-    solana_client::connection_cache::ConnectionCache,
     solana_net_utils::sockets::{bind_to, localhost_port_range_for_tests},
-    std::{
-        net::{IpAddr, Ipv4Addr, SocketAddr},
-        sync::Arc,
-    },
+    std::net::{IpAddr, Ipv4Addr, SocketAddr},
     tokio::runtime::Handle,
     tokio_util::sync::CancellationToken,
 };
@@ -28,24 +22,6 @@ pub trait CreateClient: TransactionClient + Clone {
         tpu_peers: Option<Vec<SocketAddr>>,
         leader_forward_count: u64,
     ) -> Self;
-}
-
-impl CreateClient for ConnectionCacheClient<NullTpuInfo> {
-    fn create_client(
-        _maybe_runtime: Option<Handle>,
-        my_tpu_address: SocketAddr,
-        tpu_peers: Option<Vec<SocketAddr>>,
-        leader_forward_count: u64,
-    ) -> Self {
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
-        ConnectionCacheClient::new(
-            connection_cache,
-            my_tpu_address,
-            tpu_peers,
-            None,
-            leader_forward_count,
-        )
-    }
 }
 
 impl CreateClient for TpuClientNextClient {
@@ -75,13 +51,6 @@ impl CreateClient for TpuClientNextClient {
 
 pub trait Stoppable {
     fn stop(&self);
-}
-
-impl<T> Stoppable for ConnectionCacheClient<T>
-where
-    T: TpuInfoWithSendStatic,
-{
-    fn stop(&self) {}
 }
 
 impl Stoppable for TpuClientNextClient {

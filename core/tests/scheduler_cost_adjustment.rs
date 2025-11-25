@@ -1,7 +1,7 @@
 #![cfg(test)]
 use {
     solana_account::{Account, ReadableAccount},
-    solana_clock::{Slot, MAX_PROCESSING_AGE},
+    solana_clock::MAX_PROCESSING_AGE,
     solana_compute_budget::compute_budget_limits::MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_cost_model::cost_model::CostModel,
@@ -13,7 +13,7 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
-    solana_runtime::{bank::Bank, bank_forks::BankForks},
+    solana_runtime::bank::Bank,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk_ids::{bpf_loader_upgradeable, secp256k1_program},
     solana_signer::Signer,
@@ -22,22 +22,7 @@ use {
     solana_system_interface::instruction as system_instruction,
     solana_transaction::Transaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    std::sync::{Arc, RwLock},
 };
-
-fn new_bank_from_parent_with_bank_forks(
-    bank_forks: &RwLock<BankForks>,
-    parent: Arc<Bank>,
-    collector_id: &Pubkey,
-    slot: Slot,
-) -> Arc<Bank> {
-    let bank = Bank::new_from_parent(parent, collector_id, slot);
-    bank_forks
-        .write()
-        .unwrap()
-        .insert(bank)
-        .clone_without_scheduler()
-}
 
 #[derive(Debug, Eq, PartialEq)]
 struct TestResult {
@@ -78,7 +63,7 @@ impl TestSetup {
     fn execute_test_transaction(&mut self, ixs: &[Instruction]) -> TestResult {
         let root_bank = Bank::new_for_tests(&self.genesis_config);
         let (bank, bank_forks) = root_bank.wrap_with_bank_forks_for_tests();
-        let bank = new_bank_from_parent_with_bank_forks(
+        let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
             &Pubkey::default(),

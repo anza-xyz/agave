@@ -291,7 +291,7 @@ impl CostTracker {
     fn find_costliest_account(&self) -> (Pubkey, u64) {
         self.cost_by_writable_accounts
             .iter()
-            .max_by_key(|(_, &cost)| cost)
+            .max_by_key(|(_, cost)| **cost)
             .map(|(&pubkey, &cost)| (pubkey, cost))
             .unwrap_or_default()
     }
@@ -490,7 +490,7 @@ mod tests {
     }
 
     fn test_setup() -> Keypair {
-        solana_logger::setup();
+        agave_logger::setup();
         Keypair::new()
     }
 
@@ -501,7 +501,7 @@ mod tests {
     fn simple_usage_cost_details(
         transaction: &WritableKeysTransaction,
         programs_execution_cost: u64,
-    ) -> UsageCostDetails<WritableKeysTransaction> {
+    ) -> UsageCostDetails<'_, WritableKeysTransaction> {
         UsageCostDetails {
             transaction,
             signature_cost: 0,
@@ -516,7 +516,7 @@ mod tests {
     fn simple_transaction_cost(
         transaction: &WritableKeysTransaction,
         programs_execution_cost: u64,
-    ) -> TransactionCost<WritableKeysTransaction> {
+    ) -> TransactionCost<'_, WritableKeysTransaction> {
         TransactionCost::Transaction(simple_usage_cost_details(
             transaction,
             programs_execution_cost,
@@ -525,7 +525,7 @@ mod tests {
 
     fn simple_vote_transaction_cost(
         transaction: &WritableKeysTransaction,
-    ) -> TransactionCost<WritableKeysTransaction> {
+    ) -> TransactionCost<'_, WritableKeysTransaction> {
         TransactionCost::SimpleVote { transaction }
     }
 
@@ -933,7 +933,7 @@ mod tests {
         );
 
         let test_update_cost_tracker =
-            |execution_cost_adjust: i64, loaded_acounts_data_size_cost_adjust: i64| {
+            |execution_cost_adjust: i64, loaded_accounts_data_size_cost_adjust: i64| {
                 let mut cost_tracker = CostTracker::default();
                 assert!(cost_tracker.try_add(&tx_cost).is_ok());
 
@@ -941,10 +941,10 @@ mod tests {
                     (estimated_programs_execution_cost as i64 + execution_cost_adjust) as u64;
                 let actual_loaded_accounts_data_size_cost =
                     (estimated_loaded_accounts_data_size_cost as i64
-                        + loaded_acounts_data_size_cost_adjust) as u64;
+                        + loaded_accounts_data_size_cost_adjust) as u64;
                 let expected_cost = (estimated_tx_cost as i64
                     + execution_cost_adjust
-                    + loaded_acounts_data_size_cost_adjust)
+                    + loaded_accounts_data_size_cost_adjust)
                     as u64;
 
                 cost_tracker.update_execution_cost(

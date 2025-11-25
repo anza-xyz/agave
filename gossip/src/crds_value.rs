@@ -41,7 +41,7 @@ impl Signable for CrdsValue {
         self.pubkey()
     }
 
-    fn signable_data(&self) -> Cow<[u8]> {
+    fn signable_data(&self) -> Cow<'static, [u8]> {
         Cow::Owned(serialize(&self.data).expect("failed to serialize CrdsData"))
     }
 
@@ -243,8 +243,8 @@ mod test {
         super::*,
         crate::crds_data::{LowestSlot, Vote},
         bincode::deserialize,
-        rand0_7::{Rng, SeedableRng},
-        rand_chacha0_2::ChaChaRng,
+        rand::SeedableRng as _,
+        rand_chacha::ChaChaRng,
         solana_keypair::Keypair,
         solana_perf::test_tx::new_test_vote_tx,
         solana_signer::Signer,

@@ -22,7 +22,7 @@ use {
     solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
     solana_cluster_type::ClusterType,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, ping_pong::Pong},
-    solana_keypair::{signable::Signable, Keypair},
+    solana_keypair::{signable::Signable, Keypair, Signer},
     solana_ledger::blockstore::Blockstore,
     solana_perf::{
         packet::{deserialize_from_with_limit, PacketBatch, PacketFlags, PacketRef},
@@ -257,7 +257,7 @@ impl AncestorHashesService {
                 let mut stats = AncestorHashesResponsesStats::default();
                 let mut packet_threshold = DynamicPacketToProcessThreshold::default();
                 while !exit.load(Ordering::Relaxed) {
-                    let keypair = cluster_info.keypair().clone();
+                    let keypair = cluster_info.keypair();
                     let result = Self::process_new_packets_from_channel(
                         &ancestor_hashes_request_statuses,
                         &response_receiver,
@@ -722,7 +722,7 @@ impl AncestorHashesService {
         // Keep around the last second of requests in the throttler.
         request_throttle.retain(|request_time| *request_time > (timestamp() - 1000));
 
-        let identity_keypair: &Keypair = &repair_info.cluster_info.keypair().clone();
+        let identity_keypair: &Keypair = &repair_info.cluster_info.keypair();
 
         let number_of_allowed_requests =
             MAX_ANCESTOR_HASHES_SLOT_REQUESTS_PER_SECOND.saturating_sub(request_throttle.len());
@@ -843,6 +843,7 @@ impl AncestorHashesService {
             cluster_slots,
             repair_validators,
             repair_protocol,
+            &identity_keypair.pubkey(),
         ) else {
             return false;
         };
@@ -923,11 +924,10 @@ mod test {
             blockstore::make_many_slot_entries, get_tmp_ledger_path,
             get_tmp_ledger_path_auto_delete, shred::Nonce,
         },
-        solana_net_utils::sockets::bind_to_localhost_unique,
+        solana_net_utils::{sockets::bind_to_localhost_unique, SocketAddrSpace},
         solana_perf::packet::Packet,
         solana_runtime::bank_forks::BankForks,
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
         std::collections::HashMap,
         trees::tr,
     };

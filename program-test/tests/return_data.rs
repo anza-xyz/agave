@@ -12,7 +12,7 @@ use {
     solana_signer::Signer,
     solana_transaction::Transaction,
     solana_transaction_context::TransactionReturnData,
-    std::str::from_utf8,
+    std::{slice, str::from_utf8},
 };
 
 // Process instruction to get return data from another program
@@ -30,7 +30,7 @@ fn get_return_data_process_instruction(
             accounts: vec![],
             data: input.to_vec(),
         },
-        &[invoked_program_info.clone()],
+        slice::from_ref(invoked_program_info),
     )?;
     let return_data = get_return_data().unwrap();
     msg!("Processing get_return_data instruction after CPI");

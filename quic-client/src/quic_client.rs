@@ -24,7 +24,7 @@ pub const MAX_OUTSTANDING_TASK: u64 = 2000;
 const SEND_DATA_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A semaphore used for limiting the number of asynchronous tasks spawn to the
-/// runtime. Before spawnning a task, use acquire. After the task is done (be it
+/// runtime. Before spawning a task, use acquire. After the task is done (be it
 /// success or failure), call release.
 struct AsyncTaskSemaphore {
     /// Keep the counter info about the usage
@@ -47,7 +47,7 @@ impl AsyncTaskSemaphore {
     /// When returned, the lock has been locked and usage count has been
     /// incremented. When the returned MutexGuard is dropped the lock is dropped
     /// without decrementing the usage count.
-    pub fn acquire(&self) -> MutexGuard<u64> {
+    pub fn acquire(&self) -> MutexGuard<'_, u64> {
         let mut count = self.counter.lock().unwrap();
         *count += 1;
         while *count > self.permits {

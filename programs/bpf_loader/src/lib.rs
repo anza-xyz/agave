@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 #![deny(clippy::arithmetic_side_effects)]
 #![deny(clippy::indexing_slicing)]
 
@@ -40,7 +49,9 @@ use {
     solana_svm_measure::measure::Measure,
     solana_svm_type_overrides::sync::{atomic::Ordering, Arc},
     solana_system_interface::{instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH},
-    solana_transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
+    solana_transaction_context::{
+        instruction::InstructionContext, IndexOfAccount, TransactionContext,
+    },
     std::{cell::RefCell, mem, rc::Rc},
 };
 
@@ -55,9 +66,9 @@ thread_local! {
     pub static MEMORY_POOL: RefCell<VmMemoryPool> = RefCell::new(VmMemoryPool::new());
 }
 
-fn morph_into_deployment_environment_v1(
-    from: Arc<BuiltinProgram<InvokeContext>>,
-) -> Result<BuiltinProgram<InvokeContext>, ElfError> {
+fn morph_into_deployment_environment_v1<'a>(
+    from: Arc<BuiltinProgram<InvokeContext<'a, 'a>>>,
+) -> Result<BuiltinProgram<InvokeContext<'a, 'a>>, ElfError> {
     let mut config = from.get_config().clone();
     config.reject_broken_elfs = true;
     // Once the tests are being build using a toolchain which supports the newer SBPF versions,
@@ -85,7 +96,7 @@ pub fn load_program_from_bytes(
     loader_key: &Pubkey,
     account_size: usize,
     deployment_slot: Slot,
-    program_runtime_environment: Arc<BuiltinProgram<InvokeContext<'static>>>,
+    program_runtime_environment: Arc<BuiltinProgram<InvokeContext<'static, 'static>>>,
     reloading: bool,
 ) -> Result<ProgramCacheEntry, InstructionError> {
     let effective_slot = deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET);
@@ -186,18 +197,17 @@ pub fn deploy_program(
 #[macro_export]
 macro_rules! deploy_program {
     ($invoke_context:expr, $program_id:expr, $loader_key:expr, $account_size:expr, $programdata:expr, $deployment_slot:expr $(,)?) => {
-        let environments = $invoke_context
-            .get_environments_for_slot($deployment_slot.saturating_add(
-                solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
-            ))
-            .map_err(|_err| {
-                // This will never fail since the epoch schedule is already configured.
-                InstructionError::ProgramEnvironmentSetupFailure
-            })?;
+        assert_eq!(
+            $deployment_slot,
+            $invoke_context.program_cache_for_tx_batch.slot()
+        );
         let load_program_metrics = $crate::deploy_program(
             $invoke_context.get_log_collector(),
             $invoke_context.program_cache_for_tx_batch,
-            environments.program_runtime_v1.clone(),
+            $invoke_context
+                .get_program_runtime_environments_for_deployment()
+                .program_runtime_v1
+                .clone(),
             $program_id,
             $loader_key,
             $account_size,
@@ -250,13 +260,13 @@ pub fn calculate_heap_cost(heap_size: u32, heap_cost: u64) -> u64 {
 /// Only used in macro, do not use directly!
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
 fn create_vm<'a, 'b>(
-    program: &'a Executable<InvokeContext<'b>>,
+    program: &'a Executable<InvokeContext<'b, 'b>>,
     regions: Vec<MemoryRegion>,
     accounts_metadata: Vec<SerializedAccountMetadata>,
-    invoke_context: &'a mut InvokeContext<'b>,
+    invoke_context: &'a mut InvokeContext<'b, 'b>,
     stack: &mut [u8],
     heap: &mut [u8],
-) -> Result<EbpfVm<'a, InvokeContext<'b>>, Box<dyn std::error::Error>> {
+) -> Result<EbpfVm<'a, InvokeContext<'b, 'b>>, Box<dyn std::error::Error>> {
     let stack_size = stack.len();
     let heap_size = heap.len();
     let memory_mapping = create_memory_mapping(
@@ -357,7 +367,7 @@ fn create_memory_mapping<'a, 'b, C: ContextObject>(
 declare_builtin_function!(
     Entrypoint,
     fn rust(
-        invoke_context: &mut InvokeContext,
+        invoke_context: &mut InvokeContext<'static, 'static>,
         _arg0: u64,
         _arg1: u64,
         _arg2: u64,
@@ -374,8 +384,8 @@ mod migration_authority {
 }
 
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-pub(crate) fn process_instruction_inner(
-    invoke_context: &mut InvokeContext,
+pub(crate) fn process_instruction_inner<'a>(
+    invoke_context: &mut InvokeContext<'a, 'a>,
 ) -> Result<u64, Box<dyn std::error::Error>> {
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
@@ -1439,15 +1449,16 @@ fn common_close_account(
 
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
 fn execute<'a, 'b: 'a>(
-    executable: &'a Executable<InvokeContext<'static>>,
-    invoke_context: &'a mut InvokeContext<'b>,
+    executable: &'a Executable<InvokeContext<'static, 'static>>,
+    invoke_context: &'a mut InvokeContext<'b, 'b>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // We dropped the lifetime tracking in the Executor by setting it to 'static,
     // thus we need to reintroduce the correct lifetime of InvokeContext here again.
     let executable = unsafe {
-        mem::transmute::<&'a Executable<InvokeContext<'static>>, &'a Executable<InvokeContext<'b>>>(
-            executable,
-        )
+        mem::transmute::<
+            &'a Executable<InvokeContext<'static, 'static>>,
+            &'a Executable<InvokeContext<'b, 'b>>,
+        >(executable)
     };
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
@@ -1688,7 +1699,6 @@ mod test_utils {
     use {
         super::*, agave_syscalls::create_program_runtime_environment_v1,
         solana_account::ReadableAccount, solana_loader_v4_interface::state::LoaderV4State,
-        solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
         solana_sdk_ids::loader_v4,
     };
 
@@ -1744,9 +1754,6 @@ mod test_utils {
                     program_runtime_environment.clone(),
                     false,
                 ) {
-                    invoke_context
-                        .program_cache_for_tx_batch
-                        .set_slot_for_tests(DELAY_VISIBILITY_SLOT_OFFSET);
                     invoke_context
                         .program_cache_for_tx_batch
                         .store_modified_entry(*pubkey, Arc::new(loaded_program));
@@ -3881,12 +3888,12 @@ mod tests {
     ) where
         F: Fn(&mut [u8]),
     {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for _ in 0..outer_iters {
             let mut mangled_bytes = bytes.to_vec();
             for _ in 0..inner_iters {
-                let offset = rng.gen_range(offset.start..offset.end);
-                let value = rng.gen_range(value.start..value.end);
+                let offset = rng.random_range(offset.start..offset.end);
+                let value = rng.random_range(value.start..value.end);
                 *mangled_bytes.get_mut(offset).unwrap() = value;
                 work(&mut mangled_bytes);
             }
@@ -3985,6 +3992,9 @@ mod tests {
         invoke_context
             .program_cache_for_tx_batch
             .replenish(program_id, Arc::new(program));
+        invoke_context
+            .program_cache_for_tx_batch
+            .set_slot_for_tests(2);
 
         assert_matches!(
             deploy_test_program(&mut invoke_context, program_id,),
@@ -4024,6 +4034,9 @@ mod tests {
         invoke_context
             .program_cache_for_tx_batch
             .replenish(program_id, Arc::new(program));
+        invoke_context
+            .program_cache_for_tx_batch
+            .set_slot_for_tests(2);
 
         let program_id2 = Pubkey::new_unique();
         assert_matches!(

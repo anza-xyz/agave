@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(feature = "agave-unstable-api"),
+    deprecated(
+        since = "3.1.0",
+        note = "This crate has been marked for formal inclusion in the Agave Unstable API. From \
+                v4.0.0 onward, the `agave-unstable-api` crate feature must be specified to \
+                acknowledge use of an interface that may break without warning."
+    )
+)]
 #![allow(rustdoc::private_intra_doc_links)]
 //! The task (transaction) scheduling code for the unified scheduler
 //!
@@ -98,6 +107,7 @@
 use {
     crate::utils::{ShortCounter, Token, TokenCell},
     assert_matches::assert_matches,
+    solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_transaction::sanitized::SanitizedTransaction,
@@ -442,6 +452,8 @@ const_assert_eq!(mem::size_of::<Task>(), 8);
 
 pub type BlockSize = usize;
 pub const NO_CONSUMED_BLOCK_SIZE: BlockSize = 0;
+pub const MAX_SANITIZED_EPOCH: Epoch = Epoch::MAX;
+pub const MAX_ALT_INVALIDATION_SLOT: Slot = Slot::MAX;
 
 /// [`Token`] for [`UsageQueue`].
 type UsageQueueToken = Token<UsageQueueInner>;
@@ -467,6 +479,8 @@ pub struct TaskInner {
     /// before running.
     blocked_usage_count: TokenCell<ShortCounter>,
     consumed_block_size: BlockSize,
+    sanitized_epoch: Epoch,
+    alt_invalidation_slot: Slot,
 }
 
 impl TaskInner {
@@ -484,6 +498,14 @@ impl TaskInner {
 
     pub fn consumed_block_size(&self) -> BlockSize {
         self.consumed_block_size
+    }
+
+    pub fn sanitized_epoch(&self) -> Epoch {
+        self.sanitized_epoch
+    }
+
+    pub fn alt_invalidation_slot(&self) -> Slot {
+        self.alt_invalidation_slot
     }
 
     pub fn transaction(&self) -> &RuntimeTransaction<SanitizedTransaction> {
@@ -763,7 +785,7 @@ impl UsageQueueInner {
         match self {
             Self::Fifo { current_usage, .. } => {
                 match current_usage {
-                    Some(FifoUsage::Readonly(ref mut count)) => match requested_usage {
+                    Some(FifoUsage::Readonly(count)) => match requested_usage {
                         RequestedUsage::Readonly => {
                             if count.is_one() {
                                 is_newly_lockable = true;
@@ -1245,6 +1267,8 @@ impl SchedulingStateMachine {
             transaction,
             task_id,
             NO_CONSUMED_BLOCK_SIZE,
+            MAX_SANITIZED_EPOCH,
+            MAX_ALT_INVALIDATION_SLOT,
             usage_queue_loader,
         )
     }
@@ -1253,12 +1277,16 @@ impl SchedulingStateMachine {
         transaction: RuntimeTransaction<SanitizedTransaction>,
         task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
+        sanitized_epoch: Epoch,
+        alt_invalidation_slot: Slot,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
         Self::do_create_task(
             transaction,
             task_id,
             consumed_block_size,
+            sanitized_epoch,
+            alt_invalidation_slot,
             usage_queue_loader,
         )
     }
@@ -1267,6 +1295,8 @@ impl SchedulingStateMachine {
         transaction: RuntimeTransaction<SanitizedTransaction>,
         task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
+        sanitized_epoch: Epoch,
+        alt_invalidation_slot: Slot,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
         // It's crucial for tasks to be validated with
@@ -1323,6 +1353,8 @@ impl SchedulingStateMachine {
             lock_contexts,
             blocked_usage_count: TokenCell::new(ShortCounter::zero()),
             consumed_block_size,
+            sanitized_epoch,
+            alt_invalidation_slot,
         })
     }
 
@@ -1428,7 +1460,7 @@ impl SchedulingStateMachine {
 
     #[cfg(test)]
     unsafe fn exclusively_initialize_current_thread_for_scheduling_for_test() -> Self {
-        Self::exclusively_initialize_current_thread_for_scheduling(None)
+        unsafe { Self::exclusively_initialize_current_thread_for_scheduling(None) }
     }
 }
 

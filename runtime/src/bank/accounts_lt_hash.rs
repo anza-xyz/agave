@@ -368,7 +368,7 @@ pub struct Stats {
 /// The initial state of an account prior to being modified in this slot/transaction
 #[derive(Debug, Clone, PartialEq)]
 pub enum InitialStateOfAccount {
-    /// The account was initiall dead
+    /// The account was initially dead
     Dead,
     /// The account was initially alive
     Alive(AccountSharedData),
@@ -389,16 +389,12 @@ pub enum CacheValue {
 mod tests {
     use {
         super::*,
-        crate::{
-            bank::tests::new_bank_from_parent_with_bank_forks, runtime_config::RuntimeConfig,
-            snapshot_bank_utils, snapshot_config::SnapshotConfig, snapshot_utils,
-        },
+        crate::{runtime_config::RuntimeConfig, snapshot_bank_utils, snapshot_utils},
+        agave_snapshots::snapshot_config::SnapshotConfig,
         solana_account::{ReadableAccount as _, WritableAccount as _},
         solana_accounts_db::{
             accounts_db::{AccountsDbConfig, MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING},
-            accounts_index::{
-                AccountsIndexConfig, IndexLimitMb, ACCOUNTS_INDEX_CONFIG_FOR_TESTING,
-            },
+            accounts_index::{AccountsIndexConfig, IndexLimit, ACCOUNTS_INDEX_CONFIG_FOR_TESTING},
         },
         solana_fee_calculator::FeeRateGovernor,
         solana_genesis_config::{self, GenesisConfig},
@@ -505,7 +501,7 @@ mod tests {
 
         let bank = {
             let slot = bank.slot() + 1;
-            new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot)
+            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot)
         };
 
         // send from account 2 to account 1; account 1 stays alive, account 2 ends up dead
@@ -752,7 +748,7 @@ mod tests {
         for _ in 0..7 {
             let slot = bank.slot() + 1;
             bank =
-                new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+                Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
             for _ in 0..13 {
                 bank.register_unique_recent_blockhash_for_test();
                 // note: use a random pubkey here to ensure accounts
@@ -780,12 +776,12 @@ mod tests {
 
     #[test_matrix(
         [Features::None, Features::All],
-        [IndexLimitMb::Minimal, IndexLimitMb::InMemOnly],
+        [IndexLimit::Minimal, IndexLimit::InMemOnly],
         [MarkObsoleteAccounts::Disabled, MarkObsoleteAccounts::Enabled]
     )]
     fn test_verify_accounts_lt_hash_at_startup(
         features: Features,
-        accounts_index_limit: IndexLimitMb,
+        accounts_index_limit: IndexLimit,
         mark_obsolete_accounts: MarkObsoleteAccounts,
     ) {
         let (mut genesis_config, mint_keypair) = genesis_config_with(features);
@@ -806,7 +802,7 @@ mod tests {
         for _ in 0..9 {
             let slot = bank.slot() + 1;
             bank =
-                new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+                Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
             for _ in 0..3 {
                 bank.register_unique_recent_blockhash_for_test();
                 bank.transfer(amount, &mint_keypair, &pubkey::new_rand())
@@ -832,7 +828,7 @@ mod tests {
         for i in 0..num_accounts {
             let slot = bank.slot() + 1;
             bank =
-                new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+                Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
             bank.register_unique_recent_blockhash_for_test();
 
             // transfer into the accounts so they start with a non-zero balance
@@ -872,7 +868,7 @@ mod tests {
         .unwrap();
         let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
         let accounts_index_config = AccountsIndexConfig {
-            index_limit_mb: accounts_index_limit,
+            index_limit: accounts_index_limit,
             ..ACCOUNTS_INDEX_CONFIG_FOR_TESTING
         };
         let accounts_db_config = AccountsDbConfig {
@@ -914,7 +910,7 @@ mod tests {
         let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         let slot = bank.slot() + 1;
-        bank = new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+        bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
 
         // These are the two accounts *currently* added to the bank during Bank::new().
         // More accounts could be added later, so if the test fails, inspect the actual cache
@@ -955,7 +951,7 @@ mod tests {
         for _ in 0..3 {
             let slot = bank.slot() + 1;
             bank =
-                new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+                Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
             bank.register_unique_recent_blockhash_for_test();
             bank.transfer(amount, &mint_keypair, &pubkey::new_rand())
                 .unwrap();

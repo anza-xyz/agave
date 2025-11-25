@@ -604,7 +604,7 @@ pub(crate) mod tests {
                 None
             }
         };
-        let test_cases = vec![
+        let test_cases = [
             (
                 new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true),
                 new_rand_data_shred(
@@ -1118,8 +1118,7 @@ pub(crate) mod tests {
         let coding_shred_different_retransmitter =
             Shred::new_from_serialized_shred(coding_shred_different_retransmitter_payload).unwrap();
 
-        let test_cases = vec![
-            // Same data shred from different retransmitter
+        let test_cases = [
             (data_shred, data_shred_different_retransmitter),
             // Same coding shred from different retransmitter
             (coding_shred, coding_shred_different_retransmitter),

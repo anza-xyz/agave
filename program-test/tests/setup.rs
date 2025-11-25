@@ -12,7 +12,7 @@ use {
     solana_transaction::Transaction,
     solana_vote_program::{
         vote_instruction,
-        vote_state::{self, VoteInit, VoteStateV3},
+        vote_state::{self, VoteInit, VoteStateV4},
     },
 };
 
@@ -54,7 +54,7 @@ pub async fn setup_vote(context: &mut ProgramTestContext) -> Pubkey {
         0,
         &system_program::id(),
     ));
-    let vote_lamports = Rent::default().minimum_balance(VoteStateV3::size_of());
+    let vote_lamports = Rent::default().minimum_balance(VoteStateV4::size_of());
     let vote_keypair = Keypair::new();
     let user_keypair = Keypair::new();
     instructions.append(&mut vote_instruction::create_account_with_config(
@@ -67,7 +67,7 @@ pub async fn setup_vote(context: &mut ProgramTestContext) -> Pubkey {
         },
         vote_lamports,
         vote_instruction::CreateVoteAccountConfig {
-            space: vote_state::VoteStateV3::size_of() as u64,
+            space: vote_state::VoteStateV4::size_of() as u64,
             ..vote_instruction::CreateVoteAccountConfig::default()
         },
     ));

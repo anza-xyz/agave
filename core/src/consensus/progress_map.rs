@@ -12,7 +12,7 @@ use {
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{
-        collections::{BTreeMap, HashMap, HashSet},
+        collections::{HashMap, HashSet},
         sync::{Arc, RwLock},
         time::Instant,
     },
@@ -20,7 +20,15 @@ use {
 
 type VotedSlot = Slot;
 type ExpirationSlot = Slot;
-pub type LockoutIntervals = BTreeMap<ExpirationSlot, Vec<(VotedSlot, Pubkey)>>;
+
+#[derive(Clone, Copy, Debug)]
+pub struct LockoutInterval {
+    pub voter: Pubkey,
+    pub start: VotedSlot,
+    pub end: ExpirationSlot,
+}
+
+pub type LockoutIntervals = Vec<LockoutInterval>;
 
 #[derive(Debug)]
 pub struct ValidatorStakeInfo {

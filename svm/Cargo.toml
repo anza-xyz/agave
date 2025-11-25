@@ -17,6 +17,7 @@ crate-type = ["lib"]
 name = "solana_svm"
 
 [features]
+agave-unstable-api = []
 dev-context-only-utils = [
     "dep:qualifier_attr",
     "solana-program-runtime/dev-context-only-utils",
@@ -79,6 +80,7 @@ spl-generic-token = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { workspace = true }
 agave-syscalls = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
@@ -96,7 +98,6 @@ solana-ed25519-program = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-keypair = { workspace = true }
-solana-logger = { workspace = true }
 solana-native-token = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-binaries = { workspace = true }
@@ -109,7 +110,7 @@ solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
 solana-signature = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-svm = { path = ".", features = ["dev-context-only-utils", "svm-internal"] }
+solana-svm = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils", "svm-internal"] }
 solana-system-program = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true }

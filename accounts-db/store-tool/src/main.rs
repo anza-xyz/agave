@@ -6,7 +6,7 @@ use {
     },
     rayon::prelude::*,
     solana_account::ReadableAccount,
-    solana_accounts_db::accounts_file::{AccountsFile, StorageAccess},
+    solana_accounts_db::append_vec::AppendVec,
     solana_pubkey::Pubkey,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     std::{
@@ -109,24 +109,12 @@ fn cmd_search(
 }
 
 fn do_inspect(file: impl AsRef<Path>, verbose: bool) -> Result<(), String> {
-    let file_size = fs::metadata(&file)
-        .map_err(|err| {
-            format!(
-                "failed to get file metadata '{}': {err}",
-                file.as_ref().display(),
-            )
-        })?
-        .len() as usize;
-
-    let (storage, _size) =
-        AccountsFile::new_from_file(file.as_ref(), file_size, StorageAccess::default()).map_err(
-            |err| {
-                format!(
-                    "failed to open account storage file '{}': {err}",
-                    file.as_ref().display(),
-                )
-            },
-        )?;
+    let storage = AppendVec::new_for_store_tool(file.as_ref()).map_err(|err| {
+        format!(
+            "failed to open account storage file '{}': {err}",
+            file.as_ref().display(),
+        )
+    })?;
     // By default, when the storage is dropped, the backing file will be removed.
     // We do not want to remove the backing file here in the store-tool, so prevent dropping.
     let storage = ManuallyDrop::new(storage);
@@ -138,7 +126,7 @@ fn do_inspect(file: impl AsRef<Path>, verbose: bool) -> Result<(), String> {
     let mut stored_accounts_size = Saturating(0);
     let mut lamports = Saturating(0);
     storage
-        .scan_accounts_stored_meta(|account| {
+        .scan_accounts_stored_meta_for_store_tool(|account| {
             if verbose {
                 println!("{account:?}");
             } else {
@@ -198,23 +186,12 @@ fn do_search(
         )
     })?;
     files.par_iter().for_each(|file| {
-        let file_size = match fs::metadata(file) {
-            Ok(metadata) => metadata.len() as usize,
-            Err(err) => {
-                eprintln!("failed to get storage metadata '{}': {err}", file.display(),);
-                return;
-            }
-        };
-        let Ok((storage, _size)) =
-            AccountsFile::new_from_file(file, file_size, StorageAccess::default()).inspect_err(
-                |err| {
-                    eprintln!(
-                        "failed to open account storage file '{}': {err}",
-                        file.display(),
-                    )
-                },
+        let Ok(storage) = AppendVec::new_for_store_tool(file).inspect_err(|err| {
+            eprintln!(
+                "failed to open account storage file '{}': {err}",
+                file.display(),
             )
-        else {
+        }) else {
             return;
         };
         // By default, when the storage is dropped, the backing file will be removed.
@@ -223,7 +200,7 @@ fn do_search(
 
         let file_name = Path::new(file.file_name().expect("path is a file"));
         storage
-            .scan_accounts_stored_meta(|account| {
+            .scan_accounts_stored_meta_for_store_tool(|account| {
                 if addresses.contains(account.pubkey()) {
                     if verbose {
                         println!("storage: {}, {account:?}", file_name.display());

@@ -129,7 +129,7 @@ cloud_Initialize() {
 
 #
 # cloud_CreateInstances [networkName] [namePrefix] [numNodes]
-#                       [enableGpu] [machineType] [zone]
+#                       [machineType] [zone]
 #                       [bootDiskSize] [startupScript] [address]
 #                       [bootDiskType] [additionalDiskSize] [preemptible]
 #
@@ -138,8 +138,6 @@ cloud_Initialize() {
 # networkName   - unique name of this testnet
 # namePrefix    - unique string to prefix all the instance names with
 # numNodes      - number of instances to create
-# enableGpu     - Optionally enable GPU, use the value "true" to enable
-#                 eg, request 4 K80 GPUs with "count=4,type=nvidia-tesla-k80"
 # machineType   - GCE machine type.  Note that this may also include an
 #                 `--accelerator=` or other |gcloud compute instances create|
 #                 options
@@ -159,16 +157,15 @@ cloud_CreateInstances() {
   #declare networkName="${1}" # unused
   declare namePrefix="${2}"
   declare numNodes="${3}"
-  #declare enableGpu="${4}" # unused
-  declare machineType="${5}"
-  # declare zone="${6}" # unused
-  #declare optionalBootDiskSize="${7}" # unused
-  #declare optionalStartupScript="${8}" # unused
-  #declare optionalAddress="${9}" # unused
-  #declare optionalBootDiskType="${10}" # unused
-  #declare optionalAdditionalDiskSize="${11}" # unused
-  declare optionalPreemptible="${12}"
-  declare sshPrivateKey="${13}"
+  declare machineType="${4}"
+  # declare zone="${5}" # unused
+  #declare optionalBootDiskSize="${6}" # unused
+  #declare optionalStartupScript="${7}" # unused
+  #declare optionalAddress="${8}" # unused
+  #declare optionalBootDiskType="${9}" # unused
+  #declare optionalAdditionalDiskSize="${10}" # unused
+  declare optionalPreemptible="${11}"
+  declare sshPrivateKey="${12}"
 
   declare -a nodes
   if [[ ${numNodes} = 1 ]]; then

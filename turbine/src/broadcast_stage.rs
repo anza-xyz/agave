@@ -24,15 +24,12 @@ use {
     solana_ledger::{blockstore::Blockstore, shred::Shred},
     solana_measure::measure::Measure,
     solana_metrics::{inc_new_counter_error, inc_new_counter_info},
+    solana_net_utils::SocketAddrSpace,
     solana_poh::poh_recorder::WorkingBankEntry,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::MAX_LEADER_SCHEDULE_STAKES, bank_forks::BankForks},
-    solana_streamer::{
-        sendmmsg::{batch_send, SendPktsError},
-        socket::SocketAddrSpace,
-    },
+    solana_streamer::sendmmsg::{batch_send, SendPktsError},
     solana_time_utils::{timestamp, AtomicInterval},
-    static_assertions::const_assert_eq,
     std::{
         collections::{HashMap, HashSet},
         net::{SocketAddr, UdpSocket},
@@ -54,7 +51,14 @@ pub(crate) mod broadcast_utils;
 mod fail_entry_verification_broadcast_run;
 pub(crate) mod standard_broadcast_run;
 
-const_assert_eq!(CLUSTER_NODES_CACHE_NUM_EPOCH_CAP, 5);
+const _: () = const {
+    // From https://github.com/anza-xyz/agave/pull/1735#discussion_r1644899183:
+    // 1. There must be at least two epochs because near an epoch boundary you might receive
+    //    shreds from the other side of the epoch boundary.
+    // 2. It does not make sense to have capacity more than the number of epoch-stakes in Bank.
+    assert!(CLUSTER_NODES_CACHE_NUM_EPOCH_CAP >= 2);
+    assert!(CLUSTER_NODES_CACHE_NUM_EPOCH_CAP <= MAX_LEADER_SCHEDULE_STAKES as usize);
+};
 const CLUSTER_NODES_CACHE_NUM_EPOCH_CAP: usize = MAX_LEADER_SCHEDULE_STAKES as usize;
 const CLUSTER_NODES_CACHE_TTL: Duration = Duration::from_secs(5);
 
@@ -500,7 +504,7 @@ pub fn broadcast_shreds(
     };
     let (packets, quic_packets): (Vec<_>, Vec<_>) = shreds
         .iter()
-        .group_by(|shred| shred.slot())
+        .chunk_by(|shred| shred.slot())
         .into_iter()
         .flat_map(|(slot, shreds)| {
             let cluster_nodes =
@@ -777,7 +781,7 @@ pub mod test {
 
     #[test]
     fn test_broadcast_ledger() {
-        solana_logger::setup();
+        agave_logger::setup();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
 
         // Create the leader scheduler

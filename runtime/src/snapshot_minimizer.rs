@@ -373,10 +373,10 @@ mod tests {
             genesis_utils::{self, create_genesis_config_with_leader},
             runtime_config::RuntimeConfig,
             snapshot_bank_utils,
-            snapshot_config::SnapshotConfig,
             snapshot_minimizer::SnapshotMinimizer,
             snapshot_utils,
         },
+        agave_snapshots::snapshot_config::SnapshotConfig,
         dashmap::DashSet,
         solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
         solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
@@ -393,7 +393,7 @@ mod tests {
 
     #[test]
     fn test_minimization_get_vote_accounts() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let bootstrap_validator_pubkey = solana_pubkey::new_rand();
         let bootstrap_validator_stake_lamports = 30;
@@ -422,7 +422,7 @@ mod tests {
 
     #[test]
     fn test_minimization_get_stake_accounts() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let bootstrap_validator_pubkey = solana_pubkey::new_rand();
         let bootstrap_validator_stake_lamports = 30;
@@ -461,7 +461,7 @@ mod tests {
 
     #[test]
     fn test_minimization_get_owner_accounts() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let (genesis_config, _) = create_genesis_config(1_000_000);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
@@ -485,7 +485,7 @@ mod tests {
 
     #[test]
     fn test_minimization_add_programdata_accounts() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let (genesis_config, _) = create_genesis_config(1_000_000);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
@@ -498,12 +498,12 @@ mod tests {
             programdata_address,
         };
 
-        let non_program_acount = AccountSharedData::new(1, 0, &non_program_id);
+        let non_program_account = AccountSharedData::new(1, 0, &non_program_id);
         let mut program_account =
             AccountSharedData::new_data(40, &program, &bpf_loader_upgradeable::id()).unwrap();
         program_account.set_executable(true);
 
-        bank.store_account(&non_program_id, &non_program_acount);
+        bank.store_account(&non_program_id, &non_program_account);
         bank.store_account(&program_id, &program_account);
 
         // Non-program account does not add any additional keys
@@ -531,7 +531,7 @@ mod tests {
 
     #[test]
     fn test_minimize_accounts_db() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let (genesis_config, _) = create_genesis_config(1_000_000);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));

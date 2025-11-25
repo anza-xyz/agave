@@ -8,13 +8,13 @@ mod tests {
             runtime_config::RuntimeConfig,
             serde_snapshot::{self, ExtraFieldsToSerialize, SnapshotStreams},
             snapshot_bank_utils,
-            snapshot_config::SnapshotConfig,
             snapshot_utils::{
                 create_tmp_accounts_dir_for_tests, get_storages_to_serialize,
                 StorageAndNextAccountsFileId,
             },
             stakes::{SerdeStakesToStakeFormat, Stakes},
         },
+        agave_snapshots::snapshot_config::SnapshotConfig,
         solana_accounts_db::{
             account_storage::AccountStorageMap,
             accounts_db::{
@@ -79,7 +79,7 @@ mod tests {
 
     /// Test roundtrip serialize/deserialize of a bank
     #[test_matrix(
-        [StorageAccess::Mmap, StorageAccess::File]
+        [#[allow(deprecated)] StorageAccess::Mmap, StorageAccess::File]
     )]
     fn test_serialize_bank_snapshot(storage_access: StorageAccess) {
         let (mut genesis_config, _) = create_genesis_config(500);
@@ -180,10 +180,10 @@ mod tests {
         bank.flush_accounts_cache_slot_for_tests()
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_extra_fields_eof(storage_access: StorageAccess) {
-        solana_logger::setup();
+        agave_logger::setup();
         let (genesis_config, _) = create_genesis_config(500);
 
         let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
@@ -260,7 +260,7 @@ mod tests {
 
     #[test]
     fn test_extra_fields_full_snapshot_archive() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let (mut genesis_config, _) = create_genesis_config(500);
         activate_all_features(&mut genesis_config);

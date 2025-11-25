@@ -12,9 +12,9 @@ use {
         bank::{Bank, BankSlotDelta, DropCallback},
         bank_forks::BankForks,
         snapshot_controller::SnapshotController,
-        snapshot_package::{SnapshotKind, SnapshotPackage},
-        snapshot_utils::SnapshotError,
+        snapshot_package::SnapshotPackage,
     },
+    agave_snapshots::{error::SnapshotError, SnapshotArchiveKind, SnapshotKind},
     crossbeam_channel::{Receiver, SendError, Sender},
     log::*,
     rayon::iter::{IntoParallelIterator, ParallelIterator},
@@ -188,13 +188,7 @@ impl SnapshotRequestHandler {
                 Some((snapshot_request, 1, 0))
             }
             _ => {
-                // Get the two highest priority requests, `y` and `z`.
-                // By asking for the second-to-last element to be in its final sorted position, we
-                // also ensure that the last element is also sorted.
-                // Note, we no longer need the second-to-last element; this code can be refactored.
-                let (_, _y, z) =
-                    requests.select_nth_unstable_by(requests_len - 2, cmp_requests_by_priority);
-                assert_eq!(z.len(), 1);
+                requests.select_nth_unstable_by(requests_len - 1, cmp_requests_by_priority);
 
                 // SAFETY: We know the len is > 1, so `pop` will return `Some`
                 let snapshot_request = requests.pop().unwrap();
@@ -651,7 +645,7 @@ impl AbsStatus {
 #[must_use]
 fn new_snapshot_kind(snapshot_request: &SnapshotRequest) -> Option<SnapshotKind> {
     match snapshot_request.request_kind {
-        SnapshotRequestKind::FullSnapshot => Some(SnapshotKind::FullSnapshot),
+        SnapshotRequestKind::FullSnapshot => Some(SnapshotKind::Archive(SnapshotArchiveKind::Full)),
         SnapshotRequestKind::IncrementalSnapshot => {
             if let Some(latest_full_snapshot_slot) = snapshot_request
                 .snapshot_root_bank
@@ -660,7 +654,9 @@ fn new_snapshot_kind(snapshot_request: &SnapshotRequest) -> Option<SnapshotKind>
                 .accounts_db
                 .latest_full_snapshot_slot()
             {
-                Some(SnapshotKind::IncrementalSnapshot(latest_full_snapshot_slot))
+                Some(SnapshotKind::Archive(SnapshotArchiveKind::Incremental(
+                    latest_full_snapshot_slot,
+                )))
             } else {
                 warn!(
                     "Ignoring IncrementalSnapshot request for slot {} because there is no latest \
@@ -715,8 +711,8 @@ fn cmp_snapshot_request_kinds_by_priority(
 mod test {
     use {
         super::*,
-        crate::{genesis_utils::create_genesis_config, snapshot_config::SnapshotConfig},
-        agave_snapshots::SnapshotInterval,
+        crate::genesis_utils::create_genesis_config,
+        agave_snapshots::{snapshot_config::SnapshotConfig, SnapshotInterval},
         crossbeam_channel::unbounded,
         solana_account::AccountSharedData,
         solana_epoch_schedule::EpochSchedule,
@@ -840,9 +836,12 @@ mod test {
 
                 // Since we're not using `BankForks::set_root()`, we have to handle sending the
                 // correct snapshot requests ourself.
-                if bank.block_height() % FULL_SNAPSHOT_INTERVAL == 0 {
+                if bank.block_height().is_multiple_of(FULL_SNAPSHOT_INTERVAL) {
                     send_snapshot_request(Arc::clone(&bank), SnapshotRequestKind::FullSnapshot);
-                } else if bank.block_height() % INCREMENTAL_SNAPSHOT_INTERVAL == 0 {
+                } else if bank
+                    .block_height()
+                    .is_multiple_of(INCREMENTAL_SNAPSHOT_INTERVAL)
+                {
                     send_snapshot_request(
                         Arc::clone(&bank),
                         SnapshotRequestKind::IncrementalSnapshot,

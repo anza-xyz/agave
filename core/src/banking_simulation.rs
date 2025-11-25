@@ -3,7 +3,8 @@ use {
     crate::{
         banking_stage::{
             transaction_scheduler::scheduler_controller::SchedulerConfig,
-            update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage, LikeClusterInfo,
+            update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage, BankingStageHandle,
+            LikeClusterInfo,
         },
         banking_trace::{
             BankingTracer, ChannelLabel, Channels, TimedTracedEvent, TracedEvent, TracedSender,
@@ -25,7 +26,10 @@ use {
         blockstore::{Blockstore, PurgeType},
         leader_schedule_cache::LeaderScheduleCache,
     },
-    solana_net_utils::sockets::{bind_in_range_with_config, SocketConfiguration},
+    solana_net_utils::{
+        sockets::{bind_in_range_with_config, SocketConfiguration},
+        SocketAddrSpace,
+    },
     solana_poh::{
         poh_controller::PohController,
         poh_recorder::{PohRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
@@ -42,7 +46,6 @@ use {
     },
     solana_shred_version::compute_shred_version,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
     std::{
         collections::BTreeMap,
@@ -59,6 +62,7 @@ use {
         time::{Duration, Instant, SystemTime},
     },
     thiserror::Error,
+    tokio::sync::mpsc,
 };
 
 /// This creates a simulated environment around `BankingStage` to produce leader's blocks based on
@@ -530,7 +534,7 @@ impl SimulatorLoop {
 
 struct SimulatorThreads {
     poh_service: PohService,
-    banking_stage: BankingStage,
+    banking_stage: BankingStageHandle,
     broadcast_stage: BroadcastStage,
     retracer_thread: TracerThread,
     exit: Arc<AtomicBool>,
@@ -670,7 +674,7 @@ impl<'a> SenderLoopLogger<'a> {
         );
     }
 
-    fn format_as_timestamp(time: SystemTime) -> impl Display {
+    fn format_as_timestamp(time: SystemTime) -> impl Display + use<> {
         let time: chrono::DateTime<chrono::Utc> = time.into();
         time.format("%Y-%m-%d %H:%M:%S.%f")
     }
@@ -837,6 +841,7 @@ impl BankingSimulator {
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
+            mpsc::channel(1).1,
             BankingStage::default_num_workers(),
             SchedulerConfig::default(),
             None,

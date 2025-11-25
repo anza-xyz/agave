@@ -5,7 +5,7 @@ use {
     clap::{crate_description, crate_name, Arg, ArgEnum, Command},
     crossbeam_channel::{unbounded, Receiver},
     log::*,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     rayon::prelude::*,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_core::{
@@ -44,6 +44,7 @@ use {
         thread::sleep,
         time::{Duration, Instant},
     },
+    tokio::sync::mpsc,
 };
 
 // transfer transaction cost = 1 * SIGNATURE_COST +
@@ -138,7 +139,7 @@ fn make_accounts_txs(
                 hash,
                 compute_unit_price,
             );
-            let sig: [u8; 64] = std::array::from_fn(|_| thread_rng().gen::<u8>());
+            let sig: [u8; 64] = std::array::from_fn(|_| rng().random::<u8>());
             new.message.account_keys[0] = pubkey::new_rand();
             new.message.account_keys[1] = match contention {
                 WriteLockContention::None => pubkey::new_rand(),
@@ -224,7 +225,7 @@ impl PacketsPerIteration {
     fn refresh_blockhash(&mut self, new_blockhash: Hash) {
         for tx in self.transactions.iter_mut() {
             tx.message.recent_blockhash = new_blockhash;
-            let sig: [u8; 64] = std::array::from_fn(|_| thread_rng().gen::<u8>());
+            let sig: [u8; 64] = std::array::from_fn(|_| rng().random::<u8>());
             tx.signatures[0] = Signature::from(sig);
         }
         self.packet_batches = to_packet_batches(&self.transactions, self.packets_per_batch);
@@ -233,7 +234,7 @@ impl PacketsPerIteration {
 
 #[allow(clippy::cognitive_complexity)]
 fn main() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let matches = Command::new(crate_name!())
         .about(crate_description!())
@@ -392,7 +393,7 @@ fn main() {
                     genesis_config.hash(),
                 );
                 // Ignore any pesky duplicate signature errors in the case we are using single-payer
-                let sig: [u8; 64] = std::array::from_fn(|_| thread_rng().gen::<u8>());
+                let sig: [u8; 64] = std::array::from_fn(|_| rng().random::<u8>());
                 fund.signatures = vec![Signature::from(sig)];
                 bank.process_transaction(&fund).unwrap();
             });
@@ -466,6 +467,7 @@ fn main() {
         non_vote_receiver,
         tpu_vote_receiver,
         gossip_vote_receiver,
+        mpsc::channel(1).1,
         block_production_num_workers,
         SchedulerConfig {
             scheduler_pacing: SchedulerPacing::Disabled,
@@ -579,7 +581,7 @@ fn main() {
 
         // This signature clear may not actually clear the signatures
         // in this chunk, but since we rotate between CHUNKS then
-        // we should clear them by the time we come around again to re-use that chunk.
+        // we should clear them by the time we come around again to reuse that chunk.
         bank.clear_signatures();
         total_us += now.elapsed().as_micros() as u64;
         total_sent += sent;

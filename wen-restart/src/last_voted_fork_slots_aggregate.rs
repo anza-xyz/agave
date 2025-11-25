@@ -257,7 +257,7 @@ mod tests {
         solana_signer::Signer,
         solana_time_utils::timestamp,
         solana_vote::vote_account::VoteAccount,
-        solana_vote_program::vote_state::create_account_with_authorized,
+        solana_vote_program::vote_state::create_v4_account_with_authorized,
     };
 
     const TOTAL_VALIDATOR_COUNT: u16 = 10;
@@ -273,7 +273,7 @@ mod tests {
     }
 
     fn test_aggregate_init() -> TestAggregateInitResult {
-        solana_logger::setup();
+        agave_logger::setup();
         let validator_voting_keypairs: Vec<_> = (0..TOTAL_VALIDATOR_COUNT)
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect();
@@ -688,7 +688,7 @@ mod tests {
 
     #[test]
     fn test_aggregate_from_record_failures() {
-        solana_logger::setup();
+        agave_logger::setup();
         let mut test_state = test_aggregate_init();
         let last_vote_bankhash = Hash::new_unique();
         let mut last_voted_fork_slots_record = LastVotedForkSlotsRecord {
@@ -779,10 +779,11 @@ mod tests {
                     authorized_voter,
                     (
                         stake,
-                        VoteAccount::try_from(create_account_with_authorized(
+                        VoteAccount::try_from(create_v4_account_with_authorized(
                             &node_id,
                             &authorized_voter,
                             &node_id,
+                            None,
                             0,
                             100,
                         ))

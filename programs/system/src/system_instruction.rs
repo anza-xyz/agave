@@ -10,7 +10,10 @@ use {
     solana_svm_log_collector::ic_msg,
     solana_system_interface::error::SystemError,
     solana_sysvar::rent::Rent,
-    solana_transaction_context::{BorrowedInstructionAccount, IndexOfAccount, InstructionContext},
+    solana_transaction_context::{
+        instruction::InstructionContext, instruction_accounts::BorrowedInstructionAccount,
+        IndexOfAccount,
+    },
     std::collections::HashSet,
 };
 
@@ -107,7 +110,7 @@ pub(crate) fn withdraw_nonce_account(
             }
             *from.get_key()
         }
-        State::Initialized(ref data) => {
+        State::Initialized(data) => {
             if lamports == from.get_lamports() {
                 let durable_nonce =
                     DurableNonce::from_blockhash(&invoke_context.environment_config.blockhash);
@@ -252,7 +255,7 @@ mod test {
         solana_program_runtime::with_mock_invoke_context,
         solana_sdk_ids::system_program,
         solana_sha256_hasher::hash,
-        solana_transaction_context::InstructionAccount,
+        solana_transaction_context::instruction_accounts::InstructionAccount,
     };
 
     pub const NONCE_ACCOUNT_INDEX: IndexOfAccount = 0;

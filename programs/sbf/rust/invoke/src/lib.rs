@@ -10,6 +10,7 @@ use {
     solana_instruction::Instruction,
     solana_msg::msg,
     solana_program::{
+        compute_units::sol_remaining_compute_units,
         program::{get_return_data, invoke, invoke_signed, set_return_data},
         syscalls::{
             MAX_CPI_ACCOUNT_INFOS, MAX_CPI_INSTRUCTION_ACCOUNTS, MAX_CPI_INSTRUCTION_DATA_LEN,
@@ -587,10 +588,45 @@ fn process_instruction<'a>(
                 create_instruction(*accounts[INVOKED_PROGRAM_INDEX].key, &account_metas, vec![]);
             invoke_signed(&instruction, &[], &[])?;
         }
+        TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_INCREASE_TX_ACCOUNT_LOCK_BEFORE_SIMD_0339 => {
+            msg!("Test max account infos ok before SIMD-0339 and before increase cpi info");
+            let instruction = create_instruction(*accounts[INVOKED_PROGRAM_INDEX].key, &[], vec![]);
+            let account_infos_len = 64;
+            let account_infos = vec![accounts[0].clone(); account_infos_len];
+            invoke_signed(&instruction, &account_infos, &[])?;
+        }
+        TEST_MAX_ACCOUNT_INFOS_EXCEEDED_BEFORE_INCREASE_TX_ACCOUNT_LOCK_BEFORE_SIMD_0339 => {
+            msg!("Test max account infos exceeded before SIMD-0339 and before increase cpi info");
+            let instruction = create_instruction(*accounts[INVOKED_PROGRAM_INDEX].key, &[], vec![]);
+            let account_infos_len = 65;
+            let account_infos = vec![accounts[0].clone(); account_infos_len];
+            invoke_signed(&instruction, &account_infos, &[])?;
+        }
+        TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_SIMD_0339 => {
+            msg!("Test max account infos ok before SIMD-0339");
+            let instruction = create_instruction(*accounts[INVOKED_PROGRAM_INDEX].key, &[], vec![]);
+            let account_infos_len = MAX_CPI_ACCOUNT_INFOS;
+            let account_infos = vec![accounts[0].clone(); account_infos_len];
+            invoke_signed(&instruction, &account_infos, &[])?;
+        }
+        TEST_MAX_ACCOUNT_INFOS_EXCEEDED_BEFORE_SIMD_0339 => {
+            msg!("Test max account infos exceeded before SIMD-0339");
+            let instruction = create_instruction(*accounts[INVOKED_PROGRAM_INDEX].key, &[], vec![]);
+            let account_infos_len = MAX_CPI_ACCOUNT_INFOS.saturating_add(1);
+            let account_infos = vec![accounts[0].clone(); account_infos_len];
+            invoke_signed(&instruction, &account_infos, &[])?;
+        }
+        TEST_MAX_ACCOUNT_INFOS_OK => {
+            msg!("Test max account infos ok");
+            let instruction = create_instruction(*accounts[INVOKED_PROGRAM_INDEX].key, &[], vec![]);
+            let account_infos_len = 255;
+            let account_infos = vec![accounts[0].clone(); account_infos_len];
+            invoke_signed(&instruction, &account_infos, &[])?;
+        }
         TEST_MAX_ACCOUNT_INFOS_EXCEEDED => {
             msg!("Test max account infos exceeded");
             let instruction = create_instruction(*accounts[INVOKED_PROGRAM_INDEX].key, &[], vec![]);
-            let account_infos_len = MAX_CPI_ACCOUNT_INFOS.saturating_add(1);
+            let account_infos_len = 256;
             let account_infos = vec![accounts[0].clone(); account_infos_len];
             invoke_signed(&instruction, &account_infos, &[])?;
         }
@@ -1509,6 +1545,95 @@ fn process_instruction<'a>(
                 &[account0, account1, account2],
             )
             .unwrap();
+        }
+        TEST_CU_USAGE_MINIMUM => {
+            msg!("Test minimum cost of a CPI invocation with 1 account meta and 1 account info");
+
+            let account_infos: Vec<AccountInfo<'_>> = vec![accounts[NOOP_PROGRAM_INDEX].clone()];
+
+            let account_metas: Vec<(&Pubkey, bool, bool)> =
+                vec![(accounts[NOOP_PROGRAM_INDEX].key, false, false)];
+
+            let instruction =
+                create_instruction(*accounts[NOOP_PROGRAM_INDEX].key, &account_metas, vec![]);
+
+            let before_cpi = sol_remaining_compute_units();
+            invoke_signed(&instruction, &account_infos, &[])?;
+            let after_cpi = sol_remaining_compute_units();
+            let cu_used = before_cpi - after_cpi;
+            //need to use upper bound here, as different versions of sbpf add/remove speciliazed intructions hence leading to different CU usage
+            if cu_used > 1756 {
+                panic!("CU used more than baseline");
+            }
+        }
+        TEST_CU_USAGE_BASELINE => {
+            msg!(
+                "Test minimum cost of a CPI invocation with up to 255 account metas and 64 \
+                 account infos"
+            );
+
+            let mut selected_indices: Vec<usize> = vec![NOOP_PROGRAM_INDEX];
+
+            while selected_indices.len() < 64 {
+                selected_indices.push(selected_indices[0]);
+            }
+
+            let account_infos: Vec<AccountInfo<'_>> = selected_indices
+                .iter()
+                .map(|&i| accounts[i].clone())
+                .collect();
+
+            let mut account_metas: Vec<(&Pubkey, bool, bool)> = Vec::with_capacity(255);
+            account_metas.push((accounts[NOOP_PROGRAM_INDEX].key, false, false));
+
+            while account_metas.len() < 255 {
+                account_metas.push((accounts[NOOP_PROGRAM_INDEX].key, false, false));
+            }
+
+            let instruction =
+                create_instruction(*accounts[NOOP_PROGRAM_INDEX].key, &account_metas, vec![]);
+
+            let before_cpi = sol_remaining_compute_units();
+            invoke_signed(&instruction, &account_infos, &[])?;
+            let after_cpi = sol_remaining_compute_units();
+            let cu_used = before_cpi - after_cpi;
+            if cu_used > 48212 {
+                panic!("CU used more than baseline");
+            }
+        }
+        TEST_CU_USAGE_MAX => {
+            msg!(
+                "Test minimum cost of a CPI invocation with up to 255 account metas and 255 \
+                 account infos"
+            );
+            //this is currently using 64 account infos due to heap memmory running out
+            let mut selected_indices: Vec<usize> = vec![NOOP_PROGRAM_INDEX];
+            while selected_indices.len() < 64 {
+                selected_indices.push(selected_indices[0]);
+            }
+
+            let account_infos: Vec<AccountInfo<'_>> = selected_indices
+                .iter()
+                .map(|&i| accounts[i].clone())
+                .collect();
+
+            let mut account_metas: Vec<(&Pubkey, bool, bool)> = Vec::with_capacity(255);
+
+            while account_metas.len() < 255 {
+                account_metas.push((accounts[NOOP_PROGRAM_INDEX].key, false, false));
+            }
+
+            let instruction =
+                create_instruction(*accounts[NOOP_PROGRAM_INDEX].key, &account_metas, vec![]);
+
+            let before_cpi = sol_remaining_compute_units();
+            invoke_signed(&instruction, &account_infos, &[])?;
+            let after_cpi = sol_remaining_compute_units();
+            let cu_used = before_cpi - after_cpi;
+            // previous test + 61
+            if cu_used > 48212 {
+                panic!("CU usedmore than baseline");
+            }
         }
         _ => panic!("unexpected program data"),
     }

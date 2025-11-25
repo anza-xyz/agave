@@ -1,6 +1,6 @@
 [package]
 name = "workspace-metadata"
-version = "3.1.0"
+version = "4.0.0-alpha.0"
 description = "Solana SBF test program with tools version in workspace metadata"
 authors = ["Anza Maintainers <maintainers@anza.xyz>"]
 repository = "https://github.com/anza-xyz/agave"
@@ -10,10 +10,10 @@ edition = "2021"
 publish = false
 
 [dependencies]
-solana-account-info = "=2.3.0"
-solana-program-entrypoint = "=2.3.0"
-solana-program-error = "=2.2.2"
-solana-pubkey = "=2.4.0"
+solana-account-info = "=3.1.0"
+solana-program-entrypoint = "=3.1.1"
+solana-program-error = "=3.0.0"
+solana-pubkey = "=4.0.0"
 
 [lib]
 crate-type = ["cdylib"]
@@ -27,4 +27,4 @@ check-cfg = [
 [workspace]
 
 [workspace.metadata.solana]
-tools-version = "v1.51"
+tools-version = "v1.52"

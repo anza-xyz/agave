@@ -439,7 +439,7 @@ impl ClusterSlots {
     #[cfg(test)]
     // patches the given node_id into the internal structures
     // to pretend as if it has submitted epoch slots for a given slot.
-    // If the node was not previosly registered in validator_stakes,
+    // If the node was not previously registered in validator_stakes,
     // an override_stake amount should be provided.
     pub(crate) fn insert_node_id(&self, slot: Slot, node_id: Pubkey) {
         let mut epoch_slot = EpochSlots {
@@ -722,7 +722,7 @@ mod tests {
 
     #[test]
     fn test_best_peer_3() {
-        solana_logger::setup_with_default("info");
+        agave_logger::setup_with_default("info");
         let cs = ClusterSlots::default();
         let pk1 = Pubkey::new_unique();
         let pk2 = Pubkey::new_unique();
@@ -801,7 +801,7 @@ mod tests {
         assert_eq!(
             cs.lookup(1).unwrap().get_support_by_pubkey(&pk).unwrap(),
             42,
-            "the stake of the node should be commited to the slot"
+            "the stake of the node should be committed to the slot"
         );
     }
 }

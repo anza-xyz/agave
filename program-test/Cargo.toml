@@ -8,8 +8,12 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 agave-feature-set = { workspace = true }
+agave-logger = { workspace = true }
 assert_matches = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
@@ -36,7 +40,6 @@ solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-loader-v3-interface = { workspace = true }
-solana-logger = { workspace = true }
 solana-message = { workspace = true }
 solana-msg = { workspace = true }
 solana-native-token = { workspace = true }
@@ -70,5 +73,5 @@ tokio = { workspace = true, features = ["full"] }
 [dev-dependencies]
 solana-cpi = { workspace = true }
 solana-program = { workspace = true }
-solana-stake-program = { workspace = true }
+solana-program-test = { path = ".", features = ["agave-unstable-api"] }
 test-case = { workspace = true }

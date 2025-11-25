@@ -11,13 +11,11 @@ use {
         multihomed_sockets::BindIpAddrs,
         sockets::{
             bind_gossip_port_in_range, bind_in_range_with_config, bind_more_with_config,
-            bind_to_with_config, bind_two_in_range_with_offset_and_config,
-            localhost_port_range_for_tests, multi_bind_in_range_with_config,
+            bind_to_with_config, localhost_port_range_for_tests, multi_bind_in_range_with_config,
             SocketConfiguration as SocketConfig,
         },
     },
     solana_pubkey::Pubkey,
-    solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
     solana_time_utils::timestamp,
     std::{
@@ -66,6 +64,7 @@ impl Node {
             advertised_ip: bind_ip_addr,
             public_tpu_addr: None,
             public_tpu_forwards_addr: None,
+            public_tvu_addr: None,
             num_tvu_receive_sockets: NonZero::new(1).unwrap(),
             num_tvu_retransmit_sockets: NonZero::new(1).unwrap(),
             num_quic_endpoints: NonZero::new(DEFAULT_QUIC_ENDPOINTS)
@@ -89,6 +88,7 @@ impl Node {
             bind_ip_addrs,
             public_tpu_addr,
             public_tpu_forwards_addr,
+            public_tvu_addr,
             num_tvu_receive_sockets,
             num_tvu_retransmit_sockets,
             num_quic_endpoints,
@@ -132,18 +132,15 @@ impl Node {
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
                 .expect("tvu_quic bind");
 
-        let ((tpu_port, tpu_socket), (tpu_port_quic, tpu_quic)) =
-            bind_two_in_range_with_offset_and_config(
-                bind_ip_addr,
-                port_range,
-                QUIC_PORT_OFFSET,
-                socket_config,
-                socket_config,
-            )
-            .expect("tpu_socket primary bind");
+        let (tpu_port, tpu_socket) =
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+                .expect("tpu_socket primary bind");
         let tpu_sockets =
             bind_more_with_config(tpu_socket, 32, socket_config).expect("tpu_sockets multi_bind");
 
+        let (tpu_port_quic, tpu_quic) =
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+                .expect("tpu_socket primary bind");
         let mut tpu_quic = bind_more_with_config(tpu_quic, num_quic_endpoints.get(), socket_config)
             .expect("tpu_quic bind");
 
@@ -154,17 +151,14 @@ impl Node {
         );
         let tpu_quic_addresses = Self::get_socket_addrs(&tpu_quic);
 
-        let ((tpu_forwards_port, tpu_forwards_socket), (tpu_forwards_quic_port, tpu_forwards_quic)) =
-            bind_two_in_range_with_offset_and_config(
-                bind_ip_addr,
-                port_range,
-                QUIC_PORT_OFFSET,
-                socket_config,
-                socket_config,
-            )
-            .expect("tpu_forwards primary bind");
+        let (tpu_forwards_port, tpu_forwards_socket) =
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+                .expect("tpu_forwards primary bind");
         let tpu_forwards_sockets = bind_more_with_config(tpu_forwards_socket, 8, socket_config)
             .expect("tpu_forwards multi_bind");
+        let (tpu_forwards_quic_port, tpu_forwards_quic) =
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+                .expect("tpu_forwards primary bind");
         let mut tpu_forwards_quic =
             bind_more_with_config(tpu_forwards_quic, num_quic_endpoints.get(), socket_config)
                 .expect("tpu_forwards_quic multi_bind");
@@ -282,6 +276,9 @@ impl Node {
         let (_, quic_vote_client) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config).unwrap();
 
+        let (_, quic_alpenglow_client) =
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_config).unwrap();
+
         let (_, rpc_sts_client) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config).unwrap();
 
@@ -292,11 +289,22 @@ impl Node {
         );
 
         info.set_gossip((advertised_ip, gossip_ports[0])).unwrap();
-        info.set_tvu(UDP, (advertised_ip, tvu_port)).unwrap();
+        info.set_tvu(
+            UDP,
+            public_tvu_addr.unwrap_or_else(|| SocketAddr::new(advertised_ip, tvu_port)),
+        )
+        .unwrap();
         info.set_tvu(QUIC, (advertised_ip, tvu_quic_port)).unwrap();
-        info.set_tpu(public_tpu_addr.unwrap_or_else(|| SocketAddr::new(advertised_ip, tpu_port)))
+        info.set_tpu(UDP, (advertised_ip, tpu_port)).unwrap();
+        info.set_tpu(
+            QUIC,
+            public_tpu_addr.unwrap_or_else(|| SocketAddr::new(advertised_ip, tpu_port_quic)),
+        )
+        .unwrap();
+        info.set_tpu_forwards(UDP, (advertised_ip, tpu_forwards_port))
             .unwrap();
         info.set_tpu_forwards(
+            QUIC,
             public_tpu_forwards_addr
                 .unwrap_or_else(|| SocketAddr::new(advertised_ip, tpu_forwards_port)),
         )
@@ -351,6 +359,7 @@ impl Node {
             tpu_vote_quic,
             tpu_vote_forwarding_client,
             quic_vote_client,
+            quic_alpenglow_client,
             tpu_transaction_forwarding_clients,
             rpc_sts_client,
             vortexor_receivers,
@@ -405,7 +414,6 @@ impl Node {
     }
 }
 
-#[cfg(feature = "agave-unstable-api")]
 mod multihoming {
     use {
         crate::{
@@ -476,13 +484,13 @@ mod multihoming {
             // tpu_quic
             let tpu_quic_address = self.addresses.tpu_quic[interface_index];
             cluster_info
-                .set_tpu(tpu_quic_address)
+                .set_tpu_quic(tpu_quic_address)
                 .map_err(|e| e.to_string())?;
 
             // tpu_forwards_quic
             let tpu_forwards_quic_address = self.addresses.tpu_forwards_quic[interface_index];
             cluster_info
-                .set_tpu_forwards(tpu_forwards_quic_address)
+                .set_tpu_forwards_quic(tpu_forwards_quic_address)
                 .map_err(|e| e.to_string())?;
 
             // tpu_vote_quic
@@ -519,5 +527,4 @@ mod multihoming {
     }
 }
 
-#[cfg(feature = "agave-unstable-api")]
 pub use multihoming::*;

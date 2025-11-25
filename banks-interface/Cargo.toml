@@ -16,6 +16,9 @@ targets = ["x86_64-unknown-linux-gnu"]
 crate-type = ["lib"]
 name = "solana_banks_interface"
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
 serde = { workspace = true }
 solana-account = { workspace = true, features = [ "serde" ] }

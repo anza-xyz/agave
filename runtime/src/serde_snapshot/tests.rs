@@ -11,7 +11,7 @@ mod serde_snapshot_tests {
         },
         bincode::{serialize_into, Error},
         log::info,
-        rand::{thread_rng, Rng},
+        rand::{rng, Rng},
         solana_account::{AccountSharedData, ReadableAccount},
         solana_accounts_db::{
             account_storage::AccountStorageMap,
@@ -197,7 +197,7 @@ mod serde_snapshot_tests {
 
     fn check_accounts_local(accounts: &Accounts, pubkeys: &[Pubkey], num: usize) {
         for _ in 1..num {
-            let idx = thread_rng().gen_range(0..num - 1);
+            let idx = rng().random_range(0..num - 1);
             let ancestors = vec![(0, 0)].into_iter().collect();
             let account = accounts.load_without_fixed_root(&ancestors, &pubkeys[idx]);
             let account1 = Some((
@@ -208,9 +208,9 @@ mod serde_snapshot_tests {
         }
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     fn test_accounts_serialize(storage_access: StorageAccess) {
-        solana_logger::setup();
+        agave_logger::setup();
         let (_accounts_dir, paths) = get_temp_accounts_paths(4).unwrap();
         let accounts_db = AccountsDb::new_for_tests(paths);
         let accounts = Accounts::new(Arc::new(accounts_db));
@@ -267,10 +267,10 @@ mod serde_snapshot_tests {
         assert_eq!(accounts_hash, daccounts_hash);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_remove_unrooted_slot_snapshot(storage_access: StorageAccess) {
-        solana_logger::setup();
+        agave_logger::setup();
         let unrooted_slot = 9;
         let unrooted_bank_id = 9;
         let db = AccountsDb::new_single_for_tests();
@@ -306,7 +306,7 @@ mod serde_snapshot_tests {
     }
 
     #[test_matrix(
-        [StorageAccess::File, StorageAccess::Mmap],
+        [StorageAccess::File, #[allow(deprecated)] StorageAccess::Mmap],
         [MarkObsoleteAccounts::Enabled, MarkObsoleteAccounts::Disabled],
         [MarkObsoleteAccounts::Enabled, MarkObsoleteAccounts::Disabled]
     )]
@@ -316,7 +316,7 @@ mod serde_snapshot_tests {
         mark_obsolete_accounts_restore: MarkObsoleteAccounts,
     ) {
         for pass in 0..2 {
-            solana_logger::setup();
+            agave_logger::setup();
             let accounts = AccountsDb::new_with_config(
                 Vec::new(),
                 AccountsDbConfig {
@@ -442,10 +442,10 @@ mod serde_snapshot_tests {
         }
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_accounts_db_serialize_zero_and_free(storage_access: StorageAccess) {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let some_lamport = 223;
         let zero_lamport = 0;
@@ -556,10 +556,10 @@ mod serde_snapshot_tests {
         assert_eq!(calculated_capitalization, expected_capitalization);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_accounts_purge_chained_purge_before_snapshot_restore(storage_access: StorageAccess) {
-        solana_logger::setup();
+        agave_logger::setup();
         with_chained_zero_lamport_accounts(|accounts, current_slot| {
             // If there is no latest full snapshot, zero lamport accounts can be cleaned and
             // removed immediately. Set latest full snapshot slot to zero to avoid cleaning
@@ -575,10 +575,10 @@ mod serde_snapshot_tests {
         });
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_accounts_purge_chained_purge_after_snapshot_restore(storage_access: StorageAccess) {
-        solana_logger::setup();
+        agave_logger::setup();
         with_chained_zero_lamport_accounts(|accounts, current_slot| {
             let accounts = reconstruct_accounts_db_via_serialization(
                 &accounts,
@@ -598,10 +598,10 @@ mod serde_snapshot_tests {
         });
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_accounts_purge_long_chained_after_snapshot_restore(storage_access: StorageAccess) {
-        solana_logger::setup();
+        agave_logger::setup();
         let old_lamport = 223;
         let zero_lamport = 0;
         let no_data = 0;
@@ -672,10 +672,10 @@ mod serde_snapshot_tests {
         accounts.assert_load_account(current_slot, purged_pubkey2, 0);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_accounts_clean_after_snapshot_restore_then_old_revives(storage_access: StorageAccess) {
-        solana_logger::setup();
+        agave_logger::setup();
         let old_lamport = 223;
         let zero_lamport = 0;
         let no_data = 0;
@@ -804,10 +804,10 @@ mod serde_snapshot_tests {
         accounts.assert_load_account(current_slot, dummy_pubkey, dummy_lamport);
     }
 
-    #[test_case(StorageAccess::Mmap)]
+    #[test_case(#[allow(deprecated)] StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_shrink_stale_slots_processed(storage_access: StorageAccess) {
-        solana_logger::setup();
+        agave_logger::setup();
 
         for startup in &[false, true] {
             let accounts = AccountsDb::new_single_for_tests();

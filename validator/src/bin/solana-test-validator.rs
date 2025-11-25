@@ -1,7 +1,7 @@
 use {
     agave_validator::{
-        admin_rpc_service, cli, dashboard::Dashboard, ledger_lockfile, lock_ledger,
-        println_name_value,
+        admin_rpc_service, cli, commands::FromClapArgMatches, dashboard::Dashboard,
+        ledger_lockfile, lock_ledger, println_name_value,
     },
     clap::{crate_name, value_t, value_t_or_exit, values_t_or_exit},
     crossbeam_channel::unbounded,
@@ -19,8 +19,8 @@ use {
     solana_faucet::faucet::{run_faucet, Faucet},
     solana_inflation::Inflation,
     solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
-    solana_logger::redirect_stderr_to_file,
     solana_native_token::sol_str_to_lamports,
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc::{
@@ -29,7 +29,6 @@ use {
     },
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_system_interface::program as system_program,
     solana_test_validator::*,
     std::{
@@ -118,17 +117,11 @@ fn main() {
         let _ = fs::remove_file(&validator_log_symlink);
         symlink::symlink_file(&validator_log_with_timestamp, &validator_log_symlink).unwrap();
 
-        Some(
-            ledger_path
-                .join(validator_log_with_timestamp)
-                .into_os_string()
-                .into_string()
-                .unwrap(),
-        )
+        Some(ledger_path.join(validator_log_with_timestamp))
     } else {
         None
     };
-    let _logger_thread = redirect_stderr_to_file(logfile);
+    agave_logger::initialize_logging(logfile);
 
     info!("{} {}", crate_name!(), solana_version::version!());
     info!("Starting validator with: {:#?}", std::env::args_os());
@@ -155,19 +148,12 @@ fn main() {
         });
 
     let rpc_port = value_t_or_exit!(matches, "rpc_port", u16);
-    let enable_vote_subscription = matches.is_present("rpc_pubsub_enable_vote_subscription");
-    let enable_block_subscription = matches.is_present("rpc_pubsub_enable_block_subscription");
+    let pub_sub_config =
+        PubSubConfig::from_clap_arg_match(&matches).unwrap_or(PubSubConfig::default_for_tests());
     let faucet_port = value_t_or_exit!(matches, "faucet_port", u16);
     let ticks_per_slot = value_t!(matches, "ticks_per_slot", u64).ok();
     let slots_per_epoch = value_t!(matches, "slots_per_epoch", Slot).ok();
     let inflation_fixed = value_t!(matches, "inflation_fixed", f64).ok();
-    let gossip_host = matches.value_of("gossip_host").map(|gossip_host| {
-        warn!("--gossip-host is deprecated. Use --bind-address instead.");
-        solana_net_utils::parse_host(gossip_host).unwrap_or_else(|err| {
-            eprintln!("Failed to parse --gossip-host: {err}");
-            exit(1);
-        })
-    });
     let gossip_port = value_t!(matches, "gossip_port", u16).ok();
     let dynamic_port_range = matches.value_of("dynamic_port_range").map(|port_range| {
         solana_net_utils::parse_port_range(port_range).unwrap_or_else(|| {
@@ -185,9 +171,7 @@ fn main() {
         exit(1);
     });
 
-    let advertised_ip = if let Some(ip) = gossip_host {
-        ip
-    } else if !bind_address.is_unspecified() && !bind_address.is_loopback() {
+    let advertised_ip = if !bind_address.is_unspecified() && !bind_address.is_loopback() {
         bind_address
     } else {
         IpAddr::V4(Ipv4Addr::LOCALHOST)
@@ -412,6 +396,7 @@ fn main() {
     genesis.log_messages_bytes_limit = value_t!(matches, "log_messages_bytes_limit", usize).ok();
     genesis.transaction_account_lock_limit =
         value_t!(matches, "transaction_account_lock_limit", usize).ok();
+    genesis.enable_scheduler_bindings = matches.is_present("enable_scheduler_bindings");
 
     let tower_storage = Arc::new(FileTowerStorage::new(ledger_path.clone()));
 
@@ -474,11 +459,7 @@ fn main() {
             faucet_pubkey,
             AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
         )
-        .pubsub_config(PubSubConfig {
-            enable_vote_subscription,
-            enable_block_subscription,
-            ..PubSubConfig::default()
-        })
+        .pubsub_config(pub_sub_config)
         .rpc_port(rpc_port)
         .add_upgradeable_programs_with_path(&upgradeable_programs_to_load)
         .add_accounts_from_json_files(&accounts_to_load)

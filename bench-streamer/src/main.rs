@@ -8,7 +8,7 @@ use {
         sockets::{multi_bind_in_range_with_config, SocketConfiguration},
     },
     solana_streamer::{
-        packet::{Packet, PacketBatchRecycler, PinnedPacketBatch, PACKET_DATA_SIZE},
+        packet::{Packet, PacketBatchRecycler, RecycledPacketBatch, PACKET_DATA_SIZE},
         sendmmsg::batch_send,
         streamer::{receiver, PacketBatchReceiver, StreamerReceiveStats},
     },
@@ -39,7 +39,7 @@ fn producer(dest_addr: &SocketAddr, exit: Arc<AtomicBool>) -> JoinHandle<usize> 
         packet.meta_mut().set_socket_addr(dest_addr);
         packet
     };
-    let mut packet_batch = PinnedPacketBatch::with_capacity(batch_size);
+    let mut packet_batch = RecycledPacketBatch::with_capacity(batch_size);
     packet_batch.resize(batch_size, packet);
 
     spawn(move || {
@@ -140,7 +140,7 @@ fn main() -> Result<()> {
                 packet_sender,
                 recycler.clone(),
                 stats.clone(),
-                Some(Duration::from_millis(1)), // coalesce
+                None, // coalesce
                 true,
                 None,
                 false,

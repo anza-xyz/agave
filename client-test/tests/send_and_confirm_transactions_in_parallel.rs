@@ -10,10 +10,10 @@ use {
     solana_keypair::Keypair,
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_system_interface::instruction as system_instruction,
     solana_test_validator::TestValidator,
     std::sync::Arc,
@@ -36,7 +36,7 @@ fn create_messages(from: Pubkey, to: Pubkey) -> (Vec<Message>, u64) {
 
 #[test]
 fn test_send_and_confirm_transactions_in_parallel_without_tpu_client() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let alice = Keypair::new();
     let test_validator =
@@ -93,7 +93,7 @@ fn test_send_and_confirm_transactions_in_parallel_without_tpu_client() {
 
 #[test]
 fn test_send_and_confirm_transactions_in_parallel_with_tpu_client() {
-    solana_logger::setup();
+    agave_logger::setup();
 
     let alice = Keypair::new();
     let test_validator =

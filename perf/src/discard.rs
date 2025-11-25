@@ -26,7 +26,7 @@ mod tests {
 
     #[test]
     fn test_batch_discard_random() {
-        solana_logger::setup();
+        agave_logger::setup();
         let mut batch = BytesPacketBatch::new();
         batch.resize(1, BytesPacket::new(Bytes::new(), Meta::default()));
         let batch = PacketBatch::from(batch);

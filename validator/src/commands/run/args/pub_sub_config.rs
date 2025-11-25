@@ -11,20 +11,73 @@ use {
 
 static DEFAULT_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS: LazyLock<String> =
     LazyLock::new(|| PubSubConfig::default().max_active_subscriptions.to_string());
+static DEFAULT_TEST_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS: LazyLock<String> = LazyLock::new(|| {
+    PubSubConfig::default_for_tests()
+        .max_active_subscriptions
+        .to_string()
+});
 
 static DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS: LazyLock<String> =
     LazyLock::new(|| PubSubConfig::default().queue_capacity_items.to_string());
+static DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS: LazyLock<String> = LazyLock::new(|| {
+    PubSubConfig::default_for_tests()
+        .queue_capacity_items
+        .to_string()
+});
 
 static DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_BYTES: LazyLock<String> =
     LazyLock::new(|| PubSubConfig::default().queue_capacity_bytes.to_string());
+static DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_BYTES: LazyLock<String> = LazyLock::new(|| {
+    PubSubConfig::default_for_tests()
+        .queue_capacity_bytes
+        .to_string()
+});
 
 const DEFAULT_RPC_PUBSUB_WORKER_THREADS: &str = "4";
+static DEFAULT_TEST_RPC_PUBSUB_WORKER_THREADS: LazyLock<String> =
+    LazyLock::new(|| PubSubConfig::default_for_tests().worker_threads.to_string());
 
 #[cfg_attr(test, qualifiers(pub(crate)))]
 static DEFAULT_RPC_PUBSUB_NUM_NOTIFICATION_THREADS: LazyLock<String> =
     LazyLock::new(|| get_thread_count().to_string());
 
-pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
+pub(crate) fn args<'a, 'b>(test_validator: bool) -> Vec<Arg<'a, 'b>> {
+    let rpc_pubsub_notification_threads = Arg::with_name("rpc_pubsub_notification_threads")
+        .long("rpc-pubsub-notification-threads")
+        .takes_value(true)
+        .value_name("NUM_THREADS")
+        .validator(is_parsable::<usize>)
+        .help(
+            "The maximum number of threads that RPC PubSub will use for generating notifications. \
+             0 will disable RPC PubSub notifications",
+        );
+    let (
+        rpc_pubsub_notification_threads,
+        default_rpc_pubsub_max_active_subscriptions,
+        default_rpc_pubsub_queue_capacity_items,
+        default_rpc_pubsub_queue_capacity_bytes,
+    ) = if test_validator {
+        (
+            rpc_pubsub_notification_threads.default_value(&DEFAULT_TEST_RPC_PUBSUB_WORKER_THREADS),
+            &DEFAULT_TEST_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS,
+            &DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS,
+            &DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_BYTES,
+        )
+    } else {
+        (
+            rpc_pubsub_notification_threads
+                .default_value_if(
+                    "full_rpc_api",
+                    None,
+                    &DEFAULT_RPC_PUBSUB_NUM_NOTIFICATION_THREADS,
+                )
+                .requires("full_rpc_api"),
+            &DEFAULT_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS,
+            &DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS,
+            &DEFAULT_TEST_RPC_PUBSUB_QUEUE_CAPACITY_BYTES,
+        )
+    };
+
     vec![
         Arg::with_name("rpc_pubsub_enable_block_subscription")
             .long("rpc-pubsub-enable-block-subscription")
@@ -40,7 +93,7 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .takes_value(true)
             .value_name("NUMBER")
             .validator(is_parsable::<usize>)
-            .default_value(&DEFAULT_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS)
+            .default_value(default_rpc_pubsub_max_active_subscriptions)
             .help(
                 "The maximum number of active subscriptions that RPC PubSub will accept across \
                  all connections.",
@@ -50,7 +103,7 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .takes_value(true)
             .value_name("NUMBER")
             .validator(is_parsable::<usize>)
-            .default_value(&DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS)
+            .default_value(default_rpc_pubsub_queue_capacity_items)
             .help(
                 "The maximum number of notifications that RPC PubSub will store across all \
                  connections.",
@@ -60,7 +113,7 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .takes_value(true)
             .value_name("BYTES")
             .validator(is_parsable::<usize>)
-            .default_value(&DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_BYTES)
+            .default_value(default_rpc_pubsub_queue_capacity_bytes)
             .help(
                 "The maximum total size of notifications that RPC PubSub will store across all \
                  connections.",
@@ -72,21 +125,7 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .validator(is_parsable::<usize>)
             .default_value(DEFAULT_RPC_PUBSUB_WORKER_THREADS)
             .help("PubSub worker threads"),
-        Arg::with_name("rpc_pubsub_notification_threads")
-            .long("rpc-pubsub-notification-threads")
-            .requires("full_rpc_api")
-            .takes_value(true)
-            .value_name("NUM_THREADS")
-            .validator(is_parsable::<usize>)
-            .default_value_if(
-                "full_rpc_api",
-                None,
-                &DEFAULT_RPC_PUBSUB_NUM_NOTIFICATION_THREADS,
-            )
-            .help(
-                "The maximum number of threads that RPC PubSub will use for generating \
-                 notifications. 0 will disable RPC PubSub notifications",
-            ),
+        rpc_pubsub_notification_threads,
     ]
 }
 
@@ -252,5 +291,34 @@ mod tests {
             ],
             expected_args,
         );
+    }
+
+    #[test]
+    fn test_default_rpc_pubsub_max_active_subscriptions_unchanged() {
+        assert_eq!(
+            *DEFAULT_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS,
+            1_000_000.to_string()
+        );
+    }
+
+    #[test]
+    fn test_default_rpc_pubsub_queue_capacity_items_unchanged() {
+        assert_eq!(
+            *DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS,
+            10_000_000.to_string()
+        );
+    }
+
+    #[test]
+    fn test_default_rpc_pubsub_queue_capacity_bytes_unchanged() {
+        assert_eq!(
+            *DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_BYTES,
+            (256 * 1024 * 1024).to_string()
+        );
+    }
+
+    #[test]
+    fn test_default_rpc_pubsub_worker_threads_unchanged() {
+        assert_eq!(DEFAULT_RPC_PUBSUB_WORKER_THREADS, "4");
     }
 }

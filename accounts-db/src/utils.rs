@@ -1,7 +1,7 @@
-#[cfg(target_os = "linux")]
-use {crate::io_uring::dir_remover::RingDirRemover, agave_io_uring::io_uring_supported};
 use {
+    agave_fs::dirs,
     log::*,
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_measure::measure_time,
     std::{
         collections::HashSet,
@@ -51,7 +51,7 @@ pub fn create_accounts_run_and_snapshot_dirs(
         // The run/ content cleanup will be done at a later point.  The snapshot/ content persists
         // across the process boot, and will be purged by the account_background_service.
         if fs::remove_dir_all(&account_dir).is_err() {
-            remove_dir_contents(&account_dir);
+            dirs::remove_dir_contents(&account_dir);
         }
         fs::create_dir_all(&run_path)?;
         fs::create_dir_all(&snapshot_path)?;
@@ -110,7 +110,7 @@ pub fn move_and_async_delete_path(path: impl AsRef<Path>) {
         lock.insert(path.as_ref().to_path_buf());
         drop(lock); // unlock before doing sync delete
 
-        remove_dir_contents(&path);
+        dirs::remove_dir_contents(&path);
         IN_PROGRESS_DELETES.lock().unwrap().remove(path.as_ref());
         return;
     }
@@ -121,7 +121,7 @@ pub fn move_and_async_delete_path(path: impl AsRef<Path>) {
         .name("solDeletePath".to_string())
         .spawn(move || {
             trace!("background deleting {}...", path_delete.display());
-            let (result, measure_delete) = measure_time!(remove_dir_all(&path_delete));
+            let (result, measure_delete) = measure_time!(dirs::remove_dir_all(&path_delete));
             if let Err(err) = result {
                 panic!("Failed to async delete '{}': {err}", path_delete.display());
             }
@@ -133,69 +133,6 @@ pub fn move_and_async_delete_path(path: impl AsRef<Path>) {
             IN_PROGRESS_DELETES.lock().unwrap().remove(&path_delete);
         })
         .expect("spawn background delete thread");
-}
-
-/// Removes a directory and all its contents.
-pub fn remove_dir_all(path: impl Into<PathBuf> + AsRef<Path>) -> io::Result<()> {
-    #[cfg(target_os = "linux")]
-    {
-        assert!(io_uring_supported());
-        if let Ok(mut remover) = RingDirRemover::new() {
-            return remover.remove_dir_all(path);
-        }
-    }
-
-    fs::remove_dir_all(path)
-}
-
-/// Removes the contents of a directory, but not the directory itself.
-pub fn remove_dir_contents(path: impl AsRef<Path>) {
-    let path = path.as_ref();
-
-    #[cfg(target_os = "linux")]
-    {
-        assert!(io_uring_supported());
-        if let Ok(mut remover) = RingDirRemover::new() {
-            if let Err(e) = remover.remove_dir_contents(path) {
-                warn!("Failed to delete contents of '{}': {e}", path.display());
-            }
-
-            return;
-        }
-    }
-
-    remove_dir_contents_slow(path)
-}
-
-/// Delete the files and subdirectories in a directory.
-/// This is useful if the process does not have permission
-/// to delete the top level directory it might be able to
-/// delete the contents of that directory.
-fn remove_dir_contents_slow(path: impl AsRef<Path>) {
-    match fs::read_dir(&path) {
-        Err(err) => {
-            warn!(
-                "Failed to delete contents of '{}': could not read dir: {err}",
-                path.as_ref().display(),
-            )
-        }
-        Ok(dir_entries) => {
-            for entry in dir_entries.flatten() {
-                let sub_path = entry.path();
-                let result = if sub_path.is_dir() {
-                    fs::remove_dir_all(&sub_path)
-                } else {
-                    fs::remove_file(&sub_path)
-                };
-                if let Err(err) = result {
-                    warn!(
-                        "Failed to delete contents of '{}': {err}",
-                        sub_path.display(),
-                    );
-                }
-            }
-        }
-    }
 }
 
 /// Creates `directories` if they do not exist, and canonicalizes their paths
@@ -212,6 +149,18 @@ pub fn create_and_canonicalize_directories(
 pub fn create_and_canonicalize_directory(directory: impl AsRef<Path>) -> io::Result<PathBuf> {
     fs::create_dir_all(&directory)?;
     fs::canonicalize(directory)
+}
+
+/// Creates a new AccountSharedData structure for anything that implements ReadableAccount.
+/// This function implies data copies.
+pub fn create_account_shared_data(account: &impl ReadableAccount) -> AccountSharedData {
+    AccountSharedData::create(
+        account.lamports(),
+        account.data().to_vec(),
+        *account.owner(),
+        account.executable(),
+        account.rent_epoch(),
+    )
 }
 
 #[cfg(test)]
@@ -236,7 +185,7 @@ mod tests {
 
         // delete a `run/` and `snapshot/` dir, then re-create it
         let account_path_first = account_paths.first().unwrap();
-        remove_dir_contents(account_path_first);
+        dirs::remove_dir_contents(account_path_first);
         assert!(account_path_first.exists());
         assert!(!account_path_first.join(ACCOUNTS_RUN_DIR).exists());
         assert!(!account_path_first.join(ACCOUNTS_SNAPSHOT_DIR).exists());

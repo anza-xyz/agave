@@ -6,10 +6,11 @@ use {
         epoch_stakes::VersionedEpochStakes,
         rent_collector::RentCollector,
         runtime_config::RuntimeConfig,
-        snapshot_utils::{SnapshotError, StorageAndNextAccountsFileId},
+        snapshot_utils::StorageAndNextAccountsFileId,
         stake_account::StakeAccount,
         stakes::{serialize_stake_accounts_to_delegation_format, Stakes},
     },
+    agave_snapshots::error::SnapshotError,
     bincode::{self, config::Options, Error},
     log::*,
     serde::{de::DeserializeOwned, Deserialize, Serialize},
@@ -54,6 +55,7 @@ use {
     types::SerdeAccountsLtHash,
 };
 
+mod obsolete_accounts;
 mod status_cache;
 mod storage;
 mod tests;
@@ -61,8 +63,9 @@ mod types;
 mod utils;
 
 pub(crate) use {
+    obsolete_accounts::SerdeObsoleteAccountsMap,
     status_cache::{deserialize_status_cache, serialize_status_cache},
-    storage::{SerdeObsoleteAccounts, SerializableAccountStorageEntry, SerializedAccountsFileId},
+    storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
 };
 
 const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
@@ -369,7 +372,18 @@ impl<T> SnapshotAccountsDbFields<T> {
     }
 }
 
-fn deserialize_from<R, T>(reader: R) -> bincode::Result<T>
+pub(crate) fn serialize_into<W, T>(writer: W, value: &T) -> bincode::Result<()>
+where
+    W: Write,
+    T: Serialize,
+{
+    bincode::options()
+        .with_fixint_encoding()
+        .with_limit(MAX_STREAM_SIZE)
+        .serialize_into(writer, value)
+}
+
+pub(crate) fn deserialize_from<R, T>(reader: R) -> bincode::Result<T>
 where
     R: Read,
     T: DeserializeOwned,
@@ -855,22 +869,21 @@ pub(crate) fn reconstruct_single_storage(
     current_len: usize,
     id: AccountsFileId,
     storage_access: StorageAccess,
-    obsolete_accounts: Option<SerdeObsoleteAccounts>,
+    obsolete_accounts: Option<(ObsoleteAccounts, AccountsFileId, usize)>,
 ) -> Result<Arc<AccountStorageEntry>, SnapshotError> {
     // When restoring from an archive, obsolete accounts will always be `None`
     // When restoring from fastboot, obsolete accounts will be 'Some' if the storage contained
     // accounts marked obsolete at the time the snapshot was taken.
     let (current_len, obsolete_accounts) = if let Some(obsolete_accounts) = obsolete_accounts {
-        let updated_len = current_len + obsolete_accounts.bytes as usize;
-        let id = id as SerializedAccountsFileId;
-        if obsolete_accounts.id != id {
+        let updated_len = current_len + obsolete_accounts.2;
+        if obsolete_accounts.1 != id {
             return Err(SnapshotError::MismatchedAccountsFileId(
                 id,
-                obsolete_accounts.id,
+                obsolete_accounts.1,
             ));
         }
 
-        (updated_len, obsolete_accounts.accounts)
+        (updated_len, obsolete_accounts.0)
     } else {
         (current_len, ObsoleteAccounts::default())
     };

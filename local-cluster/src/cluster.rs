@@ -4,9 +4,9 @@ use {
     solana_gossip::{contact_info::ContactInfo, node::Node},
     solana_keypair::Keypair,
     solana_ledger::shred::Shred,
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
-    solana_streamer::socket::SocketAddrSpace,
     solana_tpu_client::tpu_client::TpuClient,
     std::{io::Result, path::PathBuf, sync::Arc},
 };

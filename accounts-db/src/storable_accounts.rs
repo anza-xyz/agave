@@ -4,6 +4,7 @@ use {
         account_storage::stored_account_info::StoredAccountInfo,
         accounts_db::{AccountFromStorage, AccountStorageEntry, AccountsDb},
         is_zero_lamport::IsZeroLamport,
+        utils::create_account_shared_data,
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::{Epoch, Slot},
@@ -46,6 +47,13 @@ impl<'a> AccountForStorage<'a> {
             AccountForStorage::StoredAccountInfo(account) => account.pubkey(),
         }
     }
+
+    pub fn take_account(&self) -> AccountSharedData {
+        match self {
+            AccountForStorage::AddressAndAccount((_pubkey, account)) => (*account).clone(),
+            AccountForStorage::StoredAccountInfo(account) => create_account_shared_data(*account),
+        }
+    }
 }
 
 impl ReadableAccount for AccountForStorage<'_> {
@@ -80,12 +88,7 @@ impl ReadableAccount for AccountForStorage<'_> {
         }
     }
     fn to_account_shared_data(&self) -> AccountSharedData {
-        match self {
-            AccountForStorage::AddressAndAccount((_pubkey, account)) => {
-                account.to_account_shared_data()
-            }
-            AccountForStorage::StoredAccountInfo(account) => account.to_account_shared_data(),
-        }
+        self.take_account()
     }
 }
 
@@ -603,8 +606,7 @@ pub mod tests {
                     let source_slot = starting_slot % max_slots;
 
                     let storage = setup_sample_storage(&db, source_slot);
-                    // since we're no longer storing `StoredAccountMeta`, we have to actually store the
-                    // accounts so they can be looked up later in `db`
+                    // store the accounts so they can be looked up later in `db`
                     if let Some(offsets) = storage
                         .accounts
                         .write_accounts(&(source_slot, &three[..]), 0)
@@ -736,8 +738,7 @@ pub mod tests {
                                     let range = overall_index..(overall_index + count);
                                     let mut result =
                                         raw2_accounts_from_storage[range.clone()].to_vec();
-                                    // since we're no longer storing `StoredAccountMeta`, we have to actually store the
-                                    // accounts so they can be looked up later in `db`
+                                    // store the accounts so they can be looked up later in `db`
                                     let storage = setup_sample_storage(&db, slot);
                                     if let Some(offsets) = storage
                                         .accounts
@@ -812,7 +813,7 @@ pub mod tests {
         // each slot has a random number of accounts, between 1 and 10
         for _slot in 0..num_slots {
             // generate random accounts per slot
-            let n = rand::thread_rng().gen_range(1..10);
+            let n = rand::rng().random_range(1..10);
             total += n;
             let accounts = (0..n).map(|_| &account_from_storage).collect::<Vec<_>>();
             all_accounts.push(accounts);

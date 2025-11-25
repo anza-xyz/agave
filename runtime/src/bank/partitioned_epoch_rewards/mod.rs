@@ -9,6 +9,7 @@ use {
         inflation_rewards::points::PointValue, stake_account::StakeAccount,
         stake_history::StakeHistory,
     },
+    rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
         partitioned_rewards::PartitionedEpochRewardsConfig,
@@ -85,7 +86,9 @@ impl PartitionedStakeRewards {
     }
 
     unsafe fn assume_init(&mut self, num_stake_rewards: usize) {
-        self.rewards.set_len(self.rewards.capacity());
+        unsafe {
+            self.rewards.set_len(self.rewards.capacity());
+        }
         self.num_rewards = num_stake_rewards;
     }
 }
@@ -231,10 +234,48 @@ impl Default for CalculateValidatorRewardsResult {
     }
 }
 
+pub(super) struct FilteredStakeDelegations<'a> {
+    stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
+    min_stake_delegation: Option<u64>,
+}
+
+impl<'a> FilteredStakeDelegations<'a> {
+    pub(super) fn len(&self) -> usize {
+        self.stake_delegations.len()
+    }
+
+    pub(super) fn par_iter(
+        &'a self,
+    ) -> impl IndexedParallelIterator<Item = Option<(&'a Pubkey, &'a StakeAccount<Delegation>)>>
+    {
+        self.stake_delegations
+            .par_iter()
+            // We yield `None` items instead of filtering them out to
+            // keep the number of elements predictable. It's better to
+            // let the callers deal with `None` elements and even store
+            // them in collections (that are allocated once with the
+            // size of `FilteredStakeDelegations::len`) rather than
+            // `collect` yet another time (which would take ~100ms).
+            .map(|(pubkey, stake_account)| {
+                match self.min_stake_delegation {
+                    Some(min_stake_delegation)
+                        if stake_account.delegation().stake < min_stake_delegation =>
+                    {
+                        None
+                    }
+                    _ => {
+                        // Dereference `&&` to `&`.
+                        Some((*pubkey, *stake_account))
+                    }
+                }
+            })
+    }
+}
+
 /// hold reward calc info to avoid recalculation across functions
 pub(super) struct EpochRewardCalculateParamInfo<'a> {
     pub(super) stake_history: StakeHistory,
-    pub(super) stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
+    pub(super) stake_delegations: FilteredStakeDelegations<'a>,
     pub(super) cached_vote_accounts: &'a VoteAccounts,
 }
 
@@ -250,18 +291,6 @@ pub(super) struct PartitionedRewardsCalculation {
     pub(super) prev_epoch_duration_in_years: f64,
     pub(super) capitalization: u64,
     point_value: PointValue,
-}
-
-pub(super) struct CalculateRewardsAndDistributeVoteRewardsResult {
-    /// distributed vote rewards
-    pub(super) distributed_rewards: u64,
-    /// total rewards and points calculated for the current epoch, where points
-    /// equals the sum of (delegated stake * credits observed) for all
-    /// delegations and rewards are the lamports to split across all stake and
-    /// vote accounts
-    pub(super) point_value: PointValue,
-    /// stake rewards that still need to be distributed
-    pub(super) stake_rewards: Arc<PartitionedStakeRewards>,
 }
 
 pub(crate) type StakeRewards = Vec<StakeReward>;
@@ -370,12 +399,13 @@ mod tests {
     use {
         super::*,
         crate::{
-            bank::tests::{create_genesis_config, new_bank_from_parent_with_bank_forks},
+            bank::tests::create_genesis_config,
             bank_forks::BankForks,
             genesis_utils::{
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
             runtime_config::RuntimeConfig,
+            stake_utils,
         },
         assert_matches::assert_matches,
         solana_account::{state_traits::StateMut, Account},
@@ -389,8 +419,8 @@ mod tests {
         solana_stake_interface::state::StakeStateV2,
         solana_system_transaction as system_transaction,
         solana_vote::vote_transaction,
-        solana_vote_interface::state::{VoteStateVersions, MAX_LOCKOUT_HISTORY},
-        solana_vote_program::vote_state::{self, TowerSync},
+        solana_vote_interface::state::{VoteStateV4, VoteStateVersions, MAX_LOCKOUT_HISTORY},
+        solana_vote_program::vote_state::{self, handler::VoteStateHandle, TowerSync},
         std::sync::{Arc, RwLock},
     };
 
@@ -554,31 +584,16 @@ mod tests {
 
         // Fill bank_forks with banks with votes landing in the next slot
         // Create enough banks such that vote account will root
-        for validator_vote_keypairs in &validator_keypairs {
-            let vote_id = validator_vote_keypairs.vote_keypair.pubkey();
-            let mut vote_account = bank.get_account(&vote_id).unwrap();
-            // generate some rewards
-            let mut vote_state = Some(vote_state::from(&vote_account).unwrap());
-            for i in 0..MAX_LOCKOUT_HISTORY + 42 {
-                if let Some(v) = vote_state.as_mut() {
-                    vote_state::process_slot_vote_unchecked(v, i as u64)
-                }
-                let versioned = VoteStateVersions::V3(Box::new(vote_state.take().unwrap()));
-                vote_state::to(&versioned, &mut vote_account).unwrap();
-                match versioned {
-                    VoteStateVersions::V3(v) => {
-                        vote_state = Some(*v);
-                    }
-                    _ => panic!("Has to be of type Current"),
-                };
-            }
-            bank.store_account_and_update_capitalization(&vote_id, &vote_account);
-        }
+        populate_vote_accounts_with_votes(
+            &bank,
+            validator_keypairs.iter().map(|k| k.vote_keypair.pubkey()),
+            0,
+        );
 
         // Advance some num slots; usually to the next epoch boundary to update
         // EpochStakes
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let bank = new_bank_from_parent_with_bank_forks(
+        let bank = Bank::new_from_parent_with_bank_forks(
             &bank_forks,
             bank,
             &Pubkey::default(),
@@ -599,6 +614,37 @@ mod tests {
             },
             bank_forks,
         )
+    }
+
+    pub(super) fn populate_vote_accounts_with_votes(
+        bank: &Bank,
+        vote_pubkeys: impl IntoIterator<Item = Pubkey>,
+        commission: u8,
+    ) {
+        for vote_pubkey in vote_pubkeys {
+            let mut vote_account = bank
+                .get_account(&vote_pubkey)
+                .unwrap_or_else(|| panic!("missing vote account {vote_pubkey:?}"));
+            let mut vote_state =
+                Some(VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap());
+            if let Some(state) = vote_state.as_mut() {
+                state.set_commission(commission);
+            }
+            for i in 0..MAX_LOCKOUT_HISTORY + 42 {
+                if let Some(state) = vote_state.as_mut() {
+                    vote_state::process_slot_vote_unchecked(state, i as u64);
+                }
+                let versioned = VoteStateVersions::V4(Box::new(vote_state.take().unwrap()));
+                vote_account.set_state(&versioned).unwrap();
+                match versioned {
+                    VoteStateVersions::V4(v) => {
+                        vote_state = Some(*v);
+                    }
+                    _ => panic!("Has to be of type V4"),
+                };
+            }
+            bank.store_account_and_update_capitalization(&vote_pubkey, &vote_account);
+        }
     }
 
     #[test]
@@ -687,7 +733,7 @@ mod tests {
     /// Test get_reward_distribution_num_blocks during normal epoch gives the expected result
     #[test]
     fn test_get_reward_distribution_num_blocks_normal() {
-        solana_logger::setup();
+        agave_logger::setup();
         let (mut genesis_config, _mint_keypair) =
             create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         genesis_config.epoch_schedule = EpochSchedule::custom(432000, 432000, false);
@@ -742,7 +788,7 @@ mod tests {
 
     #[test]
     fn test_rewards_computation_and_partitioned_distribution_one_block() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let starting_slot = SLOTS_PER_EPOCH - 1;
         let (
@@ -756,7 +802,7 @@ mod tests {
         // simulate block progress
         for slot in starting_slot..=(2 * SLOTS_PER_EPOCH) + 2 {
             let pre_cap = previous_bank.capitalization();
-            let curr_bank = new_bank_from_parent_with_bank_forks(
+            let curr_bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
                 &Pubkey::default(),
@@ -827,7 +873,7 @@ mod tests {
     /// Test rewards computation and partitioned rewards distribution at the epoch boundary (two reward distribution blocks)
     #[test]
     fn test_rewards_computation_and_partitioned_distribution_two_blocks() {
-        solana_logger::setup();
+        agave_logger::setup();
 
         let starting_slot = SLOTS_PER_EPOCH - 1;
         let (
@@ -849,7 +895,7 @@ mod tests {
             let pre_epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
                 solana_account::from_account(&pre_sysvar_account).unwrap_or_default();
             let pre_distributed_rewards = pre_epoch_rewards.distributed_rewards;
-            let curr_bank = new_bank_from_parent_with_bank_forks(
+            let curr_bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
                 &Pubkey::default(),
@@ -908,7 +954,7 @@ mod tests {
                 let _ = bank_forks.write().unwrap().set_root(slot - 1, None, None);
                 assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 0);
             } else if slot == SLOTS_PER_EPOCH + 2 {
-                // When curr_slot == SLOTS_PER_EPOCH + 2, the 3nd block of
+                // When curr_slot == SLOTS_PER_EPOCH + 2, the 3rd block of
                 // epoch 1, reward distribution should happen in this block.
                 // however, all stake rewards are paid at the this block
                 // therefore reward_status should have transitioned to inactive.
@@ -964,14 +1010,14 @@ mod tests {
         let vote_account = genesis_config
             .accounts
             .iter()
-            .find(|(&address, _)| address == vote_key)
+            .find(|(address, _)| **address == vote_key)
             .map(|(_, account)| account)
             .unwrap()
             .clone();
 
         let new_stake_signer = Keypair::new();
         let new_stake_address = new_stake_signer.pubkey();
-        let new_stake_account = Account::from(solana_stake_program::stake_state::create_account(
+        let new_stake_account = Account::from(stake_utils::create_stake_account(
             &new_stake_address,
             &vote_key,
             &vote_account.into(),
@@ -989,7 +1035,7 @@ mod tests {
         let transfer_amount = 5_000;
 
         for slot in 1..=num_slots_in_epoch + 2 {
-            let bank = new_bank_from_parent_with_bank_forks(
+            let bank = Bank::new_from_parent_with_bank_forks(
                 bank_forks.as_ref(),
                 previous_bank.clone(),
                 &Pubkey::default(),

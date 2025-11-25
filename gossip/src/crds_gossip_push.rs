@@ -24,9 +24,9 @@ use {
     },
     itertools::Itertools,
     solana_keypair::Keypair,
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_time_utils::timestamp,
     std::{
         collections::{HashMap, HashSet},
@@ -114,7 +114,7 @@ impl CrdsGossipPush {
             .into_group_map()
     }
 
-    fn wallclock_window(&self, now: u64) -> impl RangeBounds<u64> {
+    fn wallclock_window(&self, now: u64) -> impl RangeBounds<u64> + use<> {
         now.saturating_sub(self.msg_timeout)..=now.saturating_add(self.msg_timeout)
     }
 
