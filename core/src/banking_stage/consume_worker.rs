@@ -316,26 +316,7 @@ pub(crate) mod external {
         fn execute_batch(
             &mut self,
             message: &PackToWorkerMessage,
-<<<<<<< HEAD
         ) -> Result<(), ExternalConsumeWorkerError> {
-=======
-            should_drain_executes: bool,
-        ) -> Result<bool, ExternalConsumeWorkerError> {
-            if should_drain_executes {
-                return self
-                    .return_not_included_with_reason(
-                        message,
-                        not_included_reasons::BANK_NOT_AVAILABLE,
-                    )
-                    .map(|()| true);
-            }
-
-            let BankPair {
-                root_bank,
-                working_bank: _,
-            } = self.sharable_banks.load();
-
->>>>>>> f3a5a32d1 (receive_and_buffer with external_worker (#9212))
             // Loop here to avoid exposing internal error to external scheduler.
             // In the vast majority of cases, this will iterate a single time;
             // If we began execution when a slot was still in process, and could
@@ -445,53 +426,6 @@ pub(crate) mod external {
             )
             .ok_or(ExternalConsumeWorkerError::AllocationFailure)?;
 
-<<<<<<< HEAD
-=======
-            // SAFETY: responses_ptr is sufficiently sized and aligned.
-            let (parsing_results, parsed_transactions, response_slice) = unsafe {
-                Self::parse_transactions_and_populate_initial_check_responses(
-                    message,
-                    &batch,
-                    &root_bank,
-                    responses_ptr,
-                )
-            };
-
-            // Check fee-payer if requested.
-            if message.flags & check_flags::LOAD_FEE_PAYER_BALANCE != 0 {
-                Self::check_load_fee_payer_balance(
-                    &parsing_results,
-                    &parsed_transactions,
-                    response_slice,
-                    &working_bank,
-                );
-            }
-
-            // Do resolving next since we (currently) need resolved transactions for status checks.
-            let (parsing_and_resolve_results, txs, max_ages) =
-                Self::translate_transaction_batch(&batch, &working_bank, &root_bank);
-
-            if message.flags & check_flags::LOAD_ADDRESS_LOOKUP_TABLES != 0 {
-                self.check_resolve_pubkeys(
-                    &parsing_results,
-                    &parsing_and_resolve_results,
-                    &txs,
-                    &max_ages,
-                    response_slice,
-                    root_bank.slot(),
-                )?;
-            }
-
-            if message.flags & check_flags::STATUS_CHECKS != 0 {
-                Self::check_status_checks(
-                    &parsing_and_resolve_results,
-                    &txs,
-                    response_slice,
-                    &working_bank,
-                );
-            }
-
->>>>>>> f3a5a32d1 (receive_and_buffer with external_worker (#9212))
             let response = WorkerToPackMessage {
                 batch: message.batch,
                 processed: agave_scheduler_bindings::PROCESSED,
