@@ -19,8 +19,6 @@ license = "Apache-2.0"
 edition = "2021"
 
 [workspace.lints.rust]
-warnings = "deny"
-
 # List of rust-2024-compatibility lints that are already satisfied
 # See https://doc.rust-lang.org/rustc/lints/groups.html
 boxed_slice_into_iter = "deny"
