@@ -939,7 +939,6 @@ mod tests {
         itertools::Itertools,
         rand::Rng,
         rand_chacha::{rand_core::SeedableRng, ChaChaRng},
-        rayon::ThreadPoolBuilder,
         solana_keypair::keypair_from_seed,
         std::io::{Cursor, Seek, SeekFrom, Write},
         test_case::test_case,
@@ -968,7 +967,6 @@ mod tests {
         data_size: usize,
         is_last_in_slot: bool,
     ) -> Result<Vec<merkle::Shred>, Error> {
-        let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
         let chained_merkle_root = Hash::new_from_array(rng.random());
         let parent_offset = rng.random_range(1..=u16::try_from(slot).unwrap_or(u16::MAX));
         let parent_slot = slot.checked_sub(u64::from(parent_offset)).unwrap();
@@ -976,7 +974,6 @@ mod tests {
         let fec_set_index = rng.random_range(0..21) * DATA_SHREDS_PER_FEC_BLOCK as u32;
         rng.fill(&mut data[..]);
         merkle::make_shreds_from_data(
-            &thread_pool,
             &Keypair::new(),
             chained_merkle_root,
             &data[..],

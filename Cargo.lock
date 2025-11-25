@@ -9170,7 +9170,6 @@ dependencies = [
  "solana-program-pack",
  "solana-program-runtime",
  "solana-pubkey 3.0.0",
- "solana-rayon-threadlimit",
  "solana-runtime",
  "solana-runtime-transaction",
  "solana-seed-derivable",

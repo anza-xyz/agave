@@ -3,27 +3,17 @@ use {
         self, Error, ProcessShredsStats, Shred, ShredData, ShredFlags, DATA_SHREDS_PER_FEC_BLOCK,
     },
     lazy_lru::LruCache,
-    rayon::ThreadPool,
     reed_solomon_erasure::{galois_8::ReedSolomon, Error::TooFewDataShards},
     solana_clock::Slot,
     solana_entry::entry::Entry,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_rayon_threadlimit::get_thread_count,
     std::{
         fmt::Debug,
         sync::{Arc, OnceLock, RwLock},
         time::Instant,
     },
 };
-
-static PAR_THREAD_POOL: std::sync::LazyLock<ThreadPool> = std::sync::LazyLock::new(|| {
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(get_thread_count())
-        .thread_name(|i| format!("solShredder{i:02}"))
-        .build()
-        .unwrap()
-});
 
 // Arc<...> wrapper so that cache entries can be initialized without locking
 // the entire cache.
@@ -104,9 +94,7 @@ impl Shredder {
         reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
     ) -> Result<impl Iterator<Item = Shred> + use<>, Error> {
-        let thread_pool: &ThreadPool = &PAR_THREAD_POOL;
         let shreds = shred::merkle::make_shreds_from_data(
-            thread_pool,
             keypair,
             chained_merkle_root,
             data,
