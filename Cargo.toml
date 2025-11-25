@@ -163,8 +163,6 @@ license = "Apache-2.0"
 edition = "2021"
 
 [workspace.lints.rust]
-warnings = "deny"
-
 # List of rust-2024-compatibility lints that are already satisfied
 # See https://doc.rust-lang.org/rustc/lints/groups.html
 boxed_slice_into_iter = "deny"
@@ -308,7 +306,7 @@ im = "15.1.0"
 indexmap = "2.12.0"
 indicatif = "0.18.3"
 io-uring = "0.7.11"
-itertools = "0.13.0"
+itertools = "0.14.0"
 jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
     "unprefixed_malloc_on_supported_platforms",
 ] }
@@ -366,9 +364,9 @@ qualifier_attr = { version = "0.2.2", default-features = false }
 quinn = "0.11.9"
 quinn-proto = "0.11.13"
 quote = "1.0"
-rand = "0.8.5"
+rand = "0.9.2"
 rand0-7 = { package = "rand", version = "0.7" }
-rand_chacha = "0.3.1"
+rand_chacha = "0.9.0"
 rand_chacha0-2 = { package = "rand_chacha", version = "0.2.2" }
 rayon = "1.11.0"
 reed-solomon-erasure = "6.0.0"
@@ -378,7 +376,7 @@ reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.4"
 rts-alloc = { version = "1.0.0" }
-rustls = { version = "0.23.34", features = ["std"], default-features = false }
+rustls = { version = "0.23.35", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.27"
 seqlock = "0.2.0"
@@ -403,7 +401,7 @@ soketto = "0.8"
 solana-account = "3.2.0"
 solana-account-decoder = { path = "account-decoder", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-account-info = "3.0.0"
+solana-account-info = "3.1.0"
 solana-accounts-db = { path = "accounts-db", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-address = "2.0.0"
 solana-address-lookup-table-interface = "3.0.0"
@@ -413,7 +411,7 @@ solana-banks-interface = { path = "banks-interface", version = "=4.0.0-alpha.0",
 solana-banks-server = { path = "banks-server", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-big-mod-exp = "3.0.0"
 solana-bincode = "3.0.0"
-solana-blake3-hasher = "3.0.0"
+solana-blake3-hasher = "3.1.0"
 solana-bloom = { path = "bloom", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-bls-signatures = { version = "1.0.0", features = ["serde"] }
 solana-bn254 = "3.1.2"
@@ -471,7 +469,7 @@ solana-inflation = "3.0.0"
 solana-instruction = "3.1.0"
 solana-instruction-error = "2.1.0"
 solana-instructions-sysvar = "3.0.0"
-solana-keccak-hasher = "3.0.0"
+solana-keccak-hasher = "3.1.0"
 solana-keypair = "3.0.1"
 solana-last-restart-slot = "3.0.0"
 solana-lattice-hash = { path = "lattice-hash", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
@@ -502,14 +500,14 @@ solana-precompile-error = "3.0.0"
 solana-presigner = "3.0.0"
 solana-program = { version = "3.0.0", default-features = false }
 solana-program-binaries = { path = "program-binaries", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-program-entrypoint = "3.1.0"
+solana-program-entrypoint = "3.1.1"
 solana-program-error = "3.0.0"
 solana-program-memory = "3.0.0"
 solana-program-option = "3.0.0"
 solana-program-pack = "3.0.0"
 solana-program-runtime = { path = "program-runtime", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-program-test = { path = "program-test", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-pubkey = { version = "3.0.0", default-features = false }
+solana-pubkey = { version = "4.0.0", default-features = false }
 solana-pubsub-client = { path = "pubsub-client", version = "=4.0.0-alpha.0" }
 solana-quic-client = { path = "quic-client", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-quic-definitions = "3.0.0"

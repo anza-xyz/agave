@@ -1,5 +1,7 @@
 use {
-    crate::snapshot_package::{cmp_snapshot_packages_by_priority, SnapshotPackage},
+    crate::snapshot_package::{
+        are_snapshot_packages_the_same_kind, cmp_snapshot_packages_by_priority, SnapshotPackage,
+    },
     agave_snapshots::{SnapshotArchiveKind, SnapshotKind},
     log::*,
     std::cmp::Ordering::Greater,
@@ -20,53 +22,33 @@ impl PendingSnapshotPackages {
     /// Note: This function will panic if `snapshot_package` is *older*
     /// than any currently-pending in-kind packages.
     pub fn push(&mut self, snapshot_package: SnapshotPackage) {
-        match snapshot_package.snapshot_kind {
-            SnapshotKind::Archive(SnapshotArchiveKind::Full) => {
-                if let Some(pending_full_snapshot_package) = self.full.as_ref() {
-                    // snapshots are monotonically increasing; only overwrite *old* packages
-                    assert!(pending_full_snapshot_package
-                        .snapshot_kind
-                        .is_full_snapshot());
-                    assert_eq!(
-                        cmp_snapshot_packages_by_priority(
-                            &snapshot_package,
-                            pending_full_snapshot_package,
-                        ),
-                        Greater,
-                        "full snapshot package must be newer than pending package, old: \
-                         {pending_full_snapshot_package:?}, new: {snapshot_package:?}",
-                    );
-                    info!(
-                        "overwrote pending full snapshot package, old slot: {}, new slot: {}",
-                        pending_full_snapshot_package.slot, snapshot_package.slot,
-                    );
-                }
-                self.full = Some(snapshot_package)
-            }
+        let (pending_package, kind_str) = match snapshot_package.snapshot_kind {
+            SnapshotKind::Archive(SnapshotArchiveKind::Full) => (&mut self.full, "full"),
             SnapshotKind::Archive(SnapshotArchiveKind::Incremental(_)) => {
-                if let Some(pending_incremental_snapshot_package) = self.incremental.as_ref() {
-                    // snapshots are monotonically increasing; only overwrite *old* packages
-                    assert!(pending_incremental_snapshot_package
-                        .snapshot_kind
-                        .is_incremental_snapshot());
-                    assert_eq!(
-                        cmp_snapshot_packages_by_priority(
-                            &snapshot_package,
-                            pending_incremental_snapshot_package,
-                        ),
-                        Greater,
-                        "incremental snapshot package must be newer than pending package, old: \
-                         {pending_incremental_snapshot_package:?}, new: {snapshot_package:?}",
-                    );
-                    info!(
-                        "overwrote pending incremental snapshot package, old slot: {}, new slot: \
-                         {}",
-                        pending_incremental_snapshot_package.slot, snapshot_package.slot,
-                    );
-                }
-                self.incremental = Some(snapshot_package)
+                (&mut self.incremental, "incremental")
             }
+        };
+
+        if let Some(pending_snapshot_package) = pending_package.as_ref() {
+            // snapshots are monotonically increasing; only overwrite *old* packages
+            assert!(
+                are_snapshot_packages_the_same_kind(&snapshot_package, pending_snapshot_package),
+                "mismatched snapshot kinds: pending: {pending_snapshot_package:?}, new: \
+                 {snapshot_package:?}",
+            );
+            assert_eq!(
+                cmp_snapshot_packages_by_priority(&snapshot_package, pending_snapshot_package),
+                Greater,
+                "{kind_str} snapshot package must be newer than pending package, old: \
+                 {pending_snapshot_package:?}, new: {snapshot_package:?}",
+            );
+            info!(
+                "overwrote pending {kind_str} snapshot package, old slot: {}, new slot: {}",
+                pending_snapshot_package.slot, snapshot_package.slot,
+            );
         }
+
+        *pending_package = Some(snapshot_package);
     }
 
     /// Returns the next pending snapshot package to handle
@@ -117,7 +99,6 @@ mod tests {
         SnapshotPackage {
             snapshot_kind,
             slot,
-            block_height: slot,
             ..SnapshotPackage::default_for_tests()
         }
     }
@@ -188,6 +169,20 @@ mod tests {
         assert_eq!(
             pending_snapshot_packages.incremental.as_ref().unwrap().slot,
             incremental_slot,
+        );
+
+        // ensure we can overwrite incremental packages with incremental packages
+        // with a new full slot
+        let full_slot = slot;
+        let slot = slot + 10;
+        pending_snapshot_packages.push(new_incr(slot, full_slot));
+        assert_eq!(
+            pending_snapshot_packages.full.as_ref().unwrap().slot,
+            full_slot,
+        );
+        assert_eq!(
+            pending_snapshot_packages.incremental.as_ref().unwrap().slot,
+            slot,
         );
     }
 

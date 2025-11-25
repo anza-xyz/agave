@@ -2,7 +2,7 @@
 use {
     clap::{crate_description, crate_name, value_t, values_t, values_t_or_exit, App, Arg},
     log::*,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     rayon::prelude::*,
     solana_clap_utils::{
         hidden_unless_forced, input_parsers::pubkey_of, input_validators::is_url_or_moniker,
@@ -163,7 +163,7 @@ impl TransactionSignatureTracker {
         if signatures.is_empty() {
             None
         } else {
-            let random_index = thread_rng().gen_range(0..signatures.len());
+            let random_index = rng().random_range(0..signatures.len());
             let random_signature = signatures.get(random_index);
             random_signature.cloned()
         }
@@ -195,7 +195,7 @@ fn make_create_message(
     let space = if mint.is_some() {
         Account::get_packed_len() as u64
     } else {
-        maybe_space.unwrap_or_else(|| thread_rng().gen_range(0..1000))
+        maybe_space.unwrap_or_else(|| rng().random_range(0..1000))
     };
 
     let instructions: Vec<_> = (0..num_instructions)
@@ -372,7 +372,7 @@ fn process_get_multiple_accounts(
             Ok(accounts) => {
                 rpc_time.stop();
                 for account in accounts.into_iter().flatten() {
-                    if thread_rng().gen_ratio(1, 10_000) {
+                    if rng().random_ratio(1, 10_000) {
                         info!(
                             "account: lamports {:?} size: {} owner: {:?}",
                             account.lamports,
@@ -497,7 +497,7 @@ fn run_rpc_bench_loop(
                     info!("get_account_info: No accounts have yet been created; skipping");
                     continue;
                 }
-                let seed = thread_rng().gen_range(seed_range).to_string();
+                let seed = rng().random_range(seed_range).to_string();
                 let account_pubkey =
                     Pubkey::create_with_seed(base_keypair_pubkey, &seed, program_id).unwrap();
                 let mut rpc_time = Measure::start("rpc-get-account-info");
@@ -643,7 +643,7 @@ fn run_rpc_bench_loop(
                         rpc_time.stop();
                         stats.success += 1;
                         stats.total_success_time_us += rpc_time.as_us();
-                        if thread_rng().gen_ratio(1, 100) {
+                        if rng().random_ratio(1, 100) {
                             info!("accounts: {} first: {:?}", accounts.len(), accounts.first());
                         }
                     }

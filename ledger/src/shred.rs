@@ -203,6 +203,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("Unknown proof size")]
     UnknownProofSize,
+    #[error("Empty shreds list")]
+    EmptyIterator,
 }
 
 #[repr(u8)]
@@ -1062,29 +1064,6 @@ mod tests {
             let flags = ShredFlags::from_reference_tick(tick);
             assert_eq!(flags.bits(), tick.min(MAX_REFERENCE_TICK));
         }
-    }
-
-    #[test]
-    fn test_version_from_hash() {
-        let hash = [
-            0xa5u8, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5,
-            0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a,
-            0xa5, 0xa5, 0x5a, 0x5a,
-        ];
-        let version = solana_shred_version::version_from_hash(&Hash::new_from_array(hash));
-        assert_eq!(version, 1);
-        let hash = [
-            0xa5u8, 0xa5, 0x5a, 0x5a, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0,
-        ];
-        let version = solana_shred_version::version_from_hash(&Hash::new_from_array(hash));
-        assert_eq!(version, 0xffff);
-        let hash = [
-            0xa5u8, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        ];
-        let version = solana_shred_version::version_from_hash(&Hash::new_from_array(hash));
-        assert_eq!(version, 0x5a5b);
     }
 
     #[test]

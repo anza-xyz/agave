@@ -195,10 +195,13 @@ impl StandardBroadcastRun {
         receive_results: ReceiveResults,
         process_stats: &mut ProcessShredsStats,
     ) -> Result<()> {
-        let num_entries = receive_results.entries.len();
-        let bank = receive_results.bank.clone();
-        let last_tick_height = receive_results.last_tick_height;
-        inc_new_counter_info!("broadcast_service-entries_received", num_entries);
+        let ReceiveResults {
+            entries,
+            bank,
+            last_tick_height,
+        } = receive_results;
+
+        inc_new_counter_info!("broadcast_service-entries_received", entries.len());
 
         let mut to_shreds_time = Measure::start("broadcast_to_shreds");
 
@@ -270,7 +273,7 @@ impl StandardBroadcastRun {
         let shreds = self
             .entries_to_shreds(
                 keypair,
-                &receive_results.entries,
+                &entries,
                 reference_tick as u8,
                 is_last_in_slot,
                 process_stats,

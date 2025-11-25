@@ -3,12 +3,29 @@ use {
     std::ptr::NonNull,
 };
 
+#[derive(Debug)]
 pub struct PubkeysPtr {
     ptr: NonNull<Pubkey>,
     count: usize,
 }
 
 impl PubkeysPtr {
+    /// Constructions a [`PubkeysPtr`] from raw parts.
+    ///
+    /// # Safety
+    ///
+    /// - `ptr` must be valid for reads.
+    /// - `count` must be accurate (in number of pubkeys) and not overrun the end of `ptr`.
+    ///
+    /// # Note
+    ///
+    /// If you are trying to construct a pointer for use by Agave, you almost certainly want to use
+    /// [`Self::from_sharable_pubkeys`].
+    #[cfg(feature = "dev-context-only-utils")]
+    pub unsafe fn from_raw_parts(ptr: NonNull<Pubkey>, count: usize) -> Self {
+        Self { ptr, count }
+    }
+
     /// Constructs the pointer from a [`SharablePubkeys`].
     ///
     /// # Safety

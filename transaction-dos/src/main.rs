@@ -3,7 +3,7 @@
 use {
     clap::{crate_description, crate_name, value_t, values_t_or_exit, App, Arg},
     log::*,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     rayon::prelude::*,
     solana_clap_utils::input_parsers::pubkey_of,
     solana_cli::{
@@ -126,7 +126,7 @@ fn make_dos_message(
 ) -> Message {
     let instructions: Vec<_> = (0..num_instructions)
         .map(|_| {
-            let data = [num_program_iterations, thread_rng().gen_range(0..255)];
+            let data = [num_program_iterations, rng().random_range(0..255)];
             Instruction::new_with_bytes(program_id, &data, account_metas.to_vec())
         })
         .collect();
@@ -138,7 +138,7 @@ fn make_dos_message(
 /// so they can't be parallelized
 ///
 #[allow(clippy::too_many_arguments)]
-fn run_transactions_dos(
+async fn run_transactions_dos(
     entrypoint_addr: SocketAddr,
     faucet_addr: SocketAddr,
     payer_keypairs: &[&Keypair],
@@ -254,7 +254,7 @@ fn run_transactions_dos(
             skip_feature_verification: true,
         });
 
-        process_command(&config).expect("deploy didn't pass");
+        process_command(&config).await.expect("deploy didn't pass");
     } else {
         info!("Found program account. Skipping deploy..");
         assert!(program_account.unwrap().executable);
@@ -426,7 +426,8 @@ fn run_transactions_dos(
     executor.close();
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     agave_logger::setup_with_default_filter();
     let matches = App::new(crate_name!())
         .about(crate_description!())
@@ -660,7 +661,8 @@ fn main() {
         account_groups,
         just_calculate_fees,
         batch_sleep_ms,
-    );
+    )
+    .await;
 }
 
 #[cfg(test)]
@@ -703,9 +705,9 @@ pub mod test {
         assert!(size < PACKET_DATA_SIZE as u64);
     }
 
-    #[test]
+    #[tokio::test(flavor = "multi_thread")]
     #[ignore]
-    fn test_transaction_dos() {
+    async fn test_transaction_dos() {
         agave_logger::setup();
 
         let validator_config = ValidatorConfig::default_for_test();
@@ -761,7 +763,8 @@ pub mod test {
             maybe_account_groups,
             false,
             100,
-        );
+        )
+        .await;
         start.stop();
         info!("{start}");
     }

@@ -142,7 +142,10 @@ impl Bank {
                                     raise_cpi_limit,
                                 )
                             }
-                        });
+                        })
+                        .inspect_err(|_err| {
+                            error_counters.invalid_compute_budget += 1;
+                        })?;
                     self.check_transaction_age(
                         tx.borrow(),
                         max_age,
@@ -161,22 +164,14 @@ impl Bank {
     fn checked_transactions_details_with_test_override(
         nonce: Option<NonceInfo>,
         lamports_per_signature: u64,
-        compute_budget_and_limits: Result<
-            SVMTransactionExecutionAndFeeBudgetLimits,
-            TransactionError,
-        >,
+        mut compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits,
     ) -> CheckedTransactionDetails {
-        let compute_budget_and_limits = if lamports_per_signature == 0 {
-            // This is done to support legacy tests. The tests should be updated, and check
-            // for 0 lamports_per_signature should be removed from the code.
-            compute_budget_and_limits.map(|v| SVMTransactionExecutionAndFeeBudgetLimits {
-                budget: v.budget,
-                loaded_accounts_data_size_limit: v.loaded_accounts_data_size_limit,
-                fee_details: FeeDetails::default(),
-            })
-        } else {
-            compute_budget_and_limits
-        };
+        // This is done to support legacy tests. The tests should be updated, and check
+        // for 0 lamports_per_signature should be removed from the code.
+        if lamports_per_signature == 0 {
+            compute_budget_and_limits.fee_details = FeeDetails::default();
+        }
+
         CheckedTransactionDetails::new(nonce, compute_budget_and_limits)
     }
 
@@ -188,7 +183,7 @@ impl Bank {
         hash_queue: &BlockhashQueue,
         next_lamports_per_signature: u64,
         error_counters: &mut TransactionErrorMetrics,
-        compute_budget: Result<SVMTransactionExecutionAndFeeBudgetLimits, TransactionError>,
+        compute_budget: SVMTransactionExecutionAndFeeBudgetLimits,
     ) -> TransactionCheckResult {
         let recent_blockhash = tx.recent_blockhash();
         if let Some(hash_info) = hash_queue.get_hash_info_if_valid(recent_blockhash, max_age) {

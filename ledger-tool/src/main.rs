@@ -134,8 +134,9 @@ fn render_dot(dot: String, output_file: &str, output_format: &str) -> io::Result
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 enum GraphVoteAccountMode {
+    #[default]
     Disabled,
     LastOnly,
     WithHistory,
@@ -160,12 +161,6 @@ impl AsRef<str> for GraphVoteAccountMode {
             Self::LastOnly => Self::LAST_ONLY,
             Self::WithHistory => Self::WITH_HISTORY,
         }
-    }
-}
-
-impl Default for GraphVoteAccountMode {
-    fn default() -> Self {
-        Self::Disabled
     }
 }
 
@@ -859,8 +854,6 @@ fn main() {
         unsafe { signal_hook::low_level::register(signal_hook::consts::SIGUSR1, || {}) }.unwrap();
     }
 
-    agave_logger::setup_with_default_filter();
-
     let load_genesis_config_arg = load_genesis_arg();
     let accounts_db_config_args = accounts_db_args();
     let snapshot_config_args = snapshot_args();
@@ -971,6 +964,14 @@ fn main() {
                 .global(true)
                 .default_value("ledger")
                 .help("Use DIR as ledger location"),
+        )
+        .arg(
+            Arg::with_name("logfile")
+                .long("log")
+                .value_name("FILE")
+                .takes_value(true)
+                .global(true)
+                .help("Redirect logging to the specified file, stderr is used if unset"),
         )
         .arg(
             Arg::with_name("wal_recovery_mode")
@@ -1688,6 +1689,9 @@ fn main() {
         )
         .program_subcommand()
         .get_matches();
+
+    let logfile = value_t!(matches, "logfile", PathBuf).ok();
+    agave_logger::initialize_logging(logfile);
 
     info!("{} {}", crate_name!(), solana_version::version!());
 

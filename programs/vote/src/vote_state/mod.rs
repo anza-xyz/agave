@@ -297,8 +297,6 @@ fn check_and_filter_proposed_vote_state(
             proposed_hash,
             slot_hashes[slot_hashes_index].1
         );
-        #[cfg(feature = "metrics")]
-        inc_new_counter_info!("dropped-vote-hash", 1);
         return Err(VoteError::SlotHashMismatch);
     }
 

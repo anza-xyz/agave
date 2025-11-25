@@ -22,13 +22,10 @@ use {
         streamer::StakedNodes,
     },
     percentage::Percentage,
-    quinn::{Connection, VarInt, VarIntBoundsExceeded},
-    solana_packet::PACKET_DATA_SIZE,
+    quinn::{Connection, VarInt},
     solana_quic_definitions::{
-        QUIC_MAX_STAKED_CONCURRENT_STREAMS, QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO,
-        QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS, QUIC_MIN_STAKED_CONCURRENT_STREAMS,
-        QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO, QUIC_TOTAL_STAKED_CONCURRENT_STREAMS,
-        QUIC_UNSTAKED_RECEIVE_WINDOW_RATIO,
+        QUIC_MAX_STAKED_CONCURRENT_STREAMS, QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
+        QUIC_MIN_STAKED_CONCURRENT_STREAMS, QUIC_TOTAL_STAKED_CONCURRENT_STREAMS,
     },
     solana_time_utils as timing,
     std::{
@@ -79,16 +76,14 @@ pub struct SwQos {
     staked_stream_load_ema: Arc<StakedStreamLoadEMA>,
     stats: Arc<StreamerStats>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
-    unstaked_connection_table: Arc<Mutex<ConnectionTable>>,
-    staked_connection_table: Arc<Mutex<ConnectionTable>>,
+    unstaked_connection_table: Arc<Mutex<ConnectionTable<ConnectionStreamCounter>>>,
+    staked_connection_table: Arc<Mutex<ConnectionTable<ConnectionStreamCounter>>>,
 }
 
 // QoS Params for Stake weighted QoS
 #[derive(Clone)]
 pub struct SwQosConnectionContext {
     peer_type: ConnectionPeerType,
-    max_stake: u64,
-    min_stake: u64,
     remote_pubkey: Option<solana_pubkey::Pubkey>,
     total_stake: u64,
     in_staked_table: bool,
@@ -135,49 +130,6 @@ impl SwQos {
     }
 }
 
-/// Calculate the ratio for per connection receive window from a staked peer
-fn compute_receive_window_ratio_for_staked_node(max_stake: u64, min_stake: u64, stake: u64) -> u64 {
-    // Testing shows the maximum throughput from a connection is achieved at receive_window =
-    // PACKET_DATA_SIZE * 10. Beyond that, there is not much gain. We linearly map the
-    // stake to the ratio range from QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO to
-    // QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO. Where the linear algebra of finding the ratio 'r'
-    // for stake 's' is,
-    // r(s) = a * s + b. Given the max_stake, min_stake, max_ratio, min_ratio, we can find
-    // a and b.
-
-    if stake > max_stake {
-        return QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO;
-    }
-
-    let max_ratio = QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO;
-    let min_ratio = QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO;
-    if max_stake > min_stake {
-        let a = (max_ratio - min_ratio) as f64 / (max_stake - min_stake) as f64;
-        let b = max_ratio as f64 - ((max_stake as f64) * a);
-        let ratio = (a * stake as f64) + b;
-        ratio.round() as u64
-    } else {
-        QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO
-    }
-}
-
-fn compute_recieve_window(
-    max_stake: u64,
-    min_stake: u64,
-    peer_type: ConnectionPeerType,
-) -> Result<VarInt, VarIntBoundsExceeded> {
-    match peer_type {
-        ConnectionPeerType::Unstaked => {
-            VarInt::from_u64(PACKET_DATA_SIZE as u64 * QUIC_UNSTAKED_RECEIVE_WINDOW_RATIO)
-        }
-        ConnectionPeerType::Staked(peer_stake) => {
-            let ratio =
-                compute_receive_window_ratio_for_staked_node(max_stake, min_stake, peer_stake);
-            VarInt::from_u64(PACKET_DATA_SIZE as u64 * ratio)
-        }
-    }
-}
-
 fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stake: u64) -> usize {
     match peer_type {
         ConnectionPeerType::Staked(peer_stake) => {
@@ -210,7 +162,7 @@ impl SwQos {
         &self,
         client_connection_tracker: ClientConnectionTracker,
         connection: &Connection,
-        mut connection_table_l: MutexGuard<ConnectionTable>,
+        mut connection_table_l: MutexGuard<ConnectionTable<ConnectionStreamCounter>>,
         conn_context: &SwQosConnectionContext,
     ) -> Result<
         (
@@ -226,18 +178,12 @@ impl SwQos {
         ) as u64)
         {
             let remote_addr = connection.remote_address();
-            let receive_window = compute_recieve_window(
-                conn_context.max_stake,
-                conn_context.min_stake,
-                conn_context.peer_type(),
-            );
 
             debug!(
-                "Peer type {:?}, total stake {}, max streams {} receive_window {:?} from peer {}",
+                "Peer type {:?}, total stake {}, max streams {} from peer {}",
                 conn_context.peer_type(),
                 conn_context.total_stake,
                 max_uni_streams.into_inner(),
-                receive_window,
                 remote_addr,
             );
 
@@ -254,14 +200,12 @@ impl SwQos {
                     conn_context.peer_type(),
                     conn_context.last_update.clone(),
                     max_connections_per_peer,
+                    || Arc::new(ConnectionStreamCounter::new()),
                 )
             {
                 update_open_connections_stat(&self.stats, &connection_table_l);
                 drop(connection_table_l);
 
-                if let Ok(receive_window) = receive_window {
-                    connection.set_receive_window(receive_window);
-                }
                 connection.set_max_concurrent_uni_streams(max_uni_streams);
 
                 Ok((last_update, cancel_connection, stream_counter))
@@ -285,7 +229,7 @@ impl SwQos {
 
     fn prune_unstaked_connection_table(
         &self,
-        unstaked_connection_table: &mut ConnectionTable,
+        unstaked_connection_table: &mut ConnectionTable<ConnectionStreamCounter>,
         max_unstaked_connections: usize,
         stats: Arc<StreamerStats>,
     ) {
@@ -305,7 +249,7 @@ impl SwQos {
         &self,
         client_connection_tracker: ClientConnectionTracker,
         connection: &Connection,
-        connection_table: Arc<Mutex<ConnectionTable>>,
+        connection_table: Arc<Mutex<ConnectionTable<ConnectionStreamCounter>>>,
         max_connections: usize,
         conn_context: &SwQosConnectionContext,
     ) -> Result<
@@ -349,8 +293,6 @@ impl QosController<SwQosConnectionContext> for SwQos {
         get_connection_stake(connection, &self.staked_nodes).map_or(
             SwQosConnectionContext {
                 peer_type: ConnectionPeerType::Unstaked,
-                max_stake: 0,
-                min_stake: 0,
                 total_stake: 0,
                 remote_pubkey: None,
                 in_staked_table: false,
@@ -358,7 +300,7 @@ impl QosController<SwQosConnectionContext> for SwQos {
                 stream_counter: None,
                 last_update: Arc::new(AtomicU64::new(timing::timestamp())),
             },
-            |(pubkey, stake, total_stake, max_stake, min_stake)| {
+            |(pubkey, stake, total_stake)| {
                 // The heuristic is that the stake should be large enough to have 1 stream pass through within one throttle
                 // interval during which we allow max (MAX_STREAMS_PER_MS * STREAM_THROTTLING_INTERVAL_MS) streams.
 
@@ -377,8 +319,6 @@ impl QosController<SwQosConnectionContext> for SwQos {
 
                 SwQosConnectionContext {
                     peer_type,
-                    max_stake,
-                    min_stake,
                     total_stake,
                     remote_pubkey: Some(pubkey),
                     in_staked_table: false,
@@ -576,41 +516,6 @@ pub mod test {
     use super::*;
 
     #[test]
-    fn test_cacluate_receive_window_ratio_for_staked_node() {
-        let mut max_stake = 10000;
-        let mut min_stake = 0;
-        let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, min_stake);
-        assert_eq!(ratio, QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO);
-
-        let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake);
-        let max_ratio = QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO;
-        assert_eq!(ratio, max_ratio);
-
-        let ratio =
-            compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake / 2);
-        let average_ratio =
-            (QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO + QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO) / 2;
-        assert_eq!(ratio, average_ratio);
-
-        max_stake = 10000;
-        min_stake = 10000;
-        let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake);
-        assert_eq!(ratio, max_ratio);
-
-        max_stake = 0;
-        min_stake = 0;
-        let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake);
-        assert_eq!(ratio, max_ratio);
-
-        max_stake = 1000;
-        min_stake = 10;
-        let ratio =
-            compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake + 10);
-        assert_eq!(ratio, max_ratio);
-    }
-
-    #[test]
-
     fn test_max_allowed_uni_streams() {
         assert_eq!(
             compute_max_allowed_uni_streams(ConnectionPeerType::Unstaked, 0),

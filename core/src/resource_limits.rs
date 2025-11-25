@@ -2,13 +2,14 @@ use {std::io, thiserror::Error};
 
 #[derive(Error, Debug)]
 pub enum ResourceLimitError {
+    #[cfg(unix)]
     #[error(
         "unable to increase the nofile limit to {desired} from {current}; setrlimit() error: \
          {error}"
     )]
     Nofile {
-        desired: u64,
-        current: u64,
+        desired: libc::rlim_t,
+        current: libc::rlim_t,
         error: libc::c_int,
     },
 }

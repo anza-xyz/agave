@@ -1,5 +1,8 @@
 use {
-    crate::{nonblocking::quic::ConnectionPeerType, quic::StreamerStats},
+    crate::{
+        nonblocking::{qos::OpaqueStreamerCounter, quic::ConnectionPeerType},
+        quic::StreamerStats,
+    },
     std::{
         cmp,
         sync::{
@@ -188,6 +191,8 @@ pub struct ConnectionStreamCounter {
     pub(crate) stream_count: AtomicU64,
     last_throttling_instant: RwLock<tokio::time::Instant>,
 }
+
+impl OpaqueStreamerCounter for ConnectionStreamCounter {}
 
 impl ConnectionStreamCounter {
     pub fn new() -> Self {

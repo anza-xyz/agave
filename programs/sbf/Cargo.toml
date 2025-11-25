@@ -115,10 +115,10 @@ serde_json = "1.0.56"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
 solana-account-decoder = { path = "../../account-decoder", version = "=4.0.0-alpha.0" }
-solana-account-info = "=3.0.0"
+solana-account-info = "=3.1.0"
 solana-accounts-db = { path = "../../accounts-db", version = "=4.0.0-alpha.0" }
 solana-big-mod-exp = "=3.0.0"
-solana-blake3-hasher = { version = "=3.0.0", features = ["blake3"] }
+solana-blake3-hasher = { version = "=3.1.0", features = ["blake3"] }
 solana-bn254 = "=3.1.2"
 solana-bpf-loader-program = { path = "../bpf_loader", version = "=4.0.0-alpha.0" }
 solana-cli-output = { path = "../../cli-output", version = "=4.0.0-alpha.0" }
@@ -132,17 +132,17 @@ solana-fee = { path = "../../fee", version = "=4.0.0-alpha.0" }
 solana-hash = { version = "=4.0.1", features = ["bytemuck", "serde", "std"] }
 solana-instruction = "=3.1.0"
 solana-instructions-sysvar = "=3.0.0"
-solana-keccak-hasher = { version = "=3.0.0", features = ["sha3"] }
+solana-keccak-hasher = { version = "=3.1.0", features = ["sha3"] }
 solana-ledger = { path = "../../ledger", version = "=4.0.0-alpha.0" }
 solana-measure = { path = "../../measure", version = "=4.0.0-alpha.0" }
 solana-msg = "=3.0.0"
 solana-poseidon = { path = "../../poseidon/", version = "=4.0.0-alpha.0" }
 solana-program = "=3.0.0"
-solana-program-entrypoint = "=3.1.0"
+solana-program-entrypoint = "=3.1.1"
 solana-program-error = "=3.0.0"
 solana-program-memory = "=3.0.0"
 solana-program-runtime = { path = "../../program-runtime", version = "=4.0.0-alpha.0" }
-solana-pubkey = { version = "=3.0.0", default-features = false }
+solana-pubkey = { version = "=4.0.0", default-features = false }
 solana-runtime = { path = "../../runtime", version = "=4.0.0-alpha.0" }
 solana-runtime-transaction = { path = "../../runtime-transaction", version = "=4.0.0-alpha.0" }
 solana-sbf-rust-128bit-dep = { path = "rust/128bit_dep", version = "=4.0.0-alpha.0" }
@@ -200,7 +200,7 @@ miow = { workspace = true }
 net2 = { workspace = true }
 solana-account = "3.2.0"
 solana-account-decoder = { workspace = true }
-solana-account-info = "3.0.0"
+solana-account-info = "3.1.0"
 solana-accounts-db = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-cli-output = { workspace = true }
@@ -225,9 +225,9 @@ solana-loader-v4-interface = "3.1.0"
 solana-measure = { workspace = true }
 solana-message = "3.0.0"
 solana-program = { workspace = true }
-solana-program-entrypoint = "3.1.0"
+solana-program-entrypoint = "3.1.1"
 solana-program-runtime = { workspace = true }
-solana-pubkey = "3.0.0"
+solana-pubkey = "4.0.0"
 solana-rent = "3.0.0"
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime-transaction = { workspace = true, features = [

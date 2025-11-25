@@ -42,6 +42,7 @@ solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }

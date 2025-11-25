@@ -864,6 +864,7 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
             let callee_account = instruction_context
                 .try_borrow_instruction_account(translated_account.index_in_caller)?;
             let update_caller = update_callee_account(
+                memory_mapping,
                 check_aligned,
                 &translated_account.caller_account,
                 callee_account,
@@ -1097,6 +1098,7 @@ where
                 // BorrowedAccount (callee_account) so the callee can see the
                 // changes.
                 update_callee_account(
+                    memory_mapping,
                     check_aligned,
                     &caller_account,
                     callee_account,
@@ -1141,6 +1143,7 @@ fn consume_compute_meter(invoke_context: &InvokeContext, amount: u64) -> Result<
 // When true is returned, the caller account must be updated after CPI. This
 // is only set for stricter_abi_and_runtime_constraints when the pointer may have changed.
 fn update_callee_account(
+    memory_mapping: &MemoryMapping,
     check_aligned: bool,
     caller_account: &CallerAccount,
     mut callee_account: BorrowedInstructionAccount<'_, '_>,
@@ -1167,6 +1170,21 @@ fn update_callee_account(
             };
             if post_len > address_space_reserved_for_account {
                 return Err(InstructionError::InvalidRealloc.into());
+            }
+            if !account_data_direct_mapping && post_len < prev_len {
+                // If the account has been shrunk, we're going to zero the unused memory
+                // *that was previously used*.
+                let serialized_data = CallerAccount::get_serialized_data(
+                    memory_mapping,
+                    caller_account.vm_data_addr,
+                    prev_len as u64,
+                    stricter_abi_and_runtime_constraints,
+                    account_data_direct_mapping,
+                )?;
+                serialized_data
+                    .get_mut(post_len..)
+                    .ok_or_else(|| Box::new(InstructionError::AccountDataTooSmall))?
+                    .fill(0);
             }
             callee_account.set_data_length(post_len)?;
             // pointer to data may have changed, so caller must be updated
@@ -2192,7 +2210,16 @@ mod tests {
 
         let mut mock_caller_account =
             MockCallerAccount::new(1234, *account.owner(), account.data(), false);
-
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let memory_mapping = MemoryMapping::new(
+            mock_caller_account.regions.clone(),
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
         let caller_account = mock_caller_account.caller_account();
 
         borrow_instruction_account!(callee_account, invoke_context, 0);
@@ -2201,6 +2228,7 @@ mod tests {
         *caller_account.owner = Pubkey::new_unique();
 
         update_callee_account(
+            &memory_mapping,
             true, // check_aligned
             &caller_account,
             callee_account,
@@ -2236,13 +2264,23 @@ mod tests {
 
         let mut mock_caller_account =
             MockCallerAccount::new(1234, *account.owner(), account.data(), false);
-
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let memory_mapping = MemoryMapping::new(
+            mock_caller_account.regions.clone(),
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
         let mut caller_account = mock_caller_account.caller_account();
         borrow_instruction_account!(callee_account, invoke_context, 0);
 
         // stricter_abi_and_runtime_constraints does not copy data in update_callee_account()
         caller_account.serialized_data[0] = b'b';
         update_callee_account(
+            &memory_mapping,
             true, // check_aligned
             &caller_account,
             callee_account,
@@ -2259,6 +2297,7 @@ mod tests {
         caller_account.serialized_data = &mut data;
         assert_eq!(
             update_callee_account(
+                &memory_mapping,
                 true, // check_aligned
                 &caller_account,
                 callee_account,
@@ -2276,6 +2315,7 @@ mod tests {
         borrow_instruction_account!(callee_account, invoke_context, 0);
         assert_eq!(
             update_callee_account(
+                &memory_mapping,
                 true, // check_aligned
                 &caller_account,
                 callee_account,
@@ -2294,6 +2334,7 @@ mod tests {
         caller_account.owner = &mut owner;
         borrow_instruction_account!(callee_account, invoke_context, 0);
         update_callee_account(
+            &memory_mapping,
             true, // check_aligned
             &caller_account,
             callee_account,
@@ -2307,6 +2348,7 @@ mod tests {
         // growing beyond address_space_reserved_for_account
         *caller_account.ref_to_len_in_vm = (7 + MAX_PERMITTED_DATA_INCREASE) as u64;
         let result = update_callee_account(
+            &memory_mapping,
             true, // check_aligned
             &caller_account,
             callee_account,
@@ -2345,6 +2387,16 @@ mod tests {
 
         let mut mock_caller_account =
             MockCallerAccount::new(1234, *account.owner(), account.data(), false);
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let memory_mapping = MemoryMapping::new(
+            mock_caller_account.regions.clone(),
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
         let mut caller_account = mock_caller_account.caller_account();
         borrow_instruction_account!(callee_account, invoke_context, 0);
 
@@ -2352,6 +2404,7 @@ mod tests {
         caller_account.serialized_data[0] = b'b';
         assert_matches!(
             update_callee_account(
+                &memory_mapping,
                 true, // check_aligned
                 &caller_account,
                 callee_account,
@@ -2368,6 +2421,7 @@ mod tests {
         borrow_instruction_account!(callee_account, invoke_context, 0);
         assert_matches!(
             update_callee_account(
+                &memory_mapping,
                 true, // check_aligned
                 &caller_account,
                 callee_account,
@@ -2384,6 +2438,7 @@ mod tests {
         borrow_instruction_account!(callee_account, invoke_context, 0);
         assert_matches!(
             update_callee_account(
+                &memory_mapping,
                 true, // check_aligned
                 &caller_account,
                 callee_account,

@@ -26,7 +26,6 @@ crossbeam-channel = { workspace = true }
 dlopen2 = { workspace = true }
 log = { workspace = true }
 num_cpus = { workspace = true }
-rand = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
 solana-address = { workspace = true }
@@ -50,6 +49,7 @@ agave-logger = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 assert_matches = { workspace = true }
 proptest = { workspace = true }
+rand = { workspace = true }
 solana-entry = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-keypair = { workspace = true }
 solana-message = { workspace = true }
