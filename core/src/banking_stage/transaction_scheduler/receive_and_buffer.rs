@@ -706,7 +706,7 @@ impl TransactionViewReceiveAndBuffer {
         };
 
         // Discard non-vote packets if in vote-only mode.
-        if root_bank.vote_only_bank() && !view.is_simple_vote_transaction() {
+        if working_bank.vote_only_bank() && !view.is_simple_vote_transaction() {
             return Err(PacketHandlingError::Sanitization);
         }
 
