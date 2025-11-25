@@ -11,7 +11,7 @@ use {
         result::{Error, Result},
     },
     agave_feature_set as feature_set,
-    crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
+    crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender, TryRecvError},
     rayon::{prelude::*, ThreadPool},
     solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
     solana_gossip::cluster_info::ClusterInfo,
@@ -103,6 +103,7 @@ impl WindowServiceMetrics {
 }
 
 fn run_check_duplicate(
+    exit: &AtomicBool,
     cluster_info: &ClusterInfo,
     blockstore: &Blockstore,
     shred_receiver: &Receiver<PossibleDuplicateShred>,
@@ -110,11 +111,11 @@ fn run_check_duplicate(
     bank_forks: &RwLock<BankForks>,
 ) -> Result<()> {
     let mut root_bank = bank_forks.read().unwrap().root_bank();
-    let mut last_updated = Instant::now();
-    let check_duplicate = |shred: PossibleDuplicateShred| -> Result<()> {
-        if last_updated.elapsed().as_millis() as u64 > DEFAULT_MS_PER_SLOT {
+    let mut last_root_bank_update = Instant::now();
+    let mut check_duplicate = |shred: PossibleDuplicateShred| -> Result<()> {
+        if last_root_bank_update.elapsed().as_millis() as u64 > DEFAULT_MS_PER_SLOT {
             // Grabs bank forks lock once a slot
-            last_updated = Instant::now();
+            last_root_bank_update = Instant::now();
             root_bank = bank_forks.read().unwrap().root_bank();
         }
         let shred_slot = shred.slot();
@@ -146,9 +147,9 @@ fn run_check_duplicate(
                 }
             }
             PossibleDuplicateShred::Exists(shred) => {
-                // Unlike the other cases we have to wait until here to decide to handle the duplicate and store
-                // in blockstore. This is because the duplicate could have been part of the same insert batch,
-                // so we wait until the batch has been written.
+                // Unlike the other cases we have to wait until here to decide to handle the
+                // duplicate and store in blockstore. This is because the duplicate could have been
+                // part of the same insert batch, so we wait until the batch has been written.
                 if blockstore.has_duplicate_shreds_in_slot(shred_slot) {
                     return Ok(()); // A duplicate is already recorded
                 }
@@ -171,10 +172,43 @@ fn run_check_duplicate(
 
         Ok(())
     };
-    const RECV_TIMEOUT: Duration = Duration::from_millis(200);
-    std::iter::once(shred_receiver.recv_timeout(RECV_TIMEOUT)?)
-        .chain(shred_receiver.try_iter())
-        .try_for_each(check_duplicate)
+
+    loop {
+        // Make sure to use `try_recv()` to avoid adding this thread into the notification list of
+        // `shred_receiver`.  If we do, we would case the sender thread, `solWinInsert`, to spend
+        // time in a syscall waking this thread up.  As this thread is mostly waiting and as we can
+        // have thousands of duplicate threads per second, this can cause considerable overhead in
+        // the `solWinInsert` `send()` calls.  Up to 40% of time is spent in `send()` in extreme
+        // cases.
+        //
+        // It would probably be more accurate to convert `shred_receiver` from a channel into a
+        // thread safe queue (like `crossbeam::queue::SegQueue`), eliminating the possibility of the
+        // unnecessary wakeup calls completely.
+        //
+        // This thread is actively waiting for any new work anyway, so it does not need to be woken
+        // up explicitly.
+        //
+        //  Duplicate shreds |      `send()` call time
+        //  over 2 seconds   | with syscalls | without syscalls
+        // ------------------+---------------+------------------
+        //              ~16k | 3ms           | 1ms
+        //               ~1k | 760us         | 201us
+        //               700 | 760us         | 185us
+        //
+        match shred_receiver.try_recv() {
+            Ok(shred) => check_duplicate(shred)?,
+            Err(TryRecvError::Empty) => {
+                if exit.load(Ordering::Relaxed) {
+                    break;
+                }
+                // Avoid spinning too fast.
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(TryRecvError::Disconnected) => break,
+        }
+    }
+
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -349,16 +383,26 @@ impl WindowService {
         Builder::new()
             .name("solWinCheckDup".to_string())
             .spawn(move || {
-                while !exit.load(Ordering::Relaxed) {
-                    if let Err(e) = run_check_duplicate(
+                loop {
+                    match run_check_duplicate(
+                        &exit,
                         &cluster_info,
                         &blockstore,
                         &duplicate_receiver,
                         &duplicate_slots_sender,
                         &bank_forks,
                     ) {
-                        if Self::should_exit_on_error(e, &handle_error) {
+                        Ok(()) => {
+                            // `run_check_duplicate()` successful exit means we are done.
                             break;
+                        }
+                        Err(e) => {
+                            if Self::should_exit_on_error(e, &handle_error) {
+                                break;
+                            } else {
+                                // Retryable error.
+                                continue;
+                            }
                         }
                     }
                 }
@@ -541,7 +585,10 @@ mod test {
             Arc::new(keypair),
             SocketAddrSpace::Unspecified,
         );
+        // `run_check_duplicate()` will only check the exit flag after it sees no pending work.
+        let exit = AtomicBool::new(true);
         run_check_duplicate(
+            &exit,
             &cluster_info,
             &blockstore,
             &receiver,
