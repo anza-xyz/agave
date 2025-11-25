@@ -240,6 +240,11 @@ pub fn tx_loop<
                     if let Some(gre) = interface_info.gre_tunnel.as_ref() {
                         // greg: todo implement underlay MAC caching
                         let outer_dst_mac = dest_mac;
+                        let (nh, _) = route_fn(&IpAddr::V4(gre.remote)).unwrap();
+                        let nh_hop_mac = nh.mac_addr.unwrap();
+                        if nh_hop_mac != outer_dst_mac {
+                            log::info!("greg: xdp: nh_hop_mac: {nh_hop_mac}, outer_dst_mac: {outer_dst_mac}");
+                        }
                         // Resolve underlay MAC with tiny cache keyed by epoch and gre remote
                         // let outer_dst_mac = match cached_underlay.as_ref() {
                         //     Some((uc, ip, mac)) if *uc == update_counter && *ip == gre.remote => {
