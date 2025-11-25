@@ -264,7 +264,7 @@ impl From<RpcCustomError> for Error {
             },
             RpcCustomError::FilterTransactionNotFound { signature } => Self {
                 code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_FILTER_TRANSACTION_NOT_FOUND),
-                message: format!("Transaction {signature} does not exist"),
+                message: format!("Transaction {signature} not found"),
                 data: None,
             },
         }
