@@ -345,7 +345,7 @@ impl std::fmt::Display for MacAddress {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GreTunnelInfo {
     pub local: Ipv4Addr,
     pub remote: Ipv4Addr,
@@ -359,11 +359,7 @@ pub struct GreTunnelInfo {
     pub link_ifindex: Option<u32>, // underlay ifindex (IFLA_GRE_LINK)
 }
 
-// Interface information structure
-// greg: todo: add more here once we need to build the headers
-// fd has a few other things here like:
-// oper_status, master_idx, slave_tbl_idx, mac_addr, mtu...
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterfaceInfo {
     pub if_index: u32,
     pub if_name: String,
@@ -435,7 +431,6 @@ pub fn netlink_get_interfaces() -> Result<Vec<InterfaceInfo>, io::Error> {
 // - if_index
 // - if_name
 // - dev_type
-// greg: todo: may need to add more here...see fd code for creating fd_netdev (same as our InterfaceInfo)
 pub(crate) fn parse_ifinfomsg(msg: &NetlinkMessage) -> Option<InterfaceInfo> {
     if msg.data.len() < mem::size_of::<ifinfomsg>() {
         return None;

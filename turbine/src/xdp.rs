@@ -224,7 +224,9 @@ impl XdpRetransmitter {
                             drop_sender,
                             move |ip| {
                                 let r = atomic_router.load();
-                                r.route(*ip).ok()
+                                let next_hop = r.route(*ip).ok()?;
+                                let interface_info = r.get_interface(next_hop.if_index).ok()?;
+                                Some((next_hop, interface_info))
                             },
                         )
                     })

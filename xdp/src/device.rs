@@ -24,7 +24,6 @@ use {
 #[derive(Copy, Clone, Debug)]
 pub struct QueueId(pub u64);
 
-// greg: todo ... we may want to change this because with ibrl the interfaces get screwed up.
 pub struct NetworkDevice {
     if_index: u32,
     if_name: String,
@@ -106,7 +105,6 @@ impl NetworkDevice {
         ))
     }
 
-    // greg: todo ... we may want to change this
     pub fn ipv4_addr(&self) -> Result<Ipv4Addr, io::Error> {
         let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0) };
         if fd < 0 {
