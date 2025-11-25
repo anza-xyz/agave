@@ -317,6 +317,8 @@ pub(crate) mod external {
             &mut self,
             message: &PackToWorkerMessage,
         ) -> Result<(), ExternalConsumeWorkerError> {
+            let root_bank = self.sharable_banks.root();
+
             // Loop here to avoid exposing internal error to external scheduler.
             // In the vast majority of cases, this will iterate a single time;
             // If we began execution when a slot was still in process, and could
