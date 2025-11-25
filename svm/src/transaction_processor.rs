@@ -1984,11 +1984,8 @@ mod tests {
         assert_eq!(entry, Arc::new(program));
     }
 
-    #[test_case(false; "informal_loaded_size")]
-    #[test_case(true; "simd186_loaded_size")]
-    fn test_validate_transaction_fee_payer_exact_balance(
-        formalize_loaded_transaction_data_size: bool,
-    ) {
+    #[test]
+    fn test_validate_transaction_fee_payer_exact_balance() {
         let lamports_per_signature = 5000;
         let message = new_unchecked_sanitized_message(Message::new_with_blockhash(
             &[
@@ -2020,12 +2017,10 @@ mod tests {
         );
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
-        let mut mock_bank = MockBankCallback {
+        let mock_bank = MockBankCallback {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
         };
-        mock_bank.feature_set.formalize_loaded_transaction_data_size =
-            formalize_loaded_transaction_data_size;
         let mut account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
@@ -2054,12 +2049,6 @@ mod tests {
             account
         };
 
-        let base_account_size = if formalize_loaded_transaction_data_size {
-            TRANSACTION_ACCOUNT_BASE_SIZE
-        } else {
-            0
-        };
-
         assert_eq!(
             result,
             Ok(ValidatedTransactionDetails {
@@ -2074,18 +2063,15 @@ mod tests {
                     .loaded_accounts_data_size_limit,
                 fee_details: FeeDetails::new(transaction_fee, priority_fee),
                 loaded_fee_payer_account: LoadedTransactionAccount {
-                    loaded_size: base_account_size + fee_payer_account.data().len(),
+                    loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE + fee_payer_account.data().len(),
                     account: post_validation_fee_payer_account,
                 },
             })
         );
     }
 
-    #[test_case(false; "informal_loaded_size")]
-    #[test_case(true; "simd186_loaded_size")]
-    fn test_validate_transaction_fee_payer_rent_paying(
-        formalize_loaded_transaction_data_size: bool,
-    ) {
+    #[test]
+    fn test_validate_transaction_fee_payer_rent_paying() {
         let lamports_per_signature = 5000;
         let message = new_unchecked_sanitized_message(Message::new_with_blockhash(
             &[],
@@ -2104,12 +2090,10 @@ mod tests {
 
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
-        let mut mock_bank = MockBankCallback {
+        let mock_bank = MockBankCallback {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
         };
-        mock_bank.feature_set.formalize_loaded_transaction_data_size =
-            formalize_loaded_transaction_data_size;
         let mut account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
@@ -2132,12 +2116,6 @@ mod tests {
             account
         };
 
-        let base_account_size = if formalize_loaded_transaction_data_size {
-            TRANSACTION_ACCOUNT_BASE_SIZE
-        } else {
-            0
-        };
-
         assert_eq!(
             result,
             Ok(ValidatedTransactionDetails {
@@ -2152,7 +2130,7 @@ mod tests {
                     .loaded_accounts_data_size_limit,
                 fee_details: FeeDetails::new(transaction_fee, 0),
                 loaded_fee_payer_account: LoadedTransactionAccount {
-                    loaded_size: base_account_size + fee_payer_account.data().len(),
+                    loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE + fee_payer_account.data().len(),
                     account: post_validation_fee_payer_account,
                 }
             })
@@ -2307,9 +2285,8 @@ mod tests {
         assert_eq!(result, Err(TransactionError::InvalidAccountForFee));
     }
 
-    #[test_case(false; "informal_loaded_size")]
-    #[test_case(true; "simd186_loaded_size")]
-    fn test_validate_transaction_fee_payer_is_nonce(formalize_loaded_transaction_data_size: bool) {
+    #[test]
+    fn test_validate_transaction_fee_payer_is_nonce() {
         let lamports_per_signature = 5000;
         let rent = Rent::default();
         let compute_unit_limit = 1000u64;
@@ -2358,12 +2335,10 @@ mod tests {
 
             let mut mock_accounts = HashMap::new();
             mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
-            let mut mock_bank = MockBankCallback {
+            let mock_bank = MockBankCallback {
                 account_shared_data: Arc::new(RwLock::new(mock_accounts)),
                 ..Default::default()
             };
-            mock_bank.feature_set.formalize_loaded_transaction_data_size =
-                formalize_loaded_transaction_data_size;
             let mut account_loader = (&mock_bank).into();
 
             let mut error_counters = TransactionErrorMetrics::default();
@@ -2389,12 +2364,6 @@ mod tests {
                 account
             };
 
-            let base_account_size = if formalize_loaded_transaction_data_size {
-                TRANSACTION_ACCOUNT_BASE_SIZE
-            } else {
-                0
-            };
-
             assert_eq!(
                 result,
                 Ok(ValidatedTransactionDetails {
@@ -2409,7 +2378,7 @@ mod tests {
                         .loaded_accounts_data_size_limit,
                     fee_details: FeeDetails::new(transaction_fee, priority_fee),
                     loaded_fee_payer_account: LoadedTransactionAccount {
-                        loaded_size: base_account_size + fee_payer_account.data().len(),
+                        loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE + fee_payer_account.data().len(),
                         account: post_validation_fee_payer_account,
                     }
                 })
