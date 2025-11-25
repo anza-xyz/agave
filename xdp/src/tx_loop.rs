@@ -137,15 +137,6 @@ pub fn tx_loop<
     // packets.
     let mut batched_packets = 0;
 
-    //greg: todo implement gre caching
-    // Cache the underlay MAC for the current router epoch and GRE remote.
-    // (Fast-path: single GRE remote per queue. If you have multiple, switch to a small HashMap.)
-    // let mut cached_underlay: Option<(
-    //     usize,    /*router update counter*/
-    //     Ipv4Addr, /*gre.remote*/
-    //     MacAddress,
-    // )> = None;
-
     let mut timeouts = 0;
     loop {
         match receiver.try_recv() {
@@ -236,45 +227,7 @@ pub fn tx_loop<
                         continue;
                     };
 
-                    // log::info!("greg: xdp: dst_ip nh: {next_hop:?} iface: {interface_info:?}");
                     if let Some(gre) = interface_info.gre_tunnel.as_ref() {
-                        // greg: todo implement underlay MAC caching
-                        let outer_dst_mac = dest_mac;
-                        let (nh, _) = route_fn(&IpAddr::V4(gre.remote)).unwrap();
-                        let nh_hop_mac = nh.mac_addr.unwrap();
-                        if nh_hop_mac != outer_dst_mac {
-                            log::info!("greg: xdp: nh_hop_mac: {nh_hop_mac}, outer_dst_mac: {outer_dst_mac}");
-                        }
-                        // Resolve underlay MAC with tiny cache keyed by epoch and gre remote
-                        // let outer_dst_mac = match cached_underlay.as_ref() {
-                        //     Some((uc, ip, mac)) if *uc == update_counter && *ip == gre.remote => {
-                        //         *mac
-                        //     }
-                        //     _ => {
-                        //         let (nh, _iface) = router.route(IpAddr::V4(gre.remote)).unwrap();
-                        //         // log::info!("greg: xdp: new gre n nh: {nh:?} iface: {iface:?}");
-                        //         match nh.mac_addr {
-                        //             Some(m) => {
-                        //                 cached_underlay = Some((update_counter, gre.remote, m));
-                        //                 // log::info!(
-                        //                 //     "greg: xdp: cached underlay MAC: {m}, remote: {}",
-                        //                 //     gre.remote
-                        //                 // );
-                        //                 m
-                        //             }
-                        //             None => {
-                        //                 // log::warn!(
-                        //                 //     "greg: dropping GRE pkt: missing underlay MAC for next-hop {} on {}({})",
-                        //                 //     nh.ip_addr, iface.if_name, iface.if_index
-                        //                 // );
-                        //                 batched_packets -= 1;
-                        //                 umem.release(frame.offset());
-                        //                 continue;
-                        //             }
-                        //         }
-                        //     }
-                        // };
-
                         // Calculate GRE packet size
                         const INNER_PACKET_HEADER_SIZE: usize = IP_HEADER_SIZE + UDP_HEADER_SIZE;
                         let inner_packet_len = INNER_PACKET_HEADER_SIZE + len;
@@ -286,7 +239,6 @@ pub fn tx_loop<
                         let packet = umem.map_frame_mut(&frame);
 
                         let inner_src_ip = next_hop.preferred_src_ip.unwrap_or(src_ip);
-                        // log::info!("greg: xdp: inner src ip: {inner_src_ip}");
 
                         // Construct the GRE packet
                         let gre_packet_len = construct_gre_packet(
@@ -299,7 +251,7 @@ pub fn tx_loop<
                             gre.local,        // gre src ip
                             gre.remote,       // gre dst ip
                             &src_mac.0,       // src MAC (our nic)
-                            &outer_dst_mac.0, //outer dst MAC (underlay next-hop)
+                            &dest_mac.0, //outer dst MAC (underlay next-hop)
                         );
 
                         // Update frame length and submit packet
