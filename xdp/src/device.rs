@@ -424,6 +424,10 @@ impl<F: Frame> RxFillRing<F> {
     pub fn sync(&mut self, commit: bool) {
         self.producer.sync(commit);
     }
+
+    pub fn available(&self) -> usize {
+        self.producer.available() as usize
+    }
 }
 
 pub struct RingMmap<T> {
