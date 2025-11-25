@@ -347,9 +347,9 @@ impl RingProducer {
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct XdpDesc {
-    pub(crate) addr: u64,
-    pub(crate) len: u32,
-    pub(crate) options: u32,
+    pub addr: u64,
+    pub len: u32,
+    pub options: u32,
 }
 
 pub struct TxCompletionRing {
