@@ -328,8 +328,8 @@ impl RingProducer {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone)]
-pub(crate) struct XdpDesc {
+#[derive(Debug, Copy, Clone)]
+pub struct XdpDesc {
     pub(crate) addr: u64,
     pub(crate) len: u32,
     pub(crate) options: u32,
