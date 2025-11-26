@@ -53,7 +53,6 @@ pub fn parse_system(
                         ParsableProgram::System,
                     ));
                 }
-                check_num_system_accounts(&instruction.accounts, 1)?;
                 Ok(ParsedInstructionEnum {
                     instruction_type: "createAccountAllowPrefund".to_string(),
                     info: json!({
@@ -63,19 +62,16 @@ pub fn parse_system(
                     }),
                 })
             }
-            2 => {
-                check_num_system_accounts(&instruction.accounts, 2)?;
-                Ok(ParsedInstructionEnum {
-                    instruction_type: "createAccountAllowPrefund".to_string(),
-                    info: json!({
-                        "newAccount": account_keys[instruction.accounts[0] as usize].to_string(),
-                        "source": account_keys[instruction.accounts[1] as usize].to_string(),
-                        "lamports": lamports,
-                        "space": space,
-                        "owner": owner.to_string(),
-                    }),
-                })
-            }
+            2 => Ok(ParsedInstructionEnum {
+                instruction_type: "createAccountAllowPrefund".to_string(),
+                info: json!({
+                    "newAccount": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "source": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "lamports": lamports,
+                    "space": space,
+                    "owner": owner.to_string(),
+                }),
+            }),
             _ => Err(ParseInstructionError::InstructionKeyMismatch(
                 ParsableProgram::System,
             )),
