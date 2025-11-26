@@ -63,7 +63,6 @@ use {
     solana_sdk_ids::address_lookup_table,
     solana_signer::Signer,
     solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
-    solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_transaction::{Transaction, TransactionError},
     solana_validator_exit::Exit,
     std::{
@@ -145,7 +144,6 @@ pub struct TestValidatorGenesis {
     compute_unit_limit: Option<u64>,
     pub log_messages_bytes_limit: Option<usize>,
     pub transaction_account_lock_limit: Option<usize>,
-    pub tpu_enable_udp: bool,
     pub geyser_plugin_manager: Arc<RwLock<GeyserPluginManager>>,
     admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
 }
@@ -181,7 +179,6 @@ impl Default for TestValidatorGenesis {
             compute_unit_limit: Option::<u64>::default(),
             log_messages_bytes_limit: Option::<usize>::default(),
             transaction_account_lock_limit: Option::<usize>::default(),
-            tpu_enable_udp: DEFAULT_TPU_ENABLE_UDP,
             geyser_plugin_manager: Arc::new(RwLock::new(GeyserPluginManager::default())),
             admin_rpc_service_post_init:
                 Arc::<RwLock<Option<AdminRpcRequestMetadataPostInit>>>::default(),
@@ -246,11 +243,6 @@ impl TestValidatorGenesis {
     /// Check if a given TestValidator ledger has already been initialized
     pub fn ledger_exists(ledger_path: &Path) -> bool {
         ledger_path.join("vote-account-keypair.json").exists()
-    }
-
-    pub fn tpu_enable_udp(&mut self, tpu_enable_udp: bool) -> &mut Self {
-        self.tpu_enable_udp = tpu_enable_udp;
-        self
     }
 
     pub fn fee_rate_governor(&mut self, fee_rate_governor: FeeRateGovernor) -> &mut Self {
@@ -819,11 +811,9 @@ impl TestValidator {
         faucet_addr: Option<SocketAddr>,
         socket_addr_space: SocketAddrSpace,
         target_lamports_per_signature: u64,
-        tpu_enable_udp: bool,
         wait_for_fees: bool,
     ) -> Self {
         let test_validator = TestValidatorGenesis::default()
-            .tpu_enable_udp(tpu_enable_udp)
             .fee_rate_governor(FeeRateGovernor::new(target_lamports_per_signature, 0))
             .rent(Rent {
                 lamports_per_byte_year: 1,
@@ -874,23 +864,7 @@ impl TestValidator {
         faucet_addr: Option<SocketAddr>,
         socket_addr_space: SocketAddrSpace,
     ) -> Self {
-        Self::start_with_config(
-            mint_address,
-            faucet_addr,
-            socket_addr_space,
-            0,
-            false,
-            false,
-        )
-    }
-
-    /// Create a test validator using udp for TPU.
-    pub fn with_no_fees_udp(
-        mint_address: Pubkey,
-        faucet_addr: Option<SocketAddr>,
-        socket_addr_space: SocketAddrSpace,
-    ) -> Self {
-        Self::start_with_config(mint_address, faucet_addr, socket_addr_space, 0, true, false)
+        Self::start_with_config(mint_address, faucet_addr, socket_addr_space, 0, false)
     }
 
     /// Create and start a `TestValidator` with custom transaction fees and minimal rent.
@@ -908,7 +882,6 @@ impl TestValidator {
             faucet_addr,
             socket_addr_space,
             target_lamports_per_signature,
-            false,
             true,
         )
     }
@@ -1256,7 +1229,7 @@ impl TestValidator {
             rpc_to_plugin_manager_receiver,
             config.start_progress.clone(),
             socket_addr_space,
-            ValidatorTpuConfig::new_for_tests(config.tpu_enable_udp),
+            ValidatorTpuConfig::new_for_tests(),
             config.admin_rpc_service_post_init.clone(),
         )?);
 
