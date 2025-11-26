@@ -58,6 +58,19 @@ pub struct VoteAccounts {
 }
 
 impl VoteAccounts {
+    fn is_valid_alpenglow_vote_account(
+        vote_account: &VoteAccount,
+        stake: u64,
+        minimum_vote_account_balance: u64,
+    ) -> bool {
+        vote_account
+            .vote_state_view()
+            .bls_pubkey_compressed()
+            .is_some() // valid account, has bls key
+            && stake != 0u64 // non-zero stake
+            && vote_account.lamports() >= minimum_vote_account_balance
+    }
+
     // This implements the filtering logic described in SIMD-357.
     // 1. Filter out any vote accounts without BLS pubkey
     // 2. Given minimum_vote_account_balance, filter out any vote account
@@ -77,24 +90,36 @@ impl VoteAccounts {
         minimum_vote_account_balance: u64,
     ) -> VoteAccounts {
         assert_ne!(max_vote_accounts, 0);
-        let mut entries_to_sort: Vec<(&Pubkey, &VoteAccount, u64)> = self
+        // In most cases we should not hit the max_vote_accounts limit, so
+        // scanning is cheaper. In worst case we just do another vec collect.
+        let entries_count = self
             .vote_accounts
             .iter()
-            .filter_map(|(pubkey, (stake, vote_account))| {
-                if vote_account
-                    .vote_state_view()
-                    .bls_pubkey_compressed()
-                    .is_none()  // invalid account, no bls key
-                    || *stake == 0u64 // zero stake, no need to consider
-                    || vote_account.lamports() < minimum_vote_account_balance
-                {
-                    return None;
-                }
-                Some((pubkey, vote_account, *stake))
+            .filter(|(_, (stake, vote_account))| {
+                Self::is_valid_alpenglow_vote_account(
+                    vote_account,
+                    *stake,
+                    minimum_vote_account_balance,
+                )
             })
-            .collect();
+            .count();
         let valid_entries: HashMap<Pubkey, (u64, VoteAccount)> =
-            if entries_to_sort.len() > max_vote_accounts {
+            if entries_count > max_vote_accounts {
+                let mut entries_to_sort: Vec<(&Pubkey, &VoteAccount, &u64)> = self
+                    .vote_accounts
+                    .iter()
+                    .filter_map(|(pubkey, (stake, vote_account))| {
+                        if Self::is_valid_alpenglow_vote_account(
+                            vote_account,
+                            *stake,
+                            minimum_vote_account_balance,
+                        ) {
+                            Some((pubkey, vote_account, stake))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
                 // Sort by stake descending, we don't care about sorting accounts with same stake, because
                 // this sort is only for truncation purpose, and we remove all accounts with same stake
                 // on the border.
@@ -111,12 +136,22 @@ impl VoteAccounts {
                 entries_to_sort
                     .into_iter()
                     .take_while(|(_, _, stake)| stake > &floor_stake)
-                    .map(|(pubkey, vote_account, stake)| (*pubkey, (stake, vote_account.clone())))
+                    .map(|(pubkey, vote_account, stake)| (*pubkey, (*stake, vote_account.clone())))
                     .collect()
             } else {
-                entries_to_sort
-                    .into_iter()
-                    .map(|(pubkey, vote_account, stake)| (*pubkey, (stake, vote_account.clone())))
+                self.vote_accounts
+                    .iter()
+                    .filter_map(|(pubkey, (stake, vote_account))| {
+                        if Self::is_valid_alpenglow_vote_account(
+                            vote_account,
+                            *stake,
+                            minimum_vote_account_balance,
+                        ) {
+                            Some((*pubkey, (*stake, vote_account.clone())))
+                        } else {
+                            None
+                        }
+                    })
                     .collect()
             };
         if valid_entries.is_empty() {
