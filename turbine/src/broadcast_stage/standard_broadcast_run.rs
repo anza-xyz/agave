@@ -74,12 +74,7 @@ impl StandardBroadcastRun {
     // If the current slot has changed, generates an empty shred indicating
     // last shred in the previous slot, along with coding shreds for the data
     // shreds buffered.
-    fn finish_prev_slot(
-        &mut self,
-        keypair: &Keypair,
-        max_ticks_in_slot: u8,
-        stats: &mut ProcessShredsStats,
-    ) -> Vec<Shred> {
+    fn finish_prev_slot(&mut self, keypair: &Keypair, max_ticks_in_slot: u8) -> Vec<Shred> {
         if self.completed {
             return vec![];
         }
@@ -96,9 +91,11 @@ impl StandardBroadcastRun {
                     self.next_shred_index,
                     self.next_code_index,
                     &self.reed_solomon_cache,
-                    stats,
+                    &mut self.process_shreds_stats,
                 )
-                .inspect(|shred| stats.record_shred(shred))
+                // These shreds will finish the slot so no need to update
+                // self.next_shred_index and self.next_code_index
+                .inspect(|shred| self.process_shreds_stats.record_shred(shred))
                 .collect();
         if let Some(shred) = shreds.iter().max_by_key(|shred| shred.fec_set_index()) {
             self.chained_merkle_root = shred.merkle_root().unwrap();
@@ -205,8 +202,7 @@ impl StandardBroadcastRun {
         if self.slot != bank.slot() {
             // Finish previous slot if it was interrupted.
             if !self.completed {
-                let shreds =
-                    self.finish_prev_slot(keypair, bank.ticks_per_slot() as u8, process_stats);
+                let shreds = self.finish_prev_slot(keypair, bank.ticks_per_slot() as u8);
                 debug_assert!(shreds.iter().all(|shred| shred.slot() == self.slot));
                 // Broadcast shreds for the interrupted slot.
                 let batch_info = Some(BroadcastShredBatchInfo {
@@ -432,13 +428,8 @@ impl StandardBroadcastRun {
             )
         };
 
-        self.process_shreds_stats.submit(
-            name,
-            self.slot,
-            self.next_shred_index, // num_data_shreds
-            self.next_code_index,  // num_coding_shreds
-            slot_broadcast_time,
-        );
+        self.process_shreds_stats
+            .submit(name, self.slot, slot_broadcast_time);
     }
 }
 
@@ -578,11 +569,8 @@ mod test {
         run.slot_broadcast_start = Instant::now();
 
         // Slot 2 interrupted slot 1
-        let shreds = run.finish_prev_slot(
-            &keypair,
-            0, // max_ticks_in_slot
-            &mut ProcessShredsStats::default(),
-        );
+        let max_ticks_in_slot = 0;
+        let shreds = run.finish_prev_slot(&keypair, max_ticks_in_slot);
         assert!(run.completed);
         let shred = shreds
             .first()
