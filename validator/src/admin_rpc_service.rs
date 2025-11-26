@@ -1058,7 +1058,6 @@ mod tests {
             bank_forks::BankForks,
         },
         solana_system_interface::program as system_program,
-        solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
         spl_generic_token::token,
         spl_token_2022_interface::state::{
             Account as TokenAccount, AccountState as TokenAccountState, Mint,
@@ -1565,7 +1564,7 @@ mod tests {
                 None, // rpc_to_plugin_manager_receiver
                 start_progress.clone(),
                 SocketAddrSpace::Unspecified,
-                ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
+                ValidatorTpuConfig::new_for_tests(),
                 post_init.clone(),
             )
             .expect("assume successful validator start");
