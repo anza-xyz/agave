@@ -1154,7 +1154,7 @@ pub mod provide_instruction_data_offset_in_vm_r2 {
 }
 
 pub mod create_account_allow_prefund {
-    solana_pubkey::declare_id!("CbwrtjKe4bGf4tyMU2AnRyzHL7Du93jxynFdGvmoNgDw");
+    solana_pubkey::declare_id!("8nZKHnryahsWXSvECnrm3rYsWbirpSQgjZAJCr7LzWsb");
 }
 
 pub mod static_instruction_limit {
