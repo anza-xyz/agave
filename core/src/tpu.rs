@@ -153,7 +153,6 @@ impl Tpu {
         shared_staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
         banking_tracer_channels: Channels,
         tracer_thread_hdl: TracerThread,
-        tpu_enable_udp: bool,
         tpu_quic_server_config: SwQosQuicStreamerConfig,
         tpu_fwd_quic_server_config: SwQosQuicStreamerConfig,
         vote_quic_server_config: SimpleQosQuicStreamerConfig,
@@ -195,7 +194,6 @@ impl Tpu {
             poh_recorder,
             None, // coalesce
             Some(bank_forks.read().unwrap().get_vote_only_mode_signal()),
-            tpu_enable_udp,
         );
 
         let staked_nodes_updater_service = StakedNodesUpdaterService::new(

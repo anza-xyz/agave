@@ -14,7 +14,6 @@ use {
     solana_streamer::streamer::{
         self, PacketBatchReceiver, PacketBatchSender, StreamerReceiveStats,
     },
-    solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     std::{
         net::UdpSocket,
         sync::{
@@ -55,7 +54,6 @@ impl FetchStage {
                 poh_recorder,
                 coalesce,
                 None,
-                DEFAULT_TPU_ENABLE_UDP,
             ),
             receiver,
             vote_receiver,
@@ -75,7 +73,6 @@ impl FetchStage {
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         coalesce: Option<Duration>,
         in_vote_only_mode: Option<Arc<AtomicBool>>,
-        tpu_enable_udp: bool,
     ) -> Self {
         let tx_sockets = sockets.into_iter().map(Arc::new).collect();
         let tpu_forwards_sockets = tpu_forwards_sockets.into_iter().map(Arc::new).collect();
@@ -92,7 +89,6 @@ impl FetchStage {
             poh_recorder,
             coalesce,
             in_vote_only_mode,
-            tpu_enable_udp,
         )
     }
 
@@ -151,58 +147,49 @@ impl FetchStage {
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         coalesce: Option<Duration>,
         in_vote_only_mode: Option<Arc<AtomicBool>>,
-        tpu_enable_udp: bool,
     ) -> Self {
         let recycler: PacketBatchRecycler = Recycler::warmed(1000, 1024);
 
         let tpu_stats = Arc::new(StreamerReceiveStats::new("tpu_receiver"));
 
-        let tpu_threads: Vec<_> = if tpu_enable_udp {
-            tpu_sockets
-                .into_iter()
-                .enumerate()
-                .map(|(i, socket)| {
-                    streamer::receiver(
-                        format!("solRcvrTpu{i:02}"),
-                        socket,
-                        exit.clone(),
-                        sender.clone(),
-                        recycler.clone(),
-                        tpu_stats.clone(),
-                        coalesce,
-                        true,
-                        in_vote_only_mode.clone(),
-                        false, // unstaked connections
-                    )
-                })
-                .collect()
-        } else {
-            Vec::default()
-        };
+        let tpu_threads: Vec<_> = tpu_sockets
+            .into_iter()
+            .enumerate()
+            .map(|(i, socket)| {
+                streamer::receiver(
+                    format!("solRcvrTpu{i:02}"),
+                    socket,
+                    exit.clone(),
+                    sender.clone(),
+                    recycler.clone(),
+                    tpu_stats.clone(),
+                    coalesce,
+                    true,
+                    in_vote_only_mode.clone(),
+                    false, // unstaked connections
+                )
+            })
+            .collect();
 
         let tpu_forward_stats = Arc::new(StreamerReceiveStats::new("tpu_forwards_receiver"));
-        let tpu_forwards_threads: Vec<_> = if tpu_enable_udp {
-            tpu_forwards_sockets
-                .into_iter()
-                .enumerate()
-                .map(|(i, socket)| {
-                    streamer::receiver(
-                        format!("solRcvrTpuFwd{i:02}"),
-                        socket,
-                        exit.clone(),
-                        forward_sender.clone(),
-                        recycler.clone(),
-                        tpu_forward_stats.clone(),
-                        coalesce,
-                        true,
-                        in_vote_only_mode.clone(),
-                        false, // unstaked connections
-                    )
-                })
-                .collect()
-        } else {
-            Vec::default()
-        };
+        let tpu_forwards_threads: Vec<_> = tpu_forwards_sockets
+            .into_iter()
+            .enumerate()
+            .map(|(i, socket)| {
+                streamer::receiver(
+                    format!("solRcvrTpuFwd{i:02}"),
+                    socket,
+                    exit.clone(),
+                    forward_sender.clone(),
+                    recycler.clone(),
+                    tpu_forward_stats.clone(),
+                    coalesce,
+                    true,
+                    in_vote_only_mode.clone(),
+                    false, // unstaked connections
+                )
+            })
+            .collect();
 
         let tpu_vote_stats = Arc::new(StreamerReceiveStats::new("tpu_vote_receiver"));
         let tpu_vote_threads: Vec<_> = tpu_vote_sockets
