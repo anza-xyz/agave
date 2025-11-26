@@ -76,9 +76,7 @@ impl VoteAccounts {
         max_vote_accounts: usize,
         minimum_vote_account_balance: u64,
     ) -> VoteAccounts {
-        if max_vote_accounts == 0 {
-            panic!("max_vote_accounts must be > 0");
-        }
+        assert_ne!(max_vote_accounts, 0);
         let mut entries_to_sort: Vec<(&Pubkey, &VoteAccount, u64)> = self
             .vote_accounts
             .iter()
