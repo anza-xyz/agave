@@ -447,7 +447,7 @@ solana-derivation-path = "3.0.0"
 solana-download-utils = { path = "download-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-ed25519-program = "3.0.0"
 solana-entry = { path = "entry", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-epoch-info = "3.0.0"
+solana-epoch-info = "3.1.0"
 solana-epoch-rewards = "3.0.0"
 solana-epoch-rewards-hasher = "3.0.0"
 solana-epoch-schedule = "3.0.0"
