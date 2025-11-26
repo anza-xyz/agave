@@ -24,6 +24,7 @@ use {
 #[derive(Copy, Clone, Debug)]
 pub struct QueueId(pub u64);
 
+#[derive(Debug, Clone)]
 pub struct NetworkDevice {
     if_index: u32,
     if_name: String,
