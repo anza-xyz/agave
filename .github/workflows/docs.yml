@@ -103,6 +103,7 @@ jobs:
       github.repository == 'anza-xyz/agave' &&
       github.event_name == 'push'
     runs-on: ubuntu-22.04
+    environment: protected
     steps:
       - name: Checkout
         uses: actions/checkout@v6
