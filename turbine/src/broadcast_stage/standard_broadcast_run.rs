@@ -431,13 +431,8 @@ impl StandardBroadcastRun {
             )
         };
 
-        self.process_shreds_stats.submit(
-            name,
-            self.slot,
-            self.next_shred_index, // num_data_shreds
-            self.next_code_index,  // num_coding_shreds
-            slot_broadcast_time,
-        );
+        self.process_shreds_stats
+            .submit(name, self.slot, slot_broadcast_time);
     }
 }
 
