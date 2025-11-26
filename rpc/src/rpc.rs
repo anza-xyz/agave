@@ -3667,15 +3667,11 @@ pub mod rpc_full {
                             tvu: contact_info
                                 .tvu(Protocol::UDP)
                                 .filter(|addr| socket_addr_space.check(addr)),
-                            tpu: contact_info
-                                .tpu(Protocol::UDP)
-                                .filter(|addr| socket_addr_space.check(addr)),
+                            tpu: None,
                             tpu_quic: contact_info
                                 .tpu(Protocol::QUIC)
                                 .filter(|addr| socket_addr_space.check(addr)),
-                            tpu_forwards: contact_info
-                                .tpu_forwards(Protocol::UDP)
-                                .filter(|addr| socket_addr_space.check(addr)),
+                            tpu_forwards: None,
                             tpu_forwards_quic: contact_info
                                 .tpu_forwards(Protocol::QUIC)
                                 .filter(|addr| socket_addr_space.check(addr)),
@@ -5185,9 +5181,9 @@ pub mod tests {
             "gossip": "127.0.0.1:8000",
             "shredVersion": 0u16,
             "tvu": "127.0.0.1:8001",
-            "tpu": "127.0.0.1:8003",
+            "tpu": null,
             "tpuQuic": "127.0.0.1:8009",
-            "tpuForwards": "127.0.0.1:8004",
+            "tpuForwards": null,
             "tpuForwardsQuic": "127.0.0.1:8010",
             "tpuVote": "127.0.0.1:8005",
             "serveRepair": "127.0.0.1:8008",
@@ -5200,9 +5196,9 @@ pub mod tests {
             "gossip": "127.0.0.1:1235",
             "shredVersion": 0u16,
             "tvu": "127.0.0.1:1236",
-            "tpu": "127.0.0.1:1234",
+            "tpu": null,
             "tpuQuic": "127.0.0.1:1240",
-            "tpuForwards": "127.0.0.1:1239",
+            "tpuForwards": null,
             "tpuForwardsQuic": "127.0.0.1:1245",
             "tpuVote": "127.0.0.1:1241",
             "serveRepair": "127.0.0.1:1242",

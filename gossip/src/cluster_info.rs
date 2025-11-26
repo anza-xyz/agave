@@ -595,10 +595,10 @@ impl ClusterInfo {
                         },
                         self.addr_to_string(&ip_addr, &node.gossip()),
                         self.addr_to_string(&ip_addr, &node.tpu_vote(contact_info::Protocol::UDP)),
-                        self.addr_to_string(&ip_addr, &node.tpu(contact_info::Protocol::UDP)),
+                        self.addr_to_string(&ip_addr, &node.tpu(contact_info::Protocol::QUIC)),
                         self.addr_to_string(
                             &ip_addr,
-                            &node.tpu_forwards(contact_info::Protocol::UDP)
+                            &node.tpu_forwards(contact_info::Protocol::QUIC)
                         ),
                         self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::UDP)),
                         self.addr_to_string(
@@ -1143,7 +1143,7 @@ impl ClusterInfo {
 
     fn is_spy_node(node: &ContactInfo, socket_addr_space: &SocketAddrSpace) -> bool {
         ![
-            node.tpu(contact_info::Protocol::UDP),
+            node.tpu(contact_info::Protocol::QUIC),
             node.gossip(),
             node.tvu(contact_info::Protocol::UDP),
         ]
@@ -2362,8 +2362,6 @@ pub struct Sockets {
     pub gossip: Arc<[UdpSocket]>,
     pub ip_echo: Option<TcpListener>,
     pub tvu: Vec<UdpSocket>,
-    pub tpu: Vec<UdpSocket>,
-    pub tpu_forwards: Vec<UdpSocket>,
     pub tpu_vote: Vec<UdpSocket>,
     pub broadcast: Vec<UdpSocket>,
     // Socket sending out local repair requests,
@@ -2867,7 +2865,7 @@ mod tests {
         }
         check_sockets(&node.sockets.gossip, ip, range);
         check_sockets(&node.sockets.tvu, ip, range);
-        check_sockets(&node.sockets.tpu, ip, range);
+        check_sockets(&node.sockets.tpu_quic, ip, range);
     }
 
     #[test]

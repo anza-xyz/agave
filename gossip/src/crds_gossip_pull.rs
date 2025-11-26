@@ -1567,7 +1567,7 @@ pub(crate) mod tests {
         };
         {
             let caller: CrdsValue = CrdsValue::new(CrdsData::from(&node), &keypair);
-            assert_eq!(get_max_bloom_filter_bytes(&caller), 1175);
+            assert_eq!(get_max_bloom_filter_bytes(&caller), 1184);
             verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
         }
         let node = {
@@ -1579,7 +1579,7 @@ pub(crate) mod tests {
         };
         {
             let caller = CrdsValue::new(CrdsData::from(&node), &keypair);
-            assert_eq!(get_max_bloom_filter_bytes(&caller), 1155);
+            assert_eq!(get_max_bloom_filter_bytes(&caller), 1165);
             verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
         }
     }
