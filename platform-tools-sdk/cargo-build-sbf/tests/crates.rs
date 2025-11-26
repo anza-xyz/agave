@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use {
     assert_cmd::assert::Assert,
     predicates::prelude::*,

@@ -1018,6 +1018,9 @@ pub async fn process_vote_authorize(
                 check_current_authority(&[vote_state.authorized_withdrawer], &authorized.pubkey())?
             }
         }
+        VoteAuthorize::VoterWithBLS(_) => {
+            unimplemented!();
+        }
     }
 
     let vote_ix = if new_authorized_signer.is_some() {

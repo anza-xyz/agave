@@ -115,7 +115,7 @@ impl VoteAccount {
             leader_schedule_epoch: rng.random(),
             unix_timestamp: rng.random(),
         };
-        let vote_state = VoteStateV4::new(&vote_pubkey, &vote_init, &clock);
+        let vote_state = VoteStateV4::new_with_defaults(&vote_pubkey, &vote_init, &clock);
         let account = AccountSharedData::new_data(
             rng.random(), // lamports
             &VoteStateVersions::new_v4(vote_state.clone()),
@@ -482,7 +482,7 @@ mod tests {
             leader_schedule_epoch: rng.random(),
             unix_timestamp: rng.random(),
         };
-        let vote_state = VoteStateV4::new(&vote_pubkey, &vote_init, &clock);
+        let vote_state = VoteStateV4::new_with_defaults(&vote_pubkey, &vote_init, &clock);
         AccountSharedData::new_data(
             rng.random(), // lamports
             &VoteStateVersions::new_v4(vote_state.clone()),

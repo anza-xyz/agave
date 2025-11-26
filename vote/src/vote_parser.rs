@@ -70,6 +70,7 @@ fn parse_vote_instruction_data(
         | VoteInstruction::AuthorizeWithSeed(_)
         | VoteInstruction::AuthorizeCheckedWithSeed(_)
         | VoteInstruction::InitializeAccount(_)
+        | VoteInstruction::InitializeAccountV2(_)
         | VoteInstruction::UpdateCommission(_)
         | VoteInstruction::UpdateValidatorIdentity
         | VoteInstruction::Withdraw(_) => None,

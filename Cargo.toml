@@ -403,7 +403,7 @@ soketto = "0.8"
 solana-account = "3.2.0"
 solana-account-decoder = { path = "account-decoder", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-account-info = "3.0.0"
+solana-account-info = "3.1.0"
 solana-accounts-db = { path = "accounts-db", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-address = "1.1.0"
 solana-address-lookup-table-interface = "3.0.0"
@@ -412,7 +412,7 @@ solana-banks-client = { path = "banks-client", version = "=4.0.0-alpha.0", featu
 solana-banks-interface = { path = "banks-interface", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-banks-server = { path = "banks-server", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-big-mod-exp = "3.0.0"
-solana-bincode = "3.0.0"
+solana-bincode = "3.1.0"
 solana-blake3-hasher = "3.1.0"
 solana-bloom = { path = "bloom", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-bls-signatures = { version = "1.0.0", features = ["serde"] }
@@ -431,7 +431,7 @@ solana-client = { path = "client", version = "=4.0.0-alpha.0" }
 solana-client-traits = "3.0.0"
 solana-clock = "3.0.0"
 solana-cluster-type = "3.0.0"
-solana-commitment-config = "3.0.0"
+solana-commitment-config = "3.1.0"
 solana-compute-budget = { path = "compute-budget", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-compute-budget-instruction = { path = "compute-budget-instruction", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-compute-budget-interface = "3.0.0"
@@ -440,16 +440,16 @@ solana-config-interface = "2.0.0"
 solana-connection-cache = { path = "connection-cache", version = "=4.0.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
 solana-core = { path = "core", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-cost-model = { path = "cost-model", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-cpi = "3.0.0"
+solana-cpi = "3.1.0"
 solana-curve25519 = { path = "curves/curve25519", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-define-syscall = "3.0.0"
+solana-define-syscall = "4.0.1"
 solana-derivation-path = "3.0.0"
 solana-download-utils = { path = "download-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-ed25519-program = "3.0.0"
 solana-entry = { path = "entry", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-epoch-info = "3.0.0"
+solana-epoch-info = "3.1.0"
 solana-epoch-rewards = "3.0.0"
-solana-epoch-rewards-hasher = "3.0.0"
+solana-epoch-rewards-hasher = "3.1.0"
 solana-epoch-schedule = "3.0.0"
 solana-example-mocks = "3.0.0"
 solana-faucet = { path = "faucet", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
@@ -459,20 +459,20 @@ solana-fee-calculator = "3.0.0"
 solana-fee-structure = "3.0.0"
 solana-file-download = "3.1.0"
 solana-frozen-abi = "3.0.1"
-solana-frozen-abi-macro = "3.0.1"
+solana-frozen-abi-macro = "3.1.0"
 solana-genesis = { path = "genesis", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-genesis-config = "3.0.0"
 solana-genesis-utils = { path = "genesis-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-gossip = { path = "gossip", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-hard-forks = "3.0.0"
-solana-hash = "3.1.0"
+solana-hash = "4.0.1"
 solana-inflation = "3.0.0"
-solana-instruction = "3.0.0"
+solana-instruction = "3.1.0"
 solana-instruction-error = "2.1.0"
 solana-instructions-sysvar = "3.0.0"
 solana-keccak-hasher = "3.1.0"
-solana-keypair = "3.0.1"
+solana-keypair = "3.1.0"
 solana-last-restart-slot = "3.0.0"
 solana-lattice-hash = { path = "lattice-hash", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-ledger = { path = "ledger", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
@@ -502,14 +502,14 @@ solana-precompile-error = "3.0.0"
 solana-presigner = "3.0.0"
 solana-program = { version = "3.0.0", default-features = false }
 solana-program-binaries = { path = "program-binaries", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-program-entrypoint = "3.1.0"
+solana-program-entrypoint = "3.1.1"
 solana-program-error = "3.0.0"
-solana-program-memory = "3.0.0"
+solana-program-memory = "3.1.0"
 solana-program-option = "3.0.0"
 solana-program-pack = "3.0.0"
 solana-program-runtime = { path = "program-runtime", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-program-test = { path = "program-test", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-pubkey = { version = "3.0.0", default-features = false }
+solana-pubkey = { version = "4.0.0", default-features = false }
 solana-pubsub-client = { path = "pubsub-client", version = "=4.0.0-alpha.0" }
 solana-quic-client = { path = "quic-client", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-quic-definitions = "3.0.0"
@@ -526,9 +526,9 @@ solana-runtime = { path = "runtime", version = "=4.0.0-alpha.0", features = ["ag
 solana-runtime-transaction = { path = "runtime-transaction", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-sanitize = "3.0.1"
 solana-sbpf = { version = "=0.13.1", default-features = false }
-solana-sdk-ids = "3.0.0"
+solana-sdk-ids = "3.1.0"
 solana-secp256k1-program = "3.0.0"
-solana-secp256k1-recover = "3.0.0"
+solana-secp256k1-recover = "3.1.0"
 solana-secp256r1-program = "3.0.0"
 solana-seed-derivable = "3.0.0"
 solana-seed-phrase = "3.0.0"
@@ -537,7 +537,7 @@ solana-serde = "3.0.0"
 solana-serde-varint = "3.0.0"
 solana-serialize-utils = "3.1.0"
 solana-sha256-hasher = "3.1.0"
-solana-short-vec = "3.0.0"
+solana-short-vec = "3.1.0"
 solana-shred-version = "3.0.0"
 solana-signature = { version = "3.1.0", default-features = false }
 solana-signer = "3.0.0"
@@ -561,8 +561,8 @@ solana-svm-type-overrides = { path = "svm-type-overrides", version = "=4.0.0-alp
 solana-system-interface = "2.0"
 solana-system-program = { path = "programs/system", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-system-transaction = "3.0.0"
-solana-sysvar = "3.0.0"
-solana-sysvar-id = "3.0.0"
+solana-sysvar = "3.1.0"
+solana-sysvar-id = "3.1.0"
 solana-test-validator = { path = "test-validator", version = "=4.0.0-alpha.0" }
 solana-time-utils = "3.0.0"
 solana-tls-utils = { path = "tls-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
@@ -703,3 +703,103 @@ crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d
 # There is a similar override in `programs/sbf/Cargo.toml`.  Please keep both
 # comments and the overrides in sync.
 solana-curve25519 = { path = "curves/curve25519" }
+# The following entries are auto-generated by ./scripts/patch-crates-no-header.sh
+solana-account = { path = "/Users/wenxu/solana-sdk/account" }
+solana-account-info = { path = "/Users/wenxu/solana-sdk/account-info" }
+solana-address-lookup-table-interface = { path = "/Users/wenxu/solana-sdk/address-lookup-table-interface" }
+solana-atomic-u64 = { path = "/Users/wenxu/solana-sdk/atomic-u64" }
+solana-big-mod-exp = { path = "/Users/wenxu/solana-sdk/big-mod-exp" }
+solana-bincode = { path = "/Users/wenxu/solana-sdk/bincode" }
+solana-blake3-hasher = { path = "/Users/wenxu/solana-sdk/blake3-hasher" }
+solana-bls-signatures = { path = "/Users/wenxu/solana-sdk/bls-signatures" }
+solana-bn254 = { path = "/Users/wenxu/solana-sdk/bn254" }
+solana-borsh = { path = "/Users/wenxu/solana-sdk/borsh" }
+solana-client-traits = { path = "/Users/wenxu/solana-sdk/client-traits" }
+solana-clock = { path = "/Users/wenxu/solana-sdk/clock" }
+solana-cluster-type = { path = "/Users/wenxu/solana-sdk/cluster-type" }
+solana-commitment-config = { path = "/Users/wenxu/solana-sdk/commitment-config" }
+solana-compute-budget-interface = { path = "/Users/wenxu/solana-sdk/compute-budget-interface" }
+solana-cpi = { path = "/Users/wenxu/solana-sdk/cpi" }
+solana-define-syscall = { path = "/Users/wenxu/solana-sdk/define-syscall" }
+solana-derivation-path = { path = "/Users/wenxu/solana-sdk/derivation-path" }
+solana-ed25519-program = { path = "/Users/wenxu/solana-sdk/ed25519-program" }
+solana-epoch-info = { path = "/Users/wenxu/solana-sdk/epoch-info" }
+solana-epoch-rewards = { path = "/Users/wenxu/solana-sdk/epoch-rewards" }
+solana-epoch-rewards-hasher = { path = "/Users/wenxu/solana-sdk/epoch-rewards-hasher" }
+solana-epoch-schedule = { path = "/Users/wenxu/solana-sdk/epoch-schedule" }
+solana-epoch-stake = { path = "/Users/wenxu/solana-sdk/epoch-stake" }
+solana-example-mocks = { path = "/Users/wenxu/solana-sdk/example-mocks" }
+solana-feature-gate-interface = { path = "/Users/wenxu/solana-sdk/feature-gate-interface" }
+solana-fee-calculator = { path = "/Users/wenxu/solana-sdk/fee-calculator" }
+solana-fee-structure = { path = "/Users/wenxu/solana-sdk/fee-structure" }
+solana-file-download = { path = "/Users/wenxu/solana-sdk/file-download" }
+solana-frozen-abi = { path = "/Users/wenxu/solana-sdk/frozen-abi" }
+solana-frozen-abi-macro = { path = "/Users/wenxu/solana-sdk/frozen-abi-macro" }
+solana-genesis-config = { path = "/Users/wenxu/solana-sdk/genesis-config" }
+solana-hard-forks = { path = "/Users/wenxu/solana-sdk/hard-forks" }
+solana-hash = { path = "/Users/wenxu/solana-sdk/hash" }
+solana-inflation = { path = "/Users/wenxu/solana-sdk/inflation" }
+solana-instruction = { path = "/Users/wenxu/solana-sdk/instruction" }
+solana-instructions-sysvar = { path = "/Users/wenxu/solana-sdk/instructions-sysvar" }
+solana-keccak-hasher = { path = "/Users/wenxu/solana-sdk/keccak-hasher" }
+solana-keypair = { path = "/Users/wenxu/solana-sdk/keypair" }
+solana-last-restart-slot = { path = "/Users/wenxu/solana-sdk/last-restart-slot" }
+solana-loader-v2-interface = { path = "/Users/wenxu/solana-sdk/loader-v2-interface" }
+solana-loader-v3-interface = { path = "/Users/wenxu/solana-sdk/loader-v3-interface" }
+solana-loader-v4-interface = { path = "/Users/wenxu/solana-sdk/loader-v4-interface" }
+solana-message = { path = "/Users/wenxu/solana-sdk/message" }
+solana-msg = { path = "/Users/wenxu/solana-sdk/msg" }
+solana-native-token = { path = "/Users/wenxu/solana-sdk/native-token" }
+solana-nonce = { path = "/Users/wenxu/solana-sdk/nonce" }
+solana-nonce-account = { path = "/Users/wenxu/solana-sdk/nonce-account" }
+solana-offchain-message = { path = "/Users/wenxu/solana-sdk/offchain-message" }
+solana-package-metadata = { path = "/Users/wenxu/solana-sdk/package-metadata" }
+solana-package-metadata-macro = { path = "/Users/wenxu/solana-sdk/package-metadata-macro" }
+solana-packet = { path = "/Users/wenxu/solana-sdk/packet" }
+solana-poh-config = { path = "/Users/wenxu/solana-sdk/poh-config" }
+solana-precompile-error = { path = "/Users/wenxu/solana-sdk/precompile-error" }
+solana-presigner = { path = "/Users/wenxu/solana-sdk/presigner" }
+solana-program = { path = "/Users/wenxu/solana-sdk/program" }
+solana-program-entrypoint = { path = "/Users/wenxu/solana-sdk/program-entrypoint" }
+solana-program-error = { path = "/Users/wenxu/solana-sdk/program-error" }
+solana-program-memory = { path = "/Users/wenxu/solana-sdk/program-memory" }
+solana-program-option = { path = "/Users/wenxu/solana-sdk/program-option" }
+solana-program-pack = { path = "/Users/wenxu/solana-sdk/program-pack" }
+solana-pubkey = { path = "/Users/wenxu/solana-sdk/pubkey" }
+solana-quic-definitions = { path = "/Users/wenxu/solana-sdk/quic-definitions" }
+solana-rent = { path = "/Users/wenxu/solana-sdk/rent" }
+solana-reward-info = { path = "/Users/wenxu/solana-sdk/reward-info" }
+solana-sanitize = { path = "/Users/wenxu/solana-sdk/sanitize" }
+solana-sdk = { path = "/Users/wenxu/solana-sdk/sdk" }
+solana-sdk-ids = { path = "/Users/wenxu/solana-sdk/sdk-ids" }
+solana-sdk-macro = { path = "/Users/wenxu/solana-sdk/sdk-macro" }
+solana-secp256k1-program = { path = "/Users/wenxu/solana-sdk/secp256k1-program" }
+solana-secp256k1-recover = { path = "/Users/wenxu/solana-sdk/secp256k1-recover" }
+solana-secp256r1-program = { path = "/Users/wenxu/solana-sdk/secp256r1-program" }
+solana-seed-derivable = { path = "/Users/wenxu/solana-sdk/seed-derivable" }
+solana-seed-phrase = { path = "/Users/wenxu/solana-sdk/seed-phrase" }
+solana-serde = { path = "/Users/wenxu/solana-sdk/serde" }
+solana-serde-varint = { path = "/Users/wenxu/solana-sdk/serde-varint" }
+solana-serialize-utils = { path = "/Users/wenxu/solana-sdk/serialize-utils" }
+solana-sha256-hasher = { path = "/Users/wenxu/solana-sdk/sha256-hasher" }
+solana-short-vec = { path = "/Users/wenxu/solana-sdk/short-vec" }
+solana-shred-version = { path = "/Users/wenxu/solana-sdk/shred-version" }
+solana-signature = { path = "/Users/wenxu/solana-sdk/signature" }
+solana-signer = { path = "/Users/wenxu/solana-sdk/signer" }
+solana-signer-store = { path = "/Users/wenxu/solana-sdk/signer-store" }
+solana-slot-hashes = { path = "/Users/wenxu/solana-sdk/slot-hashes" }
+solana-slot-history = { path = "/Users/wenxu/solana-sdk/slot-history" }
+solana-stable-layout = { path = "/Users/wenxu/solana-sdk/stable-layout" }
+solana-system-transaction = { path = "/Users/wenxu/solana-sdk/system-transaction" }
+solana-sysvar = { path = "/Users/wenxu/solana-sdk/sysvar" }
+solana-sysvar-id = { path = "/Users/wenxu/solana-sdk/sysvar-id" }
+solana-time-utils = { path = "/Users/wenxu/solana-sdk/time-utils" }
+solana-transaction = { path = "/Users/wenxu/solana-sdk/transaction" }
+solana-transaction-error = { path = "/Users/wenxu/solana-sdk/transaction-error" }
+solana-validator-exit = { path = "/Users/wenxu/solana-sdk/validator-exit" }
+solana-vote-interface = { path = "/Users/wenxu/solana-sdk/vote-interface" }
+
+solana-address          = { path = "/Users/wenxu/solana-sdk/address" }
+solana-system-interface = { path = "/Users/wenxu/solana-sdk/system-interface" }
+
+solana-instruction-error = { path = "/Users/wenxu/solana-sdk/instruction-error" }

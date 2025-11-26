@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use {
     assert_cmd::prelude::*,
     solana_keypair::{write_keypair_file, Keypair},

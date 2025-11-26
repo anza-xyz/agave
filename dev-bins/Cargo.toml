@@ -96,7 +96,7 @@ solana-cli-output = { path = "../cli-output", version = "=4.0.0-alpha.0", featur
 solana-client = { path = "../client", version = "=4.0.0-alpha.0" }
 solana-clock = "3.0.0"
 solana-cluster-type = "3.0.0"
-solana-commitment-config = "3.0.0"
+solana-commitment-config = "3.1.0"
 solana-compute-budget = { path = "../compute-budget", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-compute-budget-interface = "3.0.0"
 solana-connection-cache = { path = "../connection-cache", version = "=4.0.0-alpha.0", default-features = false, features = ["agave-unstable-api"] }
@@ -111,10 +111,10 @@ solana-genesis-config = "3.0.0"
 solana-genesis-utils = { path = "../genesis-utils", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-geyser-plugin-manager = { path = "../geyser-plugin-manager", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-gossip = { path = "../gossip", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-hash = "3.1.0"
+solana-hash = "4.0.1"
 solana-inflation = "3.0.0"
-solana-instruction = "3.0.0"
-solana-keypair = "3.0.1"
+solana-instruction = "3.1.0"
+solana-keypair = "3.1.0"
 solana-ledger = { path = "../ledger", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-loader-v3-interface = "6.1.0"
 solana-local-cluster = { path = "../local-cluster", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
@@ -127,7 +127,7 @@ solana-nonce = "3.0.0"
 solana-perf = { path = "../perf", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-poh = { path = "../poh", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-program-runtime = { path = "../program-runtime", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-pubkey = { version = "3.0.0", default-features = false }
+solana-pubkey = { version = "4.0.0", default-features = false }
 solana-quic-client = { path = "../quic-client", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-rent = "3.0.0"
 solana-rpc = { path = "../rpc", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
@@ -137,7 +137,7 @@ solana-rpc-client-nonce-utils = { path = "../rpc-client-nonce-utils", version = 
 solana-runtime = { path = "../runtime", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-runtime-transaction = { path = "../runtime-transaction", version = "=4.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-sbpf = { version = "=0.13.1", default-features = false }
-solana-sdk-ids = "3.0.0"
+solana-sdk-ids = "3.1.0"
 solana-shred-version = "3.0.0"
 solana-signature = { version = "3.1.0", default-features = false }
 solana-signer = "3.0.0"
