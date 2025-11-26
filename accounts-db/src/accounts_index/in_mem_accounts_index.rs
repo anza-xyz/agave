@@ -912,8 +912,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let mut candidates_to_flush = Vec::new();
         let mut candidates_to_evict = Vec::new();
         let (mut remaining_to_select, mut remaining_entries) = if let Some(max) = max_evictions {
-            // Selection sampling: if we know total_entries, we can calculate which entries to select
-            // and break early once we've collected max samples
+            // Selection sampling needs an estimate of eligible entries (skip
+            // ages in the flush window and ref_count != 1). A precise count
+            // would require scanning everything, so we assume ages are uniform
+            // and ref_count != 1 is rare, and estimate the number of elegible
+            // entries with a scale off by the non-flushing ages.
             let estimated_total_entries_exclude_skipped_ages =
                 total_entries * (256 - ages_flushing_now as usize) / 255;
             (
@@ -1897,7 +1900,6 @@ mod tests {
             .values()
             .filter(|&&count| count >= min_expected && count <= max_expected)
             .count();
-
         assert!(
             entries_in_range >= (total_entries * 80 / 100),
             "Expected at least 80% of entries to have selection counts in range [{min_expected}, \
