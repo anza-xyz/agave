@@ -11983,9 +11983,9 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "wincode"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd2ce6dda5b5cde0288a9fd83d513cef824744c4ca601a92e12970c3120e8e93"
+checksum = "d814d39f8894e2f0b7c6dac8a4bf1f36bf40c9415c2ff02146d6f777a91e11d3"
 dependencies = [
  "proc-macro2",
  "quote",
