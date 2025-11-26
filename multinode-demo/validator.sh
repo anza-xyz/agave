@@ -104,9 +104,6 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --dev-no-sigverify ]]; then
       args+=("$1")
       shift
-    elif [[ $1 = --dev-halt-at-slot ]]; then
-      args+=("$1" "$2")
-      shift 2
     elif [[ $1 = --rpc-port ]]; then
       args+=("$1" "$2")
       shift 2

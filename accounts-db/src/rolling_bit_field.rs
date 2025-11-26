@@ -718,7 +718,7 @@ pub mod tests {
             let width = *width;
             let mut tester = setup_empty(width);
             for start in [0, width * 5].iter().cloned() {
-                // recreate means create empty bitfield with each iteration, otherwise re-use
+                // recreate means create empty bitfield with each iteration, otherwise reuse
                 for recreate in [false, true].iter().cloned() {
                     let max = start + 3;
                     // first root to add

@@ -51,4 +51,16 @@ pub(crate) trait QosController<C: ConnectionContext> {
         context: &C,
         connection: Connection,
     ) -> impl Future<Output = usize> + Send;
+
+    /// How many concurrent
+    fn max_concurrent_connections(&self) -> usize;
 }
+
+/// Marker trait to indicate what is the shared state for connections
+pub(crate) trait OpaqueStreamerCounter: Send + Sync + 'static {}
+
+#[cfg(test)]
+pub(crate) struct NullStreamerCounter;
+
+#[cfg(test)]
+impl OpaqueStreamerCounter for NullStreamerCounter {}

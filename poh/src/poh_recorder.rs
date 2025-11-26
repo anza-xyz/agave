@@ -1725,7 +1725,7 @@ mod tests {
         assert!(poh_recorder.working_bank.is_none());
 
         // Even thought we ticked much further than working_bank.max_tick_height,
-        // the `start_slot` is still the slot of the last workign bank set by
+        // the `start_slot` is still the slot of the last working bank set by
         // the earlier call to `poh_recorder.set_bank()`
         assert_eq!(poh_recorder.start_slot(), bank.slot());
     }

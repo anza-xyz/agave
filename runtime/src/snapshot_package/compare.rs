@@ -40,21 +40,54 @@ pub fn cmp_snapshot_archive_kinds_by_priority(
     }
 }
 
+/// Check if two snapshots packages are the same kind
+#[must_use]
+pub fn are_snapshot_packages_the_same_kind(a: &SnapshotPackage, b: &SnapshotPackage) -> bool {
+    are_snapshot_kinds_the_same_kind(&a.snapshot_kind, &b.snapshot_kind)
+}
+
+/// Check if two snapshot kinds are the same kind
+#[must_use]
+pub fn are_snapshot_kinds_the_same_kind(a: &SnapshotKind, b: &SnapshotKind) -> bool {
+    use SnapshotKind as Kind;
+    match (a, b) {
+        (Kind::Archive(archive_a), Kind::Archive(archive_b)) => {
+            are_snapshot_archive_kinds_the_same_kind(archive_a, archive_b)
+        }
+    }
+}
+
+/// Check if two snapshot archives are the same kind
+///
+/// Incremental snapshot archives with different base slots are considered the same kind
+#[must_use]
+pub fn are_snapshot_archive_kinds_the_same_kind(
+    a: &SnapshotArchiveKind,
+    b: &SnapshotArchiveKind,
+) -> bool {
+    use SnapshotArchiveKind as Kind;
+    match (a, b) {
+        (Kind::Full, Kind::Full) => true,
+        (Kind::Full, Kind::Incremental(_)) => false,
+        (Kind::Incremental(_), Kind::Full) => false,
+        (Kind::Incremental(_), Kind::Incremental(_)) => true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {super::*, solana_clock::Slot};
 
+    fn new(snapshot_kind: SnapshotKind, slot: Slot) -> SnapshotPackage {
+        SnapshotPackage {
+            snapshot_kind,
+            slot,
+            ..SnapshotPackage::default_for_tests()
+        }
+    }
+
     #[test]
     fn test_cmp_snapshot_packages_by_priority() {
-        fn new(snapshot_kind: SnapshotKind, slot: Slot) -> SnapshotPackage {
-            SnapshotPackage {
-                snapshot_kind,
-                slot,
-                block_height: slot,
-                ..SnapshotPackage::default_for_tests()
-            }
-        }
-
         for (snapshot_package_a, snapshot_package_b, expected_result) in [
             (
                 new(SnapshotKind::Archive(SnapshotArchiveKind::Full), 11),
@@ -225,6 +258,93 @@ mod tests {
                 &snapshot_archive_kind_a,
                 &snapshot_archive_kind_b,
             );
+            assert_eq!(expected_result, actual_result);
+        }
+    }
+
+    #[test]
+    fn test_are_snapshot_packages_the_same_kind() {
+        for (snapshot_package_a, snapshot_package_b, expected_result) in [
+            (
+                new(SnapshotKind::Archive(SnapshotArchiveKind::Full), 11),
+                new(SnapshotKind::Archive(SnapshotArchiveKind::Full), 22),
+                true,
+            ),
+            (
+                new(SnapshotKind::Archive(SnapshotArchiveKind::Full), 11),
+                new(
+                    SnapshotKind::Archive(SnapshotArchiveKind::Incremental(5)),
+                    22,
+                ),
+                false,
+            ),
+            (
+                new(
+                    SnapshotKind::Archive(SnapshotArchiveKind::Incremental(5)),
+                    11,
+                ),
+                new(SnapshotKind::Archive(SnapshotArchiveKind::Full), 22),
+                false,
+            ),
+            (
+                new(
+                    SnapshotKind::Archive(SnapshotArchiveKind::Incremental(5)),
+                    11,
+                ),
+                new(
+                    SnapshotKind::Archive(SnapshotArchiveKind::Incremental(6)),
+                    22,
+                ),
+                true,
+            ),
+            (
+                new(
+                    SnapshotKind::Archive(SnapshotArchiveKind::Incremental(5)),
+                    11,
+                ),
+                new(
+                    SnapshotKind::Archive(SnapshotArchiveKind::Incremental(5)),
+                    22,
+                ),
+                true,
+            ),
+        ] {
+            let actual_result =
+                are_snapshot_packages_the_same_kind(&snapshot_package_a, &snapshot_package_b);
+            assert_eq!(expected_result, actual_result);
+        }
+    }
+    #[test]
+    fn test_are_snapshot_kinds_the_same_kind() {
+        for (snapshot_kind_a, snapshot_kind_b, expected_result) in [
+            (
+                SnapshotKind::Archive(SnapshotArchiveKind::Full),
+                SnapshotKind::Archive(SnapshotArchiveKind::Full),
+                true,
+            ),
+            (
+                SnapshotKind::Archive(SnapshotArchiveKind::Full),
+                SnapshotKind::Archive(SnapshotArchiveKind::Incremental(5)),
+                false,
+            ),
+            (
+                SnapshotKind::Archive(SnapshotArchiveKind::Incremental(5)),
+                SnapshotKind::Archive(SnapshotArchiveKind::Full),
+                false,
+            ),
+            (
+                SnapshotKind::Archive(SnapshotArchiveKind::Incremental(5)),
+                SnapshotKind::Archive(SnapshotArchiveKind::Incremental(6)),
+                true,
+            ),
+            (
+                SnapshotKind::Archive(SnapshotArchiveKind::Incremental(5)),
+                SnapshotKind::Archive(SnapshotArchiveKind::Incremental(5)),
+                true,
+            ),
+        ] {
+            let actual_result =
+                are_snapshot_kinds_the_same_kind(&snapshot_kind_a, &snapshot_kind_b);
             assert_eq!(expected_result, actual_result);
         }
     }

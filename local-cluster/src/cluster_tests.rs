@@ -5,7 +5,7 @@
 use log::*;
 use {
     crate::{cluster::QuicTpuClient, local_cluster::LocalCluster},
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     rayon::{prelude::*, ThreadPool},
     solana_client::connection_cache::ConnectionCache,
     solana_clock::{self as clock, Slot},
@@ -152,7 +152,7 @@ pub fn send_many_transactions(
             .rpc_client()
             .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
             .unwrap();
-        let transfer_amount = thread_rng().gen_range(1..max_tokens_per_transfer);
+        let transfer_amount = rng().random_range(1..max_tokens_per_transfer);
 
         let mut transaction = system_transaction::transfer(
             funding_keypair,
@@ -536,11 +536,11 @@ pub fn start_gossip_voter(
     shred_version: u16,
 ) -> GossipVoter {
     let exit = Arc::new(AtomicBool::new(false));
-    let (gossip_service, tcp_listener, cluster_info) = gossip_service::make_gossip_node(
+    let (gossip_service, tcp_listener, cluster_info) = gossip_service::make_node(
         // Need to use our validator's keypair to gossip EpochSlots and votes for our
         // node later.
         node_keypair.insecure_clone(),
-        Some(gossip_addr),
+        &[*gossip_addr],
         exit.clone(),
         None,
         shred_version,
@@ -627,7 +627,7 @@ fn get_and_verify_slot_entries(
     last_entry: &Hash,
 ) -> Vec<Entry> {
     let entries = blockstore.get_slot_entries(slot, 0).unwrap();
-    assert!(entries.verify(last_entry, thread_pool));
+    assert!(entries.verify(last_entry, thread_pool).status());
     entries
 }
 

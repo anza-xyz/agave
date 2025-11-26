@@ -8,18 +8,41 @@ use {
     std::marker::PhantomData,
 };
 
+#[derive(Debug)]
 pub struct TransactionPtr {
     ptr: NonNull<u8>,
-    len: usize,
+    count: usize,
 }
 
 impl TransactionData for TransactionPtr {
     fn data(&self) -> &[u8] {
-        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.count) }
+    }
+}
+
+impl TransactionData for &TransactionPtr {
+    fn data(&self) -> &[u8] {
+        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.count) }
     }
 }
 
 impl TransactionPtr {
+    /// Constructions a [`TransactionPtr`] from raw parts.
+    ///
+    /// # Safety
+    ///
+    /// - `ptr` must be valid for reads.
+    /// - `count` must be accurate and not overrun the end of `ptr`.
+    ///
+    /// # Note
+    ///
+    /// If you are trying to construct a pointer for use by Agave, you almost certainly want to use
+    /// [`Self::from_sharable_transaction_region`].
+    #[cfg(feature = "dev-context-only-utils")]
+    pub unsafe fn from_raw_parts(ptr: NonNull<u8>, count: usize) -> Self {
+        Self { ptr, count }
+    }
+
     /// # Safety
     /// - `sharable_transaction_region` must reference a valid offset and length
     ///   within the `allocator`.
@@ -30,7 +53,7 @@ impl TransactionPtr {
         let ptr = allocator.ptr_from_offset(sharable_transaction_region.offset);
         Self {
             ptr,
-            len: sharable_transaction_region.length as usize,
+            count: sharable_transaction_region.length as usize,
         }
     }
 
@@ -49,7 +72,7 @@ impl TransactionPtr {
         let offset = unsafe { allocator.offset(self.ptr) };
         SharableTransactionRegion {
             offset,
-            length: self.len as u32,
+            length: self.count as u32,
         }
     }
 
@@ -131,12 +154,17 @@ impl<'a, M> TransactionPtrBatch<'a, M> {
         })
     }
 
-    /// Free all transactions in the batch, then free the batch itself.
-    pub fn free(self) {
-        for (transaction_ptr, _) in self.iter() {
-            unsafe { transaction_ptr.free(self.allocator) }
-        }
-
+    /// Free the transaction batch container.
+    ///
+    /// # Safety
+    ///
+    /// - [`SharableTransactionBatchRegion`] must be exclusively owned by this pointer.
+    ///
+    /// # Note
+    ///
+    /// This will not free the underlying transactions as their lifetimes may be differ from that of
+    /// the batch.
+    pub unsafe fn free(self) {
         unsafe { self.allocator.free(self.tx_ptr.cast()) }
     }
 }

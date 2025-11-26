@@ -241,14 +241,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("dev_halt_at_slot")
-            .long("dev-halt-at-slot")
-            .value_name("SLOT")
-            .validator(is_slot)
-            .takes_value(true)
-            .help("Halt the validator when it reaches the given slot"),
-    )
-    .arg(
         Arg::with_name("rpc_port")
             .long("rpc-port")
             .value_name("PORT")
@@ -1298,15 +1290,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(false)
             .requires("retransmit_xdp_cpu_cores")
             .help("EXPERIMENTAL: Enable XDP zero copy. Requires hardware support"),
-    )
-    .arg(
-        Arg::with_name("use_connection_cache")
-            .long("use-connection-cache")
-            .takes_value(false)
-            .help(
-                "Use connection-cache crate to send transactions over TPU ports. If not \
-                 set,tpu-client-next is used by default.",
-            ),
     )
     .args(&pub_sub_config::args(/*test_validator:*/ false))
     .args(&json_rpc_config::args())

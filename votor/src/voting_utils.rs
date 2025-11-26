@@ -31,9 +31,9 @@ use {
 pub enum GenerateVoteTxResult {
     // The following are transient errors
     // non voting validator, not eligible for refresh
-    // until authorized keypair is overriden
+    // until authorized keypair is overridden
     NonVoting,
-    // hot spare validator, not eligble for refresh
+    // hot spare validator, not eligible for refresh
     // until set identity is invoked
     HotSpare,
     // The hash verification at startup has not completed

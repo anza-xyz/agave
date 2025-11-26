@@ -57,7 +57,7 @@ jobs:
           # re-enable with https://github.com/buffalojoec/mollusk/pull/74
           # - token
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - shell: bash
         run: |
@@ -87,7 +87,7 @@ jobs:
           - single-pool
           - token-2022
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - shell: bash
         run: |
@@ -127,7 +127,7 @@ jobs:
           # re-enable with https://github.com/buffalojoec/mollusk/pull/74
           # - token
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - shell: bash
         run: |

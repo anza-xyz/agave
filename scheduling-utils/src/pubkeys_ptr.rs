@@ -3,13 +3,29 @@ use {
     std::ptr::NonNull,
 };
 
-pub struct PubkeysPtr<'a> {
+#[derive(Debug)]
+pub struct PubkeysPtr {
     ptr: NonNull<Pubkey>,
     count: usize,
-    allocator: &'a Allocator,
 }
 
-impl<'a> PubkeysPtr<'a> {
+impl PubkeysPtr {
+    /// Constructions a [`PubkeysPtr`] from raw parts.
+    ///
+    /// # Safety
+    ///
+    /// - `ptr` must be valid for reads.
+    /// - `count` must be accurate (in number of pubkeys) and not overrun the end of `ptr`.
+    ///
+    /// # Note
+    ///
+    /// If you are trying to construct a pointer for use by Agave, you almost certainly want to use
+    /// [`Self::from_sharable_pubkeys`].
+    #[cfg(feature = "dev-context-only-utils")]
+    pub unsafe fn from_raw_parts(ptr: NonNull<Pubkey>, count: usize) -> Self {
+        Self { ptr, count }
+    }
+
     /// Constructs the pointer from a [`SharablePubkeys`].
     ///
     /// # Safety
@@ -19,7 +35,7 @@ impl<'a> PubkeysPtr<'a> {
     /// - `sharable_pubkeys.num_pubkeys` must be accurate and not overrun the allocation.
     pub unsafe fn from_sharable_pubkeys(
         sharable_pubkeys: &SharablePubkeys,
-        allocator: &'a Allocator,
+        allocator: &Allocator,
     ) -> Self {
         assert_ne!(sharable_pubkeys.num_pubkeys, 0);
         let ptr = allocator.ptr_from_offset(sharable_pubkeys.offset).cast();
@@ -27,7 +43,6 @@ impl<'a> PubkeysPtr<'a> {
         Self {
             ptr,
             count: sharable_pubkeys.num_pubkeys as usize,
-            allocator,
         }
     }
 
@@ -39,9 +54,13 @@ impl<'a> PubkeysPtr<'a> {
     }
 
     /// Frees the underlying allocation.
-    pub fn free(self) {
+    ///
+    /// # Safety
+    ///
+    /// - `Self` must be exclusively owned.
+    pub unsafe fn free(self, allocator: &Allocator) {
         // SAFETY
-        // - Constructor invariants guarantee that we exclusively own this pointer.
-        unsafe { self.allocator.free(self.ptr.cast()) };
+        // - Caller guarantees that we exclusively own this pointer.
+        unsafe { allocator.free(self.ptr.cast()) };
     }
 }

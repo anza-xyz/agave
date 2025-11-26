@@ -486,7 +486,7 @@ impl LeaderSlotMetricsTracker {
                 MetricsTrackerAction::ReportAndResetTracker
             }
 
-            // Our leader slot has begain, time to create a new slot tracker
+            // Our leader slot has begun, time to create a new slot tracker
             (None, Some(bank)) => {
                 MetricsTrackerAction::NewTracker(Some(LeaderSlotMetrics::new(bank.slot())))
             }

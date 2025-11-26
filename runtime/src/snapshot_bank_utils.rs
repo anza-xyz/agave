@@ -615,7 +615,7 @@ fn _verify_epoch_stakes(
 ) -> std::result::Result<(), VerifyEpochStakesError> {
     // Ensure epoch stakes from the snapshot does not contain entries for invalid epochs.
     // Since epoch stakes are computed for the leader schedule epoch (usually `epoch + 1`),
-    // the snapshot's epoch stakes therefor can have entries for epochs at-or-below the
+    // the snapshot's epoch stakes therefore can have entries for epochs at-or-below the
     // leader schedule epoch.
     let max_epoch = *required_epochs.end();
     if let Some(invalid_epoch) = epoch_stakes_map.keys().find(|epoch| **epoch > max_epoch) {
@@ -691,8 +691,10 @@ fn bank_to_full_snapshot_archive_with(
     bank.force_flush_accounts_cache();
     bank.clean_accounts();
 
+    let snapshot_archive_kind = SnapshotArchiveKind::Full;
+
     let snapshot_package = SnapshotPackage::new(
-        SnapshotKind::Archive(SnapshotArchiveKind::Full),
+        SnapshotKind::Archive(snapshot_archive_kind),
         bank,
         bank.get_snapshot_storages(None),
         bank.status_cache.read().unwrap().root_slot_deltas(),
@@ -706,10 +708,24 @@ fn bank_to_full_snapshot_archive_with(
         snapshot_version,
         ..Default::default()
     };
-    let snapshot_archive_info = snapshot_utils::serialize_and_archive_snapshot_package(
-        snapshot_package,
-        &snapshot_config,
+
+    let snapshot_storages = snapshot_package.snapshot_storages;
+
+    let bank_snapshot_info = snapshot_utils::serialize_snapshot(
+        &snapshot_config.bank_snapshots_dir,
+        snapshot_config.snapshot_version,
+        snapshot_package.bank_snapshot_package,
+        snapshot_storages.as_slice(),
         should_flush_and_hard_link_storages,
+    )?;
+
+    let snapshot_archive_info = snapshot_utils::archive_snapshot_package(
+        snapshot_archive_kind,
+        snapshot_package.slot,
+        snapshot_package.hash,
+        bank_snapshot_info.snapshot_dir,
+        snapshot_storages,
+        &snapshot_config,
     )?;
 
     Ok(FullSnapshotArchiveInfo::new(snapshot_archive_info))
@@ -746,8 +762,10 @@ pub fn bank_to_incremental_snapshot_archive(
     bank.force_flush_accounts_cache();
     bank.clean_accounts();
 
+    let snapshot_archive_kind = SnapshotArchiveKind::Incremental(full_snapshot_slot);
+
     let snapshot_package = SnapshotPackage::new(
-        SnapshotKind::Archive(SnapshotArchiveKind::Incremental(full_snapshot_slot)),
+        SnapshotKind::Archive(snapshot_archive_kind),
         bank,
         bank.get_snapshot_storages(Some(full_snapshot_slot)),
         bank.status_cache.read().unwrap().root_slot_deltas(),
@@ -765,10 +783,24 @@ pub fn bank_to_incremental_snapshot_archive(
         snapshot_version,
         ..Default::default()
     };
-    let snapshot_archive_info = snapshot_utils::serialize_and_archive_snapshot_package(
-        snapshot_package,
-        &snapshot_config,
+
+    let snapshot_storages = snapshot_package.snapshot_storages;
+
+    let bank_snapshot_info = snapshot_utils::serialize_snapshot(
+        &snapshot_config.bank_snapshots_dir,
+        snapshot_config.snapshot_version,
+        snapshot_package.bank_snapshot_package,
+        snapshot_storages.as_slice(),
         false, // we do not intend to fastboot, so skip flushing and hard linking the storages
+    )?;
+
+    let snapshot_archive_info = snapshot_utils::archive_snapshot_package(
+        snapshot_archive_kind,
+        snapshot_package.slot,
+        snapshot_package.hash,
+        bank_snapshot_info.snapshot_dir,
+        snapshot_storages,
+        &snapshot_config,
     )?;
 
     Ok(IncrementalSnapshotArchiveInfo::new(

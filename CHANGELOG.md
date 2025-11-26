@@ -27,6 +27,7 @@ Release channels have their own copy of this changelog:
   * `--accounts-db-read-cache-limit-mb`
   * `--accounts-hash-cache-path`
   * `--disable-accounts-disk-index`
+  * `--dev-halt-at-slot`
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
 
@@ -48,6 +49,7 @@ deprecated, signaling their inclusion in the Agave Unstable API. Enable the
 `agave-unstable-api` crate feature to acknowledge use of an interface that may break
 without warning. From v4.0.0 onward, symbols in these crates will be unavailable without
 `agave-unstable-api` enabled.
+* The `--dev-halt-at-slot` flag is now deprecated.
 
 #### Changes
 * The accounts index is now kept entirely in memory by default.
@@ -312,15 +314,3 @@ makes the feature code complete.
 * Link to any relevant feature gate issues or SIMDs.
 * If you add entries on multiple branches use the same wording if possible.
 This simplifies the process of diffing between versions of the log.
-
-## Maintaining This Changelog
-### When creating a new release branch:
-* Commit to master updating the changelog:
-  * Update the edge, beta, and stable links
-  * Create new section: `vx.y+1.0 - Unreleased`
-  * Remove `Unreleased` annotation from vx.y.0 section.
-* Create vx.y branch starting at that commit.
-* Commit to `vx.y` updating the changelog:
-  * Remove the `vx.y+1.0 - Unreleased` section
-  * Remove the channel links
-* Tag vx.y.0 on the new branch

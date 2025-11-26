@@ -119,7 +119,7 @@ pub struct SharableTransactionBatchRegion {
 pub struct TransactionResponseRegion {
     /// Tag indicating the type of message.
     /// See [`worker_message_types`] for details.
-    /// All inner messages/responses per trasaction will be of the same type.
+    /// All inner messages/responses per transaction will be of the same type.
     pub tag: u8,
     /// The number of transactions in the original message.
     /// This corresponds to the number of inner response
@@ -440,7 +440,7 @@ pub mod worker_message_types {
         pub const PROGRAM_CACHE_HIT_MAX_LIMIT: u8 = 101;
 
         // This error in agave is only internal, and to avoid updating the sdk
-        // it is re-used for mapping into `ALL_OR_NOTHING_BATCH_FAILURE`.
+        // it is reused for mapping into `ALL_OR_NOTHING_BATCH_FAILURE`.
         // /// Commit cancelled internally.
         // pub const COMMIT_CANCELLED: u8 = 102;
     }
@@ -527,7 +527,7 @@ pub mod worker_message_types {
         /// Set only if [`resolve_flags::PERFORMED`] is set,
         /// otherwise the value is undefined.
         /// Resolved pubkeys - writable then readonly.
-        /// Freeing this memory is the responsiblity of the external
+        /// Freeing this memory is the responsibility of the external
         /// pack process.
         pub resolved_pubkeys: SharablePubkeys,
     }

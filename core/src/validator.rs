@@ -25,7 +25,6 @@ use {
             adjust_nofile_limit, validate_memlock_limit_for_disk_io, ResourceLimitError,
         },
         sample_performance_service::SamplePerformanceService,
-        sigverify,
         snapshot_packager_service::SnapshotPackagerService,
         stats_reporter_service::StatsReporterService,
         system_monitor_service::{
@@ -48,10 +47,7 @@ use {
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         utils::move_and_async_delete_path_contents,
     },
-    solana_client::{
-        client_option::ClientOption,
-        connection_cache::{ConnectionCache, Protocol},
-    },
+    solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_clock::Slot,
     solana_cluster_type::ClusterType,
     solana_entry::poh::compute_hash_time,
@@ -112,7 +108,7 @@ use {
         rpc::JsonRpcConfig,
         rpc_completed_slots_service::RpcCompletedSlotsService,
         rpc_pubsub_service::{PubSubConfig, PubSubService},
-        rpc_service::{JsonRpcService, JsonRpcServiceConfig},
+        rpc_service::{JsonRpcService, JsonRpcServiceConfig, RpcTpuClientArgs},
         rpc_subscriptions::RpcSubscriptions,
         transaction_notifier_interface::TransactionNotifierArc,
         transaction_status_service::TransactionStatusService,
@@ -141,9 +137,7 @@ use {
         streamer::StakedNodes,
     },
     solana_time_utils::timestamp,
-    solana_tpu_client::tpu_client::{
-        DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
-    },
+    solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
     solana_turbine::{
         self,
         broadcast_stage::BroadcastStageType,
@@ -310,7 +304,6 @@ pub struct GeneratorConfig {
 pub struct ValidatorConfig {
     /// The destination file for validator logs; `stderr` is used if `None`
     pub logfile: Option<PathBuf>,
-    pub halt_at_slot: Option<Slot>,
     pub expected_genesis_hash: Option<Hash>,
     pub expected_bank_hash: Option<Hash>,
     pub expected_shred_version: Option<u16>,
@@ -336,7 +329,7 @@ pub struct ValidatorConfig {
     pub repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>, // Empty = repair with all
     pub gossip_validators: Option<HashSet<Pubkey>>, // None = gossip with all
     pub max_genesis_archive_unpacked_size: u64,
-    /// Run PoH, transaction signature and other transaction verifications during blockstore
+    /// Run PoH, transaction signature and other transaction verification during blockstore
     /// processing.
     pub run_verification: bool,
     pub require_tower: bool,
@@ -382,7 +375,6 @@ pub struct ValidatorConfig {
     pub replay_transactions_threads: NonZeroUsize,
     pub tvu_shred_sigverify_threads: NonZeroUsize,
     pub delay_leader_block_for_pending_fork: bool,
-    pub use_tpu_client_next: bool,
     pub retransmit_xdp: Option<XdpConfig>,
     pub repair_handler_type: RepairHandlerType,
 }
@@ -394,7 +386,6 @@ impl ValidatorConfig {
 
         Self {
             logfile: None,
-            halt_at_slot: None,
             expected_genesis_hash: None,
             expected_bank_hash: None,
             expected_shred_version: None,
@@ -466,7 +457,6 @@ impl ValidatorConfig {
             tvu_shred_sigverify_threads: NonZeroUsize::new(get_thread_count())
                 .expect("thread count is non-zero"),
             delay_leader_block_for_pending_fork: false,
-            use_tpu_client_next: true,
             retransmit_xdp: None,
             repair_handler_type: RepairHandlerType::default(),
         }
@@ -507,7 +497,11 @@ pub enum ValidatorStartProgress {
         max_slot: Slot,
     },
     StartingServices,
-    Halted, // Validator halted due to `--dev-halt-at-slot` argument
+    // This case corresponds to a state that is entered by using the now
+    // deprecated `--dev-halt-at-slot` flag. A different version of the
+    // validator may be used to monitor a running validator so leave the case
+    // here to avoid any compatibility concerns
+    Halted,
     WaitingForSupermajority {
         slot: Slot,
         gossip_stake_percent: u64,
@@ -558,13 +552,11 @@ struct TransactionHistoryServices {
 
 /// A struct easing passing Validator TPU Configurations
 pub struct ValidatorTpuConfig {
-    /// Controls if to use QUIC for sending regular TPU transaction
-    pub use_quic: bool,
     /// Controls if to use QUIC for sending TPU votes
     pub vote_use_quic: bool,
     /// Controls the connection cache pool size
     pub tpu_connection_pool_size: usize,
-    /// Controls if to enable UDP for TPU tansactions.
+    /// Controls if to enable UDP for TPU transactions.
     pub tpu_enable_udp: bool,
     /// QUIC server config for regular TPU
     pub tpu_quic_server_config: SwQosQuicStreamerConfig,
@@ -589,24 +581,24 @@ impl ValidatorTpuConfig {
         let tpu_fwd_quic_server_config = SwQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
                 max_connections_per_ipaddr_per_min: 32,
+                ..Default::default()
+            },
+            qos_config: SwQosConfig {
                 max_unstaked_connections: 0,
                 ..Default::default()
             },
-            qos_config: SwQosConfig::default(),
         };
 
         // vote and tpu_fwd share the same characteristics -- disallow non-staked connections:
         let vote_quic_server_config = SimpleQosQuicStreamerConfig {
             quic_streamer_config: QuicStreamerConfig {
                 max_connections_per_ipaddr_per_min: 32,
-                max_unstaked_connections: 0,
                 ..Default::default()
             },
             qos_config: SimpleQosConfig::default(),
         };
 
         ValidatorTpuConfig {
-            use_quic: DEFAULT_TPU_USE_QUIC,
             vote_use_quic: DEFAULT_VOTE_USE_QUIC,
             tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
             tpu_enable_udp,
@@ -685,7 +677,6 @@ impl Validator {
         info!("debug-assertion status: {DEBUG_ASSERTION_STATUS}");
 
         let ValidatorTpuConfig {
-            use_quic,
             vote_use_quic,
             tpu_connection_pool_size,
             tpu_enable_udp,
@@ -768,14 +759,6 @@ impl Validator {
         for cluster_entrypoint in &cluster_entrypoints {
             info!("entrypoint: {cluster_entrypoint:?}");
         }
-
-        if solana_perf::perf_libs::api().is_some() {
-            info!("Initializing sigverify, this could take a while...");
-        } else {
-            info!("Initializing sigverify...");
-        }
-        sigverify::init();
-        info!("Initializing sigverify done.");
 
         validate_memlock_limit_for_disk_io(config.accounts_db_config.memlock_budget_size)?;
 
@@ -1138,38 +1121,6 @@ impl Validator {
 
         let mut tpu_transactions_forwards_client_sockets =
             Some(node.sockets.tpu_transaction_forwarding_clients);
-        let connection_cache = match (config.use_tpu_client_next, use_quic) {
-            (false, true) => Some(Arc::new(ConnectionCache::new_with_client_options(
-                "connection_cache_tpu_quic",
-                tpu_connection_pool_size,
-                Some({
-                    // this conversion is not beautiful but rust does not allow popping single
-                    // elements from a boxed slice
-                    let socketbox: Box<[_; 1]> = tpu_transactions_forwards_client_sockets
-                        .take()
-                        .unwrap()
-                        .try_into()
-                        .expect("Multihoming support for connection cache is not available");
-                    let [sock] = *socketbox;
-                    sock
-                }),
-                Some((
-                    &identity_keypair,
-                    node.info
-                        .tpu(Protocol::UDP)
-                        .ok_or_else(|| {
-                            ValidatorError::Other(String::from("Invalid UDP address for TPU"))
-                        })?
-                        .ip(),
-                )),
-                Some((&staked_nodes, &identity_keypair.pubkey())),
-            ))),
-            (false, false) => Some(Arc::new(ConnectionCache::with_udp(
-                "connection_cache_tpu_udp",
-                tpu_connection_pool_size,
-            ))),
-            (true, _) => None,
-        };
 
         let vote_connection_cache = if vote_use_quic {
             let vote_connection_cache = ConnectionCache::new_with_client_options(
@@ -1201,15 +1152,14 @@ impl Validator {
         // always need a tokio runtime (and the respective handle) to initialize
         // the turbine QUIC endpoint.
         let current_runtime_handle = tokio::runtime::Handle::try_current();
-        let tpu_client_next_runtime =
-            (current_runtime_handle.is_err() && config.use_tpu_client_next).then(|| {
-                tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .worker_threads(2)
-                    .thread_name("solTpuClientRt")
-                    .build()
-                    .unwrap()
-            });
+        let tpu_client_next_runtime = current_runtime_handle.is_err().then(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .worker_threads(2)
+                .thread_name("solTpuClientRt")
+                .build()
+                .unwrap()
+        });
 
         let rpc_override_health_check =
             Arc::new(AtomicBool::new(config.rpc_config.disable_health_check));
@@ -1236,22 +1186,18 @@ impl Validator {
                 None
             };
 
-            let client_option = if config.use_tpu_client_next {
+            let rpc_tpu_client_args = {
                 let runtime_handle = tpu_client_next_runtime
                     .as_ref()
                     .map(TokioRuntime::handle)
                     .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
-                ClientOption::TpuClientNext(
+
+                RpcTpuClientArgs(
                     Arc::as_ref(&identity_keypair),
                     node.sockets.rpc_sts_client,
                     runtime_handle.clone(),
                     cancel.clone(),
                 )
-            } else {
-                let Some(connection_cache) = &connection_cache else {
-                    panic!("ConnectionCache should exist by construction.");
-                };
-                ClientOption::ConnectionCache(connection_cache.clone())
             };
             let rpc_svc_config = JsonRpcServiceConfig {
                 rpc_addr,
@@ -1273,7 +1219,7 @@ impl Validator {
                 leader_schedule_cache: leader_schedule_cache.clone(),
                 max_complete_transaction_status_slot: max_complete_transaction_status_slot.clone(),
                 prioritization_fee_cache: prioritization_fee_cache.clone(),
-                client_option,
+                rpc_tpu_client_args,
             };
             let json_rpc_service =
                 JsonRpcService::new_with_config(rpc_svc_config).map_err(ValidatorError::Other)?;
@@ -1372,19 +1318,6 @@ impl Validator {
             (None, None, None, None, None, None, None, None)
         };
 
-        if config.halt_at_slot.is_some() {
-            // Simulate a confirmed root to avoid RPC errors with CommitmentConfig::finalized() and
-            // to ensure RPC endpoints like getConfirmedBlock, which require a confirmed root, work
-            block_commitment_cache
-                .write()
-                .unwrap()
-                .set_highest_super_majority_root(bank_forks.read().unwrap().root());
-
-            // Park with the RPC service running, ready for inspection!
-            warn!("Validator halted");
-            *start_progress.write().unwrap() = ValidatorStartProgress::Halted;
-            std::thread::park();
-        }
         let ip_echo_server = match node.sockets.ip_echo {
             None => None,
             Some(tcp_listener) => Some(solana_net_utils::ip_echo_server(
@@ -1573,13 +1506,6 @@ impl Validator {
             )
         });
 
-        // If RPC is supported and ConnectionCache is used, pass ConnectionCache for being warmup inside Tvu.
-        let connection_cache_for_warmup =
-            if json_rpc_service.is_some() && connection_cache.is_some() {
-                connection_cache.as_ref()
-            } else {
-                None
-            };
         let (xdp_retransmitter, xdp_sender) =
             if let Some(xdp_config) = config.retransmit_xdp.clone() {
                 let src_port = node.sockets.retransmit_sockets[0]
@@ -1659,7 +1585,6 @@ impl Validator {
             config.wait_to_vote_slot,
             Some(snapshot_controller.clone()),
             config.runtime_config.log_messages_bytes_limit,
-            connection_cache_for_warmup,
             &prioritization_fee_cache,
             banking_tracer.clone(),
             turbine_quic_endpoint_sender.clone(),
@@ -1697,9 +1622,7 @@ impl Validator {
         }
 
         let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));
-        let forwarding_tpu_client = if let Some(connection_cache) = &connection_cache {
-            ForwardingClientOption::ConnectionCache(connection_cache.clone())
-        } else {
+        let forwarding_tpu_client = {
             let runtime_handle = tpu_client_next_runtime
                 .as_ref()
                 .map(TokioRuntime::handle)
@@ -1786,15 +1709,11 @@ impl Validator {
         );
 
         *start_progress.write().unwrap() = ValidatorStartProgress::Running;
-        if config.use_tpu_client_next {
-            if let Some(json_rpc_service) = &json_rpc_service {
-                key_notifiers.write().unwrap().add(
-                    KeyUpdaterType::RpcService,
-                    json_rpc_service.get_client_key_updater(),
-                );
-            }
-            // note, that we don't need to add ConnectionClient to key_notifiers
-            // because it is added inside Tpu.
+        if let Some(json_rpc_service) = &json_rpc_service {
+            key_notifiers.write().unwrap().add(
+                KeyUpdaterType::RpcService,
+                json_rpc_service.get_client_key_updater(),
+            );
         }
 
         *admin_rpc_service_post_init.write().unwrap() = Some(AdminRpcRequestMetadataPostInit {
@@ -2247,9 +2166,7 @@ fn load_blockstore(
 
     let blockstore = Arc::new(blockstore);
     let blockstore_root_scan = BlockstoreRootScan::new(config, blockstore.clone(), exit.clone());
-    let halt_at_slot = config
-        .halt_at_slot
-        .or_else(|| blockstore.highest_slot().unwrap_or(None));
+    let halt_at_slot = blockstore.highest_slot().unwrap_or(None);
 
     let process_options = blockstore_processor::ProcessOptions {
         run_verification: config.run_verification,

@@ -160,7 +160,6 @@ impl Tvu {
         wait_to_vote_slot: Option<Slot>,
         snapshot_controller: Option<Arc<SnapshotController>>,
         log_messages_bytes_limit: Option<usize>,
-        connection_cache: Option<&Arc<ConnectionCache>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         banking_tracer: Arc<BankingTracer>,
         turbine_quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
@@ -361,7 +360,7 @@ impl Tvu {
         );
 
         let warm_quic_cache_service = create_cache_warmer_if_needed(
-            connection_cache,
+            None,
             vote_connection_cache,
             cluster_info,
             poh_recorder,
@@ -603,7 +602,6 @@ pub mod tests {
             None,
             None, // snapshot_controller
             None,
-            Some(&Arc::new(ConnectionCache::new("connection_cache_test"))),
             &ignored_prioritization_fee_cache,
             BankingTracer::new_disabled(),
             turbine_quic_endpoint_sender,

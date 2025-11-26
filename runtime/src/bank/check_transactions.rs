@@ -3,10 +3,7 @@ use {
     agave_feature_set::{raise_cpi_nesting_limit_to_8, FeatureSet},
     solana_account::{state_traits::StateMut, AccountSharedData},
     solana_accounts_db::blockhash_queue::BlockhashQueue,
-    solana_clock::{
-        Slot, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY,
-        MAX_TRANSACTION_FORWARDING_DELAY_GPU,
-    },
+    solana_clock::{Slot, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY},
     solana_fee::{calculate_fee_details, FeeFeatures},
     solana_fee_structure::{FeeBudgetLimits, FeeDetails},
     solana_nonce::{
@@ -15,7 +12,6 @@ use {
         NONCED_TX_MARKER_IX_INDEX,
     },
     solana_nonce_account as nonce_account,
-    solana_perf::perf_libs,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -42,12 +38,7 @@ impl Bank {
         //  1. Transaction forwarding delay
         //  2. The slot at which the next leader will actually process the transaction
         // Drop the transaction if it will expire by the time the next node receives and processes it
-        let api = perf_libs::api();
-        let max_tx_fwd_delay = if api.is_none() {
-            MAX_TRANSACTION_FORWARDING_DELAY
-        } else {
-            MAX_TRANSACTION_FORWARDING_DELAY_GPU
-        };
+        let max_tx_fwd_delay = MAX_TRANSACTION_FORWARDING_DELAY;
 
         self.check_transactions(
             transactions,
@@ -151,7 +142,10 @@ impl Bank {
                                     raise_cpi_limit,
                                 )
                             }
-                        });
+                        })
+                        .inspect_err(|_err| {
+                            error_counters.invalid_compute_budget += 1;
+                        })?;
                     self.check_transaction_age(
                         tx.borrow(),
                         max_age,
@@ -170,22 +164,14 @@ impl Bank {
     fn checked_transactions_details_with_test_override(
         nonce: Option<NonceInfo>,
         lamports_per_signature: u64,
-        compute_budget_and_limits: Result<
-            SVMTransactionExecutionAndFeeBudgetLimits,
-            TransactionError,
-        >,
+        mut compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits,
     ) -> CheckedTransactionDetails {
-        let compute_budget_and_limits = if lamports_per_signature == 0 {
-            // This is done to support legacy tests. The tests should be updated, and check
-            // for 0 lamports_per_signature should be removed from the code.
-            compute_budget_and_limits.map(|v| SVMTransactionExecutionAndFeeBudgetLimits {
-                budget: v.budget,
-                loaded_accounts_data_size_limit: v.loaded_accounts_data_size_limit,
-                fee_details: FeeDetails::default(),
-            })
-        } else {
-            compute_budget_and_limits
-        };
+        // This is done to support legacy tests. The tests should be updated, and check
+        // for 0 lamports_per_signature should be removed from the code.
+        if lamports_per_signature == 0 {
+            compute_budget_and_limits.fee_details = FeeDetails::default();
+        }
+
         CheckedTransactionDetails::new(nonce, compute_budget_and_limits)
     }
 
@@ -197,7 +183,7 @@ impl Bank {
         hash_queue: &BlockhashQueue,
         next_lamports_per_signature: u64,
         error_counters: &mut TransactionErrorMetrics,
-        compute_budget: Result<SVMTransactionExecutionAndFeeBudgetLimits, TransactionError>,
+        compute_budget: SVMTransactionExecutionAndFeeBudgetLimits,
     ) -> TransactionCheckResult {
         let recent_blockhash = tx.recent_blockhash();
         if let Some(hash_info) = hash_queue.get_hash_info_if_valid(recent_blockhash, max_age) {

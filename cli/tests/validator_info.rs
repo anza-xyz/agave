@@ -8,22 +8,25 @@ use {
     solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
     solana_keypair::{keypair_from_seed, Keypair},
     solana_net_utils::SocketAddrSpace,
-    solana_rpc_client::rpc_client::RpcClient,
-    solana_signer::Signer,
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_test_validator::TestValidator,
     test_case::test_case,
 };
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[test_case(None; "base")]
 #[test_case(Some(1_000_000); "with_compute_unit_price")]
-fn test_publish(compute_unit_price: Option<u64>) {
+async fn test_publish(compute_unit_price: Option<u64>) {
     agave_logger::setup();
 
     let mint_keypair = Keypair::new();
-    let mint_pubkey = mint_keypair.pubkey();
-    let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair);
-    let test_validator =
-        TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
+    let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair.insecure_clone());
+    let test_validator = TestValidator::async_with_no_fees(
+        &mint_keypair,
+        Some(faucet_addr),
+        SocketAddrSpace::Unspecified,
+    )
+    .await;
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -39,6 +42,7 @@ fn test_publish(compute_unit_price: Option<u64>) {
         &config_validator.signers[0].pubkey(),
         100_000_000_000,
     )
+    .await
     .unwrap();
     check_balance!(
         100_000_000_000,
@@ -52,5 +56,5 @@ fn test_publish(compute_unit_price: Option<u64>) {
         info_pubkey: None,
         compute_unit_price,
     };
-    process_command(&config_validator).unwrap();
+    process_command(&config_validator).await.unwrap();
 }

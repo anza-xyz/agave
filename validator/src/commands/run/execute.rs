@@ -14,11 +14,11 @@ use {
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
     crossbeam_channel::unbounded,
     log::*,
-    rand::{seq::SliceRandom, thread_rng},
+    rand::{rng, seq::SliceRandom},
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig, MarkObsoleteAccounts},
         accounts_file::StorageAccess,
-        accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig, IndexLimitMb, ScanFilter},
+        accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig, IndexLimit, ScanFilter},
         utils::{
             create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
             create_and_canonicalize_directory,
@@ -55,7 +55,6 @@ use {
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
     solana_net_utils::multihomed_sockets::BindIpAddrs,
-    solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
     solana_pubkey::Pubkey,
     solana_runtime::{runtime_config::RuntimeConfig, snapshot_utils},
@@ -123,12 +122,6 @@ pub fn execute(
 
     info!("{} {}", crate_name!(), solana_version);
     info!("Starting validator with: {:#?}", std::env::args_os());
-
-    let cuda = matches.is_present("cuda");
-    if cuda {
-        solana_perf::perf_libs::init_cuda();
-        enable_recycler_warming();
-    }
 
     solana_core::validator::report_target_features();
 
@@ -219,10 +212,6 @@ pub fn execute(
 
     if bind_addresses.len() > 1 {
         for (flag, msg) in [
-            (
-                "use_connection_cache",
-                "Connection cache can not be used in a multihoming context",
-            ),
             (
                 "advertised_ip",
                 "--advertised-ip cannot be used in a multihoming context. In multihoming, the \
@@ -317,10 +306,10 @@ pub fn execute(
         accounts_index_config.num_initial_accounts = Some(num_initial_accounts);
     }
 
-    accounts_index_config.index_limit_mb = if !matches.is_present("enable_accounts_disk_index") {
-        IndexLimitMb::InMemOnly
+    accounts_index_config.index_limit = if !matches.is_present("enable_accounts_disk_index") {
+        IndexLimit::InMemOnly
     } else {
-        IndexLimitMb::Minimal
+        IndexLimit::Minimal
     };
 
     {
@@ -515,7 +504,6 @@ pub fn execute(
         logfile,
         require_tower: matches.is_present("require_tower"),
         tower_storage,
-        halt_at_slot: value_t!(matches, "dev_halt_at_slot", Slot).ok(),
         max_genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         expected_genesis_hash: matches
             .value_of("expected_genesis_hash")
@@ -594,7 +582,6 @@ pub fn execute(
         turbine_disabled: Arc::<AtomicBool>::default(),
         retransmit_xdp,
         broadcast_stage_type: BroadcastStageType::Standard,
-        use_tpu_client_next: !matches.is_present("use_connection_cache"),
         block_verification_method: value_t_or_exit!(
             matches,
             "block_verification_method",
@@ -738,7 +725,7 @@ pub fn execute(
         bind_addresses.active()
     } else if !entrypoint_addrs.is_empty() {
         let mut order: Vec<_> = (0..entrypoint_addrs.len()).collect();
-        order.shuffle(&mut thread_rng());
+        order.shuffle(&mut rng());
 
         order
             .into_iter()
@@ -944,6 +931,11 @@ pub fn execute(
 
     let tpu_quic_server_config = SwQosQuicStreamerConfig {
         quic_streamer_config: QuicStreamerConfig {
+            max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+            num_threads: tpu_transaction_receive_threads,
+            ..Default::default()
+        },
+        qos_config: SwQosConfig {
             max_connections_per_unstaked_peer: tpu_max_connections_per_unstaked_peer
                 .try_into()
                 .unwrap(),
@@ -952,15 +944,17 @@ pub fn execute(
                 .unwrap(),
             max_staked_connections: tpu_max_staked_connections.try_into().unwrap(),
             max_unstaked_connections: tpu_max_unstaked_connections.try_into().unwrap(),
-            max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-            num_threads: tpu_transaction_receive_threads,
-            ..Default::default()
+            max_streams_per_ms,
         },
-        qos_config: SwQosConfig { max_streams_per_ms },
     };
 
     let tpu_fwd_quic_server_config = SwQosQuicStreamerConfig {
         quic_streamer_config: QuicStreamerConfig {
+            max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+            num_threads: tpu_transaction_forward_receive_threads,
+            ..Default::default()
+        },
+        qos_config: SwQosConfig {
             max_connections_per_staked_peer: tpu_max_connections_per_staked_peer
                 .try_into()
                 .unwrap(),
@@ -969,23 +963,19 @@ pub fn execute(
                 .unwrap(),
             max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
             max_unstaked_connections: tpu_max_fwd_unstaked_connections.try_into().unwrap(),
-            max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-            num_threads: tpu_transaction_forward_receive_threads,
-            ..Default::default()
+            max_streams_per_ms,
         },
-        qos_config: SwQosConfig { max_streams_per_ms },
     };
 
     let vote_quic_server_config = SimpleQosQuicStreamerConfig {
         quic_streamer_config: QuicStreamerConfig {
-            max_connections_per_unstaked_peer: 1,
-            max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
             max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
             num_threads: tpu_vote_transaction_receive_threads,
             ..Default::default()
         },
         qos_config: SimpleQosConfig {
             max_streams_per_second: MAX_VOTES_PER_SECOND,
+            ..Default::default()
         },
     };
 
@@ -1002,7 +992,6 @@ pub fn execute(
         start_progress,
         run_args.socket_addr_space,
         ValidatorTpuConfig {
-            use_quic: true,
             vote_use_quic,
             tpu_connection_pool_size,
             tpu_enable_udp,
@@ -1074,7 +1063,7 @@ fn validators_set(
 fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -> Option<u16> {
     let entrypoints = {
         let mut index: Vec<_> = (0..entrypoints.len()).collect();
-        index.shuffle(&mut rand::thread_rng());
+        index.shuffle(&mut rand::rng());
         index.into_iter().map(|i| &entrypoints[i])
     };
     for entrypoint in entrypoints {

@@ -769,11 +769,11 @@ pub mod apply_cost_tracker_during_replay {
 }
 
 pub mod stricter_abi_and_runtime_constraints {
-    solana_pubkey::declare_id!("sD3uVpaavUXQRvDXrMFCQ2CqLqnbz5mK8ttWNXbtD3r");
+    solana_pubkey::declare_id!("Eoh7e1sDqtyPtuiWAhBNSJinvtJWTTDgeUMRi3RF8zWS");
 }
 
 pub mod account_data_direct_mapping {
-    solana_pubkey::declare_id!("DFN8MyKpQqFW31qczcahgnnxcAHQc6P94wtTEX5EP1RA");
+    solana_pubkey::declare_id!("6f2qai82RU7Dutj1WJfRzLJKYA36QWvTa89CR1imgj7N");
 }
 
 pub mod add_set_tx_loaded_accounts_data_size_instruction {
@@ -1191,7 +1191,7 @@ pub mod fix_alt_bn128_pairing_length_check {
 pub mod replace_spl_token_with_p_token {
     use super::Pubkey;
 
-    solana_pubkey::declare_id!("ptokSWRqZz5u2xdqMdstkMKpFurauUpVen7TZXgDpkQ");
+    solana_pubkey::declare_id!("ptokEXBPT9HuYdAQRysaStZNTY9bHsAcQzNscEoA6HC");
 
     pub const SPL_TOKEN_PROGRAM_ID: Pubkey =
         Pubkey::from_str_const("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
@@ -2183,7 +2183,7 @@ pub struct FullInflationFeaturePair {
     pub enable_id: Pubkey, // Feature to enable full inflation by the candidate
 }
 
-/// Set of feature pairs that once enabled will trigger full inflationi
+/// Set of feature pairs that once enabled will trigger full inflation
 pub static FULL_INFLATION_FEATURE_PAIRS: LazyLock<AHashSet<FullInflationFeaturePair>> =
     LazyLock::new(|| {
         [FullInflationFeaturePair {

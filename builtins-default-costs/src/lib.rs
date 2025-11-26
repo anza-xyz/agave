@@ -153,10 +153,10 @@ const fn validate_position(migrating_builtins: &[(Pubkey, BuiltinCost)]) {
         match migrating_builtins[index].1 {
             BuiltinCost::Migrating(MigratingBuiltinCost { position, .. }) => assert!(
                 position == index,
-                "migration feture must exist and at correct position"
+                "migration feature must exist and at correct position"
             ),
             BuiltinCost::NotMigrating => {
-                panic!("migration feture must exist and at correct position")
+                panic!("migration feature must exist and at correct position")
             }
         }
         index += 1;

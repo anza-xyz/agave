@@ -62,7 +62,7 @@ solana-epoch-schedule = "=3.0.0"
 solana-feature-gate-interface = { version = "=3.0.0", features = ["bincode"] }
 solana-fee-calculator = "=3.0.0"
 solana-fee-structure = "=3.0.0"
-solana-hash = "=3.0.0"
+solana-hash = "=3.1.0"
 solana-instruction = "=3.0.0"
 solana-keypair = "=3.0.1"
 solana-loader-v3-interface = { version = "=6.1.0", features = ["bincode"] }
@@ -74,7 +74,7 @@ solana-nonce = "=3.0.0"
 solana-offchain-message = { version = "=3.0.0", features = ["verify"] }
 solana-packet = "=3.0.0"
 solana-program-runtime = { workspace = true }
-solana-pubkey = { version = "=3.0.0", default-features = false }
+solana-pubkey = { version = "=4.0.0", default-features = false }
 solana-pubsub-client = { workspace = true }
 solana-quic-client = { workspace = true }
 solana-remote-wallet = { workspace = true }
@@ -92,7 +92,7 @@ solana-system-interface = { version = "=2.0", features = ["bincode"] }
 solana-sysvar = "=3.0.0"
 solana-tps-client = { workspace = true }
 solana-tpu-client = { workspace = true, features = ["default"] }
-solana-transaction = "=3.0.1"
+solana-transaction = "=3.0.2"
 solana-transaction-error = "=3.0.0"
 solana-transaction-status = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
@@ -102,6 +102,7 @@ solana-vote-program = { workspace = true }
 spl-memo-interface = { version = "=2.0.0" }
 thiserror = { workspace = true }
 tiny-bip39 = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
