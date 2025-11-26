@@ -25,6 +25,8 @@ enum Commands {
     BumpVersion(commands::bump_version::CommandArgs),
     #[command(about = "Update crate version")]
     UpdateCrate(commands::update_crate::CommandArgs),
+    #[command(about = "Publish crates")]
+    Publish(commands::publish::CommandArgs),
 }
 
 #[derive(Args, Debug)]
@@ -65,6 +67,8 @@ async fn try_main() -> Result<()> {
         }
         Commands::UpdateCrate(args) => {
             commands::update_crate::run(args)?;
+        Commands::Publish(args) => {
+            commands::publish::run(args)?;
         }
     }
 
