@@ -100,9 +100,13 @@ impl VoteAccounts {
                 // Sort by stake descending, we don't care about sorting accounts with same stake, because
                 // this sort is only for truncation purpose, and we remove all accounts with same stake
                 // on the border.
-                entries_to_sort.sort_by(|a, b| b.2.cmp(&a.2));
+                entries_to_sort.sort_by(|(_, lhs_stake, _), (_, rhs_stake, _)| {
+                    lhs_stake.cmp(&rhs_stake).rev()
+                });
                 // Find the stake of the first one being in the truncated list (so it's not max_vote_accounts - 1)
-                let floor_stake = entries_to_sort.get(max_vote_accounts).unwrap().2;
+                let (_, floor_stake, _) =
+                    // Safety: `entries_to_sort` is longer than `max_vote_accounts` by virtue of entering this block
+                    entries_to_sort.get(max_vote_accounts).unwrap();
                 // Per SIMD 357, we remove all vote accounts with stake smaller or equal to the first truncated one.
                 entries_to_sort
                     .into_iter()
