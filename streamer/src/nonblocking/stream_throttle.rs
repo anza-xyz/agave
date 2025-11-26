@@ -12,7 +12,11 @@ use {
     tokio::time::sleep,
 };
 
-const MAX_UNSTAKED_STREAMS_PERCENT: u64 = 20;
+/// Max TPS allowed for unstaked connection
+const MAX_UNSTAKED_TPS: u64 = 200;
+/// Expected % of max TPS to be consumed by unstaked connections
+const EXPECTED_UNSTAKED_STREAMS_PERCENT: u64 = 20;
+
 pub const STREAM_THROTTLING_INTERVAL_MS: u64 = 100;
 pub const STREAM_THROTTLING_INTERVAL: Duration =
     Duration::from_millis(STREAM_THROTTLING_INTERVAL_MS);
@@ -44,16 +48,14 @@ impl StakedStreamLoadEMA {
         let allow_unstaked_streams = max_unstaked_connections > 0;
         let max_staked_load_in_ema_window = if allow_unstaked_streams {
             (max_streams_per_ms
-                - Percentage::from(MAX_UNSTAKED_STREAMS_PERCENT).apply_to(max_streams_per_ms))
+                - Percentage::from(EXPECTED_UNSTAKED_STREAMS_PERCENT).apply_to(max_streams_per_ms))
                 * EMA_WINDOW_MS
         } else {
             max_streams_per_ms * EMA_WINDOW_MS
         };
 
         let max_unstaked_load_in_throttling_window = if allow_unstaked_streams {
-            Percentage::from(MAX_UNSTAKED_STREAMS_PERCENT)
-                .apply_to(max_streams_per_ms * STREAM_THROTTLING_INTERVAL_MS)
-                .saturating_div(max_unstaked_connections as u64)
+            MAX_UNSTAKED_TPS * STREAM_THROTTLING_INTERVAL_MS / 1000
         } else {
             0
         };
