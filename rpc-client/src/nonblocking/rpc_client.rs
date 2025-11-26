@@ -4473,7 +4473,7 @@ impl RpcClient {
     ///
     /// # RPC Reference
     ///
-    /// This method corresponds directly to the [`getAccountInfo`] RPC method.
+    /// This method is built on the [`getAccountInfo`] RPC method.
     ///
     /// [`getAccountInfo`]: https://solana.com/docs/rpc/http/getaccountinfo
     pub async fn get_token_account(&self, pubkey: &Pubkey) -> ClientResult<Option<UiTokenAccount>> {
@@ -4489,7 +4489,7 @@ impl RpcClient {
     ///
     /// # RPC Reference
     ///
-    /// This method corresponds directly to the [`getAccountInfo`] RPC method.
+    /// This method is built on the [`getAccountInfo`] RPC method.
     ///
     /// [`getAccountInfo`]: https://solana.com/docs/rpc/http/getaccountinfo
     pub async fn get_token_account_with_commitment(
@@ -4587,7 +4587,7 @@ impl RpcClient {
     ///
     /// # RPC Reference
     ///
-    /// This method corresponds directly to the [`getTokenAccountsByDelegate`] RPC method.
+    /// This method is built on the [`getTokenAccountsByDelegate`] RPC method.
     ///
     /// [`getTokenAccountsByDelegate`]: https://solana.com/docs/rpc/http/gettokenaccountsbydelegate
     pub async fn get_token_accounts_by_delegate(
@@ -4611,7 +4611,7 @@ impl RpcClient {
     ///
     /// # RPC Reference
     ///
-    /// This method corresponds directly to the [`getTokenAccountsByDelegate`] RPC method.
+    /// This method is built on the [`getTokenAccountsByDelegate`] RPC method.
     ///
     /// [`getTokenAccountsByDelegate`]: https://solana.com/docs/rpc/http/gettokenaccountsbydelegate
     pub async fn get_token_accounts_by_delegate_with_commitment(

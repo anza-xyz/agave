@@ -3978,7 +3978,7 @@ impl RpcClient {
     ///
     /// # RPC Reference
     ///
-    /// This method corresponds directly to the [`getTokenAccountsByDelegate`] RPC method.
+    /// This method is built on the [`getTokenAccountsByDelegate`] RPC method.
     ///
     /// [`getTokenAccountsByDelegate`]: https://solana.com/docs/rpc/http/gettokenaccountsbydelegate
     ///
@@ -4016,7 +4016,7 @@ impl RpcClient {
     ///
     /// # RPC Reference
     ///
-    /// This method corresponds directly to the [`getTokenAccountsByDelegate`] RPC method.
+    /// This method is built on the [`getTokenAccountsByDelegate`] RPC method.
     ///
     /// [`getTokenAccountsByDelegate`]: https://solana.com/docs/rpc/http/gettokenaccountsbydelegate
     pub fn get_token_accounts_by_delegate_with_commitment(
