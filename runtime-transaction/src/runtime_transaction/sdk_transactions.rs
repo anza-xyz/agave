@@ -30,6 +30,22 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
         let is_simple_vote_tx = is_simple_vote_tx
             .unwrap_or_else(|| is_simple_vote_transaction(&sanitized_versioned_tx));
 
+        // TAO TODO - if SDK or Sigverify have determined it's a simple-cote-transaction,
+        //            print it if it has more than 2 write locks
+        if is_simple_vote_tx {
+            let versioned_message = &sanitized_versioned_tx.get_message().message;
+            if versioned_message.static_account_keys().len()
+                - usize::from(versioned_message.header().num_readonly_signed_accounts)
+                - usize::from(versioned_message.header().num_readonly_unsigned_accounts)
+                > 2
+            {
+                log::info!(
+                    "=== SDK === simple-vote-tx has too many write locks: {:?}",
+                    sanitized_versioned_tx
+                );
+            }
+        }
+
         let InstructionMeta {
             precompile_signature_details,
             instruction_data_len,

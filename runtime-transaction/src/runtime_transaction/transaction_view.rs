@@ -75,6 +75,21 @@ where
     let is_simple_vote_tx =
         is_simple_vote_tx.unwrap_or_else(|| is_simple_vote_transaction(transaction));
 
+    // TAO TODO - if SDK or Sigverify have determined it's a simple-cote-transaction,
+    //            print it if it has more than 2 write locks
+    if is_simple_vote_tx {
+        if transaction.num_static_account_keys()
+            - transaction.num_readonly_signed_static_accounts()
+            - transaction.num_readonly_unsigned_static_accounts()
+            > 2
+        {
+            log::info!(
+                "=== View === simple-vote-tx has too many write locks: {:?}",
+                transaction
+            );
+        }
+    }
+
     let InstructionMeta {
         precompile_signature_details,
         instruction_data_len,
