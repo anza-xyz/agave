@@ -84,76 +84,59 @@ impl VoteAccounts {
     // 5. If we end up with an empty list (can happen if everyone in the world
     //    has the same stake, happens in tests, doesn't happen in real world),
     //    log a warning
+    //
+    // Note: minimum_vote_account_balance should be 1.6 SOL + minimum rent for
+    // account of size VoteStateV4::size_of().
     pub fn clone_and_filter_for_alpenglow(
         &self,
         max_vote_accounts: usize,
         minimum_vote_account_balance: u64,
     ) -> VoteAccounts {
         assert_ne!(max_vote_accounts, 0);
-        // In most cases we should not hit the max_vote_accounts limit, so
-        // scanning is cheaper. In worst case we just do another vec collect.
-        let entries_count = self
-            .vote_accounts
-            .iter()
-            .filter(|(_, (stake, vote_account))| {
-                Self::is_valid_alpenglow_vote_account(
-                    vote_account,
-                    *stake,
-                    minimum_vote_account_balance,
-                )
-            })
-            .count();
-        let valid_entries: HashMap<Pubkey, (u64, VoteAccount)> =
-            if entries_count > max_vote_accounts {
-                let mut entries_to_sort: Vec<(&Pubkey, &VoteAccount, &u64)> = self
-                    .vote_accounts
-                    .iter()
-                    .filter_map(|(pubkey, (stake, vote_account))| {
-                        if Self::is_valid_alpenglow_vote_account(
-                            vote_account,
-                            *stake,
-                            minimum_vote_account_balance,
-                        ) {
-                            Some((pubkey, vote_account, stake))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                // Sort by stake descending, we don't care about sorting accounts with same stake, because
-                // this sort is only for truncation purpose, and we remove all accounts with same stake
-                // on the border.
-                entries_to_sort
-                    .sort_by(|(_, _, lhs_stake), (_, _, rhs_stake)| rhs_stake.cmp(lhs_stake));
-                // Find the stake of the first one being in the truncated list (so it's not max_vote_accounts - 1)
-                let floor_stake = {
-                    let (_, _, stake) =
+        let filtering_valid_account = || {
+            self.vote_accounts
+                .iter()
+                .filter(|(_, (stake, vote_account))| {
+                    Self::is_valid_alpenglow_vote_account(
+                        vote_account,
+                        *stake,
+                        minimum_vote_account_balance,
+                    )
+                })
+        };
+
+        // Do not touch vote_account_iter before this point! We use cloning to shorten code
+        // but if you touch the iterator before this line, the code will break.
+        let entries_count = filtering_valid_account().count();
+        let valid_entries: HashMap<Pubkey, (u64, VoteAccount)> = if entries_count
+            > max_vote_accounts
+        {
+            let mut entries_to_sort: Vec<(&Pubkey, &VoteAccount, &u64)> = filtering_valid_account()
+                .map(|(pubkey, (stake, vote_account))| (pubkey, vote_account, stake))
+                .collect();
+            // Sort by stake descending, we don't care about sorting accounts with same stake, because
+            // this sort is only for truncation purpose, and we remove all accounts with same stake
+            // on the border.
+            entries_to_sort
+                .sort_by(|(_, _, lhs_stake), (_, _, rhs_stake)| rhs_stake.cmp(lhs_stake));
+            // Find the stake of the first one being in the truncated list (so it's not max_vote_accounts - 1)
+            let floor_stake = {
+                let (_, _, stake) =
                         // Safety: `entries_to_sort` is longer than `max_vote_accounts` by virtue of entering this block
                         entries_to_sort.get(max_vote_accounts).unwrap();
-                    *stake
-                };
-                // Per SIMD 357, we remove all vote accounts with stake smaller or equal to the first truncated one.
-                entries_to_sort
-                    .into_iter()
-                    .take_while(|(_, _, stake)| stake > &floor_stake)
-                    .map(|(pubkey, vote_account, stake)| (*pubkey, (*stake, vote_account.clone())))
-                    .collect()
-            } else {
-                self.vote_accounts
-                    .iter()
-                    .filter_map(|(pubkey, (stake, vote_account))| {
-                        if Self::is_valid_alpenglow_vote_account(
-                            vote_account,
-                            *stake,
-                            minimum_vote_account_balance,
-                        ) {
-                            Some((*pubkey, (*stake, vote_account.clone())))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
+                *stake
             };
+            // Per SIMD 357, we remove all vote accounts with stake smaller or equal to the first truncated one.
+            entries_to_sort
+                .into_iter()
+                .take_while(|(_, _, stake)| stake > &floor_stake)
+                .map(|(pubkey, vote_account, stake)| (*pubkey, (*stake, vote_account.clone())))
+                .collect()
+        } else {
+            filtering_valid_account()
+                .map(|(pubkey, (stake, vote_account))| (*pubkey, (*stake, vote_account.clone())))
+                .collect()
+        };
         if valid_entries.is_empty() {
             warn!("no valid alpenglow vote accounts found");
         }
@@ -991,6 +974,7 @@ mod tests {
         let current_limit = 3000;
         let vote_accounts =
             new_staked_vote_accounts(&mut rng, current_limit, current_limit, None, None);
+
         // All vote accounts should be returned if the limit is high enough.
         let filtered = vote_accounts
             .clone_and_filter_for_alpenglow(current_limit + 500, MIN_STAKE_FOR_STAKED_ACCOUNT);
