@@ -19,8 +19,8 @@ use {
         authorized_voters::AuthorizedVoters,
         error::VoteError,
         state::{
-            BlockTimestamp, LandedVote, Lockout, VoteInit, VoteState1_14_11, VoteStateV3,
-            VoteStateV4, VoteStateVersions, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
+            BlockTimestamp, LandedVote, Lockout, VoteInit, VoteInitV2, VoteState1_14_11,
+            VoteStateV3, VoteStateV4, VoteStateVersions, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
             MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY, VOTE_CREDITS_GRACE_SLOTS,
             VOTE_CREDITS_MAXIMUM_PER_SLOT,
         },
@@ -39,6 +39,17 @@ pub trait VoteStateHandle {
     fn set_new_authorized_voter<F>(
         &mut self,
         authorized_pubkey: &Pubkey,
+        current_epoch: Epoch,
+        target_epoch: Epoch,
+        verify: F,
+    ) -> Result<(), InstructionError>
+    where
+        F: Fn(Pubkey) -> Result<(), InstructionError>;
+
+    fn set_new_authorized_voter_with_bls<F>(
+        &mut self,
+        authorized_pubkey: &Pubkey,
+        bls_pubkey: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
         current_epoch: Epoch,
         target_epoch: Epoch,
         verify: F,
@@ -320,6 +331,21 @@ impl VoteStateHandle for VoteStateV3 {
         Ok(())
     }
 
+    fn set_new_authorized_voter_with_bls<F>(
+        &mut self,
+        _authorized_pubkey: &Pubkey,
+        _bls_pubkey: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+        _current_epoch: Epoch,
+        _target_epoch: Epoch,
+        _verify: F,
+    ) -> Result<(), InstructionError>
+    where
+        F: Fn(Pubkey) -> Result<(), InstructionError>,
+    {
+        // Not supported in v3
+        Err(InstructionError::InvalidInstructionData)
+    }
+
     fn get_and_update_authorized_voter(
         &mut self,
         current_epoch: Epoch,
@@ -477,6 +503,38 @@ impl VoteStateHandle for VoteStateV4 {
         Ok(())
     }
 
+    fn set_new_authorized_voter_with_bls<F>(
+        &mut self,
+        authorized_pubkey: &Pubkey,
+        bls_pubkey: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+        current_epoch: Epoch,
+        target_epoch: Epoch,
+        verify: F,
+    ) -> Result<(), InstructionError>
+    where
+        F: Fn(Pubkey) -> Result<(), InstructionError>,
+    {
+        // Similar to the v3 implementation, but with no `prior_voters` field.
+
+        let epoch_authorized_voter = self.get_and_update_authorized_voter(current_epoch)?;
+        verify(epoch_authorized_voter)?;
+
+        // The offset in slots `n` on which the target_epoch
+        // (default value `DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET`) is
+        // calculated is the number of slots available from the
+        // first slot `S` of an epoch in which to set a new voter for
+        // the epoch at `S` + `n`
+        if self.authorized_voters.contains(target_epoch) {
+            return Err(VoteError::TooSoonToReauthorize.into());
+        }
+
+        self.authorized_voters
+            .insert(target_epoch, *authorized_pubkey);
+        self.bls_pubkey_compressed = Some(*bls_pubkey);
+
+        Ok(())
+    }
+
     fn get_and_update_authorized_voter(
         &mut self,
         current_epoch: Epoch,
@@ -618,6 +676,27 @@ pub(crate) fn create_new_vote_state_v4(
     }
 }
 
+/// Create a new VoteStateV4 from `VoteInit` with proper SIMD-0387 defaults.
+/// Note this is a temporary substitute for `VoteStateV4::new`.
+#[allow(clippy::arithmetic_side_effects)]
+pub(crate) fn create_new_vote_state_v4_with_bls(
+    vote_init: &VoteInitV2,
+    clock: &Clock,
+) -> VoteStateV4 {
+    VoteStateV4 {
+        node_pubkey: vote_init.node_pubkey,
+        authorized_voters: AuthorizedVoters::new(clock.epoch, vote_init.authorized_voter),
+        authorized_withdrawer: vote_init.authorized_withdrawer,
+        inflation_rewards_commission_bps: vote_init.inflation_rewards_commission_bps,
+        // Per SIMD-0185, set default collectors and commission
+        inflation_rewards_collector: vote_init.inflation_rewards_collector,
+        block_revenue_collector: vote_init.block_revenue_collector,
+        block_revenue_commission_bps: vote_init.block_revenue_commission_bps,
+        bls_pubkey_compressed: Some(vote_init.authorized_voter_bls_pubkey),
+        ..VoteStateV4::default()
+    }
+}
+
 /// (Alpenglow) Create a test-only `VoteStateV4` with the provided values.
 pub(crate) fn create_new_vote_state_v4_for_tests(
     node_pubkey: &Pubkey,
@@ -701,6 +780,29 @@ impl VoteStateHandle for VoteStateHandler {
             TargetVoteState::V4(v4) => {
                 v4.set_new_authorized_voter(authorized_pubkey, current_epoch, target_epoch, verify)
             }
+        }
+    }
+
+    fn set_new_authorized_voter_with_bls<F>(
+        &mut self,
+        authorized_pubkey: &Pubkey,
+        bls_pubkey: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+        current_epoch: Epoch,
+        target_epoch: Epoch,
+        verify: F,
+    ) -> Result<(), InstructionError>
+    where
+        F: Fn(Pubkey) -> Result<(), InstructionError>,
+    {
+        match &mut self.target_state {
+            TargetVoteState::V3(_) => Err(InstructionError::InvalidAccountData),
+            TargetVoteState::V4(v4) => v4.set_new_authorized_voter_with_bls(
+                authorized_pubkey,
+                bls_pubkey,
+                current_epoch,
+                target_epoch,
+                verify,
+            ),
         }
     }
 
@@ -866,6 +968,20 @@ impl VoteStateHandler {
                 let vote_state = create_new_vote_state_v4(vote_account.get_key(), vote_init, clock);
                 vote_state.set_vote_account_state(vote_account)
             }
+        }
+    }
+
+    pub fn init_vote_account_state_v2(
+        vote_account: &mut BorrowedInstructionAccount,
+        vote_init: &VoteInitV2,
+        clock: &Clock,
+        target_version: VoteStateTargetVersion,
+    ) -> Result<(), InstructionError> {
+        if let VoteStateTargetVersion::V4 = target_version {
+            let vote_state = create_new_vote_state_v4_with_bls(vote_init, clock);
+            vote_state.set_vote_account_state(vote_account)
+        } else {
+            Err(InstructionError::InvalidInstructionData)
         }
     }
 

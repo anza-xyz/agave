@@ -11,6 +11,13 @@ use {
     handler::{VoteStateHandle, VoteStateHandler, VoteStateTargetVersion},
     log::*,
     solana_account::{AccountSharedData, WritableAccount},
+    solana_bls_signatures::{
+        proof_of_possession::{
+            ProofOfPossessionCompressed as BLSProofOfPossessionCompressed,
+            ProofOfPossessionProjective as BLSProofOfPossession,
+        },
+        Pubkey as BLSPubkey, PubkeyCompressed as BLSPubkeyCompressed, VerifiableProofOfPossession,
+    },
     solana_clock::{Clock, Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
@@ -754,9 +761,33 @@ pub fn authorize<S: std::hash::BuildHasher>(
             verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
             vote_state.set_authorized_withdrawer(*authorized);
         }
-        // VoterWithBLS not yet implemented.
-        VoteAuthorize::VoterWithBLS(_) => {
-            return Err(InstructionError::InvalidInstructionData);
+        VoteAuthorize::VoterWithBLS(args) => {
+            let authorized_withdrawer_signer =
+                verify_authorized_signer(vote_state.authorized_withdrawer(), signers).is_ok();
+
+            verify_bls_proof_of_possession(
+                authorized,
+                &args.bls_pub_key,
+                &args.bls_proof_of_possession,
+            )?;
+
+            vote_state.set_new_authorized_voter_with_bls(
+                authorized,
+                &args.bls_pub_key,
+                clock.epoch,
+                clock
+                    .leader_schedule_epoch
+                    .checked_add(1)
+                    .ok_or(InstructionError::InvalidAccountData)?,
+                |epoch_authorized_voter| {
+                    // current authorized withdrawer or authorized voter must say "yay"
+                    if authorized_withdrawer_signer {
+                        Ok(())
+                    } else {
+                        verify_authorized_signer(&epoch_authorized_voter, signers)
+                    }
+                },
+            )?;
         }
     }
 
@@ -850,6 +881,28 @@ fn verify_authorized_signer<S: std::hash::BuildHasher>(
     }
 }
 
+fn verify_bls_proof_of_possession(
+    authorized_voter: &Pubkey,
+    bls_pubkey_compressed_bytes: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+    bls_proof_of_possession_compressed_bytes: &[u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
+) -> Result<(), InstructionError> {
+    let bls_pubkey_compressed = BLSPubkeyCompressed(*bls_pubkey_compressed_bytes);
+    let bls_pubkey = BLSPubkey::try_from(bls_pubkey_compressed)
+        .map_err(|_| InstructionError::InvalidArgument)?;
+    let bls_proof_of_possession_compressed =
+        BLSProofOfPossessionCompressed(*bls_proof_of_possession_compressed_bytes);
+    let bls_proof_of_possession =
+        BLSProofOfPossession::try_from(bls_proof_of_possession_compressed)
+            .map_err(|_| InstructionError::InvalidArgument)?;
+    let mut message: Vec<u8> = b"ALPENGLOW".to_vec();
+    message.extend_from_slice(authorized_voter.as_ref());
+    message.extend_from_slice(bls_pubkey_compressed_bytes);
+    bls_proof_of_possession
+        .verify(&bls_pubkey, Some(&message))
+        .map_err(|_| InstructionError::InvalidArgument)?;
+    Ok(())
+}
+
 /// Withdraw funds from the vote account
 pub fn withdraw<S: std::hash::BuildHasher>(
     instruction_context: &InstructionContext,
@@ -909,6 +962,36 @@ pub fn withdraw<S: std::hash::BuildHasher>(
 }
 
 /// Initialize the vote_state for a vote account
+/// Assumes that the account is being init as part of a account creation or balance transfer and
+/// that the transaction must be signed by the staker's keys
+pub fn initialize_account_v2<S: std::hash::BuildHasher>(
+    vote_account: &mut BorrowedInstructionAccount,
+    target_version: VoteStateTargetVersion,
+    vote_init: &VoteInitV2,
+    signers: &HashSet<Pubkey, S>,
+    clock: &Clock,
+) -> Result<(), InstructionError> {
+    VoteStateHandler::check_vote_account_length(vote_account, target_version)?;
+    let versioned = vote_account.get_state::<VoteStateVersions>()?;
+
+    if !versioned.is_uninitialized() {
+        return Err(InstructionError::AccountAlreadyInitialized);
+    }
+
+    // node must agree to accept this vote account
+    verify_authorized_signer(&vote_init.node_pubkey, signers)?;
+
+    // verify the BLS pubkey proof of possession
+    verify_bls_proof_of_possession(
+        &vote_init.authorized_voter,
+        &vote_init.authorized_voter_bls_pubkey,
+        &vote_init.authorized_voter_bls_proof_of_possession,
+    )?;
+
+    VoteStateHandler::init_vote_account_state_v2(vote_account, vote_init, clock, target_version)
+}
+
+/// Initialize the vote_state for a vote account using VoteInitV2
 /// Assumes that the account is being init as part of a account creation or balance transfer and
 /// that the transaction must be signed by the staker's keys
 pub fn initialize_account<S: std::hash::BuildHasher>(
