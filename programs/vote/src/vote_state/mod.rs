@@ -766,7 +766,7 @@ pub fn authorize<S: std::hash::BuildHasher>(
                 verify_authorized_signer(vote_state.authorized_withdrawer(), signers).is_ok();
 
             verify_bls_proof_of_possession(
-                authorized,
+                vote_account.get_key(),
                 &args.bls_pubkey,
                 &args.bls_proof_of_possession,
             )?;
@@ -882,7 +882,7 @@ fn verify_authorized_signer<S: std::hash::BuildHasher>(
 }
 
 fn verify_bls_proof_of_possession(
-    authorized_voter: &Pubkey,
+    vote_account_pubkey: &Pubkey,
     bls_pubkey_compressed_bytes: &[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
     bls_proof_of_possession_compressed_bytes: &[u8; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
 ) -> Result<(), InstructionError> {
@@ -895,7 +895,7 @@ fn verify_bls_proof_of_possession(
         BLSProofOfPossession::try_from(bls_proof_of_possession_compressed)
             .map_err(|_| InstructionError::InvalidArgument)?;
     let mut message: Vec<u8> = b"ALPENGLOW".to_vec();
-    message.extend_from_slice(authorized_voter.as_ref());
+    message.extend_from_slice(vote_account_pubkey.as_ref());
     message.extend_from_slice(bls_pubkey_compressed_bytes);
     bls_proof_of_possession
         .verify(&bls_pubkey, Some(&message))
@@ -983,7 +983,7 @@ pub fn initialize_account_v2<S: std::hash::BuildHasher>(
 
     // verify the BLS pubkey proof of possession
     verify_bls_proof_of_possession(
-        &vote_init.authorized_voter,
+        &vote_account.get_key(),
         &vote_init.authorized_voter_bls_pubkey,
         &vote_init.authorized_voter_bls_proof_of_possession,
     )?;
