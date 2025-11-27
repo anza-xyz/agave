@@ -1,11 +1,13 @@
 use {
     agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin,
+    arc_swap::ArcSwap,
     jsonrpc_core::{ErrorCode, Result as JsonRpcResult},
     libloading::Library,
     log::*,
     std::{
         ops::{Deref, DerefMut},
         path::Path,
+        sync::Arc,
     },
     tokio::sync::oneshot::Sender as OneShotSender,
 };
@@ -54,21 +56,12 @@ impl DerefMut for LoadedGeyserPlugin {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct GeyserPluginManager {
-    pub plugins: Vec<LoadedGeyserPlugin>,
+    pub plugins: Vec<Arc<LoadedGeyserPlugin>>,
 }
 
 impl GeyserPluginManager {
-    /// Unload all plugins and loaded plugin libraries, making sure to fire
-    /// their `on_plugin_unload()` methods so they can do any necessary cleanup.
-    pub fn unload(&mut self) {
-        for mut plugin in self.plugins.drain(..) {
-            info!("Unloading plugin for {:?}", plugin.name());
-            plugin.on_unload();
-        }
-    }
-
     /// Check if there is any plugin interested in account data
     pub fn account_data_notifications_enabled(&self) -> bool {
         for plugin in &self.plugins {
@@ -123,9 +116,11 @@ impl GeyserPluginManager {
     /// The string returned is the name of the plugin loaded, which can only be accessed once
     /// the plugin has been loaded and calling the name method.
     pub(crate) fn load_plugin(
-        &mut self,
+        plugin_manager: &ArcSwap<GeyserPluginManager>,
         geyser_plugin_config_file: impl AsRef<Path>,
     ) -> JsonRpcResult<String> {
+        let mut new_plugin_manager = (*plugin_manager.load_full()).clone();
+
         // First load plugin
         let (mut new_plugin, new_config_file) =
             load_plugin_from_config(geyser_plugin_config_file.as_ref()).map_err(|e| {
@@ -137,7 +132,7 @@ impl GeyserPluginManager {
             })?;
 
         // Then see if a plugin with this name already exists. If so, abort
-        if self
+        if new_plugin_manager
             .plugins
             .iter()
             .any(|plugin| plugin.name().eq(new_plugin.name()))
@@ -166,14 +161,20 @@ impl GeyserPluginManager {
                 data: None,
             })?;
         let name = new_plugin.name().to_string();
-        self.plugins.push(new_plugin);
+        new_plugin_manager.plugins.push(Arc::new(new_plugin));
+        plugin_manager.store(Arc::new(new_plugin_manager));
 
         Ok(name)
     }
 
-    pub(crate) fn unload_plugin(&mut self, name: &str) -> JsonRpcResult<()> {
+    pub(crate) fn unload_plugin(
+        plugin_manager: &ArcSwap<GeyserPluginManager>,
+        name: &str,
+    ) -> JsonRpcResult<()> {
+        let mut new_plugin_manager: GeyserPluginManager = (*plugin_manager.load_full()).clone();
+
         // Check if any plugin names match this one
-        let Some(idx) = self
+        let Some(idx) = new_plugin_manager
             .plugins
             .iter()
             .position(|plugin| plugin.name().eq(name))
@@ -187,7 +188,9 @@ impl GeyserPluginManager {
         };
 
         // Unload and drop plugin and lib
-        self._drop_plugin(idx);
+        let plugin_ref = new_plugin_manager.plugins.remove(idx);
+        plugin_manager.store(Arc::new(new_plugin_manager));
+        Self::_unload_plugin_blocking(plugin_ref, idx);
 
         Ok(())
     }
@@ -195,9 +198,15 @@ impl GeyserPluginManager {
     /// Checks for a plugin with a given `name`.
     /// If it exists, first unload it.
     /// Then, attempt to load a new plugin
-    pub(crate) fn reload_plugin(&mut self, name: &str, config_file: &str) -> JsonRpcResult<()> {
+    /// Returns a new instance of GeyserPluginManager
+    pub(crate) fn reload_plugin(
+        plugin_manager: &ArcSwap<GeyserPluginManager>,
+        name: &str,
+        config_file: &str,
+    ) -> JsonRpcResult<()> {
+        let mut new_plugin_manager: GeyserPluginManager = (*plugin_manager.load_full()).clone();
         // Check if any plugin names match this one
-        let Some(idx) = self
+        let Some(idx) = new_plugin_manager
             .plugins
             .iter()
             .position(|plugin| plugin.name().eq(name))
@@ -212,9 +221,11 @@ impl GeyserPluginManager {
 
         // Unload and drop current plugin first in case plugin requires exclusive access to resource,
         // such as a particular port or database.
-        self._drop_plugin(idx);
+        let plugin_ref = new_plugin_manager.plugins.remove(idx);
+        plugin_manager.store(Arc::new(new_plugin_manager.clone()));
+        Self::_unload_plugin_blocking(plugin_ref, idx);
 
-        // Try to load plugin, library
+        // Try to load the plugin, library
         // SAFETY: It is up to the validator to ensure this is a valid plugin library.
         let (mut new_plugin, new_parsed_config_file) =
             load_plugin_from_config(config_file.as_ref()).map_err(|err| jsonrpc_core::Error {
@@ -224,7 +235,7 @@ impl GeyserPluginManager {
             })?;
 
         // Then see if a plugin with this name already exists. If so, abort
-        if self
+        if new_plugin_manager
             .plugins
             .iter()
             .any(|plugin| plugin.name().eq(new_plugin.name()))
@@ -246,7 +257,8 @@ impl GeyserPluginManager {
         match new_plugin.on_load(new_parsed_config_file, true) {
             // On success, push plugin and library
             Ok(()) => {
-                self.plugins.push(new_plugin);
+                new_plugin_manager.plugins.push(Arc::new(new_plugin));
+                plugin_manager.store(Arc::new(new_plugin_manager));
             }
 
             // On failure, return error
@@ -264,10 +276,16 @@ impl GeyserPluginManager {
         Ok(())
     }
 
-    fn _drop_plugin(&mut self, idx: usize) {
-        let mut current_plugin = self.plugins.remove(idx);
+    fn _unload_plugin_blocking(mut plugin_ref: Arc<LoadedGeyserPlugin>, idx: usize) {
+        let mut current_plugin = Arc::get_mut(&mut plugin_ref);
+        while current_plugin.is_none() {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            current_plugin = Arc::get_mut(&mut plugin_ref);
+        }
+        let current_plugin = current_plugin.unwrap();
         let name = current_plugin.name().to_string();
-        current_plugin.on_unload();
+        // unload the old plugin now that we own the only ref
+        current_plugin.plugin.on_unload();
         info!("Unloaded plugin {name} at idx {idx}");
     }
 }
@@ -448,6 +466,7 @@ mod tests {
             GeyserPluginManager, LoadedGeyserPlugin, TESTPLUGIN2_CONFIG, TESTPLUGIN_CONFIG,
         },
         agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin,
+        arc_swap::ArcSwap,
         libloading::Library,
         std::sync::{Arc, RwLock},
     };
@@ -491,11 +510,11 @@ mod tests {
     #[test]
     fn test_geyser_reload() {
         // Initialize empty manager
-        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::default()));
+        let plugin_manager = Arc::new(ArcSwap::new(Arc::new(GeyserPluginManager::default())));
 
         // No plugins are loaded, this should fail
-        let mut plugin_manager_lock = plugin_manager.write().unwrap();
-        let reload_result = plugin_manager_lock.reload_plugin(DUMMY_NAME, DUMMY_CONFIG);
+        let reload_result =
+            GeyserPluginManager::reload_plugin(&plugin_manager, DUMMY_NAME, DUMMY_CONFIG);
         assert_eq!(
             reload_result.unwrap_err().message,
             "The plugin you requested to reload is not loaded"
@@ -504,24 +523,28 @@ mod tests {
         // Mock having loaded plugin (TestPlugin)
         let (mut plugin, config) = dummy_plugin_and_library(TestPlugin, DUMMY_CONFIG);
         plugin.on_load(config, false).unwrap();
-        plugin_manager_lock.plugins.push(plugin);
-        assert_eq!(plugin_manager_lock.plugins[0].name(), DUMMY_NAME);
-        plugin_manager_lock.plugins[0].name();
+        let mut new_plugin_manager = (**plugin_manager.load()).clone();
+        new_plugin_manager.plugins.push(Arc::new(plugin));
+        assert_eq!(new_plugin_manager.plugins[0].name(), DUMMY_NAME);
+        new_plugin_manager.plugins[0].name();
+        plugin_manager.store(Arc::new(new_plugin_manager));
 
         // Try wrong name (same error)
         const WRONG_NAME: &str = "wrong_name";
-        let reload_result = plugin_manager_lock.reload_plugin(WRONG_NAME, DUMMY_CONFIG);
+        let reload_result =
+            GeyserPluginManager::reload_plugin(&plugin_manager, WRONG_NAME, DUMMY_CONFIG);
         assert_eq!(
             reload_result.unwrap_err().message,
             "The plugin you requested to reload is not loaded"
         );
 
         // Now try a (dummy) reload, replacing TestPlugin with TestPlugin2
-        let reload_result = plugin_manager_lock.reload_plugin(DUMMY_NAME, TESTPLUGIN2_CONFIG);
+        let reload_result =
+            GeyserPluginManager::reload_plugin(&plugin_manager, DUMMY_NAME, TESTPLUGIN2_CONFIG);
         assert!(reload_result.is_ok());
 
         // The plugin is now replaced with ANOTHER_DUMMY_NAME
-        let plugins = plugin_manager_lock.list_plugins().unwrap();
+        let plugins = plugin_manager.load().list_plugins().unwrap();
         assert!(plugins.iter().any(|name| name.eq(ANOTHER_DUMMY_NAME)));
         // DUMMY_NAME should no longer be present.
         assert!(!plugins.iter().any(|name| name.eq(DUMMY_NAME)));
@@ -537,11 +560,11 @@ mod tests {
         // First
         let (mut plugin, config) = dummy_plugin_and_library(TestPlugin, TESTPLUGIN_CONFIG);
         plugin.on_load(config, false).unwrap();
-        plugin_manager_lock.plugins.push(plugin);
+        plugin_manager_lock.plugins.push(Arc::new(plugin));
         // Second
         let (mut plugin, config) = dummy_plugin_and_library(TestPlugin2, TESTPLUGIN2_CONFIG);
         plugin.on_load(config, false).unwrap();
-        plugin_manager_lock.plugins.push(plugin);
+        plugin_manager_lock.plugins.push(Arc::new(plugin));
 
         // Check that both plugins are returned in the list
         let plugins = plugin_manager_lock.list_plugins().unwrap();
@@ -552,17 +575,16 @@ mod tests {
     #[test]
     fn test_plugin_load_unload() {
         // Initialize empty manager
-        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::default()));
-        let mut plugin_manager_lock = plugin_manager.write().unwrap();
+        let plugin_manager = Arc::new(ArcSwap::new(Arc::new(GeyserPluginManager::default())));
 
         // Load rpc call
-        let load_result = plugin_manager_lock.load_plugin(TESTPLUGIN_CONFIG);
+        let load_result = GeyserPluginManager::load_plugin(&plugin_manager, TESTPLUGIN_CONFIG);
         assert!(load_result.is_ok());
-        assert_eq!(plugin_manager_lock.plugins.len(), 1);
+        assert_eq!(plugin_manager.load().plugins.len(), 1);
 
         // Unload rpc call
-        let unload_result = plugin_manager_lock.unload_plugin(DUMMY_NAME);
+        let unload_result = GeyserPluginManager::unload_plugin(&plugin_manager, DUMMY_NAME);
         assert!(unload_result.is_ok());
-        assert_eq!(plugin_manager_lock.plugins.len(), 0);
+        assert_eq!(plugin_manager.load().plugins.len(), 0);
     }
 }
