@@ -767,13 +767,13 @@ pub fn authorize<S: std::hash::BuildHasher>(
 
             verify_bls_proof_of_possession(
                 authorized,
-                &args.bls_pub_key,
+                &args.bls_pubkey,
                 &args.bls_proof_of_possession,
             )?;
 
             vote_state.set_new_authorized_voter_with_bls(
                 authorized,
-                &args.bls_pub_key,
+                &args.bls_pubkey,
                 clock.epoch,
                 clock
                     .leader_schedule_epoch
