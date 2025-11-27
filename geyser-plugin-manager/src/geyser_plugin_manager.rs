@@ -56,6 +56,12 @@ impl DerefMut for LoadedGeyserPlugin {
     }
 }
 
+impl Drop for LoadedGeyserPlugin {
+    fn drop(&mut self) {
+        self.plugin.on_unload();
+    }
+}
+
 #[derive(Default, Debug, Clone)]
 pub struct GeyserPluginManager {
     pub plugins: Vec<Arc<LoadedGeyserPlugin>>,
@@ -190,7 +196,7 @@ impl GeyserPluginManager {
         // Unload and drop plugin and lib
         let plugin_ref = new_plugin_manager.plugins.remove(idx);
         plugin_manager.store(Arc::new(new_plugin_manager));
-        Self::_unload_plugin_blocking(plugin_ref, idx);
+        Self::unload_plugin_blocking(plugin_ref, idx)?;
 
         Ok(())
     }
@@ -222,8 +228,10 @@ impl GeyserPluginManager {
         // Unload and drop current plugin first in case plugin requires exclusive access to resource,
         // such as a particular port or database.
         let plugin_ref = new_plugin_manager.plugins.remove(idx);
+        // store a cloned instance of the plugin manager without the plugin while we are reloading the plugin
+        // this ensures that the plugin is not called/updated after we unload it
         plugin_manager.store(Arc::new(new_plugin_manager.clone()));
-        Self::_unload_plugin_blocking(plugin_ref, idx);
+        Self::unload_plugin_blocking(plugin_ref, idx)?;
 
         // Try to load the plugin, library
         // SAFETY: It is up to the validator to ensure this is a valid plugin library.
@@ -276,17 +284,34 @@ impl GeyserPluginManager {
         Ok(())
     }
 
-    fn _unload_plugin_blocking(mut plugin_ref: Arc<LoadedGeyserPlugin>, idx: usize) {
+    pub(crate) fn unload_plugin_blocking(
+        mut plugin_ref: Arc<LoadedGeyserPlugin>,
+        idx: usize,
+    ) -> JsonRpcResult<()> {
         let mut current_plugin = Arc::get_mut(&mut plugin_ref);
-        while current_plugin.is_none() {
+        let mut retries = 0;
+        const MAX_RETRIES: usize = 20_000; // 20,000 * 5ms = 100 second
+        while current_plugin.is_none() && retries < MAX_RETRIES {
             std::thread::sleep(std::time::Duration::from_millis(5));
             current_plugin = Arc::get_mut(&mut plugin_ref);
+            retries += 1;
+        }
+        if current_plugin.is_none() {
+            error!("Failed to acquire mutable reference to plugin for unloading at idx {idx} after {} retries -- plugin unload WAS NOT EXPLICITLY CALLED", MAX_RETRIES);
+            return Err(jsonrpc_core::Error {
+                code: ErrorCode::InternalError,
+                message: format!("Failed to acquire mutable reference to plugin for unloading at idx {idx} after {} retries -- plugin unload WAS NOT EXPLICITLY CALLED", MAX_RETRIES),
+                data: None,
+            });
         }
         let current_plugin = current_plugin.unwrap();
         let name = current_plugin.name().to_string();
         // unload the old plugin now that we own the only ref
-        current_plugin.plugin.on_unload();
+        // LoadedGeyserPlugin calls unload when dropped, so the plugin will be unloaded automatically
+        // at the end of this function since there's no more refs to it
         info!("Unloaded plugin {name} at idx {idx}");
+
+        Ok(())
     }
 }
 
@@ -496,6 +521,10 @@ mod tests {
         fn name(&self) -> &'static str {
             DUMMY_NAME
         }
+
+        fn on_unload(&mut self) {
+            println!("test plugin 1 unloaded correctly")
+        }
     }
 
     #[derive(Clone, Copy, Debug)]
@@ -504,6 +533,10 @@ mod tests {
     impl GeyserPlugin for TestPlugin2 {
         fn name(&self) -> &'static str {
             ANOTHER_DUMMY_NAME
+        }
+
+        fn on_unload(&mut self) {
+            println!("test plugin 2 unloaded correctly")
         }
     }
 

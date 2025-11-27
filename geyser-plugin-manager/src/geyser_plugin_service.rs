@@ -203,7 +203,9 @@ impl GeyserPluginService {
         let empty_plugin_manager = GeyserPluginManager {
             plugins: Vec::new(),
         };
-        drop(self.plugin_manager.swap(Arc::new(empty_plugin_manager)));
+        // LoadedGeyserPlugin automatically calls on_unload() when dropped so we don't need to explicitly
+        // unload all plugins here
+        self.plugin_manager.swap(Arc::new(empty_plugin_manager));
         Ok(())
     }
 
