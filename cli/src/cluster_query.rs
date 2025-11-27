@@ -11,7 +11,7 @@ use {
     console::style,
     crossbeam_channel::unbounded,
     serde::{Deserialize, Serialize},
-    solana_account::{from_account, state_traits::StateMut, Account},
+    solana_account::{from_account, state_traits::StateMut},
     solana_clap_utils::{
         compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
         input_parsers::*,
@@ -2001,7 +2001,7 @@ pub async fn process_show_stakes(
 
     let mut stake_accounts: Vec<CliKeyedStakeState> = vec![];
     for (stake_pubkey, stake_ui_account) in all_stake_accounts {
-        let stake_account: Account = stake_ui_account.decode().expect(
+        let stake_account = stake_ui_account.to_account().expect(
             "It should be impossible at this point for the account data not to be decodable. \
              Ensure that the account was fetched using a binary encoding.",
         );

@@ -1,13 +1,13 @@
 use {
     agave_fs::dirs,
     log::*,
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_measure::measure_time,
     std::{
         collections::HashSet,
         fs, io,
         path::{Path, PathBuf},
-        sync::Mutex,
+        sync::{Arc, Mutex},
         thread,
     },
 };
@@ -154,9 +154,9 @@ pub fn create_and_canonicalize_directory(directory: impl AsRef<Path>) -> io::Res
 /// Creates a new AccountSharedData structure for anything that implements ReadableAccount.
 /// This function implies data copies.
 pub fn create_account_shared_data(account: &impl ReadableAccount) -> AccountSharedData {
-    AccountSharedData::create(
+    AccountSharedData::create_from_existing_shared_data(
         account.lamports(),
-        account.data().to_vec(),
+        Arc::new(account.data().to_vec()),
         *account.owner(),
         account.executable(),
         account.rent_epoch(),

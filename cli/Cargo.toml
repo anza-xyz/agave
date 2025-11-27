@@ -74,7 +74,7 @@ solana-nonce = "=3.0.0"
 solana-offchain-message = { version = "=3.0.0", features = ["verify"] }
 solana-packet = "=3.0.0"
 solana-program-runtime = { workspace = true }
-solana-pubkey = { version = "=3.0.0", default-features = false }
+solana-pubkey = { version = "=4.0.0", default-features = false }
 solana-pubsub-client = { workspace = true }
 solana-quic-client = { workspace = true }
 solana-remote-wallet = { workspace = true }

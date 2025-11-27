@@ -27,7 +27,7 @@ solana-hash = "=3.1.0"
 solana-metrics = { workspace = true }
 solana-native-token = "=3.0.0"
 solana-notifier = { workspace = true }
-solana-pubkey = { version = "=3.0.0", default-features = false }
+solana-pubkey = { version = "=4.0.0", default-features = false }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-version = { workspace = true }

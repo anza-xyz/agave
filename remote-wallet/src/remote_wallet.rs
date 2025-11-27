@@ -5,6 +5,7 @@ use {
         ledger::LedgerWallet,
         ledger_error::LedgerError,
         locator::{Locator, LocatorError, Manufacturer},
+        trezor::TrezorWallet,
     },
     log::*,
     parking_lot::RwLock,
@@ -17,6 +18,7 @@ use {
         time::{Duration, Instant},
     },
     thiserror::Error,
+    trezor_client::{self, error::Error as TrezorClientError},
 };
 
 const HID_GLOBAL_USAGE_PAGE: u16 = 0xFF00;
@@ -55,6 +57,9 @@ pub enum RemoteWalletError {
     #[error("pubkey not found for given address")]
     PubkeyNotFound,
 
+    #[error("trezor error: {0}")]
+    TrezorError(String),
+
     #[error("remote wallet operation rejected by the user")]
     UserCancel,
 
@@ -77,6 +82,7 @@ impl From<RemoteWalletError> for SignerError {
             RemoteWalletError::InvalidDevice => SignerError::Connection(err.to_string()),
             RemoteWalletError::InvalidInput(input) => SignerError::InvalidInput(input),
             RemoteWalletError::LedgerError(e) => SignerError::Protocol(e.to_string()),
+            RemoteWalletError::TrezorError(e) => SignerError::Protocol(e),
             RemoteWalletError::NoDeviceFound => SignerError::NoDeviceFound,
             RemoteWalletError::Protocol(e) => SignerError::Protocol(e.to_string()),
             RemoteWalletError::UserCancel => {
@@ -84,6 +90,12 @@ impl From<RemoteWalletError> for SignerError {
             }
             _ => SignerError::Custom(err.to_string()),
         }
+    }
+}
+
+impl From<TrezorClientError> for RemoteWalletError {
+    fn from(err: TrezorClientError) -> RemoteWalletError {
+        RemoteWalletError::TrezorError(err.to_string())
     }
 }
 
@@ -149,6 +161,23 @@ impl RemoteWalletManager {
             }
         }
 
+        for device in trezor_client::find_devices(false) {
+            let mut trezor = device.connect().expect("connection error");
+            trezor.init_device(None)?;
+            let wallet = TrezorWallet::new(trezor);
+            let pubkey = wallet.get_pubkey(&DerivationPath::default(), false).ok();
+            let locator = Locator {
+                manufacturer: Manufacturer::Trezor,
+                pubkey,
+            };
+            let info = RemoteWalletInfo::parse_locator(locator);
+            let path = info.get_pretty_path();
+            detected_devices.push(Device {
+                path: path.clone(),
+                info,
+                wallet_type: RemoteWalletType::Trezor(Rc::new(wallet)),
+            });
+        }
         let num_curr_devices = detected_devices.len();
         *self.devices.write() = detected_devices;
 
@@ -167,25 +196,18 @@ impl RemoteWalletManager {
     }
 
     /// List connected and acknowledged wallets
-    pub fn list_devices(&self) -> Vec<RemoteWalletInfo> {
-        self.devices.read().iter().map(|d| d.info.clone()).collect()
+    pub fn list_devices(&self) -> Vec<Device> {
+        self.devices.read().iter().cloned().collect()
     }
 
     /// Get a particular wallet
-    #[allow(unreachable_patterns)]
-    pub fn get_ledger(
-        &self,
-        host_device_path: &str,
-    ) -> Result<Rc<LedgerWallet>, RemoteWalletError> {
+    pub fn get_wallet(&self, host_device_path: &str) -> Result<Device, RemoteWalletError> {
         self.devices
             .read()
             .iter()
             .find(|device| device.info.host_device_path == host_device_path)
             .ok_or(RemoteWalletError::PubkeyNotFound)
-            .and_then(|device| match &device.wallet_type {
-                RemoteWalletType::Ledger(ledger) => Ok(ledger.clone()),
-                _ => Err(RemoteWalletError::DeviceTypeMismatch),
-            })
+            .cloned()
     }
 
     /// Get wallet info.
@@ -254,7 +276,7 @@ pub trait RemoteWallet<T> {
 }
 
 /// `RemoteWallet` device
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Device {
     pub(crate) path: String,
     pub(crate) info: RemoteWalletInfo,
@@ -262,9 +284,10 @@ pub struct Device {
 }
 
 /// Remote wallet convenience enum to hold various wallet types
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum RemoteWalletType {
     Ledger(Rc<LedgerWallet>),
+    Trezor(Rc<TrezorWallet>),
 }
 
 /// Remote wallet information.
@@ -369,6 +392,35 @@ mod tests {
             pubkey: Pubkey::default(),
             error: None,
         }));
+
+        let locator = Locator {
+            manufacturer: Manufacturer::Trezor,
+            pubkey: Some(pubkey),
+        };
+        let wallet_info = RemoteWalletInfo::parse_locator(locator);
+        assert!(wallet_info.matches(&RemoteWalletInfo {
+            model: "T".to_string(),
+            manufacturer: Manufacturer::Trezor,
+            serial: "".to_string(),
+            host_device_path: "/host/device/path".to_string(),
+            pubkey,
+            error: None,
+        }));
+
+        // Test that pubkey need not be populated
+        let locator = Locator {
+            manufacturer: Manufacturer::Trezor,
+            pubkey: None,
+        };
+        let wallet_info = RemoteWalletInfo::parse_locator(locator);
+        assert!(wallet_info.matches(&RemoteWalletInfo {
+            model: "T".to_string(),
+            manufacturer: Manufacturer::Trezor,
+            serial: "".to_string(),
+            host_device_path: "/host/device/path".to_string(),
+            pubkey: Pubkey::default(),
+            error: None,
+        }));
     }
 
     #[test]
@@ -400,6 +452,33 @@ mod tests {
         assert!(!info.matches(&test_info));
         test_info.pubkey = pubkey;
         assert!(info.matches(&test_info));
+
+        let info = RemoteWalletInfo {
+            manufacturer: Manufacturer::Trezor,
+            model: "T".to_string(),
+            serial: "".to_string(),
+            host_device_path: "/host/device/path".to_string(),
+            pubkey,
+            error: None,
+        };
+        let mut test_info = RemoteWalletInfo {
+            manufacturer: Manufacturer::Unknown,
+            ..RemoteWalletInfo::default()
+        };
+        assert!(!info.matches(&test_info));
+        test_info.manufacturer = Manufacturer::Trezor;
+        assert!(info.matches(&test_info));
+        test_info.model = "Other".to_string();
+        assert!(info.matches(&test_info));
+        test_info.model = "T".to_string();
+        assert!(info.matches(&test_info));
+        test_info.host_device_path = "/host/device/path".to_string();
+        assert!(info.matches(&test_info));
+        let another_pubkey = solana_pubkey::new_rand();
+        test_info.pubkey = another_pubkey;
+        assert!(!info.matches(&test_info));
+        test_info.pubkey = pubkey;
+        assert!(info.matches(&test_info));
     }
 
     #[test]
@@ -417,6 +496,19 @@ mod tests {
         assert_eq!(
             remote_wallet_info.get_pretty_path(),
             format!("usb://ledger/{pubkey_str}")
+        );
+
+        let remote_wallet_info = RemoteWalletInfo {
+            model: "T".to_string(),
+            manufacturer: Manufacturer::Trezor,
+            serial: "".to_string(),
+            host_device_path: "/host/device/path".to_string(),
+            pubkey,
+            error: None,
+        };
+        assert_eq!(
+            remote_wallet_info.get_pretty_path(),
+            format!("usb://trezor/{pubkey_str}")
         );
     }
 }

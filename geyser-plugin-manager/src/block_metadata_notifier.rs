@@ -8,8 +8,6 @@ use {
     },
     log::*,
     solana_clock::UnixTimestamp,
-    solana_measure::measure::Measure,
-    solana_metrics::*,
     solana_runtime::bank::KeyedRewardsAndNumPartitions,
     solana_transaction_status::{Reward, RewardsAndNumPartitions},
     std::sync::{Arc, RwLock},
@@ -52,7 +50,6 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
         );
 
         for plugin in plugin_manager.plugins.iter() {
-            let mut measure = Measure::start("geyser-plugin-update-slot");
             let block_info = ReplicaBlockInfoVersions::V0_0_4(&block_info);
             match plugin.notify_block_metadata(block_info) {
                 Err(err) => {
@@ -71,13 +68,6 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
                     );
                 }
             }
-            measure.stop();
-            inc_new_counter_debug!(
-                "geyser-plugin-update-block-metadata-us",
-                measure.as_us() as usize,
-                1000,
-                1000
-            );
         }
     }
 }

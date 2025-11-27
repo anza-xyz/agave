@@ -77,8 +77,8 @@ num_enum = { workspace = true }
 prio-graph = { workspace = true }
 qualifier_attr = { workspace = true }
 quinn = { workspace = true }
-rand = { workspace = true }
-rand_chacha = { workspace = true }
+rand = "0.8.5"
+rand_chacha = "0.3.1"
 rayon = { workspace = true }
 rolling-file = { workspace = true }
 rustls = { workspace = true }

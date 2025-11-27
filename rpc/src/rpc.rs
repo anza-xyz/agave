@@ -464,9 +464,7 @@ impl JsonRpcRequestProcessor {
             );
             ClusterInfo::new(contact_info, keypair, socket_addr_space)
         });
-        // QUIC is the default TPU protocol and is used by ConnectionCache
-        // by default (see `DEFAULT_CONNECTION_CACHE_USE_QUIC`).
-        // Therefore, explicitly specifying QUIC here does not change the test behavior.
+
         let my_tpu_address = cluster_info.my_contact_info().tpu(Protocol::QUIC).unwrap();
         let (transaction_sender, transaction_receiver) = unbounded();
 
@@ -480,7 +478,7 @@ impl JsonRpcRequestProcessor {
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
         let client = Client::create_client(Some(runtime.handle().clone()), my_tpu_address, None, 1);
 
-        SendTransactionService::new_with_client(
+        SendTransactionService::new(
             &bank_forks,
             transaction_receiver,
             client,
@@ -4526,7 +4524,7 @@ pub mod tests {
         jsonrpc_core::{futures, ErrorCode, MetaIoHandler, Output, Response, Value},
         jsonrpc_core_client::transports::local,
         serde::de::DeserializeOwned,
-        solana_account::{state_traits::StateMut, Account, WritableAccount},
+        solana_account::{state_traits::StateMut, Account},
         solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         solana_address_lookup_table_interface::{
             self as address_lookup_table,
@@ -4570,8 +4568,7 @@ pub mod tests {
         },
         solana_sdk_ids::bpf_loader_upgradeable,
         solana_send_transaction_service::{
-            tpu_info::NullTpuInfo,
-            transaction_client::{ConnectionCacheClient, TpuClientNextClient},
+            test_utils::CreateClient, transaction_client::TpuClientNextClient,
         },
         solana_sha256_hasher::hash,
         solana_signer::Signer,
@@ -4957,10 +4954,11 @@ pub mod tests {
                     },
                     addresses: Cow::Owned(vec![Pubkey::new_unique()]),
                 };
-                let address_table_data = address_table_state.serialize_for_tests().unwrap();
+                let address_table_data =
+                    Arc::new(address_table_state.serialize_for_tests().unwrap());
                 let min_balance_lamports =
                     bank.get_minimum_balance_for_rent_exemption(address_table_data.len());
-                AccountSharedData::create(
+                AccountSharedData::create_from_existing_shared_data(
                     min_balance_lamports,
                     address_table_data,
                     address_lookup_table::program::id(),
@@ -5076,12 +5074,15 @@ pub mod tests {
         }
     }
 
-    fn rpc_request_processor_new<Client: ClientWithCreator>() {
+    #[test]
+    fn test_rpc_request_processor_new() {
         let bob_pubkey = solana_pubkey::new_rand();
         let genesis = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let meta =
-            JsonRpcRequestProcessor::new_from_bank::<Client>(bank, SocketAddrSpace::Unspecified);
+        let meta = JsonRpcRequestProcessor::new_from_bank::<TpuClientNextClient>(
+            bank,
+            SocketAddrSpace::Unspecified,
+        );
 
         let bank = meta.bank_forks.read().unwrap().root_bank();
         bank.transfer(20, &genesis.mint_keypair, &bob_pubkey)
@@ -5094,23 +5095,15 @@ pub mod tests {
         );
     }
 
-    // we cannot use async tests because the JsonRpcRequestProcessor owns runtime
     #[test]
-    fn test_rpc_request_processor_new_connection_cache() {
-        rpc_request_processor_new::<ConnectionCacheClient<NullTpuInfo>>();
-    }
-
-    #[test]
-    fn test_rpc_request_processor_new_tpu_client_next() {
-        rpc_request_processor_new::<TpuClientNextClient>();
-    }
-
-    fn rpc_get_balance<Client: ClientWithCreator>() {
+    fn test_rpc_get_balance() {
         let genesis = create_genesis_config(20);
         let mint_pubkey = genesis.mint_keypair.pubkey();
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let meta =
-            JsonRpcRequestProcessor::new_from_bank::<Client>(bank, SocketAddrSpace::Unspecified);
+        let meta = JsonRpcRequestProcessor::new_from_bank::<TpuClientNextClient>(
+            bank,
+            SocketAddrSpace::Unspecified,
+        );
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
@@ -5133,21 +5126,14 @@ pub mod tests {
     }
 
     #[test]
-    fn test_rpc_get_balance_new_connection_cache() {
-        rpc_get_balance::<ConnectionCacheClient<NullTpuInfo>>();
-    }
-
-    #[test]
-    fn test_rpc_get_balance_new_tpu_client_next() {
-        rpc_get_balance::<TpuClientNextClient>();
-    }
-
-    fn rpc_get_balance_via_client<Client: ClientWithCreator>() {
+    fn test_rpc_get_balance_via_client() {
         let genesis = create_genesis_config(20);
         let mint_pubkey = genesis.mint_keypair.pubkey();
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let meta =
-            JsonRpcRequestProcessor::new_from_bank::<Client>(bank, SocketAddrSpace::Unspecified);
+        let meta = JsonRpcRequestProcessor::new_from_bank::<TpuClientNextClient>(
+            bank,
+            SocketAddrSpace::Unspecified,
+        );
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
@@ -5169,16 +5155,6 @@ pub mod tests {
         };
         let (response, _) = futures::executor::block_on(fut);
         assert_eq!(response, 20);
-    }
-
-    #[test]
-    fn test_rpc_get_balance_via_client_connection_cache() {
-        rpc_get_balance_via_client::<ConnectionCacheClient<NullTpuInfo>>();
-    }
-
-    #[test]
-    fn test_rpc_get_balance_via_client_tpu_client_next() {
-        rpc_get_balance_via_client::<TpuClientNextClient>();
     }
 
     #[test]
@@ -5275,12 +5251,15 @@ pub mod tests {
         assert_eq!(result, expected);
     }
 
-    fn rpc_get_tx_count<Client: ClientWithCreator>() {
+    #[test]
+    fn test_rpc_get_tx_count() {
         let bob_pubkey = solana_pubkey::new_rand();
         let genesis = create_genesis_config(10);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let meta =
-            JsonRpcRequestProcessor::new_from_bank::<Client>(bank, SocketAddrSpace::Unspecified);
+        let meta = JsonRpcRequestProcessor::new_from_bank::<TpuClientNextClient>(
+            bank,
+            SocketAddrSpace::Unspecified,
+        );
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
@@ -5304,16 +5283,6 @@ pub mod tests {
         let result: Response = serde_json::from_str(&res.expect("actual response"))
             .expect("actual response deserialization");
         assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn test_rpc_get_tx_count_connection_cache() {
-        rpc_get_tx_count::<ConnectionCacheClient<NullTpuInfo>>();
-    }
-
-    #[test]
-    fn test_rpc_get_tx_count_tpu_client_next() {
-        rpc_get_tx_count::<TpuClientNextClient>();
     }
 
     #[test]
@@ -5591,7 +5560,13 @@ pub mod tests {
         let pubkey = Pubkey::new_unique();
         let address = pubkey.to_string();
         let data = vec![1, 2, 3, 4, 5];
-        let account = AccountSharedData::create(42, data.clone(), Pubkey::default(), false, 0);
+        let account = AccountSharedData::create_from_existing_shared_data(
+            42,
+            Arc::new(data.clone()),
+            Pubkey::default(),
+            false,
+            0,
+        );
         bank.store_account(&pubkey, &account);
 
         let request = create_test_request(
@@ -5639,7 +5614,13 @@ pub mod tests {
     fn test_encode_account_does_not_throw_when_slice_larger_than_account() {
         let data = vec![42; 5];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::create(42, data, pubkey, false, 0);
+        let account = AccountSharedData::create_from_existing_shared_data(
+            42,
+            Arc::new(data),
+            pubkey,
+            false,
+            0,
+        );
         let result = encode_account(
             &account,
             &pubkey,
@@ -5656,7 +5637,13 @@ pub mod tests {
     fn test_encode_account_throws_when_data_too_large_to_base58_encode() {
         let data = vec![42; MAX_BASE58_BYTES + 1];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::create(42, data, pubkey, false, 0);
+        let account = AccountSharedData::create_from_existing_shared_data(
+            42,
+            Arc::new(data),
+            pubkey,
+            false,
+            0,
+        );
         let _ = encode_account(&account, &pubkey, UiAccountEncoding::Base58, None).unwrap();
     }
 
@@ -5665,7 +5652,13 @@ pub mod tests {
     ) {
         let data = vec![42; MAX_BASE58_BYTES + 1];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::create(42, data, pubkey, false, 0);
+        let account = AccountSharedData::create_from_existing_shared_data(
+            42,
+            Arc::new(data),
+            pubkey,
+            false,
+            0,
+        );
         let result = encode_account(
             &account,
             &pubkey,
@@ -5683,7 +5676,13 @@ pub mod tests {
     ) {
         let data = vec![42; MAX_BASE58_BYTES];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::create(42, data, pubkey, false, 0);
+        let account = AccountSharedData::create_from_existing_shared_data(
+            42,
+            Arc::new(data),
+            pubkey,
+            false,
+            0,
+        );
         let result = encode_account(
             &account,
             &pubkey,
@@ -5701,7 +5700,13 @@ pub mod tests {
     ) {
         let data = vec![42; MAX_BASE58_BYTES + 1];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::create(42, data, pubkey, false, 0);
+        let account = AccountSharedData::create_from_existing_shared_data(
+            42,
+            Arc::new(data),
+            pubkey,
+            false,
+            0,
+        );
         let result = encode_account(
             &account,
             &pubkey,
@@ -5723,7 +5728,13 @@ pub mod tests {
         let pubkey = Pubkey::new_unique();
         let address = pubkey.to_string();
         let data = vec![1, 2, 3, 4, 5];
-        let account = AccountSharedData::create(42, data.clone(), Pubkey::default(), false, 0);
+        let account = AccountSharedData::create_from_existing_shared_data(
+            42,
+            Arc::new(data.clone()),
+            Pubkey::default(),
+            false,
+            0,
+        );
         bank.store_account(&pubkey, &account);
 
         // Test 3 accounts, one empty, one non-existent, and one with data
@@ -6347,9 +6358,9 @@ pub mod tests {
             },
             &mut mint_data,
         );
-        let account = AccountSharedData::create(
+        let account = AccountSharedData::create_from_existing_shared_data(
             mint_rent_exempt_amount,
-            mint_data.into(),
+            Arc::new(mint_data.into()),
             spl_token_interface::id(),
             false,
             0,
@@ -6375,9 +6386,9 @@ pub mod tests {
             },
             &mut token_account_data,
         );
-        let account = AccountSharedData::create(
+        let account = AccountSharedData::create_from_existing_shared_data(
             token_account_rent_exempt_amount,
-            token_account_data.into(),
+            Arc::new(token_account_data.into()),
             spl_token_interface::id(),
             false,
             0,
@@ -6809,11 +6820,14 @@ pub mod tests {
         assert_eq!(result, expected);
     }
 
-    fn rpc_send_bad_tx<Client: ClientWithCreator>() {
+    #[test]
+    fn test_rpc_send_bad_tx() {
         let genesis = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let meta =
-            JsonRpcRequestProcessor::new_from_bank::<Client>(bank, SocketAddrSpace::Unspecified);
+        let meta = JsonRpcRequestProcessor::new_from_bank::<TpuClientNextClient>(
+            bank,
+            SocketAddrSpace::Unspecified,
+        );
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_full::FullImpl.to_delegate());
@@ -6826,16 +6840,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_rpc_send_bad_tx_connection_cache() {
-        rpc_send_bad_tx::<ConnectionCacheClient<NullTpuInfo>>();
-    }
-
-    #[test]
-    fn test_rpc_send_bad_tx_tpu_client_next() {
-        rpc_send_bad_tx::<TpuClientNextClient>();
-    }
-
-    fn rpc_send_transaction_preflight<Client: ClientWithCreator>() {
+    fn test_rpc_send_transaction_preflight() {
         let exit = Arc::new(AtomicBool::new(false));
         let validator_exit = create_validator_exit(exit.clone());
         let ledger_path = get_tmp_ledger_path!();
@@ -6890,12 +6895,13 @@ pub mod tests {
             runtime.clone(),
         );
 
-        let client = Client::create_client(Some(runtime.handle().clone()), my_tpu_address, None, 1);
-        assert!(
-            client.protocol() == Protocol::QUIC,
-            "UDP is not supported by this test."
+        let client = TpuClientNextClient::create_client(
+            Some(runtime.handle().clone()),
+            my_tpu_address,
+            None,
+            1,
         );
-        SendTransactionService::new_with_client(
+        SendTransactionService::new(
             &bank_forks,
             receiver,
             client,
@@ -7033,16 +7039,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_rpc_send_transaction_preflight_with_connection_cache() {
-        rpc_send_transaction_preflight::<ConnectionCacheClient<NullTpuInfo>>();
-    }
-
-    #[test]
-    fn test_rpc_send_transaction_preflight_with_tpu_client_next() {
-        rpc_send_transaction_preflight::<TpuClientNextClient>();
-    }
-
-    #[test]
     fn test_rpc_verify_filter() {
         let filter = RpcFilterType::Memcmp(Memcmp::new(
             0,                                                                                      // offset
@@ -7162,7 +7158,8 @@ pub mod tests {
         assert_eq!(result, expected);
     }
 
-    fn rpc_processor_get_block_commitment<Client: ClientWithCreator>() {
+    #[test]
+    fn test_rpc_processor_get_block_commitment() {
         let exit = Arc::new(AtomicBool::new(false));
         let validator_exit = create_validator_exit(exit.clone());
         let bank_forks = new_bank_forks().0;
@@ -7196,7 +7193,12 @@ pub mod tests {
             ..
         } = config;
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
-        let client = Client::create_client(Some(runtime.handle().clone()), my_tpu_address, None, 1);
+        let client = TpuClientNextClient::create_client(
+            Some(runtime.handle().clone()),
+            my_tpu_address,
+            None,
+            1,
+        );
         let (request_processor, receiver) = JsonRpcRequestProcessor::new(
             config,
             None,
@@ -7217,7 +7219,7 @@ pub mod tests {
             runtime,
         );
 
-        SendTransactionService::new_with_client(
+        SendTransactionService::new(
             &bank_forks,
             receiver,
             client,
@@ -7250,16 +7252,6 @@ pub mod tests {
                 total_stake: 42,
             }
         );
-    }
-
-    #[test]
-    fn test_rpc_processor_get_block_commitment_with_connection_cache() {
-        rpc_processor_get_block_commitment::<ConnectionCacheClient<NullTpuInfo>>();
-    }
-
-    #[test]
-    fn test_rpc_processor_get_block_commitment_with_tpu_client_next() {
-        rpc_processor_get_block_commitment::<TpuClientNextClient>();
     }
 
     #[test]

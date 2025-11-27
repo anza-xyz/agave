@@ -1825,9 +1825,9 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
 
         test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
 
-        let new_nonce_state = AccountSharedData::create(
+        let new_nonce_state = AccountSharedData::create_from_existing_shared_data(
             LAMPORTS_PER_SOL,
-            vec![0; nonce_size],
+            Arc::new(vec![0; nonce_size]),
             system_program::id(),
             false,
             u64::MAX,
@@ -2082,9 +2082,9 @@ fn simd83_account_deallocate() -> Vec<SvmTestEntry> {
 
         let target = Pubkey::new_unique();
 
-        let mut target_data = AccountSharedData::create(
+        let mut target_data = AccountSharedData::create_from_existing_shared_data(
             Rent::default().minimum_balance(1),
-            vec![0],
+            Arc::new(vec![0]),
             program_id,
             false,
             u64::MAX,
@@ -2306,9 +2306,9 @@ fn simd83_account_reallocate(formalize_loaded_transaction_data_size: bool) -> Ve
     common_test_entry.add_initial_account(fee_payer, &fee_payer_data);
 
     let mk_target = |size| {
-        AccountSharedData::create(
+        AccountSharedData::create_from_existing_shared_data(
             LAMPORTS_PER_SOL * 10,
-            vec![0; size],
+            Arc::new(vec![0; size]),
             program_id,
             false,
             u64::MAX,
@@ -2680,9 +2680,9 @@ fn program_cache_loaderv3_update_tombstone(upgrade_program: bool, invoke_changed
         let mut program_bytecode = load_program(program_name.to_string());
         data.append(&mut program_bytecode);
 
-        let buffer_account = AccountSharedData::create(
+        let buffer_account = AccountSharedData::create_from_existing_shared_data(
             LAMPORTS_PER_SOL,
-            data,
+            Arc::new(data),
             bpf_loader_upgradeable::id(),
             true,
             u64::MAX,
@@ -2788,9 +2788,9 @@ fn program_cache_loaderv3_buffer_swap(invoke_changed_program: bool) {
     let mut program_bytecode = load_program(program_name.to_string());
     buffer_data.append(&mut program_bytecode);
 
-    let buffer_account = AccountSharedData::create(
+    let buffer_account = AccountSharedData::create_from_existing_shared_data(
         LAMPORTS_PER_SOL,
-        buffer_data.clone(),
+        Arc::new(buffer_data.clone()),
         bpf_loader_upgradeable::id(),
         true,
         u64::MAX,
@@ -2803,9 +2803,9 @@ fn program_cache_loaderv3_buffer_swap(invoke_changed_program: bool) {
         programdata_address,
     })
     .unwrap();
-    let program_account = AccountSharedData::create(
+    let program_account = AccountSharedData::create_from_existing_shared_data(
         LAMPORTS_PER_SOL,
-        program_data,
+        Arc::new(program_data),
         bpf_loader_upgradeable::id(),
         true,
         u64::MAX,
@@ -2918,9 +2918,9 @@ fn program_cache_stats() {
         let mut program_bytecode = load_program(program_name.to_string());
         data.append(&mut program_bytecode);
 
-        let buffer_account = AccountSharedData::create(
+        let buffer_account = AccountSharedData::create_from_existing_shared_data(
             LAMPORTS_PER_SOL,
-            data,
+            Arc::new(data),
             bpf_loader_upgradeable::id(),
             true,
             u64::MAX,
@@ -3239,8 +3239,13 @@ fn svm_inspect_nonce_load_failure(
     separate_fee_payer_account.set_lamports(LAMPORTS_PER_SOL);
     let separate_fee_payer_account = separate_fee_payer_account;
 
-    let dummy_account =
-        AccountSharedData::create(1, vec![0; 2], system_program::id(), false, u64::MAX);
+    let dummy_account = AccountSharedData::create_from_existing_shared_data(
+        1,
+        Arc::new(vec![0; 2]),
+        system_program::id(),
+        false,
+        u64::MAX,
+    );
     test_entry.add_initial_account(dummy, &dummy_account);
 
     // we always inspect the nonce at least once
@@ -3350,9 +3355,9 @@ fn svm_inspect_account() {
     expected_inspected_accounts.inspect(recipient, Inspect::DeadWrite);
 
     // system program
-    let system_account = AccountSharedData::create(
+    let system_account = AccountSharedData::create_from_existing_shared_data(
         5000,
-        "system_program".as_bytes().to_vec(),
+        Arc::new("system_program".as_bytes().to_vec()),
         native_loader::id(),
         true,
         0,
@@ -3603,9 +3608,9 @@ mod balance_collector {
         let bob = bob_keypair.pubkey();
         let charlie = charlie_keypair.pubkey();
 
-        let native_state = AccountSharedData::create(
+        let native_state = AccountSharedData::create_from_existing_shared_data(
             STARTING_BALANCE,
-            vec![],
+            Arc::new(vec![]),
             system_program::id(),
             false,
             u64::MAX,
@@ -3619,9 +3624,9 @@ mod balance_collector {
         }
         .pack_into_slice(&mut mint_buf);
 
-        let mint_state = AccountSharedData::create(
+        let mint_state = AccountSharedData::create_from_existing_shared_data(
             LAMPORTS_PER_SOL,
-            mint_buf,
+            Arc::new(mint_buf),
             spl_token_interface::id(),
             false,
             u64::MAX,
@@ -3638,9 +3643,9 @@ mod balance_collector {
         let mut token_buf = vec![0; TokenAccount::get_packed_len()];
         token_account_for_tests().pack_into_slice(&mut token_buf);
 
-        let token_state = AccountSharedData::create(
+        let token_state = AccountSharedData::create_from_existing_shared_data(
             LAMPORTS_PER_SOL,
-            token_buf,
+            Arc::new(token_buf),
             spl_token_interface::id(),
             false,
             u64::MAX,
@@ -3770,9 +3775,9 @@ mod balance_collector {
 
                 token_account.amount = *user_balances.get(&alice).unwrap();
                 token_account.pack_into_slice(&mut token_buf);
-                let final_token_state = AccountSharedData::create(
+                let final_token_state = AccountSharedData::create_from_existing_shared_data(
                     LAMPORTS_PER_SOL,
-                    token_buf.clone(),
+                    Arc::new(token_buf.clone()),
                     spl_token_interface::id(),
                     false,
                     u64::MAX,
@@ -3781,9 +3786,9 @@ mod balance_collector {
 
                 token_account.amount = *user_balances.get(&bob).unwrap();
                 token_account.pack_into_slice(&mut token_buf);
-                let final_token_state = AccountSharedData::create(
+                let final_token_state = AccountSharedData::create_from_existing_shared_data(
                     LAMPORTS_PER_SOL,
-                    token_buf.clone(),
+                    Arc::new(token_buf.clone()),
                     spl_token_interface::id(),
                     false,
                     u64::MAX,
@@ -3792,9 +3797,9 @@ mod balance_collector {
 
                 token_account.amount = *user_balances.get(&charlie).unwrap();
                 token_account.pack_into_slice(&mut token_buf);
-                let final_token_state = AccountSharedData::create(
+                let final_token_state = AccountSharedData::create_from_existing_shared_data(
                     LAMPORTS_PER_SOL,
-                    token_buf.clone(),
+                    Arc::new(token_buf.clone()),
                     spl_token_interface::id(),
                     false,
                     u64::MAX,

@@ -27,8 +27,12 @@ Release channels have their own copy of this changelog:
   * `--accounts-db-read-cache-limit-mb`
   * `--accounts-hash-cache-path`
   * `--disable-accounts-disk-index`
+  * `--dev-halt-at-slot`
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
+### CLI
+#### Changes
+* Support Trezor hardware wallets using `usb://trezor`
 
 ## 3.1.0
 ### RPC
@@ -48,6 +52,7 @@ deprecated, signaling their inclusion in the Agave Unstable API. Enable the
 `agave-unstable-api` crate feature to acknowledge use of an interface that may break
 without warning. From v4.0.0 onward, symbols in these crates will be unavailable without
 `agave-unstable-api` enabled.
+* The `--dev-halt-at-slot` flag is now deprecated.
 
 #### Changes
 * The accounts index is now kept entirely in memory by default.

@@ -8,11 +8,11 @@ use {
         BanksTransactionResultWithSimulation, TransactionConfirmationStatus, TransactionMetadata,
         TransactionSimulationDetails, TransactionStatus,
     },
-    solana_client::connection_cache::ConnectionCache,
     solana_clock::Slot,
     solana_commitment_config::CommitmentLevel,
     solana_hash::Hash,
     solana_message::{Message, SanitizedMessage},
+    solana_net_utils::sockets::{bind_to, localhost_port_range_for_tests},
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{Bank, TransactionSimulationResult},
@@ -23,7 +23,7 @@ use {
     solana_send_transaction_service::{
         send_transaction_service::{Config, SendTransactionService, TransactionInfo},
         tpu_info::NullTpuInfo,
-        transaction_client::ConnectionCacheClient,
+        transaction_client::TpuClientNextClient,
     },
     solana_signature::Signature,
     solana_transaction::{
@@ -32,8 +32,11 @@ use {
     },
     std::{
         io,
-        net::{Ipv4Addr, SocketAddr},
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        net::{IpAddr, Ipv4Addr, SocketAddr},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, RwLock,
+        },
         thread::Builder,
         time::Duration,
     },
@@ -44,8 +47,9 @@ use {
         transport::{self, channel::UnboundedChannel},
         ClientMessage, Response,
     },
-    tokio::time::sleep,
+    tokio::{runtime::Handle, time::sleep},
     tokio_serde::formats::Bincode,
+    tokio_util::sync::CancellationToken,
 };
 
 mod transaction {
@@ -431,13 +435,53 @@ pub async fn start_local_server(
     tokio::spawn(server);
     client_transport
 }
+fn create_client(
+    maybe_runtime: Option<Handle>,
+    my_tpu_address: SocketAddr,
+    exit: Arc<AtomicBool>,
+) -> TpuClientNextClient {
+    let runtime_handle = maybe_runtime.unwrap_or_else(|| {
+        Handle::try_current().expect("runtime handle not provided, and not inside Tokio runtime")
+    });
+    let port_range = localhost_port_range_for_tests();
+    let bind_socket = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.0)
+        .expect("Should be able to open UdpSocket for tests.");
+
+    let cancel = CancellationToken::new();
+    runtime_handle.spawn({
+        let exit = Arc::clone(&exit);
+        let cancel = cancel.clone();
+
+        async move {
+            loop {
+                if exit.load(Ordering::Relaxed) {
+                    cancel.cancel();
+                    break;
+                }
+
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+    });
+
+    let leader_forward_count = 0;
+    TpuClientNextClient::new::<NullTpuInfo>(
+        runtime_handle,
+        my_tpu_address,
+        None,
+        None,
+        leader_forward_count,
+        None,
+        bind_socket,
+        cancel,
+    )
+}
 
 pub async fn start_tcp_server(
     listen_addr: SocketAddr,
     tpu_addr: SocketAddr,
     bank_forks: Arc<RwLock<BankForks>>,
     block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
-    connection_cache: Arc<ConnectionCache>,
     exit: Arc<AtomicBool>,
 ) -> io::Result<()> {
     // Note: These settings are copied straight from the tarpc example.
@@ -458,15 +502,9 @@ pub async fn start_tcp_server(
         .map(move |chan| {
             let (sender, receiver) = unbounded();
 
-            let client = ConnectionCacheClient::<NullTpuInfo>::new(
-                connection_cache.clone(),
-                tpu_addr,
-                None,
-                None,
-                0,
-            );
+            let client = create_client(None, tpu_addr, exit.clone());
 
-            SendTransactionService::new_with_client(
+            SendTransactionService::new(
                 &bank_forks,
                 receiver,
                 client,

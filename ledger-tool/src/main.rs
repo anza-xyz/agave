@@ -134,8 +134,9 @@ fn render_dot(dot: String, output_file: &str, output_format: &str) -> io::Result
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 enum GraphVoteAccountMode {
+    #[default]
     Disabled,
     LastOnly,
     WithHistory,
@@ -160,12 +161,6 @@ impl AsRef<str> for GraphVoteAccountMode {
             Self::LastOnly => Self::LAST_ONLY,
             Self::WithHistory => Self::WITH_HISTORY,
         }
-    }
-}
-
-impl Default for GraphVoteAccountMode {
-    fn default() -> Self {
-        Self::Disabled
     }
 }
 

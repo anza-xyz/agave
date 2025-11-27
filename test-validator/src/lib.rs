@@ -554,7 +554,7 @@ impl TestValidatorGenesis {
             let account = account_info
                 .keyed_account
                 .account
-                .decode::<AccountSharedData>()
+                .to_account_shared_data()
                 .unwrap();
 
             self.add_account(address, account);

@@ -19,19 +19,14 @@ use {
 
 const NUM_LAMPORTS_PER_ACCOUNT_DEFAULT: u64 = solana_native_token::LAMPORTS_PER_SOL;
 
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Default)]
 pub enum ExternalClientType {
     // Submits transactions to an Rpc node using an RpcClient
     RpcClient,
     // Submits transactions directly to leaders using a TpuClient, broadcasting to upcoming leaders
     // via TpuClient default configuration
+    #[default]
     TpuClient,
-}
-
-impl Default for ExternalClientType {
-    fn default() -> Self {
-        Self::TpuClient
-    }
 }
 
 #[derive(Eq, PartialEq, Debug)]

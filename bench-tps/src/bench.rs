@@ -9,7 +9,7 @@ use {
     },
     chrono::Utc,
     log::*,
-    rand::distributions::{Distribution, Uniform},
+    rand::distr::{Distribution, Uniform},
     rayon::prelude::*,
     solana_account::Account,
     solana_client::nonce_utils,
@@ -583,8 +583,9 @@ fn generate_system_txs(
     if let Some(compute_unit_price) = compute_unit_price {
         let compute_unit_prices = match compute_unit_price {
             ComputeUnitPrice::Random => {
-                let mut rng = rand::thread_rng();
-                let range = Uniform::from(0..MAX_RANDOM_COMPUTE_UNIT_PRICE);
+                let mut rng = rand::rng();
+                let range = Uniform::try_from(0..MAX_RANDOM_COMPUTE_UNIT_PRICE)
+                    .expect("ok for non-empty range");
                 (0..pairs.len())
                     .map(|_| {
                         range

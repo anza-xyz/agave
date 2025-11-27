@@ -3529,7 +3529,7 @@ impl RpcClient {
             .map(|response| Response {
                 context: response.context,
                 value: response.value.map(|ui_account| {
-                    ui_account.decode().expect(
+                    ui_account.to_account().expect(
                         "It should be impossible at this point for the account data not to be \
                          decodable. Ensure that the account was fetched using a binary encoding.",
                     )
@@ -3566,7 +3566,7 @@ impl RpcClient {
                     value: rpc_account,
                 } = serde_json::from_value::<Response<Option<UiAccount>>>(result_json)?;
                 trace!("Response account {pubkey:?} {rpc_account:?}");
-                let account = rpc_account.and_then(|rpc_account| rpc_account.decode());
+                let account = rpc_account.and_then(|rpc_account| rpc_account.to_account());
 
                 Ok(Response {
                     context,
@@ -3804,7 +3804,7 @@ impl RpcClient {
                 .into_iter()
                 .map(|ui_account| {
                     ui_account.map(|ui_account| {
-                        ui_account.decode().expect(
+                        ui_account.to_account().expect(
                             "It should be impossible at this point for the account data not to be \
                              decodable. Ensure that the account was fetched using a binary \
                              encoding.",
@@ -3840,7 +3840,7 @@ impl RpcClient {
             } = serde_json::from_value::<Response<Vec<Option<UiAccount>>>>(response)?;
             let accounts: Vec<Option<Account>> = accounts
                 .into_iter()
-                .map(|rpc_account| rpc_account.and_then(|a| a.decode()))
+                .map(|rpc_account| rpc_account.and_then(|a| a.to_account()))
                 .collect();
             Ok(Response {
                 context,
@@ -4108,7 +4108,7 @@ impl RpcClient {
                 .map(|(pubkey, ui_account)| {
                     (
                         pubkey,
-                        ui_account.decode().expect(
+                        ui_account.to_account().expect(
                             "It should be impossible at this point for the account data not to be \
                              decodable. Ensure that the account was fetched using a binary \
                              encoding.",
@@ -4916,7 +4916,7 @@ pub(crate) fn parse_keyed_accounts(
         })?;
         pubkey_accounts.push((
             pubkey,
-            account.decode().ok_or_else(|| {
+            account.to_account().ok_or_else(|| {
                 ClientError::new_with_request(
                     RpcError::ParseError("Account from rpc".to_string()).into(),
                     request,

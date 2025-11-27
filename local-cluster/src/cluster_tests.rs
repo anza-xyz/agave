@@ -5,7 +5,7 @@
 use log::*;
 use {
     crate::{cluster::QuicTpuClient, local_cluster::LocalCluster},
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     rayon::{prelude::*, ThreadPool},
     solana_client::connection_cache::ConnectionCache,
     solana_clock::{self as clock, Slot},
@@ -152,7 +152,7 @@ pub fn send_many_transactions(
             .rpc_client()
             .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
             .unwrap();
-        let transfer_amount = thread_rng().gen_range(1..max_tokens_per_transfer);
+        let transfer_amount = rng().random_range(1..max_tokens_per_transfer);
 
         let mut transaction = system_transaction::transfer(
             funding_keypair,

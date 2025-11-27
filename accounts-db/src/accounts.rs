@@ -733,9 +733,9 @@ mod tests {
                 meta: LookupTableMeta::default(),
                 addresses: Cow::Owned(table_addresses.clone()),
             };
-            AccountSharedData::create(
+            AccountSharedData::create_from_existing_shared_data(
                 1,
-                table_state.serialize_for_tests().unwrap(),
+                Arc::new(table_state.serialize_for_tests().unwrap()),
                 address_lookup_table::program::id(),
                 false,
                 0,

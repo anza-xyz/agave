@@ -5,7 +5,7 @@ use {
             quic::{
                 get_connection_stake, update_open_connections_stat, ClientConnectionTracker,
                 ConnectionHandlerError, ConnectionPeerType, ConnectionTable, ConnectionTableKey,
-                ConnectionTableType,
+                ConnectionTableType, MAX_RTT, MIN_RTT,
             },
         },
         quic::{
@@ -14,7 +14,7 @@ use {
         },
         streamer::StakedNodes,
     },
-    quinn::Connection,
+    quinn::{Connection, VarInt},
     solana_net_utils::token_bucket::TokenBucket,
     solana_time_utils as timing,
     std::{
@@ -31,6 +31,10 @@ use {
     },
     tokio_util::sync::CancellationToken,
 };
+
+/// Allow for extra streams "in flight" on top of the nominal
+/// send rate in case of bursty traffic from the sender side.
+const STREAMS_IN_FLIGHT_MARGIN: u32 = 2;
 
 #[derive(Clone)]
 pub struct SimpleQosConfig {
@@ -85,8 +89,18 @@ impl SimpleQos {
     ) -> Result<(Arc<AtomicU64>, CancellationToken, Arc<TokenBucket>), ConnectionHandlerError> {
         let remote_addr = connection.remote_address();
 
+        // this will never overflow u32 for reasonable MAX_RTT
+        let rtt = connection.rtt().clamp(MIN_RTT, MAX_RTT).as_millis() as u32;
+        let max_streams_in_flight = (self.config.max_streams_per_second as u32).saturating_mul(rtt)
+            / 1000
+            * STREAMS_IN_FLIGHT_MARGIN;
+        // for very low values of max_streams_per_second, prevent connections from having zero
+        // streams in flight
+        let max_streams_in_flight = max_streams_in_flight.max(STREAMS_IN_FLIGHT_MARGIN);
+        connection.set_max_concurrent_uni_streams(VarInt::from_u32(max_streams_in_flight));
+
         debug!(
-            "Peer type {:?}, from peer {}",
+            "Peer type {:?}, from peer {}, max_streams {max_streams_in_flight}",
             conn_context.peer_type(),
             remote_addr,
         );
@@ -145,7 +159,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
         let (peer_type, remote_pubkey, _total_stake) =
             get_connection_stake(connection, &self.staked_nodes).map_or(
                 (ConnectionPeerType::Unstaked, None, 0),
-                |(pubkey, stake, total_stake, _max_stake, _min_stake)| {
+                |(pubkey, stake, total_stake)| {
                     (ConnectionPeerType::Staked(stake), Some(pubkey), total_stake)
                 },
             );

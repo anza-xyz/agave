@@ -2467,9 +2467,9 @@ mod tests {
         let mut next_size = 1;
         let mut make_account = |pubkey, owner, executable| {
             let size = next_size;
-            let account = AccountSharedData::create(
+            let account = AccountSharedData::create_from_existing_shared_data(
                 LAMPORTS_PER_SOL,
-                vec![0; size],
+                Arc::new(vec![0; size]),
                 owner,
                 executable,
                 u64::MAX,
@@ -2789,9 +2789,9 @@ mod tests {
 
         // arbitrary accounts
         for _ in 0..128 {
-            let account = AccountSharedData::create(
+            let account = AccountSharedData::create_from_existing_shared_data(
                 1,
-                vec![0; rng.gen_range(0, 128)],
+                Arc::new(vec![0; rng.gen_range(0, 128)]),
                 Pubkey::new_unique(),
                 rng.gen(),
                 u64::MAX,
@@ -2803,9 +2803,9 @@ mod tests {
         let mut fee_payers = vec![];
         for _ in 0..8 {
             let fee_payer = Pubkey::new_unique();
-            let account = AccountSharedData::create(
+            let account = AccountSharedData::create_from_existing_shared_data(
                 LAMPORTS_PER_SOL,
-                vec![0; rng.gen_range(0, 32)],
+                Arc::new(vec![0; rng.gen_range(0, 32)]),
                 system_program::id(),
                 rng.gen(),
                 u64::MAX,
@@ -2820,9 +2820,9 @@ mod tests {
         for loader in PROGRAM_OWNERS {
             for _ in 0..16 {
                 let program_id = Pubkey::new_unique();
-                let mut account = AccountSharedData::create(
+                let mut account = AccountSharedData::create_from_existing_shared_data(
                     1,
-                    vec![0; rng.gen_range(0, 512)],
+                    Arc::new(vec![0; rng.gen_range(0, 512)]),
                     *loader,
                     rng.gen(),
                     u64::MAX,
@@ -2838,13 +2838,14 @@ mod tests {
                     let has_programdata = rng.gen();
 
                     if has_programdata {
-                        let programdata_account = AccountSharedData::create(
-                            1,
-                            vec![0; rng.gen_range(0, 512)],
-                            *loader,
-                            rng.gen(),
-                            u64::MAX,
-                        );
+                        let programdata_account =
+                            AccountSharedData::create_from_existing_shared_data(
+                                1,
+                                Arc::new(vec![0; rng.gen_range(0, 512)]),
+                                *loader,
+                                rng.gen(),
+                                u64::MAX,
+                            );
                         programdata_tracker.insert(
                             program_id,
                             (programdata_address, programdata_account.data().len()),

@@ -3,7 +3,7 @@
 use {
     clap::{crate_description, crate_name, value_t, values_t_or_exit, App, Arg},
     log::*,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     rayon::prelude::*,
     solana_clap_utils::input_parsers::pubkey_of,
     solana_cli::{
@@ -126,7 +126,7 @@ fn make_dos_message(
 ) -> Message {
     let instructions: Vec<_> = (0..num_instructions)
         .map(|_| {
-            let data = [num_program_iterations, thread_rng().gen_range(0..255)];
+            let data = [num_program_iterations, rng().random_range(0..255)];
             Instruction::new_with_bytes(program_id, &data, account_metas.to_vec())
         })
         .collect();

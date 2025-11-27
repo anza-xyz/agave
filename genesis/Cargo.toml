@@ -53,7 +53,7 @@ solana-ledger = { workspace = true }
 solana-loader-v3-interface = "6.1.0"
 solana-native-token = "=3.0.0"
 solana-poh-config = "=3.0.0"
-solana-pubkey = { version = "=3.0.0", default-features = false }
+solana-pubkey = { version = "=4.0.0", default-features = false }
 solana-rent = "=3.0.0"
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
