@@ -8,3 +8,6 @@ pub mod sysvar_cache;
 
 #[cfg(feature = "fuzz")]
 pub mod fuzz;
+
+#[cfg(feature = "fuzz")]
+pub mod elf_loader;
