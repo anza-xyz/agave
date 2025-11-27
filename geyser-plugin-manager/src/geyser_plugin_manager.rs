@@ -469,12 +469,12 @@ pub(crate) fn load_plugin_from_config(
 ) -> Result<(LoadedGeyserPlugin, &str), GeyserPluginManagerError> {
     if geyser_plugin_config_file.ends_with(TESTPLUGIN_CONFIG) {
         Ok(tests::dummy_plugin_and_library(
-            tests::TestPlugin,
+            tests::TestPlugin::default(),
             TESTPLUGIN_CONFIG,
         ))
     } else if geyser_plugin_config_file.ends_with(TESTPLUGIN2_CONFIG) {
         Ok(tests::dummy_plugin_and_library(
-            tests::TestPlugin2,
+            tests::TestPlugin2::default(),
             TESTPLUGIN2_CONFIG,
         ))
     } else {
@@ -493,7 +493,10 @@ mod tests {
         agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin,
         arc_swap::ArcSwap,
         libloading::Library,
-        std::sync::{Arc, RwLock},
+        std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, RwLock,
+        },
     };
 
     pub(super) fn dummy_plugin_and_library<P: GeyserPlugin>(
@@ -514,29 +517,51 @@ mod tests {
     pub(super) const DUMMY_CONFIG: &str = "dummy_config";
     const ANOTHER_DUMMY_NAME: &str = "another_dummy";
 
-    #[derive(Clone, Copy, Debug)]
-    pub(super) struct TestPlugin;
+    #[derive(Clone, Debug, Default)]
+    pub(super) struct TestPlugin {
+        loaded: Arc<AtomicBool>,
+    }
 
     impl GeyserPlugin for TestPlugin {
+        fn on_load(
+            &mut self,
+            _config_file: &str,
+            _is_reload: bool,
+        ) -> agave_geyser_plugin_interface::geyser_plugin_interface::Result<()> {
+            self.loaded.store(true, Ordering::Relaxed);
+            Ok(())
+        }
+
         fn name(&self) -> &'static str {
             DUMMY_NAME
         }
 
         fn on_unload(&mut self) {
-            println!("test plugin 1 unloaded correctly")
+            self.loaded.store(false, Ordering::Relaxed)
         }
     }
 
-    #[derive(Clone, Copy, Debug)]
-    pub(super) struct TestPlugin2;
+    #[derive(Clone, Debug, Default)]
+    pub(super) struct TestPlugin2 {
+        loaded: Arc<AtomicBool>,
+    }
 
     impl GeyserPlugin for TestPlugin2 {
+        fn on_load(
+            &mut self,
+            _config_file: &str,
+            _is_reload: bool,
+        ) -> agave_geyser_plugin_interface::geyser_plugin_interface::Result<()> {
+            self.loaded.store(true, Ordering::Relaxed);
+            Ok(())
+        }
+
         fn name(&self) -> &'static str {
             ANOTHER_DUMMY_NAME
         }
 
         fn on_unload(&mut self) {
-            println!("test plugin 2 unloaded correctly")
+            self.loaded.store(false, Ordering::Relaxed)
         }
     }
 
@@ -554,8 +579,13 @@ mod tests {
         );
 
         // Mock having loaded plugin (TestPlugin)
-        let (mut plugin, config) = dummy_plugin_and_library(TestPlugin, DUMMY_CONFIG);
+        let test_plugin_loaded = Arc::new(AtomicBool::new(false));
+        let test_plugin = TestPlugin {
+            loaded: test_plugin_loaded.clone(),
+        };
+        let (mut plugin, config) = dummy_plugin_and_library(test_plugin, DUMMY_CONFIG);
         plugin.on_load(config, false).unwrap();
+        assert_eq!(true, test_plugin_loaded.load(Ordering::Relaxed));
         let mut new_plugin_manager = (**plugin_manager.load()).clone();
         new_plugin_manager.plugins.push(Arc::new(plugin));
         assert_eq!(new_plugin_manager.plugins[0].name(), DUMMY_NAME);
@@ -575,6 +605,7 @@ mod tests {
         let reload_result =
             GeyserPluginManager::reload_plugin(&plugin_manager, DUMMY_NAME, TESTPLUGIN2_CONFIG);
         assert!(reload_result.is_ok());
+        assert_eq!(false, test_plugin_loaded.load(Ordering::Relaxed));
 
         // The plugin is now replaced with ANOTHER_DUMMY_NAME
         let plugins = plugin_manager.load().list_plugins().unwrap();
@@ -591,11 +622,13 @@ mod tests {
 
         // Load two plugins
         // First
-        let (mut plugin, config) = dummy_plugin_and_library(TestPlugin, TESTPLUGIN_CONFIG);
+        let (mut plugin, config) =
+            dummy_plugin_and_library(TestPlugin::default(), TESTPLUGIN_CONFIG);
         plugin.on_load(config, false).unwrap();
         plugin_manager_lock.plugins.push(Arc::new(plugin));
         // Second
-        let (mut plugin, config) = dummy_plugin_and_library(TestPlugin2, TESTPLUGIN2_CONFIG);
+        let (mut plugin, config) =
+            dummy_plugin_and_library(TestPlugin2::default(), TESTPLUGIN2_CONFIG);
         plugin.on_load(config, false).unwrap();
         plugin_manager_lock.plugins.push(Arc::new(plugin));
 
