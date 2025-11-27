@@ -52,6 +52,7 @@ pub struct SVMFeatureSet {
     pub poseidon_enforce_padding: bool,
     pub fix_alt_bn128_pairing_length_check: bool,
     pub alt_bn128_little_endian: bool,
+    pub relax_fee_payer_constraint: bool,
 }
 
 impl SVMFeatureSet {
@@ -100,6 +101,7 @@ impl SVMFeatureSet {
             poseidon_enforce_padding: true,
             fix_alt_bn128_pairing_length_check: true,
             alt_bn128_little_endian: true,
+            relax_fee_payer_constraint: true,
         }
     }
 }

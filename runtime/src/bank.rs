@@ -3195,6 +3195,16 @@ impl Bank {
                         executed_units,
                         loaded_accounts_data_size,
                     ),
+                    ProcessedTransaction::NoOp(err) => (
+                        vec![],
+                        Err(err),
+                        Some(0),
+                        None,
+                        None,
+                        None,
+                        executed_units,
+                        loaded_accounts_data_size,
+                    ),
                 }
             }
             Err(error) => (vec![], Err(error), None, None, None, None, 0, 0),
@@ -3774,6 +3784,21 @@ impl Bank {
                             .fee_payer()
                             .1
                             .lamports(),
+                    }),
+                    // HANA idk if i like making fee_payer_post_balance 0... maybe could be an Option
+                    // but it affects all the way out to rpc/bigtable so its very annoying and breaking
+                    ProcessedTransaction::NoOp(err) => Ok(CommittedTransaction {
+                        status: Err(err),
+                        log_messages: None,
+                        inner_instructions: None,
+                        return_data: None,
+                        executed_units,
+                        fee_details: FeeDetails::default(),
+                        loaded_account_stats: TransactionLoadedAccountsStats {
+                            loaded_accounts_count: 0,
+                            loaded_accounts_data_size,
+                        },
+                        fee_payer_post_balance: 0,
                     }),
                 }
             })
