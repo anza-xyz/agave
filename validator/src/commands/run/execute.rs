@@ -134,6 +134,141 @@ pub fn execute(
     solana_metrics::set_panic_hook("validator", Some(String::from(solana_version)));
     solana_entry::entry::init_poh();
 
+    let bind_addresses = {
+        let parsed = matches
+            .values_of("bind_address")
+            .expect("bind_address should always be present due to default")
+            .map(solana_net_utils::parse_host)
+            .collect::<Result<Vec<_>, _>>()?;
+        BindIpAddrs::new(parsed).map_err(|err| format!("invalid bind_addresses: {err}"))?
+    };
+
+    let entrypoint_addrs = run_args.entrypoints;
+    for addr in &entrypoint_addrs {
+        if !run_args.socket_addr_space.check(addr) {
+            Err(format!("invalid entrypoint address: {addr}"))?;
+        }
+    }
+
+    let xdp_interface = matches.value_of("retransmit_xdp_interface");
+    let xdp_zero_copy = matches.is_present("retransmit_xdp_zero_copy");
+    let retransmit_xdp = matches.value_of("retransmit_xdp_cpu_cores").map(|cpus| {
+        XdpConfig::new(
+            xdp_interface,
+            parse_cpu_ranges(cpus).unwrap(),
+            xdp_zero_copy,
+        )
+    });
+
+    let dynamic_port_range =
+        solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
+            .expect("invalid dynamic_port_range");
+
+    let advertised_ip = matches
+        .value_of("advertised_ip")
+        .map(|advertised_ip| {
+            solana_net_utils::parse_host(advertised_ip)
+                .map_err(|err| format!("failed to parse --advertised-ip: {err}"))
+        })
+        .transpose()?;
+
+    let advertised_ip = if let Some(cli_ip) = advertised_ip {
+        cli_ip
+    } else if !bind_addresses.active().is_unspecified() && !bind_addresses.active().is_loopback() {
+        bind_addresses.active()
+    } else if !entrypoint_addrs.is_empty() {
+        let mut order: Vec<_> = (0..entrypoint_addrs.len()).collect();
+        order.shuffle(&mut rng());
+
+        order
+            .into_iter()
+            .find_map(|i| {
+                let entrypoint_addr = &entrypoint_addrs[i];
+                info!(
+                    "Contacting {entrypoint_addr} to determine the validator's public IP address"
+                );
+                solana_net_utils::get_public_ip_addr_with_binding(
+                    entrypoint_addr,
+                    bind_addresses.active(),
+                )
+                .map_or_else(
+                    |err| {
+                        warn!("Failed to contact cluster entrypoint {entrypoint_addr}: {err}");
+                        None
+                    },
+                    Some,
+                )
+            })
+            .ok_or_else(|| "unable to determine the validator's public IP address".to_string())?
+    } else {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    };
+    let gossip_port = value_t!(matches, "gossip_port", u16).or_else(|_| {
+        solana_net_utils::find_available_port_in_range(bind_addresses.active(), (0, 1))
+            .map_err(|err| format!("unable to find an available gossip port: {err}"))
+    })?;
+
+    let public_tpu_addr = matches
+        .value_of("public_tpu_addr")
+        .map(|public_tpu_addr| {
+            solana_net_utils::parse_host_port(public_tpu_addr)
+                .map_err(|err| format!("failed to parse --public-tpu-address: {err}"))
+        })
+        .transpose()?;
+
+    let public_tpu_forwards_addr = matches
+        .value_of("public_tpu_forwards_addr")
+        .map(|public_tpu_forwards_addr| {
+            solana_net_utils::parse_host_port(public_tpu_forwards_addr)
+                .map_err(|err| format!("failed to parse --public-tpu-forwards-address: {err}"))
+        })
+        .transpose()?;
+
+    let public_tvu_addr = matches
+        .value_of("public_tvu_addr")
+        .map(|public_tvu_addr| {
+            solana_net_utils::parse_host_port(public_tvu_addr)
+                .map_err(|err| format!("failed to parse --public-tvu-address: {err}"))
+        })
+        .transpose()?;
+
+    if bind_addresses.len() > 1 && public_tvu_addr.is_some() {
+        Err(String::from(
+            "--public-tvu-address can not be used in a multihoming context",
+        ))?;
+    }
+
+    let tpu_vortexor_receiver_address =
+        matches
+            .value_of("tpu_vortexor_receiver_address")
+            .map(|tpu_vortexor_receiver_address| {
+                solana_net_utils::parse_host_port(tpu_vortexor_receiver_address).unwrap_or_else(
+                    |err| {
+                        eprintln!("Failed to parse --tpu-vortexor-receiver-address: {err}");
+                        exit(1);
+                    },
+                )
+            });
+
+    info!("tpu_vortexor_receiver_address is {tpu_vortexor_receiver_address:?}");
+    let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
+
+    let node_config = NodeConfig {
+        advertised_ip,
+        gossip_port,
+        port_range: dynamic_port_range,
+        bind_ip_addrs: bind_addresses.clone(),
+        public_tpu_addr,
+        public_tpu_forwards_addr,
+        public_tvu_addr,
+        num_tvu_receive_sockets: tvu_receive_threads,
+        num_tvu_retransmit_sockets: tvu_retransmit_threads,
+        num_quic_endpoints,
+        vortexor_receiver_addr: tpu_vortexor_receiver_address,
+    };
+
+    let mut node = Node::new_with_external_ip(&identity_keypair.pubkey(), node_config);
+
     solana_core::validator::report_target_features();
 
     let authorized_voter_keypairs = keypairs_of(matches, "authorized_voter_keypairs")
@@ -212,15 +347,6 @@ pub fn execute(
         "--gossip-validator",
     )?;
 
-    let bind_addresses = {
-        let parsed = matches
-            .values_of("bind_address")
-            .expect("bind_address should always be present due to default")
-            .map(solana_net_utils::parse_host)
-            .collect::<Result<Vec<_>, _>>()?;
-        BindIpAddrs::new(parsed).map_err(|err| format!("invalid bind_addresses: {err}"))?
-    };
-
     if bind_addresses.len() > 1 {
         for (flag, msg) in [
             (
@@ -277,12 +403,6 @@ pub fn execute(
     } else {
         AccountShrinkThreshold::IndividualStore { shrink_ratio }
     };
-    let entrypoint_addrs = run_args.entrypoints;
-    for addr in &entrypoint_addrs {
-        if !run_args.socket_addr_space.check(addr) {
-            Err(format!("invalid entrypoint address: {addr}"))?;
-        }
-    }
     // TODO: Once entrypoints are updated to return shred-version, this should
     // abort if it fails to obtain a shred-version, so that nodes always join
     // gossip with a valid shred-version. The code to adopt entrypoint shred
@@ -472,16 +592,6 @@ pub fn execute(
     let starting_with_geyser_plugins: bool = on_start_geyser_plugin_config_files.is_some()
         || matches.is_present("geyser_plugin_always_enabled");
 
-    let xdp_interface = matches.value_of("retransmit_xdp_interface");
-    let xdp_zero_copy = matches.is_present("retransmit_xdp_zero_copy");
-    let retransmit_xdp = matches.value_of("retransmit_xdp_cpu_cores").map(|cpus| {
-        XdpConfig::new(
-            xdp_interface,
-            parse_cpu_ranges(cpus).unwrap(),
-            xdp_zero_copy,
-        )
-    });
-
     let account_paths: Vec<PathBuf> =
         if let Ok(account_paths) = values_t!(matches, "account_paths", String) {
             account_paths
@@ -667,10 +777,6 @@ pub fn execute(
         Keypair::new().pubkey()
     });
 
-    let dynamic_port_range =
-        solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
-            .expect("invalid dynamic_port_range");
-
     let maximum_local_snapshot_age = value_t_or_exit!(matches, "maximum_local_snapshot_age", u64);
     let minimal_snapshot_download_speed =
         value_t_or_exit!(matches, "minimal_snapshot_download_speed", f32);
@@ -745,95 +851,6 @@ pub fn execute(
         },
     );
 
-    let advertised_ip = matches
-        .value_of("advertised_ip")
-        .map(|advertised_ip| {
-            solana_net_utils::parse_host(advertised_ip)
-                .map_err(|err| format!("failed to parse --advertised-ip: {err}"))
-        })
-        .transpose()?;
-
-    let advertised_ip = if let Some(cli_ip) = advertised_ip {
-        cli_ip
-    } else if !bind_addresses.active().is_unspecified() && !bind_addresses.active().is_loopback() {
-        bind_addresses.active()
-    } else if !entrypoint_addrs.is_empty() {
-        let mut order: Vec<_> = (0..entrypoint_addrs.len()).collect();
-        order.shuffle(&mut rng());
-
-        order
-            .into_iter()
-            .find_map(|i| {
-                let entrypoint_addr = &entrypoint_addrs[i];
-                info!(
-                    "Contacting {entrypoint_addr} to determine the validator's public IP address"
-                );
-                solana_net_utils::get_public_ip_addr_with_binding(
-                    entrypoint_addr,
-                    bind_addresses.active(),
-                )
-                .map_or_else(
-                    |err| {
-                        warn!("Failed to contact cluster entrypoint {entrypoint_addr}: {err}");
-                        None
-                    },
-                    Some,
-                )
-            })
-            .ok_or_else(|| "unable to determine the validator's public IP address".to_string())?
-    } else {
-        IpAddr::V4(Ipv4Addr::LOCALHOST)
-    };
-    let gossip_port = value_t!(matches, "gossip_port", u16).or_else(|_| {
-        solana_net_utils::find_available_port_in_range(bind_addresses.active(), (0, 1))
-            .map_err(|err| format!("unable to find an available gossip port: {err}"))
-    })?;
-
-    let public_tpu_addr = matches
-        .value_of("public_tpu_addr")
-        .map(|public_tpu_addr| {
-            solana_net_utils::parse_host_port(public_tpu_addr)
-                .map_err(|err| format!("failed to parse --public-tpu-address: {err}"))
-        })
-        .transpose()?;
-
-    let public_tpu_forwards_addr = matches
-        .value_of("public_tpu_forwards_addr")
-        .map(|public_tpu_forwards_addr| {
-            solana_net_utils::parse_host_port(public_tpu_forwards_addr)
-                .map_err(|err| format!("failed to parse --public-tpu-forwards-address: {err}"))
-        })
-        .transpose()?;
-
-    let public_tvu_addr = matches
-        .value_of("public_tvu_addr")
-        .map(|public_tvu_addr| {
-            solana_net_utils::parse_host_port(public_tvu_addr)
-                .map_err(|err| format!("failed to parse --public-tvu-address: {err}"))
-        })
-        .transpose()?;
-
-    if bind_addresses.len() > 1 && public_tvu_addr.is_some() {
-        Err(String::from(
-            "--public-tvu-address can not be used in a multihoming context",
-        ))?;
-    }
-
-    let tpu_vortexor_receiver_address =
-        matches
-            .value_of("tpu_vortexor_receiver_address")
-            .map(|tpu_vortexor_receiver_address| {
-                solana_net_utils::parse_host_port(tpu_vortexor_receiver_address).unwrap_or_else(
-                    |err| {
-                        eprintln!("Failed to parse --tpu-vortexor-receiver-address: {err}");
-                        exit(1);
-                    },
-                )
-            });
-
-    info!("tpu_vortexor_receiver_address is {tpu_vortexor_receiver_address:?}");
-    let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
-
     let tpu_max_connections_per_peer: Option<u64> = matches
         .value_of("tpu_max_connections_per_peer")
         .and_then(|v| v.parse().ok());
@@ -854,26 +871,10 @@ pub fn execute(
         value_t_or_exit!(matches, "tpu_max_connections_per_ipaddr_per_minute", u64);
     let max_streams_per_ms = value_t_or_exit!(matches, "tpu_max_streams_per_ms", u64);
 
-    let node_config = NodeConfig {
-        advertised_ip,
-        gossip_port,
-        port_range: dynamic_port_range,
-        bind_ip_addrs: bind_addresses,
-        public_tpu_addr,
-        public_tpu_forwards_addr,
-        public_tvu_addr,
-        num_tvu_receive_sockets: tvu_receive_threads,
-        num_tvu_retransmit_sockets: tvu_retransmit_threads,
-        num_quic_endpoints,
-        vortexor_receiver_addr: tpu_vortexor_receiver_address,
-    };
-
     let cluster_entrypoints = entrypoint_addrs
         .iter()
         .map(ContactInfo::new_gossip_entry_point)
         .collect::<Vec<_>>();
-
-    let mut node = Node::new_with_external_ip(&identity_keypair.pubkey(), node_config);
 
     if restricted_repair_only_mode {
         if validator_config.wen_restart_proto_path.is_some() {
