@@ -2,8 +2,8 @@
 
 use {
     self::points::{
-        calculate_stake_points_and_credits, CalculatedStakePoints, InflationPointCalculationEvent,
-        PointValue, SkippedReason,
+        calculate_stake_points_and_credits, CalculatedStakePoints, DelegatedVoteState,
+        InflationPointCalculationEvent, PointValue, SkippedReason,
     },
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
@@ -12,7 +12,6 @@ use {
         stake_history::StakeHistory,
         state::{Stake, StakeStateV2},
     },
-    solana_vote::vote_state_view::VoteStateView,
 };
 
 pub mod points;
@@ -29,11 +28,11 @@ struct CalculatedStakeRewards {
 /// * Stakers reward
 /// * Voters reward
 /// * Updated stake information
-pub fn redeem_rewards(
+pub(crate) fn redeem_rewards(
     rewarded_epoch: Epoch,
     stake_state: &StakeStateV2,
     voter_commission: u8,
-    vote_state: &VoteStateView,
+    vote_state: DelegatedVoteState,
     point_value: &PointValue,
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
@@ -81,7 +80,7 @@ fn redeem_stake_rewards(
     stake: &mut Stake,
     point_value: &PointValue,
     voter_commission: u8,
-    vote_state: &VoteStateView,
+    vote_state: DelegatedVoteState,
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
@@ -130,7 +129,7 @@ fn calculate_stake_rewards(
     stake: &Stake,
     point_value: &PointValue,
     voter_commission: u8,
-    vote_state: &VoteStateView,
+    vote_state: DelegatedVoteState,
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
@@ -304,8 +303,8 @@ mod tests {
                     rewards: 1_000_000_000,
                     points: 1
                 },
-                0, // voter_commission
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -326,8 +325,8 @@ mod tests {
                     rewards: 1,
                     points: 1
                 },
-                0, // voter_commission
-                &VoteStateView::from(vote_state),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -358,8 +357,8 @@ mod tests {
                     rewards: 1_000_000_000,
                     points: 1
                 },
-                0, // voter_commission
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -384,8 +383,8 @@ mod tests {
                     rewards: 2,
                     points: 2 // all his
                 },
-                0, // voter_commission
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -407,8 +406,8 @@ mod tests {
                     rewards: 1,
                     points: 1
                 },
-                0, // voter_commission
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -433,8 +432,8 @@ mod tests {
                     rewards: 2,
                     points: 2
                 },
-                0, // voter_commission
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -457,8 +456,8 @@ mod tests {
                     rewards: 2,
                     points: 2
                 },
-                0, // voter_commission
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -483,8 +482,8 @@ mod tests {
                     rewards: 4,
                     points: 4
                 },
-                0, // voter_commission
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -503,8 +502,8 @@ mod tests {
                     rewards: 4,
                     points: 4
                 },
-                1, // voter_commission
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -520,8 +519,8 @@ mod tests {
                     rewards: 4,
                     points: 4
                 },
-                99, // voter_commission
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -544,8 +543,8 @@ mod tests {
                     rewards: 0,
                     points: 4
                 },
-                99, // voter_commission
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -568,8 +567,8 @@ mod tests {
                     rewards: 0,
                     points: 4
                 },
-                99, // voter_commission
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -584,7 +583,7 @@ mod tests {
             },
             calculate_stake_points_and_credits(
                 &stake,
-                &VoteStateView::from(vote_state.clone()),
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None
@@ -603,7 +602,7 @@ mod tests {
             },
             calculate_stake_points_and_credits(
                 &stake,
-                &VoteStateView::from(vote_state.clone()),
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None
@@ -619,7 +618,7 @@ mod tests {
             },
             calculate_stake_points_and_credits(
                 &stake,
-                &VoteStateView::from(vote_state.clone()),
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None
@@ -643,8 +642,8 @@ mod tests {
                     rewards: 1,
                     points: 1
                 },
-                0, // voter_commission
-                &VoteStateView::from(vote_state.clone()),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -668,8 +667,8 @@ mod tests {
                     rewards: 1,
                     points: 1
                 },
-                0, // voter_commission
-                &VoteStateView::from(vote_state),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -686,13 +685,12 @@ mod tests {
 
         vote_state.increment_credits(0, credits);
 
-        let voter_commission = 0;
         calculate_stake_rewards(
             0,
             &stake,
             &PointValue { rewards, points: 1 },
-            voter_commission,
-            &VoteStateView::from(vote_state.clone()),
+            (vote_state.inflation_rewards_commission_bps / 100) as u8,
+            DelegatedVoteState::from(&vote_state),
             &StakeHistory::default(),
             null_tracer(),
             None,
@@ -713,7 +711,6 @@ mod tests {
         );
 
         // this one can't collect now, credits_observed == vote_state.credits()
-        let voter_commission = 0;
         assert_eq!(
             None,
             calculate_stake_rewards(
@@ -723,8 +720,8 @@ mod tests {
                     rewards: 1_000_000_000,
                     points: 1
                 },
-                voter_commission,
-                &VoteStateView::from(vote_state),
+                (vote_state.inflation_rewards_commission_bps / 100) as u8,
+                DelegatedVoteState::from(&vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,

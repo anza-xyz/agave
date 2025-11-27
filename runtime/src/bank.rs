@@ -1600,6 +1600,33 @@ impl Bank {
             .new_warmup_cooldown_rate_epoch(&self.epoch_schedule)
     }
 
+    /// Get cached vote account state from the past few epochs so that some vote
+    /// state configuration changes are delayed before being used in reward
+    /// calculation.
+    fn get_cached_vote_accounts<'a>(
+        &'a self,
+        rewarded_epoch: Epoch,
+        distribution_epoch_vote_accounts: &'a VoteAccounts,
+    ) -> CachedVoteAccounts<'a> {
+        // Snapshot of vote account state from the beginning of the epoch prior to
+        // the rewarded epoch. This snapshot state is saved a full epoch before
+        // being used to prevent last minute commission rugs.
+        let snapshot_epoch_vote_accounts = self
+            .epoch_stakes(rewarded_epoch)
+            .map(|epoch_stakes| epoch_stakes.stakes().vote_accounts());
+
+        // Vote account state from the beginning of the rewarded epoch.
+        let rewarded_epoch_vote_accounts = self
+            .epoch_stakes(self.epoch())
+            .map(|epoch_stakes| epoch_stakes.stakes().vote_accounts());
+
+        CachedVoteAccounts {
+            snapshot_epoch_vote_accounts,
+            rewarded_epoch_vote_accounts,
+            distribution_epoch_vote_accounts,
+        }
+    }
+
     /// Returns updated stake history and vote accounts that includes new
     /// activated stake from the last epoch.
     fn compute_new_epoch_caches_and_rewards(
@@ -1622,25 +1649,8 @@ impl Bank {
                 &stake_delegations
             ));
 
-        // Snapshot of vote account state from the beginning of the epoch prior to
-        // the rewarded epoch. This snapshot state is saved a full epoch before
-        // being used to prevent last minute commission rugs.
-        let snapshot_epoch_vote_accounts = self
-            .epoch_stakes(rewarded_epoch)
-            .map(|epoch_stakes| epoch_stakes.stakes().vote_accounts());
-
-        // Vote account state from the beginning of the rewarded epoch.
-        let rewarded_epoch_vote_accounts = self
-            .epoch_stakes(self.epoch())
-            .map(|epoch_stakes| epoch_stakes.stakes().vote_accounts());
-
-        let cached_vote_accounts = CachedVoteAccounts {
-            snapshot_epoch_vote_accounts,
-            rewarded_epoch_vote_accounts,
-            distribution_epoch_vote_accounts: &vote_accounts,
-        };
-
         // Apply stake rewards and commission using new snapshots.
+        let cached_vote_accounts = self.get_cached_vote_accounts(rewarded_epoch, &vote_accounts);
         let (rewards_calculation, update_rewards_with_thread_pool_time_us) = measure_us!(self
             .calculate_rewards(
                 &stake_history,

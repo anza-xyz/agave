@@ -12,7 +12,7 @@ use {
             RewardsMetrics, VoteReward, VoteRewards,
         },
         inflation_rewards::{
-            points::{calculate_points, PointValue},
+            points::{calculate_points, DelegatedVoteState, PointValue},
             redeem_rewards,
         },
         stake_account::StakeAccount,
@@ -411,18 +411,6 @@ impl Bank {
         let stake_delegations = stakes.stake_delegations_vec();
         let stake_delegations = self.filter_stake_delegations(stake_delegations);
 
-        // Snapshot of vote account state from the beginning of the epoch prior to
-        // the rewarded epoch. This snapshot state is saved a full epoch before
-        // being used to prevent last minute commission rugs.
-        let snapshot_epoch_vote_accounts = self
-            .epoch_stakes(rewarded_epoch)
-            .map(|epoch_stakes| epoch_stakes.stakes().vote_accounts());
-
-        // Vote account state from the beginning of the rewarded epoch.
-        let rewarded_epoch_vote_accounts = self
-            .epoch_stakes(self.epoch())
-            .map(|epoch_stakes| epoch_stakes.stakes().vote_accounts());
-
         // Vote account state from the end of the rewarded epoch / beginning of the
         // distribution epoch.
         let leader_schedule_epoch = self.epoch_schedule().get_leader_schedule_epoch(self.slot());
@@ -431,15 +419,13 @@ impl Bank {
             .expect("calculation should always run after Bank::update_epoch_stakes()")
             .stakes()
             .vote_accounts();
+        let cached_vote_accounts =
+            self.get_cached_vote_accounts(rewarded_epoch, distribution_epoch_vote_accounts);
 
         EpochRewardCalculateParamInfo {
             stake_history,
             stake_delegations,
-            cached_vote_accounts: CachedVoteAccounts {
-                snapshot_epoch_vote_accounts,
-                rewarded_epoch_vote_accounts,
-                distribution_epoch_vote_accounts,
-            },
+            cached_vote_accounts,
         }
     }
 
@@ -497,7 +483,7 @@ impl Bank {
             rewarded_epoch,
             stake_state,
             commission,
-            vote_state,
+            DelegatedVoteState::from(vote_state),
             point_value,
             stake_history,
             reward_calc_tracer,
@@ -673,7 +659,7 @@ impl Bank {
 
                     calculate_points(
                         stake_account.stake_state(),
-                        vote_account.vote_state_view(),
+                        DelegatedVoteState::from(vote_account.vote_state_view()),
                         stake_history,
                         new_warmup_cooldown_rate_epoch,
                     )
