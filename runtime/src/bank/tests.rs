@@ -12459,7 +12459,7 @@ fn test_parent_block_id() {
     // Setup parent bank and populate block ID.
     let (genesis_config, _mint_keypair) = create_genesis_config(100_000);
     let parent_bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    let parent_block_id = Some(Hash::new_unique());
+    let parent_block_id = Some(SliceRoot::new_unique());
     parent_bank.set_block_id(parent_block_id);
 
     // Create child from parent and ensure parent block ID links back to the

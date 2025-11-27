@@ -457,7 +457,7 @@ impl WindowService {
 mod test {
     use {
         super::*,
-        rand::Rng,
+        agave_votor_messages::slice_root::SliceRoot,
         solana_entry::entry::{create_ticks, Entry},
         solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,
@@ -485,8 +485,7 @@ mod test {
             keypair,
             entries,
             true, // is_last_in_slot
-            // chained_merkle_root
-            Hash::new_from_array(rand::thread_rng().gen()),
+            SliceRoot::new_random(),
             0, // next_shred_index
             0, // next_code_index
             &ReedSolomonCache::default(),

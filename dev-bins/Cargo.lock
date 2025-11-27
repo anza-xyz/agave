@@ -119,6 +119,7 @@ dependencies = [
  "agave-reserved-account-keys",
  "agave-snapshots",
  "agave-syscalls",
+ "agave-votor-messages",
  "assert_cmd",
  "bs58",
  "chrono",
@@ -414,6 +415,7 @@ name = "agave-votor-messages"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
+ "rand 0.9.2",
  "serde",
  "solana-bls-signatures",
  "solana-clock",
@@ -6872,6 +6874,7 @@ dependencies = [
  "agave-transaction-view",
  "agave-verified-packet-receiver",
  "agave-votor",
+ "agave-votor-messages",
  "ahash 0.8.12",
  "anyhow",
  "arc-swap",
@@ -7456,6 +7459,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
+ "agave-votor-messages",
  "arc-swap",
  "arrayvec",
  "assert_matches",
@@ -7664,6 +7668,7 @@ dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
  "agave-snapshots",
+ "agave-votor-messages",
  "anyhow",
  "assert_matches",
  "bincode",
@@ -7829,6 +7834,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-logger",
  "agave-snapshots",
+ "agave-votor-messages",
  "crossbeam-channel",
  "itertools 0.14.0",
  "log",
@@ -9647,6 +9653,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-votor",
+ "agave-votor-messages",
  "agave-xdp",
  "bincode",
  "bytes",

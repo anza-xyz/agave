@@ -1,6 +1,7 @@
 use {
     super::*,
     crate::cluster_nodes::ClusterNodesCache,
+    agave_votor_messages::slice_root::SliceRoot,
     crossbeam_channel::Sender,
     itertools::Itertools,
     solana_entry::entry::Entry,
@@ -37,7 +38,7 @@ pub struct BroadcastDuplicatesConfig {
 pub(super) struct BroadcastDuplicatesRun {
     config: BroadcastDuplicatesConfig,
     current_slot: Slot,
-    chained_merkle_root: Hash,
+    chained_merkle_root: SliceRoot,
     carryover_entry: Option<WorkingBankEntry>,
     next_shred_index: u32,
     next_code_index: u32,
@@ -59,7 +60,7 @@ impl BroadcastDuplicatesRun {
         ));
         Self {
             config,
-            chained_merkle_root: Hash::default(),
+            chained_merkle_root: SliceRoot::default(),
             carryover_entry: None,
             next_shred_index: u32::MAX,
             next_code_index: 0,

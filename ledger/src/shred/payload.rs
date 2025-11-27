@@ -258,7 +258,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use {super::Payload, crate::shred::wire};
+    use {super::Payload, crate::shred::wire, agave_votor_messages::slice_root::SliceRoot};
 
     #[test]
     fn test_guard_write_back() {
@@ -296,7 +296,7 @@ mod test {
                 &keypair,
                 &entries,
                 /*is_last_in_slot:*/ false,
-                Hash::default(),
+                SliceRoot(Hash::default()),
                 0,
                 0,
                 &ReedSolomonCache::default(),

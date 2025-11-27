@@ -785,6 +785,7 @@ pub fn check_feature_activation(feature: &Pubkey, shred_slot: Slot, root_bank: &
 mod tests {
     use {
         super::*,
+        agave_votor_messages::slice_root::SliceRoot,
         itertools::Itertools,
         solana_hash::Hash as SolanaHash,
         solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
@@ -817,7 +818,7 @@ mod tests {
                 &Keypair::new(),
                 &[],
                 true,
-                SolanaHash::default(),
+                SliceRoot(SolanaHash::default()),
                 0,
                 0,
                 &ReedSolomonCache::default(),

@@ -11,8 +11,7 @@ use {
         consensus_pool::stats::ConsensusPoolStats,
         event::VotorEvent,
     },
-    agave_votor_messages::vote::Vote,
-    solana_hash::Hash,
+    agave_votor_messages::{slice_root::SliceRoot, vote::Vote},
     std::collections::BTreeMap,
 };
 
@@ -22,9 +21,9 @@ pub(crate) struct SlotStakeCounters {
     total_stake: Stake,
     skip_total: Stake,
     notarize_total: Stake,
-    notarize_entry_total: BTreeMap<Hash, Stake>,
+    notarize_entry_total: BTreeMap<SliceRoot, Stake>,
     top_notarized_stake: Stake,
-    safe_to_notar_sent: Vec<Hash>,
+    safe_to_notar_sent: Vec<SliceRoot>,
     safe_to_skip_sent: bool,
 }
 
@@ -84,7 +83,7 @@ impl SlotStakeCounters {
         }
     }
 
-    fn is_safe_to_notar(&self, block_id: &Hash, stake: &Stake) -> bool {
+    fn is_safe_to_notar(&self, block_id: &SliceRoot, stake: &Stake) -> bool {
         // White paper v1.1 page 22: The event is only issued if the node voted in slot s already,
         // but not to notarize b. Moreover:
         // notar(b) >= 40% or (skip(s) + notar(b) >= 60% and notar(b) >= 20%)
@@ -151,7 +150,7 @@ mod tests {
 
         // 40% of stake holders voted notarize
         counters.add_vote(
-            &Vote::new_notarization_vote(slot, Hash::default()),
+            &Vote::new_notarization_vote(slot, SliceRoot::default()),
             40,
             false,
             &mut events,
@@ -159,14 +158,14 @@ mod tests {
         );
         assert_eq!(events.len(), 1);
         assert!(
-            matches!(events[0], VotorEvent::SafeToNotar((s, block_id)) if s == slot && block_id == Hash::default())
+            matches!(events[0], VotorEvent::SafeToNotar((s, block_id)) if s == slot && block_id == SliceRoot::default())
         );
         assert_eq!(stats.event_safe_to_notarize, 1);
         events.clear();
 
         // Adding more notarizations does not trigger more events
         counters.add_vote(
-            &Vote::new_notarization_vote(slot, Hash::default()),
+            &Vote::new_notarization_vote(slot, SliceRoot::default()),
             20,
             false,
             &mut events,
@@ -181,7 +180,7 @@ mod tests {
         stats = ConsensusPoolStats::default();
 
         // I voted for notarize b
-        let hash_1 = Hash::new_unique();
+        let hash_1 = SliceRoot::new_unique();
         counters.add_vote(
             &Vote::new_notarization_vote(slot, hash_1),
             1,
@@ -193,7 +192,7 @@ mod tests {
         assert_eq!(stats.event_safe_to_notarize, 0);
 
         // 25% of stake holders voted notarize b'
-        let hash_2 = Hash::new_unique();
+        let hash_2 = SliceRoot::new_unique();
         counters.add_vote(
             &Vote::new_notarization_vote(slot, hash_2),
             25,
@@ -228,7 +227,7 @@ mod tests {
         let slot = 2;
         // I voted for notarize b
         counters.add_vote(
-            &Vote::new_notarization_vote(slot, Hash::default()),
+            &Vote::new_notarization_vote(slot, SliceRoot::default()),
             10,
             true,
             &mut events,
@@ -267,7 +266,7 @@ mod tests {
         stats = ConsensusPoolStats::default();
 
         // I voted for notarize b, 10% of stake holders voted with me
-        let hash_1 = Hash::new_unique();
+        let hash_1 = SliceRoot::new_unique();
         counters.add_vote(
             &Vote::new_notarization_vote(slot, hash_1),
             10,
@@ -276,7 +275,7 @@ mod tests {
             &mut stats,
         );
         // 20% of stake holders voted a different notarization b'
-        let hash_2 = Hash::new_unique();
+        let hash_2 = SliceRoot::new_unique();
         counters.add_vote(
             &Vote::new_notarization_vote(slot, hash_2),
             20,

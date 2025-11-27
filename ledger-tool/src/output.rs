@@ -3,6 +3,7 @@ use {
         error::{LedgerToolError, Result},
         ledger_utils::get_program_ids,
     },
+    agave_votor_messages::slice_root::SliceRoot,
     chrono::{Local, TimeZone},
     itertools::Either,
     pretty_hex::PrettyHex,
@@ -362,8 +363,8 @@ pub struct CliDuplicateShred {
     index: u32,
     shred_type: ShredType,
     version: u16,
-    merkle_root: Option<Hash>,
-    chained_merkle_root: Option<Hash>,
+    merkle_root: Option<SliceRoot>,
+    chained_merkle_root: Option<SliceRoot>,
     last_in_slot: bool,
     #[serde(with = "serde_bytes")]
     payload: Vec<u8>,

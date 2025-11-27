@@ -1,5 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
+    agave_votor_messages::slice_root::SliceRoot,
     solana_clock::Slot,
     solana_entry::entry::Entry,
     solana_hash::Hash,
@@ -53,9 +54,9 @@ fn test_multi_fec_block_coding(is_last_in_slot: bool) {
         &keypair,
         &entries,
         is_last_in_slot,
-        Hash::default(), // chained_merkle_root
-        0,               // next_shred_index
-        0,               // next_code_index
+        SliceRoot::default(),
+        0, // next_shred_index
+        0, // next_code_index
         &reed_solomon_cache,
         &mut ProcessShredsStats::default(),
     );
@@ -201,7 +202,7 @@ fn setup_different_sized_fec_blocks(
     let tx0 = system_transaction::transfer(&keypair0, &keypair1.pubkey(), 1, Hash::default());
     let entry = Entry::new(&Hash::default(), 1, vec![tx0]);
     let merkle_capacity = ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ true).unwrap();
-    let chained_merkle_root = Hash::default();
+    let chained_merkle_root = SliceRoot::default();
 
     assert!(DATA_SHREDS_PER_FEC_BLOCK > 2);
     let num_shreds_per_iter = DATA_SHREDS_PER_FEC_BLOCK;

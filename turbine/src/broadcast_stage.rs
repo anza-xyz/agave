@@ -585,8 +585,8 @@ impl<T> From<tokio::sync::mpsc::error::SendError<T>> for Error {
 pub mod test {
     use {
         super::*,
+        agave_votor_messages::slice_root::SliceRoot,
         crossbeam_channel::unbounded,
-        rand::Rng,
         solana_entry::entry::create_ticks,
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
         solana_hash::Hash,
@@ -627,8 +627,7 @@ pub mod test {
             &Keypair::new(),
             &entries,
             true, // is_last_in_slot
-            // chained_merkle_root
-            Hash::new_from_array(rand::thread_rng().gen()),
+            SliceRoot::new_random(),
             0, // next_shred_index,
             0, // next_code_index
             &ReedSolomonCache::default(),

@@ -317,8 +317,8 @@ pub fn generate_vote_message(
 mod tests {
     use {
         super::*,
+        agave_votor_messages::slice_root::SliceRoot,
         crossbeam_channel::unbounded,
-        solana_hash::Hash,
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
@@ -398,7 +398,7 @@ mod tests {
         .unwrap();
 
         // Generate a normal notarization vote and check it's sent out correctly.
-        let block_id = Hash::new_unique();
+        let block_id = SliceRoot::new_unique();
         let vote_slot = 2;
         let vote = Vote::new_notarization_vote(vote_slot, block_id);
         let result = generate_vote_message(vote, false, &mut voting_context)
@@ -499,7 +499,7 @@ mod tests {
 
         // Wrong identity keypair
         voting_context.identity_keypair = Arc::new(Keypair::new());
-        let vote = Vote::new_notarization_vote(6, Hash::new_unique());
+        let vote = Vote::new_notarization_vote(6, SliceRoot::new_unique());
         assert!(generate_vote_message(vote, true, &mut voting_context)
             .unwrap()
             .is_none());
@@ -525,7 +525,7 @@ mod tests {
 
         // Wrong vote account pubkey
         voting_context.vote_account_pubkey = Pubkey::new_unique();
-        let vote = Vote::new_notarization_vote(7, Hash::new_unique());
+        let vote = Vote::new_notarization_vote(7, SliceRoot::new_unique());
         assert!(generate_vote_message(vote, true, &mut voting_context)
             .unwrap()
             .is_none());
@@ -553,7 +553,7 @@ mod tests {
             validator_keypairs[my_index].vote_keypair.pubkey(),
             Arc::new(BLSKeypair::new()),
         );
-        let vote = Vote::new_notarization_vote(8, Hash::new_unique());
+        let vote = Vote::new_notarization_vote(8, SliceRoot::new_unique());
         assert!(generate_vote_message(vote, true, &mut voting_context)
             .unwrap()
             .is_none());
@@ -573,7 +573,7 @@ mod tests {
             setup_voting_context_and_bank_forks(own_vote_sender, &validator_keypairs, my_index);
 
         // If we try to vote for a slot in the future, we should panic
-        let vote = Vote::new_notarization_vote(1_000_000_000, Hash::new_unique());
+        let vote = Vote::new_notarization_vote(1_000_000_000, SliceRoot::new_unique());
         let _ = generate_vote_message(vote, false, &mut voting_context);
     }
 
@@ -624,7 +624,7 @@ mod tests {
             .root()
             .epoch_schedule()
             .get_first_slot_in_epoch(1);
-        let vote = Vote::new_notarization_vote(first_slot_in_epoch_1, Hash::new_unique());
+        let vote = Vote::new_notarization_vote(first_slot_in_epoch_1, SliceRoot::new_unique());
         assert!(generate_vote_message(vote, false, &mut voting_context)
             .unwrap()
             .is_some());
@@ -635,7 +635,7 @@ mod tests {
             .root()
             .epoch_schedule()
             .get_first_slot_in_epoch(2);
-        let vote = Vote::new_notarization_vote(first_slot_in_epoch_2, Hash::new_unique());
+        let vote = Vote::new_notarization_vote(first_slot_in_epoch_2, SliceRoot::new_unique());
         assert!(generate_vote_message(vote, false, &mut voting_context)
             .unwrap()
             .is_none());
