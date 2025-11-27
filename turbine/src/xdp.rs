@@ -216,23 +216,16 @@ impl XdpRetransmitter {
             let drop_sender = drop_sender.clone();
             let atomic_router = Arc::clone(&atomic_router);
             let config = tx_loop_config.clone();
+            let partial_tx_loop =
+                TxLoopBuilder::new(cpu_id, QueueId(i as u64), config, &dev, move |ip| {
+                    let r = atomic_router.load();
+                    r.route(*ip).ok()
+                });
+            let tx_loop = partial_tx_loop.build();
             threads.push(
                 Builder::new()
                     .name(format!("solRetransmIO{i:02}"))
-                    .spawn(move || {
-                        let partial_tx_loop = TxLoopBuilder::new(
-                            cpu_id,
-                            QueueId(i as u64),
-                            config,
-                            &dev,
-                            move |ip| {
-                                let r = atomic_router.load();
-                                r.route(*ip).ok()
-                            },
-                        );
-                        let tx_loop = partial_tx_loop.build();
-                        tx_loop.run(receiver, drop_sender)
-                    })
+                    .spawn(move || tx_loop.run(receiver, drop_sender))
                     .unwrap(),
             );
         }

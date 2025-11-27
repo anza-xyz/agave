@@ -216,6 +216,9 @@ pub struct PageAlignedMemory {
     len: usize,
 }
 
+/// Safety: a `PageAlignedMemory` instance MUST only be resident in one thread at a time
+unsafe impl Send for PageAlignedMemory {}
+
 impl PageAlignedMemory {
     pub fn alloc(frame_size: usize, frame_count: usize) -> Result<Self, AllocError> {
         Self::alloc_with_page_size(
