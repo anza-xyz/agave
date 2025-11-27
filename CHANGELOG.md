@@ -30,6 +30,9 @@ Release channels have their own copy of this changelog:
   * `--dev-halt-at-slot`
 #### Deprecations
 * Using `mmap` for `--accounts-db-access-storages-method` is now deprecated.
+### CLI
+#### Changes
+* Support Trezor hardware wallets using `usb://trezor`
 
 ## 3.1.0
 ### RPC

@@ -248,9 +248,9 @@ mod test {
             UiAccountData::Binary(_, UiAccountEncoding::Base64Zstd)
         );
 
-        let decoded_account = encoded_account.decode::<Account>().unwrap();
+        let decoded_account = encoded_account.to_account_shared_data().unwrap();
         assert_eq!(decoded_account.data(), &vec![0; 1024]);
-        let decoded_account = encoded_account.decode::<AccountSharedData>().unwrap();
+        let decoded_account = encoded_account.to_account().unwrap();
         assert_eq!(decoded_account.data(), &vec![0; 1024]);
     }
 }

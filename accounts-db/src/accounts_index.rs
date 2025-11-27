@@ -1748,7 +1748,7 @@ pub mod tests {
     use {
         super::{bucket_map_holder::BucketMapHolder, *},
         crate::accounts_index::account_map_entry::AccountMapEntryMeta,
-        solana_account::{AccountSharedData, WritableAccount},
+        solana_account::AccountSharedData,
         solana_pubkey::PUBKEY_BYTES,
         spl_generic_token::{spl_token_ids, token::SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
         std::ops::{
@@ -3124,9 +3124,9 @@ pub mod tests {
                 *slot,
                 &account_key,
                 // Make sure these accounts are added to secondary index
-                &AccountSharedData::create(
+                &AccountSharedData::create_from_existing_shared_data(
                     0,
-                    account_data.to_vec(),
+                    Arc::new(account_data.to_vec()),
                     spl_generic_token::token::id(),
                     false,
                     0,
@@ -3513,7 +3513,13 @@ pub mod tests {
             0,
             0,
             &account_key,
-            &AccountSharedData::create(0, account_data.to_vec(), Pubkey::default(), false, 0),
+            &AccountSharedData::create_from_existing_shared_data(
+                0,
+                Arc::new(account_data.to_vec()),
+                Pubkey::default(),
+                false,
+                0,
+            ),
             &secondary_indexes,
             true,
             &mut ReclaimsSlotList::new(),
@@ -3527,7 +3533,13 @@ pub mod tests {
             0,
             0,
             &account_key,
-            &AccountSharedData::create(0, account_data[1..].to_vec(), *token_id, false, 0),
+            &AccountSharedData::create_from_existing_shared_data(
+                0,
+                Arc::new(account_data[1..].to_vec()),
+                *token_id,
+                false,
+                0,
+            ),
             &secondary_indexes,
             true,
             &mut ReclaimsSlotList::new(),
@@ -3542,7 +3554,13 @@ pub mod tests {
         for _ in 0..2 {
             index.update_secondary_indexes(
                 &account_key,
-                &AccountSharedData::create(0, account_data.to_vec(), *token_id, false, 0),
+                &AccountSharedData::create_from_existing_shared_data(
+                    0,
+                    Arc::new(account_data.to_vec()),
+                    *token_id,
+                    false,
+                    0,
+                ),
                 &secondary_indexes,
             );
             check_secondary_index_mapping_correct(secondary_index, &[index_key], &account_key);
@@ -3560,7 +3578,13 @@ pub mod tests {
         secondary_index.reverse_index.clear();
         index.update_secondary_indexes(
             &account_key,
-            &AccountSharedData::create(0, account_data.to_vec(), *token_id, false, 0),
+            &AccountSharedData::create_from_existing_shared_data(
+                0,
+                Arc::new(account_data.to_vec()),
+                *token_id,
+                false,
+                0,
+            ),
             &secondary_indexes,
         );
         assert!(!secondary_index.index.is_empty());
@@ -3576,7 +3600,13 @@ pub mod tests {
         secondary_index.reverse_index.clear();
         index.update_secondary_indexes(
             &account_key,
-            &AccountSharedData::create(0, account_data.to_vec(), *token_id, false, 0),
+            &AccountSharedData::create_from_existing_shared_data(
+                0,
+                Arc::new(account_data.to_vec()),
+                *token_id,
+                false,
+                0,
+            ),
             &secondary_indexes,
         );
         assert!(!secondary_index.index.is_empty());
@@ -3652,7 +3682,13 @@ pub mod tests {
             slot,
             slot,
             &account_key,
-            &AccountSharedData::create(0, account_data1.to_vec(), *token_id, false, 0),
+            &AccountSharedData::create_from_existing_shared_data(
+                0,
+                Arc::new(account_data1.to_vec()),
+                *token_id,
+                false,
+                0,
+            ),
             secondary_indexes,
             true,
             &mut ReclaimsSlotList::new(),
@@ -3664,7 +3700,13 @@ pub mod tests {
             slot,
             slot,
             &account_key,
-            &AccountSharedData::create(0, account_data2.to_vec(), *token_id, false, 0),
+            &AccountSharedData::create_from_existing_shared_data(
+                0,
+                Arc::new(account_data2.to_vec()),
+                *token_id,
+                false,
+                0,
+            ),
             secondary_indexes,
             true,
             &mut ReclaimsSlotList::new(),
@@ -3684,7 +3726,13 @@ pub mod tests {
             later_slot,
             later_slot,
             &account_key,
-            &AccountSharedData::create(0, account_data1.to_vec(), *token_id, false, 0),
+            &AccountSharedData::create_from_existing_shared_data(
+                0,
+                Arc::new(account_data1.to_vec()),
+                *token_id,
+                false,
+                0,
+            ),
             secondary_indexes,
             true,
             &mut ReclaimsSlotList::new(),

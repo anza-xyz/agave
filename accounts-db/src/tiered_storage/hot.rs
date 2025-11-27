@@ -21,10 +21,10 @@ use {
     bytemuck_derive::{Pod, Zeroable},
     memmap2::{Mmap, MmapOptions},
     modular_bitfield::prelude::*,
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    std::{io::Write, option::Option, path::Path},
+    std::{io::Write, option::Option, path::Path, sync::Arc},
 };
 
 /// When rent is collected from an exempt account, rent_epoch is set to this
@@ -577,11 +577,11 @@ impl HotStorageReader {
         let account_block = self.get_account_block(account_offset, index_offset)?;
 
         let lamports = meta.lamports();
-        let data = meta.account_data(account_block).to_vec();
+        let data = Arc::new(meta.account_data(account_block).to_vec());
         let owner = *self.get_owner_address(meta.owner_offset())?;
         let executable = meta.flags().executable();
         let rent_epoch = meta.final_rent_epoch(account_block);
-        Ok(Some(AccountSharedData::create(
+        Ok(Some(AccountSharedData::create_from_existing_shared_data(
             lamports, data, owner, executable, rent_epoch,
         )))
     }

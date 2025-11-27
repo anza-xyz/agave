@@ -1,4 +1,10 @@
-use {rand0_8_5::Rng, std::num::NonZero};
+use {
+    rand0_8_5::Rng,
+    std::{
+        num::NonZero,
+        ops::{Bound, RangeBounds},
+    },
+};
 
 /// Compatibility uniform range `[0, limit)` sampler for `u64` numbers
 ///
@@ -60,6 +66,36 @@ impl UniformU64Sampler {
     }
 }
 
+/// Sample a random number in `range` using `rng` as generator for random `u64` numbers
+///
+/// This utility exists only to provide compatibility of sampling algorithm with `rand`
+/// library at versions <=0.8.5, it is equivalent to its `rng.gen_range(range)`.
+///
+/// Panics: when `range` is empty.
+pub fn random_u64_range(rng: &mut impl Rng, range: impl RangeBounds<u64>) -> u64 {
+    let start = match range.start_bound() {
+        Bound::Unbounded => 0,
+        Bound::Included(start) => *start,
+        Bound::Excluded(&u64::MAX) => panic!("Cannot generate number in empty range (max..)"),
+        Bound::Excluded(start) => start.wrapping_add(1),
+    };
+    let last = match range.end_bound() {
+        Bound::Unbounded | Bound::Included(&u64::MAX) if start == 0 => return rng.gen(),
+        Bound::Unbounded => u64::MAX,
+        Bound::Included(last) => *last,
+        Bound::Excluded(0) => panic!("Cannot generate number in empty range (..0)"),
+        Bound::Excluded(end) => end.wrapping_sub(1),
+    };
+    let zero_range_end = last
+        .checked_sub(start)
+        .expect("Range must not be empty")
+        .wrapping_add(1);
+    // last - start != u64::MAX after check calculating last above, so +1 won't overflow
+    let zero_range_end = NonZero::new(zero_range_end).unwrap();
+    let sampler = UniformU64Sampler::new_like_trait_sample(zero_range_end);
+    sampler.sample(rng).wrapping_add(start)
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -70,7 +106,7 @@ mod tests {
         },
         rand_chacha0_3_1::ChaChaRng,
         sha2::{Digest, Sha256},
-        std::array,
+        std::{array, ops::Range},
         test_case::test_case,
     };
 
@@ -142,5 +178,58 @@ mod tests {
             hash.update(compat.to_le_bytes());
         });
         assert_eq!(bs58::encode(hash.finalize()).into_string(), expected_hash);
+    }
+
+    #[test_case(0..100, &[95, 2, 28, 92, 17, 78, 72, 72, 21, 65])]
+    #[test_case(4..=100, &[96, 6, 31, 21, 77, 45, 49, 74, 24, 62])]
+    #[test_case(4..101, &[96, 6, 31, 21, 77, 45, 49, 74, 24, 62])]
+    #[test_case(77..=77, &[77, 77, 77, 77, 77, 77, 77, 77, 77, 77])]
+    #[test_case((u64::MAX - 1)..,
+                &[18446744073709551614, 18446744073709551614, 18446744073709551615, 18446744073709551614,
+                  18446744073709551615, 18446744073709551615, 18446744073709551614, 18446744073709551615,
+                  18446744073709551615, 18446744073709551615])]
+    #[test_case((u64::MAX - 1)..=u64::MAX,
+                &[18446744073709551614, 18446744073709551614, 18446744073709551615, 18446744073709551614,
+                  18446744073709551615, 18446744073709551615, 18446744073709551614, 18446744073709551615,
+                  18446744073709551615, 18446744073709551615])]
+    #[test_case(1_000..3_463, &[1704, 2597, 1072, 2152, 2777, 1526, 2619, 3318, 1824, 2749])]
+    #[test_case(.., &[17561962876765024395, 470213581521912695, 5273148429961811548, 17075204616871931816,
+                      3264552321098222474, 11961477208003522799, 543394791199312464, 14422393090876740590,
+                      14002568482199435789, 7891933133259177431])]
+    #[test_case(0..=u64::MAX,
+                &[17561962876765024395, 470213581521912695, 5273148429961811548, 17075204616871931816,
+                  3264552321098222474, 11961477208003522799, 543394791199312464, 14422393090876740590,
+                  14002568482199435789, 7891933133259177431])]
+    fn test_random_range_example(range: impl RangeBounds<u64> + Clone, expected: &[u64]) {
+        let mut rng_compat = ChaChaRng::from_seed(CHACHA_SEED);
+        let result: Vec<u64> = (0..10)
+            .map(|_| random_u64_range(&mut rng_compat, range.clone()))
+            .collect();
+        assert_eq!(result, expected);
+    }
+
+    #[test_case(0..100, "9qrc9Atiwy7f5vYs6UK4fk4WMtRqjLF8Zd8WsG7MFsYX")]
+    #[test_case(1_000..9_999, "6qRfSYk55bPZty3qc3jLaSxASXgDRLaw8AWnXKEhiW6M")]
+    #[test_case(4..4098, "7rKu65HwouY8sr3o7jZrdRPCtGwVXjZDTXsjcKg3VVr")]
+    #[test_case(1_000..20_000_000_000, "J5vwi9DrgXrTNinMQmDw1zSq6ogeUencayoqEn4r64gH")]
+    fn test_random_range_reproducibility(range: Range<u64>, expected_hash: &str) {
+        let mut rng_rand = ChaChaRng::from_seed(CHACHA_SEED);
+        let mut rng_compat = ChaChaRng::from_seed(CHACHA_SEED);
+
+        let mut hash = Sha256::new();
+        (0..10_000).for_each(|i| {
+            let rand = rng_rand.gen_range(range.clone());
+            let compat = random_u64_range(&mut rng_compat, range.clone());
+            assert_eq!(rand, compat, "should be equal at {i}");
+            hash.update(compat.to_le_bytes());
+        });
+        assert_eq!(bs58::encode(hash.finalize()).into_string(), expected_hash);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_random_range_panic_empty() {
+        let mut rng = ChaChaRng::from_seed(CHACHA_SEED);
+        let _ = random_u64_range(&mut rng, 100..100);
     }
 }

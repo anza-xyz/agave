@@ -1,12 +1,12 @@
 use {
     crate::remote_wallet::{
-        RemoteWallet, RemoteWalletError, RemoteWalletInfo, RemoteWalletManager,
+        Device, RemoteWallet, RemoteWalletError, RemoteWalletInfo, RemoteWalletManager,
     },
     console::Emoji,
     dialoguer::{theme::ColorfulTheme, Select},
     semver::Version as FirmwareVersion,
     solana_derivation_path::DerivationPath,
-    std::{fmt, rc::Rc},
+    std::fmt,
 };
 #[cfg(feature = "hidapi")]
 use {
@@ -601,29 +601,24 @@ fn extend_and_serialize_multiple(derivation_paths: &[&DerivationPath]) -> Vec<u8
 }
 
 /// Choose a Ledger wallet based on matching info fields
-pub fn get_ledger_from_info(
+pub fn get_wallet_from_info(
     info: RemoteWalletInfo,
     keypair_name: &str,
     wallet_manager: &RemoteWalletManager,
-) -> Result<Rc<LedgerWallet>, RemoteWalletError> {
+) -> Result<Device, RemoteWalletError> {
     let devices = wallet_manager.list_devices();
-    let mut matches = devices
-        .iter()
-        .filter(|&device_info| device_info.matches(&info));
-    if matches
-        .clone()
-        .all(|device_info| device_info.error.is_some())
-    {
+    let mut matches = devices.iter().filter(|&device| device.info.matches(&info));
+    if matches.clone().all(|device| device.info.error.is_some()) {
         let first_device = matches.next();
         if let Some(device) = first_device {
-            return Err(device.error.clone().unwrap());
+            return Err(device.info.error.clone().unwrap());
         }
     }
     let mut matches: Vec<(String, String)> = matches
-        .filter(|&device_info| device_info.error.is_none())
-        .map(|device_info| {
-            let query_item = format!("{} ({})", device_info.get_pretty_path(), device_info.model,);
-            (device_info.host_device_path.clone(), query_item)
+        .filter(|&device| device.info.error.is_none())
+        .map(|device| {
+            let query_item = format!("{} ({})", device.info.get_pretty_path(), device.info.model,);
+            (device.info.host_device_path.clone(), query_item)
         })
         .collect();
     if matches.is_empty() {
@@ -645,7 +640,7 @@ pub fn get_ledger_from_info(
     } else {
         &host_device_paths[0]
     };
-    wallet_manager.get_ledger(wallet_host_device_path)
+    wallet_manager.get_wallet(wallet_host_device_path)
 }
 
 //
