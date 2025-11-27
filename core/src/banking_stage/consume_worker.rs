@@ -317,6 +317,8 @@ pub(crate) mod external {
             &mut self,
             message: &PackToWorkerMessage,
         ) -> Result<(), ExternalConsumeWorkerError> {
+            let root_bank = self.sharable_banks.root();
+
             // Loop here to avoid exposing internal error to external scheduler.
             // In the vast majority of cases, this will iterate a single time;
             // If we began execution when a slot was still in process, and could
@@ -351,7 +353,7 @@ pub(crate) mod external {
                     )
                 };
                 let (translation_results, transactions, max_ages) =
-                    Self::translate_transaction_batch(&batch, bank);
+                    Self::translate_transaction_batch(&batch, bank, &root_bank);
 
                 let output = self.consumer.process_and_record_aged_transactions(
                     bank,
@@ -619,12 +621,13 @@ pub(crate) mod external {
         /// Translate batch of transactions into usable
         fn translate_transaction_batch(
             batch: &TransactionPtrBatch,
-            bank: &Bank,
+            working_bank: &Bank,
+            root_bank: &Bank,
         ) -> (Vec<Result<(), PacketHandlingError>>, Vec<Tx>, Vec<MaxAge>) {
-            let enable_static_instruction_limit = bank
+            let enable_static_instruction_limit = root_bank
                 .feature_set
                 .is_active(&agave_feature_set::static_instruction_limit::ID);
-            let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
+            let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
 
             let mut translation_results = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
             let mut transactions = Vec::with_capacity(MAX_TRANSACTIONS_PER_MESSAGE);
@@ -632,7 +635,8 @@ pub(crate) mod external {
             for transaction_ptr in batch.iter() {
                 match Self::translate_transaction(
                     transaction_ptr,
-                    bank,
+                    working_bank,
+                    root_bank,
                     enable_static_instruction_limit,
                     transaction_account_lock_limit,
                 ) {
@@ -650,13 +654,15 @@ pub(crate) mod external {
 
         fn translate_transaction(
             transaction_ptr: TransactionPtr,
-            bank: &Bank,
+            working_bank: &Bank,
+            root_bank: &Bank,
             enable_static_instruction_limit: bool,
             transaction_account_lock_limit: usize,
         ) -> Result<(Tx, MaxAge), PacketHandlingError> {
             translate_to_runtime_view(
                 transaction_ptr,
-                bank,
+                working_bank,
+                root_bank,
                 enable_static_instruction_limit,
                 transaction_account_lock_limit,
             )
@@ -664,7 +670,7 @@ pub(crate) mod external {
                 (
                     view,
                     MaxAge {
-                        sanitized_epoch: bank.epoch(),
+                        sanitized_epoch: root_bank.epoch(),
                         alt_invalidation_slot: deactivation_slot,
                     },
                 )
@@ -826,6 +832,7 @@ pub(crate) mod external {
                 .map(|_| {
                     translate_to_runtime_view(
                         &simple_tx[..],
+                        &bank,
                         &bank,
                         true,
                         bank.get_transaction_account_lock_limit(),
