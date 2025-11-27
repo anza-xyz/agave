@@ -145,11 +145,11 @@ impl StakesCache {
     pub(crate) fn activate_epoch(
         &self,
         next_epoch: Epoch,
-        thread_pool: &ThreadPool,
-        new_rate_activation_epoch: Option<Epoch>,
+        stake_history: StakeHistory,
+        vote_accounts: VoteAccounts,
     ) {
         let mut stakes = self.0.write().unwrap();
-        stakes.activate_epoch(next_epoch, thread_pool, new_rate_activation_epoch)
+        stakes.activate_epoch(next_epoch, stake_history, vote_accounts)
     }
 }
 
@@ -282,40 +282,55 @@ impl Stakes<StakeAccount> {
         &self.stake_history
     }
 
-    fn activate_epoch(
-        &mut self,
+    pub(crate) fn calculate_activated_stake(
+        &self,
         next_epoch: Epoch,
         thread_pool: &ThreadPool,
         new_rate_activation_epoch: Option<Epoch>,
-    ) {
-        let stake_delegations: Vec<_> = self.stake_delegations.values().collect();
+        stake_delegations: &[(&Pubkey, &StakeAccount)],
+    ) -> (StakeHistory, VoteAccounts) {
         // Wrap up the prev epoch by adding new stake history entry for the
         // prev epoch.
         let stake_history_entry = thread_pool.install(|| {
             stake_delegations
                 .par_iter()
-                .fold(StakeActivationStatus::default, |acc, stake_account| {
-                    let delegation = stake_account.delegation();
-                    acc + delegation.stake_activating_and_deactivating(
-                        self.epoch,
-                        &self.stake_history,
-                        new_rate_activation_epoch,
-                    )
-                })
+                .fold(
+                    StakeActivationStatus::default,
+                    |acc, (_stake_pubkey, stake_account)| {
+                        let delegation = stake_account.delegation();
+                        acc + delegation.stake_activating_and_deactivating(
+                            self.epoch,
+                            &self.stake_history,
+                            new_rate_activation_epoch,
+                        )
+                    },
+                )
                 .reduce(StakeActivationStatus::default, Add::add)
         });
-        self.stake_history.add(self.epoch, stake_history_entry);
-        self.epoch = next_epoch;
+        let mut stake_history = self.stake_history.clone();
+        stake_history.add(self.epoch, stake_history_entry);
         // Refresh the stake distribution of vote accounts for the next epoch,
         // using new stake history.
-        self.vote_accounts = refresh_vote_accounts(
+        let vote_accounts = refresh_vote_accounts(
             thread_pool,
-            self.epoch,
+            next_epoch,
             &self.vote_accounts,
-            &stake_delegations,
-            &self.stake_history,
+            stake_delegations,
+            &stake_history,
             new_rate_activation_epoch,
         );
+        (stake_history, vote_accounts)
+    }
+
+    pub(crate) fn activate_epoch(
+        &mut self,
+        next_epoch: Epoch,
+        stake_history: StakeHistory,
+        vote_accounts: VoteAccounts,
+    ) {
+        self.epoch = next_epoch;
+        self.stake_history = stake_history;
+        self.vote_accounts = vote_accounts;
     }
 
     /// Sum the stakes that point to the given voter_pubkey
@@ -403,8 +418,35 @@ impl Stakes<StakeAccount> {
         }
     }
 
+    /// Returns a reference to the map of stake delegations.
+    ///
+    /// # Performance
+    ///
+    /// `[im::HashMap]` is a [hash array mapped trie (HAMT)][hamt], which means
+    /// that inserts, deletions and lookups are average-case O(1) and
+    /// worst-case O(log n). However, the performance of iterations is poor due
+    /// to depth-first traversal and jumps. Currently it's also impossible to
+    /// iterate over it with [`rayon`].
+    ///
+    /// [hamt]: https://en.wikipedia.org/wiki/Hash_array_mapped_trie
     pub(crate) fn stake_delegations(&self) -> &ImHashMap<Pubkey, StakeAccount> {
         &self.stake_delegations
+    }
+
+    /// Collects stake delegations into a vector, which then can be used for
+    /// parallel iteration with [`rayon`].
+    ///
+    /// # Performance
+    ///
+    /// The execution of this method takes ~200ms and it collects elements of
+    /// the [`im::HashMap`], which is a [hash array mapped trie (HAMT)][hamt],
+    /// so that operation involves a depth-first traversal with jumps. However,
+    /// it's still a reasonable tradeoff if the caller iterates over these
+    /// elements.
+    ///
+    /// [hamt]: https://en.wikipedia.org/wiki/Hash_array_mapped_trie
+    pub(crate) fn stake_delegations_vec(&self) -> Vec<(&Pubkey, &StakeAccount)> {
+        self.stake_delegations.iter().collect()
     }
 
     pub(crate) fn highest_staked_node(&self) -> Option<&Pubkey> {
@@ -477,7 +519,7 @@ fn refresh_vote_accounts(
     thread_pool: &ThreadPool,
     epoch: Epoch,
     vote_accounts: &VoteAccounts,
-    stake_delegations: &[&StakeAccount],
+    stake_delegations: &[(&Pubkey, &StakeAccount)],
     stake_history: &StakeHistory,
     new_rate_activation_epoch: Option<Epoch>,
 ) -> VoteAccounts {
@@ -494,12 +536,15 @@ fn refresh_vote_accounts(
     let delegated_stakes = thread_pool.install(|| {
         stake_delegations
             .par_iter()
-            .fold(HashMap::default, |mut delegated_stakes, stake_account| {
-                let delegation = stake_account.delegation();
-                let entry = delegated_stakes.entry(delegation.voter_pubkey).or_default();
-                *entry += delegation.stake(epoch, stake_history, new_rate_activation_epoch);
-                delegated_stakes
-            })
+            .fold(
+                HashMap::default,
+                |mut delegated_stakes, (_stake_pubkey, stake_account)| {
+                    let delegation = stake_account.delegation();
+                    let entry = delegated_stakes.entry(delegation.voter_pubkey).or_default();
+                    *entry += delegation.stake(epoch, stake_history, new_rate_activation_epoch);
+                    delegated_stakes
+                },
+            )
             .reduce(HashMap::default, merge)
     });
     vote_accounts
@@ -850,7 +895,13 @@ pub(crate) mod tests {
             );
         }
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-        stakes_cache.activate_epoch(3, &thread_pool, None);
+        let next_epoch = 3;
+        let (stake_history, vote_accounts) = {
+            let stakes = stakes_cache.stakes();
+            let stake_delegations = stakes.stake_delegations_vec();
+            stakes.calculate_activated_stake(next_epoch, &thread_pool, None, &stake_delegations)
+        };
+        stakes_cache.activate_epoch(next_epoch, stake_history, vote_accounts);
         {
             let stakes = stakes_cache.stakes();
             let vote_accounts = stakes.vote_accounts();

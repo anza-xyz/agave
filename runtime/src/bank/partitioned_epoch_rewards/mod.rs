@@ -9,6 +9,7 @@ use {
         inflation_rewards::points::PointValue, stake_account::StakeAccount,
         stake_history::StakeHistory,
     },
+    rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
         partitioned_rewards::PartitionedEpochRewardsConfig,
@@ -231,10 +232,48 @@ impl Default for CalculateValidatorRewardsResult {
     }
 }
 
+pub(super) struct FilteredStakeDelegations<'a> {
+    stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
+    min_stake_delegation: Option<u64>,
+}
+
+impl<'a> FilteredStakeDelegations<'a> {
+    pub(super) fn len(&self) -> usize {
+        self.stake_delegations.len()
+    }
+
+    pub(super) fn par_iter(
+        &'a self,
+    ) -> impl IndexedParallelIterator<Item = Option<(&'a Pubkey, &'a StakeAccount<Delegation>)>>
+    {
+        self.stake_delegations
+            .par_iter()
+            // We yield `None` items instead of filtering them out to
+            // keep the number of elements predictable. It's better to
+            // let the callers deal with `None` elements and even store
+            // them in collections (that are allocated once with the
+            // size of `FilteredStakeDelegations::len`) rather than
+            // `collect` yet another time (which would take ~100ms).
+            .map(|(pubkey, stake_account)| {
+                match self.min_stake_delegation {
+                    Some(min_stake_delegation)
+                        if stake_account.delegation().stake < min_stake_delegation =>
+                    {
+                        None
+                    }
+                    _ => {
+                        // Dereference `&&` to `&`.
+                        Some((*pubkey, *stake_account))
+                    }
+                }
+            })
+    }
+}
+
 /// hold reward calc info to avoid recalculation across functions
 pub(super) struct EpochRewardCalculateParamInfo<'a> {
     pub(super) stake_history: StakeHistory,
-    pub(super) stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
+    pub(super) stake_delegations: FilteredStakeDelegations<'a>,
     pub(super) cached_vote_accounts: &'a VoteAccounts,
 }
 
@@ -250,18 +289,6 @@ pub(super) struct PartitionedRewardsCalculation {
     pub(super) prev_epoch_duration_in_years: f64,
     pub(super) capitalization: u64,
     point_value: PointValue,
-}
-
-pub(super) struct CalculateRewardsAndDistributeVoteRewardsResult {
-    /// distributed vote rewards
-    pub(super) distributed_rewards: u64,
-    /// total rewards and points calculated for the current epoch, where points
-    /// equals the sum of (delegated stake * credits observed) for all
-    /// delegations and rewards are the lamports to split across all stake and
-    /// vote accounts
-    pub(super) point_value: PointValue,
-    /// stake rewards that still need to be distributed
-    pub(super) stake_rewards: Arc<PartitionedStakeRewards>,
 }
 
 pub(crate) type StakeRewards = Vec<StakeReward>;
