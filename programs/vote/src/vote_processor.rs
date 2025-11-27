@@ -54,6 +54,15 @@ fn process_authorize_with_seed_instruction(
     )
 }
 
+fn is_bls_pubkey_feature_enabled(invoke_context: &InvokeContext) -> bool {
+    invoke_context
+        .get_feature_set()
+        .bls_pubkey_management_in_vote_account
+    && invoke_context
+        .get_feature_set()
+        .vote_state_v4
+}
+
 // Citing `runtime/src/block_cost_limit.rs`, vote has statically defined 2100
 // units; can consume based on instructions in the future like `bpf_loader` does.
 pub const DEFAULT_COMPUTE_UNITS: u64 = 2_100;
@@ -81,7 +90,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
     match limited_deserialize(data, solana_packet::PACKET_DATA_SIZE as u64)? {
         VoteInstruction::InitializeAccount(vote_init) => {
             // If the BLS pubkey feature is active, reject the instruction
-            if invoke_context.get_feature_set().bls_pubkey_management_in_vote_account {
+            if is_bls_pubkey_feature_enabled(invoke_context) {
                 return Err(InstructionError::InvalidInstructionData);
             }
             let rent =
@@ -103,7 +112,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 vote_authorize,
                 &signers,
                 &clock,
-                invoke_context.get_feature_set().bls_pubkey_management_in_vote_account,
+                is_bls_pubkey_feature_enabled(invoke_context),
             )
         }
         VoteInstruction::AuthorizeWithSeed(args) => {
@@ -117,7 +126,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 args.authorization_type,
                 &args.current_authority_derived_key_owner,
                 args.current_authority_derived_key_seed.as_str(),
-                invoke_context.get_feature_set().bls_pubkey_management_in_vote_account,
+                is_bls_pubkey_feature_enabled(invoke_context),
             )
         }
         VoteInstruction::AuthorizeCheckedWithSeed(args) => {
@@ -135,7 +144,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 args.authorization_type,
                 &args.current_authority_derived_key_owner,
                 args.current_authority_derived_key_seed.as_str(),
-                invoke_context.get_feature_set().bls_pubkey_management_in_vote_account,
+                is_bls_pubkey_feature_enabled(invoke_context),
             )
         }
         VoteInstruction::UpdateValidatorIdentity => {
@@ -255,7 +264,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 vote_authorize,
                 &signers,
                 &clock,
-                invoke_context.get_feature_set().bls_pubkey_management_in_vote_account,
+                is_bls_pubkey_feature_enabled(invoke_context),
             )
         }
         VoteInstruction::InitializeAccountV2(vote_init_v2) => {
