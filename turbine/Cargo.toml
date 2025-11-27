@@ -57,6 +57,7 @@ wincode = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 caps = { workspace = true }
+core_affinity = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { workspace = true }

@@ -11750,6 +11750,7 @@ dependencies = [
  "bincode",
  "bs58",
  "caps",
+ "core_affinity",
  "crossbeam-channel",
  "itertools 0.14.0",
  "lazy-lru",

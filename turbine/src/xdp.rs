@@ -1,5 +1,5 @@
 // re-export since this is needed at validator startup
-pub use agave_xdp::set_cpu_affinity;
+pub use agave_xdp::{get_cpu, set_cpu_affinity};
 #[cfg(target_os = "linux")]
 use {
     agave_xdp::{
@@ -132,9 +132,12 @@ impl XdpRetransmitter {
         src_ip: Option<Ipv4Addr>,
         exit: Arc<AtomicBool>,
     ) -> Result<(Self, XdpSender), Box<dyn Error>> {
-        use caps::{
-            CapSet,
-            Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON},
+        use {
+            caps::{
+                CapSet,
+                Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON},
+            },
+            std::collections::HashSet,
         };
         const DROP_CHANNEL_CAP: usize = 1_000_000;
 
@@ -207,6 +210,17 @@ impl XdpRetransmitter {
         }
         let tx_loop_config = tx_loop_config_builder.build_with_src_device(&dev);
 
+        let reserved_cores = config.cpus.iter().cloned().collect::<HashSet<_>>();
+        let available_cores = core_affinity::get_core_ids()
+            .expect("linux provide affine cores")
+            .into_iter()
+            .map(|core_affinity::CoreId { id }| id)
+            .collect::<HashSet<_>>();
+        let unreserved_cores = available_cores
+            .difference(&reserved_cores)
+            .cloned()
+            .collect::<Vec<_>>();
+
         for (i, (receiver, cpu_id)) in receivers
             .into_iter()
             .zip(config.cpus.into_iter())
@@ -216,16 +230,18 @@ impl XdpRetransmitter {
             let drop_sender = drop_sender.clone();
             let atomic_router = Arc::clone(&atomic_router);
             let config = tx_loop_config.clone();
+            // since we aren't necessarily allocating from the thread that we intend to run on,
+            // temporarily switch to the target cpu for each TxLoop to ensure that the Umem region
+            // is allocated to the correct numa node
+            set_cpu_affinity([cpu_id]).unwrap();
+            let tx_loop_builder = TxLoopBuilder::new(cpu_id, QueueId(i as u64), config, &dev);
+            // migrate main thread back off of the last xdp reserved cpu
+            set_cpu_affinity(unreserved_cores.clone()).unwrap();
+            let tx_loop = tx_loop_builder.build();
             threads.push(
                 Builder::new()
                     .name(format!("solRetransmIO{i:02}"))
                     .spawn(move || {
-                        // each queue is bound to its own CPU core
-                        set_cpu_affinity([cpu_id]).unwrap();
-
-                        let tx_loop_builder =
-                            TxLoopBuilder::new(cpu_id, QueueId(i as u64), config, &dev);
-                        let tx_loop = tx_loop_builder.build();
                         tx_loop.run(receiver, drop_sender, move |ip| {
                             let r = atomic_router.load();
                             r.route(*ip).ok()
