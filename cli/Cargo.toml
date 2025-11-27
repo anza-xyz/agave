@@ -62,7 +62,7 @@ solana-epoch-schedule = "=3.0.0"
 solana-feature-gate-interface = { version = "=3.0.0", features = ["bincode"] }
 solana-fee-calculator = "=3.0.0"
 solana-fee-structure = "=3.0.0"
-solana-hash = "=3.0.0"
+solana-hash = "=3.1.0"
 solana-instruction = "=3.0.0"
 solana-keypair = "=3.0.1"
 solana-loader-v3-interface = { version = "=6.1.0", features = ["bincode"] }
@@ -93,7 +93,7 @@ solana-system-interface = { version = "=2.0", features = ["bincode"] }
 solana-sysvar = "=3.0.0"
 solana-tps-client = { workspace = true }
 solana-tpu-client = { workspace = true, features = ["default"] }
-solana-transaction = "=3.0.1"
+solana-transaction = "=3.0.2"
 solana-transaction-error = "=3.0.0"
 solana-transaction-status = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
