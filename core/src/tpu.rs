@@ -74,8 +74,6 @@ use {
 };
 
 pub struct TpuSockets {
-    pub transactions: Vec<UdpSocket>,
-    pub transaction_forwards: Vec<UdpSocket>,
     pub vote: Vec<UdpSocket>,
     pub broadcast: Vec<UdpSocket>,
     pub transactions_quic: Vec<UdpSocket>,
@@ -168,8 +166,6 @@ impl Tpu {
         cancel: CancellationToken,
     ) -> Self {
         let TpuSockets {
-            transactions: transactions_sockets,
-            transaction_forwards: tpu_forwards_sockets,
             vote: tpu_vote_sockets,
             broadcast: broadcast_sockets,
             transactions_quic: transactions_quic_sockets,
@@ -183,8 +179,8 @@ impl Tpu {
         let (vote_packet_sender, vote_packet_receiver) = unbounded();
         let (forwarded_packet_sender, forwarded_packet_receiver) = unbounded();
         let fetch_stage = FetchStage::new_with_sender(
-            transactions_sockets,
-            tpu_forwards_sockets,
+            vec![],
+            vec![],
             tpu_vote_sockets,
             exit.clone(),
             &packet_sender,
