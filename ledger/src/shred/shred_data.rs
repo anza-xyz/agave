@@ -1,9 +1,10 @@
 use {
     crate::shred::{
         traits::ShredData as ShredDataTrait, Error, ShredFlags, ShredType, ShredVariant,
-        MAX_DATA_SHREDS_PER_SLOT, SIZE_OF_NONCE, SIZE_OF_SIGNATURE,
+        MAX_DATA_SHREDS_PER_SLOT, SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_NONCE, SIZE_OF_SIGNATURE,
     },
     solana_packet::PACKET_DATA_SIZE,
+    static_assertions::const_assert_eq,
 };
 
 #[inline]
@@ -38,16 +39,20 @@ pub(super) fn sanitize<T: ShredDataTrait>(shred: &T) -> Result<(), Error> {
     Ok(())
 }
 
+// ShredData payload size = ShredCode::SIZE_OF_PAYLOAD - SIZE_OF_CODING_SHRED_HEADERS + SIZE_OF_SIGNATURE
+// = (PACKET_DATA_SIZE - SIZE_OF_NONCE) - SIZE_OF_CODING_SHRED_HEADERS + SIZE_OF_SIGNATURE
+const SIZE_OF_PAYLOAD: usize =
+    PACKET_DATA_SIZE - SIZE_OF_NONCE - SIZE_OF_CODING_SHRED_HEADERS + SIZE_OF_SIGNATURE;
+
+// Compile-time assertions to verify the shred payload relationships.
+const_assert_eq!(PACKET_DATA_SIZE - SIZE_OF_NONCE, 1228);
+const_assert_eq!(SIZE_OF_PAYLOAD, 1203);
+
 // Possibly zero pads bytes stored in blockstore.
 pub(crate) fn resize_stored_shred(shred: Vec<u8>) -> Result<Vec<u8>, Error> {
     match crate::shred::layout::get_shred_variant(&shred)? {
         ShredVariant::MerkleCode { .. } => Err(Error::InvalidShredType),
         ShredVariant::MerkleData { .. } => {
-            // ShredData::SIZE_OF_PAYLOAD = ShredCode::SIZE_OF_PAYLOAD - SIZE_OF_CODING_SHRED_HEADERS + SIZE_OF_SIGNATURE
-            // = (PACKET_DATA_SIZE - SIZE_OF_NONCE) - 89 + 64
-            // = 1232 - 4 - 89 + 64 = 1203
-            const SIZE_OF_PAYLOAD: usize =
-                PACKET_DATA_SIZE - SIZE_OF_NONCE - 89 + SIZE_OF_SIGNATURE;
             if shred.len() != SIZE_OF_PAYLOAD {
                 return Err(Error::InvalidPayloadSize(shred.len()));
             }
