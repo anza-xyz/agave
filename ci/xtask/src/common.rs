@@ -109,6 +109,21 @@ pub fn get_current_version() -> Result<String> {
     Ok(version.to_string())
 }
 
+pub fn check_docker_available() -> Result<()> {
+    let output = Command::new("docker")
+        .args(["--version"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run docker command: {e}"))?;
+
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "Failed to run docker command: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use {super::*, pretty_assertions::assert_eq, serial_test::serial, std::collections::HashSet};

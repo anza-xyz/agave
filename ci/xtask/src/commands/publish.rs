@@ -1,12 +1,20 @@
 use {
+    crate::common::{check_docker_available, get_git_root_path},
     anyhow::{anyhow, Result},
     cargo_metadata::{MetadataCommand, PackageId},
     clap::{Args, Subcommand},
+    log::info,
+    scopeguard::defer,
     serde::Serialize,
     std::{
         collections::{HashMap, HashSet},
+        fs,
         path::{Path, PathBuf},
+        process::Command,
+        sync::{Arc, RwLock},
+        thread,
     },
+    toml_edit::{value, DocumentMut},
 };
 
 #[derive(Debug, Clone, clap::ValueEnum)]
@@ -22,6 +30,8 @@ pub enum PublishSubcommand {
         #[arg(long, value_enum, default_value = "json")]
         format: OutputFormat,
     },
+    #[command(about = "Test the publish process")]
+    Test,
 }
 
 #[derive(Args)]
@@ -39,6 +49,9 @@ pub fn run(args: CommandArgs) -> Result<()> {
             OutputFormat::Json => publish_order_json(&args.manifest_path)?,
             OutputFormat::Tree => publish_order_tree(&args.manifest_path)?,
         },
+        PublishSubcommand::Test => {
+            publish_test(&args.manifest_path)?;
+        }
     }
     Ok(())
 }
@@ -103,7 +116,7 @@ pub fn compute_publish_order_data(manifest_path: &str) -> Result<PublishOrderDat
                     if dep.pkg == node.id {
                         continue;
                     }
-                    if let Some(_) = id_to_package_info.get(&dep.pkg) {
+                    if id_to_package_info.contains_key(&dep.pkg) {
                         package_info.dependencies.insert(dep.pkg.clone());
                     }
                 }
@@ -142,7 +155,7 @@ pub fn compute_publish_order_data(manifest_path: &str) -> Result<PublishOrderDat
             id_to_level.insert(package_id, levels.len());
         }
 
-        levels.push(current_level.iter().cloned().collect());
+        levels.push(current_level.to_vec());
 
         // mark the packages in the current level as processed
         for package_id in current_level.iter().cloned() {
@@ -160,8 +173,7 @@ pub fn compute_publish_order_data(manifest_path: &str) -> Result<PublishOrderDat
     }
     if !unprocessed_packages.is_empty() {
         return Err(anyhow!(
-            "Unprocessed packages found: {:?}",
-            unprocessed_packages
+            "Unprocessed packages found: {unprocessed_packages:?}",
         ));
     }
 
@@ -223,7 +235,7 @@ pub fn publish_order_tree(manifest_path: &str) -> Result<()> {
             let package_name = &package_info.name;
             let dependencies = &package_info.dependencies;
 
-            println!("  {}", package_name);
+            println!("  {package_name}");
 
             if !dependencies.is_empty() {
                 // build a map of level -> dependencies
@@ -239,7 +251,7 @@ pub fn publish_order_tree(manifest_path: &str) -> Result<()> {
                             .name;
                         dependencies_by_level
                             .entry(dependency_level)
-                            .or_insert_with(Vec::new)
+                            .or_default()
                             .push(dependency_package_name.clone());
                     }
                 }
@@ -259,6 +271,212 @@ pub fn publish_order_tree(manifest_path: &str) -> Result<()> {
         }
         println!();
     }
+
+    Ok(())
+}
+
+fn write_custom_registry_config() -> Result<()> {
+    let config_file_path = get_git_root_path()?.join(".cargo/config.toml");
+    if !config_file_path.exists() {
+        return Err(anyhow!("file .cargo/config.toml not found"));
+    }
+
+    let content = fs::read_to_string(&config_file_path)
+        .map_err(|e| anyhow!("Failed to read config file: {e}"))?;
+    let mut doc = content
+        .parse::<DocumentMut>()
+        .map_err(|e| anyhow!("Failed to parse config file: {e}"))?;
+
+    let mut credential_provider = toml_edit::Array::new();
+    credential_provider.push("cargo:token");
+
+    doc["registries"]["kellnr"]["index"] = value("sparse+http://127.0.0.1:8000/api/v1/crates/");
+    doc["registries"]["kellnr"]["credential-provider"] = value(credential_provider);
+    doc["registries"]["kellnr"]["token"] = value("Zy9HhJ02RJmg0GCrgLfaCVfU6IwDfhXD");
+
+    fs::write(&config_file_path, doc.to_string())
+        .map_err(|e| anyhow!("Failed to write config file: {e}"))?;
+    Ok(())
+}
+
+fn start_docker_registry() -> Result<String> {
+    let output = Command::new("docker")
+        .args([
+            "run",
+            "-d",
+            "--name",
+            "kellnr",
+            "-p",
+            "8000:8000",
+            "ghcr.io/kellnr/kellnr:5",
+        ])
+        .output()
+        .map_err(|e| anyhow!("Failed to start docker container: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to start docker container: {stderr}"));
+    }
+
+    let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok(container_id)
+}
+
+fn publish_test(manifest_path: &str) -> Result<()> {
+    defer! {
+        let git_root = get_git_root_path().unwrap();
+        info!("🧹 Cleanup: git checkout {:?}", git_root.join(".cargo/config.toml").display());
+        Command::new("git")
+            .args(["checkout", git_root.join(".cargo/config.toml").to_str().unwrap()])
+            .current_dir(git_root)
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to run git checkout: {e}")).unwrap();
+    }
+
+    info!("checking docker");
+    check_docker_available()?;
+
+    info!("writing custom registry config to .cargo/config.toml");
+    write_custom_registry_config()?;
+
+    info!("starting self-hosted kellnr registry");
+    let container_id = start_docker_registry()?;
+    info!("kellnr registry started: {container_id}");
+    defer! {
+        info!("🧹 Cleanup: stopping self-hosted kellnr registry");
+        Command::new("docker")
+            .args(["stop", &container_id])
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to stop docker container: {e}")).unwrap();
+        Command::new("docker")
+            .args(["rm", &container_id])
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to remove docker container: {e}")).unwrap();
+    }
+
+    info!("starting publish process");
+    let publish_order_data = compute_publish_order_data(manifest_path)?;
+    info!("total levels: {}", publish_order_data.levels.len());
+    info!(
+        "total packages: {}",
+        publish_order_data
+            .levels
+            .iter()
+            .map(|level| level.len())
+            .sum::<usize>()
+    );
+    for (level, package_ids) in publish_order_data.levels.iter().enumerate() {
+        info!("publishing level: {}", level.saturating_add(1));
+        info!("publishing {} package(s)", package_ids.len());
+        let mut handles = vec![];
+        for package_id in package_ids.iter() {
+            let package_info = publish_order_data
+                .id_to_package_info
+                .get(package_id)
+                .unwrap();
+
+            let package_name = package_info.name.clone();
+            let package_path = package_info.path.clone();
+
+            info!("  publishing package: {package_name}");
+            let handle = thread::spawn(move || -> Result<String> {
+                publish_package_with_docker(package_name.clone(), &package_path)
+                    .map_err(|e| anyhow!("Failed to publish package {package_name}: {e}"))?;
+                info!("    ✅ {package_name} published");
+                Ok(package_name)
+            });
+            handles.push(handle);
+        }
+
+        // wait for all threads and check for errors
+        let mut errors = vec![];
+        let manifest_lock = Arc::new(RwLock::new(()));
+        for handle in handles {
+            match handle.join() {
+                Ok(result) => {
+                    if let Ok(package_name) = result {
+                        update_workspace_manifest_registry(
+                            manifest_path,
+                            &package_name,
+                            &manifest_lock,
+                        )?;
+                    } else if let Err(e) = result {
+                        errors.push(e);
+                    }
+                }
+                Err(panic_payload) => {
+                    errors.push(anyhow!("Thread panicked: {panic_payload:?}"));
+                }
+            }
+        }
+        if !errors.is_empty() {
+            return Err(anyhow!(
+                "Failed to publish {} package(s) in level {}:\n{}",
+                errors.len(),
+                level.saturating_add(1),
+                errors
+                    .iter()
+                    .map(|e| format!("  - {e}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn publish_package_with_docker(package_name: String, package_path: &Path) -> Result<String> {
+    let git_root = get_git_root_path()?;
+    let relative_package_path = package_path.strip_prefix(&git_root).unwrap_or(package_path);
+    let manifest_path = relative_package_path.join("Cargo.toml");
+    let output = Command::new(git_root.join("ci/docker-run-default-image.sh"))
+        .args([
+            "cargo",
+            "publish",
+            "--manifest-path",
+            &manifest_path.to_string_lossy(),
+            "--registry",
+            "kellnr",
+            "--allow-dirty",
+        ])
+        .current_dir(&git_root)
+        .env("EXTRA_DOCKER_RUN_ARGS", "--network container:kellnr")
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to publish package: {e}"))
+        .unwrap();
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to publish package: {stderr}\n{stdout}"));
+    }
+    Ok(package_name)
+}
+
+fn update_workspace_manifest_registry(
+    manifest_path: &str,
+    package_name: &str,
+    manifest_lock: &RwLock<()>,
+) -> Result<()> {
+    // get the write lock
+    let _lock = manifest_lock
+        .write()
+        .map_err(|e| anyhow::anyhow!("Failed to get write lock: {e}"))?;
+
+    // read the manifest file
+    let content = fs::read_to_string(manifest_path)
+        .map_err(|e| anyhow::anyhow!("Failed to read manifest at {manifest_path}: {e}"))?;
+
+    // parse the toml document
+    let mut doc = content
+        .parse::<DocumentMut>()
+        .map_err(|e| anyhow::anyhow!("Failed to parse TOML: {e}"))?;
+
+    // add kellnr registry to the package
+    doc["workspace"]["dependencies"][package_name]["registry"] = value("kellnr");
+
+    // write back to file
+    fs::write(manifest_path, doc.to_string())
+        .map_err(|e| anyhow::anyhow!("Failed to write manifest: {e}"))?;
 
     Ok(())
 }
