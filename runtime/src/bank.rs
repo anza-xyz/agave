@@ -5375,6 +5375,7 @@ impl Bank {
                 let new_account = AccountSharedData::from(Account {
                     owner: native_loader::ID,
                     executable: true,
+                    data: b"ed25519_program".to_vec(),
                     ..Account::from(account)
                 });
 
