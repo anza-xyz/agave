@@ -5359,6 +5359,29 @@ impl Bank {
             self.update_rent();
         }
 
+        if new_feature_activations
+            .contains(&feature_set::assign_ed25519_precompile_to_native_loader::id())
+        {
+            if let Some(account) = self
+                .get_account_with_fixed_root(&solana_sdk_ids::ed25519_program::id())
+                .and_then(|account| {
+                    if !native_loader::check_id(account.owner()) {
+                        Some(account)
+                    } else {
+                        None
+                    }
+                })
+            {
+                let new_account = AccountSharedData::from(Account {
+                    owner: native_loader::ID,
+                    executable: true,
+                    ..Account::from(account)
+                });
+
+                self.store_account(&solana_sdk_ids::ed25519_program::id(), &new_account);
+            }
+        }
+
         if new_feature_activations.contains(&feature_set::pico_inflation::id()) {
             *self.inflation.write().unwrap() = Inflation::pico();
             self.fee_rate_governor.burn_percent = solana_fee_calculator::DEFAULT_BURN_PERCENT; // 50% fee burn
