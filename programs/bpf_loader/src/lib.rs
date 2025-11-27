@@ -13,6 +13,7 @@
 #[cfg(feature = "svm-internal")]
 use qualifier_attr::qualifiers;
 use {
+    cfg_if::cfg_if,
     solana_bincode::limited_deserialize,
     solana_clock::Slot,
     solana_instruction::{error::InstructionError, AccountMeta},
@@ -1466,10 +1467,17 @@ fn execute<'a, 'b: 'a>(
     let program_id = *instruction_context.get_program_key()?;
     let is_loader_deprecated =
         instruction_context.get_program_owner()? == bpf_loader_deprecated::id();
-    #[cfg(any(target_os = "windows", not(target_arch = "x86_64")))]
-    let use_jit = false;
-    #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
-    let use_jit = executable.get_compiled_program().is_some();
+    cfg_if! {
+        if #[cfg(any(
+            target_os = "windows",
+            not(target_arch = "x86_64"),
+            feature = "sbpf-debugger"
+        ))] {
+            let use_jit = false;
+        } else {
+            let use_jit = executable.get_compiled_program().is_some();
+        }
+    }
     let stricter_abi_and_runtime_constraints = invoke_context
         .get_feature_set()
         .stricter_abi_and_runtime_constraints;
@@ -3888,12 +3896,12 @@ mod tests {
     ) where
         F: Fn(&mut [u8]),
     {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for _ in 0..outer_iters {
             let mut mangled_bytes = bytes.to_vec();
             for _ in 0..inner_iters {
-                let offset = rng.gen_range(offset.start..offset.end);
-                let value = rng.gen_range(value.start..value.end);
+                let offset = rng.random_range(offset.start..offset.end);
+                let value = rng.random_range(value.start..value.end);
                 *mangled_bytes.get_mut(offset).unwrap() = value;
                 work(&mut mangled_bytes);
             }

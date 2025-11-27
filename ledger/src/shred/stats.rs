@@ -15,7 +15,6 @@ pub struct ProcessShredsStats {
     pub serialize_elapsed: u64,
     pub gen_data_elapsed: u64,
     pub gen_coding_elapsed: u64,
-    pub sign_coding_elapsed: u64,
     pub coding_send_elapsed: u64,
     pub get_leader_schedule_elapsed: u64,
     pub coalesce_elapsed: u64,
@@ -74,8 +73,6 @@ impl ProcessShredsStats {
         &mut self,
         name: &'static str,
         slot: Slot,
-        num_data_shreds: u32,
-        num_coding_shreds: u32,
         slot_broadcast_time: Option<Duration>,
     ) {
         let slot_broadcast_time = slot_broadcast_time
@@ -90,14 +87,8 @@ impl ProcessShredsStats {
             ("slot", slot, i64),
             ("shredding_time", self.shredding_elapsed, i64),
             ("receive_time", self.receive_elapsed, i64),
-            ("num_data_shreds", num_data_shreds, i64),
-            ("num_coding_shreds", num_coding_shreds, i64),
-            ("num_merkle_data_shreds", self.num_merkle_data_shreds, i64),
-            (
-                "num_merkle_coding_shreds",
-                self.num_merkle_coding_shreds,
-                i64
-            ),
+            ("num_data_shreds", self.num_merkle_data_shreds, i64),
+            ("num_coding_shreds", self.num_merkle_coding_shreds, i64),
             ("slot_broadcast_time", slot_broadcast_time, i64),
             (
                 "get_leader_schedule_time",
@@ -107,7 +98,6 @@ impl ProcessShredsStats {
             ("serialize_shreds_time", self.serialize_elapsed, i64),
             ("gen_data_time", self.gen_data_elapsed, i64),
             ("gen_coding_time", self.gen_coding_elapsed, i64),
-            ("sign_coding_time", self.sign_coding_elapsed, i64),
             ("coding_send_time", self.coding_send_elapsed, i64),
             ("num_extant_slots", self.num_extant_slots, i64),
             (
@@ -239,7 +229,6 @@ impl AddAssign<ProcessShredsStats> for ProcessShredsStats {
             serialize_elapsed,
             gen_data_elapsed,
             gen_coding_elapsed,
-            sign_coding_elapsed,
             coding_send_elapsed,
             get_leader_schedule_elapsed,
             coalesce_elapsed,
@@ -260,7 +249,6 @@ impl AddAssign<ProcessShredsStats> for ProcessShredsStats {
         self.serialize_elapsed += serialize_elapsed;
         self.gen_data_elapsed += gen_data_elapsed;
         self.gen_coding_elapsed += gen_coding_elapsed;
-        self.sign_coding_elapsed += sign_coding_elapsed;
         self.coding_send_elapsed += coding_send_elapsed;
         self.get_leader_schedule_elapsed += get_leader_schedule_elapsed;
         self.coalesce_elapsed += coalesce_elapsed;

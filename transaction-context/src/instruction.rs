@@ -1,29 +1,93 @@
 use {
     crate::{
-        instruction_accounts::BorrowedInstructionAccount, IndexOfAccount, InstructionAccount,
-        TransactionContext,
+        instruction_accounts::BorrowedInstructionAccount,
+        vm_addresses::{
+            GUEST_INSTRUCTION_ACCOUNTS_ADDRESS, GUEST_INSTRUCTION_DATA_BASE_ADDRESS,
+            GUEST_REGION_SIZE,
+        },
+        vm_slice::VmSlice,
+        IndexOfAccount, InstructionAccount, TransactionContext, MAX_ACCOUNTS_PER_TRANSACTION,
     },
     solana_account::ReadableAccount,
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
-    std::{borrow::Cow, collections::HashSet},
+    std::{collections::HashSet, ops::Range},
 };
 
 /// Instruction shared between runtime and programs.
-#[derive(Debug, Clone, Default)]
-pub struct InstructionFrame<'ix_data> {
+#[repr(C)]
+#[derive(Debug)]
+pub struct InstructionFrame {
     pub nesting_level: usize,
     pub program_account_index_in_tx: IndexOfAccount,
-    pub instruction_accounts: Vec<InstructionAccount>,
-    /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
-    /// Usage: dedup_map[index_in_transaction] = index_in_instruction
-    /// This is a vector of u8s to save memory, since many entries may be unused.
-    pub(crate) dedup_map: Vec<u16>,
-    pub instruction_data: Cow<'ix_data, [u8]>,
+    pub instruction_accounts: VmSlice<InstructionAccount>,
+    pub instruction_data: VmSlice<u8>,
+}
+
+impl Default for InstructionFrame {
+    fn default() -> Self {
+        InstructionFrame {
+            nesting_level: 0,
+            program_account_index_in_tx: 0,
+            // Using u64::MAX as the default pointer value, since it shall never be accessible.
+            instruction_accounts: VmSlice::new(0, 0),
+            instruction_data: VmSlice::new(0, 0),
+        }
+    }
+}
+
+impl InstructionFrame {
+    /// This function retrieves the range to index transaction_context.instruction_accounts
+    pub fn instruction_accounts_range(&self) -> Range<usize> {
+        let first_account_index = self
+            .instruction_accounts
+            .ptr()
+            .saturating_sub(GUEST_INSTRUCTION_ACCOUNTS_ADDRESS)
+            .checked_div(size_of::<InstructionAccount>() as u64)
+            .unwrap();
+        (first_account_index as usize)
+            ..(first_account_index.saturating_add(self.instruction_accounts.len()) as usize)
+    }
+
+    /// This function retrieves the range to index transaction_context.deduplication_maps
+    pub fn deduplication_map_range(instruction_index: usize) -> Range<usize> {
+        instruction_index.saturating_mul(MAX_ACCOUNTS_PER_TRANSACTION)
+            ..instruction_index
+                .saturating_add(1)
+                .saturating_mul(MAX_ACCOUNTS_PER_TRANSACTION)
+    }
+
+    pub fn configure_vm_slices(
+        &mut self,
+        instruction_index: u64,
+        penultimate_slice: Option<VmSlice<InstructionAccount>>,
+        instruction_accounts_len: usize,
+        instruction_data_len: u64,
+    ) {
+        // Instruction data slice
+        self.instruction_data = VmSlice::new(
+            GUEST_INSTRUCTION_DATA_BASE_ADDRESS
+                .saturating_add(GUEST_REGION_SIZE.saturating_mul(instruction_index)),
+            instruction_data_len,
+        );
+
+        // Instruction accounts slice
+        let instruction_accounts_start_address = if let Some(penultimate_slice) = penultimate_slice
+        {
+            penultimate_slice.end()
+        } else {
+            GUEST_INSTRUCTION_ACCOUNTS_ADDRESS
+        };
+
+        self.instruction_accounts = VmSlice::new(
+            instruction_accounts_start_address,
+            instruction_accounts_len as u64,
+        );
+    }
 }
 
 /// View interface to read instructions.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct InstructionContext<'a, 'ix_data> {
     pub(crate) transaction_context: &'a TransactionContext<'ix_data>,
     // The rest of the fields are redundant shortcuts

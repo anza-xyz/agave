@@ -279,11 +279,7 @@ use std::fmt;
 impl fmt::Debug for EpochSlots {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let num_slots: usize = self.slots.iter().map(|s| s.num_slots()).sum();
-        let lowest_slot = self
-            .slots
-            .iter()
-            .map(|s| s.first_slot())
-            .fold(0, std::cmp::min);
+        let lowest_slot = self.first_slot().unwrap_or(0);
         write!(
             f,
             "EpochSlots {{ from: {} num_slots: {} lowest_slot: {} wallclock: {} }}",

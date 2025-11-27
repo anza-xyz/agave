@@ -23,7 +23,6 @@ itertools = { workspace = true }
 log = { workspace = true }
 solana-client = { workspace = true }
 solana-clock = { workspace = true }
-solana-connection-cache = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-measure = { workspace = true }

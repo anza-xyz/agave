@@ -12,15 +12,13 @@ use {
     pem::Pem,
     quinn::{
         crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
-        Endpoint, IdleTimeout, ServerConfig,
+        Endpoint, IdleTimeout, ServerConfig, VarInt,
     },
     rustls::KeyLogFile,
     solana_keypair::Keypair,
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::packet::PacketBatch,
-    solana_quic_definitions::{
-        NotifyKeyUpdate, QUIC_MAX_TIMEOUT, QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
-    },
+    solana_quic_definitions::{NotifyKeyUpdate, QUIC_MAX_TIMEOUT},
     solana_tls_utils::{new_dummy_x509_certificate, tls_server_config_builder},
     std::{
         net::UdpSocket,
@@ -44,7 +42,7 @@ pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER: usize = 16;
 
 pub const DEFAULT_MAX_STAKED_CONNECTIONS: usize = 2000;
 
-pub const DEFAULT_MAX_UNSTAKED_CONNECTIONS: usize = 4000;
+pub const DEFAULT_MAX_UNSTAKED_CONNECTIONS: usize = 2000;
 
 /// Limit to 500K PPS
 pub const DEFAULT_MAX_STREAMS_PER_MS: u64 = 500;
@@ -56,6 +54,14 @@ pub const DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE: u64 = 8;
 
 // This will be adjusted and parameterized in follow-on PRs.
 pub const DEFAULT_QUIC_ENDPOINTS: usize = 1;
+
+/// Allow for 8 MB QUIC connection receive window (MAX_DATA). This is sufficient to
+/// support 200 Mbps upload rate at 320 ms RTT. It is unreasonable to expect a single
+/// connection to require more bandwidth. This prevents MAX_DATA from affecting
+/// the bitrate achieved by a single connection. Actual throttling is achieved based
+/// on the number of concurrent streams. This does not affect the memory allocation
+/// in Quinn, that is driven primarily by MAX_STREAMS, not MAX_DATA.
+const CONNECTION_RECEIVE_WINDOW_BYTES: VarInt = VarInt::from_u32(8 * 1024 * 1024);
 
 pub fn default_num_tpu_transaction_forward_receive_threads() -> usize {
     num_cpus::get().min(16)
@@ -100,18 +106,20 @@ pub(crate) fn configure_server(
 
     let config = Arc::get_mut(&mut server_config.transport).unwrap();
 
-    // QUIC_MAX_CONCURRENT_STREAMS doubled, which was found to improve reliability
-    const MAX_CONCURRENT_UNI_STREAMS: u32 =
-        (QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS.saturating_mul(2)) as u32;
-    config.max_concurrent_uni_streams(MAX_CONCURRENT_UNI_STREAMS.into());
+    // Set STREAM_MAX_DATA to fit at most 1 transaction.
+    // This should match the maximal TX size.
     config.stream_receive_window((PACKET_DATA_SIZE as u32).into());
+    // set the receive window really small initially to prevent the fresh connections
+    // from slamming us with traffic.
     config.receive_window((PACKET_DATA_SIZE as u32).into());
+    // disable uni_streams until handshake is complete
+    config.max_concurrent_uni_streams(0u32.into());
+    config.receive_window(CONNECTION_RECEIVE_WINDOW_BYTES);
     let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
     config.max_idle_timeout(Some(timeout));
 
     // disable bidi & datagrams
-    const MAX_CONCURRENT_BIDI_STREAMS: u32 = 0;
-    config.max_concurrent_bidi_streams(MAX_CONCURRENT_BIDI_STREAMS.into());
+    config.max_concurrent_bidi_streams(0u32.into());
     config.datagram_receive_buffer_size(None);
 
     // Disable GSO. The server only accepts inbound unidirectional streams initiated by clients,

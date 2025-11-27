@@ -30,7 +30,7 @@ pub mod tooling_for_tests;
 use {
     ip_echo_client::{ip_echo_server_request, ip_echo_server_request_with_binding},
     ip_echo_server::IpEchoServerMessage,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     std::{
         io::{self},
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, ToSocketAddrs, UdpSocket},
@@ -283,7 +283,7 @@ pub fn find_available_ports_in_range<const N: usize>(
     let mut next_port_to_try = range
         .clone()
         .cycle() // loop over the end of the range
-        .skip(thread_rng().gen_range(range.clone()) as usize) // skip to random position
+        .skip(rng().random_range(range.clone()) as usize) // skip to random position
         .take(range.len()) // never take the same value twice
         .peekable();
     let mut num = 0;

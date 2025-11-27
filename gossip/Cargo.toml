@@ -33,6 +33,7 @@ agave-unstable-api = []
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
+agave-random = { workspace = true }
 arc-swap = { workspace = true }
 arrayvec = { workspace = true }
 assert_matches = { workspace = true }
@@ -46,8 +47,8 @@ itertools = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
 num-traits = { workspace = true }
-rand = { workspace = true }
-rand_chacha = { workspace = true }
+rand = "0.8.5"
+rand_chacha = "0.3.1"
 rayon = { workspace = true }
 serde = { workspace = true }
 serde-big-array = { workspace = true }

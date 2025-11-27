@@ -33,7 +33,7 @@ bincode = { workspace = true }
 curve25519-dalek = { workspace = true, features = ["serde"] }
 itertools = { workspace = true }
 merlin = { workspace = true }
-rand = { workspace = true }
+rand = "0.8.5"
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha3 = { workspace = true }
