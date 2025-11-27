@@ -104,6 +104,8 @@ pub trait VoteStateHandle {
         vote_account: &mut BorrowedInstructionAccount,
     ) -> Result<(), InstructionError>;
 
+    fn has_bls_pubkey(&self) -> bool;
+
     fn credits_for_vote_at_index(&self, index: usize) -> u64 {
         let latency = self
             .votes()
@@ -458,6 +460,10 @@ impl VoteStateHandle for VoteStateV3 {
         // Vote account is large enough to store the newest version of vote state
         vote_account.set_state(&VoteStateVersions::V3(Box::new(self)))
     }
+
+    fn has_bls_pubkey(&self) -> bool {
+        false
+    }
 }
 
 impl VoteStateHandle for VoteStateV4 {
@@ -649,6 +655,10 @@ impl VoteStateHandle for VoteStateV4 {
         }
         // Vote account is large enough to store the newest version of vote state
         vote_account.set_state(&VoteStateVersions::V4(Box::new(self)))
+    }
+
+    fn has_bls_pubkey(&self) -> bool {
+        self.bls_pubkey_compressed.is_some()
     }
 }
 
@@ -949,6 +959,13 @@ impl VoteStateHandle for VoteStateHandler {
         match self.target_state {
             TargetVoteState::V3(v3) => v3.set_vote_account_state(vote_account),
             TargetVoteState::V4(v4) => v4.set_vote_account_state(vote_account),
+        }
+    }
+
+    fn has_bls_pubkey(&self) -> bool {
+        match &self.target_state {
+            TargetVoteState::V3(_) => false,
+            TargetVoteState::V4(v4) => v4.bls_pubkey_compressed.is_some(),
         }
     }
 }
