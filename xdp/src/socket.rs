@@ -87,7 +87,7 @@ impl<U: Umem> Socket<U> {
                     mem::size_of::<u32>() as socklen_t,
                 ) < 0
                 {
-                    println!("setsockopt ring {ring} reg failed");
+                    println!("setsockopt ring {ring}: {size} reg failed");
                     return Err(io::Error::last_os_error());
                 }
             }
