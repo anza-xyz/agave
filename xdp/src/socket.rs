@@ -79,6 +79,11 @@ impl<U: Umem> Socket<U> {
                     continue;
                 }
 
+                if ring == XDP_TX_RING && size == 0 {
+                    //rx only
+                    continue;
+                }
+
                 if setsockopt(
                     fd.as_raw_fd(),
                     SOL_XDP,
