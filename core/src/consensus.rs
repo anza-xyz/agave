@@ -683,7 +683,7 @@ impl Tower {
                 self.vote_state.votes.clone(),
                 self.vote_state.root_slot,
                 vote_hash,
-                block_id.0,
+                block_id.0.into(),
             ))
         } else {
             VoteTransaction::from(VoteStateUpdate::new(

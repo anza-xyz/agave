@@ -296,7 +296,7 @@ mod test {
                 &keypair,
                 &entries,
                 /*is_last_in_slot:*/ false,
-                SliceRoot(Hash::default()),
+                SliceRoot::default(),
                 0,
                 0,
                 &ReedSolomonCache::default(),

@@ -11,7 +11,6 @@ use {
     },
     agave_votor_messages::slice_root::SliceRoot,
     solana_clock::Slot,
-    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_perf::packet::{PacketRef, PacketRefMut},
     solana_signature::{Signature, SIGNATURE_BYTES},
@@ -254,9 +253,9 @@ pub(crate) fn get_chained_merkle_root(shred: &[u8]) -> Option<SliceRoot> {
     }
     .ok()?;
     let merkle_root = shred.get(offset..offset + SIZE_OF_MERKLE_ROOT)?;
-    Some(SliceRoot(Hash::from(
+    Some(SliceRoot(
         <[u8; SIZE_OF_MERKLE_ROOT]>::try_from(merkle_root).unwrap(),
-    )))
+    ))
 }
 
 fn get_retransmitter_signature_offset(shred: &[u8]) -> Result<usize, Error> {

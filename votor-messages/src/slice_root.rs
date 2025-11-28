@@ -2,7 +2,7 @@
 
 use {
     serde::{Deserialize, Serialize},
-    solana_hash::Hash,
+    solana_hash::{Hash, HASH_BYTES},
     std::fmt::Display,
 };
 
@@ -17,22 +17,25 @@ use {
     Copy, Clone, Default, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
 )]
 #[repr(transparent)]
-pub struct SliceRoot(pub Hash);
+pub struct SliceRoot(pub [u8; HASH_BYTES]);
 
 impl SliceRoot {
-    /// Generates a unique [`SliceRoot`].
+    /// Generates a unique [`SliceRoot`] to be used for tests and benchmarks.
     pub fn new_unique() -> Self {
-        Self(Hash::new_unique())
+        let hash = Hash::new_unique();
+        Self(hash.to_bytes())
     }
 
     /// Generates a random [`SliceRoot`].
     pub fn new_random() -> Self {
-        Self(Hash::new_from_array(rand::random()))
+        let hash = Hash::new_from_array(rand::random());
+        Self(hash.to_bytes())
     }
 }
 
 impl Display for SliceRoot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        let hash = Hash::from(self.0);
+        write!(f, "{}", hash)
     }
 }

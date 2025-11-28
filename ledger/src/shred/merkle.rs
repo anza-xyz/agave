@@ -327,11 +327,7 @@ macro_rules! impl_merkle_shred {
             self.payload
                 .get(offset..offset + SIZE_OF_MERKLE_ROOT)
                 .map(|chained_merkle_root| {
-                    SliceRoot(
-                        <[u8; SIZE_OF_MERKLE_ROOT]>::try_from(chained_merkle_root)
-                            .map(Hash::new_from_array)
-                            .unwrap(),
-                    )
+                    SliceRoot(<[u8; SIZE_OF_MERKLE_ROOT]>::try_from(chained_merkle_root).unwrap())
                 })
                 .ok_or(Error::InvalidPayloadSize(self.payload.len()))
         }
@@ -530,7 +526,7 @@ impl<'a> ShredTrait<'a> for ShredData {
     }
 
     fn signed_data(&'a self) -> Result<Self::SignedData, Error> {
-        self.merkle_root().map(|r| r.0)
+        self.merkle_root().map(|r| r.0.into())
     }
 }
 
@@ -586,7 +582,7 @@ impl<'a> ShredTrait<'a> for ShredCode {
     }
 
     fn signed_data(&'a self) -> Result<Self::SignedData, Error> {
-        self.merkle_root().map(|r| r.0)
+        self.merkle_root().map(|r| r.0.into())
     }
 }
 
