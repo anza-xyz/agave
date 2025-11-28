@@ -132,7 +132,7 @@ impl<U: Umem> Socket<U> {
                 fd.as_raw_fd(),
             );
 
-            if zero_copy {
+            if zero_copy || rx_ring_size > 0 {
                 // most drivers (intel) are buggy if ZC is enabled and the fill ring is not
                 // pre-populated before calling bind()
                 for _ in 0..rx_fill_ring_size {
