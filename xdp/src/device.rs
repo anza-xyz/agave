@@ -101,8 +101,8 @@ impl NetworkDevice {
             unsafe {
                 slice::from_raw_parts(req.ifr_ifru.ifru_hwaddr.sa_data.as_ptr() as *const u8, 6)
             }
-            .try_into()
-            .unwrap(),
+                .try_into()
+                .unwrap(),
         ))
     }
 
@@ -271,7 +271,7 @@ impl RingConsumer {
             consumer,
             cached_consumer: unsafe { (*consumer).load(Ordering::Relaxed) },
         }
-    }
+    }x
 
     pub fn available(&self) -> u32 {
         self.cached_producer.wrapping_sub(self.cached_consumer)
@@ -316,6 +316,10 @@ impl RingProducer {
             cached_consumer: unsafe { (*consumer).load(Ordering::Acquire) },
             size,
         }
+    }
+
+    pub fn size(&self) -> usize {
+        self.size as usize
     }
 
     pub fn available(&self) -> u32 {
@@ -428,6 +432,10 @@ impl<F: Frame> RxFillRing<F> {
 
     pub fn available(&self) -> usize {
         self.producer.available() as usize
+    }
+
+    pub fn size(&self) -> usize {
+        self.size as usize
     }
 }
 
