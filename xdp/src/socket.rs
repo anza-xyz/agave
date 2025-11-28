@@ -145,16 +145,20 @@ impl<U: Umem> Socket<U> {
             }
 
             println!("creating tx_ring");
-            let tx_ring = Some(TxRing::new(
-                mmap_ring(
+            let tx_ring = if tx_ring_size > 0 {
+                Some(TxRing::new(
+                    mmap_ring(
+                        fd.as_raw_fd(),
+                        tx_ring_size.saturating_mul(mem::size_of::<XdpDesc>()),
+                        &offsets.tx,
+                        XDP_PGOFF_TX_RING as u64,
+                    )?,
+                    tx_ring_size as u32,
                     fd.as_raw_fd(),
-                    tx_ring_size.saturating_mul(mem::size_of::<XdpDesc>()),
-                    &offsets.tx,
-                    XDP_PGOFF_TX_RING as u64,
-                )?,
-                tx_ring_size as u32,
-                fd.as_raw_fd(),
-            ));
+                ))
+            } else {
+                None
+            };
 
             println!("creating rx ring");
             let rx_ring = if rx_ring_size > 0 {
