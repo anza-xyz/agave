@@ -416,6 +416,61 @@ pub mod tests {
             .is_ok(),
             "Instruction with no inline data referencing another instruction should pass"
         );
+
+        // Valid case: two signatures sharing the same ETH address
+        // Layout: | Offsets1 | Offsets2 | ETH | Sig1 | Msg1 | Sig2 | Msg2 |
+        let message1 = b"first message";
+        let message2 = b"second message";
+        let (sig1, recovery_id1) = sign_message(&secret_key.serialize(), message1).unwrap();
+        let (sig2, recovery_id2) = sign_message(&secret_key.serialize(), message2).unwrap();
+
+        let data_start = 1 + SIGNATURE_OFFSETS_SERIALIZED_SIZE * 2;
+        let eth_offset = data_start;
+        let sig1_offset = eth_offset + HASHED_PUBKEY_SERIALIZED_SIZE;
+        let msg1_offset = sig1_offset + SIGNATURE_SERIALIZED_SIZE + 1;
+        let sig2_offset = msg1_offset + message1.len();
+        let msg2_offset = sig2_offset + SIGNATURE_SERIALIZED_SIZE + 1;
+
+        let offsets1 = SecpSignatureOffsets {
+            signature_offset: sig1_offset as u16,
+            signature_instruction_index: 0,
+            eth_address_offset: eth_offset as u16,
+            eth_address_instruction_index: 0,
+            message_data_offset: msg1_offset as u16,
+            message_data_size: message1.len() as u16,
+            message_instruction_index: 0,
+        };
+        let offsets2 = SecpSignatureOffsets {
+            signature_offset: sig2_offset as u16,
+            signature_instruction_index: 0,
+            eth_address_offset: eth_offset as u16, // Same ETH address as offsets1
+            eth_address_instruction_index: 0,
+            message_data_offset: msg2_offset as u16,
+            message_data_size: message2.len() as u16,
+            message_instruction_index: 0,
+        };
+
+        let mut shared_eth_instruction: Vec<u8> = vec![2]; // count = 2
+        shared_eth_instruction.extend(bincode::serialize(&offsets1).unwrap());
+        shared_eth_instruction.extend(bincode::serialize(&offsets2).unwrap());
+        shared_eth_instruction.extend(eth_address);
+        shared_eth_instruction.extend(sig1);
+        shared_eth_instruction.push(recovery_id1);
+        shared_eth_instruction.extend(message1);
+        shared_eth_instruction.extend(sig2);
+        shared_eth_instruction.push(recovery_id2);
+        shared_eth_instruction.extend(message2);
+
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &shared_eth_instruction,
+                &[&shared_eth_instruction],
+                &feature_set
+            )
+            .is_ok(),
+            "Two signatures sharing same ETH address offset should pass"
+        );
     }
 
     #[test]
