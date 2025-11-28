@@ -179,7 +179,7 @@ impl<U: Umem> Socket<U> {
             let sxdp = sockaddr_xdp {
                 sxdp_family: AF_XDP as sa_family_t,
                 // do NEED_WAKEUP and don't do zero copy for now for maximum compatibility
-                sxdp_flags: XDP_USE_NEED_WAKEUP | if zero_copy { XDP_ZEROCOPY } else { XDP_COPY },
+                sxdp_flags: if zero_copy { XDP_ZEROCOPY } else { XDP_COPY },
                 sxdp_ifindex: dev_queue.if_index(),
                 sxdp_queue_id: dev_queue.id().0 as u32,
                 sxdp_shared_umem_fd: 0,
