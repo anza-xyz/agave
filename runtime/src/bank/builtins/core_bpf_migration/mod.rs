@@ -206,6 +206,7 @@ impl Bank {
             .unwrap()
             .merge(
                 &self.transaction_processor.environments,
+                self.slot,
                 &program_cache_for_tx_batch.drain_modified_entries(),
             );
 
@@ -2148,6 +2149,7 @@ pub(crate) mod tests {
         program_cache.assign_program(
             &roundtrip_bank.transaction_processor.environments,
             bpf_loader_v2_program_address,
+            upgrade_slot,
             entry,
         );
         // Release the lock on the program cache.
