@@ -64,6 +64,7 @@ impl<U: Umem> Socket<U> {
                 mem::size_of::<xdp_umem_reg>() as libc::socklen_t,
             ) < 0
             {
+                println!("setsockopt umem reg failed");
                 return Err(io::Error::last_os_error());
             }
 
@@ -86,6 +87,7 @@ impl<U: Umem> Socket<U> {
                     mem::size_of::<u32>() as socklen_t,
                 ) < 0
                 {
+                    println!("setsockopt ring {ring} reg failed");
                     return Err(io::Error::last_os_error());
                 }
             }
@@ -100,6 +102,7 @@ impl<U: Umem> Socket<U> {
                 &mut optlen,
             ) < 0
             {
+                println!("setsockopt map offset failed");
                 return Err(io::Error::last_os_error());
             }
 
@@ -136,6 +139,7 @@ impl<U: Umem> Socket<U> {
                 rx_fill_ring.commit();
             }
 
+            println!("creating tx_ring");
             let tx_ring = Some(TxRing::new(
                 mmap_ring(
                     fd.as_raw_fd(),
@@ -147,6 +151,7 @@ impl<U: Umem> Socket<U> {
                 fd.as_raw_fd(),
             ));
 
+            println!("creating rx ring");
             let rx_ring = if rx_ring_size > 0 {
                 Some(RxRing::new(
                     mmap_ring(
@@ -171,6 +176,7 @@ impl<U: Umem> Socket<U> {
                 sxdp_shared_umem_fd: 0,
             };
 
+            println!("binding socket");
             if bind(
                 fd.as_raw_fd(),
                 &sxdp as *const _ as *const sockaddr,
@@ -188,6 +194,7 @@ impl<U: Umem> Socket<U> {
                 fill: rx_fill_ring,
                 ring: rx_ring,
             };
+            println!("done creating xdp sock");
             Ok((
                 Self {
                     fd,
