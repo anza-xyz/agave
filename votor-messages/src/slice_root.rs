@@ -11,7 +11,7 @@ use {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "7NWdx9UtHWLUeqzPF89smNiRta2uVaEEHZSBPxCtNuUe")
+    frozen_abi(digest = "4inPqcaUikLaW1bDBfcHHYCLTBYJAfqvrUwKaSzVTP4B")
 )]
 #[derive(
     Copy, Clone, Default, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
@@ -36,6 +36,6 @@ impl SliceRoot {
 impl Display for SliceRoot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let hash = Hash::from(self.0);
-        write!(f, "{}", hash)
+        write!(f, "{hash}")
     }
 }

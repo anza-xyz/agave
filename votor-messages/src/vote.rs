@@ -10,7 +10,7 @@ use {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "J5CizUrd4VF5KU2voT5JNNNHZy1FgNmwg86bQz92fLDw")
+    frozen_abi(digest = "DsK58ZbGq5nbAwwMmeoWH7SxMiY9RQyBrYUp31aL5Y4X")
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Vote {
@@ -137,7 +137,7 @@ impl From<SkipFallbackVote> for Vote {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "2PxE2asFggYtErv5YjbjMkaoaDCNrv6NmTCsHXKEeyKj")
+    frozen_abi(digest = "GZBFH3RSPbMWQvbvsKjbsUHPi9yBw7g41FbRFJH8kybX")
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NotarizationVote {
@@ -177,7 +177,7 @@ pub struct SkipVote {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "CqysqvN3ZzSNeZFbL2qQ2kUBTQYqTGwcJoZKDy8pYK4K")
+    frozen_abi(digest = "6EeFa4qtitWDtL6FbtcvVigKaT8eMatiPHbJSHwHvwx4")
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NotarizationFallbackVote {
