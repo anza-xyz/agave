@@ -805,6 +805,7 @@ pub struct TestValidator {
     rpc_pubsub_url: String,
     rpc_url: String,
     tpu: SocketAddr,
+    tpu_quic: SocketAddr,
     gossip: SocketAddr,
     validator: Option<Validator>,
     vote_account_address: Pubkey,
@@ -1158,6 +1159,7 @@ impl TestValidator {
         let rpc_url = format!("http://{}", node.info.rpc().unwrap());
         let rpc_pubsub_url = format!("ws://{}/", node.info.rpc_pubsub().unwrap());
         let tpu = node.info.tpu(Protocol::UDP).unwrap();
+        let tpu_quic = node.info.tpu(Protocol::QUIC).unwrap_or(tpu);
         let gossip = node.info.gossip().unwrap();
 
         {
@@ -1260,6 +1262,7 @@ impl TestValidator {
             rpc_pubsub_url,
             rpc_url,
             tpu,
+            tpu_quic,
             gossip,
             validator,
             vote_account_address,
@@ -1393,6 +1396,11 @@ impl TestValidator {
     /// Return the validator's TPU address
     pub fn tpu(&self) -> &SocketAddr {
         &self.tpu
+    }
+
+    /// Return the validator's TPU QUIC address
+    pub fn tpu_quic(&self) -> &SocketAddr {
+        &self.tpu_quic
     }
 
     /// Return the validator's Gossip address
