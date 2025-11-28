@@ -1,5 +1,5 @@
 use {
-    rand0_8_5::distributions::{Distribution, WeightedIndex},
+    agave_random::weighted::WeightedU64Index,
     rand_chacha0_3_1::{rand_core::SeedableRng, ChaChaRng},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
@@ -80,7 +80,7 @@ fn stake_weighted_slot_leaders(
 ) -> Vec<Pubkey> {
     sort_stakes(&mut keyed_stakes);
     let (keys, stakes): (Vec<_>, Vec<_>) = keyed_stakes.into_iter().unzip();
-    let weighted_index = WeightedIndex::new(stakes).unwrap();
+    let weighted_index = WeightedU64Index::new(stakes).unwrap();
     let mut seed = [0u8; 32];
     seed[0..8].copy_from_slice(&epoch.to_le_bytes());
     let rng = &mut ChaChaRng::from_seed(seed);

@@ -9,7 +9,7 @@ use {
     solana_transaction::versioned,
     std::mem::MaybeUninit,
     wincode::{
-        containers::{self, Elem, Pod},
+        containers::{self, Pod},
         error::invalid_tag_encoding,
         io::{Reader, Writer},
         len::ShortU16Len,
@@ -29,8 +29,8 @@ struct MessageHeader {
 #[wincode(from = "solana_transaction::CompiledInstruction")]
 struct CompiledInstruction {
     program_id_index: u8,
-    accounts: containers::Vec<Pod<u8>, ShortU16Len>,
-    data: containers::Vec<Pod<u8>, ShortU16Len>,
+    accounts: containers::Vec<u8, ShortU16Len>,
+    data: containers::Vec<u8, ShortU16Len>,
 }
 
 #[derive(SchemaWrite, SchemaRead)]
@@ -39,26 +39,25 @@ struct LegacyMessage {
     header: MessageHeader,
     account_keys: containers::Vec<Pod<Address>, ShortU16Len>,
     recent_blockhash: Pod<Hash>,
-    instructions: containers::Vec<Elem<CompiledInstruction>, ShortU16Len>,
+    instructions: containers::Vec<CompiledInstruction, ShortU16Len>,
 }
 
 #[derive(SchemaWrite, SchemaRead)]
 #[wincode(from = "v0::MessageAddressTableLookup")]
 struct MessageAddressTableLookup {
     account_key: Pod<Address>,
-    writable_indexes: containers::Vec<Pod<u8>, ShortU16Len>,
-    readonly_indexes: containers::Vec<Pod<u8>, ShortU16Len>,
+    writable_indexes: containers::Vec<u8, ShortU16Len>,
+    readonly_indexes: containers::Vec<u8, ShortU16Len>,
 }
 
 #[derive(SchemaWrite, SchemaRead)]
 #[wincode(from = "v0::Message")]
 struct V0Message {
-    #[wincode(with = "Pod<_>")]
-    header: solana_message::MessageHeader,
+    header: MessageHeader,
     account_keys: containers::Vec<Pod<Address>, ShortU16Len>,
     recent_blockhash: Pod<Hash>,
-    instructions: containers::Vec<Elem<CompiledInstruction>, ShortU16Len>,
-    address_table_lookups: containers::Vec<Elem<MessageAddressTableLookup>, ShortU16Len>,
+    instructions: containers::Vec<CompiledInstruction, ShortU16Len>,
+    address_table_lookups: containers::Vec<MessageAddressTableLookup, ShortU16Len>,
 }
 
 #[derive(SchemaWrite, SchemaRead)]
@@ -83,7 +82,7 @@ impl SchemaWrite for VersionedMsg {
     }
 
     #[inline(always)]
-    fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
         match src {
             solana_message::VersionedMessage::Legacy(message) => {
                 LegacyMessage::write(writer, message)
@@ -96,10 +95,10 @@ impl SchemaWrite for VersionedMsg {
     }
 }
 
-impl SchemaRead<'_> for VersionedMsg {
+impl<'de> SchemaRead<'de> for VersionedMsg {
     type Dst = solana_message::VersionedMessage;
 
-    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         // From `solana_message`:
         //
         // If the first bit is set, the remaining 7 bits will be used to determine

@@ -4524,7 +4524,7 @@ pub mod tests {
         jsonrpc_core::{futures, ErrorCode, MetaIoHandler, Output, Response, Value},
         jsonrpc_core_client::transports::local,
         serde::de::DeserializeOwned,
-        solana_account::{state_traits::StateMut, Account, WritableAccount},
+        solana_account::{state_traits::StateMut, Account},
         solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         solana_address_lookup_table_interface::{
             self as address_lookup_table,
@@ -4954,10 +4954,11 @@ pub mod tests {
                     },
                     addresses: Cow::Owned(vec![Pubkey::new_unique()]),
                 };
-                let address_table_data = address_table_state.serialize_for_tests().unwrap();
+                let address_table_data =
+                    Arc::new(address_table_state.serialize_for_tests().unwrap());
                 let min_balance_lamports =
                     bank.get_minimum_balance_for_rent_exemption(address_table_data.len());
-                AccountSharedData::create(
+                AccountSharedData::create_from_existing_shared_data(
                     min_balance_lamports,
                     address_table_data,
                     address_lookup_table::program::id(),
@@ -5559,7 +5560,13 @@ pub mod tests {
         let pubkey = Pubkey::new_unique();
         let address = pubkey.to_string();
         let data = vec![1, 2, 3, 4, 5];
-        let account = AccountSharedData::create(42, data.clone(), Pubkey::default(), false, 0);
+        let account = AccountSharedData::create_from_existing_shared_data(
+            42,
+            Arc::new(data.clone()),
+            Pubkey::default(),
+            false,
+            0,
+        );
         bank.store_account(&pubkey, &account);
 
         let request = create_test_request(
@@ -5607,7 +5614,13 @@ pub mod tests {
     fn test_encode_account_does_not_throw_when_slice_larger_than_account() {
         let data = vec![42; 5];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::create(42, data, pubkey, false, 0);
+        let account = AccountSharedData::create_from_existing_shared_data(
+            42,
+            Arc::new(data),
+            pubkey,
+            false,
+            0,
+        );
         let result = encode_account(
             &account,
             &pubkey,
@@ -5624,7 +5637,13 @@ pub mod tests {
     fn test_encode_account_throws_when_data_too_large_to_base58_encode() {
         let data = vec![42; MAX_BASE58_BYTES + 1];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::create(42, data, pubkey, false, 0);
+        let account = AccountSharedData::create_from_existing_shared_data(
+            42,
+            Arc::new(data),
+            pubkey,
+            false,
+            0,
+        );
         let _ = encode_account(&account, &pubkey, UiAccountEncoding::Base58, None).unwrap();
     }
 
@@ -5633,7 +5652,13 @@ pub mod tests {
     ) {
         let data = vec![42; MAX_BASE58_BYTES + 1];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::create(42, data, pubkey, false, 0);
+        let account = AccountSharedData::create_from_existing_shared_data(
+            42,
+            Arc::new(data),
+            pubkey,
+            false,
+            0,
+        );
         let result = encode_account(
             &account,
             &pubkey,
@@ -5651,7 +5676,13 @@ pub mod tests {
     ) {
         let data = vec![42; MAX_BASE58_BYTES];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::create(42, data, pubkey, false, 0);
+        let account = AccountSharedData::create_from_existing_shared_data(
+            42,
+            Arc::new(data),
+            pubkey,
+            false,
+            0,
+        );
         let result = encode_account(
             &account,
             &pubkey,
@@ -5669,7 +5700,13 @@ pub mod tests {
     ) {
         let data = vec![42; MAX_BASE58_BYTES + 1];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::create(42, data, pubkey, false, 0);
+        let account = AccountSharedData::create_from_existing_shared_data(
+            42,
+            Arc::new(data),
+            pubkey,
+            false,
+            0,
+        );
         let result = encode_account(
             &account,
             &pubkey,
@@ -5691,7 +5728,13 @@ pub mod tests {
         let pubkey = Pubkey::new_unique();
         let address = pubkey.to_string();
         let data = vec![1, 2, 3, 4, 5];
-        let account = AccountSharedData::create(42, data.clone(), Pubkey::default(), false, 0);
+        let account = AccountSharedData::create_from_existing_shared_data(
+            42,
+            Arc::new(data.clone()),
+            Pubkey::default(),
+            false,
+            0,
+        );
         bank.store_account(&pubkey, &account);
 
         // Test 3 accounts, one empty, one non-existent, and one with data
@@ -6315,9 +6358,9 @@ pub mod tests {
             },
             &mut mint_data,
         );
-        let account = AccountSharedData::create(
+        let account = AccountSharedData::create_from_existing_shared_data(
             mint_rent_exempt_amount,
-            mint_data.into(),
+            Arc::new(mint_data.into()),
             spl_token_interface::id(),
             false,
             0,
@@ -6343,9 +6386,9 @@ pub mod tests {
             },
             &mut token_account_data,
         );
-        let account = AccountSharedData::create(
+        let account = AccountSharedData::create_from_existing_shared_data(
             token_account_rent_exempt_amount,
-            token_account_data.into(),
+            Arc::new(token_account_data.into()),
             spl_token_interface::id(),
             false,
             0,

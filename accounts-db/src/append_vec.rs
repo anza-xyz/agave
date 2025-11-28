@@ -31,7 +31,7 @@ use {
     log::*,
     memmap2::MmapMut,
     meta::StoredAccountNoData,
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_pubkey::Pubkey,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     std::{
@@ -44,7 +44,7 @@ use {
         ptr, slice,
         sync::{
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
-            Mutex, MutexGuard,
+            Arc, Mutex, MutexGuard,
         },
     },
     thiserror::Error,
@@ -890,9 +890,9 @@ impl AppendVec {
                     }
                     // SAFETY: we've just checked that `bytes_read` is at least `data_len`.
                     unsafe { data.set_len(data_len as usize) };
-                    AccountSharedData::create(
+                    AccountSharedData::create_from_existing_shared_data(
                         account_meta.lamports,
-                        data,
+                        Arc::new(data),
                         account_meta.owner,
                         account_meta.executable,
                         account_meta.rent_epoch,
@@ -1365,7 +1365,7 @@ pub mod tests {
         memoffset::offset_of,
         rand::{prelude::*, rng},
         rand_chacha::ChaChaRng,
-        solana_account::{accounts_equal, Account, AccountSharedData},
+        solana_account::{accounts_equal, Account, AccountSharedData, WritableAccount},
         solana_clock::Slot,
         std::{mem::ManuallyDrop, time::Instant},
         test_case::{test_case, test_matrix},
