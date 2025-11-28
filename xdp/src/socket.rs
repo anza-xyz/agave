@@ -244,7 +244,7 @@ impl<U: Umem> Socket<U> {
         fill_size: usize,
         ring_size: usize,
     ) -> Result<(Self, Rx<U::Frame>), io::Error> {
-        let (socket, rx, _) = Self::new(queue, umem, zero_copy, fill_size, ring_size, 0, 0)?;
+        let (socket, rx, _) = Self::new(queue, umem, zero_copy, fill_size, ring_size, 1, 0)?;
         Ok((socket, rx))
     }
 
