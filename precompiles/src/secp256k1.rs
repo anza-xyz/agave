@@ -42,6 +42,9 @@ pub fn verify(
     if data.len() < expected_data_size {
         return Err(PrecompileError::InvalidInstructionDataSize);
     }
+    let mut inline_calldata_size = data.len().saturating_sub(expected_data_size);
+    let self_data_addr = data.as_ptr();
+
     for i in 0..count {
         let start = i
             .saturating_mul(SIGNATURE_OFFSETS_SERIALIZED_SIZE)
@@ -62,6 +65,14 @@ pub fn verify(
         if sig_end >= signature_instruction.len() {
             return Err(PrecompileError::InvalidSignature);
         }
+        if inline_calldata_size > 0 && std::ptr::eq(
+            instruction_datas[signature_index].as_ptr(),
+            self_data_addr,
+        )
+        {
+            // Signature is SIGNATURE_SERIALIZED_SIZE bytes + 1 byte for recovery_id
+            inline_calldata_size = inline_calldata_size.saturating_sub(SIGNATURE_SERIALIZED_SIZE + 1);
+        }
 
         let signature = libsecp256k1::Signature::parse_standard_slice(
             &signature_instruction[sig_start..sig_end],
@@ -78,6 +89,13 @@ pub fn verify(
             offsets.eth_address_offset,
             HASHED_PUBKEY_SERIALIZED_SIZE,
         )?;
+        if inline_calldata_size > 0 && std::ptr::eq(
+            instruction_datas[offsets.eth_address_instruction_index as usize].as_ptr(),
+            self_data_addr,
+        )
+        {
+            inline_calldata_size = inline_calldata_size.saturating_sub(HASHED_PUBKEY_SERIALIZED_SIZE);
+        }
 
         // Parse out message
         let message_slice = get_data_slice(
@@ -86,6 +104,13 @@ pub fn verify(
             offsets.message_data_offset,
             offsets.message_data_size as usize,
         )?;
+        if inline_calldata_size > 0 && std::ptr::eq(
+            instruction_datas[offsets.message_instruction_index as usize].as_ptr(),
+            self_data_addr,
+        ) 
+        {
+            inline_calldata_size = inline_calldata_size.saturating_sub(offsets.message_data_size as usize);
+        }
 
         let mut hasher = sha3::Keccak256::new();
         hasher.update(message_slice);
@@ -102,6 +127,9 @@ pub fn verify(
         if eth_address_slice != eth_address {
             return Err(PrecompileError::InvalidSignature);
         }
+    }
+    if inline_calldata_size != 0 {
+        return Err(PrecompileError::InvalidInstructionDataSize);
     }
     Ok(())
 }
@@ -294,6 +322,99 @@ pub mod tests {
         assert_eq!(
             test_verify_with_alignment(verify, &instruction_data, &[&[0u8; 100]], &feature_set),
             Err(PrecompileError::InvalidInstructionDataSize)
+        );
+    }
+
+    #[test]
+    fn test_extra_data_after_offsets() {
+        agave_logger::setup();
+        let feature_set = FeatureSet::all_enabled();
+
+        // Create a valid signature
+        let secret_key = libsecp256k1::SecretKey::random(&mut thread_rng());
+        let public_key = libsecp256k1::PublicKey::from_secret_key(&secret_key);
+        let eth_address = eth_address_from_pubkey(&public_key.serialize()[1..].try_into().unwrap());
+        let message = b"test message";
+        let (signature, recovery_id) =
+            sign_message(&secret_key.serialize(), message).unwrap();
+
+        // Build instruction with inline calldata that IS referenced
+        let instruction = new_secp256k1_instruction_with_signature(
+            message,
+            &signature,
+            recovery_id,
+            &eth_address,
+        );
+
+        // Valid case: all inline calldata is consumed
+        assert!(
+            test_verify_with_alignment(verify, &instruction.data, &[&instruction.data], &feature_set).is_ok(),
+            "Valid instruction with consumed inline calldata should pass"
+        );
+
+        // Invalid case: extra unreferenced data appended 
+        let mut instruction_with_extra = instruction.data.clone();
+        instruction_with_extra.extend_from_slice(b"extra unconsumed data");
+        assert_eq!(
+            test_verify_with_alignment(
+                verify,
+                &instruction_with_extra,
+                &[&instruction_with_extra],
+                &feature_set
+            ),
+            Err(PrecompileError::InvalidInstructionDataSize),
+            "Instruction with unconsumed extra data should fail"
+        );
+
+        // Invalid case: data referenced from a different instruction, leaving inline data unconsumed
+        // Build an instruction where sig/eth/message point to instruction index 1 instead of 0
+        let offsets = SecpSignatureOffsets {
+            signature_offset: 0,
+            signature_instruction_index: 1, // Points to other instruction
+            eth_address_offset: (SIGNATURE_SERIALIZED_SIZE + 1) as u16,
+            eth_address_instruction_index: 1,
+            message_data_offset: (SIGNATURE_SERIALIZED_SIZE + 1 + HASHED_PUBKEY_SERIALIZED_SIZE) as u16,
+            message_data_size: message.len() as u16,
+            message_instruction_index: 1,
+        };
+
+        let mut instruction_data: Vec<u8> = vec![1]; // count = 1
+        instruction_data.extend(bincode::serialize(&offsets).unwrap());
+        // Add inline data that won't be consumed (since offsets point to instruction 1)
+        instruction_data.extend_from_slice(b"unconsumed inline data");
+
+        // Build the other instruction that contains the actual signature data
+        let mut other_instruction: Vec<u8> = vec![];
+        other_instruction.extend(signature);
+        other_instruction.push(recovery_id);
+        other_instruction.extend(eth_address);
+        other_instruction.extend(message);
+
+        assert_eq!(
+            test_verify_with_alignment(
+                verify,
+                &instruction_data,
+                &[&instruction_data, &other_instruction],
+                &feature_set
+            ),
+            Err(PrecompileError::InvalidInstructionDataSize),
+            "Instruction with inline data not referenced should fail"
+        );
+
+        // Valid case: no inline data, all data in another instruction
+        let mut instruction_no_inline: Vec<u8> = vec![1]; // count = 1
+        instruction_no_inline.extend(bincode::serialize(&offsets).unwrap());
+        // No extra data appended
+
+        assert!(
+            test_verify_with_alignment(
+                verify,
+                &instruction_no_inline,
+                &[&instruction_no_inline, &other_instruction],
+                &feature_set
+            )
+            .is_ok(),
+            "Instruction with no inline data referencing another instruction should pass"
         );
     }
 
