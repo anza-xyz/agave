@@ -320,15 +320,37 @@ impl ConnectionWorker {
         let connecting = self.endpoint.connect(self.peer, &server_name);
         match connecting {
             Ok(connecting) => {
+                // try to do 0rtt connection if possible
                 let mut measure_connection = Measure::start("establish connection");
-                let res = timeout(self.handshake_timeout, connecting).await;
+                let connection = match connecting.into_0rtt() {
+                    Ok((connection, zero_rtt_accepted)) => {
+                        debug!("trying 0rtt");
+                        // I think in theory I can send before getting response from zero_rtt_accepted
+                        // but in case of failure I will loose all the sent data.
+                        // If 0rtt fails cause server doesn't accept it, it will fall back to normal connection
+                        // automatically, so connection is
+                        // valid anyways.
+                        if (timeout(self.handshake_timeout, zero_rtt_accepted).await).is_ok() {
+                            debug!("0rtt accepted");
+                        } else {
+                            debug!("0rtt rejected");
+                        }
+                        Ok(Ok(connection))
+                    }
+                    Err(connecting) => {
+                        // this happens when 0-rtt is not configured on the client
+                        debug!("No 0rtt on client side");
+                        timeout(self.handshake_timeout, connecting).await
+                    }
+                };
                 measure_connection.stop();
                 debug!(
                     "Establishing connection with {} took: {} us",
                     self.peer,
                     measure_connection.as_us()
                 );
-                match res {
+
+                match connection {
                     Ok(Ok(connection)) => {
                         self.connection = ConnectionState::Active(connection);
                     }

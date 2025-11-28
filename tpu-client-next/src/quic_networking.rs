@@ -6,6 +6,7 @@ use {
         crypto::rustls::QuicClientConfig, default_runtime, ClientConfig, Connection, Endpoint,
         EndpointConfig, IdleTimeout, TransportConfig,
     },
+    rustls::client::Resumption,
     solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS},
     solana_streamer::nonblocking::quic::ALPN_TPU_PROTOCOL_ID,
     solana_tls_utils::tls_client_config_builder,
@@ -26,7 +27,14 @@ pub(crate) fn create_client_config(client_certificate: &QuicClientCertificate) -
             client_certificate.key.clone_key(),
         )
         .expect("Failed to set QUIC client certificates");
+    // this is also required to enable 0-RTT
     crypto.enable_early_data = true;
+
+    // Resumption is storage of session tickets for 0-RTT connections.
+
+    // TODO(klykov): this should be configured by user, now we use default which means in-memory
+    // storage.
+    crypto.resumption = Resumption::default();
     crypto.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
 
     let transport_config = {
