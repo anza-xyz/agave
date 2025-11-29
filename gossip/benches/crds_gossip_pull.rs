@@ -1,6 +1,6 @@
 use {
     criterion::{criterion_group, criterion_main, Criterion},
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     rayon::ThreadPoolBuilder,
     solana_gossip::{
         crds::{Crds, GossipRoute},
@@ -27,14 +27,14 @@ fn bench_hash_as_u64(c: &mut Criterion) {
 
 fn bench_build_crds_filters(c: &mut Criterion) {
     let thread_pool = ThreadPoolBuilder::new().build().unwrap();
-    let mut rng = thread_rng();
+    let mut rng = rng();
     let crds_gossip_pull = CrdsGossipPull::default();
     let mut crds = Crds::default();
     let num_inserts = (0..90_000)
         .filter(|_| {
             crds.insert(
                 CrdsValue::new_rand(&mut rng, None),
-                rng.gen(),
+                rng.random(),
                 GossipRoute::LocalMessage,
             )
             .is_ok()
