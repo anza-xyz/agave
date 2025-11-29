@@ -1,3 +1,4 @@
+use libc::{SOL_SOCKET, SO_BUSY_POLL, SO_BUSY_POLL_BUDGET, SO_PREFER_BUSY_POLL};
 use {
     crate::{
         device::{
@@ -89,6 +90,49 @@ impl<U: Umem> Socket<U> {
                     ring,
                     &size as *const _ as *const libc::c_void,
                     mem::size_of::<u32>() as socklen_t,
+                ) < 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+
+            if rx_ring_size > 0 {
+                // enable busy-polling to reduce interrupt overhead
+                // higher timeout keeps CPU spinning longer for low latency, but with higher power conspumtion.
+                let busy_poll_usec: i32 = 200; // 200 microsecond timeout for more aggressive polling
+                if setsockopt(
+                    fd.as_raw_fd(),
+                    SOL_SOCKET,
+                    SO_BUSY_POLL,
+                    &busy_poll_usec as *const _ as *const libc::c_void,
+                    mem::size_of::<i32>() as socklen_t,
+                ) < 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+
+                // set busy poll budget (number of packets to process per poll)
+                // higher budget processes more packets per poll cycle
+                let busy_poll_budget: i32 = 256;
+                if setsockopt(
+                    fd.as_raw_fd(),
+                    SOL_SOCKET,
+                    SO_BUSY_POLL_BUDGET,
+                    &busy_poll_budget as *const _ as *const libc::c_void,
+                    mem::size_of::<i32>() as socklen_t,
+                ) < 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+
+                // prefer busy-poll over blocking (reduces latency)
+                let prefer_busy_poll: i32 = 1;
+                if setsockopt(
+                    fd.as_raw_fd(),
+                    SOL_SOCKET,
+                    SO_PREFER_BUSY_POLL,
+                    &prefer_busy_poll as *const _ as *const libc::c_void,
+                    mem::size_of::<i32>() as socklen_t,
                 ) < 0
                 {
                     return Err(io::Error::last_os_error());
