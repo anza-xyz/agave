@@ -863,6 +863,13 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Specify the configuration file for the Geyser plugin."),
     )
     .arg(
+        Arg::with_name("geyser_shm_path")
+            .long("geyser-shm-path")
+            .value_name("PATH")
+            .takes_value(true)
+            .help("Enable Geyser V2 shared memory queues at the specified path (e.g., /dev/shm/geyser)"),
+    )
+    .arg(
         Arg::with_name("geyser_plugin_always_enabled")
             .long("geyser-plugin-always-enabled")
             .value_name("BOOLEAN")
