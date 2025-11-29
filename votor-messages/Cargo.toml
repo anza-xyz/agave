@@ -11,6 +11,7 @@ edition = { workspace = true }
 
 [features]
 agave-unstable-api = []
+dev-context-only-utils = []
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
@@ -19,12 +20,16 @@ frozen-abi = [
 ]
 
 [dependencies]
+agave-feature-set = { workspace = true }
 agave-logger = { workspace = true }
+log = { workspace = true }
 serde = { workspace = true }
+solana-address = { workspace = true, features = ["curve25519"] }
 solana-bls-signatures = { workspace = true, features = [
     "bytemuck", "solana-signer-derive",
 ] }
 solana-clock = { workspace = true }
+solana-epoch-schedule = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
@@ -32,6 +37,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
 solana-hash = { workspace = true, features = ["serde"] }
+solana-pubkey = { workspace = true }
 
 [lints]
 workspace = true

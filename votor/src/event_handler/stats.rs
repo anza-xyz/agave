@@ -277,6 +277,7 @@ impl SentVoteStats {
             }
             VoteType::Skip => self.skip = self.skip.saturating_add(1),
             VoteType::SkipFallback => self.skip_fallback = self.skip_fallback.saturating_add(1),
+            VoteType::Genesis => (),
         }
     }
 

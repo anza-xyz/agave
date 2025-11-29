@@ -67,6 +67,9 @@ use {
     agave_syscalls::{
         create_program_runtime_environment_v1, create_program_runtime_environment_v2,
     },
+    agave_votor_messages::{
+        consensus_message::Certificate, migration::GENESIS_CERTIFICATE_ACCOUNT,
+    },
     ahash::AHashSet,
     dashmap::DashMap,
     log::*,
@@ -2772,6 +2775,17 @@ impl Bank {
         blockhash_queue
             .get_hash_age(blockhash)
             .map(|age| self.block_height + MAX_PROCESSING_AGE as u64 - age)
+    }
+
+    /// If this is an alpenglow block, return the genesis certificate.
+    ///
+    /// Note: this should only be called on a frozen bank, otherwise results
+    /// might be inaccurate for the first alpenglow bank.
+    pub fn get_alpenglow_genesis_certificate(&self) -> Option<Certificate> {
+        self.get_account(&GENESIS_CERTIFICATE_ACCOUNT).map(|acct| {
+            acct.deserialize_data()
+                .expect("Programmer error deserializing genesis certificate")
+        })
     }
 
     pub fn confirmed_last_blockhash(&self) -> Hash {
