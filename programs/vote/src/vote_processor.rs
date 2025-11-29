@@ -58,9 +58,7 @@ fn is_bls_pubkey_feature_enabled(invoke_context: &InvokeContext) -> bool {
     invoke_context
         .get_feature_set()
         .bls_pubkey_management_in_vote_account
-    && invoke_context
-        .get_feature_set()
-        .vote_state_v4
+        && invoke_context.get_feature_set().vote_state_v4
 }
 
 // Citing `runtime/src/block_cost_limit.rs`, vote has statically defined 2100
