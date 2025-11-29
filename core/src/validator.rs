@@ -30,7 +30,7 @@ use {
         system_monitor_service::{
             verify_net_stats_access, SystemMonitorService, SystemMonitorStatsReportConfig,
         },
-        tpu::{ForwardingClientOption, Tpu, TpuSockets},
+        tpu::{ForwardingClientOption, Tpu},
         tvu::{Tvu, TvuConfig, TvuSockets},
     },
     agave_snapshots::{
@@ -68,6 +68,7 @@ use {
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
         gossip_service::GossipService,
         node::{Node, NodeMultihoming},
+        sockets::{TpuSockets, TryClone},
     },
     solana_hard_forks::HardForks,
     solana_hash::Hash,
@@ -1119,14 +1120,18 @@ impl Validator {
 
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
 
-        let mut tpu_transactions_forwards_client_sockets =
-            Some(node.sockets.tpu_transaction_forwarding_clients);
+        let mut tpu_transactions_forwards_client_sockets = Some(
+            node.sockets
+                .tpu
+                .transaction_forwarding_clients
+                .try_clone()?,
+        );
 
         let vote_connection_cache = if vote_use_quic {
             let vote_connection_cache = ConnectionCache::new_with_client_options(
                 "connection_cache_vote_quic",
                 tpu_connection_pool_size,
-                Some(node.sockets.quic_vote_client),
+                Some(node.sockets.tpu.vote_client_quic.try_clone()?),
                 Some((
                     &identity_keypair,
                     node.info
@@ -1643,15 +1648,17 @@ impl Validator {
             entry_receiver,
             retransmit_slots_receiver,
             TpuSockets {
-                transactions: node.sockets.tpu,
-                transaction_forwards: node.sockets.tpu_forwards,
-                vote: node.sockets.tpu_vote,
-                broadcast: node.sockets.broadcast,
-                transactions_quic: node.sockets.tpu_quic,
-                transactions_forwards_quic: node.sockets.tpu_forwards_quic,
-                vote_quic: node.sockets.tpu_vote_quic,
-                vote_forwarding_client: node.sockets.tpu_vote_forwarding_client,
-                vortexor_receivers: node.sockets.vortexor_receivers,
+                transactions: node.sockets.tpu.transactions,
+                transaction_forwards: node.sockets.tpu.transaction_forwards,
+                vote: node.sockets.tpu.vote,
+                broadcast: node.sockets.tpu.broadcast,
+                transactions_quic: node.sockets.tpu.transactions_quic,
+                transactions_forwards_quic: node.sockets.tpu.transactions_forwards_quic,
+                vote_quic: node.sockets.tpu.vote_quic,
+                vote_forwarding_client: node.sockets.tpu.vote_forwarding_client,
+                vortexor_receivers: node.sockets.tpu.vortexor_receivers,
+                vote_client_quic: node.sockets.tpu.vote_client_quic,
+                transaction_forwarding_clients: node.sockets.tpu.transaction_forwarding_clients,
             },
             rpc_subscriptions.clone(),
             transaction_status_sender,
@@ -1837,6 +1844,7 @@ impl Validator {
         info!(
             "local broadcast address: {}",
             node.sockets
+                .tpu
                 .broadcast
                 .first()
                 .unwrap()
