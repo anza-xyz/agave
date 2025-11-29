@@ -19,7 +19,7 @@ pub type Block = (Slot, Hash);
     derive(AbiExample),
     frozen_abi(digest = "5SPmMTisBngyvNzKsXYbo1rbhefNYeGAgVJSYF5Su6N5")
 )]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct VoteMessage {
     /// The type of the vote.
     pub vote: Vote,
@@ -68,6 +68,41 @@ impl CertificateType {
             Self::Notarize(slot, block_id)
             | Self::NotarizeFallback(slot, block_id)
             | Self::FinalizeFast(slot, block_id) => Some((slot, block_id)),
+        }
+    }
+
+    /// Reconstructs the single source `Vote` payload for this certificate.
+    ///
+    /// This method is used primarily by the signature verifier. For
+    /// certificates formed by aggregating a single type of vote
+    /// (e.g., a `Notarize` certificate from `Notarize` votes), this function
+    /// reconstructs the canonical message payload that was signed by validators.
+    ///
+    /// For `NotarizeFallback` and `Skip` certificates where there are fallback
+    /// vote types, this method returns the appropriate vote type based on
+    /// `return_primary` argument. For all other certificate types, None should
+    /// be returned if `return_primary` is false.
+    ///
+    /// All certificate types return Some when `return_primary` is true.
+    pub fn to_source_vote(self, return_primary: bool) -> Option<Vote> {
+        if return_primary {
+            match self {
+                Self::Notarize(slot, block_id)
+                | Self::FinalizeFast(slot, block_id)
+                | Self::NotarizeFallback(slot, block_id) => {
+                    Some(Vote::new_notarization_vote(slot, block_id))
+                }
+                Self::Finalize(slot) => Some(Vote::new_finalization_vote(slot)),
+                Self::Skip(slot) => Some(Vote::new_skip_vote(slot)),
+            }
+        } else {
+            match self {
+                Self::NotarizeFallback(slot, block_id) => {
+                    Some(Vote::new_notarization_fallback_vote(slot, block_id))
+                }
+                Self::Skip(slot) => Some(Vote::new_skip_fallback_vote(slot)),
+                _ => None,
+            }
         }
     }
 }
