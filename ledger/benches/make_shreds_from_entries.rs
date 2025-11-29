@@ -41,7 +41,7 @@ fn make_dummy_entries<R: Rng>(rng: &mut R, data_size: usize) -> Vec<Entry> {
     let mut serialized_size = 8; // length prefix.
     repeat_with(|| make_dummy_entry(rng))
         .take_while(|entry| {
-            serialized_size += bincode::serialized_size(entry).unwrap();
+            serialized_size += wincode::serialized_size(entry).unwrap();
             serialized_size < data_size as u64
         })
         .collect()

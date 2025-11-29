@@ -47,7 +47,7 @@ fn test_multi_fec_block_coding(is_last_in_slot: bool) {
         .collect();
 
     let reed_solomon_cache = ReedSolomonCache::default();
-    let serialized_entries = bincode::serialize(&entries).unwrap();
+    let serialized_entries = wincode::serialize(&entries).unwrap();
 
     let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
         &keypair,

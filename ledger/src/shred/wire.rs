@@ -543,7 +543,7 @@ mod tests {
             let shred_common_header = shred.common_header();
             assert_eq!(
                 get_common_header_bytes(bytes).unwrap(),
-                bincode::serialize(shred_common_header).unwrap(),
+                wincode::serialize(shred_common_header).unwrap(),
             );
             assert_eq!(get_signature(bytes).unwrap(), shred_common_header.signature,);
             assert_eq!(
