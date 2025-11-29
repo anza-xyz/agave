@@ -26,8 +26,7 @@ use {
     },
     solana_tpu_client_next::{
         connection_workers_scheduler::{
-            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, NonblockingBroadcaster,
-            StakeIdentity,
+            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
         },
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
@@ -905,6 +904,7 @@ async fn test_client_builder() {
     let leader_updater = create_leader_updater(rpc_client, websocket_url, Some(server_address))
         .await
         .unwrap();
+
     let builder = ClientBuilder::new(leader_updater)
         .cancel_token(cancel.child_token())
         .bind_socket(socket)
@@ -929,7 +929,7 @@ async fn test_client_builder() {
         });
 
     let (tx_sender, client) = builder
-        .build::<NonblockingBroadcaster>()
+        .build()
         .expect("Client should be built successfully.");
 
     // Setup sending txs
