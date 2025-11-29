@@ -2146,6 +2146,7 @@ fn main() {
                         bank_forks,
                         starting_snapshot_hashes,
                         accounts_background_service,
+                        ..
                     } = load_and_process_ledger_or_exit(
                         arg_matches,
                         &genesis_config,
@@ -2583,14 +2584,17 @@ fn main() {
                         AccessType::PrimaryForMaintenance,
                     ));
                     let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
-                    let LoadAndProcessLedgerOutput { bank_forks, .. } =
-                        load_and_process_ledger_or_exit(
-                            arg_matches,
-                            &genesis_config,
-                            blockstore.clone(),
-                            process_options,
-                            None, // transaction status sender
-                        );
+                    let LoadAndProcessLedgerOutput {
+                        bank_forks,
+                        unified_scheduler_pool,
+                        ..
+                    } = load_and_process_ledger_or_exit(
+                        arg_matches,
+                        &genesis_config,
+                        blockstore.clone(),
+                        process_options,
+                        None, // transaction status sender
+                    );
 
                     let block_production_method = value_t_or_exit!(
                         arg_matches,
@@ -2605,6 +2609,7 @@ fn main() {
                         bank_forks,
                         blockstore,
                         block_production_method,
+                        unified_scheduler_pool,
                     ) {
                         Ok(()) => println!("Ok"),
                         Err(error) => {
