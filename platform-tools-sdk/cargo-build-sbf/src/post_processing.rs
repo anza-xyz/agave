@@ -8,7 +8,7 @@ use {
         fs::{self, File},
         io::{BufRead, BufReader, BufWriter, Write},
         path::Path,
-        process::exit,
+        process::{exit, Command, Stdio},
         str::FromStr,
     },
 };
@@ -20,13 +20,17 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
         .cloned()
         .unwrap_or_else(|| target_directory.join("deploy"));
     let target_triple = rust_target_triple(config);
-    let target_build_directory = target_directory.join(&target_triple).join("release");
+    let target_build_directory = if config.debug {
+        target_directory.join(&target_triple).join("debug")
+    } else {
+        target_directory.join(&target_triple).join("release")
+    };
 
     if let Some(program_name) = program_name {
         let program_unstripped_so = target_build_directory.join(format!("{program_name}.so"));
         let program_dump = sbf_out_dir.join(format!("{program_name}-dump.txt"));
         let program_so = sbf_out_dir.join(format!("{program_name}.so"));
-        let program_debug = sbf_out_dir.join(format!("{program_name}.debug"));
+        let program_debug = sbf_out_dir.join(format!("{program_name}__debug__.so"));
         let program_keypair = sbf_out_dir.join(format!("{program_name}-keypair.json"));
 
         fn file_older_or_missing(prerequisite_file: &Path, target_file: &Path) -> bool {
@@ -67,7 +71,23 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
             .join("llvm")
             .join("bin");
 
-        if file_older_or_missing(&program_unstripped_so, &program_so) {
+        if config.debug && file_older_or_missing(&program_unstripped_so, &program_debug) {
+            #[cfg(windows)]
+            let command = "copy";
+            #[cfg(not(windows))]
+            let command = "cp";
+            let _ = Command::new(command)
+                .args([program_unstripped_so.as_os_str(), program_debug.as_os_str()])
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap_or_else(|err| {
+                    error!("Failed to copy program to deploy folder: {err}");
+                    exit(1);
+                })
+                .wait();
+        }
+
+        if !config.debug && file_older_or_missing(&program_unstripped_so, &program_so) {
             #[cfg(windows)]
             let output = spawn(
                 &llvm_bin.join("llvm-objcopy"),
@@ -119,35 +139,24 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
             postprocess_dump(&program_dump);
         }
 
-        if config.debug && file_older_or_missing(&program_unstripped_so, &program_debug) {
-            #[cfg(windows)]
-            let llvm_objcopy = &llvm_bin.join("llvm-objcopy");
-            #[cfg(not(windows))]
-            let llvm_objcopy = &config.sbf_sdk.join("scripts").join("objcopy.sh");
-
-            let output = spawn(
-                llvm_objcopy,
-                [
-                    "--only-keep-debug".as_ref(),
-                    program_unstripped_so.as_os_str(),
-                    program_debug.as_os_str(),
-                ],
-                config.generate_child_script_on_failure,
-            );
-            if config.verbose {
-                debug!("{output}");
-            }
-        }
-
         if config.arch != "v3" {
             // SBPFv3 shall not have any undefined syscall.
-            check_undefined_symbols(config, &program_so);
+            check_undefined_symbols(
+                config,
+                if config.debug {
+                    &program_debug
+                } else {
+                    &program_so
+                },
+            );
         }
 
-        info!("To deploy this program:");
-        info!("  $ solana program deploy {}", program_so.display());
-        info!("The program address will default to this keypair (override with --program-id):");
-        info!("  {}", program_keypair.display());
+        if !config.debug {
+            info!("To deploy this program:");
+            info!("  $ solana program deploy {}", program_so.display());
+            info!("The program address will default to this keypair (override with --program-id):");
+            info!("  {}", program_keypair.display());
+        }
     } else if config.dump {
         warn!("Note: --dump is only available for crates with a cdylib target");
     }
