@@ -119,6 +119,7 @@ mod tests {
     use {
         super::*,
         crate::transaction_view::TransactionView,
+        solana_address::Address,
         solana_hash::Hash,
         solana_message::{
             compiled_instruction::CompiledInstruction,
@@ -173,8 +174,8 @@ mod tests {
             signatures: vec![Signature::default()], // 1 signature to be valid.
             message: VersionedMessage::Legacy(Message::new(
                 &[
-                    system_instruction::transfer(&payer, &Pubkey::new_unique(), 1),
-                    system_instruction::transfer(&payer, &Pubkey::new_unique(), 1),
+                    system_instruction::transfer(&payer, &Address::new_unique(), 1),
+                    system_instruction::transfer(&payer, &Address::new_unique(), 1),
                 ],
                 Some(&payer),
             )),
