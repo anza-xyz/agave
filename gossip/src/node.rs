@@ -107,12 +107,21 @@ impl Node {
             gossip_ports.push(port);
             ip_echo_sockets.push(ip_echo);
         }
-        let socket_config = SocketConfig::default();
+
+        // Many sockets are primarily read heavy or write heavy.
+        // Set a 4 MiB buffer size for the minimally used side of the socket for QUIC control traffic
+        let control_traffic_buffer_size = 4 * 1024 * 1024;
+
+        let read_write_socket_config = SocketConfig::default();
+        let primarily_read_socket_config =
+            SocketConfig::default().send_buffer_size(control_traffic_buffer_size);
+        let primarily_write_socket_config =
+            SocketConfig::default().recv_buffer_size(control_traffic_buffer_size);
 
         let (tvu_port, mut tvu_sockets) = multi_bind_in_range_with_config(
             bind_ip_addr,
             port_range,
-            socket_config,
+            primarily_read_socket_config,
             num_tvu_receive_sockets.get(),
         )
         .expect("tvu multi_bind");
@@ -122,80 +131,105 @@ impl Node {
                 &bind_ip_addrs,
                 tvu_port,
                 num_tvu_receive_sockets.get(),
-                socket_config,
+                primarily_read_socket_config,
             )
             .expect("Secondary bind TVU"),
         );
         let tvu_addresses = Self::get_socket_addrs(&tvu_sockets);
 
         let (tvu_quic_port, tvu_quic) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+            bind_in_range_with_config(bind_ip_addr, port_range, primarily_read_socket_config)
                 .expect("tvu_quic bind");
 
         let (tpu_port, tpu_socket) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+            bind_in_range_with_config(bind_ip_addr, port_range, primarily_read_socket_config)
                 .expect("tpu_socket primary bind");
-        let tpu_sockets =
-            bind_more_with_config(tpu_socket, 32, socket_config).expect("tpu_sockets multi_bind");
+        let tpu_sockets = bind_more_with_config(tpu_socket, 32, primarily_read_socket_config)
+            .expect("tpu_sockets multi_bind");
 
         let (tpu_port_quic, tpu_quic) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+            bind_in_range_with_config(bind_ip_addr, port_range, primarily_read_socket_config)
                 .expect("tpu_socket primary bind");
-        let mut tpu_quic = bind_more_with_config(tpu_quic, num_quic_endpoints.get(), socket_config)
-            .expect("tpu_quic bind");
+        let mut tpu_quic = bind_more_with_config(
+            tpu_quic,
+            num_quic_endpoints.get(),
+            primarily_read_socket_config,
+        )
+        .expect("tpu_quic bind");
 
         // multihoming RX for TPU
         tpu_quic.append(
-            &mut Self::bind_to_extra_ip(&bind_ip_addrs, tpu_port_quic, 32, socket_config)
-                .expect("Secondary bind TPU QUIC"),
+            &mut Self::bind_to_extra_ip(
+                &bind_ip_addrs,
+                tpu_port_quic,
+                32,
+                primarily_read_socket_config,
+            )
+            .expect("Secondary bind TPU QUIC"),
         );
         let tpu_quic_addresses = Self::get_socket_addrs(&tpu_quic);
 
         let (tpu_forwards_port, tpu_forwards_socket) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+            bind_in_range_with_config(bind_ip_addr, port_range, primarily_read_socket_config)
                 .expect("tpu_forwards primary bind");
-        let tpu_forwards_sockets = bind_more_with_config(tpu_forwards_socket, 8, socket_config)
-            .expect("tpu_forwards multi_bind");
+        let tpu_forwards_sockets =
+            bind_more_with_config(tpu_forwards_socket, 8, primarily_read_socket_config)
+                .expect("tpu_forwards multi_bind");
         let (tpu_forwards_quic_port, tpu_forwards_quic) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+            bind_in_range_with_config(bind_ip_addr, port_range, primarily_read_socket_config)
                 .expect("tpu_forwards primary bind");
-        let mut tpu_forwards_quic =
-            bind_more_with_config(tpu_forwards_quic, num_quic_endpoints.get(), socket_config)
-                .expect("tpu_forwards_quic multi_bind");
+        let mut tpu_forwards_quic = bind_more_with_config(
+            tpu_forwards_quic,
+            num_quic_endpoints.get(),
+            primarily_read_socket_config,
+        )
+        .expect("tpu_forwards_quic multi_bind");
 
         tpu_forwards_quic.append(
             &mut Self::bind_to_extra_ip(
                 &bind_ip_addrs,
                 tpu_forwards_quic_port,
                 num_quic_endpoints.get(),
-                socket_config,
+                primarily_read_socket_config,
             )
             .expect("Secondary bind TPU forwards"),
         );
         let tpu_forwards_quic_addresses = Self::get_socket_addrs(&tpu_forwards_quic);
 
-        let (tpu_vote_port, mut tpu_vote_sockets) =
-            multi_bind_in_range_with_config(bind_ip_addr, port_range, socket_config, 1)
-                .expect("tpu_vote multi_bind");
+        let (tpu_vote_port, mut tpu_vote_sockets) = multi_bind_in_range_with_config(
+            bind_ip_addr,
+            port_range,
+            primarily_read_socket_config,
+            1,
+        )
+        .expect("tpu_vote multi_bind");
 
         tpu_vote_sockets.extend(
-            Self::bind_to_extra_ip(&bind_ip_addrs, tpu_vote_port, 1, socket_config)
-                .expect("Secondary binds for tpu vote"),
+            Self::bind_to_extra_ip(
+                &bind_ip_addrs,
+                tpu_vote_port,
+                1,
+                primarily_read_socket_config,
+            )
+            .expect("Secondary binds for tpu vote"),
         );
         let tpu_vote_addresses = Self::get_socket_addrs(&tpu_vote_sockets);
 
         let (tpu_vote_quic_port, tpu_vote_quic) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+            bind_in_range_with_config(bind_ip_addr, port_range, primarily_read_socket_config)
                 .expect("tpu_vote_quic");
-        let mut tpu_vote_quic =
-            bind_more_with_config(tpu_vote_quic, num_quic_endpoints.get(), socket_config)
-                .expect("tpu_vote_quic multi_bind");
+        let mut tpu_vote_quic = bind_more_with_config(
+            tpu_vote_quic,
+            num_quic_endpoints.get(),
+            primarily_read_socket_config,
+        )
+        .expect("tpu_vote_quic multi_bind");
         tpu_vote_quic.append(
             &mut Self::bind_to_extra_ip(
                 &bind_ip_addrs,
                 tpu_vote_quic_port,
                 num_quic_endpoints.get(),
-                socket_config,
+                primarily_read_socket_config,
             )
             .expect("Secondary bind TPU vote"),
         );
@@ -204,7 +238,7 @@ impl Node {
         let (tvu_retransmit_port, mut retransmit_sockets) = multi_bind_in_range_with_config(
             bind_ip_addr,
             port_range,
-            socket_config,
+            primarily_write_socket_config,
             num_tvu_retransmit_sockets.get(),
         )
         .expect("tvu retransmit multi_bind");
@@ -214,73 +248,90 @@ impl Node {
                 &bind_ip_addrs,
                 tvu_retransmit_port,
                 num_tvu_retransmit_sockets.get(),
-                socket_config,
+                primarily_write_socket_config,
             )
             .expect("Secondary bind TVU retransmit"),
         );
 
-        let (_, repair) = bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
-            .expect("repair bind");
-        let (_, repair_quic) = bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
-            .expect("repair_quic bind");
+        let (_, repair) =
+            bind_in_range_with_config(bind_ip_addr, port_range, read_write_socket_config)
+                .expect("repair bind");
+        let (_, repair_quic) =
+            bind_in_range_with_config(bind_ip_addr, port_range, read_write_socket_config)
+                .expect("repair_quic bind");
 
         let (serve_repair_port, serve_repair) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+            bind_in_range_with_config(bind_ip_addr, port_range, read_write_socket_config)
                 .expect("serve_repair");
         let (serve_repair_quic_port, serve_repair_quic) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+            bind_in_range_with_config(bind_ip_addr, port_range, read_write_socket_config)
                 .expect("serve_repair_quic");
 
-        let (broadcast_port, mut broadcast) =
-            multi_bind_in_range_with_config(bind_ip_addr, port_range, socket_config, 4)
-                .expect("broadcast multi_bind");
+        let (broadcast_port, mut broadcast) = multi_bind_in_range_with_config(
+            bind_ip_addr,
+            port_range,
+            primarily_write_socket_config,
+            4,
+        )
+        .expect("broadcast multi_bind");
         // Multihoming TX for broadcast
         broadcast.append(
-            &mut Self::bind_to_extra_ip(&bind_ip_addrs, broadcast_port, 4, socket_config)
-                .expect("Secondary bind broadcast"),
+            &mut Self::bind_to_extra_ip(
+                &bind_ip_addrs,
+                broadcast_port,
+                4,
+                primarily_write_socket_config,
+            )
+            .expect("Secondary bind broadcast"),
         );
 
         let (_, ancestor_hashes_requests) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+            bind_in_range_with_config(bind_ip_addr, port_range, read_write_socket_config)
                 .expect("ancestor_hashes_requests bind");
         let (_, ancestor_hashes_requests_quic) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+            bind_in_range_with_config(bind_ip_addr, port_range, read_write_socket_config)
                 .expect("ancestor_hashes_requests QUIC bind should succeed");
 
         let (alpenglow_port, alpenglow) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+            bind_in_range_with_config(bind_ip_addr, port_range, read_write_socket_config)
                 .expect("Alpenglow port bind should succeed");
         // These are "client" sockets, so they could use ephemeral ports, but we
         // force them into the provided port_range to simplify the operations.
 
         // vote forwarding is only bound to primary interface for now
         let (_, tpu_vote_forwarding_client) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config).unwrap();
+            bind_in_range_with_config(bind_ip_addr, port_range, primarily_write_socket_config)
+                .unwrap();
 
         let (tpu_transaction_forwarding_client_port, tpu_transaction_forwarding_clients) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config).expect(
-                "TPU transaction forwarding client bind on interface {bind_ip_addr} should succeed",
-            );
+            bind_in_range_with_config(bind_ip_addr, port_range, primarily_write_socket_config)
+                .expect(
+                    "TPU transaction forwarding client bind on interface {bind_ip_addr} should \
+                     succeed",
+                );
         let tpu_transaction_forwarding_clients = once(tpu_transaction_forwarding_clients)
             .chain(
                 Self::bind_to_extra_ip(
                     &bind_ip_addrs,
                     tpu_transaction_forwarding_client_port,
                     1,
-                    socket_config,
+                    primarily_write_socket_config,
                 )
                 .expect("Secondary interface binds for tpu forward clients should succeed"),
             )
             .collect();
 
         let (_, quic_vote_client) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config).unwrap();
+            bind_in_range_with_config(bind_ip_addr, port_range, primarily_write_socket_config)
+                .unwrap();
 
         let (_, quic_alpenglow_client) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config).unwrap();
+            bind_in_range_with_config(bind_ip_addr, port_range, primarily_write_socket_config)
+                .unwrap();
 
         let (_, rpc_sts_client) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config).unwrap();
+            bind_in_range_with_config(bind_ip_addr, port_range, primarily_write_socket_config)
+                .unwrap();
 
         let mut info = ContactInfo::new(
             *pubkey,
@@ -326,7 +377,7 @@ impl Node {
                     vortexor_receiver_addr.port(),
                     vortexor_receiver_addr.port() + 1,
                 ),
-                socket_config,
+                primarily_read_socket_config,
                 32,
             )
             .unwrap_or_else(|_| {
