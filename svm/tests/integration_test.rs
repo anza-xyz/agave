@@ -2283,7 +2283,7 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
     vec![test_entry]
 }
 
-fn simd83_account_reallocate(formalize_loaded_transaction_data_size: bool) -> Vec<SvmTestEntry> {
+fn simd83_account_reallocate() -> Vec<SvmTestEntry> {
     let mut test_entries = vec![];
 
     let program_name = "write-to-account";
@@ -2292,11 +2292,6 @@ fn simd83_account_reallocate(formalize_loaded_transaction_data_size: bool) -> Ve
 
     let mut common_test_entry = SvmTestEntry::default();
     common_test_entry.add_initial_program(program_name);
-    if !formalize_loaded_transaction_data_size {
-        common_test_entry
-            .feature_set
-            .formalize_loaded_transaction_data_size = false;
-    }
 
     let fee_payer_keypair = Keypair::new();
     let fee_payer = fee_payer_keypair.pubkey();
@@ -2320,13 +2315,8 @@ fn simd83_account_reallocate(formalize_loaded_transaction_data_size: bool) -> Ve
     common_test_entry.add_initial_account(target, &mk_target(target_start_size));
 
     // we set a budget that is enough pre-large-realloc but not enough post-large-realloc
-    // the relevant feature counts programdata size, so if enabled, we add breathing room
-    // this test has nothing to do with the feature
-    let size_budget = Some(if formalize_loaded_transaction_data_size {
-        (program_size + MAX_PERMITTED_DATA_INCREASE) as u32
-    } else {
-        MAX_PERMITTED_DATA_INCREASE as u32
-    });
+    // we must add program size because programdata buffers are counted
+    let size_budget = Some((program_size + MAX_PERMITTED_DATA_INCREASE) as u32);
 
     let print_transaction = WriteProgramInstruction::Print.create_transaction(
         program_id,
@@ -2563,8 +2553,7 @@ fn drop_on_failure_batch(statuses: &[bool]) -> Vec<SvmTestEntry> {
 #[test_case(simd83_nonce_reuse(true))]
 #[test_case(simd83_account_deallocate())]
 #[test_case(simd83_fee_payer_deallocate())]
-#[test_case(simd83_account_reallocate(false))]
-#[test_case(simd83_account_reallocate(true))]
+#[test_case(simd83_account_reallocate())]
 #[test_case(all_or_nothing(AbortReason::None))]
 #[test_case(all_or_nothing(AbortReason::Unprocessable))]
 #[test_case(all_or_nothing(AbortReason::DropOnFailure))]
@@ -3171,29 +3160,16 @@ impl InspectedAccounts {
     }
 }
 
-#[test_case(false, false; "separate_nonce::old")]
-#[test_case(false, true; "separate_nonce::simd186")]
-#[test_case(true, false; "fee_paying_nonce::old")]
-#[test_case(true, true; "fee_paying_nonce::simd186")]
-fn svm_inspect_nonce_load_failure(
-    fee_paying_nonce: bool,
-    formalize_loaded_transaction_data_size: bool,
-) {
+#[test_case(false; "separate_nonce::old")]
+#[test_case(true; "fee_paying_nonce::old")]
+fn svm_inspect_nonce_load_failure(fee_paying_nonce: bool) {
     let mut test_entry = SvmTestEntry::default();
     let mut expected_inspected_accounts = InspectedAccounts::default();
 
-    if !formalize_loaded_transaction_data_size {
-        test_entry
-            .feature_set
-            .formalize_loaded_transaction_data_size = false;
-    }
-
     let fee_payer_keypair = Keypair::new();
-    let dummy_keypair = Keypair::new();
     let separate_nonce_keypair = Keypair::new();
 
     let fee_payer = fee_payer_keypair.pubkey();
-    let dummy = dummy_keypair.pubkey();
     let nonce_pubkey = if fee_paying_nonce {
         fee_payer
     } else {
@@ -3223,30 +3199,13 @@ fn svm_inspect_nonce_load_failure(
 
     let compute_instruction = ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(1);
     let advance_instruction = system_instruction::advance_nonce_account(&nonce_pubkey, &fee_payer);
-    let fee_only_noop_instruction = Instruction::new_with_bytes(
-        Pubkey::new_unique(),
-        &[],
-        vec![AccountMeta {
-            pubkey: dummy,
-            is_writable: true,
-            is_signer: true,
-        }],
-    );
+    let fee_only_noop_instruction = Instruction::new_with_bytes(Pubkey::new_unique(), &[], vec![]);
 
     test_entry.add_initial_account(nonce_pubkey, &initial_nonce_account);
 
     let mut separate_fee_payer_account = AccountSharedData::default();
     separate_fee_payer_account.set_lamports(LAMPORTS_PER_SOL);
     let separate_fee_payer_account = separate_fee_payer_account;
-
-    let dummy_account = AccountSharedData::create_from_existing_shared_data(
-        1,
-        Arc::new(vec![0; 2]),
-        system_program::id(),
-        false,
-        u64::MAX,
-    );
-    test_entry.add_initial_account(dummy, &dummy_account);
 
     // we always inspect the nonce at least once
     expected_inspected_accounts.inspect(nonce_pubkey, Inspect::LiveWrite(&initial_nonce_account));
@@ -3263,14 +3222,6 @@ fn svm_inspect_nonce_load_failure(
             .inspect(fee_payer, Inspect::LiveWrite(&separate_fee_payer_account));
     }
 
-    // with simd186, transaction loading aborts when we hit the fee-payer because of TRANSACTION_ACCOUNT_BASE_SIZE
-    // without simd186, transaction loading aborts on the dummy account, so it also happens to be inspected
-    // the difference is immaterial to the test as long as it happens before the nonce is loaded for the transaction
-    if !fee_paying_nonce && !formalize_loaded_transaction_data_size {
-        expected_inspected_accounts.inspect(dummy, Inspect::LiveWrite(&dummy_account));
-    }
-
-    // by signing with the dummy account we ensure it precedes a separate nonce
     let transaction = Transaction::new_signed_with_payer(
         &[
             compute_instruction,
@@ -3278,23 +3229,9 @@ fn svm_inspect_nonce_load_failure(
             fee_only_noop_instruction,
         ],
         Some(&fee_payer),
-        &[&fee_payer_keypair, &dummy_keypair],
+        &[&fee_payer_keypair],
         *initial_durable.as_hash(),
     );
-    if !fee_paying_nonce {
-        let sanitized = SanitizedTransaction::from_transaction_for_tests(transaction.clone());
-        let dummy_index = sanitized
-            .account_keys()
-            .iter()
-            .position(|key| *key == dummy)
-            .unwrap();
-        let nonce_index = sanitized
-            .account_keys()
-            .iter()
-            .position(|key| *key == nonce_pubkey)
-            .unwrap();
-        assert!(dummy_index < nonce_index);
-    }
 
     test_entry.push_nonce_transaction_with_status(
         transaction,
@@ -3302,7 +3239,7 @@ fn svm_inspect_nonce_load_failure(
         ExecutionStatus::ProcessedFailed,
     );
 
-    test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
+    test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
     test_entry
         .final_accounts
         .get_mut(&nonce_pubkey)
