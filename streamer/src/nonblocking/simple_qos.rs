@@ -9,8 +9,7 @@ use {
             },
         },
         quic::{
-            StreamerStats, DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
-            DEFAULT_MAX_STAKED_CONNECTIONS, DEFAULT_MAX_STREAMS_PER_MS,
+            StreamerStats, DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER, DEFAULT_MAX_STREAMS_PER_MS,
         },
         streamer::StakedNodes,
     },
@@ -43,11 +42,13 @@ pub struct SimpleQosConfig {
     pub max_connections_per_peer: usize,
 }
 
+const DEFAULT_MAX_VOTING_CONNECTIONS: usize = 8000;
+
 impl Default for SimpleQosConfig {
     fn default() -> Self {
         SimpleQosConfig {
             max_streams_per_second: DEFAULT_MAX_STREAMS_PER_MS * 1000,
-            max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS,
+            max_staked_connections: DEFAULT_MAX_VOTING_CONNECTIONS,
             max_connections_per_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_STAKED_PEER,
         }
     }
@@ -186,7 +187,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
                 ConnectionPeerType::Staked(stake) => {
                     let mut connection_table_l = self.staked_connection_table.lock().await;
 
-                    if connection_table_l.total_size >= self.config.max_staked_connections {
+                    if connection_table_l.table_size() >= self.config.max_staked_connections {
                         let num_pruned =
                             connection_table_l.prune_random(PRUNE_RANDOM_SAMPLE_SIZE, stake);
 
@@ -202,7 +203,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
                         update_open_connections_stat(&self.stats, &connection_table_l);
                     }
 
-                    if connection_table_l.total_size < self.config.max_staked_connections {
+                    if connection_table_l.table_size() < self.config.max_staked_connections {
                         if let Ok((last_update, cancel_connection, stream_counter)) = self
                             .cache_new_connection(
                                 client_connection_tracker,
