@@ -1322,8 +1322,13 @@ impl Blockstore {
             metrics,
         )?;
 
-        for shred in duplicate_shreds {
-            handle_duplicate(shred);
+        if !duplicate_shreds.is_empty() {
+            metrics.num_duplicate_shreds += duplicate_shreds.len() as u64;
+            let duplicate_handling_start = Measure::start("Handle duplicate shreds");
+            for shred in duplicate_shreds {
+                handle_duplicate(shred);
+            }
+            metrics.duplicate_shred_handing_us += duplicate_handling_start.end_as_us();
         }
 
         Ok(completed_data_set_infos)
