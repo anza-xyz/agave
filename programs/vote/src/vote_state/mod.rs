@@ -990,7 +990,7 @@ pub fn initialize_account_v2<S: std::hash::BuildHasher>(
 
     // verify the BLS pubkey proof of possession
     verify_bls_proof_of_possession(
-        &vote_account.get_key(),
+        vote_account.get_key(),
         &vote_init.authorized_voter_bls_pubkey,
         &vote_init.authorized_voter_bls_proof_of_possession,
     )?;
