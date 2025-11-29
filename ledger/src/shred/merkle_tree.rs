@@ -63,7 +63,7 @@ impl MerkleTree {
     /// Returns a reference to the root of the tree.
     pub(crate) fn root(&self) -> SliceRoot {
         // constructor ensures that the tree contains at least one node so this unwrap() should be safe.
-        SliceRoot(self.nodes.last().unwrap().to_bytes())
+        SliceRoot::from(*self.nodes.last().unwrap())
     }
 
     pub(crate) fn make_merkle_proof(
@@ -120,7 +120,7 @@ where
             (index >> 1, parent)
         });
     (index == 0)
-        .then_some(SliceRoot(root.to_bytes()))
+        .then_some(SliceRoot::from(root))
         .ok_or(Error::InvalidMerkleProof)
 }
 

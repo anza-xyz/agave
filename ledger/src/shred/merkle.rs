@@ -526,7 +526,7 @@ impl<'a> ShredTrait<'a> for ShredData {
     }
 
     fn signed_data(&'a self) -> Result<Self::SignedData, Error> {
-        self.merkle_root().map(|r| r.0.into())
+        self.merkle_root().map(Hash::from)
     }
 }
 
@@ -582,7 +582,7 @@ impl<'a> ShredTrait<'a> for ShredCode {
     }
 
     fn signed_data(&'a self) -> Result<Self::SignedData, Error> {
-        self.merkle_root().map(|r| r.0.into())
+        self.merkle_root().map(Hash::from)
     }
 }
 

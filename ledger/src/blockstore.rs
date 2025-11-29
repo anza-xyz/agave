@@ -4826,7 +4826,7 @@ pub fn create_new_ledger(
     let version = solana_shred_version::version_from_hash(&last_hash);
     // Slot 0 has no parent slot so there is nothing to chain to; instead,
     // initialize the chained merkle root with the genesis hash
-    let chained_merkle_root = SliceRoot(genesis_config.hash().to_bytes());
+    let chained_merkle_root = SliceRoot::from(genesis_config.hash());
 
     let shredder = Shredder::new(0, 0, 0, version).unwrap();
     let (shreds, _) = shredder.entries_to_merkle_shreds_for_tests(

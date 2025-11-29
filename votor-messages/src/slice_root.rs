@@ -39,3 +39,15 @@ impl Display for SliceRoot {
         write!(f, "{hash}")
     }
 }
+
+impl From<Hash> for SliceRoot {
+    fn from(hash: Hash) -> Self {
+        Self(hash.to_bytes())
+    }
+}
+
+impl From<SliceRoot> for Hash {
+    fn from(value: SliceRoot) -> Self {
+        value.0.into()
+    }
+}
