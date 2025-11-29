@@ -78,6 +78,11 @@ impl<U: Umem> Socket<U> {
                     continue;
                 }
 
+                if ring == XDP_TX_RING && size == 0 {
+                    //rx only
+                    continue;
+                }
+
                 if setsockopt(
                     fd.as_raw_fd(),
                     SOL_XDP,
@@ -136,16 +141,20 @@ impl<U: Umem> Socket<U> {
                 rx_fill_ring.commit();
             }
 
-            let tx_ring = Some(TxRing::new(
-                mmap_ring(
+            let tx_ring = if tx_ring_size > 0 {
+                Some(TxRing::new(
+                    mmap_ring(
+                        fd.as_raw_fd(),
+                        tx_ring_size.saturating_mul(mem::size_of::<XdpDesc>()),
+                        &offsets.tx,
+                        XDP_PGOFF_TX_RING as u64,
+                    )?,
+                    tx_ring_size as u32,
                     fd.as_raw_fd(),
-                    tx_ring_size.saturating_mul(mem::size_of::<XdpDesc>()),
-                    &offsets.tx,
-                    XDP_PGOFF_TX_RING as u64,
-                )?,
-                tx_ring_size as u32,
-                fd.as_raw_fd(),
-            ));
+                ))
+            } else {
+                None
+            };
 
             let rx_ring = if rx_ring_size > 0 {
                 Some(RxRing::new(
@@ -237,7 +246,7 @@ impl<U: Umem> Socket<U> {
         fill_size: usize,
         ring_size: usize,
     ) -> Result<(Self, Rx<U::Frame>), io::Error> {
-        let (socket, rx, _) = Self::new(queue, umem, zero_copy, fill_size, ring_size, 0, 0)?;
+        let (socket, rx, _) = Self::new(queue, umem, zero_copy, fill_size, ring_size, 1, 0)?;
         Ok((socket, rx))
     }
 

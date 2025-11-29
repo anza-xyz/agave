@@ -343,6 +343,10 @@ impl RingProducer {
         }
         self.cached_consumer = unsafe { (*self.consumer).load(Ordering::Acquire) };
     }
+
+    pub fn size(&self) -> u32 {
+        self.size
+    }
 }
 
 #[repr(C)]
@@ -381,6 +385,10 @@ impl TxCompletionRing {
 
     pub fn sync(&mut self, commit: bool) {
         self.consumer.sync(commit);
+    }
+
+    pub fn size(&self) -> u32 {
+        self.size
     }
 }
 
