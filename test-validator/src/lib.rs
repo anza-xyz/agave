@@ -1161,7 +1161,8 @@ impl TestValidator {
         let gossip = node.info.gossip().unwrap();
 
         {
-            let mut authorized_voter_keypairs = config.authorized_voter_keypairs.write().unwrap();
+            let mut authorized_voter_keypairs: std::sync::RwLockWriteGuard<'_, Vec<Arc<Keypair>>> =
+                config.authorized_voter_keypairs.write().unwrap();
             if !authorized_voter_keypairs
                 .iter()
                 .any(|x| x.pubkey() == vote_account_address)

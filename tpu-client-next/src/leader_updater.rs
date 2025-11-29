@@ -1,28 +1,12 @@
-//! This module provides [`LeaderUpdater`] trait along with
-//! [`create_leader_updater`] function to create an instance of this trait.
+//! This module provides [`LeaderUpdater`] trait.
 //!
 //! Currently, the main purpose of [`LeaderUpdater`] is to abstract over leader
 //! updates, hiding the details of how leaders are retrieved and which
-//! structures are used. It contains trait implementations
-//! `LeaderUpdaterService` and `PinnedLeaderUpdater`, where
-//! `LeaderUpdaterService` keeps [`LeaderTpuService`] internal to this module.
-//! Yet, it also allows to implement custom leader estimation.
+//! structures are used.
 
 use {
-    crate::logging::error,
     async_trait::async_trait,
-    solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
-    solana_connection_cache::connection_cache::Protocol,
-    solana_rpc_client::nonblocking::rpc_client::RpcClient,
-    solana_tpu_client::nonblocking::tpu_client::LeaderTpuService,
-    std::{
-        fmt,
-        net::SocketAddr,
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc,
-        },
-    },
+    std::{fmt, net::SocketAddr},
     thiserror::Error,
 };
 
@@ -61,70 +45,21 @@ impl fmt::Debug for LeaderUpdaterError {
     }
 }
 
-/// Creates a [`LeaderUpdater`] based on the configuration provided by the
-/// caller.
-///
-/// If `pinned_address` is provided, it returns a `PinnedLeaderUpdater` that
-/// always returns the provided address instead of checking leader schedule.
-/// Otherwise, it creates a `LeaderUpdaterService` which dynamically updates the
-/// leaders by connecting to the network via the [`LeaderTpuService`].
-#[deprecated(
-    since = "3.1.0",
-    note = "Use create_leader_updater_with_config instead."
-)]
-pub async fn create_leader_updater(
-    rpc_client: Arc<RpcClient>,
-    websocket_url: String,
-    pinned_address: Option<SocketAddr>,
-) -> Result<Box<dyn LeaderUpdater>, LeaderUpdaterError> {
-    if let Some(pinned_address) = pinned_address {
-        return Ok(Box::new(PinnedLeaderUpdater {
-            address: vec![pinned_address],
-        }));
-    }
-
-    let exit = Arc::new(AtomicBool::new(false));
-    let leader_tpu_service =
-        LeaderTpuService::new(rpc_client, &websocket_url, Protocol::QUIC, exit.clone())
-            .await
-            .map_err(|error| {
-                error!("Failed to create a LeaderTpuService: {error}");
-                LeaderUpdaterError
-            })?;
-    Ok(Box::new(LeaderUpdaterService {
-        leader_tpu_service,
-        exit,
-    }))
-}
-
-/// `LeaderUpdaterService` is an implementation of the [`LeaderUpdater`] trait
-/// that dynamically retrieves the current and upcoming leaders by communicating
-/// with the Solana network using [`LeaderTpuService`].
-struct LeaderUpdaterService {
-    leader_tpu_service: LeaderTpuService,
-    exit: Arc<AtomicBool>,
-}
-
-#[async_trait]
-impl LeaderUpdater for LeaderUpdaterService {
-    fn next_leaders(&mut self, lookahead_leaders: usize) -> Vec<SocketAddr> {
-        let lookahead_slots =
-            (lookahead_leaders as u64).saturating_mul(NUM_CONSECUTIVE_LEADER_SLOTS);
-        self.leader_tpu_service.leader_tpu_sockets(lookahead_slots)
-    }
-
-    async fn stop(&mut self) {
-        self.exit.store(true, Ordering::Relaxed);
-        self.leader_tpu_service.join().await;
-    }
+#[cfg(feature = "dev-context-only-utils")]
+pub fn create_pinned_leader_updater(address: SocketAddr) -> Box<dyn LeaderUpdater> {
+    Box::new(PinnedLeaderUpdater {
+        address: vec![address],
+    })
 }
 
 /// `PinnedLeaderUpdater` is an implementation of [`LeaderUpdater`] that always
-/// returns a fixed, "pinned" leader address. It is mainly used for testing.
+/// returns a fixed, "pinned" leader address.
+#[cfg(feature = "dev-context-only-utils")]
 struct PinnedLeaderUpdater {
     pub address: Vec<SocketAddr>,
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 #[async_trait]
 impl LeaderUpdater for PinnedLeaderUpdater {
     fn next_leaders(&mut self, _lookahead_leaders: usize) -> Vec<SocketAddr> {
