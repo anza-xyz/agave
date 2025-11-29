@@ -50,17 +50,23 @@
 //! So, given a) - c), we must restrict data shred's payload length such that the entire coding
 //! payload can fit into one coding shred / packet.
 
-pub(crate) use self::{merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH, payload::serde_bytes_payload};
+pub(crate) use self::{
+    merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH, payload::serde_bytes_payload,
+    shred_data::resize_stored_shred,
+};
 pub use {
     self::{
         payload::Payload,
-        shred_data::ShredData,
         stats::{ProcessShredsStats, ShredFetchStats},
     },
     crate::shredder::{ReedSolomonCache, Shredder},
+    merkle::ShredData,
 };
 use {
-    self::{shred_code::ShredCode, traits::Shred as _},
+    self::{
+        shred_code::ShredCode,
+        traits::{Shred as _, ShredData as _},
+    },
     crate::blockstore::{self},
     assert_matches::debug_assert_matches,
     bitflags::bitflags,
@@ -81,7 +87,7 @@ use {
 use {solana_keypair::Keypair, solana_perf::packet::Packet, solana_signer::Signer};
 
 mod common;
-pub(crate) mod merkle;
+pub mod merkle;
 mod merkle_tree;
 mod payload;
 mod shred_code;
@@ -104,7 +110,7 @@ pub const SIZE_OF_NONCE: usize = std::mem::size_of::<Nonce>();
 /// `test_shred_constants` ensures that the values are correct.
 const SIZE_OF_COMMON_SHRED_HEADER: usize = 83;
 pub const SIZE_OF_DATA_SHRED_HEADERS: usize = 88;
-const SIZE_OF_CODING_SHRED_HEADERS: usize = 89;
+pub const SIZE_OF_CODING_SHRED_HEADERS: usize = 89;
 const SIZE_OF_SIGNATURE: usize = SIGNATURE_BYTES;
 
 // Shreds are uniformly split into erasure batches with a "target" number of
@@ -262,7 +268,7 @@ struct CodingShredHeader {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Shred {
     ShredCode(ShredCode),
-    ShredData(ShredData),
+    ShredData(merkle::ShredData),
 }
 
 /// Tuple which uniquely identifies a shred should it exists.
@@ -401,7 +407,7 @@ impl Shred {
             }
             ShredVariant::MerkleData { .. } => {
                 let shred = merkle::ShredData::from_payload(shred)?;
-                Self::from(ShredData::from(shred))
+                Self::ShredData(shred)
             }
         })
     }
@@ -557,7 +563,7 @@ impl Shred {
     fn retransmitter_signature_offset(&self) -> Result<usize, Error> {
         match self {
             Self::ShredCode(ShredCode::Merkle(shred)) => shred.retransmitter_signature_offset(),
-            Self::ShredData(ShredData::Merkle(shred)) => shred.retransmitter_signature_offset(),
+            Self::ShredData(shred) => shred.retransmitter_signature_offset(),
         }
     }
 }
@@ -568,17 +574,11 @@ impl From<ShredCode> for Shred {
     }
 }
 
-impl From<ShredData> for Shred {
-    fn from(shred: ShredData) -> Self {
-        Self::ShredData(shred)
-    }
-}
-
 impl From<merkle::Shred> for Shred {
     fn from(shred: merkle::Shred) -> Self {
         match shred {
             merkle::Shred::ShredCode(shred) => Self::ShredCode(ShredCode::Merkle(shred)),
-            merkle::Shred::ShredData(shred) => Self::ShredData(ShredData::Merkle(shred)),
+            merkle::Shred::ShredData(shred) => Self::ShredData(shred),
         }
     }
 }
@@ -589,7 +589,7 @@ impl TryFrom<Shred> for merkle::Shred {
     fn try_from(shred: Shred) -> Result<Self, Self::Error> {
         match shred {
             Shred::ShredCode(ShredCode::Merkle(shred)) => Ok(Self::ShredCode(shred)),
-            Shred::ShredData(ShredData::Merkle(shred)) => Ok(Self::ShredData(shred)),
+            Shred::ShredData(shred) => Ok(Self::ShredData(shred)),
         }
     }
 }
@@ -870,14 +870,14 @@ pub fn max_entries_per_n_shred_last_or_not(
     if !is_last_in_slot {
         // all shreds are unsigned
         let shred_data_size =
-            ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ false).unwrap() as u64;
+            merkle::ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ false).unwrap() as u64;
         (shred_data_size * num_shreds - count_size) / entry_size
     } else {
         // last FEC SET is signed, all others are unsigned
         let shred_data_size_unsigned =
-            ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ false).unwrap() as u64;
+            merkle::ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ false).unwrap() as u64;
         let shred_data_size_signed =
-            ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ true).unwrap() as u64;
+            merkle::ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ true).unwrap() as u64;
         let shreds_per_fec_block = SHREDS_PER_FEC_BLOCK as u64;
         (shred_data_size_unsigned * (num_shreds - shreds_per_fec_block)
             + shred_data_size_signed * shreds_per_fec_block
@@ -892,7 +892,8 @@ pub fn max_entries_per_n_shred(
     shred_data_size: Option<usize>,
 ) -> u64 {
     // Default 32:32 erasure batches yields 64 shreds; log2(64) = 6.
-    let data_buffer_size = ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ true).unwrap();
+    let data_buffer_size =
+        merkle::ShredData::capacity(/*proof_size:*/ 6, /*resigned:*/ true).unwrap();
     let shred_data_size = shred_data_size.unwrap_or(data_buffer_size) as u64;
     let vec_size = wincode::serialized_size(&vec![entry]).unwrap();
     let entry_size = wincode::serialized_size(entry).unwrap();
