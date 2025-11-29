@@ -4441,7 +4441,7 @@ impl RpcClient {
         };
 
         self.send(
-            RpcRequest::GetTokenAccountsByOwner,
+            RpcRequest::GetTokenAccountsByDelegate,
             json!([delegate.to_string(), token_account_filter, config]),
         )
         .await
@@ -4964,4 +4964,63 @@ pub fn create_rpc_client_mocks() -> crate::mock_sender::Mocks {
     mocks.insert(get_account_request, get_account_response);
 
     mocks
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        async_trait::async_trait,
+        serde_json::{json, Value},
+        std::sync::{Arc, Mutex},
+    };
+
+    struct RecordingSender {
+        last: Arc<Mutex<Option<RpcRequest>>>,
+    }
+
+    #[async_trait]
+    impl RpcSender for RecordingSender {
+        async fn send(&self, request: RpcRequest, _params: Value) -> ClientResult<Value> {
+            *self.last.lock().unwrap() = Some(request);
+            Ok(json!([]))
+        }
+
+        fn get_transport_stats(&self) -> RpcTransportStats {
+            RpcTransportStats::default()
+        }
+
+        fn url(&self) -> String {
+            "test".to_string()
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_get_token_accounts_by_delegate_uses_correct_rpc_method() {
+        let last = Arc::new(Mutex::new(None));
+        let sender = RecordingSender {
+            last: Arc::clone(&last),
+        };
+        let client = RpcClient::new_sender(
+            sender,
+            RpcClientConfig::with_commitment(CommitmentConfig::default()),
+        );
+
+        let delegate = solana_pubkey::new_rand();
+        let mint = solana_pubkey::new_rand();
+
+        let _ = client
+            .get_token_accounts_by_delegate_with_commitment(
+                &delegate,
+                TokenAccountsFilter::Mint(mint),
+                CommitmentConfig::processed(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            *last.lock().unwrap(),
+            Some(RpcRequest::GetTokenAccountsByDelegate)
+        );
+    }
 }
