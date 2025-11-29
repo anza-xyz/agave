@@ -118,9 +118,16 @@ impl<'ix_data> TransactionContext<'ix_data> {
             instruction_accounts: Vec::with_capacity(
                 MAX_ACCOUNTS_PER_INSTRUCTION.saturating_mul(instruction_trace_capacity),
             ),
-            deduplication_maps: Vec::with_capacity(
-                MAX_ACCOUNTS_PER_TRANSACTION.saturating_mul(instruction_trace_capacity),
-            ),
+            // Allocating one extra than the maximum allowed in the instruction trace so that we
+            // don't error in `configure_next_instruction` if we are storing one extra map for
+            // when we reach the maximum instruction trace length and only error out in
+            // InvokeContext::push
+            deduplication_maps: vec![
+                u16::MAX;
+                MAX_ACCOUNTS_PER_TRANSACTION.saturating_mul(
+                    instruction_trace_capacity.saturating_add(1)
+                )
+            ],
             instruction_data: Vec::with_capacity(instruction_trace_capacity),
         }
     }
@@ -303,10 +310,93 @@ impl<'ix_data> TransactionContext<'ix_data> {
         );
         self.instruction_accounts
             .extend_from_slice(&instruction_accounts);
-        self.deduplication_maps
-            .extend_from_slice(&deduplication_map);
         self.instruction_data.push(instruction_data);
+
+        let dedup_map_range = InstructionFrame::deduplication_map_range(instruction_index);
+        // We can avoid this check if we bring the verification for
+        // `InstructionError::MaxInstructionTraceLengthExceeded` to this stage.
+        if self.deduplication_maps.len() < dedup_map_range.end {
+            self.deduplication_maps.resize(
+                self.deduplication_maps
+                    .len()
+                    .saturating_add(MAX_ACCOUNTS_PER_TRANSACTION),
+                u16::MAX,
+            );
+        }
+
+        self.deduplication_maps
+            .get_mut(dedup_map_range)
+            .unwrap()
+            .copy_from_slice(&deduplication_map);
         Ok(())
+    }
+
+    /// Used to configure the next top level instruction by writing to the InstructionAccounts array
+    /// and to the deduplication map in place, without copying.
+    pub fn configure_next_instruction_in_place(
+        &mut self,
+        instruction_accounts_len: usize,
+        program_index: IndexOfAccount,
+        instruction_data: Cow<'ix_data, [u8]>,
+    ) -> Result<(&mut [InstructionAccount], &mut [u16]), InstructionError> {
+        let trace_len = self.instruction_trace.len();
+        let instruction_index = trace_len.saturating_sub(1);
+        let penultimate_instruction_accounts = self
+            .instruction_trace
+            .get(trace_len.wrapping_sub(2))
+            .map(|item| item.instruction_accounts);
+
+        let accounts_range = {
+            let instruction = self
+                .instruction_trace
+                .last_mut()
+                .ok_or(InstructionError::CallDepth)?;
+
+            instruction.program_account_index_in_tx = program_index;
+            instruction.configure_vm_slices(
+                instruction_index as u64,
+                penultimate_instruction_accounts,
+                instruction_accounts_len,
+                instruction_data.len() as u64,
+            );
+
+            instruction.instruction_accounts_range()
+        };
+
+        self.instruction_data.push(instruction_data);
+
+        let dedup_map_range = InstructionFrame::deduplication_map_range(instruction_index);
+        // We can avoid this check if we bring the verification for
+        // `InstructionError::MaxInstructionTraceLengthExceeded` to this stage.
+        if self.deduplication_maps.len() < dedup_map_range.end {
+            self.deduplication_maps.resize(
+                self.deduplication_maps
+                    .len()
+                    .saturating_add(MAX_ACCOUNTS_PER_TRANSACTION),
+                u16::MAX,
+            );
+        }
+
+        // Although we allocate instruction_trace_capacity * MAX_ACCOUNTS_PER_INSTRUCTION,
+        // we still have cases where an instruction references more than 255 accounts.
+        // After SIMD-406 is activated, we can remove this check.
+        let new_accounts_len = self
+            .instruction_accounts
+            .len()
+            .saturating_add(instruction_accounts_len);
+        if self.instruction_accounts.capacity() < new_accounts_len {
+            self.instruction_accounts.reserve(instruction_accounts_len);
+        }
+
+        // SAFETY: In the last if-condition, we made sure we have enough capacity.
+        unsafe {
+            self.instruction_accounts.set_len(new_accounts_len);
+        }
+
+        Ok((
+            self.instruction_accounts.get_mut(accounts_range).unwrap(),
+            self.deduplication_maps.get_mut(dedup_map_range).unwrap(),
+        ))
     }
 
     /// A version of `configure_next_instruction` to help creating the deduplication map in tests

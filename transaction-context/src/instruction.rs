@@ -51,6 +51,7 @@ impl InstructionFrame {
 
     /// This function retrieves the range to index transaction_context.deduplication_maps
     pub fn deduplication_map_range(instruction_index: usize) -> Range<usize> {
+        // We reference transaction accounts by an u8 index, so we have a total of 256 accounts.
         instruction_index.saturating_mul(MAX_ACCOUNTS_PER_TRANSACTION)
             ..instruction_index
                 .saturating_add(1)

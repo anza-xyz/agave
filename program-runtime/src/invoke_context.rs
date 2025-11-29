@@ -441,36 +441,33 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         program_account_index: IndexOfAccount,
         data: &'ix_data [u8],
     ) -> Result<(), InstructionError> {
-        // We reference accounts by an u8 index, so we have a total of 256 accounts.
-        let mut transaction_callee_map: Vec<u16> = vec![u16::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
+        let (instruction_accounts, transaction_callee_map) = self
+            .transaction_context
+            .configure_next_instruction_in_place(
+                instruction.accounts.len(),
+                program_account_index,
+                Cow::Borrowed(data),
+            )?;
 
-        let mut instruction_accounts: Vec<InstructionAccount> =
-            Vec::with_capacity(instruction.accounts.len());
-        for index_in_transaction in instruction.accounts.iter() {
+        for (slice_idx, index_in_transaction) in instruction.accounts.iter().enumerate() {
             debug_assert!((*index_in_transaction as usize) < transaction_callee_map.len());
 
             let index_in_callee = transaction_callee_map
                 .get_mut(*index_in_transaction as usize)
                 .unwrap();
 
-            if (*index_in_callee as usize) > instruction_accounts.len() {
-                *index_in_callee = instruction_accounts.len() as u16;
+            if (*index_in_callee as usize) > slice_idx {
+                *index_in_callee = slice_idx as u16;
             }
 
             let index_in_transaction = *index_in_transaction as usize;
-            instruction_accounts.push(InstructionAccount::new(
+            *instruction_accounts.get_mut(slice_idx).unwrap() = InstructionAccount::new(
                 index_in_transaction as IndexOfAccount,
                 message.is_signer(index_in_transaction),
                 message.is_writable(index_in_transaction),
-            ));
+            );
         }
 
-        self.transaction_context.configure_next_instruction(
-            program_account_index,
-            instruction_accounts,
-            transaction_callee_map,
-            Cow::Borrowed(data),
-        )?;
         Ok(())
     }
 
