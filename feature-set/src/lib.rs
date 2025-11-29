@@ -1204,6 +1204,10 @@ pub mod alt_bn128_little_endian {
     solana_pubkey::declare_id!("bnS3pWfLrxHRJvMyLm6EaYQkP7A2Fe9DxoKv4aGA8YM");
 }
 
+pub mod assign_ed25519_precompile_to_native_loader {
+    solana_pubkey::declare_id!("ownrov5XivPciuSz7cUNRUpJ4WC82H6N4KXvemHmHpU");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2158,6 +2162,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             alt_bn128_little_endian::id(),
             "SIMD-0284: Add little-endian compatibility for alt_bn128",
+        ),
+        (
+            assign_ed25519_precompile_to_native_loader::id(),
+            "Assign Ed25519 Precompile to native loader",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
