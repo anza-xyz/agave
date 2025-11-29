@@ -5,6 +5,7 @@ use solana_clock::Slot;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SnapshotKind {
     Archive(SnapshotArchiveKind),
+    Fastboot,
 }
 
 impl SnapshotKind {

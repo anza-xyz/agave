@@ -115,24 +115,25 @@ impl SnapshotPackagerService {
                         break;
                     };
 
-                    let SnapshotKind::Archive(snapshot_archive_kind) = snapshot_kind;
-                    // Archiving the snapshot package is not allowed to fail.
-                    // AccountsBackgroundService calls `clean_accounts()` with a value for
-                    // latest_full_snapshot_slot that requires this archive call to succeed.
-                    if let Err(err) = snapshot_utils::archive_snapshot_package(
-                        snapshot_archive_kind,
-                        snapshot_slot,
-                        snapshot_hash,
-                        &bank_snapshot_info.snapshot_dir,
-                        snapshot_package.snapshot_storages,
-                        snapshot_config,
-                    ) {
-                        error!(
-                            "Stopping {}! Fatal error while archiving snapshot package: {err}",
-                            Self::NAME,
-                        );
-                        exit.store(true, Ordering::Relaxed);
-                        break;
+                    if let SnapshotKind::Archive(snapshot_archive_kind) = snapshot_kind {
+                        // Archiving the snapshot package is not allowed to fail.
+                        // AccountsBackgroundService calls `clean_accounts()` with a value for
+                        // latest_full_snapshot_slot that requires this archive call to succeed.
+                        if let Err(err) = snapshot_utils::archive_snapshot_package(
+                            snapshot_archive_kind,
+                            snapshot_slot,
+                            snapshot_hash,
+                            &bank_snapshot_info.snapshot_dir,
+                            snapshot_package.snapshot_storages,
+                            snapshot_config,
+                        ) {
+                            error!(
+                                "Stopping {}! Fatal error while archiving snapshot package: {err}",
+                                Self::NAME,
+                            );
+                            exit.store(true, Ordering::Relaxed);
+                            break;
+                        }
                     }
                     let archive_time_us = archive_time.elapsed().as_micros();
 
