@@ -686,9 +686,7 @@ pub(crate) fn create_new_vote_state_v4(
     }
 }
 
-/// Create a new VoteStateV4 from `VoteInit` with proper SIMD-0387 defaults.
-/// Note this is a temporary substitute for `VoteStateV4::new`.
-#[allow(clippy::arithmetic_side_effects)]
+/// Create a new VoteStateV4 from `VoteInitV2` per SIMD-0387.
 pub(crate) fn create_new_vote_state_v4_with_bls(
     vote_init: &VoteInitV2,
     clock: &Clock,
@@ -1158,7 +1156,10 @@ mod tests {
         },
         solana_vote_interface::{
             authorized_voters::AuthorizedVoters,
-            state::{BlockTimestamp, VoteInit, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY},
+            state::{
+                BlockTimestamp, VoteInit, BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE,
+                MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY,
+            },
         },
         std::collections::VecDeque,
         test_case::test_case,
@@ -2326,5 +2327,68 @@ mod tests {
         );
 
         assert_eq!(result, expected_result);
+    }
+
+    #[test]
+    fn test_bls_pubkey_handling() {
+        let bls_pubkey_compressed = [1u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE];
+        let vote_state_v4 = create_new_vote_state_v4_with_bls(
+            &VoteInitV2 {
+                node_pubkey: Pubkey::new_unique(),
+                authorized_voter: Pubkey::new_unique(),
+                authorized_withdrawer: Pubkey::new_unique(),
+                block_revenue_commission_bps: 500,
+                block_revenue_collector: Pubkey::new_unique(),
+                inflation_rewards_commission_bps: 1000,
+                inflation_rewards_collector: Pubkey::new_unique(),
+                authorized_voter_bls_pubkey: bls_pubkey_compressed,
+                authorized_voter_bls_proof_of_possession: [2u8;
+                    BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE],
+            },
+            &Clock::default(),
+        );
+        assert_eq!(
+            vote_state_v4.bls_pubkey_compressed,
+            Some(bls_pubkey_compressed)
+        );
+        assert!(vote_state_v4.has_bls_pubkey());
+    }
+
+    #[test]
+    fn test_get_and_update_authorized_voter_v4_with_bls() {
+        let vote_pubkey = Pubkey::new_unique();
+        let original_voter = Pubkey::new_unique();
+        let mut vote_state = create_new_vote_state_v4(
+            &vote_pubkey,
+            &VoteInit {
+                node_pubkey: original_voter,
+                authorized_voter: original_voter,
+                authorized_withdrawer: original_voter,
+                commission: 0,
+            },
+            &Clock::default(),
+        );
+
+        // It has some initial authorized voter but no BLS pubkey.
+        assert_eq!(vote_state.authorized_voters().len(), 1);
+        assert_eq!(
+            *vote_state.authorized_voters().first().unwrap().1,
+            original_voter
+        );
+        assert!(!vote_state.has_bls_pubkey());
+
+        // Update authorized voter with BLS pubkey.
+        let new_voter = Pubkey::new_unique();
+        let bls_pubkey_compressed = [3u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE];
+        vote_state
+            .set_new_authorized_voter_with_bls(&new_voter, &bls_pubkey_compressed, 0, 1, |_| Ok(()))
+            .unwrap();
+        assert_eq!(vote_state.authorized_voters().len(), 2);
+        assert_eq!(*vote_state.authorized_voters().last().unwrap().1, new_voter);
+        assert_eq!(
+            vote_state.bls_pubkey_compressed,
+            Some(bls_pubkey_compressed)
+        );
+        assert!(vote_state.has_bls_pubkey());
     }
 }
