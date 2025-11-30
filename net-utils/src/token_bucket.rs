@@ -230,14 +230,12 @@ where
     pub fn new(target_capacity: usize, prototype_bucket: TokenBucket, shard_amount: usize) -> Self {
         assert!(
             shard_amount > 0 && shard_amount.is_power_of_two(),
-            "KeyedRateLimiter shard_amount ({}) must be > 0 and a power of two",
-            shard_amount
+            "KeyedRateLimiter shard_amount ({shard_amount}) must be > 0 and a power of two"
         );
         assert!(
             target_capacity >= shard_amount,
-            "KeyedRateLimiter target_capacity ({}) must be >= shard_amount ({})",
-            target_capacity,
-            shard_amount
+            "KeyedRateLimiter target_capacity ({target_capacity}) must be >= shard_amount \
+             ({shard_amount})"
         );
         let shrink_interval = target_capacity / 4;
         Self {
