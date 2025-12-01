@@ -145,6 +145,8 @@ impl Default for PartialCertificate {
 }
 
 /// Partial certificate for notar fallback votes.
+///
+/// Not using [`PartialCertificate`] directly as a validator may vote notar fallback for up to [`MAX_NOTAR_FALLBACK_PER_VALIDATOR`] blocks in a given slot.
 #[derive(Default)]
 struct NotarFallbackPartial {
     /// In a given slot, we can see multiple block ids, stores per block id entries.
@@ -192,6 +194,8 @@ impl NotarFallbackPartial {
 }
 
 /// Partial certificate for notar votes.
+///
+/// Not using [`PartialCertificate`] directly as different validator may vote notar for different block ids and honest validators should not vote notar for more than one block in in a given slot.
 #[derive(Default)]
 struct NotarPartial {
     /// Different votes may vote for different block ids, store per block id entries.
