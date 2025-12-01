@@ -129,7 +129,7 @@ impl ConsensusPool {
             highest_finalized_slot: None,
             highest_finalized_with_notarize: None,
             parent_ready_tracker,
-            stats: ConsensusPoolStats::new(),
+            stats: ConsensusPoolStats::default(),
             slot_stake_counters_map: BTreeMap::new(),
         }
     }
