@@ -12,8 +12,9 @@ edition = { workspace = true }
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["log"]
 agave-unstable-api = []
+default = ["log"]
+dev-context-only-utils = []
 log = ["dep:log"]
 metrics = ["dep:solana-metrics"]
 tracing = ["dep:tracing"]
@@ -29,7 +30,6 @@ quinn = { workspace = true }
 rustls = { workspace = true }
 solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true }
-solana-connection-cache = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-keypair = { workspace = true }
 solana-measure = { workspace = true }
@@ -42,7 +42,6 @@ solana-rpc-client-api = { workspace = true }
 solana-streamer = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-tls-utils = { workspace = true }
-solana-tpu-client = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true, optional = true }
@@ -59,4 +58,4 @@ solana-net-utils = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
-solana-tpu-client-next = { path = ".", features = ["agave-unstable-api", "websocket-node-address-service"] }
+solana-tpu-client-next = { path = ".", features = ["agave-unstable-api", "websocket-node-address-service", "dev-context-only-utils"] }

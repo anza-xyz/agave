@@ -224,6 +224,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-random"
+version = "4.0.0-alpha.0"
+dependencies = [
+ "rand 0.8.5",
+]
+
+[[package]]
 name = "agave-reserved-account-keys"
 version = "4.0.0-alpha.0"
 dependencies = [
@@ -6521,6 +6528,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-syscalls",
  "bincode",
+ "cfg-if 1.0.4",
  "qualifier_attr",
  "solana-account",
  "solana-bincode",
@@ -7175,7 +7183,7 @@ dependencies = [
  "num_cpus",
  "rayon",
  "serde",
- "solana-address 1.1.0",
+ "solana-address 2.0.0",
  "solana-hash 3.1.0",
  "solana-measure",
  "solana-merkle-tree",
@@ -7455,6 +7463,7 @@ version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
+ "agave-random",
  "arc-swap",
  "arrayvec",
  "assert_matches",
@@ -7661,6 +7670,7 @@ name = "solana-ledger"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
+ "agave-random",
  "agave-reserved-account-keys",
  "agave-snapshots",
  "anyhow",
@@ -8606,7 +8616,7 @@ dependencies = [
  "serde_json",
  "solana-account",
  "solana-account-decoder-client-types",
- "solana-address 1.1.0",
+ "solana-address 2.0.0",
  "solana-clock",
  "solana-commitment-config",
  "solana-fee-calculator",
@@ -9496,7 +9506,6 @@ dependencies = [
  "rustls 0.23.35",
  "solana-clock",
  "solana-commitment-config",
- "solana-connection-cache",
  "solana-epoch-schedule",
  "solana-keypair",
  "solana-measure",
@@ -9508,7 +9517,6 @@ dependencies = [
  "solana-streamer",
  "solana-time-utils",
  "solana-tls-utils",
- "solana-tpu-client",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util 0.7.17",

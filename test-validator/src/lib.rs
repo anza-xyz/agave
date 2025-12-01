@@ -805,6 +805,7 @@ pub struct TestValidator {
     rpc_pubsub_url: String,
     rpc_url: String,
     tpu: SocketAddr,
+    tpu_quic: SocketAddr,
     gossip: SocketAddr,
     validator: Option<Validator>,
     vote_account_address: Pubkey,
@@ -1158,10 +1159,12 @@ impl TestValidator {
         let rpc_url = format!("http://{}", node.info.rpc().unwrap());
         let rpc_pubsub_url = format!("ws://{}/", node.info.rpc_pubsub().unwrap());
         let tpu = node.info.tpu(Protocol::UDP).unwrap();
+        let tpu_quic = node.info.tpu(Protocol::QUIC).unwrap_or(tpu);
         let gossip = node.info.gossip().unwrap();
 
         {
-            let mut authorized_voter_keypairs = config.authorized_voter_keypairs.write().unwrap();
+            let mut authorized_voter_keypairs: std::sync::RwLockWriteGuard<'_, Vec<Arc<Keypair>>> =
+                config.authorized_voter_keypairs.write().unwrap();
             if !authorized_voter_keypairs
                 .iter()
                 .any(|x| x.pubkey() == vote_account_address)
@@ -1260,6 +1263,7 @@ impl TestValidator {
             rpc_pubsub_url,
             rpc_url,
             tpu,
+            tpu_quic,
             gossip,
             validator,
             vote_account_address,
@@ -1393,6 +1397,11 @@ impl TestValidator {
     /// Return the validator's TPU address
     pub fn tpu(&self) -> &SocketAddr {
         &self.tpu
+    }
+
+    /// Return the validator's TPU QUIC address
+    pub fn tpu_quic(&self) -> &SocketAddr {
+        &self.tpu_quic
     }
 
     /// Return the validator's Gossip address
