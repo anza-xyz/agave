@@ -46,29 +46,13 @@ fn create_folders(config: &Config, deploy_folder: &PathBuf, debug_folder: &PathB
     }
 }
 
-fn strip_object(
-    config: &Config,
-    unstripped: &Path,
-    stripped: &Path,
-    #[cfg(windows)] llvm_bin: &Path,
-) {
-    #[cfg(windows)]
+fn strip_object(config: &Config, unstripped: &Path, stripped: &Path, llvm_bin: &Path) {
     let output = spawn(
         &llvm_bin.join("llvm-objcopy"),
         [
             "--strip-all".as_ref(),
             unstripped.as_os_str(),
             stripped.as_os_str(),
-        ],
-        config.generate_child_script_on_failure,
-    );
-    #[cfg(not(windows))]
-    let output = spawn(
-        &config.sbf_sdk.join("scripts").join("strip.sh"),
-        [
-            unstripped.as_os_str(),
-            stripped.as_os_str(),
-            "--strip-all".as_ref(),
         ],
         config.generate_child_script_on_failure,
     );
@@ -85,7 +69,7 @@ fn generate_debug_objects(
     deploy_keypair: &Path,
     debug_keypair: &PathBuf,
     program_name: &str,
-    #[cfg(windows)] llvm_bin: &Path,
+    llvm_bin: &Path,
 ) -> PathBuf {
     // debug objects
     let program_debug = sbf_debug_dir.join(format!("{program_name}.so.debug"));
@@ -96,7 +80,6 @@ fn generate_debug_objects(
             config,
             program_unstripped_so,
             &program_debug_stripped,
-            #[cfg(windows)]
             llvm_bin,
         );
     }
@@ -123,18 +106,12 @@ fn generate_release_objects(
     deploy_keypair: &PathBuf,
     debug_keypair: &Path,
     program_name: &str,
-    #[cfg(windows)] llvm_bin: &Path,
+    llvm_bin: &Path,
 ) -> PathBuf {
     let program_so = sbf_out_dir.join(format!("{program_name}.so"));
 
     if file_older_or_missing(program_unstripped_so, &program_so) {
-        strip_object(
-            config,
-            program_unstripped_so,
-            &program_so,
-            #[cfg(windows)]
-            llvm_bin,
-        );
+        strip_object(config, program_unstripped_so, &program_so, llvm_bin);
     }
 
     if !deploy_keypair.exists() {
@@ -175,7 +152,6 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
         let program_unstripped_so = target_build_directory.join(finalized_program_file.clone());
         let program_dump = sbf_out_dir.join(format!("{program_name}-dump.txt"));
 
-        #[cfg(windows)]
         let llvm_bin = config
             .sbf_sdk
             .join("dependencies")
@@ -192,7 +168,6 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
                 &deploy_keypair,
                 &debug_keypair,
                 &program_name,
-                #[cfg(windows)]
                 &llvm_bin,
             )
         } else {
@@ -203,38 +178,55 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
                 &deploy_keypair,
                 &debug_keypair,
                 &program_name,
-                #[cfg(windows)]
                 &llvm_bin,
             )
         };
 
         if config.dump && file_older_or_missing(&program_unstripped_so, &program_dump) {
-            let dump_script = config.sbf_sdk.join("scripts").join("dump.sh");
-            #[cfg(windows)]
+            let mangled_name = format!("{}.mangled", program_dump.display());
             {
-                error!(
-                    "Using Bash scripts from within a program is not supported on Windows, \
-                     skipping `--dump`."
-                );
-                error!(
-                    "Please run \"{} {} {}\" from a Bash-supporting shell, then re-run this \
-                     command to see the processed program dump.",
-                    &dump_script.display(),
-                    &program_unstripped_so.display(),
-                    &program_dump.display()
-                );
-            }
-            #[cfg(not(windows))]
-            {
-                let output = spawn(
-                    &dump_script,
-                    [&program_unstripped_so, &program_dump],
+                let mangled =
+                    File::create(mangled_name.clone()).expect("failed to open mangled file");
+                let mut mangled_out = BufWriter::new(mangled);
+                let mut output = spawn(
+                    &llvm_bin.join("llvm-readelf"),
+                    ["-aW".as_ref(), program_unstripped_so.as_os_str()],
                     config.generate_child_script_on_failure,
                 );
+                output.retain(|c| c != ':');
+                write!(mangled_out, "{output}").expect("write readelf output to mangled file");
+                if config.verbose {
+                    debug!("{output}");
+                }
+
+                let mut output = spawn(
+                    &llvm_bin.join("llvm-objdump"),
+                    [
+                        "--print-imm-hex".as_ref(),
+                        "--source".as_ref(),
+                        "--disassemble".as_ref(),
+                        program_unstripped_so.as_os_str(),
+                    ],
+                    config.generate_child_script_on_failure,
+                );
+                output.retain(|c| c != ':');
+                write!(mangled_out, "{output}").expect("write objdump output to mangled file");
                 if config.verbose {
                     debug!("{output}");
                 }
             }
+
+            let dump = File::create(&program_dump).expect("failed to open dump file");
+            let mut dump_out = BufWriter::new(dump);
+            let output = spawn(
+                Path::new("rustfilt"),
+                ["--input", mangled_name.as_str()],
+                config.generate_child_script_on_failure,
+            );
+            write!(dump_out, "{output}").expect("write output of rustfilt");
+            std::fs::remove_file(mangled_name).expect("mangled file to be removed");
+
+            info!("Wrote {}", program_dump.display());
             postprocess_dump(&program_dump);
         }
 

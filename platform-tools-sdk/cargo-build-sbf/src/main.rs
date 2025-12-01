@@ -417,12 +417,10 @@ fn main() {
              information available.\n`target/deploy/debug/program.so` is a stripped version for \
              execution in the VM.\nThese objects are not optimized for mainnet-beta deployment.",
         ))
-        .arg(
-            Arg::new("dump")
-                .long("dump")
-                .takes_value(false)
-                .help("Dump ELF information to a text file on success"),
-        )
+        .arg(Arg::new("dump").long("dump").takes_value(false).help(
+            "Dump ELF information to a text file on success. Requires `rustfilt` to demangle Rust \
+             symbols.",
+        ))
         .arg(
             Arg::new("features")
                 .long("features")
