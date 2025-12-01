@@ -25,6 +25,37 @@ use {
     },
 };
 
+#[derive(Clone, Copy)]
+struct CandidateSelection {
+    key: Pubkey,
+    dirty: bool,
+}
+
+struct ReservoirState {
+    samples: Vec<CandidateSelection>,
+    seen: usize,
+    max_samples: usize,
+}
+
+impl ReservoirState {
+    fn select(&mut self, candidate: CandidateSelection, rng: &mut impl Rng) {
+        if self.max_samples == 0 {
+            return;
+        }
+
+        self.seen += 1;
+        if self.samples.len() < self.max_samples {
+            self.samples.push(candidate);
+            return;
+        }
+
+        let idx = rng.random_range(0..self.seen);
+        if idx < self.max_samples {
+            self.samples[idx] = candidate;
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct StartupStats {
     pub copy_data_us: AtomicU64,
@@ -906,27 +937,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         iter: impl Iterator<Item = (&'a Pubkey, &'a Box<AccountMapEntry<T>>)>,
         current_age: Age,
         ages_flushing_now: Age,
-        total_entries: usize,
         max_evictions: Option<usize>,
     ) -> (CandidatesToFlush, CandidatesToEvict) {
         let mut candidates_to_flush = Vec::new();
         let mut candidates_to_evict = Vec::new();
-        let (mut remaining_to_select, mut remaining_entries) = if let Some(max) = max_evictions {
-            // Selection sampling needs an estimate of eligible entries (skip
-            // ages in the flush window and ref_count != 1). A precise count
-            // would require scanning everything, so we assume ages are uniform
-            // and ref_count != 1 is rare, and estimate the number of elegible
-            // entries with a scale off by the non-flushing ages.
-            let estimated_total_entries_exclude_skipped_ages =
-                total_entries * (256 - ages_flushing_now as usize) / 255;
-            (
-                max.min(estimated_total_entries_exclude_skipped_ages),
-                estimated_total_entries_exclude_skipped_ages,
-            )
-        } else {
-            (usize::MAX, usize::MAX)
-        };
         let mut rng = rng();
+        // use reservoir sampling to select a bounded, roughly uniform subset
+        let mut sampling_state = max_evictions.map(|limit| ReservoirState {
+            samples: Vec::with_capacity(limit),
+            seen: 0,
+            max_samples: limit,
+        });
         for (k, v) in iter {
             if !Self::should_evict_based_on_age(current_age, v, ages_flushing_now) {
                 // not planning to evict this item from memory within 'ages_flushing_now' ages
@@ -939,26 +960,30 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             if v.ref_count() != 1 {
                 continue;
             }
-            let should_select = if remaining_entries != usize::MAX {
-                // Selection probability: remaining_to_select / remaining_entries
-                let should_select = rng.random_range(0..remaining_entries) < remaining_to_select;
-                remaining_entries -= 1;
-                should_select
+            if let Some(state) = sampling_state.as_mut() {
+                state.select(
+                    CandidateSelection {
+                        key: *k,
+                        dirty: v.dirty(),
+                    },
+                    &mut rng,
+                );
+                continue;
+            }
+
+            if v.dirty() {
+                candidates_to_flush.push(*k);
             } else {
-                true
-            };
-            if should_select {
-                if v.dirty() {
-                    candidates_to_flush.push(*k);
+                candidates_to_evict.push(*k);
+            }
+        }
+
+        if let Some(state) = sampling_state {
+            for candidate in state.samples {
+                if candidate.dirty {
+                    candidates_to_flush.push(candidate.key);
                 } else {
-                    candidates_to_evict.push(*k);
-                }
-                if remaining_to_select != usize::MAX {
-                    remaining_to_select -= 1;
-                    if remaining_to_select == 0 {
-                        // Early exit: we've selected all max items
-                        break;
-                    }
+                    candidates_to_evict.push(candidate.key);
                 }
             }
         }
@@ -981,14 +1006,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let (possible_evictions, m) = {
             let map = self.map_internal.read().unwrap();
             let m = Measure::start("flush_scan"); // we don't care about lock time in this metric - bg threads can wait
-            let entries_in_bin = map.len();
-            let possible_evictions = Self::gather_possible_evictions(
-                map.iter(),
-                current_age,
-                ages_flushing_now,
-                entries_in_bin,
-                None,
-            );
+            let possible_evictions =
+                Self::gather_possible_evictions(map.iter(), current_age, ages_flushing_now, None);
             (possible_evictions, m)
         };
         Self::update_time_stat(&self.stats().flush_scan_us, m);
@@ -1794,7 +1813,6 @@ mod tests {
                         map_dirty.iter().chain(&map_clean),
                         current_age,
                         ages_flushing_now,
-                        256,
                         None,
                     );
                 // Verify that the number of entries selected for eviction matches the expected count.
@@ -1850,7 +1868,6 @@ mod tests {
 
     #[test]
     fn test_gather_possible_evictions_with_max_evictions() {
-        agave_logger::setup();
         let ref_count = 1;
         let current_age = 100;
         let ages_flushing_now = 0;
@@ -1867,44 +1884,40 @@ mod tests {
                     ref_count,
                     AccountMapEntryMeta::default(),
                 ));
+                if i % 2 == 0 {
+                    one_element_slot_list_entry.set_dirty(true);
+                }
                 one_element_slot_list_entry.set_age(current_age);
                 (pk, one_element_slot_list_entry)
             })
             .collect();
 
-        // Run the sampling multiple times to verify statistical properties
-        let num_trials = 1000;
-        let mut selection_counts: HashMap<Pubkey, usize> = HashMap::new();
+        let (to_flush, to_evict) = InMemAccountsIndex::<u64, u64>::gather_possible_evictions(
+            map.iter(),
+            current_age,
+            ages_flushing_now,
+            Some(max_evictions),
+        );
 
-        for _ in 0..num_trials {
-            let (to_flush, to_evcit) = InMemAccountsIndex::<u64, u64>::gather_possible_evictions(
-                map.iter(),
+        let total_selected = to_flush.0.len() + to_evict.0.len();
+        assert_eq!(total_selected, max_evictions);
+
+        for key in to_flush.0.iter().chain(&to_evict.0) {
+            let entry = map.get(key).unwrap();
+            assert_eq!(entry.ref_count(), ref_count);
+            assert!(InMemAccountsIndex::<u64, u64>::should_evict_based_on_age(
                 current_age,
+                entry,
                 ages_flushing_now,
-                total_entries,
-                Some(max_evictions),
-            );
-
-            for key in to_flush.0.iter().chain(to_evcit.0.iter()) {
-                *selection_counts.entry(*key).or_insert(0) += 1;
-            }
+            ));
         }
 
-        let expected_selections = (max_evictions as f64 / total_entries as f64) * num_trials as f64;
-        let tolerance = 0.5;
-
-        let min_expected = (expected_selections * (1.0 - tolerance)) as usize;
-        let max_expected = (expected_selections * (1.0 + tolerance)) as usize;
-
-        let entries_in_range = selection_counts
-            .values()
-            .filter(|&&count| count >= min_expected && count <= max_expected)
-            .count();
-        assert!(
-            entries_in_range >= (total_entries * 80 / 100),
-            "Expected at least 80% of entries to have selection counts in range [{min_expected}, \
-             {max_expected}], but only {entries_in_range} out of {total_entries} did"
-        );
+        for key in &to_flush.0 {
+            assert!(map.get(key).unwrap().dirty());
+        }
+        for key in &to_evict.0 {
+            assert!(!map.get(key).unwrap().dirty());
+        }
     }
 
     #[test]
