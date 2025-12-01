@@ -198,6 +198,12 @@ pub fn parse_system(
                 }),
             })
         }
+        SystemInstruction::CreateAccountAllowPrefund { .. } => {
+            // feature-gated activation to be implemented
+            Err(ParseInstructionError::InstructionNotParsable(
+                ParsableProgram::System,
+            ))
+        }
     }
 }
 

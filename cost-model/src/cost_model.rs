@@ -848,4 +848,113 @@ mod tests {
 
         assert_eq!(expected_execution_cost, programs_execution_cost);
     }
+
+    /// Regression test for SystemInstruction allocation data size calculation behavior.
+    ///
+    /// When a new SystemInstruction variant is added, this test will fail to compile
+    /// until updated.
+    ///
+    /// When you see a compile error here:
+    /// 1. DO NOT add the new variant to
+    ///    `calculate_account_data_size_on_deserialized_system_instruction`
+    ///    without proper feature gating
+    /// 2. Add the variant to the exhaustive match below in the appropriate category
+    /// 3. Add a test case verifying it returns None until feature-gate-activated,
+    ///    as demonstrated with `CreateAccountAllowPrefund`
+    ///
+    /// Adding a new allocating instruction without feature gating will cause consensus
+    /// issues during block replay.
+    #[test]
+    fn test_calculate_account_data_size_all_system_instruction_variants() {
+        let (lamports, owner, seed, space, base, authority) = (
+            1_000_000,
+            Pubkey::default(),
+            "seed".to_string(),
+            100u64,
+            Pubkey::default(),
+            Pubkey::default(),
+        );
+
+        let all_instructions = [
+            SystemInstruction::CreateAccount {
+                lamports,
+                space,
+                owner,
+            },
+            SystemInstruction::CreateAccountWithSeed {
+                base,
+                seed: seed.clone(),
+                lamports,
+                space,
+                owner,
+            },
+            SystemInstruction::Allocate { space },
+            SystemInstruction::AllocateWithSeed {
+                base,
+                seed: seed.clone(),
+                space,
+                owner,
+            },
+            SystemInstruction::Assign { owner },
+            SystemInstruction::Transfer { lamports },
+            SystemInstruction::AdvanceNonceAccount,
+            SystemInstruction::WithdrawNonceAccount(lamports),
+            SystemInstruction::InitializeNonceAccount(authority),
+            SystemInstruction::AuthorizeNonceAccount(authority),
+            SystemInstruction::UpgradeNonceAccount,
+            SystemInstruction::AssignWithSeed {
+                base,
+                seed: seed.clone(),
+                owner,
+            },
+            SystemInstruction::TransferWithSeed {
+                lamports,
+                from_seed: seed.clone(),
+                from_owner: owner,
+            },
+        ];
+
+        for instruction in all_instructions {
+            let result = CostModel::calculate_account_data_size_on_deserialized_system_instruction(
+                instruction.clone(),
+            );
+
+            let expected = match instruction {
+                // Allocating instructions (should return Some(space) when properly handled)
+                SystemInstruction::CreateAccount { space, .. }
+                | SystemInstruction::CreateAccountWithSeed { space, .. }
+                | SystemInstruction::Allocate { space }
+                | SystemInstruction::AllocateWithSeed { space, .. } => {
+                    SystemProgramAccountAllocation::Some(space)
+                }
+                // Non-allocating instructions
+                SystemInstruction::Assign { .. }
+                | SystemInstruction::Transfer { .. }
+                | SystemInstruction::AdvanceNonceAccount
+                | SystemInstruction::WithdrawNonceAccount(..)
+                | SystemInstruction::InitializeNonceAccount(..)
+                | SystemInstruction::AuthorizeNonceAccount(..)
+                | SystemInstruction::UpgradeNonceAccount
+                | SystemInstruction::AssignWithSeed { .. }
+                | SystemInstruction::TransferWithSeed { .. } => {
+                    SystemProgramAccountAllocation::None
+                }
+                // New allocating instructions must return None until feature-gated.
+                // They must not return Failed, as estimates are not adjusted to 0 in that case.
+                SystemInstruction::CreateAccountAllowPrefund { .. } => {
+                    assert!(
+                        matches!(result, SystemProgramAccountAllocation::None),
+                        "CreateAccountAllowPrefund must return None until feature-gated, got \
+                         {result:?}",
+                    );
+                    continue;
+                } // Do not add catch-all (_) pattern - compiler intentionally errors if new variants are added.
+            };
+
+            assert_eq!(
+                expected, result,
+                "Mismatch for instruction: {instruction:?}",
+            );
+        }
+    }
 }
