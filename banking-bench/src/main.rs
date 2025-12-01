@@ -29,9 +29,7 @@ use {
     solana_perf::packet::{to_packet_batches, PacketBatch},
     solana_poh::poh_recorder::{create_test_recorder, PohRecorder, WorkingBankEntry},
     solana_pubkey::{self as pubkey, Pubkey},
-    solana_runtime::{
-        bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
-    },
+    solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_signature::Signature,
     solana_signer::Signer,
     solana_system_interface::instruction as system_instruction,
@@ -451,7 +449,6 @@ fn main() {
             BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
         )))
         .unwrap();
-    let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
     let Channels {
         non_vote_sender,
         non_vote_receiver,
@@ -476,7 +473,7 @@ fn main() {
         replay_vote_sender,
         None,
         bank_forks.clone(),
-        prioritization_fee_cache,
+        None,
     );
 
     // This is so that the signal_receiver does not go out of scope after the closure.

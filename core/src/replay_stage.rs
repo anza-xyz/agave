@@ -287,7 +287,7 @@ pub struct ReplayStageConfig {
     pub vote_tracker: Arc<VoteTracker>,
     pub cluster_slots: Arc<ClusterSlots>,
     pub log_messages_bytes_limit: Option<usize>,
-    pub prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    pub prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     pub banking_tracer: Arc<BankingTracer>,
     pub snapshot_controller: Option<Arc<SnapshotController>>,
 }
@@ -801,7 +801,7 @@ impl ReplayStage {
                     log_messages_bytes_limit,
                     &replay_mode,
                     &replay_tx_thread_pool,
-                    &prioritization_fee_cache,
+                    prioritization_fee_cache.as_deref(),
                     &mut purge_repair_slot_counter,
                     &poh_recorder,
                     first_alpenglow_slot,
@@ -2299,7 +2299,7 @@ impl ReplayStage {
         entry_notification_sender: Option<&EntryNotifierSender>,
         replay_vote_sender: &ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
-        prioritization_fee_cache: &PrioritizationFeeCache,
+        prioritization_fee_cache: Option<&PrioritizationFeeCache>,
     ) -> result::Result<usize, BlockstoreProcessorError> {
         let mut w_replay_stats = replay_stats.write().unwrap();
         let mut w_replay_progress = replay_progress.write().unwrap();
@@ -2950,7 +2950,7 @@ impl ReplayStage {
         replay_timing: &mut ReplayLoopTiming,
         log_messages_bytes_limit: Option<usize>,
         active_bank_slots: &[Slot],
-        prioritization_fee_cache: &PrioritizationFeeCache,
+        prioritization_fee_cache: Option<&PrioritizationFeeCache>,
     ) -> Vec<ReplaySlotFromBlockstore> {
         // Make mutable shared structures thread safe.
         let progress = RwLock::new(progress);
@@ -3063,7 +3063,7 @@ impl ReplayStage {
         replay_timing: &mut ReplayLoopTiming,
         log_messages_bytes_limit: Option<usize>,
         bank_slot: Slot,
-        prioritization_fee_cache: &PrioritizationFeeCache,
+        prioritization_fee_cache: Option<&PrioritizationFeeCache>,
     ) -> ReplaySlotFromBlockstore {
         let mut replay_result = ReplaySlotFromBlockstore {
             is_slot_dead: false,
@@ -3485,7 +3485,7 @@ impl ReplayStage {
         log_messages_bytes_limit: Option<usize>,
         replay_mode: &ForkReplayMode,
         replay_tx_thread_pool: &ThreadPool,
-        prioritization_fee_cache: &PrioritizationFeeCache,
+        prioritization_fee_cache: Option<&PrioritizationFeeCache>,
         purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
         poh_recorder: &RwLock<PohRecorder>,
         first_alpenglow_slot: Option<Slot>,
@@ -5184,7 +5184,7 @@ pub(crate) mod tests {
                 None,
                 &replay_vote_sender,
                 None,
-                &PrioritizationFeeCache::new(0u64),
+                None,
             );
             let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
             let rpc_subscriptions = Arc::new(RpcSubscriptions::new_for_tests(

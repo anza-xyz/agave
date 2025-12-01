@@ -35,9 +35,7 @@ use {
     solana_perf::packet::to_packet_batches,
     solana_poh::poh_recorder::{create_test_recorder, WorkingBankEntry},
     solana_pubkey as pubkey,
-    solana_runtime::{
-        bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
-    },
+    solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_signature::Signature,
     solana_signer::Signer,
     solana_system_interface::instruction as system_instruction,
@@ -252,7 +250,7 @@ fn bench_banking(
         s,
         None,
         bank_forks,
-        Arc::new(PrioritizationFeeCache::new(0u64)),
+        None,
     );
 
     let chunk_len = verified.len() / CHUNKS;

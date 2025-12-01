@@ -42,7 +42,6 @@ use {
         bank::{Bank, HashOverrides},
         bank_forks::BankForks,
         installed_scheduler_pool::BankWithScheduler,
-        prioritization_fee_cache::PrioritizationFeeCache,
     },
     solana_shred_version::compute_shred_version,
     solana_signer::Signer,
@@ -833,7 +832,6 @@ impl BankingSimulator {
         );
 
         info!("Start banking stage!...");
-        let prioritization_fee_cache = &Arc::new(PrioritizationFeeCache::new(0u64));
         let banking_stage = BankingStage::new_num_threads(
             block_production_method.clone(),
             poh_recorder.clone(),
@@ -848,7 +846,7 @@ impl BankingSimulator {
             replay_vote_sender,
             None,
             bank_forks.clone(),
-            prioritization_fee_cache.clone(),
+            None,
         );
 
         let (&_slot, &raw_base_event_time) = freeze_time_by_slot

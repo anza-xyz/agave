@@ -989,9 +989,11 @@ impl Validator {
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
 
-        // block min prioritization fee cache should be readable by RPC, and writable by validator
-        // (by both replay stage and banking stage)
-        let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::default());
+        let prioritization_fee_cache = if config.rpc_config.full_api {
+            Some(Arc::new(PrioritizationFeeCache::default()))
+        } else {
+            None
+        };
 
         let leader_schedule_cache = Arc::new(leader_schedule_cache);
         let (poh_recorder, entry_receiver) = {
@@ -1585,7 +1587,7 @@ impl Validator {
             config.wait_to_vote_slot,
             Some(snapshot_controller.clone()),
             config.runtime_config.log_messages_bytes_limit,
-            &prioritization_fee_cache,
+            prioritization_fee_cache.clone(),
             banking_tracer.clone(),
             turbine_quic_endpoint_sender.clone(),
             turbine_quic_endpoint_receiver,
@@ -1681,7 +1683,7 @@ impl Validator {
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
-            &prioritization_fee_cache,
+            prioritization_fee_cache,
             config.block_production_method.clone(),
             config.block_production_num_workers,
             config.block_production_scheduler_config.clone(),
