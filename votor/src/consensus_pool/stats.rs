@@ -84,6 +84,7 @@ impl VoteStats {
 
 pub(crate) struct ConsensusPoolStats {
     pub(crate) invalid_votes: u32,
+    pub(crate) bls_errors: u32,
     pub(crate) event_safe_to_notarize: u32,
     pub(crate) event_safe_to_skip: u32,
     pub(crate) exist_certs: u32,
@@ -110,6 +111,7 @@ impl ConsensusPoolStats {
     pub fn new() -> Self {
         Self {
             invalid_votes: 0,
+            bls_errors: 0,
             event_safe_to_notarize: 0,
             event_safe_to_skip: 0,
             exist_certs: 0,
@@ -143,6 +145,7 @@ impl ConsensusPoolStats {
         datapoint_info!(
             "consensus_pool_stats",
             ("vote_pool_invalid_votes", self.invalid_votes as i64, i64),
+            ("vote_pool_bls_error", self.bls_errors as i64, i64),
             ("event_safe_to_skip", self.event_safe_to_skip as i64, i64),
             (
                 "event_safe_to_notarize",

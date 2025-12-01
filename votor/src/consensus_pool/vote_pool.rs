@@ -42,33 +42,40 @@ pub(crate) enum BuildCertError {
     Encode(EncodeError),
 }
 
-/// Builds a [`Certificate`].
+/// Builds a [`Certificate`] of the given `cert_type` from the given primary and fallback vote aggregations.
 ///
-/// If [`fallback`] is `None`, uses base-2 encoding.
-/// If [`fallback`] is not `None`, then uses base-3 encoding.
+/// A vote aggregation is a [`SignatureProjective`] aggregate of signatures of each validator whose vote was received alone with a bitvec containing the ranks of the validators that voted.
+///
+/// If [`fallback`] is `None`, uses base-2 encoding to convert the `primary_bitvec` into [`Certificate::bitmap`] and `primary_sig` into [`Certificate::signature`].
+/// If [`fallback`] is not `None`, then uses base-3 encoding to convert the combination of `primary_bitvec` and `fallback_bitvec` into [`Certificate::bitmap`] and an aggregate of `primary_sig` and `fallback_sig` into [`Certificate::signature`].
+/// [`Certificate::cert_type`] is set to `cert_type` without performing any validation checks.
+///
+/// To save space, we also resize the bitvecs to largest index that is set to 1.
 fn build_cert(
     cert_type: CertificateType,
-    signature: &SignatureProjective,
-    mut bitmap: BitVec<u8, Lsb0>,
+    primary_sig: &SignatureProjective,
+    mut primary_bitvec: BitVec<u8, Lsb0>,
     fallback: Option<(&SignatureProjective, BitVec<u8, Lsb0>)>,
 ) -> Result<Certificate, BuildCertError> {
     let (signature, bitmap) = match fallback {
         None => {
-            let new_len = bitmap.last_one().map_or(0, |i| i.saturating_add(1));
-            bitmap.resize(new_len, false);
-            let bitmap = encode_base2(&bitmap).map_err(BuildCertError::Encode)?;
-            (signature.into(), bitmap)
+            let new_len = primary_bitvec.last_one().map_or(0, |i| i.saturating_add(1));
+            primary_bitvec.resize(new_len, false);
+            let bitmap = encode_base2(&primary_bitvec).map_err(BuildCertError::Encode)?;
+            (primary_sig.into(), bitmap)
         }
-        Some((fallback_sig, mut fallback_bitmap)) => {
-            let last_one_0 = bitmap.last_one().map_or(0, |i| i.saturating_add(1));
-            let last_one_1 = fallback_bitmap
+        Some((fallback_sig, mut fallback_bitvec)) => {
+            let last_one_0 = primary_bitvec.last_one().map_or(0, |i| i.saturating_add(1));
+            let last_one_1 = fallback_bitvec
                 .last_one()
                 .map_or(0, |i| i.saturating_add(1));
             let new_len = last_one_0.max(last_one_1);
-            bitmap.resize(new_len, false);
-            fallback_bitmap.resize(new_len, false);
-            let bitmap = encode_base3(&bitmap, &fallback_bitmap).map_err(BuildCertError::Encode)?;
-            let signature = SignatureProjective::aggregate([signature, fallback_sig].into_iter())?;
+            primary_bitvec.resize(new_len, false);
+            fallback_bitvec.resize(new_len, false);
+            let bitmap =
+                encode_base3(&primary_bitvec, &fallback_bitvec).map_err(BuildCertError::Encode)?;
+            let signature =
+                SignatureProjective::aggregate([primary_sig, fallback_sig].into_iter())?;
             (signature.into(), bitmap)
         }
     };

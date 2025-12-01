@@ -320,7 +320,7 @@ impl ConsensusPool {
                     &mut self.stats,
                 );
             }
-            Err(e) => match e {
+            Err(e) => match &e {
                 vote_pool::AddVoteError::Duplicate => {
                     self.stats.exist_votes = self.stats.exist_votes.saturating_add(1);
                     return Ok(vec![]);
@@ -329,7 +329,10 @@ impl ConsensusPool {
                     self.stats.invalid_votes = self.stats.invalid_votes.saturating_add(1);
                     return Err(e.into());
                 }
-                vote_pool::AddVoteError::Bls(_) => {
+                vote_pool::AddVoteError::Bls(bls_error) => {
+                    // this error might indicate a bug as signature verification should have happened when the vote was received so this error should not happen.
+                    error!("Adding vote {vote:?} produced error {bls_error}");
+                    self.stats.bls_errors = self.stats.bls_errors.saturating_add(1);
                     return Err(e.into());
                 }
             },
