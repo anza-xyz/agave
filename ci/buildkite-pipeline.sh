@@ -180,119 +180,119 @@ wait_step() {
 }
 
 all_test_steps() {
-  command_step crate-publish-test "cargo xtask publish test" 180 check
-#   command_step dcou-1-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 1/3" 20 check
-#   command_step dcou-2-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 2/3" 20 check
-#   command_step dcou-3-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 3/3" 20 check
-#   command_step miri "ci/docker-run-default-image.sh ci/test-miri.sh" 5 check
-#   command_step frozen-abi "ci/docker-run-default-image.sh ci/test-frozen-abi.sh" 30 check
-#   wait_step
+  command_step checks1 "ci/docker-run-default-image.sh ci/test-checks.sh" 20 check
+  command_step dcou-1-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 1/3" 20 check
+  command_step dcou-2-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 2/3" 20 check
+  command_step dcou-3-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 3/3" 20 check
+  command_step miri "ci/docker-run-default-image.sh ci/test-miri.sh" 5 check
+  command_step frozen-abi "ci/docker-run-default-image.sh ci/test-frozen-abi.sh" 30 check
+  wait_step
 
-#   # Full test suite
-#   .buildkite/scripts/build-stable.sh >> "$output_file"
+  # Full test suite
+  .buildkite/scripts/build-stable.sh >> "$output_file"
 
-#   # Docs tests
-#   if affects \
-#              .rs$ \
-#              Cargo.lock$ \
-#              Cargo.toml$ \
-#              ^ci/rust-version.sh \
-#              ^ci/test-docs.sh \
-#       ; then
-#     command_step doctest "ci/docker-run-default-image.sh ci/test-docs.sh" 15
-#   else
-#     annotate --style info --context test-docs \
-#       "Docs skipped as no .rs files were modified"
-#   fi
-#   wait_step
+  # Docs tests
+  if affects \
+             .rs$ \
+             Cargo.lock$ \
+             Cargo.toml$ \
+             ^ci/rust-version.sh \
+             ^ci/test-docs.sh \
+      ; then
+    command_step doctest "ci/docker-run-default-image.sh ci/test-docs.sh" 15
+  else
+    annotate --style info --context test-docs \
+      "Docs skipped as no .rs files were modified"
+  fi
+  wait_step
 
-#   # SBF test suite
-#   if affects \
-#              .rs$ \
-#              Cargo.lock$ \
-#              Cargo.toml$ \
-#              ^ci/rust-version.sh \
-#              ^ci/test-stable-sbf.sh \
-#              ^ci/test-stable.sh \
-#              ^ci/test-local-cluster.sh \
-#              ^core/build.rs \
-#              ^fetch-perf-libs.sh \
-#              ^platform-tools-sdk/ \
-#              ^programs/ \
-#              cargo-build-sbf$ \
-#              cargo-test-sbf$ \
-#       ; then
-#     cat >> "$output_file" <<"EOF"
-#   - command: "ci/docker-run-default-image.sh ci/test-stable-sbf.sh"
-#     name: "stable-sbf"
-#     timeout_in_minutes: 35
-#     agents:
-#       queue: "solana"
-# EOF
-#   else
-#     annotate --style info \
-#       "Stable-SBF skipped as no relevant files were modified"
-#   fi
+  # SBF test suite
+  if affects \
+             .rs$ \
+             Cargo.lock$ \
+             Cargo.toml$ \
+             ^ci/rust-version.sh \
+             ^ci/test-stable-sbf.sh \
+             ^ci/test-stable.sh \
+             ^ci/test-local-cluster.sh \
+             ^core/build.rs \
+             ^fetch-perf-libs.sh \
+             ^platform-tools-sdk/ \
+             ^programs/ \
+             cargo-build-sbf$ \
+             cargo-test-sbf$ \
+      ; then
+    cat >> "$output_file" <<"EOF"
+  - command: "ci/docker-run-default-image.sh ci/test-stable-sbf.sh"
+    name: "stable-sbf"
+    timeout_in_minutes: 35
+    agents:
+      queue: "solana"
+EOF
+  else
+    annotate --style info \
+      "Stable-SBF skipped as no relevant files were modified"
+  fi
 
-#    # Shuttle tests
-#   if affects \
-#              .rs$ \
-#              Cargo.lock$ \
-#              Cargo.toml$ \
-#              ^ci/rust-version.sh \
-#       ; then
-#     command_step shuttle "ci/docker-run-default-image.sh ci/test-shuttle.sh" 10
-#   else
-#     annotate --style info \
-#       "test-shuttle skipped as no relevant files were modified"
-#   fi
+   # Shuttle tests
+  if affects \
+             .rs$ \
+             Cargo.lock$ \
+             Cargo.toml$ \
+             ^ci/rust-version.sh \
+      ; then
+    command_step shuttle "ci/docker-run-default-image.sh ci/test-shuttle.sh" 10
+  else
+    annotate --style info \
+      "test-shuttle skipped as no relevant files were modified"
+  fi
 
-#   # Coverage...
-#   if affects \
-#              .rs$ \
-#              Cargo.lock$ \
-#              Cargo.toml$ \
-#              ^ci/rust-version.sh \
-#              ^ci/test-coverage.sh \
-#              ^scripts/coverage.sh \
-#       ; then
-#     cat >> "$output_file" <<"EOF"
-#   - group: "coverage"
-#     steps:
-#       - command: "ci/docker-run-default-image.sh ci/coverage/part-1.sh"
-#         name: "coverage-1"
-#         timeout_in_minutes: 60
-#         agents:
-#           queue: "solana"
-#       - command: "ci/docker-run-default-image.sh ci/coverage/part-2.sh"
-#         name: "coverage-2"
-#         timeout_in_minutes: 60
-#         agents:
-#           queue: "solana"
-#       - command: "ci/docker-run-default-image.sh ci/coverage/part-3.sh"
-#         name: "coverage-3"
-#         timeout_in_minutes: 60
-#         agents:
-#           queue: "solana"
-# EOF
-#   else
-#     annotate --style info --context test-coverage \
-#       "Coverage skipped as no .rs files were modified"
-#   fi
+  # Coverage...
+  if affects \
+             .rs$ \
+             Cargo.lock$ \
+             Cargo.toml$ \
+             ^ci/rust-version.sh \
+             ^ci/test-coverage.sh \
+             ^scripts/coverage.sh \
+      ; then
+    cat >> "$output_file" <<"EOF"
+  - group: "coverage"
+    steps:
+      - command: "ci/docker-run-default-image.sh ci/coverage/part-1.sh"
+        name: "coverage-1"
+        timeout_in_minutes: 60
+        agents:
+          queue: "solana"
+      - command: "ci/docker-run-default-image.sh ci/coverage/part-2.sh"
+        name: "coverage-2"
+        timeout_in_minutes: 60
+        agents:
+          queue: "solana"
+      - command: "ci/docker-run-default-image.sh ci/coverage/part-3.sh"
+        name: "coverage-3"
+        timeout_in_minutes: 60
+        agents:
+          queue: "solana"
+EOF
+  else
+    annotate --style info --context test-coverage \
+      "Coverage skipped as no .rs files were modified"
+  fi
 }
 
 pull_or_push_steps() {
-  # command_step sanity "ci/test-sanity.sh" 5 check
-  # wait_step
+  command_step sanity "ci/test-sanity.sh" 5 check
+  wait_step
 
-  # # Check for any .sh file changes
-  # if affects \
-  #             .sh$ \
-  #             ^.buildkite/hooks \
-  #     ; then
-  #   command_step shellcheck "ci/shellcheck.sh" 5 check
-  #   wait_step
-  # fi
+  # Check for any .sh file changes
+  if affects \
+              .sh$ \
+              ^.buildkite/hooks \
+      ; then
+    command_step shellcheck "ci/shellcheck.sh" 5 check
+    wait_step
+  fi
 
   # Version bump PRs are an edge case that can skip most of the CI steps
   if affects .toml$ && affects .lock$ && ! affects_other_than .toml$ .lock$; then
