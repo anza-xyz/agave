@@ -117,19 +117,19 @@ impl VoteAccounts {
             // Sort by stake descending, we don't care about sorting accounts with same stake, because
             // this sort is only for truncation purpose, and we remove all accounts with same stake
             // on the border.
-            entries_to_sort
-                .sort_by(|(_, _, lhs_stake), (_, _, rhs_stake)| rhs_stake.cmp(lhs_stake));
+            // After the following call, entries [..max_vote_accounts] contains the top max_vote_accounts
+            // largest stakes (unordered), entries[max_vote_accounts] is the first truncated one.
+            entries_to_sort.select_nth_unstable_by(
+                max_vote_accounts,
+                |(_, _, lhs_stake), (_, _, rhs_stake)| rhs_stake.cmp(lhs_stake),
+            );
             // Find the stake of the first one being in the truncated list (so it's not max_vote_accounts - 1)
-            let floor_stake = {
-                let (_, _, stake) =
-                        // Safety: `entries_to_sort` is longer than `max_vote_accounts` by virtue of entering this block
-                        entries_to_sort.get(max_vote_accounts).unwrap();
-                *stake
-            };
+            let floor_stake = entries_to_sort[max_vote_accounts].2;
             // Per SIMD 357, we remove all vote accounts with stake smaller or equal to the first truncated one.
             entries_to_sort
                 .into_iter()
-                .take_while(|(_, _, stake)| stake > &floor_stake)
+                .take(max_vote_accounts)
+                .filter(|(_, _, stake)| stake > &floor_stake)
                 .map(|(pubkey, vote_account, stake)| (*pubkey, (*stake, vote_account.clone())))
                 .collect()
         } else {
