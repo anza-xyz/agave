@@ -44,10 +44,7 @@ impl TlvRecord {
     /// If this returns None, the record was not properly formatted,
     /// and one must assume the rest of the buffer is not readable.
     pub fn deserialize<'a>(buffer: &mut impl Reader<'a>) -> Option<Self> {
-        let mut tlv_record: MaybeUninit<Self> = MaybeUninit::uninit();
-        Self::read(buffer, &mut tlv_record).ok()?;
-        let tlv_record = unsafe { tlv_record.assume_init() };
-        Some(tlv_record)
+        Some(Self::get(buffer).ok()?);
     }
 }
 

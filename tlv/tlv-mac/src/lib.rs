@@ -23,6 +23,7 @@ impl<const N: usize> _ConstUsize<N> {}
 /// Poly 1305 signature for a packet.
 /// Can be truncated from default of 16 bytes down as needed.
 #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(transparent)]
 pub struct Signature<const N: usize = 16> {
     signature: [u8; N],
 }
