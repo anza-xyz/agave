@@ -212,13 +212,25 @@ impl SvmTestEnvironment<'_> {
 
             match processed_transaction {
                 Ok(ProcessedTransaction::Executed(executed_transaction)) => {
-                    for (index, (pubkey, account_data)) in executed_transaction
-                        .loaded_transaction
-                        .accounts
-                        .iter()
-                        .enumerate()
-                    {
-                        if sanitized_transaction.is_writable(index) {
+                    if executed_transaction.was_successful() {
+                        for (index, (pubkey, account_data)) in executed_transaction
+                            .loaded_transaction
+                            .accounts
+                            .iter()
+                            .enumerate()
+                        {
+                            if sanitized_transaction.is_writable(index) {
+                                update_or_dealloc_account(
+                                    &mut final_accounts_actual,
+                                    *pubkey,
+                                    account_data.clone(),
+                                );
+                            }
+                        }
+                    } else {
+                        for (pubkey, account_data) in
+                            &executed_transaction.loaded_transaction.rollback_accounts
+                        {
                             update_or_dealloc_account(
                                 &mut final_accounts_actual,
                                 *pubkey,
@@ -843,6 +855,7 @@ fn program_medley(drop_on_failure: bool) -> Vec<SvmTestEntry> {
 
         let mut fee_payer_data = AccountSharedData::default();
         fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
+        fee_payer_data.set_rent_epoch(u64::MAX);
         test_entry.add_initial_account(fee_payer, &fee_payer_data);
         if drop_on_failure {
             test_entry.final_accounts.insert(fee_payer, fee_payer_data);
@@ -850,6 +863,7 @@ fn program_medley(drop_on_failure: bool) -> Vec<SvmTestEntry> {
 
         let mut sender_data = AccountSharedData::default();
         sender_data.set_lamports(base_amount);
+        sender_data.set_rent_epoch(u64::MAX);
         test_entry.add_initial_account(sender, &sender_data);
         if drop_on_failure {
             test_entry.final_accounts.insert(sender, sender_data);
@@ -857,6 +871,7 @@ fn program_medley(drop_on_failure: bool) -> Vec<SvmTestEntry> {
 
         let mut recipient_data = AccountSharedData::default();
         recipient_data.set_lamports(base_amount);
+        recipient_data.set_rent_epoch(u64::MAX);
         test_entry.add_initial_account(recipient, &recipient_data);
         if drop_on_failure {
             test_entry.final_accounts.insert(recipient, recipient_data);
@@ -961,6 +976,7 @@ fn simple_transfer(drop_on_failure: bool) -> Vec<SvmTestEntry> {
         let mut source_data = AccountSharedData::default();
 
         source_data.set_lamports(transfer_amount - 1);
+        source_data.set_rent_epoch(u64::MAX);
         test_entry.add_initial_account(source, &source_data);
         if drop_on_failure {
             test_entry.final_accounts.insert(source, source_data);
@@ -1076,6 +1092,7 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         if !fake_fee_payer && !fee_paying_nonce {
             let mut fee_payer_data = AccountSharedData::default();
             fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
+            fee_payer_data.set_rent_epoch(u64::MAX);
             test_entry.add_initial_account(fee_payer, &fee_payer_data);
         } else if rent_paying_nonce {
             assert!(fee_paying_nonce);
@@ -1088,12 +1105,13 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         let nonce_initial_hash = DurableNonce::from_blockhash(&Hash::new_unique());
         let nonce_data =
             nonce::state::Data::new(fee_payer, nonce_initial_hash, LAMPORTS_PER_SIGNATURE);
-        let nonce_account = AccountSharedData::new_data(
+        let mut nonce_account = AccountSharedData::new_data(
             nonce_balance,
             &nonce::versions::Versions::new(nonce::state::State::Initialized(nonce_data.clone())),
             &system_program::id(),
         )
         .unwrap();
+        nonce_account.set_rent_epoch(u64::MAX);
         let nonce_info = NonceInfo::new(nonce_pubkey, nonce_account.clone());
 
         if !(fake_fee_payer && fee_paying_nonce) {
@@ -1143,11 +1161,6 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
     {
         let (transaction, _fee_payer, nonce_info) =
             mk_nonce_transaction(&mut test_entry, real_program_id, true, false);
-
-        test_entry
-            .final_accounts
-            .entry(*nonce_info.address())
-            .and_modify(|account| account.set_rent_epoch(0));
 
         test_entry.push_nonce_transaction_with_status(
             transaction,
@@ -1210,15 +1223,6 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
             .unwrap()
             .data_as_mut_slice()
             .copy_from_slice(nonce_info.account().data());
-
-        // if the nonce account pays fees, it keeps its new rent epoch, otherwise it resets
-        if !fee_paying_nonce {
-            test_entry
-                .final_accounts
-                .get_mut(nonce_info.address())
-                .unwrap()
-                .set_rent_epoch(0);
-        }
     }
 
     // 4: safety check that nonce fee-payers are required to be rent-exempt (blockhash fee-payers may be below rent-exemption)
@@ -1228,12 +1232,6 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
     if fee_paying_nonce {
         let (transaction, _, nonce_info) =
             mk_nonce_transaction(&mut test_entry, real_program_id, false, true);
-
-        test_entry
-            .final_accounts
-            .get_mut(nonce_info.address())
-            .unwrap()
-            .set_rent_epoch(0);
 
         test_entry.push_nonce_transaction_with_status(
             transaction,
@@ -1246,12 +1244,6 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
     if fee_paying_nonce {
         let (transaction, _, nonce_info) =
             mk_nonce_transaction(&mut test_entry, Pubkey::new_unique(), false, true);
-
-        test_entry
-            .final_accounts
-            .get_mut(nonce_info.address())
-            .unwrap()
-            .set_rent_epoch(0);
 
         test_entry.push_nonce_transaction_with_status(
             transaction,
@@ -1526,7 +1518,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
     let initial_durable = DurableNonce::from_blockhash(&Hash::new_unique());
     let initial_nonce_data =
         nonce::state::Data::new(fee_payer, initial_durable, LAMPORTS_PER_SIGNATURE);
-    let initial_nonce_account = AccountSharedData::new_data(
+    let mut initial_nonce_account = AccountSharedData::new_data(
         LAMPORTS_PER_SOL,
         &nonce::versions::Versions::new(nonce::state::State::Initialized(
             initial_nonce_data.clone(),
@@ -1534,6 +1526,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         &system_program::id(),
     )
     .unwrap();
+    initial_nonce_account.set_rent_epoch(u64::MAX);
     let initial_nonce_info = NonceInfo::new(nonce_pubkey, initial_nonce_account.clone());
 
     let advanced_durable = DurableNonce::from_blockhash(&LAST_BLOCKHASH);
@@ -1683,15 +1676,6 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
             advanced_nonce_info.clone(),
             ExecutionStatus::Discarded,
         );
-
-        // if the nonce account pays fees, it keeps its new rent epoch, otherwise it resets
-        if !fee_paying_nonce {
-            test_entry
-                .final_accounts
-                .get_mut(&nonce_pubkey)
-                .unwrap()
-                .set_rent_epoch(0);
-        }
 
         test_entries.push(test_entry);
     }
