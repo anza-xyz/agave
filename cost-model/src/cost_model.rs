@@ -231,6 +231,10 @@ impl CostModel {
                     SystemProgramAccountAllocation::Some(space)
                 }
             }
+            SystemInstruction::CreateAccountAllowPrefund { space: _, .. } => {
+                // pending feature-gated implementation
+                SystemProgramAccountAllocation::Failed
+            }
             _ => SystemProgramAccountAllocation::None,
         }
     }
@@ -859,7 +863,7 @@ mod tests {
     ///    `calculate_account_data_size_on_deserialized_system_instruction`
     ///    without proper feature gating
     /// 2. Add the variant to the exhaustive match below in the appropriate category
-    /// 3. Add a test case verifying it returns None until feature-gate-activated,
+    /// 3. Add a test case verifying it returns Failed until feature-gate-activated,
     ///    as demonstrated with `CreateAccountAllowPrefund`
     ///
     /// Adding a new allocating instruction without feature gating will cause consensus
@@ -884,6 +888,11 @@ mod tests {
             SystemInstruction::CreateAccountWithSeed {
                 base,
                 seed: seed.clone(),
+                lamports,
+                space,
+                owner,
+            },
+            SystemInstruction::CreateAccountAllowPrefund {
                 lamports,
                 space,
                 owner,
@@ -939,12 +948,11 @@ mod tests {
                 | SystemInstruction::TransferWithSeed { .. } => {
                     SystemProgramAccountAllocation::None
                 }
-                // New allocating instructions must return None until feature-gated.
-                // They must not return Failed, as estimates are not adjusted to 0 in that case.
+                // New allocating instructions must return Failed until feature-gated.
                 SystemInstruction::CreateAccountAllowPrefund { .. } => {
                     assert!(
-                        matches!(result, SystemProgramAccountAllocation::None),
-                        "CreateAccountAllowPrefund must return None until feature-gated, got \
+                        matches!(result, SystemProgramAccountAllocation::Failed),
+                        "CreateAccountAllowPrefund must return Failed until feature-gated, got \
                          {result:?}",
                     );
                     continue;
