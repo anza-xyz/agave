@@ -14,12 +14,7 @@ use {
         quic::{StreamerStats, DEFAULT_MAX_STREAMS_PER_MS},
         streamer::StakedNodes,
     },
-<<<<<<< HEAD
-    quinn::Connection,
-=======
     quinn::{Connection, VarInt},
-    solana_net_utils::token_bucket::TokenBucket,
->>>>>>> a1556213d (streamer: set fixed RX window for all connections (#9143))
     solana_time_utils as timing,
     std::{
         future::Future,
@@ -98,8 +93,7 @@ impl SimpleQos {
 
         // this will never overflow u32 for reasonable MAX_RTT
         let rtt = connection.rtt().clamp(MIN_RTT, MAX_RTT).as_millis() as u32;
-        let max_streams_in_flight = (self.config.max_streams_per_second as u32).saturating_mul(rtt)
-            / 1000
+        let max_streams_in_flight = (self.max_streams_per_second as u32).saturating_mul(rtt) / 1000
             * STREAMS_IN_FLIGHT_MARGIN;
         // for very low values of max_streams_per_second, prevent connections from having zero
         // streams in flight

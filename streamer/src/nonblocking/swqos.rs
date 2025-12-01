@@ -489,44 +489,6 @@ pub mod test {
     use super::*;
 
     #[test]
-<<<<<<< HEAD
-    fn test_cacluate_receive_window_ratio_for_staked_node() {
-        let mut max_stake = 10000;
-        let mut min_stake = 0;
-        let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, min_stake);
-        assert_eq!(ratio, QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO);
-
-        let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake);
-        let max_ratio = QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO;
-        assert_eq!(ratio, max_ratio);
-
-        let ratio =
-            compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake / 2);
-        let average_ratio =
-            (QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO + QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO) / 2;
-        assert_eq!(ratio, average_ratio);
-
-        max_stake = 10000;
-        min_stake = 10000;
-        let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake);
-        assert_eq!(ratio, max_ratio);
-
-        max_stake = 0;
-        min_stake = 0;
-        let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake);
-        assert_eq!(ratio, max_ratio);
-
-        max_stake = 1000;
-        min_stake = 10;
-        let ratio =
-            compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake + 10);
-        assert_eq!(ratio, max_ratio);
-    }
-
-    #[test]
-
-=======
->>>>>>> a1556213d (streamer: set fixed RX window for all connections (#9143))
     fn test_max_allowed_uni_streams() {
         assert_eq!(
             compute_max_allowed_uni_streams(ConnectionPeerType::Unstaked, 0),

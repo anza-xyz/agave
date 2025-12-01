@@ -11,18 +11,8 @@ use {
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
     histogram::Histogram,
-<<<<<<< HEAD
-    itertools::Itertools,
     solana_net_utils::multihomed_sockets::{
         BindIpAddrs, CurrentSocket, FixedSocketProvider, MultihomedSocketProvider, SocketProvider,
-=======
-    solana_net_utils::{
-        multihomed_sockets::{
-            BindIpAddrs, CurrentSocket, FixedSocketProvider, MultihomedSocketProvider,
-            SocketProvider,
-        },
-        SocketAddrSpace,
->>>>>>> a1556213d (streamer: set fixed RX window for all connections (#9143))
     },
     solana_packet::Packet,
     solana_pubkey::Pubkey,
