@@ -815,7 +815,6 @@ mod tests {
         super::*,
         crate::{
             bank::{tests::create_simple_test_bank, BankTestConfig},
-            snapshot_package::BankSnapshotPackage,
             snapshot_utils::{
                 clean_orphaned_account_snapshot_dirs, create_tmp_accounts_dir_for_tests,
                 get_bank_snapshots, get_highest_bank_snapshot, get_highest_loadable_bank_snapshot,
@@ -874,50 +873,6 @@ mod tests {
         }
 
         Arc::into_inner(bank).unwrap()
-    }
-
-    /// Convenience function to create an fastboot snapshot out of any Bank, regardless of
-    /// state.  The Bank will be frozen during the process.
-    ///
-    /// Requires:
-    ///     - `bank` is complete
-    fn bank_to_fastboot_snapshot(
-        bank_snapshots_dir: impl AsRef<Path>,
-        bank: &Bank,
-        snapshot_version: SnapshotVersion,
-    ) -> agave_snapshots::Result<()> {
-        assert!(bank.is_complete());
-
-        bank.squash(); // Bank may not be a root
-        bank.rehash(); // Bank may have been manually modified by the caller
-        bank.force_flush_accounts_cache();
-        bank.clean_accounts();
-
-        let bank_fields = bank.get_fields_to_serialize();
-
-        let bank_snapshot_package = BankSnapshotPackage {
-            bank_fields,
-            bank_hash_stats: bank.get_bank_hash_stats(),
-            status_cache_slot_deltas: bank.status_cache.read().unwrap().root_slot_deltas(),
-            write_version: bank
-                .rc
-                .accounts
-                .accounts_db
-                .write_version
-                .load(Ordering::Acquire),
-        };
-
-        let snapshot_storages = bank.get_snapshot_storages(None);
-
-        snapshot_utils::serialize_snapshot(
-            bank_snapshots_dir.as_ref(),
-            snapshot_version,
-            bank_snapshot_package,
-            snapshot_storages.as_slice(),
-            true,
-        )?;
-
-        Ok(())
     }
 
     /// Test roundtrip of bank to a full snapshot, then back again.  This test creates the simplest
@@ -2012,6 +1967,8 @@ mod tests {
         let key2 = Keypair::new();
 
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+
         let (mut genesis_config, mint) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
 
         // Disable fees so fees don't need to be calculated
@@ -2054,7 +2011,16 @@ mod tests {
         // Take a full snapshot, passing `true` for `should_flush_and_hard_link_storages`.
         // This ensures that `serialize_snapshot` performs all necessary steps to create
         // a snapshot that supports fastbooting.
-        bank_to_fastboot_snapshot(&bank_snapshots_dir, &bank2, SnapshotVersion::default()).unwrap();
+        bank_to_full_snapshot_archive_with(
+            &bank_snapshots_dir,
+            &bank2,
+            SnapshotVersion::default(),
+            full_snapshot_archives_dir.path(),
+            full_snapshot_archives_dir.path(),
+            SnapshotConfig::default().archive_format,
+            true,
+        )
+        .unwrap();
 
         let account_paths = &bank2.rc.accounts.accounts_db.paths;
         let bank_snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
@@ -2119,9 +2085,7 @@ mod tests {
     fn test_bank_from_snapshot_dir(storage_access: StorageAccess) {
         let genesis_config = GenesisConfig::default();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
-        let bank = Bank::new_for_tests(&genesis_config);
-        bank.fill_bank_with_ticks_for_tests();
-        bank_to_fastboot_snapshot(&bank_snapshots_dir, &bank, SnapshotVersion::default()).unwrap();
+        let bank = create_snapshot_dirs_for_tests(&genesis_config, &bank_snapshots_dir, 3, true);
 
         let bank_snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
         let account_paths = &bank.rc.accounts.accounts_db.paths;
