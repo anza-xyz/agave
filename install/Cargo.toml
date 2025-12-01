@@ -36,7 +36,7 @@ serde_yaml = { workspace = true }
 serde_yaml_08 = { package = "serde_yaml", version = "0.8.26" }
 solana-clap-utils = { workspace = true }
 solana-config-interface = { version = "=2.0.0", features = ["bincode"] }
-solana-hash = "=3.0.0"
+solana-hash = "=3.1.0"
 solana-keypair = "=3.0.1"
 solana-message = "=3.0.1"
 solana-pubkey = { version = "=3.0.0", default-features = false }
@@ -44,7 +44,7 @@ solana-rpc-client = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-signature = { version = "=3.1.0", default-features = false }
 solana-signer = "=3.0.0"
-solana-transaction = "=3.0.1"
+solana-transaction = "=3.0.2"
 solana-version = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }

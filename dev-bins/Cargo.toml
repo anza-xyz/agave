@@ -96,7 +96,7 @@ solana-genesis-config = "3.0.0"
 solana-genesis-utils = { path = "../genesis-utils", version = "=3.1.4", features = ["agave-unstable-api"] }
 solana-geyser-plugin-manager = { path = "../geyser-plugin-manager", version = "=3.1.4", features = ["agave-unstable-api"] }
 solana-gossip = { path = "../gossip", version = "=3.1.4", features = ["agave-unstable-api"] }
-solana-hash = "3.0.0"
+solana-hash = "3.1.0"
 solana-inflation = "3.0.0"
 solana-instruction = "3.0.0"
 solana-keypair = "3.0.1"
@@ -139,7 +139,7 @@ solana-test-validator = { path = "../test-validator", version = "=3.1.4" }
 solana-time-utils = "3.0.0"
 solana-tps-client = { path = "../tps-client", version = "=3.1.4", features = ["agave-unstable-api"] }
 solana-tpu-client = { path = "../tpu-client", version = "=3.1.4", default-features = false, features = ["agave-unstable-api"] }
-solana-transaction = "3.0.1"
+solana-transaction = "3.0.2"
 solana-transaction-context = { path = "../transaction-context", version = "=3.1.4", features = ["agave-unstable-api", "bincode"] }
 solana-transaction-status = { path = "../transaction-status", version = "=3.1.4", features = ["agave-unstable-api"] }
 solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", version = "=3.1.4", features = ["agave-unstable-api"] }

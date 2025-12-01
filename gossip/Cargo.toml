@@ -72,7 +72,7 @@ solana-frozen-abi = { version = "=3.0.1", optional = true, features = [
 solana-frozen-abi-macro = { version = "=3.0.1", optional = true, features = [
     "frozen-abi",
 ] }
-solana-hash = "=3.0.0"
+solana-hash = "=3.1.0"
 solana-keypair = "=3.0.1"
 solana-ledger = { workspace = true, features = ["agave-unstable-api"] }
 solana-measure = { workspace = true }
@@ -88,14 +88,14 @@ solana-rpc-client = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sanitize = "=3.0.1"
 solana-serde-varint = "=3.0.0"
-solana-sha256-hasher = "=3.0.0"
+solana-sha256-hasher = "=3.1.0"
 solana-short-vec = "=3.0.0"
 solana-signature = { version = "=3.1.0", default-features = false }
 solana-signer = "=3.0.0"
 solana-streamer = { workspace = true }
 solana-time-utils = "=3.0.0"
 solana-tpu-client = { workspace = true }
-solana-transaction = "=3.0.1"
+solana-transaction = "=3.0.2"
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
