@@ -100,7 +100,8 @@ if [[ -z "$SOLANA_DOCKER_RUN_NOSETUID" ]]; then
 fi
 
 if [[ -n $EXTRA_DOCKER_RUN_ARGS ]]; then
-  ARGS+=(${EXTRA_DOCKER_RUN_ARGS[@]})
+  read -r -a extra_docker_run_args <<< "$EXTRA_DOCKER_RUN_ARGS"
+  ARGS+=("${extra_docker_run_args[@]}")
 fi
 
 if [[ -n $SOLANA_ALLOCATE_TTY ]]; then
